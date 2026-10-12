@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` **adds C31 — a list that shows one server page, read as if it were the whole list** (BUG-2026-10-12-281). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/bug87-auto-grn-read` adds C23 row 2 (purchase-invoices auto receipt id read snake_case only).
 > **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` **adds C30 — a list column whose screen value exists only in `render`, exported raw** (BUG-2026-10-12-278). Nothing else re-checked.
 > **Last verified: 2026-10-01**: restamped on branch `fix/grn-number-collision` (staging only): C27 row 2 marked verified on staging (2026-09-30), row 5 added for read-max-then-insert document numbers (BUG-2026-10-01-232).
@@ -1870,3 +1871,21 @@ Test: `tests/worker-history-snapshot-fresh.test.mjs` (row 4).
 | 2 | status columns export the raw code (`IN_PRODUCTION`) where the screen swaps `_` for a space | ⬜ open, cosmetic, left on purpose |
 
 Test: `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue".
+
+## C31 — a list that shows one server page, read as if it were the whole list
+
+**Shape.** A list page loads one server page (`?page=&limit=`) and a feature built on the grid's rows (the Export, a total, a "select all") treats those rows as the whole list. Or a request carries a `limit` the route clamps lower, so the "whole" list is silently cut.
+
+**Why it keeps happening.** Paging was added to these pages for speed long after the grid features that read its rows. Staging and local data are small, so one page often IS everything.
+
+**The rule.** A grid feature that means "every row" on a paged page takes its rows from `exportAllRows` (or the page's own all-rows path), never from the grid's `data`. A request that means "all" sends no `limit`, or walks pages with `fetchAllPages`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | grid Export on Sales Orders, Purchase Orders, GRN, Invoices, Delivery Orders (unfiltered) | ✅ on branch `fix/export-all-pages` (BUG-2026-10-12-281), not deployed |
+| 2 | Invoices search and filter sent `limit=2000`, clamped to 500 | ✅ on branch `fix/export-all-pages` (BUG-2026-10-12-281), not deployed |
+| 3 | Purchase Orders and GRN Draft tab: not in the "load everything" switch, so the tab shows only the drafts on the current 200-row page | ⬜ open, screen only (the Export is complete) |
+
+Test: `tests/export-all-pages.test.mjs`.

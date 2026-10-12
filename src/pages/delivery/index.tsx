@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState, useUrlStateNumber, useUrlBatch } from "@/lib/use-url-state";
 import { pageSlice } from "@/lib/delivery-list-filters";
 import { useToast } from "@/components/ui/toast";
@@ -1129,6 +1130,8 @@ export default function DeliveryPage() {
   // editDialogDrivers can finish the resolve. Cleared when match found or
   // when the user closes the edit dialog.
   const pendingDriverNameToResolveRef = useRef<string>("");
+  // The SO lookup the effect below builds, kept for the all-pages Export.
+  const soRefMapRef = useRef<Map<string, { customerSO: string; reference: string; customerPO: string }>>(new Map());
 
   // ----- Customer hub lookup -----
   const [customersData, setCustomersData] = useState<Customer[]>([]);
@@ -1448,6 +1451,7 @@ export default function DeliveryPage() {
             if (so.companySOId) soRefMap.set(so.companySOId, v);
           }
         }
+        soRefMapRef.current = soRefMap;
         if (dRes.success && dRes.data) {
           const realRows = (dRes.data as DeliveryOrder[])
             .filter((d) => !d.id.startsWith("virt-"))
@@ -5160,6 +5164,16 @@ export default function DeliveryPage() {
               contextMenuItems={getContextMenuItems}
               exportName="delivery-orders"
               exportSheetLabel="Delivery Orders"
+              // One 50-row page per tab is loaded; Export walks the tab's
+              // statuses page by page. Search already loads every match.
+              exportAllRows={search.trim() || !TAB_DO_STATUSES[activeTab] ? undefined : () => {
+                const statuses = TAB_DO_STATUSES[activeTab];
+                return fetchAllPages<DeliveryOrder>((p, l) => `/api/delivery-orders?page=${p}&limit=${l}&status=${statuses.join(",")}`)
+                  .then((rows) => rows
+                    .filter((d) => !d.id.startsWith("virt-"))
+                    .map((d) => mapDOToRow(d, soRefMapRef.current))
+                    .filter((d) => statuses.includes(d.status)));
+              }}
               detailExport={{ label: "Detail Listing", build: (rows) => buildDoDetailListingAoa(rows) }}
             />
 

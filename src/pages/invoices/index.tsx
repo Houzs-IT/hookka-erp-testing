@@ -7,6 +7,7 @@ import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency } from "@/lib/utils";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   Plus,
@@ -104,9 +105,9 @@ export default function InvoicesPage() {
     total?: number;
   }>(
     gridSearch.trim()
-      ? `/api/invoices?search=${encodeURIComponent(gridSearch.trim())}&limit=2000`
+      ? `/api/invoices?search=${encodeURIComponent(gridSearch.trim())}`
       : filterQs
-        ? `/api/invoices?${filterQs}&limit=2000`
+        ? `/api/invoices?${filterQs}`
         : `/api/invoices?page=${page}&limit=${PAGE_SIZE}`,
   );
   // Whole-dataset KPI numbers — bucket counts AND money aggregates.
@@ -908,6 +909,10 @@ export default function InvoicesPage() {
                 // every row (the 2026-05-21 list-payload trim) — which is why it
                 // did not exist until 2026-08-20.
                 exportName="invoices"
+                // Unfiltered, the grid holds one 200-row page; Export walks
+                // them all. A search or filter already loads every match.
+                exportAllRows={gridSearch.trim() || filterQs ? undefined : () =>
+                  fetchAllPages<Invoice>((p, l) => `/api/invoices?page=${p}&limit=${l}`)}
                 exportSheetLabel="Invoices"
                 detailExport={{
                   label: "Detail Listing",

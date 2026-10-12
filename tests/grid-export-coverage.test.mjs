@@ -241,20 +241,23 @@ test("the export reads the FILTERED rows and the VISIBLE columns, never raw data
     /const ticked = selectable\s*\?\s*sortedData\.filter\(/,
     "ticked rows must be picked out of the filtered rows",
   );
+  // With nothing ticked: the filtered rows, or on a paged list every page put
+  // through the same filter + sort (tests/export-all-pages.test.mjs).
+  assert.match(src, /if \(ticked\.length > 0\) return ticked;/, "ticked rows win");
   assert.match(
     src,
-    /const exportRows = ticked\.length > 0 \? ticked : sortedData;/,
+    /if \(!exportAllRows\) return sortedData;/,
     "with nothing ticked the export falls back to the filtered rows",
   );
   assert.match(
     src,
-    /buildListingAoa\(visibleColumns as unknown as ExportColumn<T>\[\], exportRows\)/,
-    "listing must be built from visibleColumns × exportRows",
+    /buildListingAoa\(visibleColumns as unknown as ExportColumn<T>\[\], rows\)/,
+    "listing must be built from visibleColumns × the export rows",
   );
   assert.match(
     src,
-    /detailExport\.build\(exportRows\)/,
-    "the detail listing must also be built from the same rows",
+    /void exportRows\(\)\s*\.then\(build\)/,
+    "listing and detail listing are both built from the same rows",
   );
 });
 

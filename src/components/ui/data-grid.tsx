@@ -241,6 +241,11 @@ export type DataGridProps<T> = {
   // `GET /api/invoices` ships `items: []` per row, so the builder has to fetch
   // them. That fetch is the whole reason invoices had no detail listing.
   detailExport?: { label: string; build: (rows: T[]) => Aoa | Promise<Aoa> };
+  // A server-paged list holds only the page on screen. Pass a loader for every
+  // row (same scoped route, same shape as `data`) and the Export, when nothing
+  // is ticked, runs the grid's own filter + sort over all of them. Pass it only
+  // while the page is paged; a page that already holds the full set omits it.
+  exportAllRows?: () => Promise<T[]>;
   // Fires whenever the global search text changes. Lets the parent react
   // to "user is searching" — e.g. switch a server-paginated fetch to a
   // whole-dataset fetch so the search covers every record, not just the
@@ -1622,6 +1627,127 @@ const EMPTY_SEARCH_KEYS: string[] = [];
 // across renders (a fresh `new Set()` would bust the filteredData useMemo).
 const EMPTY_FORCE_SHOW: ReadonlySet<string> = new Set();
 
+// The grid's filter and sort steps as plain functions, so the Export can run
+// them over every page of a server-paged list, not only the page on screen.
+type GridFilterState<T> = {
+  deferredSearch: string;
+  visibleColumns: Column<T>[];
+  alwaysSearchKeys: string[];
+  forceShowKeys: ReadonlySet<string>;
+  keyField: string;
+  columnFilters: Record<string, string>;
+  columnValueFilters: Record<string, Set<string>>;
+  columns: Column<T>[];
+};
+export function filterGridRows<T>(
+  data: T[],
+  { deferredSearch, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columnFilters, columnValueFilters, columns }: GridFilterState<T>,
+): T[] {
+  let result = data;
+
+  // Global search (deferred — see deferredSearch above)
+  if (deferredSearch) {
+    const lower = deferredSearch.toLowerCase();
+    // Search visible columns PLUS any alwaysSearchKeys, so an identifier
+    // stays findable even when its column is hidden via the "Columns" menu.
+    const searchKeys = new Set<string>(visibleColumns.map(c => c.key));
+    for (const k of alwaysSearchKeys) searchKeys.add(k);
+    result = result.filter(row => {
+      for (const key of searchKeys) {
+        const val = getNestedValue(row, key);
+        if (String(val ?? "").toLowerCase().includes(lower)) return true;
+      }
+      return false;
+    });
+  }
+
+  // forceShowKeys exemption (see prop doc): a row whose keyField is in the
+  // allowlist bypasses the per-column TEXT and VALUE filters below, so it
+  // stays visible even when its value (e.g. status COMPLETED) would normally
+  // be hidden by the default-hide filter. Global search above is intentionally
+  // NOT exempted — that's an explicit operator narrowing. No-op when empty.
+  const hasForceShow = forceShowKeys.size > 0;
+  const isForceShown = (row: T) =>
+    hasForceShow && forceShowKeys.has(String(getNestedValue(row, keyField)));
+
+  // Per-column text filters
+  const activeFilters = Object.entries(columnFilters).filter(([, v]) => v);
+  if (activeFilters.length > 0) {
+    result = result.filter(row =>
+      isForceShown(row) ||
+      activeFilters.every(([key, val]) => matchesFilter(getNestedValue(row, key), val))
+    );
+  }
+
+  // Per-column value filters (checkbox-based). filterAccessor on the
+  // column wins over the raw key so e.g. dept-status columns can store
+  // a sort number on .key but filter on a "Pending/Overdue/Done" label.
+  const activeValueFilters = Object.entries(columnValueFilters);
+  if (activeValueFilters.length > 0) {
+    result = result.filter(row =>
+      isForceShown(row) ||
+      activeValueFilters.every(([key, allowedValues]) => {
+        const col = columns.find((c) => c.key === key);
+        const v = col?.filterAccessor
+          ? String(col.filterAccessor(row) ?? "")
+          : String(getNestedValue(row, key) ?? "");
+        return allowedValues.has(v);
+      })
+    );
+  }
+
+  return result;
+}
+
+type GridSortState<T> = {
+  groupBy?: string;
+  groupEnabled: boolean;
+  groupFilter: Set<string> | null;
+  sortKey: string | null;
+  sortDir: "asc" | "desc";
+  columns: Column<T>[];
+};
+export function sortGridRows<T>(
+  filteredData: T[],
+  { groupBy, groupEnabled, groupFilter, sortKey, sortDir, columns }: GridSortState<T>,
+): T[] {
+  let result = [...filteredData];
+
+  // Apply group filter (only when grouping is active)
+  if (groupBy && groupEnabled && groupFilter) {
+    result = result.filter(row => {
+      const gv = String(getNestedValue(row, groupBy) ?? "—");
+      return groupFilter.has(gv);
+    });
+  }
+
+  // Primary sort by groupBy column (if grouping enabled), then by user sort.
+  // Look up column.sortAccessor from sortKey so columns whose displayed
+  // value is computed (e.g. via an external Map lookup) sort by that
+  // computed value instead of always returning undefined from
+  // getNestedValue.
+  const sortCol = sortKey ? columns.find((c) => c.key === sortKey) : null;
+  const sortRead = sortCol?.sortAccessor;
+  if ((groupBy && groupEnabled) || sortKey) {
+    result.sort((a, b) => {
+      if (groupBy && groupEnabled) {
+        const ga = getNestedValue(a, groupBy);
+        const gb = getNestedValue(b, groupBy);
+        const gc = compareValues(ga, gb);
+        if (gc !== 0) return gc;
+      }
+      if (sortKey) {
+        const va = sortRead ? sortRead(a) : getNestedValue(a, sortKey);
+        const vb = sortRead ? sortRead(b) : getNestedValue(b, sortKey);
+        const vc = compareValues(va, vb);
+        return sortDir === "desc" ? -vc : vc;
+      }
+      return 0;
+    });
+  }
+  return result;
+}
+
 export function DataGrid<T extends Record<string, any>>({
   columns,
   data,
@@ -1649,6 +1775,7 @@ export function DataGrid<T extends Record<string, any>>({
   exportName,
   exportSheetLabel,
   detailExport,
+  exportAllRows,
   onSearchChange,
   initialSearch,
   alwaysSearchKeys = EMPTY_SEARCH_KEYS,
@@ -1784,6 +1911,8 @@ export function DataGrid<T extends Record<string, any>>({
 
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const { toast } = useToast();
 
   const toggleColumn = useCallback((key: string) => {
     setVisibleKeys(prev => {
@@ -2446,60 +2575,7 @@ export function DataGrid<T extends Record<string, any>>({
 
   // ── Filtered + Sorted data ──
   const filteredData = useMemo(() => {
-    let result = data;
-
-    // Global search (deferred — see deferredSearch above)
-    if (deferredSearch) {
-      const lower = deferredSearch.toLowerCase();
-      // Search visible columns PLUS any alwaysSearchKeys, so an identifier
-      // stays findable even when its column is hidden via the "Columns" menu.
-      const searchKeys = new Set<string>(visibleColumns.map(c => c.key));
-      for (const k of alwaysSearchKeys) searchKeys.add(k);
-      result = result.filter(row => {
-        for (const key of searchKeys) {
-          const val = getNestedValue(row, key);
-          if (String(val ?? "").toLowerCase().includes(lower)) return true;
-        }
-        return false;
-      });
-    }
-
-    // forceShowKeys exemption (see prop doc): a row whose keyField is in the
-    // allowlist bypasses the per-column TEXT and VALUE filters below, so it
-    // stays visible even when its value (e.g. status COMPLETED) would normally
-    // be hidden by the default-hide filter. Global search above is intentionally
-    // NOT exempted — that's an explicit operator narrowing. No-op when empty.
-    const hasForceShow = forceShowKeys.size > 0;
-    const isForceShown = (row: T) =>
-      hasForceShow && forceShowKeys.has(String(getNestedValue(row, keyField)));
-
-    // Per-column text filters
-    const activeFilters = Object.entries(columnFilters).filter(([, v]) => v);
-    if (activeFilters.length > 0) {
-      result = result.filter(row =>
-        isForceShown(row) ||
-        activeFilters.every(([key, val]) => matchesFilter(getNestedValue(row, key), val))
-      );
-    }
-
-    // Per-column value filters (checkbox-based). filterAccessor on the
-    // column wins over the raw key so e.g. dept-status columns can store
-    // a sort number on .key but filter on a "Pending/Overdue/Done" label.
-    const activeValueFilters = Object.entries(columnValueFilters);
-    if (activeValueFilters.length > 0) {
-      result = result.filter(row =>
-        isForceShown(row) ||
-        activeValueFilters.every(([key, allowedValues]) => {
-          const col = columns.find((c) => c.key === key);
-          const v = col?.filterAccessor
-            ? String(col.filterAccessor(row) ?? "")
-            : String(getNestedValue(row, key) ?? "");
-          return allowedValues.has(v);
-        })
-      );
-    }
-
-    return result;
+    return filterGridRows(data, { deferredSearch, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columnFilters, columnValueFilters, columns });
   }, [data, deferredSearch, columnFilters, columnValueFilters, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columns]);
 
   // All unique group values (for group filter dropdown)
@@ -2531,41 +2607,7 @@ export function DataGrid<T extends Record<string, any>>({
   }, [groupBy, groupEnabled, allGroupValues]);
 
   const sortedData = useMemo(() => {
-    let result = [...filteredData];
-
-    // Apply group filter (only when grouping is active)
-    if (groupBy && groupEnabled && groupFilter) {
-      result = result.filter(row => {
-        const gv = String(getNestedValue(row, groupBy) ?? "—");
-        return groupFilter.has(gv);
-      });
-    }
-
-    // Primary sort by groupBy column (if grouping enabled), then by user sort.
-    // Look up column.sortAccessor from sortKey so columns whose displayed
-    // value is computed (e.g. via an external Map lookup) sort by that
-    // computed value instead of always returning undefined from
-    // getNestedValue.
-    const sortCol = sortKey ? columns.find((c) => c.key === sortKey) : null;
-    const sortRead = sortCol?.sortAccessor;
-    if ((groupBy && groupEnabled) || sortKey) {
-      result.sort((a, b) => {
-        if (groupBy && groupEnabled) {
-          const ga = getNestedValue(a, groupBy);
-          const gb = getNestedValue(b, groupBy);
-          const gc = compareValues(ga, gb);
-          if (gc !== 0) return gc;
-        }
-        if (sortKey) {
-          const va = sortRead ? sortRead(a) : getNestedValue(a, sortKey);
-          const vb = sortRead ? sortRead(b) : getNestedValue(b, sortKey);
-          const vc = compareValues(va, vb);
-          return sortDir === "desc" ? -vc : vc;
-        }
-        return 0;
-      });
-    }
-    return result;
+    return sortGridRows(filteredData, { groupBy, groupEnabled, groupFilter, sortKey, sortDir, columns });
   }, [filteredData, sortKey, sortDir, groupBy, groupEnabled, groupFilter, columns]);
 
   // ── Row cap (render-only) ──
@@ -2963,6 +3005,7 @@ export function DataGrid<T extends Record<string, any>>({
                 showExportMenu ? "border-[#6B5C32] bg-[#6B5C32]/10 text-[#6B5C32]" : "border-[#DDD] text-[#666] hover:border-[#999]",
               )}
               onClick={() => setShowExportMenu((v) => !v)}
+              disabled={exportBusy}
               title="Export the current view"
             >
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -2981,23 +3024,35 @@ export function DataGrid<T extends Record<string, any>>({
                     const ticked = selectable
                       ? sortedData.filter((r) => selectedKeys.has(String(getNestedValue(r, keyField))))
                       : [];
-                    const exportRows = ticked.length > 0 ? ticked : sortedData;
-                    const listingAoa = (): Aoa =>
-                      buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], exportRows);
+                    // Nothing ticked on a paged list: load every page, then the
+                    // same filter + sort the screen uses.
+                    const allPages = ticked.length === 0 && !!exportAllRows;
+                    const exportRows = async (): Promise<T[]> => {
+                      if (ticked.length > 0) return ticked;
+                      if (!exportAllRows) return sortedData;
+                      const all = await exportAllRows();
+                      return sortGridRows(
+                        filterGridRows(all, { deferredSearch, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columnFilters, columnValueFilters, columns }),
+                        { groupBy, groupEnabled, groupFilter, sortKey, sortDir, columns },
+                      );
+                    };
+                    const listingAoa = (rows: T[]): Aoa =>
+                      buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], rows);
                     const run = (
-                      aoa: Aoa | Promise<Aoa>,
+                      build: (rows: T[]) => Aoa | Promise<Aoa>,
                       kind: string,
                       ext: "xlsx" | "csv",
                     ) => {
                       setShowExportMenu(false);
                       const fname = exportFilename(exportName, kind, ext, today);
-                      // An async builder must not write a half-built file: await
-                      // it, and let a failure surface rather than silently
-                      // exporting whatever came back.
-                      void Promise.resolve(aoa).then((rows) => {
-                        if (ext === "xlsx") return exportReportXlsx(fname, label, rows);
-                        exportReportCsv(fname, rows);
-                      });
+                      // Never write a half-built file: await the rows and the
+                      // builder, and say so when either fails.
+                      setExportBusy(true);
+                      void exportRows()
+                        .then(build)
+                        .then((rows) => (ext === "xlsx" ? exportReportXlsx(fname, label, rows) : exportReportCsv(fname, rows)))
+                        .catch((e) => toast.error(e instanceof Error ? e.message : "Export failed. Nothing was downloaded."))
+                        .finally(() => setExportBusy(false));
                     };
                     const Item = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
                       <button
@@ -3010,20 +3065,20 @@ export function DataGrid<T extends Record<string, any>>({
                     return (
                       <>
                         <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
-                          Listing · {ticked.length > 0 ? `${ticked.length} ticked` : exportRows.length} rows, {visibleColumns.length} cols
+                          Listing · {ticked.length > 0 ? `${ticked.length} ticked rows` : allPages ? "all pages" : `${sortedData.length} rows`}, {visibleColumns.length} cols
                         </div>
-                        <Item onClick={() => run(listingAoa(), "listing", "xlsx")}>Listing → Excel</Item>
-                        <Item onClick={() => run(listingAoa(), "listing", "csv")}>Listing → CSV</Item>
+                        <Item onClick={() => run(listingAoa, "listing", "xlsx")}>Listing → Excel</Item>
+                        <Item onClick={() => run(listingAoa, "listing", "csv")}>Listing → CSV</Item>
                         {detailExport && (
                           <>
                             <div className="my-1 border-t border-[#F0ECE9]" />
                             <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
                               {detailExport.label} · per line item
                             </div>
-                            <Item onClick={() => run(detailExport.build(exportRows), "detail", "xlsx")}>
+                            <Item onClick={() => run(detailExport.build, "detail", "xlsx")}>
                               {detailExport.label} → Excel
                             </Item>
-                            <Item onClick={() => run(detailExport.build(exportRows), "detail", "csv")}>
+                            <Item onClick={() => run(detailExport.build, "detail", "csv")}>
                               {detailExport.label} → CSV
                             </Item>
                           </>
