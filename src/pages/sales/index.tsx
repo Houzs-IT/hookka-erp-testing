@@ -21,6 +21,7 @@ import { Plus, ShoppingCart, Download, Filter, X, Eye, Pencil, Printer, Truck, F
 // 1MB jspdf vendor chunk only ships when the user actually prints a SO.
 import { ScanPOModal } from "@/components/scan-po-modal";
 import { StagingTestOrderFactory } from "@/components/staging-test-order-factory";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   OUTSTANDING_STATUSES,
@@ -1739,6 +1740,12 @@ export default function SalesPage() {
             onSearchChange={setGridSearch}
             gridId="sales-orders-list"
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
+            // Unfiltered, the grid holds one 200-row page; Export walks them
+            // all with the same tab rule as filteredOrders. Any filter already
+            // loads the whole set.
+            exportAllRows={_filtersActive ? undefined : () =>
+              fetchAllPages<SalesOrder>((p, l) => `/api/sales-orders?page=${p}&limit=${l}&${soFilterQs}`)
+                .then((rows) => rows.filter((o) => !(tab === "DRAFT" && o.status !== "DRAFT") && !(tab === "CONFIRMED" && o.status === "DRAFT")))}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}
             // Give each Status-dropdown selection its own filter session

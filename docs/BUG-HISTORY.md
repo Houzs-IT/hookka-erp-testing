@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-281 (branch `fix/export-all-pages`, to staging; 279 and 280 are staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: BUG-2026-10-12-279 follow-up (branch `fix/bug87-auto-grn-read`, to staging): the receipt id was read snake_case only; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-280 (branch `fix/credit-override-explicit-tick`, to staging; 279 is staging's PO-direct invoice fix); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-279 (branch `fix/bug87-po-overdue-stock-check`, to staging; client tracker BUG-87); a log, so "verified" means the entry matches the code on its branch.
@@ -124,6 +125,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-12-281 — List Export wrote only the page on screen; Invoices search and filter stopped at 500 `ui-frontend` `exports` `C31` 🟡
+
+🟡 **Fixed on branch** (`fix/export-all-pages` → `staging`). Found comparing Hookka's list Export with the Houzs ERP one.
+
+**Symptom.** With no filter, Sales Orders, Purchase Orders, GRN and Invoices load 200 rows a page and Delivery Orders 50 a tab. The grid Export reads only the rows the grid holds, so an unfiltered export was one page. A filter or search already loads the whole set on each of these pages, so those exports were complete. Consignment Orders was never affected: its list route ignores `page` / `limit` and returns every order.
+
+**Second, same class.** Invoices asks `?search=…&limit=2000` and `?<filters>&limit=2000`. Any `limit` makes the invoice route paginate, and it clamps `limit` to 500, so a search or filter matching more than 500 invoices showed and exported only the first 500. Prod volume against that 500 is UNMEASURED.
+
+**Fix.** The grid's filter and sort steps moved out of its memos into `filterGridRows` / `sortGridRows` (same code, the memos call them). New opt-in prop `exportAllRows`: when nothing is ticked, the Export loads every row through it and runs the same filter and sort. `src/lib/fetch-all-pages.ts` walks the page's own scoped list route 500 rows at a time and refuses (toast, no file) on a failed page, more than 20,000 rows, or a list that shrank mid-walk. The five paged pages pass it only while unfiltered, with the page's own row mapping and Draft/Confirmed tab rule. Invoices drops `limit=2000` so search and filter return every match.
+
+**Regression.** `tests/export-all-pages.test.mjs` (page walk with a stubbed fetch, the refusals, the lifted filter and sort on fixtures, the five pages wired, Consignment needs none, no `limit=2000` on Invoices); fails on the old code. Not yet verified on the staging site.
 
 ---
 

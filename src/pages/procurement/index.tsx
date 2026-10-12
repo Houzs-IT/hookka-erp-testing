@@ -13,6 +13,7 @@ import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
 import { roundUnitPriceSen, lineTotalSen } from "@/lib/unit-price";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import type { Supplier, PurchaseOrder, SupplierMaterialBinding, RawMaterial } from "@/types";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
@@ -2152,6 +2153,13 @@ export default function ProcurementPage() {
             alwaysSearchKeys={PO_ALWAYS_SEARCH_KEYS}
             gridId="purchase-orders-list"
             exportName="purchase-orders"
+            // Unfiltered, the grid holds one 200-row page; Export walks them
+            // all, mapped and tab-filtered like purchaseOrders / filteredOrders.
+            exportAllRows={poFiltersActive ? undefined : () =>
+              fetchAllPages<PurchaseOrder>((p, l) => `/api/purchase-orders?page=${p}&limit=${l}`)
+                .then((rows) => rows
+                  .map((po) => ({ ...po, itemsSearchText: poItemsSearchText(po.items) }))
+                  .filter((po) => !(tab === "DRAFT" && po.status !== "DRAFT") && !(tab === "CONFIRMED" && po.status === "DRAFT")))}
             exportSheetLabel="Purchase Orders"
             detailExport={{ label: "Detail Listing", build: (rows) => buildPoDetailListingAoa(rows) }}
           />
