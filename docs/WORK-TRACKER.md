@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `fix/bug87-po-overdue-stock-check` (to `staging`, BUG-87, BUG-2026-10-12-279) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` (to `staging`, BUG-2026-10-12-278) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/po-picker-show-supplier` (BUG-98 follow-up to `staging`) added item 5 to the BUG-98 entry below.
 > **Last verified: 2026-10-09**: branch `fix/po-line-material-supplier-only` (BUG-98 follow-up to `staging`) added item 4 to the BUG-98 entry below.
@@ -182,6 +183,15 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 BUG-87: PO overdue, check stock in / stock out on both convert routes, then clear the old ones (branch `fix/bug87-po-overdue-stock-check` → `staging`)
+
+Ticket BUG-87 (Laphii): overdue purchase orders pile up. Two routes are in use: PO → GRN → PI, and PO → PI direct.
+
+1. ✅ Checked on staging 2026-10-12 with one material (start balance 196). PO → GRN put 2 in (198) and moved the PO to RECEIVED; the PI on that GRN changed nothing. PO → PI direct put nothing in and left the PO CONFIRMED (so it goes overdue). A GRN added after a direct PI still put stock in (+4) and moved the PO to RECEIVED. Cancelling each GRN took its stock back out; ended at 196. Marking a direct-PI PO received answers 412 "Create + post a GRN first"; cancelling it works and leaves the PI alone. Test documents: PIs deleted, PO-2610-019/020/021 and GRN-2610-006/007 left CANCELLED on staging. Local test: `BUG-87` in `tests/purchasing-convert-flow.test.mjs`.
+2. ✅ Staging count 2026-10-12 (MYT date): 109 overdue POs, all CONFIRMED, expected dates 2026-06 to 2026-10. 91 have a PI and no GRN, 17 have neither (mostly Aug to Oct, likely real late deliveries), 1 has both (PO-2606-006: a PI plus a DRAFT, not-arrived receipt that was never posted). Staging has 573 PIs against 42 GRNs, so PO → PI direct is the normal route. Matched on the PI header PO only. Prod UNMEASURED.
+3. 🟡 Clear the old ones. Owner 2026-10-12: leave them for now, decide after checking whether their stock was already adjusted by hand. Nothing changed on prod.
+4. 🔵 Owner 2026-10-12: "stock should be able to change if PO -> PI". Built (BUG-2026-10-12-279): when an invoice billed straight off a PO is confirmed (owner: Confirm, not create; a draft holds no stock), it posts an automatic goods receipt for the part no receipt covers yet, so stock goes in and the PO moves to received. Void cancels the receipt (refused if the stock was already used); unvoid receives again; quantity and material on those lines are frozen while the receipt holds the stock. Local tests pass. Staging check after deploy still to do.
 
 ## 2026-10-12 — 🔵 List Export: Items showed "[object Object]" and Qty was blank (branch `fix/grid-export-computed-columns` → `staging`, BUG-2026-10-12-278)
 
