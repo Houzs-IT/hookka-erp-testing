@@ -1,5 +1,15 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
+> **Last verified: 2026-10-12**: branch `fix/bug87-po-overdue-stock-check` (to `staging`, BUG-87, BUG-2026-10-12-279) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` (to `staging`, BUG-2026-10-12-278) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/po-picker-show-supplier` (BUG-98 follow-up to `staging`) added item 5 to the BUG-98 entry below.
+> **Last verified: 2026-10-09**: branch `fix/po-line-material-supplier-only` (BUG-98 follow-up to `staging`) added item 4 to the BUG-98 entry below.
+> **Last verified: 2026-10-09**: branch `feat/po-supplier-combobox-material-modal` (BUG-98 to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/dashboard-compare-plant-card-drills` (to `staging`) added item 11 to the Plant Load entry below.
+> **Last verified: 2026-10-09**: branch `feat/batch-exports-from-houzs` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/dev64-price-list-default-column` (DEV-64 to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `fix/worker-i18n-popups-and-date` (to `staging`, then `main`) added below (in progress, its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/dashboard-month-static-kpis` (to `staging`) added below (its entry is the newest).
@@ -188,6 +198,53 @@ Phone mode only (`layout.mode === "phone"`, < 720). iPad rail / breakpoints / pe
 6. A11y: Escape / backdrop / close button, focus trap + restore, body scroll lock, safe areas, labels.
 7. Validation: tsc strict, tests, regression test `tests/mobile-nav-drawer.test.mjs`.
 
+## 2026-10-12 — 🔵 List Export compared with Houzs: all pages, Excel formats, line layout (branch `fix/export-all-pages` → `staging`, BUG-2026-10-12-281)
+
+1. ✅ Compared Hookka's list Export with the Houzs ERP one (answered in chat).
+2. ✅ Export of an unfiltered paged list (Sales, Purchase, GRN, Invoices, Delivery) now walks every page; Invoices search and filter no longer stop at 500.
+3. ✅ Excel: real date cells (dd/mm/yyyy) and `#,##0.00` money, plus status with spaces as on screen (branch `fix/export-all-pages`).
+4. ✅ Showed the one-row-per-line Detail Listing against Houzs's default layout (answered in chat).
+5. ⬜ Check on the staging site after deploy: download Delivery Orders and Sales Orders with more than one page and count rows.
+
+## 2026-10-12 — 🔵 BUG-87: PO overdue, check stock in / stock out on both convert routes, then clear the old ones (branch `fix/bug87-po-overdue-stock-check` → `staging`)
+
+Ticket BUG-87 (Laphii): overdue purchase orders pile up. Two routes are in use: PO → GRN → PI, and PO → PI direct.
+
+1. ✅ Checked on staging 2026-10-12 with one material (start balance 196). PO → GRN put 2 in (198) and moved the PO to RECEIVED; the PI on that GRN changed nothing. PO → PI direct put nothing in and left the PO CONFIRMED (so it goes overdue). A GRN added after a direct PI still put stock in (+4) and moved the PO to RECEIVED. Cancelling each GRN took its stock back out; ended at 196. Marking a direct-PI PO received answers 412 "Create + post a GRN first"; cancelling it works and leaves the PI alone. Test documents: PIs deleted, PO-2610-019/020/021 and GRN-2610-006/007 left CANCELLED on staging. Local test: `BUG-87` in `tests/purchasing-convert-flow.test.mjs`.
+2. ✅ Staging count 2026-10-12 (MYT date): 109 overdue POs, all CONFIRMED, expected dates 2026-06 to 2026-10. 91 have a PI and no GRN, 17 have neither (mostly Aug to Oct, likely real late deliveries), 1 has both (PO-2606-006: a PI plus a DRAFT, not-arrived receipt that was never posted). Staging has 573 PIs against 42 GRNs, so PO → PI direct is the normal route. Matched on the PI header PO only. Prod UNMEASURED.
+3. 🟡 Clear the old ones. Owner 2026-10-12: leave them for now, decide after checking whether their stock was already adjusted by hand. Nothing changed on prod.
+4. 🔵 Owner 2026-10-12: "stock should be able to change if PO -> PI". Built (BUG-2026-10-12-279): when an invoice billed straight off a PO is confirmed (owner: Confirm, not create; a draft holds no stock), it posts an automatic goods receipt for the part no receipt covers yet, so stock goes in and the PO moves to received. Void cancels the receipt (refused if the stock was already used); unvoid receives again; quantity and material on those lines are frozen while the receipt holds the stock. Merged as #803.
+5. 🔵 Staging check of #803: Draft held no stock (196), Confirm put 3 in (199), PO RECEIVED, GRN-2610-008 "Auto (PI-2610-023)". But a qty edit saved and void left the stock in: the receipt id was read snake_case only and the adapter returns camelCase. Fix on `fix/bug87-auto-grn-read`; recheck after deploy, then clean up PO-2610-022 / PI-2610-023 / GRN-2610-008.
+
+## 2026-10-12 — 🔵 List Export: Items showed "[object Object]" and Qty was blank (branch `fix/grid-export-computed-columns` → `staging`, BUG-2026-10-12-278)
+
+1. ✅ Listed every export button on staging (answered in chat).
+2. ✅ Sales Orders Listing export: Items and Qty now match the screen.
+3. ✅ Swept the other 11 export grids; six pages had the same gap (ids, sen, blanks, `[object Object]`), all fixed with `exportValue`.
+4. ⬜ Check the downloaded file on the staging site after deploy.
+5. ⬜ `main` has the same Sales Orders bug; a separate PR to `main` waits on the owner.
+
+## 2026-10-09 — 🔵 BUG-98: New Purchase Order supplier search box and material picker popup (branch `feat/po-supplier-combobox-material-modal` → `staging`)
+
+Ticket BUG-98 (reporter siti): the supplier picker on New Purchase Order shows every supplier. Owner then asked for two changes to the page:
+
+1. 🔵 Order Details Supplier becomes a type-to-search box with an inline clear (✕). Typing or clicking opens the list; Esc or a click outside closes it; emptying the box clears the supplier. Picking a different supplier while items are in the table asks first, then clears the items.
+2. 🔵 The inline category + search list above Order Items moves into a Select Materials popup opened by `+ Add Materials from Supplier`. Each row shows code, description, unit, price and Add / Added; the footer counts the items added.
+3. ⚪ Check on the staging site after merge.
+4. 🔵 Owner follow-up: once a supplier is picked, only that supplier's materials can be chosen. The popup already did this; the RM code box on each line now does too (its suggestions and what it accepts), and a swapped line takes the picked supplier's price. Changing supplier keeps the ask-then-clear prompt (owner choice).
+5. 🔵 Owner follow-up: with no supplier picked, each row in the Select Materials popup shows the supplier Add will fill the line with (main supplier first, "+N more" when others sell it), or "No supplier linked".
+
+## 2026-10-09 — 🔵 Batch exports brought over from the Houzs ERP comparison (branch `feat/batch-exports-from-houzs` → `staging`)
+
+Owner asks: compare batch import/export with the Houzs ERP repo (finance tabs and modules only one system has are out of scope), then build the exports first and leave imports for later. Owner picked: the MRP workbook covers both tabs; list exports use only the ticked rows when any are ticked.
+
+1. 🔵 Shared grid Export uses only the ticked rows when any are ticked (`data-grid.tsx`).
+2. 🔵 Export switched on for Suppliers, Fabrics, Delivery Returns and a supplier's SKU price list.
+3. 🔵 MRP page: one Excel workbook with a Material Requirements sheet and a Fabric Planning sheet, matching the screen.
+4. ⚪ Per-line Excel (Detail Listing) for Delivery Return, Purchase Invoice and Purchase Return. Separate PR.
+5. 🟡 One merged PDF of ticked Delivery Orders, Delivery Returns and Purchase Returns. Needs owner: Purchase Returns has no PDF layout yet, and ticked DOs already print as one PDF behind a packing-list cover.
+6. ⚪ Imports (fabrics, supplier prices, PO line updates) parked by the owner until exports are done.
+
 ## 2026-10-09 — 🔵 DEV-63: Bank charges column on the Trade Finance aging block (branch `feat/dev63-creditor-aging-trade-finance` → `staging`)
 
 Ticket DEV-63 (reporter Ain): "in creditor aging for supplier that we pay through trade finance, they have column for interest. so can help me include another column of bank charges".
@@ -235,6 +292,7 @@ Owner asks (one message, plus answers to three follow-up questions):
 8. 🔵 Follow-up ask (2026-10-09): a staging-only Dashboard Compare page under Dashboard in the side menu (`/dashboard/compare`, `src/pages/dashboard-compare.tsx`): the 7-day and 14-day Plant Load side by side, charts on one scale, plus a per-department difference table. The overview route takes `capacityWindow=7`, which reads and writes no stored copy.
 9. 🔵 Follow-up (2026-10-09, branch `feat/dashboard-compare-month`): month picker on Dashboard Compare. "Up to yesterday" or the end of a finished month; for a month both windows end on its last day and the saved month-end backlog is divided again by each. `capacityWindow` now takes 7 or 14, with its own cache key.
 10. 🔵 Follow-up (2026-10-09, branch `feat/dashboard-compare-plant-card`): each column of Dashboard Compare shows the Plant Load card (`PlantLoadCard` takes an optional `capacityWindow`) and Department Backlog bars (sofa / bedframe, shared scale) above the daily chart. A picked month keeps both windows inside that month (no days from the month before; divisor = days counted); the current month is in the picker too. Staging data stops at the 30 Sep clone, so October windows on staging hold empty days.
+11. 🔵 Follow-up (2026-10-09, branch `feat/dashboard-compare-plant-card-drills`): the compare page's Plant Load card is now a copy of the /dashboard card, so its four rows (Daily Capacity, Total Backlog, Active Jobs, Completed) open the same drill-throughs; the Fabric tab shows a copy of the /dashboard Fabric Usage section for the picked month above the shown-vs-real tables; the month picker stays at the top right on every tab. Copies (`src/pages/dashboard-compare-cards.tsx`), not shared code, because `dashboard-b/index.tsx` is frozen. The optional `capacityWindow` on the experimental `PlantLoadCard` is removed again.
 
 ## 2026-10-08 — 🔵 BOM Variant Fields and WIP Types as lists with product-type ticks (branch `feat/bom-variant-fields-list` → `staging`)
 

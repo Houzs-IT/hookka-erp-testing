@@ -1,5 +1,9 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages`: C30 row 2 closed (a status column exports with spaces, as on screen). Nothing else re-checked.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` **adds C31 — a list that shows one server page, read as if it were the whole list** (BUG-2026-10-12-281). Nothing else re-checked.
+> **Last verified: 2026-10-12**: branch `fix/bug87-auto-grn-read` adds C23 row 2 (purchase-invoices auto receipt id read snake_case only).
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` **adds C30 — a list column whose screen value exists only in `render`, exported raw** (BUG-2026-10-12-278). Nothing else re-checked.
 > **Last verified: 2026-10-01**: restamped on branch `fix/grn-number-collision` (staging only): C27 row 2 marked verified on staging (2026-09-30), row 5 added for read-max-then-insert document numbers (BUG-2026-10-01-232).
 > **Last verified: 2026-09-30**: restamped on branch `fix/t006-r2-grn-receipt-race` (staging only): adds C27, a ceiling checked before the write with nothing in the write to back it (BUG-2026-09-30-226); C10 row 4 renamed to the functions that now exist. Nothing else re-checked.
 > **Last verified: 2026-09-30**: restamped on branch `fix/staging-so-detail-live-do` (staging): C21 gains row 18, the SO detail page that showed a cancelled DO as a production order's delivery (BUG-2026-09-30-225). Nothing else re-checked.
@@ -1598,6 +1602,7 @@ by SQL name throughout, route its rows through `withSnakeKeys` at the ONE place 
 | # | file | reads | state |
 |---|---|---|---|
 | 1 | `src/api/routes/dashboard-prototype.ts` | 105 snake reads across 17 queries | ✅ 2026-09-21 (-181) — `section()` mapped rows through `withSnakeKeys`. **Superseded 2026-09-22** by the staging↔main sync (PR #463): the route is now `main`'s rewrite, which reads every row camelCased (0 snake reads), so the wrap is gone; `withSnakeKeys` stays in `db-pg.ts` for the next file that needs it |
+| 2 | `src/api/routes/purchase-invoices.ts` (BUG-87 auto receipt, BUG-2026-10-12-279) | `auto_grn_id` (PUT, void, unvoid) and `grn_id` (confirm hook), read off `SELECT *` | ✅ 2026-10-12 — caught on the staging check of #803 (qty edit saved, void left the stock in); now `autoGrnIdOf` / dual-keyed. `tests/purchasing-convert-flow.test.mjs` mock returns camelCased PI rows so a snake-only read fails there too |
 
 **Enforced by** `tests/dashboard-prototype-snake-reads.test.mjs` (row 1 only — since 2026-09-22 it asserts the route has NO `r.snake_case` read and every `prepare` sits inside `section()`, plus the `withSnakeKeys` unit test). **Not swept
 repo-wide yet** — the next fixer should grep `\br\.[a-z]+_[a-z_]+` in `src/api` and check each
@@ -1850,3 +1855,38 @@ Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return tr
 | 5 | `lib/snapshot.ts`, dashboard / delivery / invoice snapshots: probe and rebuild are plain reads | ⬜ open; needs `freshReads` on both, or the infra switch |
 
 Test: `tests/worker-history-snapshot-fresh.test.mjs` (row 4).
+
+## C30 — a list column whose screen value exists only in `render`, exported raw
+
+**Shape.** A DataGrid column computes what it shows inside `render` (a count of an array, a sum, an id looked up to a name, sen formatted as RM). The grid Export (`cellExportValue`, `src/lib/grid-export.ts`) never calls `render`; it reads `exportValue`, else `filterAccessor`, else the raw value at the key. So the file gets `[object Object]`, a blank, an id or a sen integer.
+
+**Why it keeps happening.** The screen is right, so nobody looks at the file until an operator opens it. `exportName` is switched on per page, and the columns were written long before export existed.
+
+**The rule.** When a page has `exportName`, every column whose render shows something other than the raw key value carries an `exportValue` that returns the same thing as text or a number (money as RM). Add the column to `RENDER_ONLY_COLUMNS` in `tests/grid-export-coverage.test.mjs`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | Sales/Service Orders, Purchase Orders, GRN, Purchase Invoices, Delivery Orders, Consignment, Customers (list in BUG-2026-10-12-278) | ✅ on branch `fix/grid-export-computed-columns` (BUG-2026-10-12-278), not deployed |
+| 2 | status columns export the raw code (`IN_PRODUCTION`) where the screen swaps `_` for a space | ✅ on branch `fix/export-all-pages`, `cellExportValue` does the same swap for `type: "status"` |
+
+Test: `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue".
+
+## C31 — a list that shows one server page, read as if it were the whole list
+
+**Shape.** A list page loads one server page (`?page=&limit=`) and a feature built on the grid's rows (the Export, a total, a "select all") treats those rows as the whole list. Or a request carries a `limit` the route clamps lower, so the "whole" list is silently cut.
+
+**Why it keeps happening.** Paging was added to these pages for speed long after the grid features that read its rows. Staging and local data are small, so one page often IS everything.
+
+**The rule.** A grid feature that means "every row" on a paged page takes its rows from `exportAllRows` (or the page's own all-rows path), never from the grid's `data`. A request that means "all" sends no `limit`, or walks pages with `fetchAllPages`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | grid Export on Sales Orders, Purchase Orders, GRN, Invoices, Delivery Orders (unfiltered) | ✅ on branch `fix/export-all-pages` (BUG-2026-10-12-281), not deployed |
+| 2 | Invoices search and filter sent `limit=2000`, clamped to 500 | ✅ on branch `fix/export-all-pages` (BUG-2026-10-12-281), not deployed |
+| 3 | Purchase Orders and GRN Draft tab: not in the "load everything" switch, so the tab shows only the drafts on the current 200-row page | ⬜ open, screen only (the Export is complete) |
+
+Test: `tests/export-all-pages.test.mjs`.

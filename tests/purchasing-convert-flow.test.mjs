@@ -116,12 +116,15 @@ function makeDb() {
     if (m) {
       const table = m[1];
       const cols = m[2].split(",").map((c) => c.trim());
+      const vals = m[3].split(",").map((v) => v.trim());
       const row = {};
+      let bi = 0;
       cols.forEach((col, i) => {
-        row[col] = binds[i];
+        // A literal in VALUES (e.g. 'GRN') takes no bind.
+        row[col] = /^'[^']*'$/.test(vals[i] ?? "") ? vals[i].slice(1, -1) : binds[bi++];
       });
       if (table === "grn_items" && row.id == null) row.id = autoId++;
-      tables[table].push(row);
+      (tables[table] ??= []).push(row);
       return;
     }
     // UPDATE grn_items SET invoiced_qty = COALESCE(invoiced_qty,0) + ? WHERE id = ?
@@ -183,6 +186,14 @@ function makeDb() {
       const id = binds[binds.length - 1];
       const g = tables.grns.find((r) => String(r.id) === String(id));
       if (g) applySet(g, m[1], binds.slice(0, -1));
+      return;
+    }
+    // UPDATE purchase_invoices SET ... WHERE id = ?  (last bind is id)
+    m = sql.match(/^UPDATE purchase_invoices SET (.+) WHERE id = \?$/i);
+    if (m) {
+      const id = binds[binds.length - 1];
+      const pi = tables.purchase_invoices.find((r) => String(r.id) === String(id));
+      if (pi) applySet(pi, m[1], binds.slice(0, -1));
       return;
     }
     // UPDATE purchase_orders SET ... WHERE id = ? [AND status IN (...)]
@@ -266,6 +277,16 @@ function makeDb() {
     // RBAC role_permissions join — short-circuited by SUPER_ADMIN, but answer empty.
     if (/FROM role_permissions/i.test(sql)) return [];
 
+    // PO lines by id list (the GRN restore path reads these before decrementing).
+    if (/FROM purchase_order_items WHERE id IN \(/i.test(sql)) {
+      return tables.purchase_order_items.filter((r) => binds.map(String).includes(String(r.id)));
+    }
+    // The lots a GRN posted (GRN cancel reverses exactly these).
+    if (/FROM rm_batches WHERE source = 'GRN' AND sourceRefId = \?/i.test(sql)) {
+      return tables.rm_batches.filter(
+        (r) => r.source === "GRN" && String(getCol(r, "sourceRefId")) === String(binds[0]),
+      );
+    }
     // SELECT * FROM grns WHERE id = ?
     if (/FROM grns WHERE id = \?/i.test(sql)) {
       return tables.grns.filter((r) => String(r.id) === String(binds[0]));
@@ -350,7 +371,11 @@ function makeDb() {
 
     // SELECT * FROM purchase_invoices WHERE id = ?
     if (/FROM purchase_invoices WHERE id = \?/i.test(sql)) {
-      return tables.purchase_invoices.filter((r) => String(r.id) === String(binds[0]));
+      // The real adapter camelCases result rows (db-pg.ts), so a route that
+      // reads a snake_case key only sees undefined there; do the same here.
+      return tables.purchase_invoices
+        .filter((r) => String(r.id) === String(binds[0]))
+        .map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()), v])));
     }
     // SELECT piNo FROM purchase_invoices WHERE grn_id = ? AND status != 'CANCELLED'
     if (/SELECT piNo FROM purchase_invoices WHERE grn_id = \? AND status != 'CANCELLED'/i.test(sql)) {
@@ -1493,4 +1518,121 @@ test("GRN number collision: after the retries run out the answer is a clear 409 
   assert.equal(db.tables.grns.length, 0);
   assert.equal(Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty), 0);
   assert.equal(db.tables.rm_batches.length, 0);
+});
+
+
+// ---------------------------------------------------------------------------
+// BUG-87 — an invoice billed straight off a PO puts its goods into stock
+// through an automatic goods receipt, and takes them out again when it goes.
+// ---------------------------------------------------------------------------
+function seedBug87(db, { received = 0 } = {}) {
+  seedOpenPo(db);
+  db.tables.raw_materials.push({ id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0 });
+  if (received) db.tables.purchase_order_items[0].receivedQty = received;
+}
+const directPi = (qty, extra = {}) => ({
+  purchaseOrderId: "po-9", supplierId: "sup-9", supplierName: "OPEN CO", ...extra,
+  items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty, unitPriceSen: 10000, poId: "po-9" }],
+});
+const lotQty = (db) => db.tables.rm_batches.reduce((s, b) => s + Number(b.originalQty ?? b.original_qty ?? 0), 0);
+
+const send = (root, path, method, body) =>
+  root.request(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+async function directDraft(db, qty) {
+  const piRoot = mount(piApp, db);
+  const res = await post(piRoot, directPi(qty));
+  assert.equal(res.status, 200);
+  return { piRoot, pi: (await res.json()).data };
+}
+async function directConfirmed(db, qty) {
+  const { piRoot, pi } = await directDraft(db, qty);
+  const res = await send(piRoot, `/${pi.id}`, "PUT", { status: "CONFIRMED" });
+  assert.equal(res.status, 200, await res.clone().text());
+  return { piRoot, pi };
+}
+
+test("BUG-87 — a draft holds no stock; deleting it touches nothing", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directDraft(db, 5);
+  assert.equal(db.tables.grns.length, 0, "no receipt while the invoice is a draft");
+  assert.equal(db.tables.purchase_orders[0].status, "CONFIRMED");
+  assert.equal((await piRoot.request(`/${pi.id}`, { method: "DELETE" })).status, 200);
+  assert.equal(db.tables.grns.length, 0);
+  assert.equal(lotQty(db), 0);
+});
+
+test("BUG-87 — Confirm receives the goods: one lot, PO received, receipt remembered", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { pi } = await directConfirmed(db, 5);
+  assert.equal(lotQty(db), 5, "5 into stock");
+  assert.equal(Number(db.tables.purchase_order_items[0].receivedQty), 5);
+  assert.equal(db.tables.purchase_orders[0].status, "RECEIVED", "the PO leaves the overdue list");
+  const grn = db.tables.grns[0];
+  assert.equal(grn.status, "POSTED");
+  assert.match(String(grn.notes), new RegExp(pi.piNo));
+  assert.equal(db.tables.purchase_invoices[0].auto_grn_id, grn.id);
+  assert.equal(db.tables.purchase_invoice_items[0].grn_item_id ?? null, null, "invoice lines stay PO-direct");
+});
+
+test("BUG-87 — goods a real GRN already received are not stocked twice", async () => {
+  const db = makeDb();
+  seedBug87(db, { received: 5 });
+  await directConfirmed(db, 5);
+  assert.equal(db.tables.grns.length, 0, "nothing left to receive, no auto receipt");
+  assert.equal(lotQty(db), 0);
+});
+
+test("BUG-87 — a partly received PO only receives the rest", async () => {
+  const db = makeDb();
+  seedBug87(db, { received: 2 });
+  await directConfirmed(db, 5);
+  assert.equal(lotQty(db), 3, "only the 3 nobody received");
+  assert.equal(Number(db.tables.purchase_order_items[0].receivedQty), 5);
+});
+
+test("BUG-87 — quantities on received lines are frozen; prices are not", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  const put = (qty, unitPriceSen) =>
+    send(piRoot, `/${pi.id}`, "PUT", {
+      items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty, unitPriceSen, poId: "po-9" }],
+    });
+  const qtyEdit = await put(4, 10000);
+  assert.equal(qtyEdit.status, 409);
+  assert.match((await qtyEdit.json()).error, /can't change here/);
+  assert.equal((await put(5, 9000)).status, 200, "a price-only edit still saves");
+  assert.equal(lotQty(db), 5);
+});
+
+test("BUG-87 — void takes the goods out, unvoid receives them again", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  const v = await send(piRoot, `/${pi.id}/void`, "POST");
+  assert.equal(v.status, 200, await v.clone().text());
+  assert.equal(lotQty(db), 0, "void took the 5 out");
+  assert.equal(Number(db.tables.purchase_order_items[0].receivedQty), 0);
+
+  const u = await send(piRoot, `/${pi.id}/unvoid`, "POST");
+  assert.equal(u.status, 200, await u.clone().text());
+  assert.equal(lotQty(db), 5, "unvoid put the 5 back");
+  const live = db.tables.grns.filter((g) => g.status !== "CANCELLED");
+  assert.equal(live.length, 1);
+  assert.equal(db.tables.purchase_invoices[0].auto_grn_id, live[0].id);
+});
+
+test("BUG-87 — a void is refused when the received stock was already used", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  const lot = db.tables.rm_batches[0];
+  if ("remainingQty" in lot) lot.remainingQty = 2; else lot.remaining_qty = 2;
+  const v = await send(piRoot, `/${pi.id}/void`, "POST");
+  assert.equal(v.status, 409);
+  assert.match((await v.json()).error, /already been issued or returned/);
+  assert.equal(db.tables.purchase_invoices[0].status, "CONFIRMED", "the invoice stays live");
+  assert.equal(db.tables.grns[0].status, "POSTED", "the receipt is kept");
 });

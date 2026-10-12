@@ -1,5 +1,13 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-281 (branch `fix/export-all-pages`, to staging; 279 and 280 are staging's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: BUG-2026-10-12-279 follow-up (branch `fix/bug87-auto-grn-read`, to staging): the receipt id was read snake_case only; a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-280 (branch `fix/credit-override-explicit-tick`, to staging; 279 is staging's PO-direct invoice fix); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-279 (branch `fix/bug87-po-overdue-stock-check`, to staging; client tracker BUG-87); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-278 (branch `fix/grid-export-computed-columns`, to staging; 277 is staging's, 276 is main's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-277 (branch `fix/credit-overdue-skip-pre-opening`, to staging; 273 to 276 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-09**: BUG-2026-10-09-272 follow-up (branch `fix/worker-i18n-single-words`, to staging then main): single-word worker labels translated; a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-272 (branch `fix/worker-i18n-popups-and-date`, to staging then main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-269 (branch `feat/plant-load-14d`, to `staging`; 268 is taken on another branch).
 > **Last verified: 2026-10-08**: entry BUG-2026-10-08-267 (branch `fix/kpi-delivered-last-leg-myt`, to `staging`; 264 to 266 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -120,6 +128,84 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-12-281 — List Export wrote only the page on screen; Invoices search and filter stopped at 500 `ui-frontend` `exports` `C31` 🟡
+
+🟡 **Fixed on branch** (`fix/export-all-pages` → `staging`). Found comparing Hookka's list Export with the Houzs ERP one.
+
+**Symptom.** With no filter, Sales Orders, Purchase Orders, GRN and Invoices load 200 rows a page and Delivery Orders 50 a tab. The grid Export reads only the rows the grid holds, so an unfiltered export was one page. A filter or search already loads the whole set on each of these pages, so those exports were complete. Consignment Orders was never affected: its list route ignores `page` / `limit` and returns every order.
+
+**Second, same class.** Invoices asks `?search=…&limit=2000` and `?<filters>&limit=2000`. Any `limit` makes the invoice route paginate, and it clamps `limit` to 500, so a search or filter matching more than 500 invoices showed and exported only the first 500. Prod volume against that 500 is UNMEASURED.
+
+**Fix.** The grid's filter and sort steps moved out of its memos into `filterGridRows` / `sortGridRows` (same code, the memos call them). New opt-in prop `exportAllRows`: when nothing is ticked, the Export loads every row through it and runs the same filter and sort. `src/lib/fetch-all-pages.ts` walks the page's own scoped list route 500 rows at a time and refuses (toast, no file) on a failed page, more than 20,000 rows, or a list that shrank mid-walk. The five paged pages pass it only while unfiltered, with the page's own row mapping and Draft/Confirmed tab rule. Invoices drops `limit=2000` so search and filter return every match.
+
+**Regression.** `tests/export-all-pages.test.mjs` (page walk with a stubbed fetch, the refusals, the lifted filter and sort on fixtures, the five pages wired, Consignment needs none, no `limit=2000` on Invoices); fails on the old code. Not yet verified on the staging site.
+
+---
+
+## BUG-2026-10-12-280 — Every Sales and Office account could override the customer credit block `rbac` `delivery-orders` 🟡
+
+🟡 **Fixed on branch** (`fix/credit-override-explicit-tick` → `staging`). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
+
+**Symptom, measured on staging 2026-10-12 (read-only).** Using "View as" on each non-admin account, a packing-list-first preview for a blocked Houzs order came back as "override allowed" for Adrian, Wei Seng and sales (Sales), and Office@ and Siti (Office). Finance, Lim, QA, Zamri, Zira and Chee get 403 on DOs at all. So nobody who can make a DO saw the no-override dialog, and the "only admin approves" SOP did not hold. Production permission lists are UNMEASURED.
+
+**Root cause.** The Sales and Office@ lists hold `delivery-orders:*`, and `permitted()` in `src/api/lib/rbac.ts` lets a module wildcard grant every action on it, the special `credit-override` included. Siti has `delivery-orders:credit-override` ticked by name, which is intended.
+
+**Fix.** `src/lib/explicit-rights.ts` lists rights a wildcard does not grant (`delivery-orders:credit-override`). `permitted()` (API gate), `checkSet()` (`src/lib/use-permission.ts`, browser) and `granted()` (`src/components/user-permissions-panel.tsx`, User Management boxes) all require the exact tick for those. ADMIN / SUPER_ADMIN still pass before `permitted()`. Accounts with the exact tick keep it (Siti on staging); untick in User Management if not wanted.
+
+**Regression.** `tests/credit-override-explicit.test.mjs` runs the real `hasPermission` with a stubbed role list (wildcard denied, exact tick and admins allowed) and pins the same rule in all three places. 2 of its 3 tests fail on the old code. Not yet verified on the staging site.
+
+---
+
+## BUG-2026-10-12-279 — A purchase invoice billed straight off a PO never put the goods into stock or closed the PO `procurement` `inventory` 🟡
+
+🟡 **Fixed on branch** (`fix/bug87-po-overdue-stock-check` → `staging`). Client tracker BUG-87 ("PO overdue").
+
+**Symptom.** The overdue PO count kept growing. Measured on staging 2026-10-12: 109 overdue POs, all CONFIRMED; 91 of them already had a purchase invoice and no goods receipt. Staging has 573 invoices against 42 receipts, so PO → PI direct is the normal route. Prod UNMEASURED.
+
+**Root cause.** Stock goes in only when a GRN posts (`postGRNToStock`), and a PO leaves CONFIRMED only through a GRN (`cascadePOStatusAfterGRNPost`; a direct flip to RECEIVED answers 412 `requiresGrn`). `purchase-invoices.ts` never writes stock or PO status. Measured live on staging with one material: PO → GRN put 2 in and moved the PO to RECEIVED; PO → PI direct changed nothing and left the PO CONFIRMED.
+
+**Fix.** Owner 2026-10-12: stock should change on PO → PI, at Confirm (every invoice is born DRAFT; a draft holds no stock). On DRAFT → CONFIRMED, an invoice line billed straight off a PO (`po_id` set, no `grn_item_id`, STOCKED) makes the GRN route post an ordinary receipt (`createAutoReceipt`, via an in-process request to `grn.ts` as the same user), remembered in `purchase_invoices.auto_grn_id` (self-applied). Only the part no receipt covers is received: `need = clamp(invoiced by others + this − (received + returned), 0, this)`, so a PO that already had a GRN is never stocked twice. Not for a GRN-sourced invoice. Void cancels the receipt first and is refused with the GRN's own message if that stock was already used; unvoid receives again. Delete is DRAFT-only, so it never touches stock. While the receipt holds the stock, the quantity and material of those lines are frozen (price edits still save). The invoice lines are not linked to the receipt, so the PO ceiling still governs billing; the receipt does show as unbilled in the Convert-to-PI GRN tab, and picking it is refused by that ceiling.
+
+**Not changed.** The old overdue POs (owner: leave them for now). Their already-confirmed invoices never get a receipt; an old draft invoice does when it is confirmed.
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` BUG-87 tests: a draft holds no stock and deletes cleanly; Confirm → one lot and PO RECEIVED; a received PO is not stocked twice; a partly received PO receives only the rest; qty frozen, price free; void out, unvoid back; void refused once the lot was used.
+
+**Follow-up, caught on the staging check (#803 deployed).** Draft → Confirm worked (196 → 199, PO RECEIVED, GRN-2610-008 "Auto (PI-2610-023)"), but a qty edit saved and void left the stock in. The adapter camelCases result rows (`db-pg.ts`), so `auto_grn_id` reads back as `autoGrnId` and the snake-only read saw nothing; the confirm hook's `grn_id` read had the same flaw. Both now read dual-keyed (`autoGrnIdOf`). The test mock's `SELECT * FROM purchase_invoices WHERE id = ?` now returns camelCased rows like the adapter; three BUG-87 tests fail without the fix.
+
+---
+
+## BUG-2026-10-12-278 — List Export wrote "[object Object]" for Items, blanks for Qty, and ids / sen in other columns `ui-frontend` `exports` `C30` 🟡
+
+🟡 **Fixed on branch** (`fix/grid-export-computed-columns` → `staging`). Found on the Sales Orders Listing → Excel export.
+
+**Symptom.** Sales Orders export: Items showed `[object Object],[object Object]` and Qty was empty, while the screen shows a count and a total.
+
+**Root cause.** `cellExportValue` (`src/lib/grid-export.ts`) uses `exportValue`, else `filterAccessor`, else the raw value at the column key. It never sees `render`. Items is keyed on the `items` array and shows its length only in render; `totalQty` is not a field on the row at all. A sweep of the 12 export grids found the same gap on six pages: Sales/Service Orders (Company, Items, Qty, Current Dept, Progress), Purchase Orders (Purchase co, Supplier OTR%, Ordered, Outstanding), GRN (Purchase co, Arrival: `NOT_ARRIVED` shows as "Planning"), Purchase Invoices (Purchase co, Status: legacy values show as CONFIRMED), Delivery Orders (Packing List, Dispatch Date fallback, Customers, State, Sales Orders, Amount exported in sen, Status label, Transport Co. exported as the provider id, plus two headerless columns from `_select` / `_view`), Consignment (Items, Qty, Outstanding) and Customers (Salesperson exported as a user id, Delivery Hubs as `[object Object]`, PIC, PIC Contact, Outstanding in sen, Available blank).
+
+**Fix.** Each of those columns gets an `exportValue` that returns what its render shows, as plain text or a number (money as RM). `buildListingAoa` also drops `_select` and `_view`. Left as is: status columns export the raw code (`IN_PRODUCTION`, screen shows "IN PRODUCTION"), and SO Outstanding exports its stage bucket via the existing `filterAccessor`.
+
+**Regression.** `tests/grid-export.test.mjs` (array-keyed and render-only columns) and `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue" (7 pages; all 7 fail on the old pages). Not yet verified on the staging site.
+
+---
+
+## BUG-2026-10-12-277 — Credit block counted bills dated before the books' opening date as overdue `delivery-orders` `accounting` 🟢
+
+🟢 **Fixed and verified on staging** (#800, deployed 2026-10-12 01:28 UTC). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
+
+**Symptom, measured on staging 2026-10-12 (read-only).** The overdue rule of the customer credit gate listed 77 unpaid bills dated 8 to 20 May 2026 (Houzs 53, RM 295,996.60; Carress 18, RM 51,093.64; The Conts 6, RM 8,683.00). The opening date is 2026-05-22, the opening AR balance is RM 41,242.00 (28 Carress seeds, all paid) and these bills are not part of it. Each customer's `outstandingSen` equals its unpaid bills dated from 22 May to the sen, so the limit rule already ignored them; only the overdue rule did not.
+
+**Root cause.** `loadCreditCheck` read every unpaid invoice with no opening-date floor, while `rebuildArCounterSen` and every AR report skip rows where `rowBeforeOpening` is true.
+
+**Fix.** `decideCredit` skips unpaid bills with `rowBeforeOpening(invoiceDate, openingDate, isOpening)`; `loadCreditCheck` passes `getOpeningDate` and the `isOpening` flag. Opening seeds still count. Owner decision 2026-10-12: ignore the pre-opening bills. Staging impact today: the same 6 customers stay blocked on post-opening bills (Houzs 17 bills RM 52,201.00, Carress 25 bills RM 110,595.28, The Conts 12 bills RM 13,438.00).
+
+**Regression.** `tests/customer-credit-gate.test.mjs` "bills dated before the opening date never block; opening seeds still do" fails on the old code.
+
+**Verified on staging, 2026-10-12.** A packing-list-first preview (writes nothing) for one ready order each returned the server's own block text: Houzs Century 17 overdue invoices RM 52,201.00, Carress 25 RM 110,595.28, The Conts 12 RM 13,438.00. These match the post-fix numbers predicted above.
+
+**Follow-up (branch `feat/credit-block-invoice-list`).** A user who may not override only got a one-line toast with the count and total, not which invoices. `askCreditOverride` now shows the same dialog (overdue invoice list, or the limit breakdown) with a single OK button (`ConfirmOptions.hideCancel`) and no reason box. Test: `tests/customer-credit-gate.test.mjs` "no override: the dialog still lists each overdue invoice" renders the dialog and fails on the old code.
+
+---
+
 ## BUG-2026-10-09-272 — Worker portal: scan pop-ups and ~45 strings were English-only; non-prod date pre-filled yesterday `worker-portal` `ui-frontend` 🟢
 
 🟢 **Fixed** (branch `fix/worker-i18n-popups-and-date` → `staging`, then `main`; not yet deployed) · Found scanning the worker pages before the Play Store work.
@@ -131,6 +217,8 @@ Entries themselves stay newest-first.
 **Regression.** `tests/worker-pages-translated.test.mjs`: every `t("key")` on a worker page exists; every entry has four non-empty languages; translations keep their English placeholders; the old literals are gone; the date default is the Malaysia date. 4 of 7 fail on the old pages.
 
 **Verify.** Not driven in a browser (worker pages need a PIN login). To check on staging: switch language on the worker app and trigger a wrong-department scan.
+
+**Follow-up 2026-10-09** (branch `fix/worker-i18n-single-words`). The first pass searched for phrases of two or more words, so single-word and conditional labels slipped through — found when the owner-facing staging check showed "Photo" in English on a Malay page. Eight more now use `t()`: Photo, Open, Exit, Save (3 places), the two Standard Times descriptions, "Opening… / Save payslip as PDF", and the login's "WORKER PORTAL" (existing `brand.title`). Also `scan.prodTime` replaces the reused `home.productionTime`, so `staging` and `main` carry the same entry. The test gained a block for these.
 
 ---
 

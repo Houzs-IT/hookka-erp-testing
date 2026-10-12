@@ -405,6 +405,10 @@ export default function PurchaseInvoicesPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: PurchaseInvoice) => {
+        const code = row.purchaseOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: PurchaseInvoice) => {
         const code = row.purchaseOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -429,6 +433,7 @@ export default function PurchaseInvoicesPage() {
       sortable: true,
       // Lifecycle simplification (2026-06-29): legacy PENDING_APPROVAL / APPROVED
       // rows render as CONFIRMED so the operator only sees the new vocabulary.
+      exportValue: (row: PurchaseInvoice) => normalizePiStatus(row.status).replace(/_/g, " "),
       render: (_v: unknown, row: PurchaseInvoice) => {
         const shown = normalizePiStatus(row.status);
         return <Badge variant="status" status={shown}>{shown.replace(/_/g, " ")}</Badge>;

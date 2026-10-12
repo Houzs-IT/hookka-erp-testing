@@ -10,6 +10,16 @@
 
 export type Aoa = (string | number)[][];
 
+/** Per-column Excel display: money as 1,234.00, a YYYY-MM-DD day as a real date cell. */
+export type XlsxColFormat = "money" | "date" | undefined;
+
+/** Excel's day number for a YYYY-MM-DD day, from its parts (no timezone). */
+export function excelDateSerial(ymd: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  return (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000;
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -42,10 +52,24 @@ export async function exportReportXlsx(
   filename: string,
   sheetName: string,
   aoa: Aoa,
-  opts?: { moneyFormat?: boolean },
+  opts?: { moneyFormat?: boolean; colFormats?: XlsxColFormat[] },
 ): Promise<void> {
   const XLSX = await import("xlsx");
   const ws = XLSX.utils.aoa_to_sheet(aoa);
+  if (opts?.colFormats) {
+    // Body rows only; the header row stays text.
+    for (let r = 1; r < aoa.length; r++) {
+      opts.colFormats.forEach((fmt, c) => {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })] as { t?: string; v?: unknown; z?: string } | undefined;
+        if (!cell || !fmt) return;
+        if (fmt === "money" && cell.t === "n") cell.z = "#,##0.00";
+        if (fmt === "date" && cell.t === "s") {
+          const serial = excelDateSerial(String(cell.v));
+          if (serial != null) Object.assign(cell, { t: "n", v: serial, z: "dd/mm/yyyy" });
+        }
+      });
+    }
+  }
   if (opts?.moneyFormat) {
     // Give every numeric cell the accounting display format (1,392.50) —
     // still a real number underneath, so SUM/filter keep working.
@@ -65,7 +89,21 @@ export async function exportReportXlsx(
 
 // Optional per-row styling for the PDF (owner 2026-07-09: doc rows and
 // subtotal rows looked identical, party sections had no visible boundary).
-export type PdfRowKind = "section" | "subtotal" | "grand" | undefined;
+/** Several sheets in one .xlsx (e.g. one per tab of a page). */
+export async function exportWorkbookXlsx(
+  filename: string,
+  sheets: { name: string; aoa: Aoa }[],
+): Promise<void> {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.utils.book_new();
+  for (const s of sheets) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.aoa), s.name.slice(0, 31) || "Sheet");
+  }
+  const out = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+  downloadBlob(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
+}
+
+export type PdfRowKind ="section" | "subtotal" | "grand" | undefined;
 export type PdfExportOpts = {
   /** Format numeric cells as 1,392.50 (default true — these are money reports). */
   formatNumbers?: boolean;

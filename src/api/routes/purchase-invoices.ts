@@ -11,7 +11,7 @@
 // statuses are backfilled to CONFIRMED by ensurePiMigrations() below.
 // DELETE is gated to DRAFT only — once confirmed we keep the row for audit.
 // ---------------------------------------------------------------------------
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
@@ -38,6 +38,7 @@ import { PI_STATUS_CHECK_SQL } from "../lib/ensure-partial-payment";
 import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
 import { loadGrnReturnedQty, loadPoReturnedQty } from "../lib/purchase-return-create";
+import grnApp from "./grn";
 
 // ---------------------------------------------------------------------------
 // Runtime schema self-apply — convert-chain columns (PO→GRN→PI). All
@@ -135,6 +136,8 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
       // source supplier document straight from the PI detail page. snake_case
       // → no column-rename-map.json entry needed.
       "ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS source_document_file_id TEXT",
+      // BUG-87: the goods receipt this invoice posted for lines billed straight off a PO.
+      "ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS auto_grn_id TEXT",
     ];
     await runSelfApply(db, "purchase-invoices", stmts);
   })().catch((err) => {
@@ -1169,6 +1172,223 @@ async function checkPoRemaining(
   };
 }
 
+// ---------------------------------------------------------------------------
+// BUG-87 — an invoice billed straight off a PO puts its goods into stock when
+// it is confirmed (a draft holds no stock), and takes them out when voided.
+//
+// It does so through an ordinary posted goods receipt (the "auto receipt"),
+// created by the GRN route itself, so stock lots, the PO counter, the PO status
+// and the cancel reversal are the same code a store-keeper's receipt runs.
+// purchase_invoices.auto_grn_id remembers it; the invoice lines are NOT linked
+// to it (grn_item_id stays null), so the PO ceiling above still governs billing.
+//
+// Only the part of the order no receipt covers yet is received:
+//   need = clamp(invoiced by others + this − (received + returned), 0, this)
+// so a PO that already had a real GRN is never stocked twice.
+// ---------------------------------------------------------------------------
+type AutoReceiptRow = { poId: string; materialCode: string; qty: number };
+
+/** The adapter camelCases result rows, so read both spellings. */
+function autoGrnIdOf(pi: PurchaseInvoiceRow): string | null {
+  const r = pi as unknown as { autoGrnId?: string | null; auto_grn_id?: string | null };
+  return r.autoGrnId ?? r.auto_grn_id ?? null;
+}
+type AutoReceiptLine = { poId: string; poItemId: string; qty: number };
+
+/** Invoice lines that bill a PO with no receipt behind them. */
+function autoReceiptRows(
+  rows: Array<{ materialCode: string | null; qty: number; lineType: string; grnItemId: string | null; poId?: string | null }>,
+  headerPoId: string | null | undefined,
+): AutoReceiptRow[] {
+  const out: AutoReceiptRow[] = [];
+  for (const r of rows) {
+    const poId = r.poId || headerPoId;
+    const code = (r.materialCode ?? "").trim();
+    if (!poId || !code || r.grnItemId || r.lineType !== "STOCKED" || !(r.qty > 0)) continue;
+    out.push({ poId: String(poId), materialCode: code, qty: r.qty });
+  }
+  return out;
+}
+
+async function loadAutoReceiptRows(
+  db: D1Database,
+  piId: string,
+  headerPoId: string | null | undefined,
+): Promise<AutoReceiptRow[]> {
+  const res = await db
+    .prepare("SELECT * FROM purchase_invoice_items WHERE pi_id = ? ORDER BY created_at ASC, id ASC")
+    .bind(piId)
+    .all<PurchaseInvoiceItemRow & { po_id?: string | null; poId?: string | null }>();
+  return autoReceiptRows(
+    (res.results ?? []).map((r) => ({ ...rowToItem(r), poId: r.po_id ?? r.poId ?? null })),
+    headerPoId,
+  );
+}
+
+/** Same lines, same quantities? Keyed by PO + material. */
+function sameAutoReceiptRows(a: AutoReceiptRow[], b: AutoReceiptRow[]): boolean {
+  const sum = (rows: AutoReceiptRow[]) => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(`${r.poId}|${r.materialCode}`, (m.get(`${r.poId}|${r.materialCode}`) ?? 0) + r.qty);
+    return m;
+  };
+  const ma = sum(a);
+  const mb = sum(b);
+  return ma.size === mb.size && [...ma].every(([k, q]) => Math.abs((mb.get(k) ?? NaN) - q) < 1e-9);
+}
+
+async function planAutoReceipt(
+  db: D1Database,
+  rows: AutoReceiptRow[],
+  excludePiId: string | null,
+): Promise<AutoReceiptLine[]> {
+  const byPo = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    const m = byPo.get(r.poId) ?? new Map<string, number>();
+    m.set(r.materialCode, (m.get(r.materialCode) ?? 0) + r.qty);
+    byPo.set(r.poId, m);
+  }
+  const out: AutoReceiptLine[] = [];
+  for (const [poId, thisByCode] of byPo) {
+    const poItems =
+      (
+        await db
+          .prepare(
+            "SELECT id, material_code, materialName, quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ?",
+          )
+          .bind(poId)
+          .all<{ id: string; material_code?: string | null; materialCode?: string | null; quantity: number; receivedQty?: number | null; received_qty?: number | null }>()
+      ).results ?? [];
+    const returned = await loadPoReturnedQty(db, poId);
+    const codeOfItem = new Map(poItems.map((p) => [String(p.id), String(p.material_code ?? p.materialCode ?? "")]));
+    // Same query checkPoRemaining measures the ceiling with.
+    const invRes = await db
+      .prepare(
+        `SELECT gi.po_item_id AS "poItemId", pii.material_code AS mc, COALESCE(SUM(pii.qty), 0) AS qty
+           FROM purchase_invoice_items pii
+           JOIN purchase_invoices pi ON pi.id = pii.pi_id
+           LEFT JOIN grn_items gi ON gi.id::text = pii.grn_item_id
+          WHERE COALESCE(pii.po_id, pi.purchaseOrderId) = ? AND pi.status != 'CANCELLED'${
+            excludePiId ? " AND pii.pi_id != ?" : ""
+          }
+          GROUP BY gi.po_item_id, pii.material_code`,
+      )
+      .bind(...(excludePiId ? [poId, excludePiId] : [poId]))
+      .all<{ poItemId?: string | null; mc?: string | null; material_code?: string | null; qty: number }>();
+    const invByCode = new Map<string, number>();
+    for (const row of invRes.results ?? []) {
+      const code = (row.poItemId ? codeOfItem.get(String(row.poItemId)) : undefined) || String(row.mc ?? row.material_code ?? "");
+      invByCode.set(code, (invByCode.get(code) ?? 0) + (Number(row.qty) || 0));
+    }
+    for (const [code, thisQty] of thisByCode) {
+      const lines = poItems.filter((p) => codeOfItem.get(String(p.id)) === code);
+      if (lines.length === 0) continue; // not a line of this PO: nothing to receive against
+      const held = (p: (typeof lines)[number]) =>
+        (Number(p.receivedQty ?? p.received_qty ?? 0) || 0) + (returned.get(String(p.id)) ?? 0);
+      const covered = lines.reduce((s, p) => s + held(p), 0);
+      const need = Math.min(thisQty, Math.max(0, (invByCode.get(code) ?? 0) + thisQty - covered));
+      let left = need;
+      lines.forEach((p, i) => {
+        const room = Math.max(0, (Number(p.quantity) || 0) - held(p));
+        const take = i === lines.length - 1 ? left : Math.min(left, room);
+        if (take > 0) out.push({ poId, poItemId: String(p.id), qty: take });
+        left -= take;
+      });
+    }
+  }
+  return out;
+}
+
+/** Calls the GRN route as the current user, so the receipt runs the same code as a manual one. */
+async function grnRoute(c: Context<Env>, path: string, body: unknown) {
+  const sub = new Hono<Env>();
+  sub.use("*", async (cc, next) => {
+    for (const [k, v] of Object.entries(c.var)) cc.set(k as never, v as never);
+    await next();
+  });
+  sub.route("/", grnApp);
+  const res = await sub.request(
+    path,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+    c.env,
+  );
+  const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string; data?: { id?: string; grnNumber?: string } } | null;
+  return { ok: res.ok && !!j?.success, status: res.status, error: j?.error ?? `HTTP ${res.status}`, data: j?.data };
+}
+
+async function createAutoReceipt(
+  c: Context<Env>,
+  lines: AutoReceiptLine[],
+  pi: { piNo: string; invoiceDate: string; purchaseOrgCode: string },
+): Promise<{ ok: true; grnId: string | null } | { ok: false; status: number; error: string }> {
+  if (lines.length === 0) return { ok: true, grnId: null };
+  const res = await grnRoute(c, "/", {
+    poId: lines[0].poId,
+    receivedBy: `Auto (${pi.piNo})`,
+    notes: `Received automatically with purchase invoice ${pi.piNo}`,
+    receiveDate: pi.invoiceDate,
+    arrival_state: "ARRIVED",
+    purchaseOrgCode: pi.purchaseOrgCode,
+    items: lines.map((l) => ({
+      poId: l.poId,
+      poItemId: l.poItemId,
+      poItemIndex: null,
+      receivedQty: l.qty,
+      acceptedQty: l.qty,
+      rejectedQty: 0,
+    })),
+  });
+  if (!res.ok || !res.data?.id) {
+    return {
+      ok: false,
+      status: res.status >= 400 && res.status < 500 ? 409 : 500,
+      error: `The goods could not be received into stock: ${res.error}`,
+    };
+  }
+  return { ok: true, grnId: res.data.id };
+}
+
+/** Cancels an auto receipt (stock goes back out). Already-cancelled counts as done. */
+async function cancelAutoReceipt(
+  c: Context<Env>,
+  grnId: string,
+  piNo: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const grn = await c.var.DB
+    .prepare("SELECT grnNumber, status FROM grns WHERE id = ?")
+    .bind(grnId)
+    .first<{ grnNumber?: string; status?: string }>();
+  if (!grn || String(grn.status).toUpperCase() === "CANCELLED") return { ok: true };
+  const res = await grnRoute(c, `/${grnId}/cancel`, { reason: `Purchase invoice ${piNo} removed` });
+  if (res.ok) return { ok: true };
+  return {
+    ok: false,
+    error: `This invoice put its goods into stock through ${grn.grnNumber ?? grnId}, and that receipt can't be cancelled: ${res.error}`,
+  };
+}
+
+/** A delete/void failed after its receipt was cancelled: put the goods back. */
+async function receiveAfterFailedRemoval(c: Context<Env>, pi: PurchaseInvoiceRow) {
+  const again = await receiveAgain(c, pi);
+  if (again.ok && again.grnId) {
+    await c.var.DB.prepare("UPDATE purchase_invoices SET auto_grn_id = ? WHERE id = ?").bind(again.grnId, pi.id).run();
+  } else if (!again.ok) {
+    console.error(`[pi] ${pi.id} was not removed and its goods could not be received again:`, again.error);
+  }
+}
+
+/** Receives an invoice's PO-direct goods again, replacing its cancelled auto receipt. */
+async function receiveAgain(c: Context<Env>, pi: PurchaseInvoiceRow) {
+  const db = c.var.DB;
+  const rows = await loadAutoReceiptRows(db, pi.id, pi.purchaseOrderId);
+  const org = pi as unknown as { purchase_org_code?: string | null; purchaseOrgCode?: string | null };
+  return createAutoReceipt(c, await planAutoReceipt(db, rows, pi.id), {
+    piNo: pi.piNo,
+    invoiceDate: String(pi.invoiceDate ?? "").split("T")[0],
+    purchaseOrgCode: org.purchaseOrgCode ?? org.purchase_org_code ?? "HOOKKA",
+  });
+}
+
 app.post("/", async (c) => {
   const denied = await requirePermission(c, "purchase-invoices", "create");
   if (denied) return denied;
@@ -2091,6 +2311,7 @@ app.put("/:id", async (c) => {
     .bind(id)
     .first<PurchaseInvoiceRow>();
   if (!existing) return c.json({ success: false, error: "PI not found" }, 404);
+  const existingAutoGrnId = autoGrnIdOf(existing);
 
   const body = await c.req.json().catch(() => ({})) as {
     status?: string;
@@ -2229,6 +2450,30 @@ app.put("/:id", async (c) => {
       if (!poGuard.ok) {
         return c.json({ success: false, error: poGuard.error }, 409);
       }
+    }
+    // BUG-87 — while this invoice's auto receipt holds its goods in stock, the
+    // quantity and material of those lines are frozen. Prices may still change.
+    const autoGrn = existingAutoGrnId
+      ? await db
+          .prepare("SELECT grnNumber, status FROM grns WHERE id = ?")
+          .bind(existingAutoGrnId)
+          .first<{ grnNumber?: string; status?: string }>()
+      : null;
+    if (
+      autoGrn &&
+      String(autoGrn.status).toUpperCase() !== "CANCELLED" &&
+      !sameAutoReceiptRows(
+        await loadAutoReceiptRows(db, id, existing.purchaseOrderId),
+        autoReceiptRows(normalizedItems.rows, existing.purchaseOrderId),
+      )
+    ) {
+      return c.json(
+        {
+          success: false,
+          error: `This invoice put its goods into stock through ${autoGrn.grnNumber ?? existingAutoGrnId}, so the quantity and material of those lines can't change here. Delete or void the invoice and raise it again.`,
+        },
+        409,
+      );
     }
   }
 
@@ -2721,9 +2966,34 @@ app.put("/:id", async (c) => {
     ? new Set((await loadItemsForPI(db, id)).map((it) => supplierPairKey(it.materialCode, it.supplierSku)))
     : new Set<string>();
 
+  // BUG-87 — on Confirm, lines billed straight off a PO receive their goods.
+  // Not for an invoice raised from a GRN (that receipt already put them in).
+  let confirmGrnId: string | null = null;
+  if (
+    existing.status === "DRAFT" &&
+    merged.status === "CONFIRMED" &&
+    !existingAutoGrnId &&
+    !((existing as unknown as { grnId?: string | null }).grnId ?? (existing as unknown as { grn_id?: string | null }).grn_id)
+  ) {
+    const rows = normalizedItems?.ok
+      ? autoReceiptRows(normalizedItems.rows, existing.purchaseOrderId)
+      : await loadAutoReceiptRows(db, id, existing.purchaseOrderId);
+    const made = await createAutoReceipt(c, await planAutoReceipt(db, rows, id), {
+      piNo: existing.piNo,
+      invoiceDate: String(merged.invoiceDate ?? "").split("T")[0] || now.split("T")[0],
+      purchaseOrgCode: merged.purchaseOrgCode,
+    });
+    if (!made.ok) return c.json({ success: false, error: `${made.error} The invoice was not confirmed.` }, made.status as 409 | 500);
+    confirmGrnId = made.grnId;
+    if (confirmGrnId) {
+      statements.push(db.prepare("UPDATE purchase_invoices SET auto_grn_id = ? WHERE id = ?").bind(confirmGrnId, id));
+    }
+  }
+
   try {
     await db.batch(statements);
   } catch (e) {
+    if (confirmGrnId) await cancelAutoReceipt(c, confirmGrnId, existing.piNo);
     // T-006 R5 — same DB backstop as the create path (chk_grn_items_invoiced_qty,
     // Postgres 23514): an edit that adds/increases GRN-sourced lines can race
     // a concurrent create/edit against the same GRN line the same way.
@@ -2971,6 +3241,15 @@ app.post("/:id/void", async (c) => {
     );
   }
 
+  // BUG-87 — the goods this invoice put into stock come back out first; a
+  // refusal (stock already used) stops here with nothing voided. auto_grn_id
+  // stays on the row so an unvoid knows to receive them again.
+  const autoGrnId = autoGrnIdOf(pi);
+  if (autoGrnId) {
+    const undone = await cancelAutoReceipt(c, autoGrnId, pi.piNo);
+    if (!undone.ok) return c.json({ success: false, error: undone.error }, 409);
+  }
+
   const statements: D1PreparedStatement[] = [];
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
@@ -3001,7 +3280,12 @@ app.post("/:id/void", async (c) => {
       .bind(status, new Date().toISOString(), id),
   );
 
-  await db.batch(statements);
+  try {
+    await db.batch(statements);
+  } catch (e) {
+    if (autoGrnId) await receiveAfterFailedRemoval(c, pi);
+    throw e;
+  }
 
   await emitAudit(c, {
     resource: "purchase-invoices",
@@ -3080,6 +3364,17 @@ app.post("/:id/unvoid", async (c) => {
 
   statements.push(...reconsume.statements);
 
+  // BUG-87 — an invoice whose void took its goods out of stock receives them again.
+  let newAutoGrnId: string | null = null;
+  if (autoGrnIdOf(pi)) {
+    const made = await receiveAgain(c, pi);
+    if (!made.ok) return c.json({ success: false, error: `${made.error} The invoice was not unvoided.` }, made.status as 409 | 500);
+    newAutoGrnId = made.grnId;
+    if (newAutoGrnId) {
+      statements.push(db.prepare("UPDATE purchase_invoices SET auto_grn_id = ? WHERE id = ?").bind(newAutoGrnId, id));
+    }
+  }
+
   const restored =
     String(
       (pi as unknown as { pre_void_status?: string | null; preVoidStatus?: string | null })
@@ -3095,7 +3390,12 @@ app.post("/:id/unvoid", async (c) => {
       .bind(restored, new Date().toISOString(), id),
   );
 
-  await db.batch(statements);
+  try {
+    await db.batch(statements);
+  } catch (e) {
+    if (newAutoGrnId) await cancelAutoReceipt(c, newAutoGrnId, pi.piNo);
+    throw e;
+  }
 
   await emitAudit(c, {
     resource: "purchase-invoices",
