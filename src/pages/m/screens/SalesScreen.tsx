@@ -106,6 +106,7 @@ export function SalesScreen() {
       <MobileHeader
         title="Sales Orders"
         onBack={() => navigate(-1)}
+        menu
         trailing={
           <button
             onClick={() => setCreateSpec(newSalesOrderSpec())}

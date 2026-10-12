@@ -1,19 +1,29 @@
 // MobileHeader — sticky top bar for non-Home screens.
 // Optional back button (taupe) + title; centered to the content width.
+// `menu` (top-level screens: module lists, /m/more): on phones the leading
+// slot is the flat hamburger that opens the NavDrawer, replacing the back
+// button. Tablets ignore `menu` and keep the back button exactly as before.
 import { ChevronLeft } from "lucide-react";
 import { type ReactNode } from "react";
 import { M, M_MAX_WIDTH } from "../theme";
 import { useResponsiveLayout } from "../lib/responsive-layout";
+import { useNavDrawer } from "../lib/nav-drawer";
+import { MenuButton } from "./MenuButton";
 
 type Props = {
   title: string;
   onBack?: () => void;
   /** Optional trailing action (e.g. a + button). */
   trailing?: ReactNode;
+  /** Top-level screen: show the drawer hamburger on phones. */
+  menu?: boolean;
 };
 
-export function MobileHeader({ title, onBack, trailing }: Props) {
+export function MobileHeader({ title, onBack: onBackProp, trailing, menu = false }: Props) {
   const { mode } = useResponsiveLayout();
+  const drawer = useNavDrawer();
+  const showMenu = menu && mode === "phone" && drawer !== null;
+  const onBack = showMenu ? undefined : onBackProp;
   return (
     <div
       style={{
@@ -38,6 +48,7 @@ export function MobileHeader({ title, onBack, trailing }: Props) {
           padding: "0 12px",
         }}
       >
+        {showMenu ? <MenuButton /> : null}
         {onBack ? (
           <button
             onClick={onBack}

@@ -193,6 +193,17 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 2. ✅ Owner chose no credit check at dispatch: an existing DO can always leave, office button and phone scan alike. The check stays at DO create and packing-list-first. Production had the block from #808, reverted in #809.
 3. ⬜ Check on the staging site after deploy: dispatch a DO for a customer with overdue bills from the phone scan page.
 
+## 2026-10-12 — 🔵 /m phone navigation shell: 4 flat tabs + hamburger + left drawer (branch `design/mobile-iPad`, local only, awaiting owner review)
+
+Phone mode only (`layout.mode === "phone"`, < 720). iPad rail / breakpoints / permissions / API untouched.
+1. Bottom nav: 4 flat tabs Home · Sales · Delivery · Procurement; raised More removed; active state matches by path segment and no tab lights up on non-tab routes.
+2. Hamburger: flat icon, no box. Home (replaces the brand tile on phone only) + L1 list headers (`MobileHeader menu`) + bespoke headers.
+3. Left drawer: 324px, slides from left, profile + search pinned, grouped modules, theme toggle, install, desktop link, sign out.
+4. More content extracted to a shared component; `/m/more` route kept and renders the same content.
+5. Permissions: the existing `navGate` / `isNavAllowed` filter only.
+6. A11y: Escape / backdrop / close button, focus trap + restore, body scroll lock, safe areas, labels.
+7. Validation: tsc strict, tests, regression test `tests/mobile-nav-drawer.test.mjs`.
+
 ## 2026-10-12 — 🔵 List Export compared with Houzs: all pages, Excel formats, line layout (branch `fix/export-all-pages` → `staging`, BUG-2026-10-12-281)
 
 1. ✅ Compared Hookka's list Export with the Houzs ERP one (answered in chat).

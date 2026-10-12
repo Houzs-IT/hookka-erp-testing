@@ -1,16 +1,15 @@
 // Navigation model for the mobile (phone) UI.
 //
-// - TABS: the 5 bottom-tab destinations (Home, Sales, Production, Procure, More).
-// - MORE_GROUPS: the grouped module list shown on the "More" screen. Each row
-//   routes to a module screen under /m/* (Phase 2 builds the real screens; for
-//   now they land on a placeholder). NO QR-scan tab anywhere.
+// - TABS: the 4 bottom-tab destinations (Home, Sales, Delivery, Procurement).
+// - MORE_GROUPS: the grouped module list shown in the phone NavDrawer and on
+//   the /m/more screen. Each row routes to a module screen under /m/*.
+//   NO QR-scan tab anywhere.
 import {
   Home,
   ShoppingCart,
   Factory,
   ShoppingBag,
   Truck,
-  LayoutGrid,
   Megaphone,
   Mail,
   Users,
@@ -29,32 +28,48 @@ import {
 } from "lucide-react";
 import { DASHBOARD_NAV_HREF } from "./screens/dashboard/dashboard-m-lib";
 
-export type TabKey = "home" | "sales" | "delivery" | "procure" | "more";
+export type TabKey = "home" | "sales" | "delivery" | "procure";
 
 export type TabDef = {
   key: TabKey;
   label: string;
   icon: LucideIcon;
-  /** Route this tab navigates to. "more" opens the More screen. */
+  /** Route this tab navigates to. */
   path: string;
-  /** When true this slot renders as the floating circular center button. */
-  raised?: boolean;
+  /** Other route prefixes that also light this tab up. */
+  alsoActiveOn?: string[];
 };
 
-// Bottom-nav: 5 slots with More as the CENTER raised button (owner 2026-06-28,
-// reference: a colored circular grid button popping above the bar). Order per
-// dc12 design v12:
-//   Home · Sales · [More — center raised button] · Delivery · Procure.
-// Production moved to the More menu — for office staff Delivery is a more
-// common one-tap target than Production. The `raised` flag tells BottomTabBar
-// to render that slot as the floating circular action button.
+// Bottom-nav: 4 equal flat tabs (owner 2026-10-12, phone nav shell):
+//   Home · Sales · Delivery · Procurement.
+// The raised centre "More" button is gone — every other module now lives in
+// the left drawer (NavDrawer), opened from the hamburger in the header.
+// /m/more stays routable and renders the same menu content.
 export const TABS: TabDef[] = [
   { key: "home", label: "Home", icon: Home, path: "/m" },
   { key: "sales", label: "Sales", icon: ShoppingCart, path: "/m/sales" },
-  { key: "more", label: "More", icon: LayoutGrid, path: "/m/more", raised: true },
   { key: "delivery", label: "Delivery", icon: Truck, path: "/m/delivery" },
-  { key: "procure", label: "Procure", icon: ShoppingBag, path: "/m/procurement" },
+  { key: "procure", label: "Procurement", icon: ShoppingBag, path: "/m/procurement", alsoActiveOn: ["/m/suppliers"] },
 ];
+
+/** True when `pathname` is `base` itself or a route below it (segment match,
+ * so /m/sales does not claim /m/salesxyz). */
+function underPath(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+/** The bottom tab the current route belongs to, or null when the route is not
+ * a tab destination (a drawer module, /m/more, …) — then no tab is lit. */
+export function activeTabFor(pathname: string): TabKey | null {
+  if (pathname === "/m" || pathname === "/m/") return "home";
+  for (const t of TABS) {
+    if (t.key === "home") continue;
+    if ([t.path, ...(t.alsoActiveOn ?? [])].some((p) => underPath(pathname, p))) {
+      return t.key;
+    }
+  }
+  return null;
+}
 
 
 export type ModuleLink = {
@@ -149,4 +164,30 @@ export const MORE_GROUPS: ModuleGroup[] = [
     ],
   },
 ];
+
+/**
+ * The module groups a user may see, optionally narrowed by a search query
+ * (case-insensitive match on the row label or its group title). Rows with a
+ * navGate follow the server's nav gate (navHidden); groups left empty drop out.
+ * Shared by the More screen and the phone NavDrawer so both show the same list.
+ */
+export function visibleModuleGroups(
+  isNavAllowed: (href: string) => boolean,
+  query = "",
+  groups: ModuleGroup[] = MORE_GROUPS,
+): ModuleGroup[] {
+  const q = query.trim().toLowerCase();
+  return groups
+    .map((g) => {
+      const allowed = g.items.filter((i) => !i.navGate || isNavAllowed(i.navGate));
+      const groupHit = q !== "" && g.title.toLowerCase().includes(q);
+      return {
+        ...g,
+        items: q === "" || groupHit
+          ? allowed
+          : allowed.filter((i) => i.label.toLowerCase().includes(q)),
+      };
+    })
+    .filter((g) => g.items.length > 0);
+}
 

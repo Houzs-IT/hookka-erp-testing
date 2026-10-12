@@ -62,6 +62,7 @@ export function MailCenterScreen() {
       <MobileHeader
         title="Mail Center"
         onBack={() => navigate(-1)}
+        menu
         trailing={
           <button
             onClick={() => setComposeSpec(newMailSpec())}

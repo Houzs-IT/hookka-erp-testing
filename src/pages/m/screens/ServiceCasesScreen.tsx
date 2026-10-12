@@ -66,7 +66,7 @@ export function ServiceCasesScreen() {
 
   return (
     <>
-      <MobileHeader title="Service Cases" onBack={() => navigate(-1)} />
+      <MobileHeader title="Service Cases" onBack={() => navigate(-1)} menu />
 
       <div style={{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 }}>
         <div
