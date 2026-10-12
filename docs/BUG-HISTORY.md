@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-278 (branch `fix/grid-export-computed-columns`, to staging; 277 is staging's, 276 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-277 (branch `fix/credit-overdue-skip-pre-opening`, to staging; 273 to 276 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-09**: BUG-2026-10-09-272 follow-up (branch `fix/worker-i18n-single-words`, to staging then main): single-word worker labels translated; a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -137,9 +138,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-12-277 — Credit block counted bills dated before the books' opening date as overdue `delivery-orders` `accounting` 🟡
+## BUG-2026-10-12-277 — Credit block counted bills dated before the books' opening date as overdue `delivery-orders` `accounting` 🟢
 
-🟡 **Fixed on branch** (`fix/credit-overdue-skip-pre-opening` → `staging`). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
+🟢 **Fixed and verified on staging** (#800, deployed 2026-10-12 01:28 UTC). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
 
 **Symptom, measured on staging 2026-10-12 (read-only).** The overdue rule of the customer credit gate listed 77 unpaid bills dated 8 to 20 May 2026 (Houzs 53, RM 295,996.60; Carress 18, RM 51,093.64; The Conts 6, RM 8,683.00). The opening date is 2026-05-22, the opening AR balance is RM 41,242.00 (28 Carress seeds, all paid) and these bills are not part of it. Each customer's `outstandingSen` equals its unpaid bills dated from 22 May to the sen, so the limit rule already ignored them; only the overdue rule did not.
 
@@ -147,7 +148,11 @@ Entries themselves stay newest-first.
 
 **Fix.** `decideCredit` skips unpaid bills with `rowBeforeOpening(invoiceDate, openingDate, isOpening)`; `loadCreditCheck` passes `getOpeningDate` and the `isOpening` flag. Opening seeds still count. Owner decision 2026-10-12: ignore the pre-opening bills. Staging impact today: the same 6 customers stay blocked on post-opening bills (Houzs 17 bills RM 52,201.00, Carress 25 bills RM 110,595.28, The Conts 12 bills RM 13,438.00).
 
-**Regression.** `tests/customer-credit-gate.test.mjs` "bills dated before the opening date never block; opening seeds still do" fails on the old code. Not yet verified on the staging site.
+**Regression.** `tests/customer-credit-gate.test.mjs` "bills dated before the opening date never block; opening seeds still do" fails on the old code.
+
+**Verified on staging, 2026-10-12.** A packing-list-first preview (writes nothing) for one ready order each returned the server's own block text: Houzs Century 17 overdue invoices RM 52,201.00, Carress 25 RM 110,595.28, The Conts 12 RM 13,438.00. These match the post-fix numbers predicted above.
+
+**Follow-up (branch `feat/credit-block-invoice-list`).** A user who may not override only got a one-line toast with the count and total, not which invoices. `askCreditOverride` now shows the same dialog (overdue invoice list, or the limit breakdown) with a single OK button (`ConfirmOptions.hideCancel`) and no reason box. Test: `tests/customer-credit-gate.test.mjs` "no override: the dialog still lists each overdue invoice" renders the dialog and fails on the old code.
 
 ---
 

@@ -8,6 +8,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
+register("./tests/_alias-loader.mjs", pathToFileURL("./"));
 const { decideCredit } = await import(
   pathToFileURL(resolve(process.cwd(), "src/api/lib/customer-credit.ts")).href
 );
@@ -103,4 +104,35 @@ test("structural: Sales transfer box shows the credit dialog and reads a fresh r
   assert.match(rp.slice(0, 400), /c\.req\.query\("fresh"\) === "1"/);
   assert.match(routes, /staleWhileRevalidate: !fresh/);
   assert.match(routes, /const db = fresh \? freshReads\(c\.var\.DB\) : c\.var\.DB;/);
+});
+
+// Staff who may not override get the same overdue-invoice list (OK button only),
+// not a one-line toast.
+test("no override: the dialog still lists each overdue invoice", async () => {
+  globalThis.React ??= (await import("react")).default; // tsx compiles JSX to React.createElement
+  const { askCreditOverride } = await import(
+    pathToFileURL(resolve(process.cwd(), "src/pages/delivery/credit-override.tsx")).href
+  );
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const seen = [];
+  const toasts = [];
+  const out = await askCreditOverride(
+    async (o) => { seen.push(o); return true; },
+    { error: (m) => toasts.push(m) },
+    {
+      code: "PAYMENT_OVERDUE",
+      error: "Acme has 1 overdue invoice (RM 123.45) past their NET30 term.",
+      overrideAllowed: false,
+      details: { overdue: [{ invoiceNo: "INV-2606-001", dueDate: "2026-07-31", balanceSen: 12345 }] },
+    },
+  );
+  assert.equal(out, null);
+  assert.equal(toasts.length, 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].hideCancel, true);
+  assert.equal(seen[0].confirmLabel, "OK");
+  const html = renderToStaticMarkup(seen[0].message);
+  assert.match(html, /INV-2606-001/);
+  assert.match(html, /due 2026-07-31/);
+  assert.doesNotMatch(html, /textarea/);
 });
