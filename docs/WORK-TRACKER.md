@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
@@ -189,6 +190,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 IT Support: list layout with status tabs and an empty state (branch `feat/it-support-list-layout` → `staging`, local only)
+
+1. ✅ All / Active / Resolved tabs with counts, in the grid toolbar left of Search / Views / Columns (new optional DataGrid prop `toolbarStart`).
+2. ✅ Empty list: illustration, "No tickets yet", a short line and a Report an issue button. An empty tab or search shows one plain line.
+3. ✅ Resolved tab holds Done-please-confirm, Closed and Rejected; Active holds the rest.
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy, desktop and a 320px phone width.
 
 ## 2026-10-12 — 🔵 IT Support: report form tweaks and a new attachment picker (branch `feat/it-support-form-tweaks` → `staging`, local only)
 

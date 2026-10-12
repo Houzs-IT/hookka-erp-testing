@@ -200,7 +200,9 @@ export type DataGridProps<T> = {
   // Undefined (the default) never clears, so existing grids are untouched.
   clearSelectionToken?: number;
   rowClassName?: (row: T) => string;
-  emptyMessage?: string;
+  emptyMessage?: React.ReactNode;
+  // Shown at the left of the toolbar (e.g. status tabs); search and buttons move to the right.
+  toolbarStart?: React.ReactNode;
   loading?: boolean;
   stickyHeader?: boolean;
   maxHeight?: string;
@@ -1760,6 +1762,7 @@ export function DataGrid<T extends Record<string, any>>({
   clearSelectionToken,
   rowClassName,
   emptyMessage = "No data found.",
+  toolbarStart,
   loading = false,
   stickyHeader = true,
   maxHeight,
@@ -2792,6 +2795,8 @@ export function DataGrid<T extends Record<string, any>>({
       {/* Tablet UX: bumped from py-1.5 / text-[11px] / h-~26px to h-9 (36px)
           search + h-9 buttons. Per-control sizing notes inline below. */}
       <div className="flex flex-wrap items-center gap-2 border border-b-0 border-[#E2DDD8] bg-[#FAFAF8] px-2 py-1.5 rounded-t">
+        {toolbarStart}
+        {toolbarStart && <div className="flex-1" />}
         {/* Search — h-9 / text-sm for finger-target on iPad Safari */}
         <div className="relative flex-1 max-w-[280px] max-md:max-w-full">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#999]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2825,7 +2830,7 @@ export function DataGrid<T extends Record<string, any>>({
           </button>
         )}
 
-        <div className="flex-1" />
+        {!toolbarStart && <div className="flex-1" />}
 
         {/* Group toggle + filter (only when groupBy prop is set) */}
         {groupBy && (
