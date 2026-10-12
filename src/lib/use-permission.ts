@@ -25,7 +25,6 @@
 // ---------------------------------------------------------------------------
 import { useEffect } from "react";
 import { useCachedJson, cachedFetchJson } from "./cached-fetch";
-import { EXPLICIT_ONLY_RIGHTS } from "./explicit-rights";
 
 export type PermissionMap = ReadonlySet<string>;
 
@@ -92,7 +91,6 @@ function checkSet(
   //
   // These two predicates must not drift again: tests/permission-wildcards.test.mjs
   // asserts they agree on the same inputs.
-  if (EXPLICIT_ONLY_RIGHTS.has(`${resource}:${action}`)) return set.has(`${resource}:${action}`);
   return (
     set.has(`${resource}:${action}`) ||
     set.has(`${resource}:*`) ||

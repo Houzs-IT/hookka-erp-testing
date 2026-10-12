@@ -30,8 +30,7 @@ import {
 } from "@/lib/so-status";
 import type { SalesOrder } from "@/types";
 import type { Customer, DeliveryOrder } from "@/types";
-import { fetchJson, FetchJsonError } from "@/lib/fetch-json";
-import { askCreditOverride, isCreditBlock } from "@/pages/delivery/credit-override";
+import { fetchJson } from "@/lib/fetch-json";
 import { mutationWithData } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
@@ -1889,31 +1888,16 @@ export default function SalesPage() {
                           rackingNumber: "",
                           packingStatus: "PENDING",
                         }));
-                        const body = {
-                          salesOrderId: transferDORow.id,
-                          items: mappedItems,
-                          ...(doDeliveryDate && { deliveryDate: doDeliveryDate }),
-                          ...(doDriverName && { driverName: doDriverName }),
-                          ...(doVehicleNo && { vehicleNo: doVehicleNo }),
-                        };
-                        const postDo = (b: Record<string, unknown>) =>
-                          fetchJson("/api/delivery-orders", DOMutationSchema, {
-                            method: "POST",
-                            body: b,
-                          });
-                        let d: Awaited<ReturnType<typeof postDo>>;
-                        try {
-                          d = await postDo(body);
-                        } catch (e) {
-                          // Customer credit block (BUG-34): same dialog as the
-                          // Delivery page, re-sent with the override reason when
-                          // the server allows one.
-                          const eb = e instanceof FetchJsonError ? e.body : null;
-                          if (!isCreditBlock(eb)) throw e;
-                          const reason = await askCreditOverride(confirm, toast, eb);
-                          if (!reason) return;
-                          d = await postDo({ ...body, creditOverride: { reason } });
-                        }
+                        const d = await fetchJson("/api/delivery-orders", DOMutationSchema, {
+                          method: "POST",
+                          body: {
+                            salesOrderId: transferDORow.id,
+                            items: mappedItems,
+                            ...(doDeliveryDate && { deliveryDate: doDeliveryDate }),
+                            ...(doDriverName && { driverName: doDriverName }),
+                            ...(doVehicleNo && { vehicleNo: doVehicleNo }),
+                          },
+                        });
                         if (d.success) {
                           invalidateCachePrefix("/api/delivery-orders");
                           invalidateCachePrefix("/api/sales-orders");
@@ -1922,10 +1906,8 @@ export default function SalesPage() {
                         } else {
                           toast.error(d.error || "Failed to create Delivery Order.");
                         }
-                      } catch (e) {
-                        // Show the server's reason when there is one, not a fixed line.
-                        const msg = e instanceof FetchJsonError ? (e.body as { error?: string } | null)?.error || e.message : null;
-                        toast.error(msg || "Failed to create Delivery Order. Please try again.");
+                      } catch {
+                        toast.error("Failed to create Delivery Order. Please try again.");
                       } finally {
                         setTransferLoading(false);
                       }
