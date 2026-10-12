@@ -128,6 +128,20 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-12-282 — Drivers could not dispatch a lorry for a customer with overdue bills `delivery-orders` 🟡
+
+🟡 **Fixed on branch** (`fix/credit-no-dispatch-check` → `staging`). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
+
+**Symptom.** The phone scan page showed "Carress has 12 overdue invoices ... Collect payment before releasing goods." and Dispatch failed. The phone has no override step and drivers scan without signing in, so nobody could release the lorry from the phone, not even an admin. The block reached production in #808 and was reverted in #809.
+
+**Root cause.** `applyDeliveryOrderUpdate` re-ran the credit gate on DRAFT → LOADED. The public QR advance lands there with no user, so `creditOverrideAllowed` is always false and the block could not be passed.
+
+**Fix.** Owner 2026-10-12: no credit check at dispatch. The DRAFT → LOADED re-check is removed, for the office button and the phone scan alike. The gate still runs when a DO is created (`createDeliveryOrderForPOs`) and on packing-list-first, with the same override. A DO raised before a bill went overdue can now leave.
+
+**Regression.** `tests/customer-credit-gate.test.mjs` structural test now asserts `applyDeliveryOrderUpdate` calls neither `checkCustomerCredit` nor `gateCredit`; fails on the old code. Not yet verified on the staging site.
+
+---
+
 ## BUG-2026-10-12-281 — List Export wrote only the page on screen; Invoices search and filter stopped at 500 `ui-frontend` `exports` `C31` 🟡
 
 🟡 **Fixed on branch** (`fix/export-all-pages` → `staging`). Found comparing Hookka's list Export with the Houzs ERP one.
@@ -142,9 +156,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-12-280 — Every Sales and Office account could override the customer credit block `rbac` `delivery-orders` 🟡
+## BUG-2026-10-12-280 — Every Sales and Office account could override the customer credit block `rbac` `delivery-orders` 🟢
 
-🟡 **Fixed on branch** (`fix/credit-override-explicit-tick` → `staging`). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
+🟢 **Fixed and verified on staging** (#804). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
 
 **Symptom, measured on staging 2026-10-12 (read-only).** Using "View as" on each non-admin account, a packing-list-first preview for a blocked Houzs order came back as "override allowed" for Adrian, Wei Seng and sales (Sales), and Office@ and Siti (Office). Finance, Lim, QA, Zamri, Zira and Chee get 403 on DOs at all. So nobody who can make a DO saw the no-override dialog, and the "only admin approves" SOP did not hold. Production permission lists are UNMEASURED.
 

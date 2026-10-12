@@ -187,6 +187,12 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 2026-10-12 — 🔵 Credit block: drivers cannot dispatch for a customer with overdue bills (branch `fix/credit-no-dispatch-check` → `staging`, BUG-2026-10-12-282)
+
+1. ✅ Explained why the phone dispatch was blocked (overdue bills, not the credit limit) and how the NET30 due date is counted (answered in chat).
+2. ✅ Owner chose no credit check at dispatch: an existing DO can always leave, office button and phone scan alike. The check stays at DO create and packing-list-first. Production had the block from #808, reverted in #809.
+3. ⬜ Check on the staging site after deploy: dispatch a DO for a customer with overdue bills from the phone scan page.
+
 ## 2026-10-12 — 🔵 List Export compared with Houzs: all pages, Excel formats, line layout (branch `fix/export-all-pages` → `staging`, BUG-2026-10-12-281)
 
 1. ✅ Compared Hookka's list Export with the Houzs ERP one (answered in chat).
