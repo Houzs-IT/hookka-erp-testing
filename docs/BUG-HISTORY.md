@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: BUG-2026-10-12-279 follow-up (branch `fix/bug87-auto-grn-read`, to staging): the receipt id was read snake_case only; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-280 (branch `fix/credit-override-explicit-tick`, to staging; 279 is staging's PO-direct invoice fix); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-279 (branch `fix/bug87-po-overdue-stock-check`, to staging; client tracker BUG-87); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
@@ -152,7 +153,9 @@ Entries themselves stay newest-first.
 
 **Not changed.** The old overdue POs (owner: leave them for now). Their already-confirmed invoices never get a receipt; an old draft invoice does when it is confirmed.
 
-**Regression.** `tests/purchasing-convert-flow.test.mjs` BUG-87 tests: a draft holds no stock and deletes cleanly; Confirm → one lot and PO RECEIVED; a received PO is not stocked twice; a partly received PO receives only the rest; qty frozen, price free; void out, unvoid back; void refused once the lot was used. Not yet verified on the staging site.
+**Regression.** `tests/purchasing-convert-flow.test.mjs` BUG-87 tests: a draft holds no stock and deletes cleanly; Confirm → one lot and PO RECEIVED; a received PO is not stocked twice; a partly received PO receives only the rest; qty frozen, price free; void out, unvoid back; void refused once the lot was used.
+
+**Follow-up, caught on the staging check (#803 deployed).** Draft → Confirm worked (196 → 199, PO RECEIVED, GRN-2610-008 "Auto (PI-2610-023)"), but a qty edit saved and void left the stock in. The adapter camelCases result rows (`db-pg.ts`), so `auto_grn_id` reads back as `autoGrnId` and the snake-only read saw nothing; the confirm hook's `grn_id` read had the same flaw. Both now read dual-keyed (`autoGrnIdOf`). The test mock's `SELECT * FROM purchase_invoices WHERE id = ?` now returns camelCased rows like the adapter; three BUG-87 tests fail without the fix.
 
 ---
 

@@ -371,7 +371,11 @@ function makeDb() {
 
     // SELECT * FROM purchase_invoices WHERE id = ?
     if (/FROM purchase_invoices WHERE id = \?/i.test(sql)) {
-      return tables.purchase_invoices.filter((r) => String(r.id) === String(binds[0]));
+      // The real adapter camelCases result rows (db-pg.ts), so a route that
+      // reads a snake_case key only sees undefined there; do the same here.
+      return tables.purchase_invoices
+        .filter((r) => String(r.id) === String(binds[0]))
+        .map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()), v])));
     }
     // SELECT piNo FROM purchase_invoices WHERE grn_id = ? AND status != 'CANCELLED'
     if (/SELECT piNo FROM purchase_invoices WHERE grn_id = \? AND status != 'CANCELLED'/i.test(sql)) {

@@ -1187,6 +1187,12 @@ async function checkPoRemaining(
 // so a PO that already had a real GRN is never stocked twice.
 // ---------------------------------------------------------------------------
 type AutoReceiptRow = { poId: string; materialCode: string; qty: number };
+
+/** The adapter camelCases result rows, so read both spellings. */
+function autoGrnIdOf(pi: PurchaseInvoiceRow): string | null {
+  const r = pi as unknown as { autoGrnId?: string | null; auto_grn_id?: string | null };
+  return r.autoGrnId ?? r.auto_grn_id ?? null;
+}
 type AutoReceiptLine = { poId: string; poItemId: string; qty: number };
 
 /** Invoice lines that bill a PO with no receipt behind them. */
@@ -2305,7 +2311,7 @@ app.put("/:id", async (c) => {
     .bind(id)
     .first<PurchaseInvoiceRow>();
   if (!existing) return c.json({ success: false, error: "PI not found" }, 404);
-  const existingAutoGrnId = (existing as unknown as { auto_grn_id?: string | null }).auto_grn_id ?? null;
+  const existingAutoGrnId = autoGrnIdOf(existing);
 
   const body = await c.req.json().catch(() => ({})) as {
     status?: string;
@@ -2967,7 +2973,7 @@ app.put("/:id", async (c) => {
     existing.status === "DRAFT" &&
     merged.status === "CONFIRMED" &&
     !existingAutoGrnId &&
-    !(existing as unknown as { grn_id?: string | null }).grn_id
+    !((existing as unknown as { grnId?: string | null }).grnId ?? (existing as unknown as { grn_id?: string | null }).grn_id)
   ) {
     const rows = normalizedItems?.ok
       ? autoReceiptRows(normalizedItems.rows, existing.purchaseOrderId)
@@ -3238,7 +3244,7 @@ app.post("/:id/void", async (c) => {
   // BUG-87 — the goods this invoice put into stock come back out first; a
   // refusal (stock already used) stops here with nothing voided. auto_grn_id
   // stays on the row so an unvoid knows to receive them again.
-  const autoGrnId = (pi as unknown as { auto_grn_id?: string | null }).auto_grn_id;
+  const autoGrnId = autoGrnIdOf(pi);
   if (autoGrnId) {
     const undone = await cancelAutoReceipt(c, autoGrnId, pi.piNo);
     if (!undone.ok) return c.json({ success: false, error: undone.error }, 409);
@@ -3360,7 +3366,7 @@ app.post("/:id/unvoid", async (c) => {
 
   // BUG-87 — an invoice whose void took its goods out of stock receives them again.
   let newAutoGrnId: string | null = null;
-  if ((pi as unknown as { auto_grn_id?: string | null }).auto_grn_id) {
+  if (autoGrnIdOf(pi)) {
     const made = await receiveAgain(c, pi);
     if (!made.ok) return c.json({ success: false, error: `${made.error} The invoice was not unvoided.` }, made.status as 409 | 500);
     newAutoGrnId = made.grnId;
