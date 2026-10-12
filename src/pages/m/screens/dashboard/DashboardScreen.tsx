@@ -47,7 +47,7 @@ export function DashboardScreen() {
   if (!isNavAllowed(DASHBOARD_NAV_HREF)) {
     return (
       <>
-        <MobileHeader title="Dashboard" onBack={() => navigate("/m/more")} />
+        <MobileHeader title="Dashboard" onBack={() => navigate("/m/more")} menu />
         <MState kind="empty" text="Your role doesn't have access to the dashboard." />
       </>
     );
@@ -59,6 +59,7 @@ export function DashboardScreen() {
       <MobileHeader
         title="Dashboard"
         onBack={() => navigate("/m/more")}
+        menu
         trailing={<PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} />}
       />
       {/* Sticky under the MobileHeader (minHeight 52), like SubTabs. */}

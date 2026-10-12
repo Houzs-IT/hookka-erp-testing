@@ -61,6 +61,7 @@ export function AnnouncementsScreen() {
       <MobileHeader
         title="Announcements"
         onBack={() => navigate(-1)}
+        menu
         trailing={
           <button
             onClick={() => setCreateSpec(newAnnouncementSpec())}

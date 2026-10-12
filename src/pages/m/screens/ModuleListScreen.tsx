@@ -357,6 +357,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
       <MobileHeader
         title={config.title}
         onBack={() => navigate(-1)}
+        menu
         trailing={
           canCreate ? (
             <button
