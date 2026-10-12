@@ -1,6 +1,5 @@
 # Bug History
 
-> **Last verified: 2026-10-12**: BUG-34 customer credit block brought to main (branch `feat/customer-credit-control-main`): entries BUG-2026-10-12-280, -277, BUG-2026-10-07-263 and BUG-2026-09-28-233 copied from `staging` with a main note each; no id collides on main (newest main entry is 276).
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-276 (branch `fix/po-picker-duplicate-supplier-rows`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-275 (branch `fix/undone-labour-post-hides-payroll`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-274 (branch `fix/do-accessory-uom`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -91,42 +90,6 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
-
----
-
-## BUG-2026-10-12-280 — Every Sales and Office account could override the customer credit block `rbac` `delivery-orders` 🟡
-
-On `main` via branch `feat/customer-credit-control-main` (one commit carrying the staging work); not yet verified on production.
-
-🟡 **Fixed on branch** (`fix/credit-override-explicit-tick` → `staging`). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
-
-**Symptom, measured on staging 2026-10-12 (read-only).** Using "View as" on each non-admin account, a packing-list-first preview for a blocked Houzs order came back as "override allowed" for Adrian, Wei Seng and sales (Sales), and Office@ and Siti (Office). Finance, Lim, QA, Zamri, Zira and Chee get 403 on DOs at all. So nobody who can make a DO saw the no-override dialog, and the "only admin approves" SOP did not hold. Production permission lists are UNMEASURED.
-
-**Root cause.** The Sales and Office@ lists hold `delivery-orders:*`, and `permitted()` in `src/api/lib/rbac.ts` lets a module wildcard grant every action on it, the special `credit-override` included. Siti has `delivery-orders:credit-override` ticked by name, which is intended.
-
-**Fix.** `src/lib/explicit-rights.ts` lists rights a wildcard does not grant (`delivery-orders:credit-override`). `permitted()` (API gate), `checkSet()` (`src/lib/use-permission.ts`, browser) and `granted()` (`src/components/user-permissions-panel.tsx`, User Management boxes) all require the exact tick for those. ADMIN / SUPER_ADMIN still pass before `permitted()`. Accounts with the exact tick keep it (Siti on staging); untick in User Management if not wanted.
-
-**Regression.** `tests/credit-override-explicit.test.mjs` runs the real `hasPermission` with a stubbed role list (wildcard denied, exact tick and admins allowed) and pins the same rule in all three places. 2 of its 3 tests fail on the old code. Not yet verified on the staging site.
-
----
-
-## BUG-2026-10-12-277 — Credit block counted bills dated before the books' opening date as overdue `delivery-orders` `accounting` 🟢
-
-On `main` via branch `feat/customer-credit-control-main` (one commit carrying the staging work); not yet verified on production.
-
-🟢 **Fixed and verified on staging** (#800, deployed 2026-10-12 01:28 UTC). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
-
-**Symptom, measured on staging 2026-10-12 (read-only).** The overdue rule of the customer credit gate listed 77 unpaid bills dated 8 to 20 May 2026 (Houzs 53, RM 295,996.60; Carress 18, RM 51,093.64; The Conts 6, RM 8,683.00). The opening date is 2026-05-22, the opening AR balance is RM 41,242.00 (28 Carress seeds, all paid) and these bills are not part of it. Each customer's `outstandingSen` equals its unpaid bills dated from 22 May to the sen, so the limit rule already ignored them; only the overdue rule did not.
-
-**Root cause.** `loadCreditCheck` read every unpaid invoice with no opening-date floor, while `rebuildArCounterSen` and every AR report skip rows where `rowBeforeOpening` is true.
-
-**Fix.** `decideCredit` skips unpaid bills with `rowBeforeOpening(invoiceDate, openingDate, isOpening)`; `loadCreditCheck` passes `getOpeningDate` and the `isOpening` flag. Opening seeds still count. Owner decision 2026-10-12: ignore the pre-opening bills. Staging impact today: the same 6 customers stay blocked on post-opening bills (Houzs 17 bills RM 52,201.00, Carress 25 bills RM 110,595.28, The Conts 12 bills RM 13,438.00).
-
-**Regression.** `tests/customer-credit-gate.test.mjs` "bills dated before the opening date never block; opening seeds still do" fails on the old code.
-
-**Verified on staging, 2026-10-12.** A packing-list-first preview (writes nothing) for one ready order each returned the server's own block text: Houzs Century 17 overdue invoices RM 52,201.00, Carress 25 RM 110,595.28, The Conts 12 RM 13,438.00. These match the post-fix numbers predicted above.
-
-**Follow-up (branch `feat/credit-block-invoice-list`).** A user who may not override only got a one-line toast with the count and total, not which invoices. `askCreditOverride` now shows the same dialog (overdue invoice list, or the limit breakdown) with a single OK button (`ConfirmOptions.hideCancel`) and no reason box. Test: `tests/customer-credit-gate.test.mjs` "no override: the dialog still lists each overdue invoice" renders the dialog and fails on the old code.
 
 ---
 
@@ -305,22 +268,6 @@ and that the PO screen reads the same field as sen).
 **Fix.** `fetchOrders` refetches the sheet and the overdue chips without invalidating; the stock-PO create path invalidates first. `cached-fetch.ts` keeps a body that localStorage refuses in memory (up to 9 entries, ~6 MB heap each, measured), cleared by every invalidation path. The dead seed is removed; dept pages keep loading every open order (owner's choice). Same test, new code: 0.55 s, no "(loading…)".
 
 **Guard.** `tests/production-dept-tab-cache.test.mjs`.
-
----
-
-## BUG-2026-10-07-263 — Sales "Transfer to Delivery Order" box: credit block shown as "Failed to create Delivery Order", and "Nothing ready" for a finished order `sales` `delivery-orders` 🟡
-
-On `main` via branch `feat/customer-credit-control-main` (one commit carrying the staging work); not yet verified on production. Only the credit dialog half reached main: main's Transfer box still sends hand-built items (the production-order body and the fresh ready list are staging-only work), and the server gate runs on that path too.
-
-🟡 Fix on `fix/sales-transfer-credit-block` (to `staging`). Found by the credit control test run on staging (case CC-31), 2026-10-07.
-
-**Measured on staging.** Sales Orders › right-click SO-2610-007 (SL HOME DESIGN, 2 overdue invoices) › Transfer to Delivery Order, as Super Admin. (1) The box said "Ready to deliver 0 item(s)" although all 3 production orders were COMPLETED; a console GET of `/api/delivery-orders/ready-planning` at the same time listed them, and the box listed them after a reload. (2) Create DO: `POST /api/delivery-orders` returned 409 `PAYMENT_OVERDUE` with the invoice list and `overrideAllowed: true`; the page showed only "Failed to create Delivery Order. Please try again."
-
-**Cause.** (2) `fetchJson` throws `FetchJsonError` on every non-2xx, and the button's bare `catch {}` in `src/pages/sales/index.tsx` showed a fixed line, dropping the reason, the invoice list and the override. Only the Delivery page was wired to `askCreditOverride` in BUG-34. (1) `GET /ready-planning` uses `withSnapshot(..., { staleWhileRevalidate: true })`: the first read after a change gets the old snapshot while the rebuild runs in the background, and the freshness probe can also be answered from Hyperdrive's query cache (BUG-CLASSES C29). The box was the first reader after the orders were finished.
-
-**Fix.** The Create DO button uses the Delivery page's dialog: on a credit block it calls `askCreditOverride` and re-sends with `creditOverride: { reason }`; any other server error shows the server's message. `GET /ready-planning?fresh=1` skips serve-stale and reads through `freshReads`, so a stale snapshot is rebuilt before the answer; the Sales box asks with `fresh=1`. The Delivery page keeps serve-stale (its speed), so its own short lag is unchanged. Not changed: the phone New Delivery Order form and the DO detail "Load & Generate DO" show the reason but still have no override (owner to decide).
-
-**Guard.** `tests/customer-credit-gate.test.mjs` "Sales transfer box shows the credit dialog and reads a fresh ready list".
 
 ---
 
@@ -540,22 +487,6 @@ not capped at all, and the in-app page is never capped.
 Regression: `tests/schedule-email-size.test.mjs`.
 
 Follow-up 2026-10-02 (branch `feat/schedule-summary-email-to-main`): the email no longer carries job rows at all, only the four top boxes, a department table and one "Show full list" link, so the row cap (`EMAIL_ROWS_BUDGET`) is gone and the email is about 8 KB on any day. The full list page has every row plus a department filter (`?dept=<code>`).
-
-## BUG-2026-09-28-233 — customer credit control let DOs through: no overdue-term block, undelivered DOs not counted `delivery-orders` `accounting` 🟡
-
-On `main` via branch `feat/customer-credit-control-main` (one commit carrying the staging work); not yet verified on production.
-
-🟡 **Fix in progress** (branch `feat/customer-credit-control` → `staging`). Client tracker BUG-34.
-
-**Symptom.** A customer over their credit limit, or with last month's invoice unpaid past their term, could still get goods out on a DO.
-
-**Root cause.** (1) The only gate was the credit limit at DO create (`createDeliveryOrderForPOs`). It compared `outstandingSen + this DO`, but `outstandingSen` only rises when a DO is DELIVERED, so DOs created but not yet delivered were invisible: several DOs in a row each passed on their own. (2) Nothing read the customer's credit term (COD / NET30 / NET60 / NET90) at all, so there was no overdue block. The DO auto-invoice stamped `dueDate` as invoice date + 30 days, while manual invoices used end of next month. (3) The gate ran only at create, not at dispatch.
-
-**Fix.** One shared gate, `src/api/lib/customer-credit.ts` (`checkCustomerCredit` + `gateCredit`): PAYMENT_OVERDUE when an issued, unpaid invoice is past `dueDateForTerms(invoiceDate, creditTerms)` (`src/lib/terms.ts`, last day of invoice month + term months), and CREDIT_LIMIT_EXCEEDED on outstanding + undelivered DOs (DRAFT / LOADED / IN_TRANSIT, priced by `do-value.ts`) + this DO. Run at DO create (all paths, incl. the delivery agent), packing-list-first (summed per customer, replaces `projectCreditFailure`) and DRAFT→LOADED (office button and driver QR). Admin override: `creditOverride: { reason }`, allowed for `delivery-orders:credit-override` (ADMIN / SUPER_ADMIN always) while kv_config `credit-override-enabled` is not `false`; each override is an audit event (`credit-override`). Invoice due dates now follow the customer's term on the DO auto-invoice and the manual invoice. Consignment-note convert keeps its limit-only check (it bills goods already out).
-
-**Verified.** `tsc -p tsconfig.app.json` exit 0; `tests/customer-credit-gate.test.mjs` + `tests/terms.test.mjs` + full `npm test` pass. NOT verified on staging yet; staging data impact UNMEASURED.
-
----
 
 ## BUG-2026-09-29-232 — the Schedule, Efficiency and Morning Brief emails were unreadable on a phone `reports` `ui-frontend` 🟢
 
