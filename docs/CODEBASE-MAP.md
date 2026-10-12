@@ -3,7 +3,7 @@
 > **Last verified: 2026-10-12 on branch `feat/it-support` (to `staging`)**: the new IT Support bullet at the end of Customers & Platform, read from `src/api/routes/it-support.ts`, `src/pages/it-support/index.tsx`, `src/components/layout/sidebar.tsx` and `src/dashboard-routes.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `fix/export-all-pages` (to `staging`)**: the data-grid export bullet (Listing → Excel date and money formats, status text), read from `src/lib/grid-export.ts` and `src/lib/export-report.ts`.
 > **Last verified: 2026-10-12 on branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281)**: the data-grid export bullet (`exportAllRows`, `filterGridRows` / `sortGridRows`, `src/lib/fetch-all-pages.ts`), read from those files.
-> **Last verified: 2026-10-12 on branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282)**: the customer credit gate gotcha (no check at dispatch any more), read from `src/api/routes/delivery-orders/_helpers.ts` `applyDeliveryOrderUpdate`. Nothing else re-checked.
+> **Last verified: 2026-10-12 on branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282)**: the customer credit gate gotcha (no check at dispatch any more), read from `src/api/routes/delivery-orders/_helpers.ts` `applyDeliveryOrderUpdate`; after the staging merge, the `worker.ts` middleware refs (953 / 960 / 975) and `sidebar.tsx` `switchOrg` (475) re-derived. Nothing else re-checked.
 
 > **Last verified: 2026-10-12 on branch `fix/credit-override-explicit-tick` (to `staging`, BUG-2026-10-12-280)**: the customer credit gate gotcha (override needs the exact tick, a module wildcard does not count), read from `src/api/lib/rbac.ts` `permitted()` and `src/lib/explicit-rights.ts`. Nothing else re-checked.
 > **Restamped 2026-10-12 on branch `fix/bug87-po-overdue-stock-check` (to `staging`):** the Procurement gotcha on PO-direct purchase invoices receiving their goods (BUG-2026-10-12-279), read from `src/api/routes/purchase-invoices.ts`. Nothing else re-checked.
@@ -2358,8 +2358,8 @@ and gets it right — cite it in the fix.
 **All eight routers are LIVE** (mounted in `src/api/worker.ts`). Every mount below sits
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:913`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
-`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:939`),
-`tenantMiddleware` (`src/api/worker.ts:946`) and `apiRateLimit` (`src/api/worker.ts:961`)
+`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:953`),
+`tenantMiddleware` (`src/api/worker.ts:960`) and `apiRateLimit` (`src/api/worker.ts:975`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 
@@ -2596,7 +2596,7 @@ deliberately not dropped.
 **This field is NOT the tenant boundary, and never was.** `getOrgId(c)`
 (`src/api/lib/tenant.ts:109`) resolves the request's org from the session's `users.orgId`
 and never reads `inter_company_config`, so switching company has never rescoped a single
-query — despite `switchOrg` in `sidebar.tsx:457` doing a full `window.location.reload()`,
+query — despite `switchOrg` in `sidebar.tsx:475` doing a full `window.location.reload()`,
 which reads as though it should. `activeOrgId` drives exactly two things: the switcher's
 label + tick (`sidebar.tsx:908`/`:963`) and the highlight ring on Settings → Organisations
 (`settings/organisations.tsx:329`). **Open owner question:** `PUT /api/organisations` is
