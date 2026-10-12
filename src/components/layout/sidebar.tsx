@@ -339,6 +339,13 @@ const AGENTS_LINK: NavItem = {
   href: "/agents",
   icon: Bot,
 };
+// IT Support: every login, own tickets only (the Houzs IT Hub holds them).
+// The badge counts tickets IT has answered that this person has not opened.
+const IT_SUPPORT_LINK: NavItem = {
+  name: "IT Support",
+  href: "/it-support",
+  icon: Wrench,
+};
 
 type OrgInfo = {
   id: string;
@@ -394,6 +401,7 @@ export function Sidebar({
   });
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [itUnread, setItUnread] = useState(0);
   const [orgs, setOrgs] = useState<OrgInfo[]>([]);
   const [activeOrgId, setActiveOrgId] = useState("");
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
@@ -487,17 +495,32 @@ export function Sidebar({
     }
   }, []);
 
+  // A badge is a nudge, not a fact the page depends on: when the hub is not
+  // connected (503) or is down (502) the last known count simply stays.
+  const fetchItUnread = useCallback(async () => {
+    try {
+      const res = await fetch("/api/it-support/unread-count");
+      if (!res.ok) return;
+      const body = (await res.json()) as { data?: { unread?: number } } | null;
+      setItUnread(Number(body?.data?.unread) || 0);
+    } catch {
+      // silently ignore fetch errors
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount; pre-existing pattern, separate cleanup task
     fetchOrgs();
     fetchUnreadCount();
-  }, [fetchOrgs, fetchUnreadCount]);
+    fetchItUnread();
+  }, [fetchOrgs, fetchUnreadCount, fetchItUnread]);
 
   // Poll the unread-notifications count once a minute. useInterval pauses when
   // the tab is hidden (saves a request/min on idle pinned tabs) and clears on
   // unmount automatically.
   useInterval(() => {
     fetchUnreadCount();
+    fetchItUnread();
   }, 60_000);
 
   // P3.6 — load the current user's permission set so we can hide nav links
@@ -562,7 +585,13 @@ export function Sidebar({
     if (group.label === "SYSTEM") {
       const idx = items.findIndex((i) => i.name === "Settings");
       const at = idx === -1 ? items.length : idx;
-      items = [...items.slice(0, at), KPI_LINK, AGENTS_LINK, ...items.slice(at)];
+      items = [
+        ...items.slice(0, at),
+        KPI_LINK,
+        AGENTS_LINK,
+        { ...IT_SUPPORT_LINK, badge: itUnread },
+        ...items.slice(at),
+      ];
     }
     // Drop the items this user may not see, and their sub-items with them —
     // a parent that survives only to show a submenu of forbidden pages is
