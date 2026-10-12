@@ -78,6 +78,8 @@ export const NAV_RESOURCE: Record<string, string> = {
   // "/kpi" has no row on purpose (DEV-37, 2026-10-06): every login opens their
   // own card there. What is not theirs is refused by requireSuperAdmin on each
   // /api/kpi route, so a gate here would only hide a person's own KPIs.
+  // "/it-support" has no row for the same reason: every login reports issues
+  // and reads only its own tickets (the reporter comes off the session).
   "/bom": "bom",
   "/maintenance/sofa-combos": "sofa-combos",
 

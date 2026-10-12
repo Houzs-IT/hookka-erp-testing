@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-12 on branch `feat/it-support` (to `staging`)**: the new IT Support bullet at the end of Customers & Platform, read from `src/api/routes/it-support.ts`, `src/pages/it-support/index.tsx`, `src/components/layout/sidebar.tsx` and `src/dashboard-routes.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `fix/export-all-pages` (to `staging`)**: the data-grid export bullet (Listing → Excel date and money formats, status text), read from `src/lib/grid-export.ts` and `src/lib/export-report.ts`.
 > **Last verified: 2026-10-12 on branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281)**: the data-grid export bullet (`exportAllRows`, `filterGridRows` / `sortGridRows`, `src/lib/fetch-all-pages.ts`), read from those files.
 > **Last verified: 2026-10-12 on branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282)**: the customer credit gate gotcha (no check at dispatch any more), read from `src/api/routes/delivery-orders/_helpers.ts` `applyDeliveryOrderUpdate`. Nothing else re-checked.
@@ -1109,6 +1110,8 @@ that proves those locks can actually go red.
 **Start here:** For a customer-facing task open `src/pages/customers.tsx`; for users/RBAC/org/mailbox-scope open `src/pages/settings/Users.tsx`; for internal email open `src/pages/mail-center/index.tsx`.
 
 ---
+
+- **IT Support (2026-10-12).** `/it-support` → `src/pages/it-support/index.tsx` (one page, three views by query string: list, `?new=1`, `?ticket=HK-0001`; `?from=` pre-fills the page URL). API `src/api/routes/it-support.ts`, mounted at `/api/it-support` in `worker.ts`: `GET /tickets`, `GET /unread-count`, `GET /tickets/:code`, `POST /tickets`, `POST /tickets/:code/replies`, `POST /tickets/:code/confirm`, `GET /attachments/:id`. **No Hookka table**: every call is forwarded to the Houzs IT Hub (`IT_HUB_URL` + secret `IT_HUB_API_KEY`, both in `Env.Bindings`), which stores the tickets and files. Gotchas: (1) the reporter is `ctxGet(c, "userId")` and never comes from the request, the hub scopes every read to that id; (2) self-scoped like `/api/kpi/me`, so there is no `it-support` resource, no `NAV_RESOURCE` row and no route guard, and `audit-rbac.mjs` lists its 7 handlers as ungated (scanner limitation, see `RBAC-REMEDIATION.md`); (3) unset settings answer 503 and a hub failure 502, never an empty list, and a hub 401 (bad key) is mapped to 502 so the client does not treat it as a logged-out session; (4) the sidebar badge polls `/unread-count` each minute with the notifications poll. Test: `tests/it-support.test.mjs`.
 
 ## Planning (Production Planning / Scheduling / MRP / Lead Times)
 

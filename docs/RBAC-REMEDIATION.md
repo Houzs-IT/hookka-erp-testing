@@ -1,5 +1,6 @@
 # RBAC Remediation — current state and the way through
 
+> **Last verified: 2026-10-12** (branch `feat/it-support`, to `staging`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
 > **Last verified: 2026-09-30** (branch `feat/account-permissions-tab`) — added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `feat/permissions-tab-main`, ported from staging): added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
 >
@@ -155,6 +156,13 @@ entirely.
 (`WHERE id = ? AND userId = ?`) and the delete emits an audit row with `scope: "self"`.
 Self-scoped is the correct model for session management; a permission gate would be wrong
 here. Scanner limitation, confirmed by hand.
+
+**2b. `it-support.ts` is the same case — do not "fix" it either.** `audit-rbac.mjs` lists all 7
+`/api/it-support` handlers as ungated. Each one starts with `hubFor(c)`, which refuses a request
+with no session user (401) and sends that user's id to the IT Hub as `X-Reporter-Id`; the hub
+returns only that reporter's tickets. There is no cross-user read to gate and no id taken from
+the request (`tests/it-support.test.mjs` asserts both). Every login may report an issue, so a
+grantable resource here would only be a way to lock someone out of asking for help.
 
 **3. `working-hour-entries.ts` has already chosen its resource.** Every write in that file
 gates on `attendance:create` / `update` / `delete`, and `GET /nonprod-requests` on
