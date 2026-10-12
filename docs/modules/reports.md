@@ -1,6 +1,6 @@
 # Reports & Analytics — Module Guide
 
-> **Last verified: 2026-10-12** (branch `fix/export-excel-formats`): the `export-report.ts` anchors re-derived (`exportReportCsv` :37, `exportReportXlsx` :51, `exportWorkbookXlsx` :93, `exportReportPdf` :120) after `excelDateSerial` and the per-column Excel formats were added. Nothing else re-checked.
+> **Last verified: 2026-10-12** (branch `fix/export-all-pages`): the `export-report.ts` anchors re-derived (`exportReportCsv` :37, `exportReportXlsx` :51, `exportWorkbookXlsx` :93, `exportReportPdf` :120) after `excelDateSerial` and the per-column Excel formats were added. Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/compare-fabric-purchasing-tab`): the dashboard-overview.ts line anchors re-derived after new imports moved the handler. Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/batch-exports-from-houzs`): the `export-report.ts` anchors re-derived (`exportReportPdf` :96) after `exportWorkbookXlsx` (:69, several sheets in one file) was added. Nothing else re-checked.
 

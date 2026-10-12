@@ -1,6 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
-> **Last verified: 2026-10-12**: branch `fix/export-excel-formats`: C30 row 2 closed (a status column exports with spaces, as on screen). Nothing else re-checked.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages`: C30 row 2 closed (a status column exports with spaces, as on screen). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` **adds C31 — a list that shows one server page, read as if it were the whole list** (BUG-2026-10-12-281). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/bug87-auto-grn-read` adds C23 row 2 (purchase-invoices auto receipt id read snake_case only).
 > **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` **adds C30 — a list column whose screen value exists only in `render`, exported raw** (BUG-2026-10-12-278). Nothing else re-checked.
@@ -1869,7 +1869,7 @@ Test: `tests/worker-history-snapshot-fresh.test.mjs` (row 4).
 | # | where | state |
 |---|---|---|
 | 1 | Sales/Service Orders, Purchase Orders, GRN, Purchase Invoices, Delivery Orders, Consignment, Customers (list in BUG-2026-10-12-278) | ✅ on branch `fix/grid-export-computed-columns` (BUG-2026-10-12-278), not deployed |
-| 2 | status columns export the raw code (`IN_PRODUCTION`) where the screen swaps `_` for a space | ✅ on branch `fix/export-excel-formats`, `cellExportValue` does the same swap for `type: "status"` |
+| 2 | status columns export the raw code (`IN_PRODUCTION`) where the screen swaps `_` for a space | ✅ on branch `fix/export-all-pages`, `cellExportValue` does the same swap for `type: "status"` |
 
 Test: `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue".
 

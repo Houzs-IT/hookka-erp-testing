@@ -1,6 +1,6 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-12**: branch `fix/export-excel-formats` (to `staging`) closed item 3 of the list Export entry below.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
 > **Last verified: 2026-10-12**: branch `fix/bug87-po-overdue-stock-check` (to `staging`, BUG-87, BUG-2026-10-12-279) added below (its entry is the newest).
@@ -191,7 +191,7 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 1. ✅ Compared Hookka's list Export with the Houzs ERP one (answered in chat).
 2. ✅ Export of an unfiltered paged list (Sales, Purchase, GRN, Invoices, Delivery) now walks every page; Invoices search and filter no longer stop at 500.
-3. ✅ Excel: real date cells (dd/mm/yyyy) and `#,##0.00` money, plus status with spaces as on screen (branch `fix/export-excel-formats`).
+3. ✅ Excel: real date cells (dd/mm/yyyy) and `#,##0.00` money, plus status with spaces as on screen (branch `fix/export-all-pages`).
 4. ✅ Showed the one-row-per-line Detail Listing against Houzs's default layout (answered in chat).
 5. ⬜ Check on the staging site after deploy: download Delivery Orders and Sales Orders with more than one page and count rows.
 

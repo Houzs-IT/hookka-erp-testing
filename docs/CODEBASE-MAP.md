@@ -1,6 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
-> **Last verified: 2026-10-12 on branch `fix/export-excel-formats` (to `staging`)**: the data-grid export bullet (Listing → Excel date and money formats, status text), read from `src/lib/grid-export.ts` and `src/lib/export-report.ts`.
+> **Last verified: 2026-10-12 on branch `fix/export-all-pages` (to `staging`)**: the data-grid export bullet (Listing → Excel date and money formats, status text), read from `src/lib/grid-export.ts` and `src/lib/export-report.ts`.
 > **Last verified: 2026-10-12 on branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281)**: the data-grid export bullet (`exportAllRows`, `filterGridRows` / `sortGridRows`, `src/lib/fetch-all-pages.ts`), read from those files.
 > **Last verified: 2026-10-12 on branch `fix/credit-override-explicit-tick` (to `staging`, BUG-2026-10-12-280)**: the customer credit gate gotcha (override needs the exact tick, a module wildcard does not count), read from `src/api/lib/rbac.ts` `permitted()` and `src/lib/explicit-rights.ts`. Nothing else re-checked.
 > **Restamped 2026-10-12 on branch `fix/bug87-po-overdue-stock-check` (to `staging`):** the Procurement gotcha on PO-direct purchase invoices receiving their goods (BUG-2026-10-12-279), read from `src/api/routes/purchase-invoices.ts`. Nothing else re-checked.
