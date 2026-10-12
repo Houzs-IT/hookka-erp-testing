@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `fix/po-picker-duplicate-supplier-rows` (BUG-2026-10-12-276, to `main`) added item 7 to the BUG-98 to-main entry below.
 > **Last verified: 2026-10-09**: Journal Entries undone fold (#798) prod-verified.
 > **Last verified: 2026-10-09**: branch `feat/system-journal-undone-fold` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/po-picker-row-per-supplier` (BUG-98 follow-up, to `main`) added item 6 to the BUG-98 to-main entry below.
@@ -153,6 +154,7 @@ Ticket BUG-98 (reporter siti). Shipped to staging in #784 and #786; this brings 
 4. ⚪ Check on prod after deploy.
 5. 🔵 Follow-up (staging #790): with no supplier picked, each Select Materials row names the supplier Add will use ("+N more" when others sell it), or "No supplier linked".
 6. 🔵 Follow-up: with no supplier picked, a material sold by several suppliers shows one Select Materials row per supplier, each with its own price and Add, instead of one row with "+N more".
+7. 🔵 Fix (BUG-2026-10-12-276): the popup search stopped filtering after item 6, because a supplier listed twice for one material gave two rows the same key. Now one row per supplier.
 
 ## 2026-10-09 — ✅ Labour posting: EPF / SOCSO / EIS accrue on their own; system postings on Journal Entries (owner「这个post to GL 我在journal 看没有，然后epf, socso 那些也要accrual」→「EIS 单独记 0040，journal 也要显示，做」)(#785 1d7f7dce, prod-verified)
 
