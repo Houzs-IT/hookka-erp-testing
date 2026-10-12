@@ -1,6 +1,8 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
+> **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
@@ -196,6 +198,20 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 - Files: `index.html`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/components/BottomTabBar.tsx`, `src/pages/m/components/LeftRail.tsx`
 - Fix: Dynamic Island clipping (top), home indicator (bottom), landscape notch (left/right)
 - Status: in progress. `NavDrawer` left inset is not on this branch; do it on the merged branch.
+
+## 2026-10-12 — 🔵 IT Support: empty state as its own card (branch `feat/it-support-empty-card` → `staging`, local only)
+
+1. ✅ No tickets at all: a standalone rounded card (illustration, "No tickets yet", Report an issue). No grid, so no headers, search, Views, Columns or record count.
+2. ✅ One ticket or more: the grid with tabs, search, views, columns and paging, as before. Split into `EmptyState` and `TicketTable` in the page file.
+3. ✅ DataGrid `emptyMessage` back to `string` (the ReactNode use is gone).
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy with an account that has no tickets, then one that has some.
+
+## 2026-10-12 — 🔵 IT Support: list layout with status tabs and an empty state (branch `feat/it-support-list-layout` → `staging`, local only)
+
+1. ✅ All / Active / Resolved tabs with counts, in the grid toolbar left of Search / Views / Columns (new optional DataGrid prop `toolbarStart`).
+2. ✅ Empty list: illustration, "No tickets yet", a short line and a Report an issue button. An empty tab or search shows one plain line.
+3. ✅ Resolved tab holds Done-please-confirm, Closed and Rejected; Active holds the rest.
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy, desktop and a 320px phone width.
 
 ## 2026-10-12 — 🔵 IT Support: report form tweaks and a new attachment picker (branch `feat/it-support-form-tweaks` → `staging`, local only)
 

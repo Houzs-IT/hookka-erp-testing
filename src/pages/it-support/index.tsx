@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { useInterval } from "@/lib/scheduler";
@@ -517,33 +518,58 @@ function Ticket({ code, onChanged }: { code: string; onChanged: () => void }) {
   );
 }
 
-// ---- Page ---------------------------------------------------------------------
-export default function ItSupport() {
-  const [params, setParams] = useSearchParams();
-  const ticketCode = params.get("ticket") ?? "";
-  const isNew = params.get("new") === "1";
-  const fromUrl = params.get("from") ?? "";
+// "resolved" (IT says done, waiting on the reporter) counts as Resolved with closed and rejected.
+const DONE: Status[] = ["resolved", "closed", "rejected"];
+type ListTab = "all" | "active" | "resolved";
 
-  const [rows, setRows] = useState<TicketRow[] | null>(null);
-  const [listError, setListError] = useState("");
+function NoTicketsArt() {
+  return (
+    <svg viewBox="0 0 180 150" className="h-36 w-44" aria-hidden="true">
+      <ellipse cx="88" cy="84" rx="70" ry="58" fill="#F1E4CC" />
+      <g transform="rotate(-8 84 78)" stroke="#6B5C32" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="46" y="30" width="76" height="98" rx="8" fill="#FBF6EE" />
+        <rect x="68" y="22" width="32" height="16" rx="5" fill="#C9A86A" />
+        <path d="M58 58l5 5 9-10M58 82l5 5 9-10M58 106l5 5 9-10" fill="none" />
+        <path d="M80 58h28M80 82h28M80 106h20" stroke="#D9BE8C" strokeWidth="5" />
+      </g>
+      <g transform="translate(-12 4) rotate(40 132 82)" stroke="#6B5C32" strokeWidth="3" strokeLinejoin="round">
+        <rect x="126" y="72" width="12" height="54" rx="6" fill="#C9A86A" />
+        <path d="M120 58a14 14 0 1 0 24 0v12h-24z" fill="#C9A86A" />
+        <rect x="127" y="50" width="10" height="14" fill="#F1E4CC" stroke="none" />
+      </g>
+      <path d="M140 22l4-8M152 32l8-4M150 46h8" stroke="#C9A86A" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
 
-  const loadList = useCallback(async () => {
-    const res = await api<{ tickets: TicketRow[] }>("/tickets");
-    if (res.ok) {
-      setRows(res.data.tickets);
-      setListError("");
-    } else {
-      setListError(res.error);
-    }
-  }, []);
+// Only when the server answered with no tickets at all: no grid, no toolbar, no headers.
+function EmptyState({ onReport }: { onReport: () => void }) {
+  return (
+    <section aria-labelledby="it-support-empty" className="rounded-xl border border-[#E2DDD8] bg-white px-6 py-12 text-center sm:py-16">
+      <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
+        <NoTicketsArt />
+        <h2 id="it-support-empty" className="text-xl font-bold text-[#1F1D1B]">No tickets yet</h2>
+        <p className="text-sm text-[#6B7280]">
+          Need help with hardware, software, or access permissions? Submit a request and our IT team will pick it up.
+        </p>
+        <Button variant="primary" onClick={onReport}>
+          <Plus className="h-4 w-4" />
+          Report an issue
+        </Button>
+      </div>
+    </section>
+  );
+}
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount; same pattern as the sidebar
-    loadList();
-  }, [loadList]);
-  useInterval(loadList, 60_000);
+function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code: string) => void }) {
+  const [tab, setTab] = useState<ListTab>("all");
 
-  const open = useCallback((next: Record<string, string>) => setParams(next), [setParams]);
+  // Counts come from every ticket, never from what the search box left.
+  const byTab = useMemo(() => {
+    const all = rows ?? [];
+    const resolved = all.filter((r) => DONE.includes(r.status));
+    return { all, active: all.filter((r) => !DONE.includes(r.status)), resolved };
+  }, [rows]);
 
   const columns = useMemo<Column<TicketRow>[]>(
     () => [
@@ -577,6 +603,60 @@ export default function ItSupport() {
     ],
     [],
   );
+
+
+  return (
+    <DataGrid
+      gridId="it-support-my-tickets"
+      keyField="code"
+      columns={columns}
+      data={byTab[tab]}
+      loading={rows === null}
+      onRowClick={(r) => onOpen(r.code)}
+      toolbarStart={
+        <Tabs
+          className="-my-1.5 border-b-0"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "all", label: "All", count: byTab.all.length },
+            { key: "active", label: "Active", count: byTab.active.length },
+            { key: "resolved", label: "Resolved", count: byTab.resolved.length },
+          ]}
+        />
+      }
+      emptyMessage={{ all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab]}
+    />
+  );
+}
+
+// ---- Page ---------------------------------------------------------------------
+export default function ItSupport() {
+  const [params, setParams] = useSearchParams();
+  const ticketCode = params.get("ticket") ?? "";
+  const isNew = params.get("new") === "1";
+  const fromUrl = params.get("from") ?? "";
+
+  const [rows, setRows] = useState<TicketRow[] | null>(null);
+  const [listError, setListError] = useState("");
+
+  const loadList = useCallback(async () => {
+    const res = await api<{ tickets: TicketRow[] }>("/tickets");
+    if (res.ok) {
+      setRows(res.data.tickets);
+      setListError("");
+    } else {
+      setListError(res.error);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount; same pattern as the sidebar
+    loadList();
+  }, [loadList]);
+  useInterval(loadList, 60_000);
+
+  const open = useCallback((next: Record<string, string>) => setParams(next), [setParams]);
 
   if (isNew) {
     return (
@@ -632,17 +712,11 @@ export default function ItSupport() {
           </CardContent>
         </Card>
       )}
-      {/* While the list has never loaded there is nothing true to draw: no grid, so no "no tickets" line. */}
-      {(rows !== null || !listError) && (
-        <DataGrid
-          gridId="it-support-my-tickets"
-          keyField="code"
-          columns={columns}
-          data={rows ?? []}
-          loading={rows === null}
-          onRowClick={(r) => open({ ticket: r.code })}
-          emptyMessage="You have not reported anything yet. Use Report an issue when something is wrong."
-        />
+      {/* While the list has never loaded there is nothing true to draw, so no empty state either. */}
+      {rows !== null && rows.length === 0 ? (
+        <EmptyState onReport={() => open({ new: "1" })} />
+      ) : (
+        (rows !== null || !listError) && <TicketTable rows={rows} onOpen={(code) => open({ ticket: code })} />
       )}
     </div>
   );
