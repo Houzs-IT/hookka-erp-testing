@@ -799,6 +799,10 @@ export default function SalesPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: SalesOrder) => {
+        const code = row.salesOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: SalesOrder) => {
         const code = row.salesOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -826,6 +830,7 @@ export default function SalesPage() {
       type: "number",
       width: "50px",
       sortable: true,
+      exportValue: (row: SalesOrder) => row.items.length,
       render: (_value, row) => <span>{row.items.length}</span>,
     },
     {
@@ -835,6 +840,7 @@ export default function SalesPage() {
       width: "55px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: SalesOrder) => row.items.reduce((s, i) => s + i.quantity, 0),
       render: (_value: unknown, row: SalesOrder) => {
         const totalQty = row.items.reduce((s, i) => s + i.quantity, 0);
         return <span>{totalQty}</span>;
@@ -948,6 +954,8 @@ export default function SalesPage() {
             label: "Current Dept",
             type: "text" as const,
             width: "120px",
+            exportValue: (row: SalesOrder) =>
+              aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []).dept ?? "",
             render: (_value: unknown, row: SalesOrder) => {
               const agg = aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []);
               return agg.dept ? (
@@ -962,6 +970,8 @@ export default function SalesPage() {
             label: "Progress",
             type: "number" as const,
             width: "130px",
+            exportValue: (row: SalesOrder) =>
+              aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []).progress ?? null,
             render: (_value: unknown, row: SalesOrder) => {
               const agg = aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []);
               if (agg.progress == null)

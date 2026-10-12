@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` (to `staging`, BUG-2026-10-12-278) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/po-picker-show-supplier` (BUG-98 follow-up to `staging`) added item 5 to the BUG-98 entry below.
 > **Last verified: 2026-10-09**: branch `fix/po-line-material-supplier-only` (BUG-98 follow-up to `staging`) added item 4 to the BUG-98 entry below.
 > **Last verified: 2026-10-09**: branch `feat/po-supplier-combobox-material-modal` (BUG-98 to `staging`) added below (its entry is the newest).
@@ -181,6 +182,14 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 List Export: Items showed "[object Object]" and Qty was blank (branch `fix/grid-export-computed-columns` → `staging`, BUG-2026-10-12-278)
+
+1. ✅ Listed every export button on staging (answered in chat).
+2. ✅ Sales Orders Listing export: Items and Qty now match the screen.
+3. ✅ Swept the other 11 export grids; six pages had the same gap (ids, sen, blanks, `[object Object]`), all fixed with `exportValue`.
+4. ⬜ Check the downloaded file on the staging site after deploy.
+5. ⬜ `main` has the same Sales Orders bug; a separate PR to `main` waits on the owner.
 
 ## 2026-10-09 — 🔵 BUG-98: New Purchase Order supplier search box and material picker popup (branch `feat/po-supplier-combobox-material-modal` → `staging`)
 
