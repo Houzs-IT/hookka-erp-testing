@@ -1,5 +1,6 @@
 # Employees & Payroll — Module Guide
 
+> **Last verified: 2026-10-12** (branch `feat/labor-cost-incl-payroll-card`): `EmployeesPage` / `LeaveManagementTab` / `AttendanceTab` anchors re-derived after the Labor Cost tab grew a card ("Labor Cost incl. EPF & Allowances"). Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `fix/ot-hourly-rate-display`): the hourly-rate gotcha now names the seeded ÷9 rule from 2026-10-01 (`seedHoursOnlyRule`). Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `fix/ot-hourly-rate-display`, to `main`, BUG-2026-10-08-269): the hourly-rate rule in Gotchas (one rounded rate, `payrollHourRateSen`) and the `PayrollTab` / `LaborCostTab` / `LeaveManagementTab` / `AttendanceTab` / `EmployeesPage` anchors re-derived from the source. Nothing else re-checked.
 > **Last verified: 2026-10-02** (branch `feat/dev31-worker-dept-hours-main`): DEV-31 to main, the `worker.ts` / `punch-autofill.ts` / `dept-scan-split.ts` anchors re-read on the merged tree. Nothing else re-checked.
@@ -63,7 +64,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11767` | 9-tab admin host (default export, at file tail) |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11858` | 9-tab admin host (default export, at file tail) |
 | `WorkingHoursTab` | `src/pages/employees.tsx:1032` | Tab 1 — flat working-hours grid |
 | `EmployeeMasterTab` | `src/pages/employees.tsx:2427` | Tab 2 — worker master + salary |
 | `EfficiencyOverviewTab` | `src/pages/employees.tsx:3886` | Tab 3 — efficiency overview |
@@ -71,7 +72,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `EmployeeDetailTab` | `src/pages/employees.tsx:5430` | Tab 4 — guard-unmounted detail |
 | `PayrollTab` | `src/pages/employees.tsx:6810` | Tab 5 — payroll drafts |
 | `LaborCostTab` | `src/pages/employees.tsx:8755` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10401 / 11535` | Leave + attendance tabs |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10492 / 11626` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:557` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:408 / 382` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |
