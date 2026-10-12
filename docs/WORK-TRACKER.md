@@ -1,6 +1,9 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
+> **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
@@ -193,6 +196,43 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 - Files: `index.html`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/components/BottomTabBar.tsx`, `src/pages/m/components/LeftRail.tsx`
 - Fix: Dynamic Island clipping (top), home indicator (bottom), landscape notch (left/right)
 - Status: in progress. `NavDrawer` left inset is not on this branch; do it on the merged branch.
+
+## 2026-10-12 — 🔵 IT Support: report form tweaks and a new attachment picker (branch `feat/it-support-form-tweaks` → `staging`, local only)
+
+1. ✅ Type options read Bug / Development (stored values unchanged).
+2. ✅ How urgent? offers High / Medium / Low. `urgent` is still labelled so an older ticket reads.
+3. ✅ "When did it happen?" removed; `occurred_at` is the moment Send is pressed.
+4. ✅ The form button reads Send (Cancel kept, the reply box keeps Send reply).
+5. ✅ Attachments (form and reply box): browse, drag-and-drop, Ctrl+V / Cmd+V paste; type and 10 MB checked on add, max 5; image thumbnails with a full-size preview, PDF / video show an icon and the extension; preview URLs freed on remove.
+6. ⬜ NOT yet seen in a browser. Check on the staging site after deploy: paste, drop, remove, preview, then send a ticket and confirm it reaches the hub with its files.
+
+## 2026-10-12 — 🔵 Credit block: drivers cannot dispatch for a customer with overdue bills (branch `fix/credit-no-dispatch-check` → `staging`, BUG-2026-10-12-282)
+
+1. ✅ Explained why the phone dispatch was blocked (overdue bills, not the credit limit) and how the NET30 due date is counted (answered in chat).
+2. ✅ Owner chose no credit check at dispatch: an existing DO can always leave, office button and phone scan alike. The check stays at DO create and packing-list-first. Production had the block from #808, reverted in #809.
+3. ⬜ Check on the staging site after deploy: dispatch a DO for a customer with overdue bills from the phone scan page.
+
+## 2026-10-12 — 🔵 IT Support: report an issue to the Houzs IT Hub from inside Hookka (branch `feat/it-support` → `staging`, local only)
+
+Source: Houzs IT Hub ticket DEV-35 ("To Create Centralise IT system"). Tickets live in the hub (support.houzscentury.com); Hookka is its first reporting system.
+1. ✅ `src/api/routes/it-support.ts`: 7 handlers proxying to the hub server to server. Reporter = the session's user, reporter name / email / department from `users`. 503 when `IT_HUB_URL` / `IT_HUB_API_KEY` are unset, 502 when the hub is down or refuses the key.
+2. ✅ `/it-support` page (`src/pages/it-support/index.tsx`): my tickets, Report an issue form with screenshots, ticket conversation, reply, confirm the fix. Sidebar link for every login with an unread badge.
+3. ✅ `tests/it-support.test.mjs` (14 cases), `docs/API.md` regenerated, tsc strict shows only the 2 errors already on `staging` (`dashboard-overview.ts:2536`, `sales/index.tsx:1748`).
+4. ⬜ NOT yet seen in a browser. This checkout has no `.dev.vars`, so the page has only been type-checked and linted. Run it locally against the sandbox before pushing.
+5. ⬜ Owner: issue Hookka's hub key (`node scripts/issue-api-key.mjs HK` in the hub repo) and set `IT_HUB_URL` + `IT_HUB_API_KEY` on Pages Preview (staging), later Production.
+6. ⬜ End to end on staging: report in Hookka → pick up in the hub → reply → reporter sees it → Done → Confirm.
+7. ⬜ Optional, from the hub notes: a "Report issue" button in the top bar that opens `/it-support?new=1&from=<current page>` (the page already reads `from`).
+
+## 2026-10-12 — 🔵 /m phone navigation shell: 4 flat tabs + hamburger + left drawer (branch `design/mobile-iPad`, local only, awaiting owner review)
+
+Phone mode only (`layout.mode === "phone"`, < 720). iPad rail / breakpoints / permissions / API untouched.
+1. Bottom nav: 4 flat tabs Home · Sales · Delivery · Procurement; raised More removed; active state matches by path segment and no tab lights up on non-tab routes.
+2. Hamburger: flat icon, no box. Home (replaces the brand tile on phone only) + L1 list headers (`MobileHeader menu`) + bespoke headers.
+3. Left drawer: 324px, slides from left, profile + search pinned, grouped modules, theme toggle, install, desktop link, sign out.
+4. More content extracted to a shared component; `/m/more` route kept and renders the same content.
+5. Permissions: the existing `navGate` / `isNavAllowed` filter only.
+6. A11y: Escape / backdrop / close button, focus trap + restore, body scroll lock, safe areas, labels.
+7. Validation: tsc strict, tests, regression test `tests/mobile-nav-drawer.test.mjs`.
 
 ## 2026-10-12 — 🔵 List Export compared with Houzs: all pages, Excel formats, line layout (branch `fix/export-all-pages` → `staging`, BUG-2026-10-12-281)
 

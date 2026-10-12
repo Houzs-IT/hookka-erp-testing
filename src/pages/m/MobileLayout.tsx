@@ -11,16 +11,19 @@
 //   • centers content to ~414px (phone width) on any viewport,
 //   • paints the paper background + system font,
 //   • renders its own nested <Routes> for the /m/* screens,
-//   • pins the 5-item BottomTabBar (Home · Sales · Production · Procure · More).
+//   • on phones pins the 4-tab BottomTabBar (Home · Sales · Delivery ·
+//     Procurement) and owns the left NavDrawer opened by the header
+//     hamburger; on tablets renders the LeftRail instead (unchanged).
 //
 // Phase 1: Home + More + placeholders. Phase 2 (this): every module's L1 list
 // is wired to <ModuleListScreen> driven by its ModuleConfig (config-driven —
 // see src/pages/m/config/modules.ts). L2 detail routes (/m/<slug>/:id) land on
 // a ComingSoon detail until Phase 3 supplies the real detail screen.
 // ===========================================================================
-import { lazy, Suspense, useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { Route, Routes } from "react-router-dom";
-import { BottomTabBar, LeftRail } from "./components";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { BottomTabBar, LeftRail, NavDrawer } from "./components";
+import { NavDrawerProvider } from "./lib/nav-drawer";
 import { M, M_FONT, M_MAX_WIDTH } from "./theme";
 import MobileHome from "./screens/Home";
 import MobileMore from "./screens/More";
@@ -145,8 +148,25 @@ export default function MobileLayout() {
     });
   };
 
+  // Phone left drawer (hamburger → NavDrawer). Closes on any route change
+  // (incl. browser back) and whenever the shell leaves phone mode, so a
+  // rotated/resized device never keeps a stale overlay over the tablet rail.
+  const phone = layout.mode === "phone";
+  const { pathname } = useLocation();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname, phone]);
+  const drawer = useMemo(
+    () => (phone ? { isOpen: drawerOpen, open: openDrawer, close: closeDrawer } : null),
+    [phone, drawerOpen, openDrawer, closeDrawer],
+  );
+
   return (
     <ResponsiveLayoutProvider value={layout}>
+      <NavDrawerProvider value={drawer}>
       {/* Safe-area left/right (landscape notch / home indicator). The padding sits
           on this outer box so the measured shell below sees only the usable width,
           which keeps the layout mode and canSplitDetail honest. Zero on iPad/SE. */}
@@ -255,8 +275,10 @@ export default function MobileLayout() {
           </Routes>
         </div>
         {layout.hasBottomNavigation ? <BottomTabBar /> : null}
+        {phone ? <NavDrawer open={drawerOpen} onClose={closeDrawer} /> : null}
       </div>
       </div>
+      </NavDrawerProvider>
     </ResponsiveLayoutProvider>
   );
 }

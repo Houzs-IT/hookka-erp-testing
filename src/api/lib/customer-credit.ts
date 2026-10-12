@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // customer-credit.ts — the ONE customer credit gate (BUG-34, 2026-09-28).
 //
-// Two rules block goods leaving for a customer (DO create, DO dispatch,
-// consignment note):
+// Two rules block a new DO for a customer (DO create, packing-list-first);
+// not dispatch (BUG-2026-10-12-282), not consignment notes:
 //
 //   1. PAYMENT_OVERDUE — the customer has an issued, unpaid invoice past the
 //      due date of THEIR credit term (src/lib/terms.ts dueDateForTerms: NET30

@@ -321,7 +321,7 @@ export function WarehouseScreen() {
 
   return (
     <>
-      <MobileHeader title="Warehouse" onBack={() => navigate(-1)} />
+      <MobileHeader title="Warehouse" onBack={() => navigate(-1)} menu />
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
 
       <div style={{ padding: "12px 18px 24px" }}>
