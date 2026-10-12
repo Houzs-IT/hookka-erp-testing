@@ -276,3 +276,30 @@ test("no export path re-fetches around the customer-scope middleware", () => {
     assert.ok(scope.includes(`"${p}"`), `${p} must stay a scoped prefix`);
   }
 });
+
+// Columns whose screen value exists only inside `render` (an array, a field
+// that is not on the row, an id or code turned into a name, sen shown as RM).
+// The export ignores render, so each needs an exportValue or it ships
+// "[object Object]", a blank, an id or a sen integer. (BUG-2026-10-12-278)
+const RENDER_ONLY_COLUMNS = {
+  "src/pages/sales/index.tsx": ["salesOrgCode", "items", "totalQty", "currentDept", "poProgress"],
+  "src/pages/procurement/index.tsx": ["purchaseOrgCode", "supplierOtr", "orderedQty", "outstandingQty"],
+  "src/pages/procurement/grn.tsx": ["purchaseOrgCode", "arrival_state"],
+  "src/pages/procurement/pi.tsx": ["purchaseOrgCode", "status"],
+  "src/pages/delivery/index.tsx": ["_packingList", "dispatchDate", "customerCount", "hubBranch", "salesOrderNos", "valueSen", "status", "driverId"],
+  "src/pages/consignment/index.tsx": ["items", "totalQty", "outstanding"],
+  "src/pages/customers.tsx": ["salespersonUserId", "deliveryHubs", "contactName", "phone", "outstandingSen", "availableSen"],
+};
+
+for (const [file, keys] of Object.entries(RENDER_ONLY_COLUMNS)) {
+  test(`${file}: render-only columns carry an exportValue`, () => {
+    const src = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+    for (const k of keys) {
+      // A key can repeat in another grid on the same page; the exported
+      // definition is the one with an exportValue before its render.
+      const defs = src.split(`key: "${k}"`).slice(1).map((s) => s.split("render:")[0]);
+      assert.ok(defs.length > 0, `${k} column not found`);
+      assert.ok(defs.some((d) => d.includes("exportValue:")), `${k} has no exportValue`);
+    }
+  });
+}

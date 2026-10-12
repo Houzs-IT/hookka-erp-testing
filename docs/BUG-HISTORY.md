@@ -1,6 +1,7 @@
 # Bug History
 
 > **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-278 (branch `fix/grid-export-computed-columns`, to staging; 277 is staging's, 276 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-277 (branch `fix/credit-overdue-skip-pre-opening`, to staging; 273 to 276 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-09**: BUG-2026-10-09-272 follow-up (branch `fix/worker-i18n-single-words`, to staging then main): single-word worker labels translated; a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-272 (branch `fix/worker-i18n-popups-and-date`, to staging then main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -120,6 +121,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-12-278 — List Export wrote "[object Object]" for Items, blanks for Qty, and ids / sen in other columns `ui-frontend` `exports` `C30` 🟡
+
+🟡 **Fixed on branch** (`fix/grid-export-computed-columns` → `staging`). Found on the Sales Orders Listing → Excel export.
+
+**Symptom.** Sales Orders export: Items showed `[object Object],[object Object]` and Qty was empty, while the screen shows a count and a total.
+
+**Root cause.** `cellExportValue` (`src/lib/grid-export.ts`) uses `exportValue`, else `filterAccessor`, else the raw value at the column key. It never sees `render`. Items is keyed on the `items` array and shows its length only in render; `totalQty` is not a field on the row at all. A sweep of the 12 export grids found the same gap on six pages: Sales/Service Orders (Company, Items, Qty, Current Dept, Progress), Purchase Orders (Purchase co, Supplier OTR%, Ordered, Outstanding), GRN (Purchase co, Arrival: `NOT_ARRIVED` shows as "Planning"), Purchase Invoices (Purchase co, Status: legacy values show as CONFIRMED), Delivery Orders (Packing List, Dispatch Date fallback, Customers, State, Sales Orders, Amount exported in sen, Status label, Transport Co. exported as the provider id, plus two headerless columns from `_select` / `_view`), Consignment (Items, Qty, Outstanding) and Customers (Salesperson exported as a user id, Delivery Hubs as `[object Object]`, PIC, PIC Contact, Outstanding in sen, Available blank).
+
+**Fix.** Each of those columns gets an `exportValue` that returns what its render shows, as plain text or a number (money as RM). `buildListingAoa` also drops `_select` and `_view`. Left as is: status columns export the raw code (`IN_PRODUCTION`, screen shows "IN PRODUCTION"), and SO Outstanding exports its stage bucket via the existing `filterAccessor`.
+
+**Regression.** `tests/grid-export.test.mjs` (array-keyed and render-only columns) and `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue" (7 pages; all 7 fail on the old pages). Not yet verified on the staging site.
 
 ---
 
