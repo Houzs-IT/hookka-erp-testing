@@ -82,15 +82,23 @@ const STATUS_LABEL: Record<Status, string> = {
   rejected: "Rejected",
 };
 
-const STATUS_TONE: Record<Status, string> = {
-  open: "bg-[#F0ECE9] text-[#4B4540] border-[#E2DDD8]",
-  in_progress: "bg-blue-50 text-blue-700 border-blue-200",
-  on_hold: "bg-[#F5F2ED] text-[#6B5C32] border-[#E2DDD8]",
-  testing: "bg-violet-50 text-violet-700 border-violet-200",
-  waiting_reporter: "bg-amber-50 text-amber-800 border-amber-200",
-  resolved: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  closed: "bg-[#F0ECE9] text-[#6B7280] border-[#E2DDD8]",
-  rejected: "bg-red-50 text-red-700 border-red-200",
+// Chip colours, then the dot inside the chip.
+const STATUS_TONE: Record<Status, [string, string]> = {
+  open: ["bg-blue-50 text-blue-700 border-blue-200", "bg-blue-600"],
+  in_progress: ["bg-amber-50 text-amber-700 border-amber-200", "bg-amber-500"],
+  on_hold: ["bg-slate-100 text-slate-600 border-slate-200", "bg-slate-400"],
+  testing: ["bg-violet-50 text-violet-700 border-violet-200", "bg-violet-500"],
+  waiting_reporter: ["bg-orange-50 text-orange-700 border-orange-200", "bg-orange-500"],
+  resolved: ["bg-emerald-50 text-emerald-700 border-emerald-200", "bg-emerald-500"],
+  closed: ["bg-slate-100 text-slate-600 border-slate-200", "bg-slate-500"],
+  rejected: ["bg-rose-50 text-rose-700 border-rose-200", "bg-rose-500"],
+};
+
+const PRIORITY_TONE: Record<string, string> = {
+  urgent: "bg-rose-100 text-rose-800 border-rose-300 font-semibold",
+  high: "bg-rose-50 text-rose-700 border-rose-200 font-semibold",
+  medium: "bg-amber-50 text-amber-700 border-amber-200 font-medium",
+  low: "bg-slate-100 text-slate-600 border-slate-200 font-medium",
 };
 
 const PRIORITY_LABEL: Record<string, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
@@ -106,11 +114,33 @@ const FIELD =
 
 function StatusChip({ status }: { status: Status }) {
   return (
-    <span className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_TONE[status] ?? STATUS_TONE.open)}>
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium", (STATUS_TONE[status] ?? STATUS_TONE.open)[0])}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", (STATUS_TONE[status] ?? STATUS_TONE.open)[1])} aria-hidden="true" />
       {STATUS_LABEL[status] ?? status}
     </span>
   );
 }
+
+function PriorityChip({ priority }: { priority: string }) {
+  return (
+    <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-xs", PRIORITY_TONE[priority] ?? PRIORITY_TONE.low)}>
+      {PRIORITY_LABEL[priority] ?? priority}
+    </span>
+  );
+}
+
+function initials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+}
+
+// The shared grid paints its own beige toolbar, header and zebra rows. These
+// descendant rules restyle them for this table only; every other list is untouched.
+const TABLE_SKIN = [
+  "overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm",
+  "[&>div>div:first-child]:rounded-none [&>div>div:first-child]:border-0 [&>div>div:first-child]:bg-white [&>div>div:first-child]:px-3",
+  "[&_thead_tr]:bg-slate-50 [&_thead_th]:px-4 [&_thead_th]:py-3 [&_thead_th]:text-xs [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-wider [&_thead_th]:text-slate-500",
+  "[&_tr]:border-slate-200 [&_tbody_tr]:bg-white [&_tbody_tr]:text-sm [&_tbody_tr]:text-slate-700 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-slate-50/80 [&_tbody_td]:px-4 [&_tbody_td]:py-3",
+].join(" ");
 
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -575,19 +605,19 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
     () => [
       {
         key: "code", label: "Ticket", width: "110px", type: "docno", sortable: true,
-        render: (_v, r) => <span className={cn("font-mono", r.unread && "font-semibold")}>{r.code}</span>,
+        render: (_v, r) => <span className="whitespace-nowrap font-semibold text-slate-900">{r.code}</span>,
       },
       {
         key: "title", label: "Issue", sortable: true,
         render: (_v, r, _i, highlight) => (
-          <span className={cn(r.unread && "font-semibold")}>
+          <span className={cn("text-slate-800", r.unread && "font-semibold text-slate-900")}>
             {highlight(r.title)}
-            {r.unread && <span className="ml-2 rounded-full bg-[#6B5C32] px-2 py-0.5 text-xs font-medium text-white">New reply</span>}
+            {r.unread && <span className="ml-2 rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white">New reply</span>}
           </span>
         ),
       },
       {
-        key: "status", label: "Status", width: "190px", sortable: true,
+        key: "status", label: "Status", width: "180px", sortable: true,
         filterAccessor: (r) => STATUS_LABEL[r.status] ?? r.status,
         exportValue: (r) => STATUS_LABEL[r.status] ?? r.status,
         render: (_v, r) => <StatusChip status={r.status} />,
@@ -596,37 +626,57 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
         key: "priority", label: "Urgency", width: "110px", sortable: true,
         sortAccessor: (r) => ["urgent", "high", "medium", "low"].indexOf(r.priority),
         filterAccessor: (r) => PRIORITY_LABEL[r.priority] ?? r.priority,
-        render: (_v, r) => PRIORITY_LABEL[r.priority] ?? r.priority,
+        exportValue: (r) => PRIORITY_LABEL[r.priority] ?? r.priority,
+        render: (_v, r) => <PriorityChip priority={r.priority} />,
       },
-      { key: "assignee_name", label: "Handled by", width: "150px", sortable: true, render: (v) => v || "Not picked up yet" },
-      { key: "updated_at", label: "Last update", width: "170px", sortable: true, render: (v) => formatDateTime(String(v)) },
+      {
+        key: "assignee_name", label: "Handled by", width: "190px", sortable: true,
+        exportValue: (r) => r.assignee_name || "Not picked up yet",
+        render: (_v, r) =>
+          r.assignee_name ? (
+            <span className="inline-flex items-center gap-2 whitespace-nowrap font-medium text-slate-800">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700" aria-hidden="true">
+                {initials(r.assignee_name)}
+              </span>
+              {r.assignee_name}
+            </span>
+          ) : (
+            <span className="text-sm italic text-slate-400">Not picked up yet</span>
+          ),
+      },
+      {
+        key: "updated_at", label: "Last update", width: "170px", sortable: true,
+        render: (v) => <span className="whitespace-nowrap text-slate-500">{formatDateTime(String(v))}</span>,
+      },
     ],
     [],
   );
 
 
   return (
-    <DataGrid
-      gridId="it-support-my-tickets"
-      keyField="code"
-      columns={columns}
-      data={byTab[tab]}
-      loading={rows === null}
-      onRowClick={(r) => onOpen(r.code)}
-      toolbarStart={
-        <Tabs
-          className="-my-1.5 border-b-0"
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { key: "all", label: "All", count: byTab.all.length },
-            { key: "active", label: "Active", count: byTab.active.length },
-            { key: "resolved", label: "Resolved", count: byTab.resolved.length },
-          ]}
-        />
-      }
-      emptyMessage={{ all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab]}
-    />
+    <div className={TABLE_SKIN}>
+      <DataGrid
+        gridId="it-support-my-tickets"
+        keyField="code"
+        columns={columns}
+        data={byTab[tab]}
+        loading={rows === null}
+        onRowClick={(r) => onOpen(r.code)}
+        toolbarStart={
+          <Tabs
+            className="-my-1.5 border-b-0"
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { key: "all", label: "All", count: byTab.all.length },
+              { key: "active", label: "Active", count: byTab.active.length },
+              { key: "resolved", label: "Resolved", count: byTab.resolved.length },
+            ]}
+          />
+        }
+        emptyMessage={{ all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab]}
+      />
+    </div>
   );
 }
 
