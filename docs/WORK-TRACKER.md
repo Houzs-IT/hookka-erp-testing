@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: running-month labour to date (#818) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/pnl-running-month-labour-to-date` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: Labor Cost incl. EPF & Allowances card (#814) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/labor-cost-incl-payroll-card` (to `main`) added below (its entry is the newest).
@@ -130,18 +131,21 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
-## 2026-10-12 — 🔵 P&L + finance dashboard: the running month's labour is labour TO DATE (owner「然后我任何的 payroll 还没 confirm 都拿这个新卡显示的数据可以吗？就算我的 pnl, dash board 这些」→「做」)(branch `feat/pnl-running-month-labour-to-date` → `main`)
+## 2026-10-12 — ✅ P&L + finance dashboard: the running month's labour is labour TO DATE (owner「然后我任何的 payroll 还没 confirm 都拿这个新卡显示的数据可以吗？就算我的 pnl, dash board 这些」→「做」)(#818 2108559e, prod-verified)
 
-1. 🔵 The month still running carries the Labor Cost page's "Labor Cost incl. EPF & Allowances" figure on the P&L
+1. ✅ The month still running carries the Labor Cost page's "Labor Cost incl. EPF & Allowances" figure on the P&L
    (report-layer labour) instead of a whole month of draft / projected payroll against a part-month of sales — split by
    each worker's home department and EPF / SOCSO / EIS, like a finished month. Pure core `src/lib/labour-to-date.ts`
    (mirrors the card line for line; the split is trued up to the card's total), loader `src/api/lib/labour-to-date.ts`.
-2. 🔵 Finance dashboard: the Production / Non-Production Salary stacks for the running month use the same to-date
+2. ✅ Finance dashboard: the Production / Non-Production Salary stacks for the running month use the same to-date
    figures (per home department; per worker for the hours share). Payload `v16`.
-3. 🔵 Unchanged: finished months (payslips), months recorded in the ledger (the ledger), the Labour post, the
+3. ✅ Unchanged: finished months (payslips), months recorded in the ledger (the ledger), the Labour post, the
    Employees module (owner: not this work's — the card itself is untouched). `labour-projection` now also returns
    its per-worker records (`projectedPayslipsForMonth`); its per-department figure is their sum.
-4. ⚪ Check on prod after deploy.
+4. ✅ Prod (2026-10-12, read-only): the running month's P&L direct labour equals the Labor Cost card to the sen (EPF /
+   SOCSO / EIS on their own lines); the earlier months' direct labour is unchanged; the dashboard's Production Salary
+   for the running month equals the same figure and its Non-Production stack follows; earlier months unchanged.
+   Before deploy, the pure core run in the browser on production data had given the card's figure to the sen.
 
 ## 2026-10-12 — ✅ Labor Cost vs Revenue: a "Labor Cost incl. EPF & Allowances" card (owner「如果我要看到今天的工资包括津贴、雇主 EPF/SOCSO/EIS、缺勤和扣钱的差价，我哪里可以看到？」→ method B →「原本的没有碰到对吗？我只是多一个 card 罢了是吗？」→「做」)(#814 97a8d568, prod-verified)
 
