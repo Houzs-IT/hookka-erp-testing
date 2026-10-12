@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
@@ -186,6 +187,12 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 /m phone shell safe-area fix (viewport-fit + 4-side insets) (branch `design/safe-area-fix`)
+
+- Files: `index.html`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/components/BottomTabBar.tsx`, `src/pages/m/components/LeftRail.tsx`
+- Fix: Dynamic Island clipping (top), home indicator (bottom), landscape notch (left/right)
+- Status: in progress. `NavDrawer` left inset is not on this branch; do it on the merged branch.
 
 ## 2026-10-12 — 🔵 List Export compared with Houzs: all pages, Excel formats, line layout (branch `fix/export-all-pages` → `staging`, BUG-2026-10-12-281)
 

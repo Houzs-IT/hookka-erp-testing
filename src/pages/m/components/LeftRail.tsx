@@ -100,7 +100,11 @@ export function LeftRail({
         borderRight: "1px solid #E4DDD0",
         display: "flex",
         flexDirection: "column",
-        padding: compact ? "14px 8px" : "14px 11px",
+        // Bottom = 14px + home-indicator inset (folded into the shorthand so React
+        // never sees padding + paddingBottom together when `compact` toggles).
+        padding: compact
+          ? "14px 8px calc(14px + env(safe-area-inset-bottom))"
+          : "14px 11px calc(14px + env(safe-area-inset-bottom))",
         position: "sticky",
         top: 0,
       }}

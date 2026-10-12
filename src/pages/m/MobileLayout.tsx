@@ -147,6 +147,17 @@ export default function MobileLayout() {
 
   return (
     <ResponsiveLayoutProvider value={layout}>
+      {/* Safe-area left/right (landscape notch / home indicator). The padding sits
+          on this outer box so the measured shell below sees only the usable width,
+          which keeps the layout mode and canSplitDetail honest. Zero on iPad/SE. */}
+      <div
+        style={{
+          minHeight: "100dvh",
+          backgroundColor: M.paper,
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
+      >
       <div
         ref={shellRef}
         style={{
@@ -172,7 +183,7 @@ export default function MobileLayout() {
             minHeight: "100dvh",
             paddingBottom: layout.hasBottomNavigation
               ? "calc(72px + env(safe-area-inset-bottom))"
-              : "24px",
+              : "calc(24px + env(safe-area-inset-bottom))",
             position: "relative",
             overflowX: "hidden",
           }}
@@ -244,6 +255,7 @@ export default function MobileLayout() {
           </Routes>
         </div>
         {layout.hasBottomNavigation ? <BottomTabBar /> : null}
+      </div>
       </div>
     </ResponsiveLayoutProvider>
   );

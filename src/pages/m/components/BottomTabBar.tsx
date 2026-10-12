@@ -44,6 +44,8 @@ export function BottomTabBar() {
         backgroundColor: M.card,
         borderTop: `1px solid ${M.border}`,
         boxShadow: "0 -2px 12px rgba(31,29,27,0.06)",
+        paddingLeft: "env(safe-area-inset-left)",
+        paddingRight: "env(safe-area-inset-right)",
       }}
     >
       <div
