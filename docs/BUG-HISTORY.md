@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-279 (branch `fix/bug87-po-overdue-stock-check`, to staging; client tracker BUG-87); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-278 (branch `fix/grid-export-computed-columns`, to staging; 277 is staging's, 276 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-277 (branch `fix/credit-overdue-skip-pre-opening`, to staging; 273 to 276 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
@@ -121,6 +122,22 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-12-279 — A purchase invoice billed straight off a PO never put the goods into stock or closed the PO `procurement` `inventory` 🟡
+
+🟡 **Fixed on branch** (`fix/bug87-po-overdue-stock-check` → `staging`). Client tracker BUG-87 ("PO overdue").
+
+**Symptom.** The overdue PO count kept growing. Measured on staging 2026-10-12: 109 overdue POs, all CONFIRMED; 91 of them already had a purchase invoice and no goods receipt. Staging has 573 invoices against 42 receipts, so PO → PI direct is the normal route. Prod UNMEASURED.
+
+**Root cause.** Stock goes in only when a GRN posts (`postGRNToStock`), and a PO leaves CONFIRMED only through a GRN (`cascadePOStatusAfterGRNPost`; a direct flip to RECEIVED answers 412 `requiresGrn`). `purchase-invoices.ts` never writes stock or PO status. Measured live on staging with one material: PO → GRN put 2 in and moved the PO to RECEIVED; PO → PI direct changed nothing and left the PO CONFIRMED.
+
+**Fix.** Owner 2026-10-12: stock should change on PO → PI, at Confirm (every invoice is born DRAFT; a draft holds no stock). On DRAFT → CONFIRMED, an invoice line billed straight off a PO (`po_id` set, no `grn_item_id`, STOCKED) makes the GRN route post an ordinary receipt (`createAutoReceipt`, via an in-process request to `grn.ts` as the same user), remembered in `purchase_invoices.auto_grn_id` (self-applied). Only the part no receipt covers is received: `need = clamp(invoiced by others + this − (received + returned), 0, this)`, so a PO that already had a GRN is never stocked twice. Not for a GRN-sourced invoice. Void cancels the receipt first and is refused with the GRN's own message if that stock was already used; unvoid receives again. Delete is DRAFT-only, so it never touches stock. While the receipt holds the stock, the quantity and material of those lines are frozen (price edits still save). The invoice lines are not linked to the receipt, so the PO ceiling still governs billing; the receipt does show as unbilled in the Convert-to-PI GRN tab, and picking it is refused by that ceiling.
+
+**Not changed.** The old overdue POs (owner: leave them for now). Their already-confirmed invoices never get a receipt; an old draft invoice does when it is confirmed.
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` BUG-87 tests: a draft holds no stock and deletes cleanly; Confirm → one lot and PO RECEIVED; a received PO is not stocked twice; a partly received PO receives only the rest; qty frozen, price free; void out, unvoid back; void refused once the lot was used. Not yet verified on the staging site.
 
 ---
 
