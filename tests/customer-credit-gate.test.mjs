@@ -46,6 +46,15 @@ test("fully paid / zero-balance / undated invoices never block", () => {
   assert.equal(decideCredit(s, 0, "2026-09-28"), null);
 });
 
+test("bills dated before the opening date never block; opening seeds still do", () => {
+  const s = { ...base, openingDate: "2026-05-22", unpaid: [inv("2026-05-08"), { ...inv("2026-05-20"), isOpening: true }] };
+  const b = decideCredit(s, 0, "2026-10-12");
+  assert.equal(b.code, "PAYMENT_OVERDUE");
+  assert.deepEqual(b.details.overdue.map((i) => i.invoiceDate), ["2026-05-20"]);
+  assert.equal(decideCredit({ ...s, unpaid: [inv("2026-05-08")] }, 0, "2026-10-12"), null);
+  assert.equal(decideCredit({ ...s, unpaid: [inv("2026-05-22")] }, 0, "2026-10-12").code, "PAYMENT_OVERDUE", "the opening day itself counts");
+});
+
 test("limit: outstanding + undelivered DOs + this DO", () => {
   const s = { ...base, limitSen: 100000, outstandingSen: 50000, pendingDoSen: 30000 };
   assert.equal(decideCredit(s, 20000, "2026-09-28"), null, "exactly at the limit passes");
