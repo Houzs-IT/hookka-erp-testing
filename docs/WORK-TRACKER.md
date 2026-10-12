@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: Labor Cost incl. EPF & Allowances card (#814) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/labor-cost-incl-payroll-card` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: finance dashboard Production Revenue (#811) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/cost-structure-production-revenue` (to `main`) added below (its entry is the newest).
@@ -127,18 +128,21 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
-## 2026-10-12 — 🔵 Labor Cost vs Revenue: a "Labor Cost incl. EPF & Allowances" card (owner「如果我要看到今天的工资包括津贴、雇主 EPF/SOCSO/EIS、缺勤和扣钱的差价，我哪里可以看到？」→ method B →「原本的没有碰到对吗？我只是多一个 card 罢了是吗？」→「做」)(branch `feat/labor-cost-incl-payroll-card` → `main`)
+## 2026-10-12 — ✅ Labor Cost vs Revenue: a "Labor Cost incl. EPF & Allowances" card (owner「如果我要看到今天的工资包括津贴、雇主 EPF/SOCSO/EIS、缺勤和扣钱的差价，我哪里可以看到？」→ method B →「原本的没有碰到对吗？我只是多一个 card 罢了是吗？」→「做」)(#814 97a8d568, prod-verified)
 
-1. 🔵 One card after Total Labor Cost. A finished month shows the payroll itself (gross + employer EPF / SOCSO / EIS —
+1. ✅ One card after Total Labor Cost. A finished month shows the payroll itself (gross + employer EPF / SOCSO / EIS —
    the reconciliation's Total Payroll Cost). A month still running shows the logged-hours labour so far, plus the
    payslips' allowances and employer statutory pro-rated to the working days logged, plus the absent-day / OT /
    docked-hours pay differences already incurred, marked "to <last logged day> · estimate"
    (`src/lib/labor-cost-incl-payroll.ts`). Needs an un-filtered whole month, like the reconciliation.
-2. 🔵 A running month with no payslips generated yet reads the same live estimate the Payroll tab shows
+2. ✅ A running month with no payslips generated yet reads the same live estimate the Payroll tab shows
    (`GET /api/payslips/projected`).
-3. 🔵 Unchanged: the five existing cards, the breakdown, the reconciliation and the print. The strip goes six across
+3. ✅ Unchanged: the five existing cards, the breakdown, the reconciliation and the print. The strip goes six across
    only when all six cards show.
-4. ⚪ Check on prod after deploy.
+4. ✅ Prod (2026-10-12, read-only): a finished month's card equals the reconciliation's Total Payroll Cost and the five
+   existing cards read exactly as before the deploy; the running month's card matches an independent recomputation from
+   the payslips, working days, holidays, pay rules and docks to the sen. The strip shows six across.
+
 ## 2026-10-12 — ✅ Finance dashboard: Production Revenue beside Sales Revenue on Cost Structure and both salary cards (owner「这个 cost structure 我要优化一点」→ 4 asks →「做」)(#811 d51f5646, prod-verified)
 
 1. ✅ Cost Structure: the REVENUE row is renamed SALES REVENUE, and a PRODUCTION REVENUE row sits under it — the
