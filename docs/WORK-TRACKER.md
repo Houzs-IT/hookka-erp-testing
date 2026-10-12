@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
