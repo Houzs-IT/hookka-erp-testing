@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
 > **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
@@ -191,6 +192,12 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 /m phone shell safe-area fix (viewport-fit + 4-side insets) (branch `design/safe-area-fix`)
+
+- Files: `index.html`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/components/BottomTabBar.tsx`, `src/pages/m/components/LeftRail.tsx`
+- Fix: Dynamic Island clipping (top), home indicator (bottom), landscape notch (left/right)
+- Status: in progress. `NavDrawer` left inset is not on this branch; do it on the merged branch.
 
 ## 2026-10-12 — 🔵 IT Support: empty state as its own card (branch `feat/it-support-empty-card` → `staging`, local only)
 
