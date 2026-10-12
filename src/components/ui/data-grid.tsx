@@ -200,7 +200,7 @@ export type DataGridProps<T> = {
   // Undefined (the default) never clears, so existing grids are untouched.
   clearSelectionToken?: number;
   rowClassName?: (row: T) => string;
-  emptyMessage?: React.ReactNode;
+  emptyMessage?: string;
   // Shown at the left of the toolbar (e.g. status tabs); search and buttons move to the right.
   toolbarStart?: React.ReactNode;
   loading?: boolean;
