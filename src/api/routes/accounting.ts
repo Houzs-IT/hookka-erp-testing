@@ -45,6 +45,7 @@ import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
 import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
 import { projectedLabourByDept } from "../lib/labour-projection";
+import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
@@ -13476,7 +13477,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v14"; // v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v15"; // v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -13509,6 +13510,12 @@ app.get("/dashboard", async (c) => {
         "working_hour_entries",
         "payroll_hour_deductions",
         "worker_salary_history",
+        // Production Revenue (2026-10-12) books a PO when its last upholstery
+        // card completes, priced from its SO / CO line or the product master.
+        "job_cards",
+        "sales_order_items",
+        "consignment_order_items",
+        "products",
       ],
     },
     dashOrgId,
@@ -14016,6 +14023,24 @@ app.get("/dashboard", async (c) => {
     fcByMonth.set(ym, slice);
   }
 
+  // Production Revenue (owner 2026-10-12 「把这个 total revenue 放在 revenue
+  // 下面，显示 production revenue」): the Employees › Labor Cost vs Revenue
+  // page's Total Revenue, from the same loader. One window over every month
+  // that has happened, bucketed by recognition month. null when it cannot be
+  // read, so every period shows "-" rather than a zero that looks measured.
+  let prodRevByMonth: Map<string, ProductionRevenueSplit> | null = null;
+  const prodRevMonths = allMonths.filter((ym) => ym <= nowYm);
+  if (prodRevMonths.length) {
+    const lastYm = prodRevMonths[prodRevMonths.length - 1];
+    const [ly, lm] = lastYm.split("-").map((n) => parseInt(n, 10));
+    const lastDay = String(new Date(Date.UTC(ly, lm, 0)).getUTCDate()).padStart(2, "0");
+    try {
+      prodRevByMonth = productionRevenueByMonth(await loadProductionRevenue(db, `${prodRevMonths[0]}-01`, `${lastYm}-${lastDay}`));
+    } catch {
+      /* job cards unreadable → Production Revenue reads "-" */
+    }
+  }
+
   // --- assemble per bucket -------------------------------------------------
   const sumSlices = (src: Map<string, PnlSlice>, months: string[]): PnlSlice | null => {
     let any = false;
@@ -14111,6 +14136,8 @@ app.get("/dashboard", async (c) => {
         .map((dept) => ({ dept, costSen: salDept.get(dept) ?? 0, forecastSen: salDeptFc.get(dept) ?? 0, nonProd: nonProdDash.has(dept) || undefined }))
         .filter((d) => d.costSen !== 0 || d.forecastSen !== 0)
         .sort((a, b2) => a.dept.localeCompare(b2.dept)),
+      // Same months as the bucket; null for a period wholly ahead.
+      productionRevenue: prodRevByMonth ? sumProductionRevenue(prodRevByMonth, b.months, nowYm) : null,
       costStructure: {
         salesSplit: { bedframe: bedSales, sofa: sofaSales },
         // Target spend per category from the Forecast P&L (blank when the
