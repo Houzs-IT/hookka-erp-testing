@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
@@ -186,6 +187,17 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 IT Support: report an issue to the Houzs IT Hub from inside Hookka (branch `feat/it-support` → `staging`, local only)
+
+Source: Houzs IT Hub ticket DEV-35 ("To Create Centralise IT system"). Tickets live in the hub (support.houzscentury.com); Hookka is its first reporting system.
+1. ✅ `src/api/routes/it-support.ts`: 7 handlers proxying to the hub server to server. Reporter = the session's user, reporter name / email / department from `users`. 503 when `IT_HUB_URL` / `IT_HUB_API_KEY` are unset, 502 when the hub is down or refuses the key.
+2. ✅ `/it-support` page (`src/pages/it-support/index.tsx`): my tickets, Report an issue form with screenshots, ticket conversation, reply, confirm the fix. Sidebar link for every login with an unread badge.
+3. ✅ `tests/it-support.test.mjs` (14 cases), `docs/API.md` regenerated, tsc strict shows only the 2 errors already on `staging` (`dashboard-overview.ts:2536`, `sales/index.tsx:1748`).
+4. ⬜ NOT yet seen in a browser. This checkout has no `.dev.vars`, so the page has only been type-checked and linted. Run it locally against the sandbox before pushing.
+5. ⬜ Owner: issue Hookka's hub key (`node scripts/issue-api-key.mjs HK` in the hub repo) and set `IT_HUB_URL` + `IT_HUB_API_KEY` on Pages Preview (staging), later Production.
+6. ⬜ End to end on staging: report in Hookka → pick up in the hub → reply → reporter sees it → Done → Confirm.
+7. ⬜ Optional, from the hub notes: a "Report issue" button in the top bar that opens `/it-support?new=1&from=<current page>` (the page already reads `from`).
 
 ## 2026-10-12 — 🔵 /m phone navigation shell: 4 flat tabs + hamburger + left drawer (branch `design/mobile-iPad`, local only, awaiting owner review)
 
