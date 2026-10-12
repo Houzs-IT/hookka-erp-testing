@@ -67,7 +67,7 @@ import {
   type SemanticStyle,
 } from "@/lib/design-tokens";
 import type { RawMaterial } from "@/types";
-import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard } from "../components";
+import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard, MenuButton } from "../components";
 import { GlobalSearchSheet } from "../components/GlobalSearchSheet";
 import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
@@ -829,9 +829,15 @@ export default function MobileHome() {
             gap: 12,
           }}
         >
-          {/* Brand tile — matches the ERP-mobile app icon (black bg, white "H",
+          {/* Phone (owner 2026-10-12 nav shell): a flat hamburger opens the
+              left NavDrawer in place of the brand tile. Tablets keep the
+              brand tile — the LeftRail is their navigation. */}
+          {mode === "phone" ? (
+            <MenuButton edge={-8} />
+          ) : (
+          /* Brand tile — matches the ERP-mobile app icon (black bg, white "H",
               squircle corner). Owner 2026-06-28: use the erp-mobile logo, same
-              rounding as the white-bg app icon. */}
+              rounding as the white-bg app icon. */
           <div
             style={{
               width: 42,
@@ -848,6 +854,7 @@ export default function MobileHome() {
               H
             </span>
           </div>
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, color: M.muted }}>{greeting()}</div>
             <div

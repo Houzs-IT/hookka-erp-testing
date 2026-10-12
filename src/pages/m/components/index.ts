@@ -17,3 +17,12 @@ export type { ScanPOExtracted } from "./ScanPOSheet";
 export { LeftRail } from "./LeftRail";
 export { InstallAppCard } from "./InstallAppCard";
 export { ResponsiveActionDock } from "./ResponsiveActionDock";
+export {
+  ProfileCard,
+  ThemeToggleCard,
+  ModuleGroupList,
+  DesktopAppLink,
+  handleSignOut,
+} from "./ModuleMenu";
+export { MenuButton } from "./MenuButton";
+export { NavDrawer } from "./NavDrawer";
