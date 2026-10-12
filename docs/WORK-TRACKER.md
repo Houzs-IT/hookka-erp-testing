@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: finance dashboard Production Revenue (#811) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/cost-structure-production-revenue` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/po-picker-duplicate-supplier-rows` (BUG-2026-10-12-276, to `main`) added item 7 to the BUG-98 to-main entry below.
 > **Last verified: 2026-10-09**: Journal Entries undone fold (#798) prod-verified.
@@ -124,16 +125,19 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
 
-## 2026-10-12 — 🔵 Finance dashboard: Production Revenue beside Sales Revenue on Cost Structure and both salary cards (owner「这个 cost structure 我要优化一点」→ 4 asks →「做」)(branch `feat/cost-structure-production-revenue` → `main`)
+## 2026-10-12 — ✅ Finance dashboard: Production Revenue beside Sales Revenue on Cost Structure and both salary cards (owner「这个 cost structure 我要优化一点」→ 4 asks →「做」)(#811 d51f5646, prod-verified)
 
-1. 🔵 Cost Structure: the REVENUE row is renamed SALES REVENUE, and a PRODUCTION REVENUE row sits under it — the
+1. ✅ Cost Structure: the REVENUE row is renamed SALES REVENUE, and a PRODUCTION REVENUE row sits under it — the
    Employees › Labor Cost vs Revenue page's Total Revenue (orders whose last upholstery piece completed in the period,
    selling price × quantity), from one shared loader so the two screens always agree.
-2. 🔵 Every cost figure reads "% of sales / % of production revenue".
-3. 🔵 A TOTAL row under the materials (amount and both percentages; the forecast column totals too).
-4. 🔵 The Production Salary and Non-Production Salary cards get the same two revenue rows and the "/" percentage.
+2. ✅ Every cost figure reads "% of sales / % of production revenue".
+3. ✅ A TOTAL row under the materials (amount and both percentages; the forecast column totals too).
+4. ✅ The Production Salary and Non-Production Salary cards get the same two revenue rows and the "/" percentage.
 5. ⚪ Owner: the unit-price matching inside Production Revenue is not this card's concern — left as is.
-6. ⚪ Check on prod after deploy.
+6. ✅ Prod (2026-10-12, read-only): the Labor Cost endpoint, now on the shared loader, returns the same month totals as
+   before the deploy; the dashboard's Production Revenue equals it month by month, category split included, and is
+   blank for months ahead. Cost Structure and both salary cards show the two revenue rows, `% / %` and TOTAL; a figure
+   re-divided by hand matches.
 ## 2026-10-09 — ✅ Journal Entries: an undone system posting is one REVERSED · UNDONE row (owner「我post 了，然后发现unposted 有显示posted,很让人混乱」→「做」)(#798 47d52f03, prod-verified)
 
 1. ✅ An undo (Unpost on the Labour tab, a closing-stock or opening-balance reversal) used to be listed as its own
