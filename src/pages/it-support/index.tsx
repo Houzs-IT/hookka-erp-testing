@@ -14,9 +14,9 @@
 // A failed load is shown as a failure. An empty list is only ever drawn when
 // the server actually answered with one.
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ArrowLeft, Paperclip, Plus } from "lucide-react";
+import { ArrowLeft, FileText, Film, Paperclip, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataGrid, type Column } from "@/components/ui/data-grid";
@@ -26,6 +26,7 @@ import { LoadingButton } from "@/components/ui/loading-button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
+import { useEscapeClose } from "@/lib/escape-stack";
 import { useInterval } from "@/lib/scheduler";
 import { cn, formatDateTime } from "@/lib/utils";
 
@@ -92,7 +93,9 @@ const STATUS_TONE: Record<Status, string> = {
 };
 
 const PRIORITY_LABEL: Record<string, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
-const TYPE_LABEL: Record<string, string> = { bug: "Something is broken", development: "Request a change" };
+// The form offers no "urgent"; it stays here so an older ticket still reads.
+const FORM_PRIORITIES = ["high", "medium", "low"];
+const TYPE_LABEL: Record<string, string> = { bug: "Bug", development: "Development" };
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -127,36 +130,155 @@ function checkFiles(files: File[]): string | null {
   return big ? `${big.name} is larger than 10 MB.` : null;
 }
 
+// The input's accept only limits the file browser; drop and paste come through here too.
+function acceptedType(f: File): boolean {
+  return f.type.startsWith("image/") || ["application/pdf", "video/mp4", "video/quicktime"].includes(f.type);
+}
+
 function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
+  const [urls, setUrls] = useState<(string | null)[]>([]);
+  const [note, setNote] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
+  useEscapeClose(() => setViewing(null), viewing !== null);
+
+  // Made in the effect, not a memo, so StrictMode's second mount never holds revoked URLs.
+  useEffect(() => {
+    const made = files.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : null));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- previews follow the file list
+    setUrls(made);
+    return () => made.forEach((u) => u && URL.revokeObjectURL(u));
+  }, [files]);
+
+  const add = useCallback(
+    (incoming: File[]) => {
+      const skipped: string[] = [];
+      const ok = incoming.filter((f) => {
+        if (!acceptedType(f)) skipped.push(`${f.name} is not an image, PDF, MP4 or MOV`);
+        else if (f.size > MAX_FILE_BYTES) skipped.push(`${f.name} is larger than 10 MB`);
+        else return true;
+        return false;
+      });
+      const room = MAX_FILES - files.length;
+      if (ok.length > room) skipped.push(`only ${MAX_FILES} files can be attached`);
+      setNote(skipped.length ? `Not added: ${skipped.join("; ")}.` : "");
+      if (ok.length && room > 0) onChange([...files, ...ok.slice(0, room)]);
+    },
+    [files, onChange],
+  );
+
+  // Ctrl+V / Cmd+V anywhere on the page. A text paste is left alone.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented) return;
+      const pasted = Array.from(e.clipboardData?.files ?? []);
+      if (!pasted.length) return;
+      e.preventDefault();
+      // Every clipboard screenshot arrives as "image.png"; give each its own name.
+      const stamp = Date.now();
+      add(pasted.map((f, i) => new File([f], `screenshot-${stamp}-${i + 1}.${f.type.split("/")[1] || "png"}`, { type: f.type })));
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [add]);
+
+  const remove = (i: number) => {
+    setViewing(null);
+    setNote("");
+    onChange(files.filter((_, j) => j !== i));
+  };
+
+  const shown = viewing !== null ? urls[viewing] : null;
+
   return (
-    <div className="space-y-2">
-      <input
-        ref={ref}
-        type="file"
-        multiple
-        accept={FILE_ACCEPT}
-        className="hidden"
-        onChange={(e) => {
-          onChange([...files, ...Array.from(e.target.files ?? [])].slice(0, MAX_FILES));
-          e.target.value = "";
+    <div className="space-y-3">
+      <label
+        className={cn(
+          "flex cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-5 text-center text-sm transition-colors focus-within:ring-2 focus-within:ring-[#6B5C32]",
+          dragging ? "border-[#6B5C32] bg-[#F5F2ED]" : "border-[#E2DDD8] hover:border-[#6B5C32] hover:bg-[#FAF9F7]",
+        )}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
         }}
-      />
-      <Button type="button" variant="outline" size="sm" onClick={() => ref.current?.click()} disabled={files.length >= MAX_FILES}>
-        <Paperclip className="h-4 w-4" />
-        Attach screenshot or file
-      </Button>
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          add(Array.from(e.dataTransfer.files));
+        }}
+      >
+        <input
+          type="file"
+          multiple
+          accept={FILE_ACCEPT}
+          className="sr-only"
+          onChange={(e) => {
+            add(Array.from(e.target.files ?? []));
+            e.target.value = "";
+          }}
+        />
+        <Upload className="h-5 w-5 text-[#6B5C32]" />
+        <span className="font-medium text-[#1F1D1B]">Drop files here, click to browse, or paste a screenshot</span>
+        <span className="text-xs text-[#8A7F73]">Up to {MAX_FILES} files, 10 MB each: images, PDF, MP4 or MOV.</span>
+      </label>
+
+      {note && <p className="text-sm text-amber-700" role="status">{note}</p>}
+
       {files.length > 0 && (
-        <ul className="space-y-1 text-sm text-[#4B4540]">
-          {files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="flex items-center gap-2">
-              <span className="truncate">{f.name}</span>
-              <button type="button" className="text-xs text-[#6B5C32] hover:underline" onClick={() => onChange(files.filter((_, j) => j !== i))}>
-                Remove
-              </button>
-            </li>
-          ))}
+        <ul className="flex flex-wrap gap-3">
+          {files.map((f, i) => {
+            const ext = f.name.includes(".") ? f.name.split(".").pop()!.toUpperCase() : "FILE";
+            const url = urls[i];
+            return (
+              <li key={`${f.name}-${i}`} className="relative h-20 w-20">
+                {f.type.startsWith("image/") ? (
+                  <button
+                    type="button"
+                    title={f.name}
+                    aria-label={`Preview ${f.name}`}
+                    onClick={() => setViewing(i)}
+                    className="h-full w-full overflow-hidden rounded-md border border-[#E2DDD8] transition hover:border-[#6B5C32] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]"
+                  >
+                    {url && <img src={url} alt="" className="h-full w-full object-cover" />}
+                  </button>
+                ) : (
+                  <div title={f.name} className="flex h-full w-full flex-col items-center justify-center gap-1 rounded-md border border-[#E2DDD8] bg-[#F5F2ED] text-[#6B5C32]">
+                    {f.type.startsWith("video/") ? <Film className="h-6 w-6" /> : <FileText className="h-6 w-6" />}
+                    <span className="max-w-full truncate px-1 text-[10px] font-semibold">{ext}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => remove(i)}
+                  className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#1F1D1B] text-white shadow transition-colors hover:bg-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
+      )}
+
+      {shown && viewing !== null && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/70" onClick={() => setViewing(null)} />
+          <div role="dialog" aria-modal="true" aria-label={files[viewing]?.name} className="relative">
+            <img src={shown} alt={files[viewing]?.name ?? ""} className="max-h-[85vh] max-w-[90vw] rounded-md bg-white object-contain shadow-2xl" />
+            <button
+              type="button"
+              aria-label="Close preview"
+              onClick={() => setViewing(null)}
+              className="absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#1F1D1B] shadow transition-colors hover:bg-[#F0ECE9]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -169,7 +291,6 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
   const [description, setDescription] = useState("");
   const [type, setType] = useState("bug");
   const [priority, setPriority] = useState("medium");
-  const [occurredAt, setOccurredAt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -185,7 +306,7 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
     form.set("description", description.trim());
     form.set("type", type);
     form.set("priority", priority);
-    if (occurredAt) form.set("occurred_at", new Date(occurredAt).toISOString());
+    form.set("occurred_at", new Date().toISOString());
     if (fromUrl) form.set("page_url", fromUrl);
     for (const f of files) form.append("files", f, f.name);
     const res = await api<{ code: string }>("/tickets", { method: "POST", body: form });
@@ -204,7 +325,7 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
         <FormField label="Details" hint="What you did, what you expected, and what happened instead.">
           <textarea className={cn(FIELD, "min-h-32")} value={description} maxLength={10000} onChange={(e) => setDescription(e.target.value)} />
         </FormField>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <FormField label="Type">
             <select className={cn(FIELD, "h-10")} value={type} onChange={(e) => setType(e.target.value)}>
               {Object.entries(TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -212,19 +333,16 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
           </FormField>
           <FormField label="How urgent?">
             <select className={cn(FIELD, "h-10")} value={priority} onChange={(e) => setPriority(e.target.value)}>
-              {Object.entries(PRIORITY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {FORM_PRIORITIES.map((v) => <option key={v} value={v}>{PRIORITY_LABEL[v]}</option>)}
             </select>
           </FormField>
-          <FormField label="When did it happen?">
-            <input type="datetime-local" className={cn(FIELD, "h-10")} value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} />
-          </FormField>
         </div>
-        <FormField label="Screenshots" hint="Up to 5 files, 10 MB each: images, MP4 / MOV video or PDF.">
+        <FormField label="Screenshots">
           <FilePicker files={files} onChange={setFiles} />
         </FormField>
         {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
         <div className="flex gap-2">
-          <LoadingButton variant="primary" loading={saving} loadingText="Sending" onClick={submit}>Send to IT</LoadingButton>
+          <LoadingButton variant="primary" loading={saving} loadingText="Sending" onClick={submit}>Send</LoadingButton>
           <Button variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>
         </div>
       </CardContent>
