@@ -21,8 +21,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { useToast } from "@/components/ui/toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-export";
-import { exportReportCsv, exportReportXlsx, type Aoa } from "@/lib/export-report";
+import { buildListingAoa, exportFilename, listingXlsxFormats, type ExportColumn } from "@/lib/grid-export";
+import { exportReportCsv, exportReportXlsx, type Aoa, type XlsxColFormat } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
@@ -3042,6 +3042,8 @@ export function DataGrid<T extends Record<string, any>>({
                       build: (rows: T[]) => Aoa | Promise<Aoa>,
                       kind: string,
                       ext: "xlsx" | "csv",
+                      // Listing only: the detail builders own their column sets.
+                      xlsxFormats?: XlsxColFormat[],
                     ) => {
                       setShowExportMenu(false);
                       const fname = exportFilename(exportName, kind, ext, today);
@@ -3050,7 +3052,7 @@ export function DataGrid<T extends Record<string, any>>({
                       setExportBusy(true);
                       void exportRows()
                         .then(build)
-                        .then((rows) => (ext === "xlsx" ? exportReportXlsx(fname, label, rows) : exportReportCsv(fname, rows)))
+                        .then((rows) => (ext === "xlsx" ? exportReportXlsx(fname, label, rows, { colFormats: xlsxFormats }) : exportReportCsv(fname, rows)))
                         .catch((e) => toast.error(e instanceof Error ? e.message : "Export failed. Nothing was downloaded."))
                         .finally(() => setExportBusy(false));
                     };
@@ -3067,7 +3069,7 @@ export function DataGrid<T extends Record<string, any>>({
                         <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
                           Listing · {ticked.length > 0 ? `${ticked.length} ticked rows` : allPages ? "all pages" : `${sortedData.length} rows`}, {visibleColumns.length} cols
                         </div>
-                        <Item onClick={() => run(listingAoa, "listing", "xlsx")}>Listing → Excel</Item>
+                        <Item onClick={() => run(listingAoa, "listing", "xlsx", listingXlsxFormats(visibleColumns as unknown as ExportColumn<T>[]))}>Listing → Excel</Item>
                         <Item onClick={() => run(listingAoa, "listing", "csv")}>Listing → CSV</Item>
                         {detailExport && (
                           <>

@@ -13,7 +13,7 @@
 // export/filter accessor, never "[object Object]").
 // ---------------------------------------------------------------------------
 
-import type { Aoa } from "./export-report";
+import type { Aoa, XlsxColFormat } from "./export-report";
 
 // The minimal column shape this needs — a structural subset of DataGrid's
 // Column<T>, so callers pass their columns straight through.
@@ -64,6 +64,8 @@ export function cellExportValue<T>(col: ExportColumn<T>, row: T): string | numbe
     // ISO timestamp → just the day; anything else passes through.
     return /^\d{4}-\d{2}-\d{2}T/.test(s) ? s.slice(0, 10) : s;
   }
+  // The screen shows a status code with spaces for underscores.
+  if (col.type === "status") return String(raw).replace(/_/g, " ");
   return typeof raw === "number" ? raw : String(raw);
 }
 
@@ -72,11 +74,19 @@ export function cellExportValue<T>(col: ExportColumn<T>, row: T): string | numbe
  * order) followed by one row per data row. `columns` is expected to already be
  * the VISIBLE columns in display order — pass DataGrid's visibleColumns.
  */
+const listingColumns = <T>(columns: ExportColumn<T>[]) =>
+  columns.filter((c) => !["__select__", "__actions__", "actions", "_select", "_view"].includes(c.key));
+
 export function buildListingAoa<T>(columns: ExportColumn<T>[], rows: T[]): Aoa {
-  const cols = columns.filter((c) => !["__select__", "__actions__", "actions", "_select", "_view"].includes(c.key));
+  const cols = listingColumns(columns);
   const header = cols.map((c) => c.label);
   const body = rows.map((r) => cols.map((c) => cellExportValue(c, r)));
   return [header, ...body];
+}
+
+/** Excel display per Listing column, index-aligned with buildListingAoa. */
+export function listingXlsxFormats<T>(columns: ExportColumn<T>[]): XlsxColFormat[] {
+  return listingColumns(columns).map((c) => (c.type === "currency" ? "money" : c.type === "date" ? "date" : undefined));
 }
 
 /** A safe, dated filename base. `kind` distinguishes listing vs detail. */
