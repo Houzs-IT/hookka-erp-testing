@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
 > **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
@@ -192,6 +193,14 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 IT Support: high-contrast ticket table (branch `feat/it-support-table-style` → `staging`, local only)
+
+1. ✅ Table in a white rounded card with a slate border and shadow; slate-50 uppercase header; white rows with a slate hover. Scoped to this page, the shared grid is unchanged.
+2. ✅ Status chips with a coloured dot: Open blue, In progress amber, Done please confirm green, Waiting for you orange, Testing violet, On hold / Closed slate, Rejected rose.
+3. ✅ Urgency chips: High rose, Medium amber, Low slate (older Urgent tickets a stronger rose).
+4. ✅ Handled by: initials avatar and name, or muted italic "Not picked up yet". Ticket code semi-bold slate; Issue keeps the free width.
+5. ⬜ NOT yet seen in a browser. Check on the staging site after deploy, desktop and 320px.
 
 ## 2026-10-12 — 🔵 /m phone shell safe-area fix (viewport-fit + 4-side insets) (branch `design/safe-area-fix`)
 
