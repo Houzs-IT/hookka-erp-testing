@@ -45,6 +45,7 @@ import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
 import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
 import { projectedLabourByDept } from "../lib/labour-projection";
+import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
@@ -6834,6 +6835,36 @@ async function labourInjectionLines(
 ): Promise<{ account: string; sen: number }[]> {
   const hit = memo?.get(ym);
   if (hit) return hit;
+  // The month still running (owner 2026-10-12 「任何的 payroll 还没 confirm 都拿
+  // 这个新卡显示的数据」): labour TO DATE — the Labor Cost page's "Labor Cost
+  // incl. EPF & Allowances" card, split by home department and EPF / SOCSO /
+  // EIS (src/api/lib/labour-to-date.ts) — not a whole month of draft or
+  // projected payroll against a part-month of sales. A finished month keeps its
+  // payslips below; a recorded month never gets here (the caller skips it).
+  if (ym === runningMonthYm()) {
+    try {
+      const td = await loadLabourToDate(db, orgId, ym);
+      const tdMap = await getLabourMap(db);
+      const tdByDept: LabourDeptAgg[] = (td?.byDept ?? []).map((d) => ({
+        departmentCode: d.departmentCode,
+        account: tdMap.byDept[d.departmentCode] ?? tdMap.fallback,
+        workers: d.workers,
+        grossSen: d.nonStatutorySen,
+        employerSen: d.epfSen + d.socsoSen + d.eisSen,
+        costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen,
+        epfSen: d.epfSen,
+        socsoSen: d.socsoSen,
+        eisSen: d.eisSen,
+        // Debit side only (P&L cost), as in the dry run below.
+        epfEmployeeSen: 0,
+        socsoEmployeeSen: 0,
+        eisEmployeeSen: 0,
+      }));
+      const tdLines = tdByDept.length ? labourDebitLines(tdByDept, tdMap) : [];
+      memo?.set(ym, tdLines);
+      return tdLines;
+    } catch { /* unreadable → the whole-month figures below, as before */ }
+  }
   let byDept: LabourDeptAgg[] = [];
   let map: LabourMap | null = null;
   try {
@@ -13477,7 +13508,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v15"; // v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v16"; // v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -13516,6 +13547,11 @@ app.get("/dashboard", async (c) => {
         "sales_order_items",
         "consignment_order_items",
         "products",
+        // The running month's labour to date (2026-10-12) also reads the
+        // department master (which departments log factory hours) and the
+        // effective-dated pay rules.
+        "departments",
+        "pay_rule_versions",
       ],
     },
     dashOrgId,
@@ -13688,6 +13724,14 @@ app.get("/dashboard", async (c) => {
   // ---- Salary by department (owner 2026-08-11) ----------------------------
   // The dept dimension lives only in payslips; one query for the whole window,
   // grouped by the shared pure rule so Σdepts always equals the Labour tab.
+  // The month still running (owner 2026-10-12): its salary stacks are labour
+  // TO DATE, the same figure the P&L now carries for it — per home department
+  // for the Production card, per worker for the hours-share below.
+  const runYmDash = runningMonthYm();
+  let toDateRun: Awaited<ReturnType<typeof loadLabourToDate>> = null;
+  if (allMonths.includes(runYmDash)) {
+    try { toDateRun = await loadLabourToDate(db, orgIdDash, runYmDash); } catch { /* keep the payslips */ }
+  }
   let salByMonth = new Map<string, { dept: string; costSen: number }[]>();
   try {
     const psRes = await db
@@ -13700,6 +13744,14 @@ app.get("/dashboard", async (c) => {
     salByMonth = groupPayslipsByMonthDept((psRes.results ?? []) as never[]);
   } catch {
     /* payslips table absent → card simply shows no dept split */
+  }
+  if (toDateRun) {
+    salByMonth.set(
+      runYmDash,
+      toDateRun.byDept
+        .map((d) => ({ dept: d.departmentCode, costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen }))
+        .filter((d) => d.costSen !== 0),
+    );
   }
   // Non-production ACTUALS (owner 2026-08-31 「actual资料不是能从payroll 提取
   // 出来吗」): a payslip files the worker's whole month under his MASTER
@@ -13741,6 +13793,10 @@ app.get("/dashboard", async (c) => {
           (Number(r.eisEmployerSen ?? r.eis_employer_sen) || 0);
         const k = `${ym}::${wid}`;
         costByYmWorker.set(k, (costByYmWorker.get(k) ?? 0) + cost);
+      }
+      if (toDateRun) {
+        for (const k of [...costByYmWorker.keys()]) if (k.startsWith(`${runYmDash}::`)) costByYmWorker.delete(k);
+        for (const [wid, sen] of toDateRun.byWorker) costByYmWorker.set(`${runYmDash}::${wid}`, sen);
       }
       const earliestIso = allMonths.length ? `${allMonths[0]}-01` : "2000-01-01";
       const wheRes = await db

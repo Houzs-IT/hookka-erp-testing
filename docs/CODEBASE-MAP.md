@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-12 on branch `feat/pnl-running-month-labour-to-date` (to `main`)**: the Financial Dashboard Production Revenue note gained the running-month labour line, read from `src/lib/labour-to-date.ts`, `src/api/lib/labour-to-date.ts`, `src/api/lib/labour-projection.ts` and `src/api/routes/accounting.ts` (`labourInjectionLines`, `GET /dashboard`). Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `feat/labor-cost-incl-payroll-card` (to `main`)**: the Employees › Labor Cost tab line (the "Labor Cost incl. EPF & Allowances" card), read from `src/pages/employees.tsx` and `src/lib/labor-cost-incl-payroll.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `feat/cost-structure-production-revenue` (to `main`)**: the Financial Dashboard row and its Production Revenue note (Cost Structure + both salary cards), the Labor Cost tab line, read from `src/api/lib/production-revenue.ts`, `src/api/routes/accounting.ts` (`GET /dashboard`), `src/api/routes/working-hour-entries.ts` and `src/pages/finance-dashboard.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `fix/po-picker-duplicate-supplier-rows` (to `main`, BUG-2026-10-12-276)**: the `src/pages/procurement/create.tsx` row (popup keeps one row per supplier, line count), read from that file. Nothing else re-checked.
@@ -1837,7 +1838,7 @@ you are changing auth behaviour you want L227–417 and nothing else.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13466`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
+| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13491`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
 | `src/pages/forecast.tsx` — `/forecast` (`src/dashboard-routes.tsx:471`; sidebar FORECASTING → "Forecast P&L"); planning grid, zero contact with the books (575) | `src/api/routes/accounting.ts` — `GET /forecast` (`:10743`), `PUT /forecast` (`:10758`), `GET /coa` (`:829`), `GET /pnl/section-map` (`:9827`), `GET /labor/departments` (`:9561`) | `kv_config` row `key='forecast_pnl'` (`:10789`) — **no forecast table exists**; plus `chart_of_accounts` for the line structure | **NONE** |
 
 > **Name collision — read this before touching either.** `/forecast` (`src/pages/forecast.tsx`,
@@ -1866,6 +1867,15 @@ Cash Flow with Summary/Detail (`:1133`) → Balance Sheet (`:1200`) → Financia
   production` (`PctPair`; only the first is coloured against the plan); Cost Structure ends in a TOTAL row over every
   material in the table, not just the drawn ones. Sofa view = SOFA + ACCESSORY, like the sales split. Payload `v15`; the
   snapshot also watches `job_cards`, `sales_order_items`, `consignment_order_items`, `products`.
+- **Running month's labour = labour TO DATE (2026-10-12, owner「任何的 payroll 还没 confirm 都拿这个新卡显示的数据」)**:
+  `labourInjectionLines` (accounting.ts — the P&L's report-layer labour) and the dashboard's salary stacks read
+  `loadLabourToDate` (`src/api/lib/labour-to-date.ts` → pure `computeLabourToDate` in `src/lib/labour-to-date.ts`) for
+  `runningMonthYm()` (Malaysia time): the Labor Cost page's "Labor Cost incl. EPF & Allowances" figure — logged hours
+  at cost + payslips' allowances & employer statutory × working days logged ÷ month's + absent-day / OT / dock
+  bridges — split by home department and EPF / SOCSO / EIS, trued up to the card's total. Payslips = stored (drafts
+  included), else `projectedPayslipsForMonth` (labour-projection's per-worker dry run). Finished months keep their
+  payslips; recorded months keep the ledger. Payload `v16`; snapshot also watches `departments`, `pay_rule_versions`.
+  Guard `tests/labour-to-date.test.mjs`.
 - Money is integer sen end to end. `rm` / `rm2` (L83–86) divide by 100 **for display only**;
   every derived figure uses `Math.round(... * 10000) / 100` on sen ints.
 - **The forecast-percentage rule (BUG-2026-08-06-002) is load-bearing and is stated three
