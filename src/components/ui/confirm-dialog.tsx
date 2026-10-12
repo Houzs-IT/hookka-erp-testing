@@ -41,6 +41,8 @@ export type ConfirmOptions = {
   message?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  // Info-only dialog: one button.
+  hideCancel?: boolean;
   // Paint the confirm button red (delete / void / discard / cancel actions).
   // `tone: "danger"` is the legacy alias for `danger: true` — either works.
   danger?: boolean;
@@ -121,13 +123,15 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-[#E2DDD8] bg-[#FAF9F7] p-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => settle(false)}
-              >
-                {opts.cancelLabel ?? "Cancel"}
-              </Button>
+              {!opts.hideCancel && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => settle(false)}
+                >
+                  {opts.cancelLabel ?? "Cancel"}
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={() => settle(true)}
