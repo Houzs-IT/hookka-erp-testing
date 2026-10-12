@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
@@ -188,6 +189,15 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 IT Support: report form tweaks and a new attachment picker (branch `feat/it-support-form-tweaks` → `staging`, local only)
+
+1. ✅ Type options read Bug / Development (stored values unchanged).
+2. ✅ How urgent? offers High / Medium / Low. `urgent` is still labelled so an older ticket reads.
+3. ✅ "When did it happen?" removed; `occurred_at` is the moment Send is pressed.
+4. ✅ The form button reads Send (Cancel kept, the reply box keeps Send reply).
+5. ✅ Attachments (form and reply box): browse, drag-and-drop, Ctrl+V / Cmd+V paste; type and 10 MB checked on add, max 5; image thumbnails with a full-size preview, PDF / video show an icon and the extension; preview URLs freed on remove.
+6. ⬜ NOT yet seen in a browser. Check on the staging site after deploy: paste, drop, remove, preview, then send a ticket and confirm it reaches the hub with its files.
 
 ## 2026-10-12 — 🔵 Credit block: drivers cannot dispatch for a customer with overdue bills (branch `fix/credit-no-dispatch-check` → `staging`, BUG-2026-10-12-282)
 
