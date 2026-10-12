@@ -19,8 +19,8 @@
 //      creditLimitSen <= 0 = no limit configured → rule 2 is skipped.
 //
 // Admin override (testing phase): body.creditOverride = { reason } lets a user
-// with delivery-orders:credit-override (ADMIN / SUPER_ADMIN always) pass a
-// block, audited. kv_config "credit-override-enabled" = false turns the
+// with the exact delivery-orders:credit-override tick (a delivery-orders:*
+// wildcard does not count; ADMIN / SUPER_ADMIN always) pass a block, audited. kv_config "credit-override-enabled" = false turns the
 // override off for everyone (strict SOP) without a deploy. Missing key = ON.
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";

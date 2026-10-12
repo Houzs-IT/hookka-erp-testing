@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-280 (branch `fix/credit-override-explicit-tick`, to staging; 279 is staging's PO-direct invoice fix); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-279 (branch `fix/bug87-po-overdue-stock-check`, to staging; client tracker BUG-87); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-278 (branch `fix/grid-export-computed-columns`, to staging; 277 is staging's, 276 is main's); a log, so "verified" means the entry matches the code on its branch.
@@ -122,6 +123,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-12-280 — Every Sales and Office account could override the customer credit block `rbac` `delivery-orders` 🟡
+
+🟡 **Fixed on branch** (`fix/credit-override-explicit-tick` → `staging`). Follow-up to BUG-2026-09-28-233 (client tracker BUG-34).
+
+**Symptom, measured on staging 2026-10-12 (read-only).** Using "View as" on each non-admin account, a packing-list-first preview for a blocked Houzs order came back as "override allowed" for Adrian, Wei Seng and sales (Sales), and Office@ and Siti (Office). Finance, Lim, QA, Zamri, Zira and Chee get 403 on DOs at all. So nobody who can make a DO saw the no-override dialog, and the "only admin approves" SOP did not hold. Production permission lists are UNMEASURED.
+
+**Root cause.** The Sales and Office@ lists hold `delivery-orders:*`, and `permitted()` in `src/api/lib/rbac.ts` lets a module wildcard grant every action on it, the special `credit-override` included. Siti has `delivery-orders:credit-override` ticked by name, which is intended.
+
+**Fix.** `src/lib/explicit-rights.ts` lists rights a wildcard does not grant (`delivery-orders:credit-override`). `permitted()` (API gate), `checkSet()` (`src/lib/use-permission.ts`, browser) and `granted()` (`src/components/user-permissions-panel.tsx`, User Management boxes) all require the exact tick for those. ADMIN / SUPER_ADMIN still pass before `permitted()`. Accounts with the exact tick keep it (Siti on staging); untick in User Management if not wanted.
+
+**Regression.** `tests/credit-override-explicit.test.mjs` runs the real `hasPermission` with a stubbed role list (wildcard denied, exact tick and admins allowed) and pins the same rule in all three places. 2 of its 3 tests fail on the old code. Not yet verified on the staging site.
 
 ---
 
