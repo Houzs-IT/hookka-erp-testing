@@ -242,7 +242,7 @@ function CreatePurchaseOrderPage() {
     if (!rm) return;
     const mainBinding =
       (supplierId
-        ? getBindingsForRM(rmItemCode).find((b) => b.supplierId === supplierId)
+        ? getSortedBindingsForRM(rmItemCode).find((b) => b.supplierId === supplierId)
         : undefined) ?? bindingForPick(rmItemCode);
     const seedQty = mainBinding?.moq ?? 1;
     const newItem: POLineItem = {
@@ -976,8 +976,11 @@ function CreatePurchaseOrderPage() {
           materials={pickerRMs}
           supplierLabel={selectedSupplierId ? resolveSupplierName(selectedSupplierId) : ""}
           optionsFor={(code) =>
+            // One row per supplier: some suppliers carry the same material twice,
+            // and a repeated row key froze the list (BUG-2026-10-12-276).
             (selectedSupplierId ? [bindingForPick(code)] : getSortedBindingsForRM(code))
-              .filter((b): b is SupplierMaterialBinding => !!b)
+              .filter((b, i, all): b is SupplierMaterialBinding =>
+                !!b && all.findIndex((x) => x?.supplierId === b.supplierId) === i)
               .map((b) => ({
                 supplierId: b.supplierId,
                 supplierName: resolveSupplierName(b.supplierId),

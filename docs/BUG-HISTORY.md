@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-276 (branch `fix/po-picker-duplicate-supplier-rows`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-275 (branch `fix/undone-labour-post-hides-payroll`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-274 (branch `fix/do-accessory-uom`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: BUG-2026-10-09-272 follow-up (branch `fix/worker-i18n-single-words`, to staging then main): single-word worker labels translated; a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -89,6 +90,22 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-12-276 — New PO Select Materials search stopped filtering (typing "pearl" left plywood rows) `procurement` `ui-frontend` 🟢
+
+🟢 **Fixed** (branch `fix/po-picker-duplicate-supplier-rows` → `main`) · owner 2026-10-12, searching "pearl" with no supplier picked.
+
+**Symptom.** In New Purchase Order → Add Materials from Supplier, with no supplier picked, typing in the search box did not narrow the list. Rows such as "18MM 4' X 8' AA PLYWOOD" stayed on screen for any search.
+
+**Cause.** #794 (BUG-98 follow-up) split the popup into one row per supplier, keyed `${rm.id}|${supplierId}`. Prod has 31 supplier + material pairs stored twice for the same supplier (e.g. CLM ETERNAL's 18MM plywood at RM 68.00 twice), so those rows shared a React key. React then could not remove them on re-render, and stale rows piled up as the filter changed.
+
+**Fix.** `src/pages/procurement/create.tsx`: the popup options keep one row per supplier (first in main-first order), so keys are unique and the repeat row is gone. Add, for a row's supplier, takes the first binding from the same sorted list, so it uses the price the row shows. The duplicate rows in `supplier_material_bindings` are left as they are.
+
+**Regression.** `tests/po-picker-unique-rows.test.mjs`: options deduped by supplier, row key from that supplier, Add picks the same binding as the row. Two of its three checks fail on the unfixed file.
+
+**Verify.** On prod after deploy: New PO, no supplier, Add Materials from Supplier, type "pearl": only Pearl materials remain (BO315-1, BO315-21, CH141-5, HOK-BO315-21, KN390-1, M2402-1), and 18MM plywood shows once.
 
 ---
 
