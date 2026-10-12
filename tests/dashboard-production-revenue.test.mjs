@@ -60,7 +60,8 @@ test("the Labor Cost vs Revenue endpoint reads the shared loader, not its own co
 
 test("the dashboard carries production revenue per period and retires the old cached shape", () => {
   assert.match(API, /productionRevenue: prodRevByMonth \? sumProductionRevenue\(prodRevByMonth, b\.months, nowYm\) : null,/);
-  assert.match(API, /const DASH_PAYLOAD_V = "v15";/);
+  // v15 introduced the field; any later bump keeps it retired.
+  assert.match(API, /const DASH_PAYLOAD_V = "v(1[5-9]|[2-9]\d)";/);
   assert.match(API, /sourceTables: \[[\s\S]{0,1800}"job_cards",/, "a completed upholstery card must refresh the snapshot");
 });
 

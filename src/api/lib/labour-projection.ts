@@ -41,6 +41,28 @@ export type ProjectedDeptCost = {
   eisSen: number;
 };
 
+// One worker's projected payslip — the fields the running month's labour TO
+// DATE needs (src/api/lib/labour-to-date.ts) when no payslips are stored yet;
+// they mirror GET /api/payslips/projected's row (payslips.ts).
+export type ProjectedPayslip = {
+  id: string;
+  employeeId: string;
+  departmentCode: string;
+  /** The month's EFFECTIVE (day-weighted) salary — the payslip's basic. */
+  basicSalarySen: number;
+  absentDays: number;
+  absenceDeductionSen: number;
+  otWeekdayHours: number;
+  otSundayHours: number;
+  otPhHours: number;
+  totalOtSen: number;
+  allowancesSen: number;
+  grossPaySen: number;
+  epfEmployerSen: number;
+  socsoEmployerSen: number;
+  eisEmployerSen: number;
+};
+
 // Field types mirror payslips.ts WorkerRow so the engine sees the exact same
 // shapes the generate route feeds it (statutory toggles: NULL → enabled).
 type ProjWorkerRow = {
@@ -67,6 +89,26 @@ export async function projectedLabourByDept(
   db: Env["Variables"]["DB"],
   period: string,
 ): Promise<ProjectedDeptCost[]> {
+  const agg = new Map<string, ProjectedDeptCost>();
+  for (const p of await projectedPayslipsForMonth(db, period)) {
+    const dept = p.departmentCode.trim() || "(unassigned)";
+    const cur = agg.get(dept) ?? { departmentCode: dept, workers: 0, grossSen: 0, epfSen: 0, socsoSen: 0, eisSen: 0 };
+    cur.workers += 1;
+    cur.grossSen += p.grossPaySen;
+    cur.epfSen += p.epfEmployerSen;
+    cur.socsoSen += p.socsoEmployerSen;
+    cur.eisSen += p.eisEmployerSen;
+    agg.set(dept, cur);
+  }
+  return [...agg.values()].sort((a, b) => a.departmentCode.localeCompare(b.departmentCode));
+}
+
+// The same dry run, one record per worker (2026-10-12: the running month's
+// labour to date reads the absences / OT / allowances / statutory per payslip).
+export async function projectedPayslipsForMonth(
+  db: Env["Variables"]["DB"],
+  period: string,
+): Promise<ProjectedPayslip[]> {
   if (!/^\d{4}-\d{2}$/.test(period)) return [];
   const [pYear, pMonth] = period.split("-").map(Number);
 
@@ -151,7 +193,7 @@ export async function projectedLabourByDept(
   const effByWorker = await computeMonthlyEfficiencyByWorker(db, effBounds.start, effBounds.end);
 
   const periodLastIso = periodEndYmd;
-  const agg = new Map<string, ProjectedDeptCost>();
+  const out: ProjectedPayslip[] = [];
   for (const worker of workers) {
     if (
       typeof worker.joinDate === "string" &&
@@ -236,14 +278,23 @@ export async function projectedLabourByDept(
       },
     );
 
-    const dept = String(worker.departmentCode ?? "").trim() || "(unassigned)";
-    const cur = agg.get(dept) ?? { departmentCode: dept, workers: 0, grossSen: 0, epfSen: 0, socsoSen: 0, eisSen: 0 };
-    cur.workers += 1;
-    cur.grossSen += labor.payroll.grossSen + allowances;
-    cur.epfSen += stat.epfEmployer;
-    cur.socsoSen += stat.socsoEmployer;
-    cur.eisSen += stat.eisEmployer;
-    agg.set(dept, cur);
+    out.push({
+      id: `projected-${period}-${worker.id}`,
+      employeeId: worker.id,
+      departmentCode: String(worker.departmentCode ?? ""),
+      basicSalarySen: effectiveSalarySen,
+      absentDays: labor.payroll.absentDays,
+      absenceDeductionSen: labor.payroll.absenceDeductionSen,
+      otWeekdayHours: Math.round(labor.otWeekdayHours),
+      otSundayHours: Math.round(labor.otSundayHours),
+      otPhHours: Math.round(labor.otHolidayHours),
+      totalOtSen: labor.payroll.otPaySen,
+      allowancesSen: allowances,
+      grossPaySen: labor.payroll.grossSen + allowances,
+      epfEmployerSen: stat.epfEmployer,
+      socsoEmployerSen: stat.socsoEmployer,
+      eisEmployerSen: stat.eisEmployer,
+    });
   }
-  return [...agg.values()].sort((a, b) => a.departmentCode.localeCompare(b.departmentCode));
+  return out;
 }
