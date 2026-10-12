@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
@@ -190,6 +191,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-12 — 🔵 IT Support: empty state as its own card (branch `feat/it-support-empty-card` → `staging`, local only)
+
+1. ✅ No tickets at all: a standalone rounded card (illustration, "No tickets yet", Report an issue). No grid, so no headers, search, Views, Columns or record count.
+2. ✅ One ticket or more: the grid with tabs, search, views, columns and paging, as before. Split into `EmptyState` and `TicketTable` in the page file.
+3. ✅ DataGrid `emptyMessage` back to `string` (the ReactNode use is gone).
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy with an account that has no tickets, then one that has some.
 
 ## 2026-10-12 — 🔵 IT Support: list layout with status tabs and an empty state (branch `feat/it-support-list-layout` → `staging`, local only)
 

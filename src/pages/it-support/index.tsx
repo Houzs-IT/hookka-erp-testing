@@ -542,33 +542,26 @@ function NoTicketsArt() {
   );
 }
 
-// ---- Page ---------------------------------------------------------------------
-export default function ItSupport() {
-  const [params, setParams] = useSearchParams();
-  const ticketCode = params.get("ticket") ?? "";
-  const isNew = params.get("new") === "1";
-  const fromUrl = params.get("from") ?? "";
+// Only when the server answered with no tickets at all: no grid, no toolbar, no headers.
+function EmptyState({ onReport }: { onReport: () => void }) {
+  return (
+    <section aria-labelledby="it-support-empty" className="rounded-xl border border-[#E2DDD8] bg-white px-6 py-12 text-center sm:py-16">
+      <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
+        <NoTicketsArt />
+        <h2 id="it-support-empty" className="text-xl font-bold text-[#1F1D1B]">No tickets yet</h2>
+        <p className="text-sm text-[#6B7280]">
+          Need help with hardware, software, or access permissions? Submit a request and our IT team will pick it up.
+        </p>
+        <Button variant="primary" onClick={onReport}>
+          <Plus className="h-4 w-4" />
+          Report an issue
+        </Button>
+      </div>
+    </section>
+  );
+}
 
-  const [rows, setRows] = useState<TicketRow[] | null>(null);
-  const [listError, setListError] = useState("");
-
-  const loadList = useCallback(async () => {
-    const res = await api<{ tickets: TicketRow[] }>("/tickets");
-    if (res.ok) {
-      setRows(res.data.tickets);
-      setListError("");
-    } else {
-      setListError(res.error);
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount; same pattern as the sidebar
-    loadList();
-  }, [loadList]);
-  useInterval(loadList, 60_000);
-
-  const open = useCallback((next: Record<string, string>) => setParams(next), [setParams]);
+function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code: string) => void }) {
   const [tab, setTab] = useState<ListTab>("all");
 
   // Counts come from every ticket, never from what the search box left.
@@ -610,6 +603,60 @@ export default function ItSupport() {
     ],
     [],
   );
+
+
+  return (
+    <DataGrid
+      gridId="it-support-my-tickets"
+      keyField="code"
+      columns={columns}
+      data={byTab[tab]}
+      loading={rows === null}
+      onRowClick={(r) => onOpen(r.code)}
+      toolbarStart={
+        <Tabs
+          className="-my-1.5 border-b-0"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { key: "all", label: "All", count: byTab.all.length },
+            { key: "active", label: "Active", count: byTab.active.length },
+            { key: "resolved", label: "Resolved", count: byTab.resolved.length },
+          ]}
+        />
+      }
+      emptyMessage={{ all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab]}
+    />
+  );
+}
+
+// ---- Page ---------------------------------------------------------------------
+export default function ItSupport() {
+  const [params, setParams] = useSearchParams();
+  const ticketCode = params.get("ticket") ?? "";
+  const isNew = params.get("new") === "1";
+  const fromUrl = params.get("from") ?? "";
+
+  const [rows, setRows] = useState<TicketRow[] | null>(null);
+  const [listError, setListError] = useState("");
+
+  const loadList = useCallback(async () => {
+    const res = await api<{ tickets: TicketRow[] }>("/tickets");
+    if (res.ok) {
+      setRows(res.data.tickets);
+      setListError("");
+    } else {
+      setListError(res.error);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount; same pattern as the sidebar
+    loadList();
+  }, [loadList]);
+  useInterval(loadList, 60_000);
+
+  const open = useCallback((next: Record<string, string>) => setParams(next), [setParams]);
 
   if (isNew) {
     return (
@@ -665,42 +712,11 @@ export default function ItSupport() {
           </CardContent>
         </Card>
       )}
-      {/* While the list has never loaded there is nothing true to draw: no grid, so no "no tickets" line. */}
-      {(rows !== null || !listError) && (
-        <DataGrid
-          gridId="it-support-my-tickets"
-          keyField="code"
-          columns={columns}
-          data={byTab[tab]}
-          loading={rows === null}
-          onRowClick={(r) => open({ ticket: r.code })}
-          toolbarStart={
-            <Tabs
-              className="-my-1.5 border-b-0"
-              value={tab}
-              onChange={setTab}
-              tabs={[
-                { key: "all", label: "All", count: byTab.all.length },
-                { key: "active", label: "Active", count: byTab.active.length },
-                { key: "resolved", label: "Resolved", count: byTab.resolved.length },
-              ]}
-            />
-          }
-          emptyMessage={
-            byTab.all.length === 0 ? (
-              <div className="mx-auto flex max-w-sm flex-col items-center gap-3 px-4 py-8">
-                <NoTicketsArt />
-                <h3 className="text-xl font-bold text-[#1F1D1B]">No tickets yet</h3>
-                <p className="text-sm text-[#6B7280]">
-                  Need help with hardware, software or access? Report it and the IT team will pick it up.
-                </p>
-                <Button variant="primary" onClick={() => open({ new: "1" })}>Report an issue</Button>
-              </div>
-            ) : (
-              <span className="text-sm text-[#6B7280]">{{ all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab]}</span>
-            )
-          }
-        />
+      {/* While the list has never loaded there is nothing true to draw, so no empty state either. */}
+      {rows !== null && rows.length === 0 ? (
+        <EmptyState onReport={() => open({ new: "1" })} />
+      ) : (
+        (rows !== null || !listError) && <TicketTable rows={rows} onOpen={(code) => open({ ticket: code })} />
       )}
     </div>
   );
