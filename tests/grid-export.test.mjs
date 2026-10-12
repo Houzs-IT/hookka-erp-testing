@@ -49,6 +49,8 @@ test("select/actions pseudo-columns and the row-buttons column are excluded", ()
     { key: "companySOId", label: "SO No." },
     { key: "__actions__", label: "" },
     { key: "actions", label: "Actions" },
+    { key: "_select", label: "" },
+    { key: "_view", label: "" },
   ];
   const aoa = ge.buildListingAoa(cols, [{ companySOId: "SO-1" }]);
   assert.deepEqual(aoa[0], ["SO No."]);
@@ -67,6 +69,19 @@ test("currency null → blank; date ISO → day; computed uses filterAccessor", 
 test("exportValue wins over everything", () => {
   const cols = [{ key: "totalSen", label: "T", type: "currency", exportValue: () => "custom" }];
   assert.equal(ge.buildListingAoa(cols, [{ totalSen: 999 }])[1][0], "custom");
+});
+
+// The SO "Items" column is keyed on the items ARRAY and shows its length via
+// render, which the export never sees: without exportValue it wrote
+// "[object Object],[object Object]". (BUG-2026-10-12-278)
+test("an array-keyed column exports its exportValue, not the joined objects", () => {
+  const row = { items: [{ quantity: 2 }, { quantity: 3 }] };
+  const bare = { key: "items", label: "Items", type: "number" };
+  assert.equal(ge.cellExportValue(bare, row), "[object Object],[object Object]");
+  assert.equal(ge.cellExportValue({ ...bare, exportValue: (r) => r.items.length }, row), 2);
+  const qty = { key: "totalQty", label: "Qty", type: "number" };
+  assert.equal(ge.cellExportValue(qty, row), "", "a render-only key is not on the row");
+  assert.equal(ge.cellExportValue({ ...qty, exportValue: (r) => r.items.reduce((s, i) => s + i.quantity, 0) }, row), 5);
 });
 
 // ── AutoCount SO detail listing ──────────────────────────────────────────

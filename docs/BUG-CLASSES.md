@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` **adds C30 — a list column whose screen value exists only in `render`, exported raw** (BUG-2026-10-12-278). Nothing else re-checked.
 > **Last verified: 2026-10-01**: restamped on branch `fix/grn-number-collision` (staging only): C27 row 2 marked verified on staging (2026-09-30), row 5 added for read-max-then-insert document numbers (BUG-2026-10-01-232).
 > **Last verified: 2026-09-30**: restamped on branch `fix/t006-r2-grn-receipt-race` (staging only): adds C27, a ceiling checked before the write with nothing in the write to back it (BUG-2026-09-30-226); C10 row 4 renamed to the functions that now exist. Nothing else re-checked.
 > **Last verified: 2026-09-30**: restamped on branch `fix/staging-so-detail-live-do` (staging): C21 gains row 18, the SO detail page that showed a cancelled DO as a production order's delivery (BUG-2026-09-30-225). Nothing else re-checked.
@@ -1850,3 +1851,20 @@ Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return tr
 | 5 | `lib/snapshot.ts`, dashboard / delivery / invoice snapshots: probe and rebuild are plain reads | ⬜ open; needs `freshReads` on both, or the infra switch |
 
 Test: `tests/worker-history-snapshot-fresh.test.mjs` (row 4).
+
+## C30 — a list column whose screen value exists only in `render`, exported raw
+
+**Shape.** A DataGrid column computes what it shows inside `render` (a count of an array, a sum, an id looked up to a name, sen formatted as RM). The grid Export (`cellExportValue`, `src/lib/grid-export.ts`) never calls `render`; it reads `exportValue`, else `filterAccessor`, else the raw value at the key. So the file gets `[object Object]`, a blank, an id or a sen integer.
+
+**Why it keeps happening.** The screen is right, so nobody looks at the file until an operator opens it. `exportName` is switched on per page, and the columns were written long before export existed.
+
+**The rule.** When a page has `exportName`, every column whose render shows something other than the raw key value carries an `exportValue` that returns the same thing as text or a number (money as RM). Add the column to `RENDER_ONLY_COLUMNS` in `tests/grid-export-coverage.test.mjs`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | Sales/Service Orders, Purchase Orders, GRN, Purchase Invoices, Delivery Orders, Consignment, Customers (list in BUG-2026-10-12-278) | ✅ on branch `fix/grid-export-computed-columns` (BUG-2026-10-12-278), not deployed |
+| 2 | status columns export the raw code (`IN_PRODUCTION`) where the screen swaps `_` for a space | ⬜ open, cosmetic, left on purpose |
+
+Test: `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue".

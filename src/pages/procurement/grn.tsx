@@ -697,6 +697,10 @@ export default function GRNPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: GoodsReceiptNote) => {
+        const code = row.purchaseOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: GoodsReceiptNote) => {
         const code = row.purchaseOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -716,6 +720,8 @@ export default function GRNPage() {
     },
     { key: "totalAmount", label: "Total", type: "currency", width: "120px", sortable: true },
     { key: "arrival_state", label: "Arrival", type: "status", width: "130px", sortable: true,
+      exportValue: (row: GoodsReceiptNote) =>
+        ARRIVAL_LABELS[row.arrival_state as ArrivalState] ?? row.arrival_state.replace(/_/g, " "),
       render: (_v: unknown, row: GoodsReceiptNote) => (
         <Badge variant="status" status={row.arrival_state}>
           {ARRIVAL_LABELS[row.arrival_state as ArrivalState] ?? row.arrival_state.replace(/_/g, " ")}

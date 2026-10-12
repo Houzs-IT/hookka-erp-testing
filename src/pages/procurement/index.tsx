@@ -1607,6 +1607,10 @@ export default function ProcurementPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: PurchaseOrder) => {
+        const code = row.purchaseOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: PurchaseOrder) => {
         const code = row.purchaseOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -1627,6 +1631,10 @@ export default function ProcurementPage() {
       width: "110px",
       align: "right" as const,
       sortable: false,
+      exportValue: (row: PurchaseOrder) => {
+        const stat = otrMap[row.supplierId];
+        return !stat || stat.totalPOs === 0 ? null : Math.round(stat.onTimeRate);
+      },
       render: (_v: unknown, row: PurchaseOrder) => {
         const stat = otrMap[row.supplierId];
         if (!stat || stat.totalPOs === 0) {
@@ -1658,6 +1666,7 @@ export default function ProcurementPage() {
       width: "80px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: PurchaseOrder) => row.items.reduce((s, it) => s + it.quantity, 0),
       render: (_v: unknown, row: PurchaseOrder) => {
         const total = row.items.reduce((s, it) => s + it.quantity, 0);
         return <span>{total}</span>;
@@ -1670,6 +1679,10 @@ export default function ProcurementPage() {
       width: "95px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: PurchaseOrder) =>
+        row.status === "RECEIVED" || row.status === "CANCELLED"
+          ? null
+          : row.items.reduce((s, it) => s + Math.max(0, it.quantity - (it.receivedQty || 0)), 0),
       render: (_v: unknown, row: PurchaseOrder) => {
         if (row.status === "RECEIVED" || row.status === "CANCELLED") {
           return <span className="text-[#9CA3AF]">—</span>;
