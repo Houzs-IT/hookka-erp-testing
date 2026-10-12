@@ -2533,7 +2533,7 @@ app.get("/fabric-cost-compare", async (c) => {
       fabricCode: r.fabricCode,
       plannedMeters: r.productCode
         ? computeFcFabricUsageMeters(
-            { ...r, quantity: num(r.quantity) },
+            { ...r, itemCategory: r.cat, quantity: num(r.quantity) },
             { departmentCode: "FAB_CUT", wipType: null },
             bomMap.get(r.productCode),
           )

@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-283 (branch `fix/fabric-meter-calc`, to staging; 282 is staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-281 (branch `fix/export-all-pages`, to staging; 279 and 280 are staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: BUG-2026-10-12-279 follow-up (branch `fix/bug87-auto-grn-read`, to staging): the receipt id was read snake_case only; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-280 (branch `fix/credit-override-explicit-tick`, to staging; 279 is staging's PO-direct invoice fix); a log, so "verified" means the entry matches the code on its branch.
@@ -125,6 +126,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-12-283 — Fabric cost compare planned sofa orders without their seat height `dashboard` 🟡
+
+🟡 **Fixed on branch** (`fix/fabric-meter-calc` → `staging`). Found by build:strict (`tsc -p tsconfig.app.json`) on another branch.
+
+**Symptom.** On the dashboard's fabric cost compare, the planned fabric meters for sofa orders ignored seat height. A BOM fabric line that scales with seat height was planned at its base quantity. Bedframes were not affected. How far the prod figures move is UNMEASURED.
+
+**Root cause.** `GET /api/dashboard/overview/fabric-cost-compare` (`src/api/routes/dashboard-overview.ts`) selects the order category as `cat`, but `computeFcFabricUsageMeters` reads `itemCategory`. The row was spread as-is, so `itemCategory` was always undefined. Every order was treated as a non-sofa and `seatHeightInches` was never worked out.
+
+**Fix.** The call now passes `itemCategory: r.cat`. In the same commit, a typecheck-only fix in `src/pages/sales/index.tsx`: the list Export filter checked `tab === "DRAFT"` on a path that only runs on the Confirmed tab (the Draft tab counts as a filter in `_filtersActive`). The dead check is removed; behaviour is unchanged.
+
+**Regression.** `tests/fabric-usage.test.mjs`: a sofa plans 2.4 m with the category and 2 m without it, and the route must map `r.cat` to `itemCategory`. The route test fails on the old code. Not yet verified on the staging site.
 
 ---
 

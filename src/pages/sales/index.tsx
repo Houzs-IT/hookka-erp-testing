@@ -1742,10 +1742,11 @@ export default function SalesPage() {
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
             // Unfiltered, the grid holds one 200-row page; Export walks them
             // all with the same tab rule as filteredOrders. Any filter already
-            // loads the whole set.
+            // loads the whole set. The Draft tab counts as a filter
+            // (_filtersActive), so this only ever runs on Confirmed.
             exportAllRows={_filtersActive ? undefined : () =>
               fetchAllPages<SalesOrder>((p, l) => `/api/sales-orders?page=${p}&limit=${l}&${soFilterQs}`)
-                .then((rows) => rows.filter((o) => !(tab === "DRAFT" && o.status !== "DRAFT") && !(tab === "CONFIRMED" && o.status === "DRAFT")))}
+                .then((rows) => rows.filter((o) => o.status !== "DRAFT"))}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}
             // Give each Status-dropdown selection its own filter session
