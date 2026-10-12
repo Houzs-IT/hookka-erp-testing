@@ -4334,21 +4334,8 @@ export async function applyDeliveryOrderUpdate(
           409,
         );
       }
-      // Customer credit re-check at dispatch (BUG-34): a DRAFT raised while
-      // the customer was clear must not leave once an invoice has gone
-      // overdue or the undelivered total passes the limit. This DO is still
-      // DRAFT, so it is already inside the undelivered total — no extra
-      // items. Covers the office button and the public QR scan (both land
-      // here); only a signed-in user with the override can pass a block.
-      if (body.status === "LOADED" && existing.status === "DRAFT") {
-        const gate = await gateCredit(
-          c,
-          await checkCustomerCredit(c.var.DB, existing.customerId, []),
-          body.creditOverride,
-          { resource: "delivery-orders", resourceId: id },
-        );
-        if (!gate.ok) return c.json(gate.body, gate.status);
-      }
+      // No credit check at dispatch (BUG-2026-10-12-282): the gate runs when
+      // the DO is created; a DO that exists can always leave.
       // A cancel is a whole-document reversal (see the `cancelled` block
       // below). Replacing the line items in the SAME request would make it
       // reverse a composition that was never delivered — refuse and let the

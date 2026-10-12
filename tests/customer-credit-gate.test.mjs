@@ -76,13 +76,14 @@ test("overdue wins over the limit", () => {
   assert.equal(decideCredit(s, 0, "2026-09-28").code, "PAYMENT_OVERDUE");
 });
 
-test("structural: DO create, packing-list-first and dispatch all run the shared gate", () => {
+test("structural: DO create and packing-list-first run the shared gate, dispatch does not", () => {
   const helpers = readFileSync("src/api/routes/delivery-orders/_helpers.ts", "utf8");
   const routes = readFileSync("src/api/routes/delivery-orders.ts", "utf8");
   const core = helpers.slice(helpers.indexOf("export async function createDeliveryOrderForPOs("));
   assert.match(core.slice(0, core.indexOf("genDoId()")), /gateCredit\(\s*c,\s*await checkCustomerCredit\(/);
   const upd = helpers.slice(helpers.indexOf("export async function applyDeliveryOrderUpdate("));
-  assert.match(upd, /body\.status === "LOADED" && existing\.status === "DRAFT"[\s\S]{0,200}checkCustomerCredit\(/);
+  // BUG-2026-10-12-282: a DO that exists can always be dispatched (office or phone scan).
+  assert.doesNotMatch(upd.slice(0, upd.indexOf("\nexport ", 1)), /checkCustomerCredit\(|gateCredit\(/);
   const pl = routes.slice(routes.indexOf('app.post("/packing-list-first"'));
   assert.ok(pl.indexOf("checkCustomerCredit(") < pl.indexOf("body.preview === true"), "credit check before preview");
   assert.match(pl, /creditOverride: body\.creditOverride/, "override reaches the core");
