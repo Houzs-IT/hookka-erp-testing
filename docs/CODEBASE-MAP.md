@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-12 on branch `feat/labor-cost-incl-payroll-card` (to `main`)**: the Employees › Labor Cost tab line (the "Labor Cost incl. EPF & Allowances" card), read from `src/pages/employees.tsx` and `src/lib/labor-cost-incl-payroll.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `feat/cost-structure-production-revenue` (to `main`)**: the Financial Dashboard row and its Production Revenue note (Cost Structure + both salary cards), the Labor Cost tab line, read from `src/api/lib/production-revenue.ts`, `src/api/routes/accounting.ts` (`GET /dashboard`), `src/api/routes/working-hour-entries.ts` and `src/pages/finance-dashboard.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `fix/po-picker-duplicate-supplier-rows` (to `main`, BUG-2026-10-12-276)**: the `src/pages/procurement/create.tsx` row (popup keeps one row per supplier, line count), read from that file. Nothing else re-checked.
 > **Last verified: 2026-10-09 on branch `fix/undone-labour-post-hides-payroll` (to `main`)**: the Labour tab row (the P&L's "salary already recorded" check now nets each document's legs, `src/lib/recorded-salary.ts`, BUG-2026-10-09-275). Nothing else re-checked.
@@ -866,7 +867,13 @@ not carried forward: the previous stamp was 3 lines light on every entry.)
   - TAB 5: Payroll (PayrollTab) — L6653 (+ Advance column / drift banner, 2026-08-07)
   - DepartmentsManager (inside Labor Cost section) — L8234
   - TAB 5b: Labor Cost (LaborCostTab) — L8481. Its Total Revenue = `GET /api/working-hour-entries/production-revenue`,
-    whose recognition SQL lives in `src/api/lib/production-revenue.ts` (shared with the finance dashboard, 2026-10-12)
+    whose recognition SQL lives in `src/api/lib/production-revenue.ts` (shared with the finance dashboard, 2026-10-12).
+    **"Labor Cost incl. EPF & Allowances" card (2026-10-12)**: `fullCostCard` — finished month = Σ gross + employer
+    statutory (the reconciliation's Total Payroll Cost); running month = Total Labor Cost + allowances & employer
+    statutory pro-rated to the working days logged + the absent-day / OT / docked-hours bridges so far
+    (`laborCostInclPayroll` in `src/lib/labor-cost-incl-payroll.ts`). No stored payslips in a running month → the
+    bridges read `GET /api/payslips/projected` (`bridgePayslips`); everything the reconciliation shows still needs
+    stored payslips. Guard `tests/labor-cost-incl-payroll.test.mjs`.
   - TAB 6: Leave Management (LeaveManagementTab) — L10104. **Entitlement is no
     longer a constant in this file** — it is per-worker data and the balance is
     read from `GET /api/leaves/balances`. See `src/lib/leave-entitlement.ts`.
