@@ -48,6 +48,7 @@ import { projectedLabourByDept } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
 import { loadPreparedProduction } from "../lib/production-stock";
 import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
+import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
@@ -8084,6 +8085,59 @@ async function blankMonthStock(
   }
 }
 
+// The closing stock the P&L carries at month-end `ym` — the material window's
+// close, with a blank month's FG / WIP from the production orders — in the
+// shape the Balance Sheet reads (src/lib/bs-stock.ts). For callers that already
+// hold the material data; the sheet itself reads the Stock Summary.
+async function closingStockAt(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string,
+  matData: MaterialCostData,
+  dc: DocDateCtx,
+  override: Record<string, string>,
+): Promise<ClosingStock> {
+  const w = materialWindow(matData, ym, ym);
+  const blank = await blankMonthStock(db, orgId, ym, matData, dc, override);
+  return {
+    rows: w.rmGroups.map((g) => ({ group: g.itemGroup, closingSen: g.closingSen })),
+    wipSen: blank?.wip ?? w.wipCloseSen,
+    fgSen: blank?.fg ?? w.fgCloseSen,
+  };
+}
+
+// The Balance Sheet's stock as at `endYm` (owner 2026-10-13 「balance sheet 就让
+// 他的 closing stock 和 P&L closing stock 一样」; src/lib/bs-stock.ts): the stock
+// map's accounts read the Stock Summary's closing for the sheet's month — the
+// figure the P&L closes on — in place of the ledger's own balance on them
+// (`ledgerNet`, DR − CR). `earningsSen` is what Current Year Earnings moves by.
+// Only accounts the sheet can place (`placeable`: in the chart, on the sheet)
+// take part, so the sheet always balances. null = no stock on this sheet
+// (before the opening month).
+async function sheetStockAt(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  endYm: string | null,
+  resolve: (code: string) => string,
+  ledgerNet: (code: string) => number,
+  placeable: (code: string) => boolean,
+): Promise<{ month: string; totalSen: number; balances: Map<string, number>; earningsSen: number } | null> {
+  const openingDate = await getOpeningDate(db);
+  const month = sheetStockMonth(endYm, openingDate ? openingDate.slice(0, 7) : null, runningMonthYm());
+  if (!month) return null;
+  const [map, s] = await Promise.all([getStockMap(db), stockSummaryRange(db, orgId, month, month)]);
+  const closing: ClosingStock = {
+    rows: s.rows.map((r) => ({ group: r.group, closingSen: r.closingSen })),
+    wipSen: s.wip.closingSen,
+    fgSen: s.fg.closingSen,
+  };
+  const accounts = new Set([...stockAccounts(map, resolve)].filter(placeable));
+  const { balances, earningsSen } = stockOverride(accounts, stockByAccount(map, closing, resolve), ledgerNet);
+  let totalSen = 0;
+  for (const v of balances.values()) totalSen += v;
+  return { month, totalSen, balances, earningsSen };
+}
+
 async function computePnlWindow(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -9083,6 +9137,41 @@ app.get("/bs-drill", async (c) => {
   if (!section) return c.json({ success: false, error: `${account} is not a balance-sheet account` }, 400);
   const assetSide = bsSectionClass(section) === "asset";
   const coFilter = companyFilter(c, "orgId");
+  // A stock account shows the P&L's closing stock, not the ledger (owner
+  // 2026-10-13; see sheetStockAt): the drill is the Stock Summary's movement per
+  // material group — b/f last month-end's closing, c/f this month-end's.
+  if (!coFilter.active || coFilter.orgId === orgId) {
+    const stockMap = await getStockMap(db);
+    if (stockAccounts(stockMap, resolve).has(account)) {
+      const openingRaw = await getOpeningDate(db);
+      const openingYm = openingRaw ? openingRaw.slice(0, 7) : null;
+      const month = sheetStockMonth(period, openingYm, runningMonthYm());
+      if (month) {
+        const s = await stockSummaryRange(db, orgId, month, month);
+        const prev = prevMonthYm(month);
+        const opening: ClosingStock | null = sheetStockMonth(prev, openingYm, runningMonthYm()) === prev
+          ? { rows: s.rows.map((r) => ({ group: r.group, closingSen: r.openingSen })), wipSen: s.wip.openingSen, fgSen: s.fg.openingSen }
+          : null;
+        const closing: ClosingStock = { rows: s.rows.map((r) => ({ group: r.group, closingSen: r.closingSen })), wipSen: s.wip.closingSen, fgSen: s.fg.closingSen };
+        const d = stockDrill(account, stockMap, opening, closing, resolve);
+        const money = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const stockSide = (v: number) => (assetSide ? v : -v);
+        return c.json({
+          success: true,
+          data: {
+            period,
+            account: { code: account, name: acct.name, type: acct.type, section },
+            assetSide,
+            bfSen: stockSide(d.bfSen),
+            cfSen: stockSide(d.cfSen),
+            lines: stockDrillRows(month, lastDayIso(month), d.lines, money),
+            tied: true,
+            fromStockTake: true,
+          },
+        });
+      }
+    }
+  }
   const legWhere = coFilter.active ? ` AND ${coFilter.sql}` : "";
   const legRes = await db.prepare(
     `SELECT id, accountCode, sourceId, sourceType, debitSen, creditSen, postedAt, description FROM ledger_journal_entries WHERE hidden = 0${legWhere}`,
@@ -9266,6 +9355,15 @@ export async function loadFinanceSeries(
     loadAccountResolver(db),
   ]);
   const coaType = new Map((coaRes.results ?? []).map((a) => [a.code, a.type] as const));
+  // Stock = the P&L's closing stock at each month-end (owner 2026-10-13; see
+  // sheetStockAt): the ledger's own stock balances give way to it and the
+  // difference is earnings, as on the Balance Sheet.
+  const stockMap = await getStockMap(db);
+  const stockAccts = new Set([...stockAccounts(stockMap, resolveAcct)].filter((code) => {
+    const t = coaType.get(code);
+    const sec = t ? bsSectionFor(code, t, bsOverride) : null;
+    return !!sec && bsSectionClass(sec) === "asset";
+  }));
   const perYm = new Map<string, Map<string, { dr: number; cr: number }>>();
   for (const l of legRes.results ?? []) {
     const dd = dc.docDate(l.sourceType, l.sourceId, l.postedAt);
@@ -9308,6 +9406,14 @@ export async function loadFinanceSeries(
       }
       if (type === "REVENUE") unclosed += v.cr - v.dr;
       else if (type === "COST" || type === "EXPENSE") unclosed -= v.dr - v.cr;
+    }
+    const stockYm = sheetStockMonth(ym, openingMonth, runningMonthYm());
+    if (stockYm) {
+      const closing = await closingStockAt(db, orgId, stockYm, matData, dc, override);
+      const net = (code: string) => { const e = run.get(code); return e ? e.dr - e.cr : 0; };
+      const { earningsSen } = stockOverride(stockAccts, stockByAccount(stockMap, closing, resolveAcct), net);
+      assets += earningsSen;
+      unclosed += earningsSen;
     }
     out.push({
       ym, ...(pnl.get(ym) ?? { revenueSen: 0, labourSen: 0, netProfitSen: 0 }),
@@ -10288,7 +10394,24 @@ app.get("/pl", async (c) => {
   }[] = [];
   const asOf = endYm ? `${endYm}-28` : new Date().toISOString().slice(0, 10);
   const bsOverride = await getBsSectionMap(c.var.DB);
-  const bsCodes = new Set([...bsDr.keys(), ...bsCr.keys()]);
+  // Stock = the P&L's closing stock for the sheet's month, not what the ledger
+  // holds (owner 2026-10-13; sheetStockAt). The difference lands in Current
+  // Year Earnings below. One company's sheet carries it only when that is the
+  // company the stock take belongs to.
+  let sheetStock: Awaited<ReturnType<typeof sheetStockAt>> = null;
+  let sheetStockError: string | null = null;
+  if (!coFilter.active || coFilter.orgId === getOrgId(c)) {
+    try {
+      sheetStock = await sheetStockAt(
+        c.var.DB, getOrgId(c), endYm, resolveAcct,
+        (code) => (bsDr.get(code) ?? 0) - (bsCr.get(code) ?? 0),
+        (code) => { const a = coa.get(code); return !!a && bsSectionFor(code, a.type, bsOverride) !== null; },
+      );
+    } catch (e) {
+      sheetStockError = (e as Error)?.message || "The stock could not be read";
+    }
+  }
+  const bsCodes = new Set([...bsDr.keys(), ...bsCr.keys(), ...(sheetStock ? sheetStock.balances.keys() : [])]);
   for (const code of bsCodes) {
     const acct = coa.get(code);
     if (!acct) continue;
@@ -10297,13 +10420,15 @@ app.get("/pl", async (c) => {
     const dr = bsDr.get(code) ?? 0;
     const cr = bsCr.get(code) ?? 0;
     const bal = bsSectionClass(section) === "asset" ? dr - cr : cr - dr;
-    if (bal === 0) continue;
+    const stockSen = sheetStock?.balances.get(code);
+    const shown = stockSen === undefined ? bal : bsSectionClass(section) === "asset" ? stockSen : -stockSen;
+    if (shown === 0) continue;
     balanceSheet.push({
       id: code,
       accountCode: code,
       accountName: acct.name,
       category: section,
-      balance: bal,
+      balance: shown,
       asOfDate: asOf,
     });
   }
@@ -10322,6 +10447,8 @@ app.get("/pl", async (c) => {
     else if (acct.type === "COST" || acct.type === "EXPENSE")
       unclosedEarnings -= dr - cr;
   }
+  // The stock the ledger has already expensed comes back as earnings.
+  unclosedEarnings += sheetStock?.earningsSen ?? 0;
   if (unclosedEarnings !== 0)
     balanceSheet.push({
       id: "NP-CURRENT",
@@ -10350,6 +10477,9 @@ app.get("/pl", async (c) => {
       cogsByAccount,
       opexByAccount,
       balanceSheet,
+      // Which month's closing stock the sheet's stock lines carry (null = none).
+      sheetStock: sheetStock ? { month: sheetStock.month, totalSen: sheetStock.totalSen } : null,
+      sheetStockError,
       manufacturing: {
         ...mfg,
         // Opening/closing stock are LIVE from the cost ledger (read at
@@ -13646,7 +13776,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v17"; // v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v18"; // v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -14061,6 +14191,14 @@ app.get("/dashboard", async (c) => {
     return meta ? bsSectionFor(code, meta.type, bsMap as Record<string, string>) : null;
   };
   const bucketEnd = (b: Bucket) => `${b.months[b.months.length - 1]}-31`;
+  // Stock = the P&L's closing stock at each bucket's month-end (owner
+  // 2026-10-13; see sheetStockAt): the ledger's own stock balances give way.
+  const stockMapDash = await getStockMap(db);
+  const stockAcctsDash = new Set([...stockAccounts(stockMapDash, resolveDash)].filter((code) => {
+    const sec = sectionOf(code);
+    return sec === "FIXED_ASSET" || sec === "CURRENT_ASSET";
+  }));
+  const openingYmDash = dcDash.openingDate ? dcDash.openingDate.slice(0, 7) : null;
   const running = new Map<string, number>(); // account → dr−cr
   const bsByBucket = new Map<string, { assets: number; liabilities: number; equity: number; currentAssets: number; currentLiabilities: number; inventory: number } | null>();
   {
@@ -14076,7 +14214,14 @@ app.get("/dashboard", async (c) => {
       // card doesn't draw phantom zero bars past today.
       if (b.months[0] > nowYm) { bsByBucket.set(b.key, null); continue; }
       let assets = 0, liabilities = 0, equity = 0, curA = 0, curL = 0, inv = 0;
-      for (const [code, net] of running) {
+      const nets = new Map(running);
+      const stockYm = sheetStockMonth(b.months[b.months.length - 1], openingYmDash, runningMonthYm());
+      if (stockYm) {
+        const closing = await closingStockAt(db, orgIdDash, stockYm, matDataDash, dcDash, overrideDash);
+        const { balances } = stockOverride(stockAcctsDash, stockByAccount(stockMapDash, closing, resolveDash), (code) => running.get(code) ?? 0);
+        for (const [code, v] of balances) nets.set(code, v);
+      }
+      for (const [code, net] of nets) {
         const sec = sectionOf(code);
         if (!sec) continue;
         if (sec === "FIXED_ASSET" || sec === "CURRENT_ASSET") {
