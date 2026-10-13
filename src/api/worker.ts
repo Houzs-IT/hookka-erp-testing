@@ -149,6 +149,9 @@ export type Env = {
     // With either unset the routes answer 503 and the page says so.
     IT_HUB_URL?: string;
     IT_HUB_API_KEY?: string;
+    // The hub sends this as x-it-hub-secret when it pushes a ticket event to
+    // /api/it-support/hub-events (>= 16 chars). Unset: that endpoint answers 503.
+    IT_HUB_WEBHOOK_SECRET?: string;
   };
   // Per-request variables.  DB is the Supabase-backed D1-compat adapter
   // installed by the middleware below; typed as D1Database so existing route
@@ -921,6 +924,29 @@ app.post("/api/mail-center/inbound", async (c) => {
   } catch (err) {
     console.error("[mail-inbound] error:", err);
     return c.json({ ok: false, error: "ingest failed" }, 500);
+  }
+});
+
+// IT Hub ticket events: the hub POSTs each IT reply / status change here and
+// it lands in the reporter's top-bar bell. Machine-to-machine, so registered
+// BEFORE authMiddleware and gated on IT_HUB_WEBHOOK_SECRET (x-it-hub-secret),
+// same constant-time pattern as above. Idempotent on the hub's event id.
+app.post("/api/it-support/hub-events", async (c) => {
+  const expected = c.env.IT_HUB_WEBHOOK_SECRET;
+  if (!expected || expected.length < 16) {
+    console.error("[it-hub-events] IT_HUB_WEBHOOK_SECRET unset or too short — refusing");
+    return c.json({ ok: false, error: "service unavailable" }, 503);
+  }
+  const given = c.req.header("x-it-hub-secret") || "";
+  if (!(await constantTimeEqual(given, expected))) {
+    return c.json({ ok: false, error: "forbidden" }, 403);
+  }
+  try {
+    const { recordHubEvent } = await import("./routes/it-support");
+    return await recordHubEvent(c);
+  } catch (err) {
+    console.error("[it-hub-events] error:", err);
+    return c.json({ ok: false, error: "record failed" }, 500);
   }
 });
 
