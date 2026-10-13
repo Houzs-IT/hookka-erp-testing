@@ -190,7 +190,8 @@ export interface LateOrderRow {
 /**
  * The judged orders as list rows: LATE only, or every judged order with `all`.
  * Orders the metric left out (not fully delivered, no customer date) are not
- * listed, so the LATE rows ARE the card's late count.
+ * listed. Urgent rows are included (the card tags them by `leadDays`), so the
+ * card's late count is the LATE rows that are not urgent.
  */
 export function deliveryOrderRows(rows: OnTimeRow[], all: boolean): LateOrderRow[] {
   const out: LateOrderRow[] = [];
