@@ -203,7 +203,7 @@ test("an empty period publishes nulls, not a perfect score", () => {
 // The on-time delivery KPI — the same rows, the same verdict (BUG-2026-10-08-267)
 // ===========================================================================
 
-const RULES = { urgentDays: 7, urgentLatePct: 100 };
+const RULES = { urgentDays: 7 };
 
 test("KPI: an order whose last lorry was late is late, however the first one went", () => {
   // The old KPI took the FIRST dispatch. The shared rows carry the LAST
@@ -249,17 +249,22 @@ test("KPI: the late % and the order list agree, row for row", () => {
   assert.deepEqual(all.map((r) => r.status), ["EARLY", "ON_TIME", "LATE", "LATE"]);
 });
 
-test("KPI: a late urgent order counts as the editable share", () => {
+test("KPI: urgent orders are scored apart from the late % and early %", () => {
   const rows = [
     { ...row({ soId: "a", due: "2026-08-10", delivered: "2026-08-12" }), orderDate: "2026-08-04" },
+    { ...row({ soId: "u2", due: "2026-08-10", delivered: "2026-08-09" }), orderDate: "2026-08-03" },
     { ...row({ soId: "b", due: "2026-08-20", delivered: "2026-08-22" }), orderDate: "2026-08-01" },
     row({ soId: "c", due: "2026-08-20", delivered: "2026-08-19" }),
-    row({ soId: "d", due: "2026-08-20", delivered: "2026-08-19" }),
+    row({ soId: "d", due: "2026-08-20", delivered: "2026-08-20" }),
   ];
-  assert.equal(deliveryMetric(rows, RULES).actual, 50, "100%: urgent counts in full");
-  const half = deliveryMetric(rows, { urgentDays: 7, urgentLatePct: 50 });
-  assert.equal(half.actual, 37.5, "a (6 days' notice) counts half: 1.5 of 4");
-  assert.match(half.detail, /1 urgent at 50%, so 1\.5 counted/);
+  const m = deliveryMetric(rows, RULES);
+  assert.equal(m.actual, 33.3, "b of b, c, d: a and u2 (6 and 7 days' notice) are urgent");
+  assert.equal(m.earlyPct, 33.3);
+  assert.equal(m.urgentOnTimePct, 50, "u2 early, a late");
+  assert.equal(m.sampleSize, 5);
+  assert.match(m.detail, /^1 late, 1 early of 3 delivered \(33\.3% late, 33\.3% early\) · urgent: 1 of 2 on time or early \(50%\)$/);
+  assert.equal(deliveryMetric(rows.slice(2), RULES).urgentOnTimePct, null);
+  assert.match(deliveryMetric(rows.slice(2), RULES).detail, /· no urgent orders$/);
   assert.equal(deliveryOrderRows(rows, false)[0].leadDays, 6);
 });
 
