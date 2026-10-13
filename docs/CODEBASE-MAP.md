@@ -1,5 +1,7 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-13 on branch `fix/claude-calls-via-sg-forwarder-main` (to `main`)**: the Claude-calls note in the Scanning/OCR/AI fragment (`claudeFetch` + `claude-forwarder-worker/`), read from `src/api/lib/claude-fetch.ts` and the five call sites.
+
 > **Last verified: 2026-10-12 on branch `feat/pnl-running-month-labour-to-date` (to `main`)**: the Financial Dashboard Production Revenue note gained the running-month labour line, read from `src/lib/labour-to-date.ts`, `src/api/lib/labour-to-date.ts`, `src/api/lib/labour-projection.ts` and `src/api/routes/accounting.ts` (`labourInjectionLines`, `GET /dashboard`). Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `feat/labor-cost-incl-payroll-card` (to `main`)**: the Employees › Labor Cost tab line (the "Labor Cost incl. EPF & Allowances" card), read from `src/pages/employees.tsx` and `src/lib/labor-cost-incl-payroll.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-12 on branch `feat/cost-structure-production-revenue` (to `main`)**: the Financial Dashboard row and its Production Revenue note (Cost Structure + both salary cards), the Labor Cost tab line, read from `src/api/lib/production-revenue.ts`, `src/api/routes/accounting.ts` (`GET /dashboard`), `src/api/routes/working-hour-entries.ts` and `src/pages/finance-dashboard.tsx`. Nothing else re-checked.
@@ -2281,6 +2283,12 @@ handler with no `userId`, no `userRole` and no orgId on the context.
 > boot the worker or hit a DB. They pin shape, not behaviour: a handler can be structurally
 > correct and still return the wrong rows. Treat "covered" here as "a rename or a deletion
 > trips CI", nothing stronger.
+
+**Every Claude call** (scan, rule distilling, agent brain, AI assistant, announcement
+translation) goes through `claudeFetch` in `src/api/lib/claude-fetch.ts`. On Pages it uses
+the `CLAUDE_FORWARDER` service binding to `claude-forwarder-worker/`, a Worker pinned to
+Singapore, because Anthropic refuses requests from some Cloudflare regions (BUG-2026-10-13-284).
+Do not add a new direct `fetch("https://api.anthropic.com/...")`. Guard `tests/claude-fetch.test.mjs`.
 
 ---
 

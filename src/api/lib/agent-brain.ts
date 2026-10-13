@@ -21,7 +21,8 @@
 // hand-rolling the fetch.
 // ---------------------------------------------------------------------------
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+import { claudeFetch } from "./claude-fetch";
+
 const ANTHROPIC_VERSION = "2023-06-01";
 /** Same model as the in-app assistant — one model, one bill, one behaviour. */
 export const AGENT_BRAIN_MODEL = "claude-sonnet-4-5-20250929";
@@ -48,7 +49,7 @@ export async function askAgentBrain(
 ): Promise<string | null> {
   if (!apiKey) return null;
   try {
-    const res = await fetch(ANTHROPIC_URL, {
+    const res = await claudeFetch({
       method: "POST",
       headers: {
         "x-api-key": apiKey,
