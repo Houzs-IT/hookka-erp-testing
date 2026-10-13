@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: blank-month FG / WIP from the production orders (#829) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-live-fg-wip` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-to-main` (IT Support staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder-main` (to `main`, BUG-2026-10-13-284) added below (its entry is the newest).
@@ -135,21 +136,26 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
-## 2026-10-13 — 🔵 P&L: FG and WIP of a month the Stock Take leaves blank, valued from the production orders (owner「10 月的 FG 可以计算还没送的货，然后在我的 P&L 出现吗」→ 1.A, WIP the same method, cost ratio without factory overhead, 「人工用这个月的，做」, 「已经出车…那就不能算 wip 了，上线」)(branch `feat/pnl-live-fg-wip` → `main`)
+## 2026-10-13 — ✅ P&L: FG and WIP of a month the Stock Take leaves blank, valued from the production orders (owner「10 月的 FG 可以计算还没送的货，然后在我的 P&L 出现吗」→ 1.A, WIP the same method, cost ratio without factory overhead, 「人工用这个月的，做」, 「已经出车…那就不能算 wip 了，上线」)(#829 475f181a, prod-verified)
 
-1. 🔵 A month-end with no FG / WIP in Stock Take (FG only under "stock take only") is valued live from the production
+1. ✅ A month-end with no FG / WIP in Stock Take (FG only under "stock take only") is valued live from the production
    orders — as of today for the running month, the month's last day otherwise; a typed month keeps its figure. FG =
    orders closed and not yet out by delivery order / consignment note; WIP = orders open with work done, at completion
    by standard minutes (all done but not closed = 100%); orders already out are neither; SERVICE CHARGE is neither.
-2. 🔵 Value = selling price (sales-order line for the product, own line first; else consignment line; else category
+2. ✅ Value = selling price (sales-order line for the product, own line first; else consignment line; else category
    average) × cost ratio = last month's materials ÷ last month's completed goods + this month's direct labour ÷ this
    month's completed goods; no factory overhead. Core `src/lib/production-stock.ts`, loader
    `src/api/lib/production-stock.ts`, wiring `liveStockFor` / `blankMonthStock` in `computePnlWindow`.
-3. 🔵 Checked before shipping on production data: September's FG by this method matches the figure keyed on 2026-10-09
+3. ✅ Checked before shipping on production data: September's FG by this method matches the figure keyed on 2026-10-09
    to within 0.1% (same units); September's WIP differs only by the owner's two rules (service charges, orders already
    out) plus later scans. Dashboard payload `v17`.
 4. ⚪ Not changed: the Stock Summary page still shows the engine's own WIP / FG for a blank month.
-5. ⚪ Check on prod after deploy.
+5. ✅ Prod (2026-10-13, read-only): the running month's P&L now carries FG and WIP closing figures (both were blank
+   / the engine's own before); the typed months before it read exactly as before the deploy. An independent browser
+   run of the same core on the same data gives the server's FG to within a few ringgit once service orders are included
+   (the sales-order list leaves them out by default); WIP differs ~2% because the server also uses estimated minutes for
+   job cards with no standard time, which the job-card list doesn't return. The running month's statement loads about
+   half a second slower.
 
 ## 2026-10-13 — 🔵 IT Support, staging to main (branch `feat/it-support-to-main` → `main`)
 
