@@ -1,6 +1,6 @@
 // Navigation model for the mobile (phone) UI.
 //
-// - TABS: the 4 bottom-tab destinations (Home, Sales, Delivery, Procurement).
+// - TABS: the 5 bottom-tab destinations (Home, Sales, Products, Delivery, Procurement).
 // - MORE_GROUPS: the grouped module list shown in the phone NavDrawer and on
 //   the /m/more screen. Each row routes to a module screen under /m/*.
 //   NO QR-scan tab anywhere.
@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { DASHBOARD_NAV_HREF } from "./screens/dashboard/dashboard-m-lib";
 
-export type TabKey = "home" | "sales" | "delivery" | "procure";
+export type TabKey = "home" | "sales" | "products" | "delivery" | "procure";
 
 export type TabDef = {
   key: TabKey;
@@ -41,14 +41,16 @@ export type TabDef = {
   alsoActiveOn?: string[];
 };
 
-// Bottom-nav: 4 equal flat tabs (owner 2026-10-12, phone nav shell):
-//   Home · Sales · Delivery · Procurement.
+// Bottom-nav: 5 equal flat tabs (owner 2026-10-12 phone nav shell; Products
+// added in the middle 2026-10-13): Home · Sales · Products · Delivery · Procurement.
+// Products stays in the drawer too (redundant by design).
 // The raised centre "More" button is gone — every other module now lives in
 // the left drawer (NavDrawer), opened from the hamburger in the header.
 // /m/more stays routable and renders the same menu content.
 export const TABS: TabDef[] = [
   { key: "home", label: "Home", icon: Home, path: "/m" },
   { key: "sales", label: "Sales", icon: ShoppingCart, path: "/m/sales" },
+  { key: "products", label: "Products", icon: Shapes, path: "/m/products" },
   { key: "delivery", label: "Delivery", icon: Truck, path: "/m/delivery" },
   { key: "procure", label: "Procurement", icon: ShoppingBag, path: "/m/procurement", alsoActiveOn: ["/m/suppliers"] },
 ];

@@ -1,7 +1,7 @@
-// BottomTabBar — fixed 4-slot bottom navigation for the phone shell.
+// BottomTabBar — fixed 5-slot bottom navigation for the phone shell.
 //
-// Owner 2026-10-12 (phone nav shell): 4 equal flat tabs
-//   Home · Sales · Delivery · Procurement.
+// Owner 2026-10-12 (phone nav shell), Products added 2026-10-13: 5 equal flat tabs
+//   Home · Sales · Products · Delivery · Procurement.
 // The raised centre "More" button is gone; every other module is reached from
 // the left NavDrawer (hamburger in the header).
 //   • Active tab = taupe icon+label (stroke 2.2, weight 700); inactive = muted
