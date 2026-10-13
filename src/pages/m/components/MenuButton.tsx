@@ -23,8 +23,8 @@ export function MenuButton({ edge = -10 }: { edge?: number }) {
       style={{
         width: 44,
         height: 44,
-        // Pull the 44px target out to the gutter so the 24px glyph lines up
-        // with the content edge.
+        // Pull the 44px target out to the gutter; the glyph stays centred in it
+        // (same slot as the MobileHeader back arrow).
         marginLeft: edge,
         background: "none",
         border: "none",
@@ -38,7 +38,8 @@ export function MenuButton({ edge = -10 }: { edge?: number }) {
         WebkitTapHighlightColor: "transparent",
       }}
     >
-      <Menu size={24} strokeWidth={1.9} />
+      {/* 20px glyph (owner 2026-10-13: 24 read too large next to the 18px title). */}
+      <Menu size={20} strokeWidth={1.9} />
     </button>
   );
 }

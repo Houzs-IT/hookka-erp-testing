@@ -11,6 +11,7 @@ import { useCallback } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { usePermissions } from "@/lib/use-permission";
 import { MobileHeader } from "../../components";
+import { useStickyBelowHeader } from "../../lib/header-geometry";
 import { M } from "../../theme";
 import { DASHBOARD_NAV_HREF, MOBILE_TABS, isMobileTab, type MobileTabKey } from "./dashboard-m-lib";
 import { useDashboardFeed, useDashboardPeriod } from "./hooks";
@@ -32,6 +33,7 @@ export function DashboardScreen() {
   // Newest day that carries data: the period sheet anchors its presets to it.
   const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
   const { period, setPeriod } = useDashboardPeriod(months, tab);
+  const stickyTop = useStickyBelowHeader();
 
   const openTab = useCallback(
     (key: MobileTabKey) => navigate(`/m/dashboard/${key}${search}`),
@@ -62,8 +64,8 @@ export function DashboardScreen() {
         menu
         trailing={<PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} />}
       />
-      {/* Sticky under the MobileHeader (minHeight 52), like SubTabs. */}
-      <div style={{ position: "sticky", top: 52, zIndex: 30, padding: "8px 12px", backgroundColor: M.paper, borderBottom: `1px solid ${M.border}` }}>
+      {/* Sticky under the MobileHeader, like SubTabs. */}
+      <div style={{ position: "sticky", top: stickyTop, zIndex: 30, padding: "8px 12px", backgroundColor: M.paper, borderBottom: `1px solid ${M.border}` }}>
         <select
           aria-label="Dashboard section"
           value={tab}

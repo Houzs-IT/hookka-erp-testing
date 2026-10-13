@@ -20,8 +20,9 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { StatusPill, FormSheet, ResponsiveActionDock } from "../components";
+import { MobileHeader, StatusPill, FormSheet, ResponsiveActionDock } from "../components";
 import { M } from "../theme";
+import { useResponsiveLayout } from "../lib/responsive-layout";
 import { editSalesOrderSpec, newDeliveryOrderSpec } from "../config/forms";
 import { type FormSpec } from "../config/form-types";
 import { mutateJson, refreshOne, refreshList } from "../config/mutate";
@@ -44,6 +45,7 @@ function arr(v: unknown): RawRow[] {
 
 export function SalesDetailScreen() {
   const navigate = useNavigate();
+  const phone = useResponsiveLayout().mode === "phone";
   const { id = "" } = useParams();
   const url = `/api/sales-orders/${encodeURIComponent(id)}`;
   const { data, loading, error } = useCachedJson<Envelope>(url);
@@ -105,9 +107,20 @@ export function SalesDetailScreen() {
     } else flash(r.error || "Undo failed");
   };
 
-  if (loading && !doc) return <Center text="Loading…" />;
-  if (error && !doc) return <Center text="Couldn’t load this order." />;
-  if (!doc) return <Center text="Order not found." />;
+  // Phones: the shared header (with back) shows on the loading / error states
+  // too, so the header does not jump once the document arrives.
+  const withHeader = (node: ReactNode) =>
+    phone ? (
+      <>
+        <MobileHeader title="Sales Order" onBack={() => navigate(-1)} />
+        {node}
+      </>
+    ) : (
+      node
+    );
+  if (loading && !doc) return withHeader(<Center text="Loading…" />);
+  if (error && !doc) return withHeader(<Center text="Couldn’t load this order." />);
+  if (!doc) return withHeader(<Center text="Order not found." />);
 
   const status = str(doc, "status");
   const pill = resolveStatus(status, STATUS_MAPS.so);
@@ -140,26 +153,35 @@ export function SalesDetailScreen() {
 
   return (
     <div style={{ paddingBottom: 92 }}>
-      {/* Header */}
+      {/* Header — phones: the shared MobileHeader (back arrow + status pill),
+          and the ID / name block below scrolls with the page. Tablets keep
+          the original sticky block with its text back link. */}
+      {phone ? (
+        <MobileHeader
+          title="Sales Order"
+          onBack={() => navigate(-1)}
+          trailing={<StatusPill style={pill.style} label={pill.label} size="sm" />}
+        />
+      ) : null}
       <div
         style={{
           background: M.card,
           padding: "14px 16px 12px",
           borderBottom: `1px solid ${M.divider}`,
-          position: "sticky",
-          top: 0,
-          zIndex: 5,
+          ...(phone ? null : { position: "sticky", top: 0, zIndex: 5 }),
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <button
-            onClick={() => navigate(-1)}
-            style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}
-          >
-            ‹ Sales Orders
-          </button>
-          <StatusPill style={pill.style} label={pill.label} size="sm" />
-        </div>
+        {phone ? null : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <button
+              onClick={() => navigate(-1)}
+              style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}
+            >
+              ‹ Sales Orders
+            </button>
+            <StatusPill style={pill.style} label={pill.label} size="sm" />
+          </div>
+        )}
         <div
           style={{
             fontSize: 10,
@@ -167,7 +189,7 @@ export function SalesDetailScreen() {
             letterSpacing: ".13em",
             textTransform: "uppercase",
             color: M.taupe,
-            marginTop: 7,
+            marginTop: phone ? 0 : 7,
           }}
         >
           {str(doc, "companySO", "companySOId")}
