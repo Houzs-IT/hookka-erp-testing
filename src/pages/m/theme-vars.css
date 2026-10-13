@@ -33,6 +33,13 @@ body:not([data-theme]) {
   --m-faint: #9CA3AF;
   --m-logo-from: #8B7A4E;
   --m-logo-to: #6B5C32;
+  /* Notification severity (dot + left bar + severity word). Light = the
+     desktop dot colours (SEMANTIC DANGER / INFO hex), except Warning: the
+     desktop #9C6F1E is 4.46:1 as text on white, so it is darkened a touch to
+     #976B1C (4.73:1, owner 2026-10-13). */
+  --m-sev-critical: #9A3A2D;
+  --m-sev-warning: #976B1C;
+  --m-sev-info: #3E6570;
 }
 
 body[data-theme="dark"] {
@@ -54,6 +61,11 @@ body[data-theme="dark"] {
   --m-gold: #D9BD7B;
   --m-logo-from: #C9A961;
   --m-logo-to: #B59A5C;
+  /* Severity, lifted for the dark card (#2A2722): the light values measure
+     2.14 / 3.33 / 2.34, these 4.89 / 6.61 / 5.34 (non-text needs 3:1). */
+  --m-sev-critical: #D67B6B;
+  --m-sev-warning: #D9A441;
+  --m-sev-info: #6FA3B0;
 }
 
 /* Logo + photos must NOT invert (per CHANGELOG: "logo/QR/photos

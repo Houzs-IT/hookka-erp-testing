@@ -73,6 +73,7 @@ import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
 import { type FormSpec } from "../config/form-types";
 import { useResponsiveLayout } from "../lib/responsive-layout";
+import { useNotificationFeed } from "../lib/use-notification-feed";
 import {
   newSalesOrderSpec,
   newDeliveryOrderSpec,
@@ -329,6 +330,9 @@ export default function MobileHome() {
   // Global search overlay (CHANGELOG O.1) — fans out across the localStorage
   // cache that preload.ts warmed at /m mount.
   const [searchOpen, setSearchOpen] = useState(false);
+  // Bell dot = real unread notifications (same rows /m/updates lists). Not
+  // announcements: office users have no per-user read state for those yet.
+  const { unread: unreadNotifications } = useNotificationFeed();
 
   // ---- Pending Delivery + the analytics cards are the expensive part of this
   // Home (Pending Delivery itself is now two small server-computed fetches:
@@ -913,11 +917,15 @@ export default function MobileHome() {
       >
         <SearchIcon size={20} strokeWidth={1.75} color={M.ink} />
       </button>
-      {/* Notification bell (round white button, unread dot) */}
+      {/* Notification bell (round white button). The dot renders ONLY while a
+          real notification is unread; it opens /m/updates (Notifications). */}
       <button
-        aria-label="Notifications"
-        // TODO(wave-x): wire to a real notifications surface (none in /m yet).
-        onClick={() => navigate("/m/announcements")}
+        aria-label={
+          unreadNotifications > 0
+            ? `Notifications, ${unreadNotifications} unread`
+            : "Notifications"
+        }
+        onClick={() => navigate("/m/updates")}
         style={{
           width: 42,
           height: 42,
@@ -934,18 +942,22 @@ export default function MobileHome() {
         }}
       >
         <Bell size={20} strokeWidth={1.75} color={M.ink} />
-        <span
-          style={{
-            position: "absolute",
-            top: 8,
-            right: 9,
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: "#C0463A",
-            border: "1.5px solid #fff",
-          }}
-        />
+        {unreadNotifications > 0 ? (
+          <span
+            data-testid="mobile-notification-unread-dot"
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 9,
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#C0463A",
+              border: `1.5px solid ${M.card}`,
+            }}
+          />
+        ) : null}
       </button>
     </>
   );
