@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: Balance Sheet lines in account-code order (#843) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/bs-sort-by-account-code` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: Balance Sheet stock = the P&L's closing stock (#840) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/bs-stock-from-pnl-closing` (to `main`) added below (its entry is the newest).
@@ -140,12 +141,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
-## 2026-10-13 — 🔵 Balance Sheet lines in account-code order (owner「排序按科目编号，做」)(branch `feat/bs-sort-by-account-code` → `main`)
+## 2026-10-13 — ✅ Balance Sheet lines in account-code order (owner「排序按科目编号，做」)(#843 8d546ce0, prod-verified)
 
-1. 🔵 Within each section the Balance Sheet listed accounts in the order the ledger read first met them (no ORDER BY,
+1. ✅ Within each section the Balance Sheet listed accounts in the order the ledger read first met them (no ORDER BY,
    no sort), with the stock lines appended in stock-map order. `/pl` now sorts the sheet's account lines by code;
    Current Year Earnings (unclosed) stays last in Equity.
-2. ⚪ Check on prod after deploy.
+2. ✅ Prod (2026-10-13, read-only): a closed month and the running month come back in code order within every
+   section, Current Year Earnings last in Equity; the closed month's totals are unchanged and both sheets balance.
 
 ## 2026-10-13 — ✅ Balance Sheet stock = the P&L's closing stock (owner「balance sheet 就让他的 closing stock 和 P&L closing stock 一样」→「做」)(#840 973232c7, prod-verified)
 
