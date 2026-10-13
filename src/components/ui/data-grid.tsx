@@ -168,6 +168,9 @@ export type Column<T> = {
   // the column wider reveals more. Set `noClip: true` for the rare cell that
   // must wrap or render multi-line content.
   noClip?: boolean;
+  // Hide the header ▼ value filter. For columns where every row differs (an ID,
+  // a title), whose filter is just the whole list again; search still finds them.
+  noFilter?: boolean;
   // Plain value this column contributes to a WYSIWYG export. Defaults to the
   // filterAccessor, then the raw path value (currency sen→RM number, date→day).
   // Set this for columns whose real value is computed in `render` and has no
@@ -3197,6 +3200,7 @@ export function DataGrid<T extends Record<string, any>>({
                       {/* Filter funnel: bumped 16px → 28px (h-7 w-7) for
                           tablet tap target. Glyph also bumped from 8px
                           to text-xs (12px) so it's actually visible. */}
+                      {!col.noFilter && (
                       <button
                         className={cn(
                           "ml-0.5 inline-flex items-center justify-center h-7 w-7 rounded hover:bg-[#D8D8D8] transition-colors text-xs",
@@ -3213,6 +3217,7 @@ export function DataGrid<T extends Record<string, any>>({
                       >
                         ▼
                       </button>
+                      )}
                     </span>
                     {/* Drag-to-resize handle on the column's right edge.
                         Persists per gridId (datagrid-colw-*); double-click
