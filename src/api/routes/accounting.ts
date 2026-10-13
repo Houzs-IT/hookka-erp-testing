@@ -49,6 +49,7 @@ import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
 import { loadPreparedProduction } from "../lib/production-stock";
 import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
 import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
+import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
@@ -6820,6 +6821,9 @@ interface DocDateCtx {
   // the loaded production data once, each month's figures once (key = ym).
   prodStock?: Promise<PreparedProduction>;
   liveStockMemo?: Map<string, Promise<{ fgSen: number; wipSen: number; ratio: number }>>;
+  // Per-request memo for the running month's recurring-cost estimates
+  // (2026-10-13, runningMonthEstimates; key = the running month).
+  estimateMemo?: Map<string, Promise<Map<string, { sen: number; fromYm: string }>>>;
 }
 
 // Report-layer labour for one month (owner 2026-08-31 「任何时候我看P&L 时你都
@@ -6962,7 +6966,7 @@ type PnlTrace = {
   account: string; // resolved code
   legs: PnlTraceLeg[];
   entryLegs: Map<string, { accountCode: string; debitSen: number; creditSen: number }[]>; // sourceType::sourceId → legs
-  extra: { kind: "payroll" | "opening_slice"; ym: string; sen: number }[];
+  extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
 };
 
 async function glWindowSigned(
@@ -8138,6 +8142,38 @@ async function sheetStockAt(
   return { month, totalSen, balances, earningsSen };
 }
 
+// The running month's recurring costs that nothing has been recorded for yet,
+// at last month's amount (owner 2026-10-13 「这个月的 amount 还没有但每个月都
+// 有的…根据上个月的 amount 出现」; src/lib/expense-estimates.ts): operating
+// expenses, salaries & contribution and factory overhead with an amount in each
+// of the last three months and nothing so far this month. Read from the same
+// one-month ledger windows the statement shows for those months (before any
+// estimate). Display only — nothing is posted. Memoised per request.
+async function runningMonthEstimates(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  dc: DocDateCtx,
+): Promise<Map<string, { sen: number; fromYm: string }>> {
+  const runYm = runningMonthYm();
+  dc.estimateMemo ??= new Map();
+  let hit = dc.estimateMemo.get(runYm);
+  if (!hit) {
+    hit = (async () => {
+      const prevYms = previousMonths(runYm, ESTIMATE_LOOKBACK);
+      const [cur, ...prev] = await Promise.all([runYm, ...prevYms].map((ym) => glWindowSigned(db, orgId, ym, ym, dc)));
+      const override = await getPnlSectionMap(db);
+      const bucketOf = (code: string): string | null => {
+        const meta = cur.coa.get(code);
+        return meta ? pnlBucketFor(code, meta.type, override) : null;
+      };
+      const est = recurringEstimates({ current: cur.net, previous: prev.map((w) => w.net), bucketOf });
+      return new Map([...est].map(([code, sen]) => [code, { sen, fromYm: prevYms[0] }] as const));
+    })();
+    dc.estimateMemo.set(runYm, hit);
+  }
+  return hit;
+}
+
 async function computePnlWindow(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -8153,10 +8189,22 @@ async function computePnlWindow(
   // that stockSummaryRange returns (that ledger stopped being fed after 2026-03).
   // All OTHER P&L lines (labour / overhead / carriage / SST / revenue / other
   // income / expenses) still come from the GL window untouched.
-  const [gl, ratio] = await Promise.all([
+  const [glLedger, ratio] = await Promise.all([
     glWindowSigned(db, orgId, startYm, endYm, dc),
     costByLineWindow(db, startYm, endYm),
   ]);
+  // A window that reaches the running month carries its recurring-cost
+  // estimates (runningMonthEstimates). Added to a COPY — the ledger window is a
+  // shared memo and stays read-only.
+  const est = windowCoversYm(startYm, endYm, runningMonthYm())
+    ? await runningMonthEstimates(db, orgId, dc)
+    : new Map<string, { sen: number; fromYm: string }>();
+  const gl = est.size ? { ...glLedger, net: new Map(glLedger.net) } : glLedger;
+  for (const [code, e] of est) gl.net.set(code, (gl.net.get(code) ?? 0) + e.sen);
+  const estPart = (code: string): { estSen: number; estFrom: string } | Record<string, never> => {
+    const e = est.get(code);
+    return e ? { estSen: Math.round(e.sen * (line === "all" ? 1 : R)), estFrom: e.fromYm } : {};
+  };
   // Material window derived synchronously from the single-replay checkpoints.
   const mat = materialWindow(matData, startYm, endYm);
   // A month-end the Stock Take leaves blank: FG / WIP from the production
@@ -8300,12 +8348,12 @@ async function computePnlWindow(
   const labourSen = labourLines.reduce((s, l) => s + l.amountSen, 0);
 
   // --- Factory overhead (780-x) ---
-  const overheadLines: { code: string; name: string; amountSen: number }[] = [];
+  const overheadLines: { code: string; name: string; amountSen: number; estSen?: number; estFrom?: string }[] = [];
   for (const [code, v] of gl.net) {
     const meta = gl.coa.get(code);
     if (!meta) continue;
     if (pnlBucketFor(code, meta.type, override) !== "FACTORY_OVERHEAD") continue;
-    overheadLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)) });
+    overheadLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)), ...estPart(code) });
   }
   const overheadSen = overheadLines.reduce((s, l) => s + l.amountSen, 0);
 
@@ -8321,13 +8369,13 @@ async function computePnlWindow(
 
   // --- Operating expenses (EXPENSE type, 900-x). Salaries & Contribution
   //     (900-S00x) grouped; product-line-tagged PV lines stay on their line. ---
-  const expenseLines: { code: string; name: string; amountSen: number; salary: boolean }[] = [];
+  const expenseLines: { code: string; name: string; amountSen: number; salary: boolean; estSen?: number; estFrom?: string }[] = [];
   for (const [code, v] of gl.net) {
     const meta = gl.coa.get(code);
     if (!meta) continue;
     const bucket = pnlBucketFor(code, meta.type, override);
     if (bucket !== "OPERATING_EXPENSE" && bucket !== "OPEX_SALARIES") continue;
-    expenseLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)), salary: bucket === "OPEX_SALARIES" });
+    expenseLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)), salary: bucket === "OPEX_SALARIES", ...estPart(code) });
   }
   const expenseSen = expenseLines.reduce((s, l) => s + l.amountSen, 0);
   const netProfitSen = grossProfitSen + otherIncomeSen * (isAll ? 1 : R) - expenseSen;
@@ -8401,12 +8449,20 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
   // drillCode: the account a line can be opened on (the P&L inline drill) when
   // the line is one account's ledger figure but carries no accountCode (that
   // field also drives the edit-mode drag, which these rows must not get).
-  type Row = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; periodSen?: number; ytdSen?: number; groupId?: string; totalLabel?: string; badge?: string; accountCode?: string; bucket?: string; drillCode?: string };
+  type Row = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; periodSen?: number; ytdSen?: number; groupId?: string; totalLabel?: string; badge?: string; accountCode?: string; bucket?: string; drillCode?: string; estSen?: number; estFrom?: string };
   const rows: Row[] = [];
   let gid = 0;
   const g = (label: string, depth: number, periodSen: number, ytdSen: number, totalLabel: string, bucket?: string) => { const id = `g${gid++}`; rows.push({ kind: "group", depth, label, periodSen, ytdSen, groupId: id, totalLabel, bucket }); return id; };
   const line = (label: string, depth: number, ps: number, ys: number, accountCode?: string, bucket?: string, drillCode?: string) => rows.push({ kind: "line", depth, label, periodSen: ps, ytdSen: ys, accountCode, bucket, drillCode });
   const tot = (label: string, depth: number, ps: number, ys: number) => rows.push({ kind: "total", depth, label, periodSen: ps, ytdSen: ys });
+  // A line whose period figure is (partly) a running-month estimate says so —
+  // the page colours it (owner 2026-10-13).
+  const markEst = (l: { estSen?: number; estFrom?: string }) => {
+    if (!l.estSen) return;
+    const r = rows[rows.length - 1];
+    r.estSen = l.estSen;
+    r.estFrom = l.estFrom;
+  };
 
   // SALES
   g("SALES", 0, p.netSalesSen, y.netSalesSen, "NET SALES", "REVENUE");
@@ -8433,7 +8489,7 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
   for (let i = 0; i < p.labourLines.length; i++) line(p.labourLines[i].name, 2, p.labourLines[i].amountSen, y.labourLines.find((x) => x.code === p.labourLines[i].code)?.amountSen ?? 0, p.labourLines[i].code, "DIRECT_LABOUR");
   // Factory overhead
   g("FACTORY OVERHEAD", 1, p.overheadSen, y.overheadSen, "TOTAL FACTORY OVERHEAD", "FACTORY_OVERHEAD");
-  for (let i = 0; i < p.overheadLines.length; i++) line(p.overheadLines[i].name, 2, p.overheadLines[i].amountSen, y.overheadLines.find((x) => x.code === p.overheadLines[i].code)?.amountSen ?? 0, p.overheadLines[i].code, "FACTORY_OVERHEAD");
+  for (let i = 0; i < p.overheadLines.length; i++) { line(p.overheadLines[i].name, 2, p.overheadLines[i].amountSen, y.overheadLines.find((x) => x.code === p.overheadLines[i].code)?.amountSen ?? 0, p.overheadLines[i].code, "FACTORY_OVERHEAD"); markEst(p.overheadLines[i]); }
   // WIP movement
   g("WORK IN PROGRESS", 1, p.wipOpen - p.wipClose, y.wipOpen - y.wipClose, "WIP MOVEMENT (net)");
   line("WIP - OPENING", 2, p.wipOpen, y.wipOpen);
@@ -8455,9 +8511,9 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
   const ySalSum = y.expenseLines.filter((l) => l.salary).reduce((s, l) => s + l.amountSen, 0);
   if (editable || pSal.length > 0) {
     g("SALARIES & CONTRIBUTION", 1, pSal.reduce((s, l) => s + l.amountSen, 0), ySalSum, "TOTAL SALARIES & CONTRIBUTION", "OPEX_SALARIES");
-    for (const l of pSal) line(l.name, 2, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPEX_SALARIES");
+    for (const l of pSal) { line(l.name, 2, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPEX_SALARIES"); markEst(l); }
   }
-  for (const l of p.expenseLines.filter((x) => !x.salary)) line(l.name, 1, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPERATING_EXPENSE");
+  for (const l of p.expenseLines.filter((x) => !x.salary)) { line(l.name, 1, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPERATING_EXPENSE"); markEst(l); }
   rows.push({ kind: "grandtotal", depth: 0, label: "NET PROFIT / (LOSS)", periodSen: p.netProfitSen, ytdSen: y.netProfitSen });
   return rows;
 }
@@ -9086,13 +9142,23 @@ app.get("/pl-drill", async (c) => {
   const dc = await loadDocDateResolver(db);
   const trace: PnlTrace = { account, legs: [], entryLegs: new Map(), extra: [] };
   const { net, coa } = await glWindowSigned(db, orgId, startYm, endYm, dc, trace);
+  // A running-month estimate on this account (runningMonthEstimates) is part
+  // of the statement's line, so the drill lists it as its own row.
+  let netSen = net.get(account) ?? 0;
+  const runYm = runningMonthYm();
+  if (windowCoversYm(startYm, endYm, runYm)) {
+    const e = (await runningMonthEstimates(db, orgId, dc)).get(account);
+    if (e) {
+      trace.extra.push({ kind: "estimate", ym: runYm, sen: e.sen, fromYm: e.fromYm });
+      netSen += e.sen;
+    }
+  }
 
   const lines = await buildDrillLines(db, orgId, trace.legs, trace.entryLegs, resolve, coa);
   const extraDebit = trace.extra.reduce((s, e) => s + (e.sen > 0 ? e.sen : 0), 0);
   const extraCredit = trace.extra.reduce((s, e) => s + (e.sen < 0 ? -e.sen : 0), 0);
   const debitSen = lines.reduce((s, l) => s + l.debitSen, 0) + extraDebit;
   const creditSen = lines.reduce((s, l) => s + l.creditSen, 0) + extraCredit;
-  const netSen = net.get(account) ?? 0;
   return c.json({
     success: true,
     data: {
@@ -13779,7 +13845,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v18"; // v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v19"; // v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -13937,10 +14003,13 @@ app.get("/dashboard", async (c) => {
     sales: number; cogs: number; gross: number; otherIncome: number; expenses: number; net: number;
     materials: number; labour: number; overhead: number; stockMovement: number;
     staffCost: number; otherOpex: number;
+    // Running-month estimates for recurring costs not yet recorded (2026-10-13).
+    estimated: number;
   };
   const zero = (): PnlSlice => ({
     sales: 0, cogs: 0, gross: 0, otherIncome: 0, expenses: 0, net: 0,
     materials: 0, labour: 0, overhead: 0, stockMovement: 0, staffCost: 0, otherOpex: 0,
+    estimated: 0,
   });
   const pnlByMonth = new Map<string, PnlSlice>();
   // Cost-structure feed (owner 2026-07-29): per month,每个料别 spend /
@@ -14162,6 +14231,8 @@ app.get("/dashboard", async (c) => {
       stockMovement: w.cogsSen - materials - w.labourSen - w.overheadSen,
       staffCost,
       otherOpex: w.expenseSen - staffCost,
+      // How much of the month is running-month estimate (each line says).
+      estimated: [...w.overheadLines, ...w.expenseLines].reduce((sum, l) => sum + ((l as { estSen?: number }).estSen ?? 0), 0),
     });
   }
 
@@ -14401,6 +14472,7 @@ app.get("/dashboard", async (c) => {
       acc.otherIncome += s.otherIncome; acc.expenses += s.expenses; acc.net += s.net;
       acc.materials += s.materials; acc.labour += s.labour; acc.overhead += s.overhead;
       acc.stockMovement += s.stockMovement; acc.staffCost += s.staffCost; acc.otherOpex += s.otherOpex;
+      acc.estimated += s.estimated;
     }
     return any ? acc : null;
   };

@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-13 on branch `feat/pnl-running-month-expense-estimates` (to `main`)**: the running-month expense estimates note, read from `src/lib/expense-estimates.ts`, `src/lib/pnl-matrix.ts` and `src/api/routes/accounting.ts` (`runningMonthEstimates`, `computePnlWindow`, `buildPnlRows`, `/pl-drill`, `/dashboard`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/kpi-urgent-points-editable` (to `main`)**: the kpi-catalog.ts row (urgent points rule editable), read from `src/api/lib/kpi-catalog.ts` and `PUT /rules/:kpiKey` in `src/api/routes/kpi.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/bs-sort-by-account-code` (to `main`)**: the Balance Sheet stock note (line order), read from `src/api/routes/accounting.ts` (`/pl`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `fix/kpi-score-percent` (to `main`)**: the KPI row (Card headline is the KPI score as a percentage, the raw measurement moved to the small "result" line), read from `src/pages/kpi/index.tsx`. Nothing else re-checked.
@@ -1853,7 +1854,7 @@ you are changing auth behaviour you want L227–417 and nothing else.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13768`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
+| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13828`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
 | `src/pages/forecast.tsx` — `/forecast` (`src/dashboard-routes.tsx:471`; sidebar FORECASTING → "Forecast P&L"); planning grid, zero contact with the books (575) | `src/api/routes/accounting.ts` — `GET /forecast` (`:10743`), `PUT /forecast` (`:10758`), `GET /coa` (`:829`), `GET /pnl/section-map` (`:9827`), `GET /labor/departments` (`:9561`) | `kv_config` row `key='forecast_pnl'` (`:10789`) — **no forecast table exists**; plus `chart_of_accounts` for the line structure | **NONE** |
 
 > **Name collision — read this before touching either.** `/forecast` (`src/pages/forecast.tsx`,
@@ -1913,6 +1914,15 @@ Cash Flow with Summary/Detail (`:1133`) → Balance Sheet (`:1200`) → Financia
   "Post closing stock to GL" button is gone (`POST /stock/close-post` left in place). Pure core `src/lib/bs-stock.ts`;
   guard `tests/bs-stock.test.mjs`. The sheet's account lines are sorted by code (Current Year Earnings last in Equity);
   guard `tests/bs-order.test.mjs`.
+- **Running-month estimates for recurring costs (2026-10-13, owner「用上个月，3个月，factory overhead 也一起」)**:
+  `runningMonthEstimates` (memo `dc.estimateMemo`) reads the running month and the three before it as one-month
+  `glWindowSigned` windows (no estimates in them) and `recurringEstimates` (`src/lib/expense-estimates.ts`) picks every
+  OPERATING_EXPENSE / OPEX_SALARIES / FACTORY_OVERHEAD account positive in all three and zero so far this month, at last
+  month's amount. `computePnlWindow` adds them to a COPY of the ledger window (the memo stays read-only) only when the
+  window reaches the running month, tagging `overheadLines` / `expenseLines` with `estSen` / `estFrom`; `buildPnlRows`
+  (`markEst`), `buildPnlMatrix` (`estValues`), `/pl-drill` (an `estimate` extra row) and the dashboard slices
+  (`estimated`, payload `v19`) carry them; the pages colour them amber (`EST_ROW`). Guard
+  `tests/expense-estimates.test.mjs`.
 - Money is integer sen end to end. `rm` / `rm2` (L83–86) divide by 100 **for display only**;
   every derived figure uses `Math.round(... * 10000) / 100` on sen ints.
 - **The forecast-percentage rule (BUG-2026-08-06-002) is load-bearing and is stated three

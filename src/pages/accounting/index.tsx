@@ -5475,6 +5475,11 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 // Phase 5.1/5.2 — manufacturing-account P&L statement (owner workbook
 // format): Overall / Sofa / Bedframe, L1–L4 expand, columns
 // ITEM | FY YTD | YTD % | <period> | %  (% = of net sales).
+// A running-month estimate for a recurring cost nothing has been recorded for
+// yet (owner 2026-10-13 「不是真实的数据…字体颜色和 row 的 background colour
+// 不一样」): warning amber text on a pale amber row, italic, with an "est." tag.
+const EST_ROW = "bg-[#FAEFCB] text-[#9C6F1E] italic";
+const estTitle = (fromYm?: string) => `Estimated from ${fromYm ? drillMonthLabel(fromYm) : "last month"} — nothing recorded yet this month`;
 type PnlStmtRow = {
   kind: "group" | "line" | "total" | "grandtotal" | "gap";
   depth: number;
@@ -5489,6 +5494,10 @@ type PnlStmtRow = {
   // The account a computed line (a group's PURCHASE, carriage, SST) opens on in
   // the inline drill — kept apart from accountCode, which also drives the drag.
   drillCode?: string;
+  // The part of the period figure that is a running-month estimate, and the
+  // month it was taken from.
+  estSen?: number;
+  estFrom?: string;
 };
 
 // Material data-quality warnings surfaced on the P&L (from the FIFO engine):
@@ -5905,7 +5914,7 @@ function MonthlyTrendTab() {
   );
 }
 
-type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[] };
+type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
 type PlMonthlyData = { fyLabel: string; line: string; anchor: string; columns: { key: string; label: string; accum: boolean }[]; rows: PlMatrixRow[] };
 
 function MonthlyPlTab() {
@@ -6037,12 +6046,17 @@ function MonthlyPlTab() {
                         </button>
                       ) : r.label}
                     </td>
-                    {r.values.map((v, j) => (
+                    {r.values.map((v, j) => {
+                      const est = (r.estValues?.[j] ?? 0) !== 0;
+                      return (
                       <React.Fragment key={j}>
-                        <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${v < 0 ? "text-[#9A3A2D]" : ""}`}>{fmt(v)}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-[#9CA3AF]">{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${est ? EST_ROW : v < 0 ? "text-[#9A3A2D]" : ""}`} title={est ? estTitle(r.estFrom) : undefined}>
+                          {fmt(v)}{est && <span className="ml-1 text-[9px] not-italic font-semibold">est.</span>}
+                        </td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${est ? EST_ROW : "text-[#9CA3AF]"}`}>{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
                       </React.Fragment>
-                    ))}
+                      );
+                    })}
                   </tr>
                   {drilled && drillCode && <PlMonthlyDrillRows account={drillCode} cols={cols} line={line} rowValues={r.values} depth={r.depth} />}
                   </Fragment>
@@ -6050,6 +6064,12 @@ function MonthlyPlTab() {
               })}
             </tbody>
           </table>
+        )}
+        {rows.some((r) => r.estValues) && (
+          <p className="text-[11px] text-[#9C6F1E] mt-3">
+            Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+            month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+          </p>
         )}
       </CardContent></Card>
     </div>
@@ -6112,7 +6132,7 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   for (const e of data.extra) {
     entries.push({
       key: `${e.kind}:${e.ym}`, ym: e.ym, italic: true, sen: creditNormal ? -e.sen : e.sen,
-      text: e.kind === "payroll" ? `Payroll ${drillMonthLabel(e.ym)} from the payslips, not posted to the ledger yet` : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`,
+      text: e.kind === "payroll" ? `Payroll ${drillMonthLabel(e.ym)} from the payslips, not posted to the ledger yet` : e.kind === "estimate" ? estTitle(e.fromYm) : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`,
       title: "",
     });
   }
@@ -6199,7 +6219,7 @@ type PlDrillData = {
   historical?: boolean;
   account?: { code: string; name: string; type: string | null };
   lines: PlDrillLine[];
-  extra: { kind: "payroll" | "opening_slice"; ym: string; sen: number }[];
+  extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
   debitSen: number; creditSen: number; netSen: number; tied?: boolean;
 };
 const plDrillAmt = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -6285,7 +6305,9 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
                     <td className="py-1 pr-3 whitespace-nowrap">{drillMonthLabel(e.ym)}</td>
                     <td className="py-1 pr-3" colSpan={4}>{e.kind === "payroll"
                       ? `Payroll ${drillMonthLabel(e.ym)} from the payslips, not posted to the ledger yet`
-                      : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`}</td>
+                      : e.kind === "estimate"
+                        ? estTitle(e.fromYm)
+                        : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`}</td>
                     <td className={amtCls(sen)}>{amt(sen)}</td>
                   </tr>
                 );
@@ -6565,11 +6587,12 @@ function PLStatementTab() {
                   const drilled = canDrill && drillOpen.has(drillKey);
                   return (
                     <Fragment key={i}>
-                    <tr className={`hover:bg-[#F7F4EF] ${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
+                    <tr className={`${row.estSen ? EST_ROW : "hover:bg-[#F7F4EF]"} ${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""} ${drilled && !row.estSen ? "bg-[#F7F4EF]" : ""}`}
+                      title={row.estSen ? estTitle(row.estFrom) : undefined}
                       draggable={draggable}
                       onDragStart={draggable ? (e) => { setDragCode(row.accountCode!); setDragClass(classOfBucket(row.bucket)); e.dataTransfer.setData("text/plain", row.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
                       onDragEnd={draggable ? () => { setDragCode(null); setDragClass(null); setDragOverBucket(null); } : undefined}>
-                      <td className="py-0.5 text-[#4B5563]" style={pad}>
+                      <td className={`py-0.5 ${row.estSen ? "" : "text-[#4B5563]"}`} style={pad}>
                         {canDrill ? (
                           <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
                             onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
@@ -6577,6 +6600,7 @@ function PLStatementTab() {
                           </button>
                         ) : <>{draggable ? "⠿ " : ""}{row.label}</>}
                         {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
+                        {row.estSen ? <span className="ml-1.5 text-[9px] not-italic font-semibold">est.</span> : null}
                       </td>
                       <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
                       <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
@@ -6592,6 +6616,12 @@ function PLStatementTab() {
               </tbody>
             </table>
             </div>
+          )}
+          {rows.some((r) => r.estSen) && (
+            <p className="text-[11px] text-[#9C6F1E] mt-3">
+              Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+              month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+            </p>
           )}
           <p className="text-[11px] text-[#9CA3AF] mt-3">
             Stock (raw material / WIP / FG) is live from the cost ledger; labour, overhead, carriage, SST, revenue and
