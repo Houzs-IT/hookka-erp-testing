@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `fix/it-support-sort-cycle` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/it-support-header-filters` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`, bell events) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
@@ -197,6 +198,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 Grid sort: third click clears it; IT Support Issue not sortable (branch `fix/it-support-sort-cycle` → `staging`)
+
+1. ✅ Shared DataGrid: clicking a header goes A to Z, Z to A, then off (back to the page's own order). Before, it flipped between the two forever. Applies to every list.
+2. ✅ The ▲▼ arrows only show on sortable columns (`sortable: false` columns used to show dead arrows).
+3. ✅ IT Support: Issue is `sortable: false`.
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy.
 
 ## 2026-10-13 — 🔵 IT Support: no header filter on Ticket, Issue, Last update (branch `fix/it-support-header-filters` → `staging`)
 
