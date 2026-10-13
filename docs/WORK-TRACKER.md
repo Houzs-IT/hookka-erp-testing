@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
 > **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
@@ -193,6 +194,15 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 IT Support: ticket cards on phones, tidier report form, /m screen (branch `feat/it-support-mobile-cards` → `staging`, local only)
+
+1. ✅ Below 768px the ticket grid is hidden (with it the Columns button and the Record 1 of X pager) and each ticket is a tappable card: code and last update on top, title (2 lines max), then status, urgency and who handles it.
+2. ✅ Phone toolbar: All / Active / Resolved tabs on one horizontally scrollable row and a full-width search box (code, title, handler, status, urgency).
+3. ✅ Desktop (768px and up) unchanged: same grid, same toolbar.
+4. ✅ Report form: card capped at ~768px and centred (header too), padding p-6 / p-8, dropzone py-6 (previews stay below it), Send / Cancel larger (px-5 py-2.5, rounded-lg) in a gap-3 row.
+5. ✅ Phone app: IT Support in the /m side menu (Service & Support) opens /m/it-support, which runs the same page (list, report, ticket, reply, confirm). It stays light when /m is in dark mode.
+6. ⬜ NOT yet seen in a browser. Check on the staging site after deploy at 320px, 375px and desktop, and /m/it-support on a phone (light and dark).
 
 ## 2026-10-12 — 🔵 IT Support: high-contrast ticket table (branch `feat/it-support-table-style` → `staging`, local only)
 
