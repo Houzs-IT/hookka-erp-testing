@@ -20,8 +20,9 @@
 // storing `null` translations; the worker FE then shows the original text.
 // ---------------------------------------------------------------------------
 
+import { claudeFetch } from "./claude-fetch";
+
 const CLAUDE_MODEL = "claude-sonnet-4-6";
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 // The four worker-portal languages (mirrors WorkerLang in src/lib/worker-i18n.ts).
 export const ANNOUNCEMENT_LANGS = ["en", "ms", "zh", "my"] as const;
@@ -139,7 +140,7 @@ export async function translateAnnouncement(args: {
   const userPayload = JSON.stringify({ title, body });
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",

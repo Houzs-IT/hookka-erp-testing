@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder`, to staging; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-283 (branch `fix/fabric-meter-calc`, to staging; 282 is staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-281 (branch `fix/export-all-pages`, to staging; 279 and 280 are staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: BUG-2026-10-12-279 follow-up (branch `fix/bug87-auto-grn-read`, to staging): the receipt id was read snake_case only; a log, so "verified" means the entry matches the code on its branch.
@@ -126,6 +127,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-13-284 — Scans failed for users whose internet provider routes to Cloudflare in Hong Kong `scanning` 🟡
+
+🟡 **Fixed on branch** (`fix/claude-calls-via-sg-forwarder` → `staging`). Needs the new Worker deployed first (see Fix).
+
+**Symptom.** A user's document scans failed on erp.hookka.com while the same scans worked for others. That user's requests reached Cloudflare through its Hong Kong data centre. The Hong Kong routing comes from an earlier request-log analysis; it was not re-measured on this branch. Users on other routes were not affected.
+
+**Root cause.** Pages Functions run in the Cloudflare data centre the user's ISP routes to, and every Claude call left from there. Anthropic does not serve requests from Hong Kong. Nothing in the app chose the region; five files called `api.anthropic.com` directly with plain `fetch`.
+
+**Fix.** New Worker `claude-forwarder-worker/` (`hookka-claude-forwarder`) is pinned to Singapore with `[placement] region = "aws:ap-southeast-1"` and has no public URL. The root `wrangler.toml` binds it as `CLAUDE_FORWARDER`; `functions/api/[[route]].ts` hands the binding to `setClaudeForwarder`, and every Claude call now goes through `claudeFetch` (`src/api/lib/claude-fetch.ts`) in `scan-engine.ts`, `ocr-distill.ts`, `agent-brain.ts`, `anthropic-client.ts` and `translate-announcement.ts`. Without the binding (tests, local dev) it calls Anthropic directly as before. The forwarder must be deployed before this reaches a Pages deploy, or the binding points at nothing.
+
+**Regression.** `tests/claude-fetch.test.mjs`: with the binding set, the call goes to the forwarder and never to Anthropic directly; without it, it goes to Anthropic. Not yet verified on the staging site, and the Singapore placement is not yet observed (`wrangler tail` on the forwarder shows it).
 
 ---
 
