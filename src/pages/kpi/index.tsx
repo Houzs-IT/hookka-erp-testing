@@ -44,6 +44,7 @@ type Line = {
   actual: number | null; attainment: number | null; points: number | null;
   evidence: string;
   daily?: Array<{ date: string; pct: number }>;
+  scoreParts?: { late: number; early: number; urgent: number };
 };
 type CardData = {
   period: string; locked: boolean; lines: Line[];
@@ -68,7 +69,7 @@ type LibItem = {
   current: number | null; evidence: string;
   editableRules?: string[];
   penaltyPerPct?: number; earlyStepPct?: number; earlyBonusPerStep?: number; earlyMaxBonus?: number;
-  urgentDays?: number; urgentLatePct?: number;
+  urgentDays?: number;
   assignedTo: Array<{ userId: string; name: string; role: string; scope?: string }>;
 };
 type PersonRow = {
@@ -1219,7 +1220,13 @@ export default function KpiPage() {
                           ) : (
                             <ol className="ml-4 list-decimal space-y-0.5">
                               <li>Measured: <b>{fmt(l.actual, l.unit)}</b>{l.evidence && <> · {l.evidence}</>}</li>
-                              <li>Score for this KPI: <b>{l.attainment}</b> out of 100</li>
+                              <li>
+                                Score for this KPI:{" "}
+                                {l.scoreParts && (
+                                  <>late {l.scoreParts.late} + early bonus {l.scoreParts.early} + urgent {l.scoreParts.urgent}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent > 100 && " (capped)"} ={" "}</>
+                                )}
+                                <b>{l.attainment}</b> out of 100
+                              </li>
                               {l.shape !== "GATE" && l.points !== null && (
                                 <>
                                   <li>{l.attainment} × weight {l.weight} ÷ 100 = <b>{l.points} points</b></li>
@@ -1525,7 +1532,6 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
     earlyBonusPerStep: String(item.earlyBonusPerStep ?? 1),
     earlyMaxBonus: String(item.earlyMaxBonus ?? 5),
     urgentDays: String(item.urgentDays ?? 7),
-    urgentLatePct: String(item.urgentLatePct ?? 100),
   });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -1577,7 +1583,7 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
       </p>
       <p className="text-[11.5px] text-[#3A3733] leading-loose">
         An order promised within{num("urgentDays", "Urgent order days")}days of its order date is urgent.
-        If it ships late it counts as{num("urgentLatePct", "Late urgent order counts as percent")}% of a late order.
+        Urgent orders are scored on their own share delivered on time or early (0% → 5 points up to 100% → 60) and are left out of the late and early %.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button

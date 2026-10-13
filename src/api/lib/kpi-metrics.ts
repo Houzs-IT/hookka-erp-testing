@@ -81,6 +81,8 @@ export interface MetricResult {
   detail: string;
   /** customer_delivery_date only — % shipped before the promised date. */
   earlyPct?: number;
+  /** customer_delivery_date only — % of urgent orders on time or early; null with none. */
+  urgentOnTimePct?: number | null;
   /** department_efficiency only: the same pool per day, for the card's chart. */
   daily?: Array<{ date: string; pct: number }>;
 }
@@ -119,48 +121,41 @@ export function leadDays(r: OnTimeRow): number | null {
   return Number.isFinite(d) ? d : null;
 }
 
-/**
- * Late %, with a late URGENT order (promised within the urgent window of its
- * order date) counting as `urgentLatePct`% of a late one. Owner 2026-10-08.
- */
-export function weightedLatePct(
-  judged: number, late: number, urgentLate: number, urgentLatePct: number,
-): number {
-  const counted = late - urgentLate * (1 - urgentLatePct / 100);
-  return Math.round((counted / judged) * 1000) / 10;
-}
+const pct1 = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
 /**
  * The KPI figure from the shared rows. Pure, so the tests can hold it and the
- * order list to the same rows.
+ * order list to the same rows. An URGENT order (promised within `urgentDays`
+ * of its order date) is out of the late % and early % and is scored on its
+ * own on-time-or-early % (owner 2026-10-13).
  */
 export function deliveryMetric(
   rows: OnTimeRow[],
-  rules: Pick<KpiDef, "urgentDays" | "urgentLatePct">,
+  rules: Pick<KpiDef, "urgentDays">,
 ): MetricResult {
   const urgentDays = Math.floor(Number(rules.urgentDays ?? 7));
-  const urgentLatePct = Number(rules.urgentLatePct ?? 100);
-  const s = summarizeOnTimeRows(rows);
-  if (s.judged === 0) return EMPTY;
-  const urgentLate = rows.filter((r) => {
-    if (judgeOnTimeRow(r) !== "LATE") return false;
+  const isUrgent = (r: OnTimeRow) => {
     const lead = leadDays(r);
     return lead !== null && lead <= urgentDays;
-  }).length;
+  };
+  const s = summarizeOnTimeRows(rows.filter((r) => !isUrgent(r)));
+  const u = summarizeOnTimeRows(rows.filter(isUrgent));
+  if (s.judged + u.judged === 0) return EMPTY;
   // Reported as a PERCENTAGE, not a count: 9 late out of 41 and 9 out of 400
   // are different failures, and the scoring curve is per percentage point.
-  const pct = weightedLatePct(s.judged, s.late, urgentLate, urgentLatePct);
-  const earlyPct = Math.round((s.early / s.judged) * 1000) / 10;
+  const pct = pct1(s.late, s.judged);
+  const earlyPct = pct1(s.early, s.judged);
+  const urgentOnTimePct = u.judged > 0 ? pct1(u.onTime, u.judged) : null;
   return {
     actual: pct,
-    sampleSize: s.judged,
+    sampleSize: s.judged + u.judged,
     detail:
-      `${s.late} late` +
-      (urgentLate > 0 && urgentLatePct < 100
-        ? ` (${urgentLate} urgent at ${urgentLatePct}%, so ${Math.round((s.late - urgentLate * (1 - urgentLatePct / 100)) * 10) / 10} counted)`
-        : "") +
-      `, ${s.early} early of ${s.judged} delivered (${pct}% late, ${earlyPct}% early)`,
+      `${s.late} late, ${s.early} early of ${s.judged} delivered (${pct}% late, ${earlyPct}% early) · ` +
+      (u.judged > 0
+        ? `urgent: ${u.onTime} of ${u.judged} on time or early (${urgentOnTimePct}%)`
+        : "no urgent orders"),
     earlyPct,
+    urgentOnTimePct,
   };
 }
 
@@ -173,7 +168,7 @@ export function deliveryMetric(
 export async function customerDeliveryLate(
   c: Context<Env>,
   period: string,
-  rules: Pick<KpiDef, "urgentDays" | "urgentLatePct"> = kpiByKey("customer_delivery_date")!,
+  rules: Pick<KpiDef, "urgentDays"> = kpiByKey("customer_delivery_date")!,
 ): Promise<MetricResult> {
   const { start, end } = periodBounds(period);
   return deliveryMetric(await collectOnTimeOrders(c.var.DB, start, end), rules);
