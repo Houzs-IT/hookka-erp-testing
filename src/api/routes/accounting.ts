@@ -10432,6 +10432,9 @@ app.get("/pl", async (c) => {
       asOfDate: asOf,
     });
   }
+  // Account-code order within every section (owner 2026-10-13 「排序按科目编号」);
+  // Current Year Earnings is pushed after this, so it stays last in Equity.
+  balanceSheet.sort((a, b) => a.accountCode.localeCompare(b.accountCode));
   // Un-closed P&L result as of the BS cutoff — CUMULATIVE revenue/cost/
   // expense nets including year_close legs (a closed FY nets to zero
   // here, leaving only the open year). Phase 1 fix: the old code injected
