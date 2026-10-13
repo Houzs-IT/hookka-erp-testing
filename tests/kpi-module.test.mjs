@@ -126,7 +126,7 @@ test("the delivery result lists each part with its orders, % and points", () => 
   assert.deepEqual(deliveryBreakdown(d, 29.5, 66.1, 9.5, n), [
     "Late: 86 of 292 orders = 29.5% late → 0 points (100 − 29.5 × 10 = -195, never below 0)",
     "Early: 193 of 292 orders = 66.1% early → +5 points (6 full 10% step(s) × +1 = +6, capped at +5)",
-    "Urgent: 2 of 21 urgent orders on time or early = 9.5% → +5 points (0% to under 10% → 5)",
+    "Urgent: 2 of 21 urgent orders on time or early = 9.5% → +5 points (5 + 0 full 10% step(s) × 5 = 5)",
   ]);
   assert.equal(deliveryBreakdown(d, 3, 25, 100, n)[0].endsWith("→ 70 points (100 − 3 × 10 = 70)"), true);
   assert.equal(deliveryBreakdown(d, 3, 25, 100, n)[2].endsWith("→ +60 points (100% → 60)"), true);
@@ -138,13 +138,23 @@ test("urgent orders earn their own points on the on-time-or-early share", () => 
   const d = kpiByKey("customer_delivery_date");
   assert.equal(d.urgentDays, 7);
   assert.equal(d.urgentLatePct, undefined, "the old late-share rule is gone");
-  assert.equal(urgentPoints(0), 5);
-  assert.equal(urgentPoints(9.9), 5, "bands round down");
-  assert.equal(urgentPoints(10), 10);
-  assert.equal(urgentPoints(75), 40);
-  assert.equal(urgentPoints(90), 50);
-  assert.equal(urgentPoints(99.9), 50);
-  assert.equal(urgentPoints(100), 60);
+  assert.equal(urgentPoints(d, 0), 5);
+  assert.equal(urgentPoints(d, 9.9), 5, "bands round down");
+  assert.equal(urgentPoints(d, 10), 10);
+  assert.equal(urgentPoints(d, 75), 40);
+  assert.equal(urgentPoints(d, 90), 50);
+  assert.equal(urgentPoints(d, 99.9), 50);
+  assert.equal(urgentPoints(d, 100), 60);
+  // Super Admin can change the rule from the Library, like the late and early numbers.
+  const e = withRules(d, { urgentBasePoints: 0, urgentStepPct: 20, urgentPointsPerStep: 10, urgentFullPoints: 50 });
+  assert.equal(urgentPoints(e, 0), 0);
+  assert.equal(urgentPoints(e, 39.9), 10);
+  assert.equal(urgentPoints(e, 80), 40);
+  assert.equal(urgentPoints(e, 100), 50);
+  assert.equal(attainment(e, 0, 18.4, 80.1, 80), 45, "0 late + 5 early + 40 urgent");
+  assert.ok(e.measurement.some((m) => m.includes("0% → 0 · 20% → 10 · 40% → 20 · 60% → 30 · 80% → 40 · 100% → 50")));
+  assert.equal(deliveryBreakdown(e, 18.4, 80.1, 50, { late: 1, early: 1, judged: 1, urgentOnTime: 1, urgentJudged: 2 })[2],
+    "Urgent: 1 of 2 urgent orders on time or early = 50% → +20 points (0 + 2 full 20% step(s) × 10 = 20)");
   // Aug card: 18.4% late → 0, 80.1% early → +5, 90% urgent → +50.
   assert.deepEqual(penaltyParts(d, 18.4, 80.1, 90), { late: 0, early: 5, urgent: 50 });
   assert.equal(attainment(d, 0, 18.4, 80.1, 90), 55);
