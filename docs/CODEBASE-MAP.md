@@ -1,6 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
-> **Last verified: 2026-10-13 on branch `fix/it-support-header-filters` (to `staging`)**: the IT Support bullet (no header filter on Ticket / Issue / Last update via the new DataGrid `Column.noFilter`), read from `src/pages/it-support/index.tsx` and `src/components/ui/data-grid.tsx`. Nothing else re-checked.
+> **Last verified: 2026-10-13 on branch `fix/it-support-header-filters` (to `staging`)**: the IT Support bullet (no header filter on Ticket / Issue / Last update via the new DataGrid `Column.noFilter`), read from `src/pages/it-support/index.tsx` and `src/components/ui/data-grid.tsx`; also the three `src/api/worker.ts` middleware line refs (customerScope / tenant / apiRateLimit), which the bell endpoint had shifted. Nothing else re-checked.
 
 > **Last verified: 2026-10-13 on branch `feat/it-support-mobile-cards` (to `staging`, bell events)**: the IT Support bullet (hub ticket events into the bell), read from `src/api/routes/it-support.ts` (`recordHubEvent`) and the `/api/it-support/hub-events` mount in `src/api/worker.ts`. Nothing else re-checked.
 
@@ -2374,8 +2374,8 @@ and gets it right — cite it in the fix.
 **All eight routers are LIVE** (mounted in `src/api/worker.ts`). Every mount below sits
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:913`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
-`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:953`),
-`tenantMiddleware` (`src/api/worker.ts:960`) and `apiRateLimit` (`src/api/worker.ts:975`)
+`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:979`),
+`tenantMiddleware` (`src/api/worker.ts:986`) and `apiRateLimit` (`src/api/worker.ts:1001`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 
