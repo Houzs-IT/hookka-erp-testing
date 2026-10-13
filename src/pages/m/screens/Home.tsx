@@ -67,7 +67,7 @@ import {
   type SemanticStyle,
 } from "@/lib/design-tokens";
 import type { RawMaterial } from "@/types";
-import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard, MenuButton } from "../components";
+import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard, MobileHeader } from "../components";
 import { GlobalSearchSheet } from "../components/GlobalSearchSheet";
 import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
@@ -818,9 +818,134 @@ export default function MobileHome() {
       .slice(0, 5);
   }, [inventory]);
 
+  // Header pieces, shared by the phone and tablet header layouts below.
+  const greetingBlock = (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 13, color: M.muted }}>{greeting()}</div>
+      <div
+        style={{
+          fontSize: 18,
+          fontWeight: 700,
+          color: M.raisin,
+          letterSpacing: "-0.3px",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {firstName}
+      </div>
+    </div>
+  );
+  const periodChip = (
+    <>
+      {/* Period chip — dc12 design v12: tap to pick last 12 months,
+          re-fetches every analytics card under it. Defaults to current
+          month so first paint matches the desktop Command Center. */}
+      <button
+        aria-label="Pick analytics period"
+        onClick={() => setPickerOpen(true)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          flex: "none",
+          height: 34,
+          padding: "0 11px",
+          borderRadius: 11,
+          backgroundColor: M.card,
+          border: `1px solid ${M.hairline}`,
+          fontSize: 12,
+          fontWeight: 700,
+          color: M.taupe,
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        {periodLabel(period)}
+        <ChevronDown size={14} strokeWidth={1.75} color={M.taupe} />
+      </button>
+    </>
+  );
+  const headerActions = (
+    <>
+      {/* Global Search — CHANGELOG O.1. Opens GlobalSearchSheet which
+          fans out across the preloaded localStorage cache (every
+          endpoint in preload.ts). Searchable: customer / PO / SO /
+          reference / doc number — across every module. */}
+      <button
+        onClick={() => setSearchOpen(true)}
+        aria-label="Search"
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: "50%",
+          backgroundColor: M.card,
+          border: `1px solid ${M.hairline}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flex: "none",
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        <SearchIcon size={20} strokeWidth={1.75} color={M.ink} />
+      </button>
+      {/* Notification bell (round white button, unread dot) */}
+      <button
+        aria-label="Notifications"
+        // TODO(wave-x): wire to a real notifications surface (none in /m yet).
+        onClick={() => navigate("/m/announcements")}
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: "50%",
+          backgroundColor: M.card,
+          border: `1px solid ${M.hairline}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+          flex: "none",
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        <Bell size={20} strokeWidth={1.75} color={M.ink} />
+        <span
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 9,
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: "#C0463A",
+            border: "1.5px solid #fff",
+          }}
+        />
+      </button>
+    </>
+  );
+
   return (
-    <div style={{ paddingTop: "env(safe-area-inset-top)" }}>
-      {/* ===== Header — greeting + avatar + bell ===== */}
+    // Phones: MobileHeader owns the top safe-area inset; tablets keep the
+    // original single-row header, which pads for it here.
+    <div style={{ paddingTop: mode === "phone" ? 0 : "env(safe-area-inset-top)" }}>
+      {mode === "phone" ? (
+        <>
+          {/* Phone (owner 2026-10-13, global header consistency): the shared
+              sticky header row (hamburger | Home | search + bell), then a
+              non-sticky row with the greeting and the period chip. */}
+          <MobileHeader title="Home" menu trailing={headerActions} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px 16px" }}>
+            {greetingBlock}
+            {periodChip}
+          </div>
+        </>
+      ) : (
+      /* ===== Tablet header — brand tile + greeting + period + search + bell ===== */
       <div style={{ padding: "12px 18px 16px" }}>
         <div
           style={{
@@ -829,15 +954,9 @@ export default function MobileHome() {
             gap: 12,
           }}
         >
-          {/* Phone (owner 2026-10-12 nav shell): a flat hamburger opens the
-              left NavDrawer in place of the brand tile. Tablets keep the
-              brand tile — the LeftRail is their navigation. */}
-          {mode === "phone" ? (
-            <MenuButton edge={-8} />
-          ) : (
-          /* Brand tile — matches the ERP-mobile app icon (black bg, white "H",
+          {/* Brand tile — matches the ERP-mobile app icon (black bg, white "H",
               squircle corner). Owner 2026-06-28: use the erp-mobile logo, same
-              rounding as the white-bg app icon. */
+              rounding as the white-bg app icon. */}
           <div
             style={{
               width: 42,
@@ -854,108 +973,12 @@ export default function MobileHome() {
               H
             </span>
           </div>
-          )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, color: M.muted }}>{greeting()}</div>
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 700,
-                color: M.raisin,
-                letterSpacing: "-0.3px",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {firstName}
-            </div>
-          </div>
-          {/* Period chip — dc12 design v12: tap to pick last 12 months,
-              re-fetches every analytics card under it. Defaults to current
-              month so first paint matches the desktop Command Center. */}
-          <button
-            aria-label="Pick analytics period"
-            onClick={() => setPickerOpen(true)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              flex: "none",
-              height: 34,
-              padding: "0 11px",
-              borderRadius: 11,
-              backgroundColor: M.card,
-              border: `1px solid ${M.hairline}`,
-              fontSize: 12,
-              fontWeight: 700,
-              color: M.taupe,
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            {periodLabel(period)}
-            <ChevronDown size={14} strokeWidth={1.75} color={M.taupe} />
-          </button>
-          {/* Global Search — CHANGELOG O.1. Opens GlobalSearchSheet which
-              fans out across the preloaded localStorage cache (every
-              endpoint in preload.ts). Searchable: customer / PO / SO /
-              reference / doc number — across every module. */}
-          <button
-            onClick={() => setSearchOpen(true)}
-            aria-label="Search"
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: "50%",
-              backgroundColor: M.card,
-              border: `1px solid ${M.hairline}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flex: "none",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <SearchIcon size={20} strokeWidth={1.75} color={M.ink} />
-          </button>
-          {/* Notification bell (round white button, unread dot) */}
-          <button
-            aria-label="Notifications"
-            // TODO(wave-x): wire to a real notifications surface (none in /m yet).
-            onClick={() => navigate("/m/announcements")}
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: "50%",
-              backgroundColor: M.card,
-              border: `1px solid ${M.hairline}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-              flex: "none",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <Bell size={20} strokeWidth={1.75} color={M.ink} />
-            <span
-              style={{
-                position: "absolute",
-                top: 8,
-                right: 9,
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#C0463A",
-                border: "1.5px solid #fff",
-              }}
-            />
-          </button>
+          {greetingBlock}
+          {periodChip}
+          {headerActions}
         </div>
       </div>
+      )}
 
       <div style={{ padding: "0 18px" }}>
         {/* One-tap install offer (hidden once installed or dismissed). */}

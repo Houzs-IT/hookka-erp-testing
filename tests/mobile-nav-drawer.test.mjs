@@ -1,6 +1,7 @@
 // Phone navigation shell (owner 2026-10-12; Products tab 2026-10-13): 5 flat bottom tabs, a flat
 // hamburger, and a 324px left drawer that reuses the More menu content.
 // Tablet (rail) behaviour must stay untouched.
+// 2026-10-13: one phone header geometry for every /m screen (see the last test).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -107,7 +108,8 @@ test("hamburger is flat, labelled and phone-only", () => {
   assert.match(menuButton, /border: "none"/);
   assert.match(menuButton, /mode !== "phone" \|\| !drawer\) return null/);
   assert.match(header, /menu && mode === "phone" && drawer !== null/);
-  assert.match(home, /mode === "phone" \? \(\s*<MenuButton/);
+  // Phones: Home uses the shared header, so its hamburger sits in the same slot as every module.
+  assert.match(home, /mode === "phone" \? \(\s*<>[\s\S]*?<MobileHeader title="Home" menu trailing=\{headerActions\} \/>/);
 });
 
 test("shell mounts the drawer for phones only and leaves the tablet rail alone", () => {
@@ -115,4 +117,33 @@ test("shell mounts the drawer for phones only and leaves the tablet rail alone",
   assert.match(layout, /<LeftRail compact=\{compactRail\} onToggle=\{toggleRail\} \/>/);
   assert.match(layout, /<Route path="\/more" element=\{<MobileMore \/>\} \/>/, "/m/more kept");
   assert.match(more, /visibleModuleGroups\(isNavAllowed\)/, "More shares the same list");
+});
+
+test("phone header geometry is shared: one 44px leading slot, fixed 52px row, offsets include the inset", () => {
+  const geometry = read("lib/header-geometry.ts");
+  const subTabs = read("components/SubTabs.tsx");
+  const dashboard = read("screens/dashboard/DashboardScreen.tsx");
+  // Back arrow and hamburger use the same 44x44 slot with the same -10 pull.
+  assert.match(header, /width: 44,\s*height: 44,\s*marginLeft: -10,/);
+  assert.match(menuButton, /export function MenuButton\(\{ edge = -10 \}/);
+  assert.match(menuButton, /width: 44,\s*height: 44,/);
+  // 20px glyphs on phones (24 read too large next to the title); tablets keep a 24px back arrow.
+  assert.match(menuButton, /<Menu size=\{20\}/);
+  assert.match(header, /<ChevronLeft size=\{phone \? 20 : 24\}/);
+  assert.match(header, /phone \? \{ height: MOBILE_HEADER_ROW \}/, "fixed row on phones, no growth");
+  assert.match(header, /paddingTop: "env\(safe-area-inset-top\)"/);
+  assert.match(header, /textOverflow: "ellipsis"/);
+  assert.match(geometry, /MOBILE_HEADER_ROW = 52/);
+  assert.match(geometry, /calc\(\$\{MOBILE_HEADER_ROW\}px \+ env\(safe-area-inset-top, 0px\)\)/);
+  // Sticky rows pin under the header through the shared hook, not a literal 52.
+  assert.match(subTabs, /useStickyBelowHeader\(\)/);
+  assert.doesNotMatch(subTabs, /top: 52/);
+  assert.match(dashboard, /top: stickyTop/);
+  // Home on phones: no second safe-area pad on top of the header's.
+  assert.match(home, /paddingTop: mode === "phone" \? 0 : "env\(safe-area-inset-top\)"/);
+  // Custom detail screens use the shared header (back arrow) on phones.
+  for (const f of ["SalesDetailScreen", "ProductionDetailScreen", "MailCenterScreen"]) {
+    const src = read(`screens/${f}.tsx`);
+    assert.match(src, /phone \? \(?\s*<MobileHeader[\s\S]*?onBack=\{\(\) => navigate\(-1\)\}/, f);
+  }
 });
