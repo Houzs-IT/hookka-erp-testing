@@ -67,7 +67,7 @@ import {
   type SemanticStyle,
 } from "@/lib/design-tokens";
 import type { RawMaterial } from "@/types";
-import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard, MobileHeader } from "../components";
+import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard, MobileHeader, SegmentedSwitch } from "../components";
 import { GlobalSearchSheet } from "../components/GlobalSearchSheet";
 import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
@@ -288,6 +288,13 @@ function rm2(sen: number): string {
  */
 const SBC_COLORS = ["#16425B", "#1F6E8C", "#2E8FA3", "#4FA8B8", "#7FB9C6", "#A9C7D0"];
 
+/** Phone Home views (owner 2026-10-13). Operations is the default. */
+type HomeView = "operations" | "performance";
+const HOME_VIEWS: { key: HomeView; label: string }[] = [
+  { key: "operations", label: "Operations" },
+  { key: "performance", label: "Performance" },
+];
+
 /** Local time-of-day greeting (design says "Good morning,"). */
 function greeting(): string {
   const h = new Date().getHours();
@@ -306,6 +313,15 @@ export default function MobileHome() {
   // deferred).
   const { mode } = useResponsiveLayout();
   const expanded = mode === "tablet-landscape";
+  // Phone only (owner 2026-10-13): one Home split into two views by a
+  // switch, to cut scrolling. Tablets keep every section in one column, in
+  // the original order: `show()` is always true there, and the four blocks
+  // that sit elsewhere on a phone render in their original slot when
+  // !isPhone. Hooks and fetches don't depend on `view`, so switching only
+  // changes what is rendered: no refetch, and the month is kept.
+  const isPhone = mode === "phone";
+  const [view, setView] = useState<HomeView>("operations");
+  const show = (v: HomeView) => !isPhone || view === v;
 
   // Quick-action create form: holds the active FormSpec, or null. "Staff" has
   // no in-scope create endpoint, so it routes to the Employees directory.
@@ -540,15 +556,20 @@ export default function MobileHome() {
       { label: "Delivered", sen: delivered, color: M_DELTA.up },
     ].map((p) => ({ ...p, pct: Math.round((p.sen / max) * 100) }));
     const ratePct = confirmed > 0 ? (delivered / confirmed) * 100 : null;
+    // /api/sales-orders/stats has no date filter, so the phone card says
+    // "Live" and drops the month from its note (owner 2026-10-13). Tablets
+    // keep the month wording (follow-up in WORK-TRACKER).
+    const liveNote =
+      confirmed > 0
+        ? `${formatCurrency(outstanding)} still to ship of ${formatCurrency(
+            confirmed,
+          )} confirmed`
+        : null;
     return {
       bars,
       ratePct,
-      note:
-        confirmed > 0
-          ? `${formatCurrency(outstanding)} still to ship of ${formatCurrency(
-              confirmed,
-            )} confirmed · ${period}`
-          : null,
+      liveNote,
+      note: liveNote ? `${liveNote} · ${period}` : null,
     };
   }, [stats, period]);
 
@@ -929,6 +950,330 @@ export default function MobileHome() {
     </>
   );
 
+  // ---- Section blocks rendered in two places: their original slot on
+  // tablets, and a different slot in a phone view. Moved here verbatim. ----
+  // Mirrors dashboard KTile "This Month Sales" (overview.salesThisMonthSen).
+  const salesKpi = (
+        <KpiCard
+          icon={DollarSign}
+          accent="gold"
+          label="This Month Sales"
+          value={formatCurrency(salesThisMonthSen)}
+          delta={
+            salesDeltaPct == null
+              ? null
+              : {
+                  text: `${salesDeltaPct >= 0 ? "+" : ""}${salesDeltaPct}% MoM`,
+                  good: salesDeltaPct >= 0,
+                }
+          }
+        />
+  );
+  // Mirrors dashboard KTile "This Month Invoices" (overview.invoicesThisMonthSen).
+  const invoicesKpi = (
+        <KpiCard
+          icon={FileText}
+          accent="info"
+          label="This Month Invoices"
+          value={formatCurrency(invoicesThisMonthSen)}
+          delta={
+            invoiceDeltaPct == null
+              ? null
+              : {
+                  text: `${invoiceDeltaPct >= 0 ? "+" : ""}${invoiceDeltaPct}% MoM`,
+                  good: invoiceDeltaPct >= 0,
+                }
+          }
+        />
+  );
+  // Mirrors dashboard KTile "Pending Delivery" (consolidated live).
+  const pendingKpi = (
+        <KpiCard
+          icon={Package}
+          accent="moss"
+          label="Pending Delivery"
+          note={pdTile.past ? pdTile.tag : undefined}
+          // Lazy-loaded after first paint — show a placeholder until its two
+          // deferred fetches resolve, then the real (dashboard-identical) value.
+          value={tileValue(pdTile, pendingDeliveryLoading)}
+          // Live point-in-time figure — no prior-period delta (as on desktop).
+          delta={null}
+        />
+  );
+  // Mirrors dashboard KTile "Outstanding" (stats.outstandingItemsSen).
+  const outstandingKpi = (
+        <KpiCard
+          icon={Clock}
+          accent="danger"
+          label="Outstanding"
+          note={outTile.past ? outTile.tag : undefined}
+          value={tileValue(outTile, false)}
+          // Live point-in-time figure — no prior-period delta (as on desktop).
+          delta={null}
+        />
+  );
+  const pipelineNote = isPhone ? pipeline.liveNote : pipeline.note;
+  // ===== Order Pipeline — header + rate badge + bars + note =====
+  const pipelineBlock = (
+    <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
+            {isPhone ? "Order Pipeline · Live" : <>Order Pipeline · {periodLabel(period)}</>}
+          </div>
+          <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
+            {isPhone ? "shipped vs still to ship · all months" : "shipped vs still to ship"}
+          </div>
+        </div>
+        {pipeline.ratePct != null ? (
+          <div style={{ textAlign: "right" }}>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                color: "#A89F8D",
+              }}
+            >
+              DELIVERED RATE
+            </div>
+            <div
+              style={{
+                fontSize: 17,
+                fontWeight: 800,
+                color: M_DELTA.up,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {Math.round(pipeline.ratePct)}%
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div style={{ marginTop: 14 }}>
+        {pipeline.bars.map((p) => (
+          <div
+            key={p.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 10,
+            }}
+          >
+            <span
+              style={{
+                width: 74,
+                flex: "none",
+                fontSize: 12,
+                color: M.body,
+                fontWeight: 600,
+              }}
+            >
+              {p.label}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                height: 14,
+                background: "#F0EBE0",
+                borderRadius: 5,
+                overflow: "hidden",
+              }}
+            >
+              <span
+                style={{
+                  display: "block",
+                  width: `${p.pct}%`,
+                  height: "100%",
+                  background: p.color,
+                  borderRadius: 5,
+                }}
+              />
+            </span>
+            <span
+              style={{
+                width: 108,
+                flex: "none",
+                textAlign: "right",
+                fontSize: 12,
+                fontWeight: 700,
+                color: M.raisin,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {formatCurrency(p.sen)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {pipelineNote ? (
+        <div style={{ fontSize: 11, color: M.muted, marginTop: 6 }}>
+          {pipelineNote}
+        </div>
+      ) : null}
+    </MobileCard>
+  );
+  // ===== Stock alerts =====
+  const stockAlertsBlock = (
+    <>
+      <SectionHeader
+        title="Stock alerts"
+        right={
+          stockAlerts.length > 0 ? (
+            <span
+              style={{
+                background: M_ACCENT.danger.bg,
+                color: M_ACCENT.danger.fg,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "2px 9px",
+                borderRadius: 20,
+                border: "1px solid #E8B2A1",
+              }}
+            >
+              {stockAlerts.length} low
+            </span>
+          ) : undefined
+        }
+      />
+      <MobileCard padded={false} radius={16}>
+        {stockAlerts.length === 0 ? (
+          <EmptyRow text="No low-stock materials" />
+        ) : (
+          stockAlerts.map((rm, i) => {
+            const qty = Number(rm.balanceQty) || 0;
+            const min =
+              typeof rm.minStock === "number" ? rm.minStock : null;
+            const danger = qty === 0;
+            const accent = danger ? M_ACCENT.danger : M_ACCENT.warning;
+            const AlertIcon = danger ? CircleAlert : TriangleAlert;
+            const last = i === stockAlerts.length - 1;
+            return (
+              <div
+                key={rm.id}
+                onClick={() => navigate("/m/inventory")}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/m/inventory");
+                  }
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "13px 15px",
+                  borderBottom: last
+                    ? "none"
+                    : `1px solid ${M.divider}`,
+                  cursor: "pointer",
+                  WebkitTapHighlightColor: "transparent",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    background: accent.bg,
+                    flex: "none",
+                  }}
+                >
+                  <AlertIcon size={17} strokeWidth={1.75} color={accent.fg} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      color: M.raisin,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {rm.description || rm.itemCode}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: M.muted }}>
+                    {rm.itemCode}
+                    {rm.itemGroup ? ` · ${rm.itemGroup}` : ""}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flex: "none" }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: M_ACCENT.danger.fg,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {`${qty} ${rm.baseUOM || ""}`.trim()}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: M.faint }}>
+                    {min != null ? `min ${min}` : "low"}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </MobileCard>
+    </>
+  );
+  // ===== Orders due =====
+  const ordersDueBlock = (
+    <>
+      <SectionHeader
+        title="Orders due this week"
+        right={
+          <button
+            onClick={() => navigate("/m/sales")}
+            style={{
+              background: "none",
+              border: "none",
+              color: M.taupe,
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            See all
+          </button>
+        }
+      />
+      <div style={{ display: "grid", gap: 10 }}>
+        {ordersDue.length === 0 ? (
+          <MobileCard padded={false} radius={16}>
+            <EmptyRow text="No upcoming orders" />
+          </MobileCard>
+        ) : (
+          ordersDue.map(({ so, overdue }) => (
+            <OrderDueCard
+              key={so.id}
+              so={so}
+              overdue={overdue}
+              onClick={() => navigate("/m/sales")}
+            />
+          ))
+        )}
+      </div>
+    </>
+  );
+
+
   return (
     // Phones: MobileHeader owns the top safe-area inset; tablets keep the
     // original single-row header, which pads for it here.
@@ -983,34 +1328,40 @@ export default function MobileHome() {
       <div style={{ padding: "0 18px" }}>
         {/* One-tap install offer (hidden once installed or dismissed). */}
         <InstallAppCard dismissible />
+        {/* Phone only: Operations | Performance switch (owner 2026-10-13). */}
+        {isPhone && (
+          <SegmentedSwitch options={HOME_VIEWS} value={view} onChange={setView} ariaLabel="Home view" />
+        )}
         {/* ===== Quick actions (FIRST per dc13 order) ===== */}
-        <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
-          <QuickAction
-            icon={Plus}
-            accent="gold"
-            label="New SO"
-            onClick={() => setFormSpec(newSalesOrderSpec())}
-          />
-          <QuickAction
-            icon={Truck}
-            accent="info"
-            label="Delivery"
-            onClick={() => setFormSpec(newDeliveryOrderSpec())}
-          />
-          <QuickAction
-            icon={PackageCheck}
-            accent="moss"
-            label="Receive"
-            onClick={() => setFormSpec(newPurchaseOrderSpec())}
-          />
-          <QuickAction
-            icon={HardHat}
-            accent="plum"
-            label="Staff"
-            // No staff-create endpoint is in scope. Route to the directory.
-            onClick={() => navigate("/m/employees")}
-          />
-        </div>
+        {show("operations") && (
+          <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
+            <QuickAction
+              icon={Plus}
+              accent="gold"
+              label="New SO"
+              onClick={() => setFormSpec(newSalesOrderSpec())}
+            />
+            <QuickAction
+              icon={Truck}
+              accent="info"
+              label="Delivery"
+              onClick={() => setFormSpec(newDeliveryOrderSpec())}
+            />
+            <QuickAction
+              icon={PackageCheck}
+              accent="moss"
+              label="Receive"
+              onClick={() => setFormSpec(newPurchaseOrderSpec())}
+            />
+            <QuickAction
+              icon={HardHat}
+              accent="plum"
+              label="Staff"
+              // No staff-create endpoint is in scope. Route to the directory.
+              onClick={() => navigate("/m/employees")}
+            />
+          </div>
+        )}
 
         {/* ===== KPI grid — 2×2 on phone, 1×4 on fold (dc13 sizing — was
             too loose at 25px font, dc13 uses 18px + tighter padding). ===== */}
@@ -1019,156 +1370,138 @@ export default function MobileHome() {
             display: "grid",
             gridTemplateColumns: expanded ? "repeat(4, minmax(0, 1fr))" : "1fr 1fr",
             gap: 9,
-            marginTop: 11,
+            // Phone Performance: this row is the first card under the switch,
+            // so it gets the same 14px gap as Quick Actions in Operations.
+            marginTop: isPhone && view === "performance" ? 14 : 11,
           }}
         >
-          {/* Mirrors dashboard KTile "This Month Sales" (overview.salesThisMonthSen). */}
-          <KpiCard
-            icon={DollarSign}
-            accent="gold"
-            label="This Month Sales"
-            value={formatCurrency(salesThisMonthSen)}
-            delta={
-              salesDeltaPct == null
-                ? null
-                : {
-                    text: `${salesDeltaPct >= 0 ? "+" : ""}${salesDeltaPct}% MoM`,
-                    good: salesDeltaPct >= 0,
-                  }
-            }
-          />
-          {/* Mirrors dashboard KTile "This Month Invoices" (overview.invoicesThisMonthSen). */}
-          <KpiCard
-            icon={FileText}
-            accent="info"
-            label="This Month Invoices"
-            value={formatCurrency(invoicesThisMonthSen)}
-            delta={
-              invoiceDeltaPct == null
-                ? null
-                : {
-                    text: `${invoiceDeltaPct >= 0 ? "+" : ""}${invoiceDeltaPct}% MoM`,
-                    good: invoiceDeltaPct >= 0,
-                  }
-            }
-          />
-          {/* Mirrors dashboard KTile "Pending Delivery" (consolidated live). */}
-          <KpiCard
-            icon={Package}
-            accent="moss"
-            label="Pending Delivery"
-            note={pdTile.past ? pdTile.tag : undefined}
-            // Lazy-loaded after first paint — show a placeholder until its two
-            // deferred fetches resolve, then the real (dashboard-identical) value.
-            value={tileValue(pdTile, pendingDeliveryLoading)}
-            // Live point-in-time figure — no prior-period delta (as on desktop).
-            delta={null}
-          />
-          {/* Mirrors dashboard KTile "Outstanding" (stats.outstandingItemsSen). */}
-          <KpiCard
-            icon={Clock}
-            accent="danger"
-            label="Outstanding"
-            note={outTile.past ? outTile.tag : undefined}
-            value={tileValue(outTile, false)}
-            // Live point-in-time figure — no prior-period delta (as on desktop).
-            delta={null}
-          />
+          {/* Phone: Operations shows Pending Delivery + Outstanding, Performance
+              shows Sales + Invoices. Tablets: all four, original order. */}
+          {isPhone ? (
+            view === "operations" ? (
+              <>
+                {pendingKpi}
+                {outstandingKpi}
+              </>
+            ) : (
+              <>
+                {salesKpi}
+                {invoicesKpi}
+              </>
+            )
+          ) : (
+            <>
+              {salesKpi}
+              {invoicesKpi}
+              {pendingKpi}
+              {outstandingKpi}
+            </>
+          )}
         </div>
 
         {/* ===== Daily Report — dc12: total + 4 chips (Overdue / SO no DO /
             PO not received / Low efficiency). Each chip taps through to the
             relevant module screen. Chips with 0 count hide. */}
-        <MobileCard
-          radius={16}
-          style={{ padding: "15px 16px", marginTop: 14 }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 11,
-                background: M_ACCENT.gold.bg,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flex: "none",
-              }}
-            >
-              <ClipboardCheck size={20} strokeWidth={1.75} color={M.taupe} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+        {show("operations") && (
+          <MobileCard
+            radius={16}
+            style={{ padding: "15px 16px", marginTop: 14 }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
               <div
                 style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: 1,
-                  color: "#A89F8D",
+                  width: 40,
+                  height: 40,
+                  borderRadius: 11,
+                  background: M_ACCENT.gold.bg,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flex: "none",
                 }}
               >
-                DAILY REPORT
+                <ClipboardCheck size={20} strokeWidth={1.75} color={M.taupe} />
               </div>
-              <div
-                style={{
-                  fontSize: 22,
-                  fontWeight: 800,
-                  color: M.raisin,
-                  letterSpacing: "-0.4px",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {dailyReportTotal}
-              </div>
-            </div>
-          </div>
-          <div style={{ fontSize: 11.5, color: M.muted, marginTop: 3 }}>
-            process &amp; SOP exceptions to action today
-          </div>
-          {dailyChips.length > 0 ? (
-            <div
-              style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 11 }}
-            >
-              {dailyChips.map((c) => (
-                <span
-                  key={c.label}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(c.to);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      navigate(c.to);
-                    }
-                  }}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    fontSize: 11.5,
-                    fontWeight: 600,
-                    color: M_ACCENT.danger.fg,
-                    background: M_ACCENT.danger.bg,
-                    border: "1px solid #E8B2A1",
-                    padding: "3px 9px",
-                    borderRadius: 20,
-                    cursor: "pointer",
-                    WebkitTapHighlightColor: "transparent",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                    color: "#A89F8D",
                   }}
                 >
-                  {c.label} <b>{c.count}</b>
-                </span>
-              ))}
+                  DAILY REPORT
+                </div>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: M.raisin,
+                    letterSpacing: "-0.4px",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {dailyReportTotal}
+                </div>
+              </div>
             </div>
-          ) : null}
-        </MobileCard>
+            <div style={{ fontSize: 11.5, color: M.muted, marginTop: 3 }}>
+              process &amp; SOP exceptions to action today
+            </div>
+            {dailyChips.length > 0 ? (
+              <div
+                style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 11 }}
+              >
+                {dailyChips.map((c) => (
+                  <span
+                    key={c.label}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(c.to);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigate(c.to);
+                      }
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      color: M_ACCENT.danger.fg,
+                      background: M_ACCENT.danger.bg,
+                      border: "1px solid #E8B2A1",
+                      padding: "3px 9px",
+                      borderRadius: 20,
+                      cursor: "pointer",
+                      WebkitTapHighlightColor: "transparent",
+                    }}
+                  >
+                    {c.label} <b>{c.count}</b>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </MobileCard>
+        )}
+
+        {/* Phone Operations: Orders due, then Order Pipeline. */}
+        {isPhone && view === "operations" && (
+          <>
+            {ordersDueBlock}
+            {pipelineBlock}
+          </>
+        )}
 
         {/* ===== Revenue — 3-line area chart (per-day x-axis) ===== */}
-        {revenue ? (
+        {show("performance") && revenue ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Revenue · {periodLabel(period)}
@@ -1261,7 +1594,7 @@ export default function MobileHome() {
         ) : null}
 
         {/* ===== Plant Load — gauge + workforce/queue-load + 4 rows ===== */}
-        {plant ? (
+        {show("operations") && plant ? (
           <MobileCard radius={16} style={{ padding: 16, marginTop: 14 }}>
             <div
               style={{
@@ -1406,114 +1739,11 @@ export default function MobileHome() {
           </MobileCard>
         ) : null}
 
-        {/* ===== Order Pipeline — header + rate badge + bars + note ===== */}
-        <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
-                Order Pipeline · {periodLabel(period)}
-              </div>
-              <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
-                shipped vs still to ship
-              </div>
-            </div>
-            {pipeline.ratePct != null ? (
-              <div style={{ textAlign: "right" }}>
-                <div
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: 0.5,
-                    color: "#A89F8D",
-                  }}
-                >
-                  DELIVERED RATE
-                </div>
-                <div
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 800,
-                    color: M_DELTA.up,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {Math.round(pipeline.ratePct)}%
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <div style={{ marginTop: 14 }}>
-            {pipeline.bars.map((p) => (
-              <div
-                key={p.label}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 10,
-                }}
-              >
-                <span
-                  style={{
-                    width: 74,
-                    flex: "none",
-                    fontSize: 12,
-                    color: M.body,
-                    fontWeight: 600,
-                  }}
-                >
-                  {p.label}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    height: 14,
-                    background: "#F0EBE0",
-                    borderRadius: 5,
-                    overflow: "hidden",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "block",
-                      width: `${p.pct}%`,
-                      height: "100%",
-                      background: p.color,
-                      borderRadius: 5,
-                    }}
-                  />
-                </span>
-                <span
-                  style={{
-                    width: 108,
-                    flex: "none",
-                    textAlign: "right",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: M.raisin,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {formatCurrency(p.sen)}
-                </span>
-              </div>
-            ))}
-          </div>
-          {pipeline.note ? (
-            <div style={{ fontSize: 11, color: M.muted, marginTop: 6 }}>
-              {pipeline.note}
-            </div>
-          ) : null}
-        </MobileCard>
+        {/* ===== Order Pipeline ===== (phone: under Orders due) */}
+        {!isPhone && pipelineBlock}
 
         {/* ===== Worker Efficiency — TOP 5 + LOWEST 5 ===== */}
-        {workerEff ? (
+        {show("performance") && workerEff ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Worker Efficiency
@@ -1553,7 +1783,7 @@ export default function MobileHome() {
         ) : null}
 
         {/* ===== Sales by Customer — category tabs + donut + rows ===== */}
-        {salesByCustomer ? (
+        {show("performance") && salesByCustomer ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Sales by Customer
@@ -1723,7 +1953,7 @@ export default function MobileHome() {
         ) : null}
 
         {/* ===== Top Sellers — BEDFRAME by units · SOFA by sets ===== */}
-        {topSellers ? (
+        {show("performance") && topSellers ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Top Sellers
@@ -1751,7 +1981,7 @@ export default function MobileHome() {
         ) : null}
 
         {/* ===== Fabric Usage — BEDFRAME + SOFA (code, metres, avg/m) ===== */}
-        {fabricUsage ? (
+        {show("performance") && fabricUsage ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div
               style={{
@@ -1785,7 +2015,7 @@ export default function MobileHome() {
         ) : null}
 
         {/* ===== Department Backlog — bottleneck first ===== */}
-        {deptBacklog ? (
+        {show("operations") && deptBacklog ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Department Backlog
@@ -1853,8 +2083,11 @@ export default function MobileHome() {
           </MobileCard>
         ) : null}
 
+        {/* Phone Operations: Stock alerts sit above Purchasing. */}
+        {isPhone && view === "operations" && stockAlertsBlock}
+
         {/* ===== Purchasing — open POs + month spend + top suppliers ===== */}
-        {purchasing ? (
+        {show("operations") && purchasing ? (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Purchasing
@@ -1925,151 +2158,11 @@ export default function MobileHome() {
           </MobileCard>
         ) : null}
 
-        {/* ===== Stock alerts ===== */}
-        <SectionHeader
-          title="Stock alerts"
-          right={
-            stockAlerts.length > 0 ? (
-              <span
-                style={{
-                  background: M_ACCENT.danger.bg,
-                  color: M_ACCENT.danger.fg,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  padding: "2px 9px",
-                  borderRadius: 20,
-                  border: "1px solid #E8B2A1",
-                }}
-              >
-                {stockAlerts.length} low
-              </span>
-            ) : undefined
-          }
-        />
-        <MobileCard padded={false} radius={16}>
-          {stockAlerts.length === 0 ? (
-            <EmptyRow text="No low-stock materials" />
-          ) : (
-            stockAlerts.map((rm, i) => {
-              const qty = Number(rm.balanceQty) || 0;
-              const min =
-                typeof rm.minStock === "number" ? rm.minStock : null;
-              const danger = qty === 0;
-              const accent = danger ? M_ACCENT.danger : M_ACCENT.warning;
-              const AlertIcon = danger ? CircleAlert : TriangleAlert;
-              const last = i === stockAlerts.length - 1;
-              return (
-                <div
-                  key={rm.id}
-                  onClick={() => navigate("/m/inventory")}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      navigate("/m/inventory");
-                    }
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "13px 15px",
-                    borderBottom: last
-                      ? "none"
-                      : `1px solid ${M.divider}`,
-                    cursor: "pointer",
-                    WebkitTapHighlightColor: "transparent",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 34,
-                      height: 34,
-                      borderRadius: 10,
-                      background: accent.bg,
-                      flex: "none",
-                    }}
-                  >
-                    <AlertIcon size={17} strokeWidth={1.75} color={accent.fg} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 13.5,
-                        fontWeight: 600,
-                        color: M.raisin,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {rm.description || rm.itemCode}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: M.muted }}>
-                      {rm.itemCode}
-                      {rm.itemGroup ? ` · ${rm.itemGroup}` : ""}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right", flex: "none" }}>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: M_ACCENT.danger.fg,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {`${qty} ${rm.baseUOM || ""}`.trim()}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: M.faint }}>
-                      {min != null ? `min ${min}` : "low"}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </MobileCard>
+        {/* ===== Stock alerts ===== (phone: above Purchasing) */}
+        {!isPhone && stockAlertsBlock}
 
-        {/* ===== Orders due ===== */}
-        <SectionHeader
-          title="Orders due this week"
-          right={
-            <button
-              onClick={() => navigate("/m/sales")}
-              style={{
-                background: "none",
-                border: "none",
-                color: M.taupe,
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              See all
-            </button>
-          }
-        />
-        <div style={{ display: "grid", gap: 10 }}>
-          {ordersDue.length === 0 ? (
-            <MobileCard padded={false} radius={16}>
-              <EmptyRow text="No upcoming orders" />
-            </MobileCard>
-          ) : (
-            ordersDue.map(({ so, overdue }) => (
-              <OrderDueCard
-                key={so.id}
-                so={so}
-                overdue={overdue}
-                onClick={() => navigate("/m/sales")}
-              />
-            ))
-          )}
-        </div>
+        {/* ===== Orders due ===== (phone: under Daily Report) */}
+        {!isPhone && ordersDueBlock}
       </div>
 
       <div style={{ height: 8 }} />

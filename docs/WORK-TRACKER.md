@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `chore/sync-staging-from-main-1013` (to `staging`, staging<-main sync) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/it-support-sort-cycle` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/it-support-header-filters` (to `staging`) added below (its entry is the newest).
@@ -233,6 +234,18 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 Phone Home: Operations | Performance views (branch `design/mobile-home-dashboard` → `staging`, local only)
+
+Owner asks (planned and approved 2026-10-13). Phone only (below 720px); tablet and desktop unchanged.
+1. 🔵 One Home page, a 44px full-width Operations | Performance switch under the Install App card. Operations by default. Text only, M.* tokens, soft active shadow.
+2. 🔵 Operations: Quick Actions, Pending Delivery + Outstanding, Daily Report, Orders due, Order Pipeline, Plant Load, Department Backlog, Stock alerts, Purchasing.
+3. 🔵 Performance: This Month Sales + This Month Invoices, Revenue, Worker Efficiency, Sales by Customer, Top Sellers, Fabric Usage.
+4. 🔵 The 2x2 KPI grid splits into two rows of two on the phone only; tablet keeps the one four-card grid.
+5. 🔵 Month chip stays in the greeting row; the month is kept when switching; no new fetches, no API or calculation change.
+6. 🔵 Phone Order Pipeline wording: "Order Pipeline · Live", "shipped vs still to ship · all months", note without the month (`/api/sales-orders/stats` has no date filter). Pending Delivery / Outstanding snapshot labels unchanged.
+7. 🔵 Tablet must render the same HTML as before (before/after render comparison).
+8. ⚪ Follow-up, not in this branch: the TABLET Order Pipeline still says "Order Pipeline · <month>" and ends its note with the month, but `/api/sales-orders/stats` is not filtered by month.
 
 ## 2026-10-13 — 🔵 Sync `staging` from `main` (branch `chore/sync-staging-from-main-1013` → `staging`)
 
