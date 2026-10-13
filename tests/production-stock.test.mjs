@@ -103,6 +103,16 @@ test("the P&L takes FG / WIP from the production orders only where the Stock Tak
   assert.match(API, /if \(matData\.fgSeedYm && ym <= matData\.fgSeedYm\) return null;/);
 });
 
+test("the Stock Summary (page and closing-stock post) carries the same blank-month FG / WIP (owner「Stock Summary 也一起改」)", () => {
+  const fn = API.slice(API.indexOf("async function stockSummaryRange("), API.indexOf("async function stockSummaryRange(") + 3200);
+  assert.match(fn, /if \(blankStockParts\(openYm, data, openingDate\) \|\| blankStockParts\(closeYm, data, openingDate\)\) \{/);
+  assert.match(fn, /blankMonthStock\(db, orgId, openYm, data, dc, override\),\n\s*blankMonthStock\(db, orgId, closeYm, data, dc, override\),/);
+  assert.match(fn, /wip: \{ openingSen: blankOpen\?\.wip \?\? w\.wipOpenSen, closingSen: blankClose\?\.wip \?\? w\.wipCloseSen \},/);
+  assert.match(fn, /fg: \{ openingSen: blankOpen\?\.fg \?\? w\.fgOpenSen, closingSen: blankClose\?\.fg \?\? w\.fgCloseSen \},/);
+  // One eligibility rule for both.
+  assert.match(API, /const parts = blankStockParts\(ym, matData, dc\.openingDate\);/);
+});
+
 test("the valuation: as of today for the running month, last month's materials + this month's labour", () => {
   assert.match(API, /const asOf = ym === runningMonthYm\(\) \?/);
   assert.match(API, /prevMaterialsSen: prevMaterials,/);

@@ -6313,6 +6313,21 @@ async function stockSummaryRange(
   const lastYm = endYm ?? new Date().toISOString().slice(0, 7);
   const data = await loadMaterialCostData(db, orgId, lastYm);
   const w = materialWindow(data, startYm, endYm);
+  // A month-end the Stock Take leaves blank: the same production-order FG / WIP
+  // the P&L carries (owner 2026-10-13 「Stock Summary 也一起改」). The doc-date
+  // context and section map are only loaded when there is something to value.
+  const openYm = startYm ? prevMonthYm(startYm) : null;
+  const closeYm = endYm ?? data.lastYm;
+  const openingDate = await getOpeningDate(db);
+  let blankOpen: { wip: number | null; fg: number | null } | null = null;
+  let blankClose: { wip: number | null; fg: number | null } | null = null;
+  if (blankStockParts(openYm, data, openingDate) || blankStockParts(closeYm, data, openingDate)) {
+    const [dc, override] = await Promise.all([loadDocDateResolver(db), getPnlSectionMap(db)]);
+    [blankOpen, blankClose] = await Promise.all([
+      blankMonthStock(db, orgId, openYm, data, dc, override),
+      blankMonthStock(db, orgId, closeYm, data, dc, override),
+    ]);
+  }
   const rows: StockGroupRow[] = w.rmGroups
     .filter((g) => g.openingSen !== 0 || g.purchaseSen !== 0 || g.consumedSen !== 0 || g.closingSen !== 0)
     .map((g) => ({
@@ -6331,8 +6346,8 @@ async function stockSummaryRange(
   };
   return {
     rows,
-    wip: { openingSen: w.wipOpenSen, closingSen: w.wipCloseSen },
-    fg: { openingSen: w.fgOpenSen, closingSen: w.fgCloseSen },
+    wip: { openingSen: blankOpen?.wip ?? w.wipOpenSen, closingSen: blankClose?.wip ?? w.wipCloseSen },
+    fg: { openingSen: blankOpen?.fg ?? w.fgOpenSen, closingSen: blankClose?.fg ?? w.fgCloseSen },
     totals,
   };
 }
@@ -8028,11 +8043,28 @@ async function liveStockFor(
   return run;
 }
 
-// The month-end FG / WIP a window should use at `ym` when the Stock Take
-// carries none (owner 2026-10-13, 1.A): typed months keep their own figure, the
-// opening seed month keeps the seed, months before the books and months ahead
-// aren't valued. FG only under the "stock take only" mode — "auto" keeps its
-// batch figures. null = leave the material window's figure.
+// Which of a month-end's WIP / FG the Stock Take leaves blank (owner
+// 2026-10-13, 1.A): typed months keep their own figure, the opening seed month
+// keeps the seed, months before the books and months ahead aren't valued. FG
+// only under the "stock take only" mode — "auto" keeps its batch figures.
+// null = nothing to value.
+function blankStockParts(
+  ym: string | null,
+  matData: MaterialCostData,
+  openingDate: string | null,
+): { wipBlank: boolean; fgBlank: boolean } | null {
+  if (!ym) return null;
+  const openingYm = openingDate ? openingDate.slice(0, 7) : null;
+  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return null;
+  if (matData.fgSeedYm && ym <= matData.fgSeedYm) return null;
+  const wipBlank = !matData.stockTakeByGroupYm.get("WIP")?.has(ym);
+  const fgBlank = matData.fgValuationMode === "stock_take_only" && !matData.stockTakeByGroupYm.get("FG")?.has(ym);
+  return wipBlank || fgBlank ? { wipBlank, fgBlank } : null;
+}
+
+// The month-end FG / WIP to use at `ym` where the Stock Take is blank — the
+// production-order valuation (liveStockFor). null = leave the material
+// window's figure.
 async function blankMonthStock(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -8041,13 +8073,9 @@ async function blankMonthStock(
   dc: DocDateCtx,
   override: Record<string, string>,
 ): Promise<{ wip: number | null; fg: number | null } | null> {
-  if (!ym) return null;
-  const openingYm = dc.openingDate ? dc.openingDate.slice(0, 7) : null;
-  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return null;
-  if (matData.fgSeedYm && ym <= matData.fgSeedYm) return null;
-  const wipBlank = !matData.stockTakeByGroupYm.get("WIP")?.has(ym);
-  const fgBlank = matData.fgValuationMode === "stock_take_only" && !matData.stockTakeByGroupYm.get("FG")?.has(ym);
-  if (!wipBlank && !fgBlank) return null;
+  const parts = blankStockParts(ym, matData, dc.openingDate);
+  if (!ym || !parts) return null;
+  const { wipBlank, fgBlank } = parts;
   try {
     const v = await liveStockFor(db, orgId, ym, matData, dc, override);
     return { wip: wipBlank ? v.wipSen : null, fg: fgBlank ? v.fgSen : null };
