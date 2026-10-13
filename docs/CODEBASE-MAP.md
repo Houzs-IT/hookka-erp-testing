@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-13 on branch `feat/bs-stock-from-pnl-closing` (to `main`)**: the Balance Sheet stock note, read from `src/lib/bs-stock.ts` and `src/api/routes/accounting.ts` (`sheetStockAt`, `closingStockAt`, `/pl`, `/bs-drill`, `loadFinanceSeries`, `/dashboard`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/kpi-delivery-score-breakdown` (to `main`)**: the kpi-catalog.ts row (`deliveryBreakdown`), read from `src/api/lib/kpi-catalog.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `fix/m-it-support-under-system` (to `main`)**: the IT Support bullet (/m row moved from Service & Support to System), read from `src/pages/m/nav.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/kpi-urgent-orders-scored-apart` (to `main`)**: the kpi-catalog.ts and kpi-metrics.ts rows (urgent orders scored apart, `penaltyParts`, `URGENT_POINTS`), read from `src/api/lib/kpi-catalog.ts` and `src/api/lib/kpi-metrics.ts`. Nothing else re-checked.
@@ -1849,7 +1850,7 @@ you are changing auth behaviour you want L227–417 and nothing else.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13629`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
+| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13768`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
 | `src/pages/forecast.tsx` — `/forecast` (`src/dashboard-routes.tsx:471`; sidebar FORECASTING → "Forecast P&L"); planning grid, zero contact with the books (575) | `src/api/routes/accounting.ts` — `GET /forecast` (`:10743`), `PUT /forecast` (`:10758`), `GET /coa` (`:829`), `GET /pnl/section-map` (`:9827`), `GET /labor/departments` (`:9561`) | `kv_config` row `key='forecast_pnl'` (`:10789`) — **no forecast table exists**; plus `chart_of_accounts` for the line structure | **NONE** |
 
 > **Name collision — read this before touching either.** `/forecast` (`src/pages/forecast.tsx`,
@@ -1897,6 +1898,17 @@ Cash Flow with Summary/Detail (`:1133`) → Balance Sheet (`:1200`) → Financia
   (`prodStock`, `liveStockMemo`). `stockSummaryRange` (Stock Summary page + closing-stock post) uses the same
   `blankMonthStock` for its opening / closing (eligibility `blankStockParts`). Guard
   `tests/production-stock.test.mjs`.
+- **Balance Sheet stock = the P&L's closing stock (2026-10-13, owner「balance sheet 就让他的 closing stock 和 P&L
+  closing stock 一样」)**: report layer, nothing posted. `/pl`'s sheet asks `sheetStockAt` (the Stock Summary's closing,
+  `stockSummaryRange(month, month)`, for the sheet's month — the running month for a sheet past it, none before the
+  opening month); the stock map's accounts (each group's 330-x home, WIP 330-8000, FG 330-9000) show it in place of
+  the ledger's own balance and Current Year Earnings moves by (stock − ledger), so a matching year-end ledger entry
+  adds nothing. A single company's sheet carries it only for the stock take's own org. `loadFinanceSeries` and the
+  dashboard's balance-sheet buckets use `closingStockAt` (same material window + blank-month FG / WIP, on the data they
+  already hold); dashboard equity is equity accounts only, so only assets / inventory move there (payload `v18`).
+  `/bs-drill` on a stock account returns the Stock Summary movement per group (`fromStockTake`). The Stock Summary's
+  "Post closing stock to GL" button is gone (`POST /stock/close-post` left in place). Pure core `src/lib/bs-stock.ts`;
+  guard `tests/bs-stock.test.mjs`.
 - Money is integer sen end to end. `rm` / `rm2` (L83–86) divide by 100 **for display only**;
   every derived figure uses `Math.round(... * 10000) / 100` on sen ints.
 - **The forecast-percentage rule (BUG-2026-08-06-002) is load-bearing and is stated three

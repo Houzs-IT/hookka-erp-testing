@@ -12833,11 +12833,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
 // real check possible, but choosing that basis is an owner/finance decision.
 
 function StockSummaryTab() {
-  const { toast } = useToast();
-  const { confirm } = useConfirm();
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [reloadKey, setReloadKey] = useState(0);
-  const [posting, setPosting] = useState(false);
   const [data, setData] = useState<{
     rows: { group: string; description: string; openingSen: number; purchasesSen: number; consumptionSen: number; closingSen: number; balanced: boolean; accounts: { stock: string; opening: string; closing: string } }[];
     wip: { openingSen: number; closingSen: number };
@@ -12853,7 +12849,7 @@ function StockSummaryTab() {
       .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
       .catch(() => {});
     return () => { stale = true; };
-  }, [month, reloadKey]);
+  }, [month]);
 
   const [byLine, setByLine] = useState<{
     sofa: { materialSen: number; labourSen: number };
@@ -12872,27 +12868,11 @@ function StockSummaryTab() {
       .then((j) => { if (!stale && j?.success && j.data) setByLine(j.data); })
       .catch(() => {});
     return () => { stale = true; };
-  }, [month, reloadKey]);
+  }, [month]);
 
-
-  const handlePost = async () => {
-    if (!(await confirm({ title: "Post closing stock?", message: `Post closing stock for ${month}? This takes the period's stock onto the balance-sheet stock accounts (DR 330-x · CR closing-stock) and brings down opening; re-posting/next month re-bases automatically.`, danger: false }))) return;
-    setPosting(true);
-    try {
-      const res = await fetch("/api/accounting/stock/close-post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month }),
-      });
-      const j = await res.json() as { success?: boolean; data?: { closingTotalSen: number }; error?: string };
-      if (j?.success && j.data) {
-        toast.success(`Closing stock ${month} posted — ${formatCurrency(j.data.closingTotalSen)} on the balance sheet`);
-        setReloadKey((k) => k + 1);
-      } else toast.error(j?.error || "Post failed");
-    } finally {
-      setPosting(false);
-    }
-  };
+  // No "Post closing stock to GL" button any more (owner 2026-10-13 「balance
+  // sheet 就让他的 closing stock 和 P&L closing stock 一样」): the Balance Sheet
+  // reads this month-end's closing stock itself, so nothing needs posting.
 
   return (
     <div className="space-y-4">
@@ -12904,12 +12884,7 @@ function StockSummaryTab() {
             <input type="month" value={month} onChange={(e) => { setData(null); setMonth(e.target.value); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
           </div>
           {data && (
-            <>
-              <Button variant="primary" size="sm" disabled={posting || data.totals.closingSen === 0} onClick={handlePost}>
-                {posting ? "Posting…" : data.posted ? "Re-post closing stock" : "Post closing stock to GL"}
-              </Button>
-              {data.posted && <span className="text-xs text-[#27500A] pb-2">Posted ✓ — on the balance sheet</span>}
-            </>
+            <span className="text-xs text-[#6B7280] pb-2">The Balance Sheet shows this month-end&apos;s closing stock by itself — the same figure as the P&amp;L.</span>
           )}
           <p className="text-[11px] text-[#9CA3AF] pb-1">Opening + Purchases − Consumption = Closing, per material group, live from the cost ledger.</p>
         </CardContent>
@@ -13016,7 +12991,7 @@ function StockSummaryTab() {
         costs (no-issue factory materials, SST, admin) are apportioned by the sales ratio shown, in the Phase-5 split P&L.
       </p>
 
-      <WipDetailCard month={month} reloadKey={reloadKey} />
+      <WipDetailCard month={month} reloadKey={0} />
     </div>
   );
 }
@@ -16341,6 +16316,8 @@ function GroupByCompanyCard({ period, options }: { period: string; options: Comp
 type BsDrillData = {
   account?: { code: string; name: string; type: string | null; section: string };
   assetSide: boolean; bfSen: number; cfSen: number; lines: PlDrillLine[]; tied?: boolean;
+  // A stock account: the lines are the Stock Summary's movement, not ledger lines.
+  fromStockTake?: boolean;
 };
 const prevYmOf = (ym: string) => { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; };
 function BsDrillPanel({ period, account, company }: { period: string; account: string; company: string }) {
@@ -16365,6 +16342,7 @@ function BsDrillPanel({ period, account, company }: { period: string; account: s
       {data && (
         <div className="overflow-x-auto">
           {data.tied === false && <div className="text-[11px] text-[#9A3412] mb-1">These lines do not add up to the balance — please report it.</div>}
+          {data.fromStockTake && <div className="text-[11px] text-[#6B7280] mb-1">From the Stock Summary — the P&amp;L&apos;s closing stock per material group, not ledger lines.</div>}
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[11px] uppercase tracking-wide text-[#6B7280]">
@@ -16424,11 +16402,14 @@ function BalanceSheetTab() {
       months.push(d.toISOString().slice(0, 7));
     }
   }
-  const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
+  const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp; sheetStock?: { month: string; totalSen: number } | null; sheetStockError?: string | null } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
   const bsData: BalanceSheetEntry[] = useMemo(
     () => (bsResp?.success && bsResp.data?.balanceSheet ? bsResp.data.balanceSheet : []),
     [bsResp]
   );
+  // The stock lines are the P&L's closing stock for this month (owner 2026-10-13).
+  const bsStock = bsResp?.success ? bsResp.data?.sheetStock ?? null : null;
+  const bsStockError = bsResp?.success ? bsResp.data?.sheetStockError ?? null : null;
 
   const { toast } = useToast();
   const [edit, setEdit] = useState(false);
@@ -16632,6 +16613,14 @@ function BalanceSheetTab() {
               <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: {formatCurrency(Math.abs(totalAssets - totalLiabEquity))}</span>
             )}
           </div>
+          {bsStock && (
+            <p className="mt-2 text-xs text-[#6B7280]">
+              Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
+            </p>
+          )}
+          {bsStockError && (
+            <p className="mt-2 text-xs text-[#9A3412]">The stock could not be read ({bsStockError}) — the stock lines show the ledger&apos;s own balance.</p>
+          )}
         </CardContent>
       </Card>
     </div>
