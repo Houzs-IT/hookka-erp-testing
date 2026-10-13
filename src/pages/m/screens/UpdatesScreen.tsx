@@ -48,7 +48,7 @@ import {
 import type { Notification } from "@/types";
 import { isUnread } from "@/lib/notifications-feed";
 import { MobileHeader, SegmentedSwitch } from "../components";
-import { M, titleCaseStatus } from "../theme";
+import { M, M_ACCENT, titleCaseStatus } from "../theme";
 import { useNotificationFeed, type NotificationFeed } from "../lib/use-notification-feed";
 import { useResponsiveLayout } from "../lib/responsive-layout";
 import { groupNotifications, relativeTime, toMobilePath } from "../lib/notification-links";
@@ -124,13 +124,17 @@ export function UpdatesScreen() {
               aria-label="Mark all notifications read"
               title="Mark all read"
               style={{
-                width: 44,
-                height: 44,
-                marginRight: -6,
+                // Same 34x34 / radius-10 header action as the + buttons
+                // (Sales, Mail, Announcements); outlined, not filled, because
+                // it is not a create action.
+                width: 34,
+                height: 34,
+                boxSizing: "border-box",
                 borderRadius: 10,
-                border: "none",
-                background: "transparent",
+                border: `1px solid ${M.hairline}`,
+                backgroundColor: M.card,
                 color: feed.unread === 0 ? M.faint : M.taupe,
+                opacity: feed.unread === 0 ? 0.6 : 1,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -138,7 +142,7 @@ export function UpdatesScreen() {
                 WebkitTapHighlightColor: "transparent",
               }}
             >
-              <CheckCheck size={20} strokeWidth={2} />
+              <CheckCheck size={19} strokeWidth={2} />
             </button>
           ) : (
             <NewAnnouncementButton onClick={create.open} />
@@ -315,17 +319,17 @@ function NotificationsView({
     );
   } else {
     body = (
-      <div style={{ padding: "4px 18px 120px" }}>
+      <div style={{ padding: "0 18px 120px" }}>
         {groups.map((g) => (
           <section key={g.label} aria-label={g.label}>
             <div
               style={{
-                fontSize: 10.5,
+                fontSize: 11,
                 fontWeight: 700,
-                letterSpacing: ".4px",
+                letterSpacing: 1,
                 textTransform: "uppercase",
                 color: M.muted,
-                padding: "10px 2px 8px",
+                padding: "14px 2px 9px",
               }}
             >
               {g.label}
@@ -343,8 +347,9 @@ function NotificationsView({
 
   return (
     <>
-      {/* Search + filter button */}
-      <div style={{ display: "flex", gap: 8, padding: "12px 18px 0" }}>
+      {/* Search + filter — the Sales row: 18px gutters, 7px gap, 44px
+          controls, radius 12, hairline border, 18px search icon. */}
+      <div style={{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 }}>
         <div
           style={{
             flex: 1,
@@ -353,8 +358,8 @@ function NotificationsView({
             boxSizing: "border-box",
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            padding: "0 0 0 12px",
+            gap: 9,
+            padding: "0 0 0 13px",
             backgroundColor: M.card,
             border: `1px solid ${M.hairline}`,
             borderRadius: 12,
@@ -370,7 +375,7 @@ function NotificationsView({
             autoCorrect="off"
             spellCheck={false}
             aria-label="Search notifications"
-            placeholder="Search title, message, ref"
+            placeholder="Search title · message · ref"
             value={query}
             disabled={disabled}
             onChange={(e) => setQuery(e.target.value)}
@@ -384,7 +389,8 @@ function NotificationsView({
               border: "none",
               outline: "none",
               background: "transparent",
-              // 16px: iOS Safari zooms the page into any smaller input.
+              // 16px, not the 14px of other /m search boxes: iOS Safari zooms
+              // the whole page into any input under 16px.
               fontSize: 16,
               fontFamily: "inherit",
               color: M.raisin,
@@ -397,12 +403,12 @@ function NotificationsView({
               aria-label="Clear search"
               onClick={() => setQuery("")}
               style={{
-                width: 44,
+                width: 40,
                 height: 42,
                 flex: "none",
                 border: "none",
                 background: "transparent",
-                color: M.muted,
+                color: M.faint,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -413,9 +419,11 @@ function NotificationsView({
               <X size={18} strokeWidth={1.75} />
             </button>
           ) : (
-            <span style={{ width: 4, flex: "none" }} />
+            <span style={{ width: 13, flex: "none" }} />
           )}
         </div>
+        {/* Filter button — the Sales convention: outlined 44×44 at rest,
+            taupe with the count beside the icon while filters are on. */}
         <button
           type="button"
           aria-label={activeCount > 0 ? `Filters, ${activeCount} active` : "Filters"}
@@ -424,54 +432,37 @@ function NotificationsView({
           disabled={disabled}
           onClick={() => setSheetOpen(true)}
           style={{
-            position: "relative",
-            width: 44,
-            height: 44,
-            flex: "none",
-            boxSizing: "border-box",
-            borderRadius: 12,
-            border: `1px solid ${activeCount > 0 ? M.taupe : M.hairline}`,
-            backgroundColor: M.card,
-            color: activeCount > 0 ? M.taupe : M.ink,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            gap: 6,
+            height: 44,
+            boxSizing: "border-box",
+            width: activeCount > 0 ? undefined : 44,
+            padding: activeCount > 0 ? "0 14px" : 0,
+            backgroundColor: activeCount > 0 ? M.taupe : M.card,
+            border: `1px solid ${activeCount > 0 ? M.taupe : M.hairline}`,
+            borderRadius: 12,
+            color: activeCount > 0 ? M.card : M.ink,
+            fontFamily: "inherit",
+            fontSize: 13,
+            fontWeight: 700,
+            fontVariantNumeric: "tabular-nums",
             cursor: disabled ? "default" : "pointer",
             opacity: disabled ? 0.6 : 1,
+            flexShrink: 0,
             WebkitTapHighlightColor: "transparent",
           }}
         >
-          <SlidersHorizontal size={19} strokeWidth={1.75} />
-          {activeCount > 0 ? (
-            <span
-              aria-hidden
-              style={{
-                position: "absolute",
-                top: -6,
-                right: -6,
-                minWidth: 18,
-                height: 18,
-                boxSizing: "border-box",
-                padding: "0 5px",
-                borderRadius: 9,
-                backgroundColor: M.taupe,
-                color: M.card,
-                fontSize: 11,
-                fontWeight: 700,
-                lineHeight: "18px",
-                textAlign: "center",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {activeCount}
-            </span>
-          ) : null}
+          <SlidersHorizontal size={19} strokeWidth={1.75} aria-hidden />
+          {activeCount > 0 ? <span aria-hidden>{activeCount}</span> : null}
         </button>
       </div>
 
-      {/* Active filters (only while some are on) */}
+      {/* Active filters — the selected-chip look of Sales / Announcements
+          (30px, 12/600, taupe on gold); each sits in a 44px tap target. */}
       {activeChips.length > 0 ? (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 4, padding: "4px 14px 0" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", padding: "2px 14.5px 0" }}>
           {activeChips.map((c) => (
             <button
               key={c.key}
@@ -480,7 +471,7 @@ function NotificationsView({
               onClick={() => applyFilters({ ...filters, [c.key]: "all" })}
               style={{
                 height: 44,
-                padding: "0 4px",
+                padding: "0 3.5px",
                 border: "none",
                 background: "transparent",
                 display: "flex",
@@ -492,13 +483,14 @@ function NotificationsView({
               <span
                 style={{
                   height: 30,
+                  boxSizing: "border-box",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 5,
-                  padding: "0 9px 0 12px",
+                  padding: "0 10px 0 13px",
                   borderRadius: 999,
                   border: `1px solid ${M.taupe}`,
-                  backgroundColor: M.card,
+                  background: M_ACCENT.gold.bg,
                   color: M.taupe,
                   fontSize: 12,
                   fontWeight: 600,
@@ -506,7 +498,7 @@ function NotificationsView({
                 }}
               >
                 {c.label}
-                <X size={14} strokeWidth={2} aria-hidden />
+                <X size={13} strokeWidth={2.2} aria-hidden />
               </span>
             </button>
           ))}
@@ -515,12 +507,12 @@ function NotificationsView({
             onClick={clearAll}
             style={{
               height: 44,
-              padding: "0 8px",
+              padding: "0 6px",
               border: "none",
               background: "transparent",
               color: M.taupe,
               fontFamily: "inherit",
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: 600,
               cursor: "pointer",
               WebkitTapHighlightColor: "transparent",
@@ -531,10 +523,22 @@ function NotificationsView({
         </div>
       ) : null}
 
-      {/* Result count while searching / filtering; always mounted so screen
-          readers hear the change. */}
-      <div aria-live="polite" style={{ padding: filtering && feed.loaded ? "8px 20px 0" : 0, fontSize: 12, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
-        {filtering && feed.loaded ? `${shown.length} result${shown.length === 1 ? "" : "s"}` : ""}
+      {/* Result count — the Sales summary strip (11.5px, muted, bold count).
+          Always mounted so screen readers hear the change. */}
+      <div
+        aria-live="polite"
+        style={{
+          padding: filtering && feed.loaded ? `${activeChips.length > 0 ? 2 : 8}px 20px 2px` : 0,
+          fontSize: 11.5,
+          color: M.muted,
+        }}
+      >
+        {filtering && feed.loaded ? (
+          <span>
+            <b style={{ color: M.raisin, fontVariantNumeric: "tabular-nums" }}>{shown.length}</b>{" "}
+            {shown.length === 1 ? "result" : "results"}
+          </span>
+        ) : null}
       </div>
 
       {feed.error && feed.loaded ? <Notice text="Couldn’t refresh. Showing the last loaded list." onRetry={feed.refresh} /> : null}

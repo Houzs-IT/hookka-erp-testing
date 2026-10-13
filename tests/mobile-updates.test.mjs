@@ -297,3 +297,35 @@ test("phone titles wrap to at most 2 lines; tablet keeps one line with an ellips
   assert.match(updates, /: \{ textOverflow: "ellipsis", whiteSpace: expanded \? "normal" : "nowrap" \}\),/);
   assert.match(updates, /marginTop: phone \? 7 : 0,/);
 });
+
+// ── Page chrome follows existing /m conventions (2026-10-13 consistency pass) ─
+
+test("search row = the Sales row (18px gutters, 7px gap, 13px inset, 18px icon)", () => {
+  assert.match(updates, /<div style=\{\{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 \}\}>/);
+  assert.match(updates, /gap: 9,\s*padding: "0 0 0 13px",\s*backgroundColor: M\.card,\s*border: `1px solid \$\{M\.hairline\}`,\s*borderRadius: 12,/);
+  assert.match(updates, /placeholder="Search title · message · ref"/);
+});
+
+test("filter button = the Sales filter button (count beside the icon, taupe when active)", () => {
+  assert.match(updates, /width: activeCount > 0 \? undefined : 44,\s*padding: activeCount > 0 \? "0 14px" : 0,\s*backgroundColor: activeCount > 0 \? M\.taupe : M\.card,/);
+  assert.doesNotMatch(updates, /position: "absolute",\s*top: -6,/); // no corner badge any more
+});
+
+test("active chips use the selected-chip look; headings use the /m section heading", () => {
+  assert.match(updates, /border: `1px solid \$\{M\.taupe\}`,\s*background: M_ACCENT\.gold\.bg,\s*color: M\.taupe,\s*fontSize: 12,\s*fontWeight: 600,/);
+  assert.match(updates, /fontSize: 11,\s*fontWeight: 700,\s*letterSpacing: 1,\s*textTransform: "uppercase",/);
+  assert.match(updates, /fontSize: 11\.5,\s*color: M\.muted,/); // result count = Sales summary strip
+});
+
+test("Mark all read uses the 34×34 / radius-10 header action shape", () => {
+  assert.match(updates, /width: 34,\s*height: 34,\s*boxSizing: "border-box",\s*borderRadius: 10,/);
+});
+
+test("filter sheet = FilterSheet conventions, without double padding", () => {
+  assert.match(filterSheet, /<div style=\{\{ display: "grid", gap: 18 \}\}>/);
+  assert.doesNotMatch(filterSheet, /padding: "4px 16px 8px"/); // the Sheet already pads 16px
+  assert.match(filterSheet, /fontSize: 12, fontWeight: 700, color: M\.raisin/); // SectionLabel
+  assert.match(filterSheet, /border: `1px solid \$\{on \? M\.taupe : M\.border\}`,\s*backgroundColor: on \? M\.taupe : M\.card,\s*color: on \? M\.card : M\.body,\s*fontSize: 12,\s*fontWeight: on \? 700 : 500,/);
+  assert.match(filterSheet, /flex: 1,\s*height: 44,\s*borderRadius: 12,/);
+  assert.equal((filterSheet.match(/style=\{footerButton\(/g) ?? []).length, 2);
+});
