@@ -1,4 +1,4 @@
-// Phone navigation shell (owner 2026-10-12): 4 flat bottom tabs, a flat
+// Phone navigation shell (owner 2026-10-12; Products tab 2026-10-13): 5 flat bottom tabs, a flat
 // hamburger, and a 324px left drawer that reuses the More menu content.
 // Tablet (rail) behaviour must stay untouched.
 import test from "node:test";
@@ -20,9 +20,13 @@ const layout = read("MobileLayout.tsx");
 const more = read("screens/More.tsx");
 const home = read("screens/Home.tsx");
 
-test("bottom nav is exactly 4 flat tabs: Home | Sales | Delivery | Procurement", () => {
-  assert.deepEqual(TABS.map((t) => t.label), ["Home", "Sales", "Delivery", "Procurement"]);
-  assert.deepEqual(TABS.map((t) => t.path), ["/m", "/m/sales", "/m/delivery", "/m/procurement"]);
+test("bottom nav is exactly 5 flat tabs: Home | Sales | Products | Delivery | Procurement", () => {
+  assert.deepEqual(TABS.map((t) => t.label), ["Home", "Sales", "Products", "Delivery", "Procurement"]);
+  assert.deepEqual(TABS.map((t) => t.path), ["/m", "/m/sales", "/m/products", "/m/delivery", "/m/procurement"]);
+  const products = TABS.find((t) => t.key === "products");
+  const drawerProducts = MORE_GROUPS.flatMap((g) => g.items).find((i) => i.path === "/m/products");
+  assert.ok(drawerProducts, "drawer still lists Products");
+  assert.equal(products.icon, drawerProducts.icon, "Products tab uses the drawer's icon");
   assert.ok(!TABS.some((t) => "raised" in t), "no raised slot");
   assert.doesNotMatch(tabBar, /translateY\(-16px\)|t\.raised/, "raised More button removed");
 });
@@ -32,6 +36,9 @@ test("active tab follows the route by path segment; non-tab routes light nothing
   assert.equal(activeTabFor("/m/"), "home");
   assert.equal(activeTabFor("/m/sales"), "sales");
   assert.equal(activeTabFor("/m/sales/so-1"), "sales");
+  assert.equal(activeTabFor("/m/products"), "products");
+  assert.equal(activeTabFor("/m/products/prod-1"), "products");
+  assert.equal(activeTabFor("/m/productsxyz"), null, "Products matches by path segment");
   assert.equal(activeTabFor("/m/delivery/do-9/item/2"), "delivery");
   assert.equal(activeTabFor("/m/procurement"), "procure");
   assert.equal(activeTabFor("/m/suppliers/s-1"), "procure");

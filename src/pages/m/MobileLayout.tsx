@@ -11,8 +11,8 @@
 //   • centers content to ~414px (phone width) on any viewport,
 //   • paints the paper background + system font,
 //   • renders its own nested <Routes> for the /m/* screens,
-//   • on phones pins the 4-tab BottomTabBar (Home · Sales · Delivery ·
-//     Procurement) and owns the left NavDrawer opened by the header
+//   • on phones pins the 5-tab BottomTabBar (Home · Sales · Products ·
+//     Delivery · Procurement) and owns the left NavDrawer opened by the header
 //     hamburger; on tablets renders the LeftRail instead (unchanged).
 //
 // Phase 1: Home + More + placeholders. Phase 2 (this): every module's L1 list
