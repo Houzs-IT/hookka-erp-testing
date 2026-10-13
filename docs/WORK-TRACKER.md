@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder` (to `staging`, BUG-2026-10-13-284) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
 > **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
@@ -193,6 +194,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 Claude calls from Singapore so scans work on any network (branch `fix/claude-calls-via-sg-forwarder` → `staging`, BUG-2026-10-13-284)
+
+1. ✅ New Worker `claude-forwarder-worker/` pinned to Singapore (`[placement] region = "aws:ap-southeast-1"`), no public URL.
+2. ✅ All five Claude call sites (scan, rule distilling, agent brain, AI assistant, announcement translation) go through `claudeFetch` (`src/api/lib/claude-fetch.ts`), which uses the `CLAUDE_FORWARDER` service binding when present.
+3. ⬜ Owner: deploy the forwarder BEFORE this merges (`cd claude-forwarder-worker && npx wrangler deploy`).
+4. ⬜ After the staging deploy: run a scan on the staging site while `npx wrangler tail` runs in `claude-forwarder-worker/`, and confirm the log shows a Singapore placement and status 200.
 
 ## 2026-10-12 — 🔵 IT Support: high-contrast ticket table (branch `feat/it-support-table-style` → `staging`, local only)
 

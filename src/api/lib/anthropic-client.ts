@@ -11,6 +11,8 @@
 // tool-calling loop and SSE re-emit to the browser.
 // ---------------------------------------------------------------------------
 
+import { claudeFetch } from "./claude-fetch";
+
 export type AnthropicRole = "user" | "assistant";
 
 export type AnthropicTextBlock = {
@@ -127,7 +129,6 @@ export type AnthropicStreamEvent =
       message: string;
     };
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
 // PDF / document content blocks require this beta header. Adding it is a
@@ -151,7 +152,7 @@ export async function* streamMessages(
   apiKey: string,
   body: AnthropicRequestBody,
 ): AsyncGenerator<AnthropicStreamEvent> {
-  const res = await fetch(ANTHROPIC_URL, {
+  const res = await claudeFetch({
     method: "POST",
     headers: {
       "x-api-key": apiKey,

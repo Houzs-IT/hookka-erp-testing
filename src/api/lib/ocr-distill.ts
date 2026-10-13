@@ -23,9 +23,9 @@
 // ---------------------------------------------------------------------------
 
 import { runSelfApply } from "../lib/self-apply";
+import { claudeFetch } from "./claude-fetch";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 // Self-applying migration — adds the `ocrPromptRules` column to `customers`
 // and the `isGold` column to `po_scan_samples` the first time this runs in a
@@ -213,7 +213,7 @@ export async function distillCustomerRules(
   let tokensOut = 0;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -508,7 +508,7 @@ export async function distillSupplierRules(
   let tokensOut = 0;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",

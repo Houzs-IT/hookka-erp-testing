@@ -1,5 +1,7 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-13 on branch `fix/claude-calls-via-sg-forwarder` (to `staging`)**: the Claude-calls note in the Scanning/OCR/AI fragment (`claudeFetch` + `claude-forwarder-worker/`), read from `src/api/lib/claude-fetch.ts` and the five call sites.
+
 > **Last verified: 2026-10-12 on branch `feat/it-support-table-style` (to `staging`)**: the IT Support bullet (page-scoped table styling, status and urgency chips), read from `src/pages/it-support/index.tsx` and the toolbar/header/row markup of `src/components/ui/data-grid.tsx`. Nothing else re-checked.
 
 > **Last verified: 2026-10-12 on branch `feat/it-support-empty-card` (to `staging`)**: the IT Support bullet (empty state is its own card, no grid) and DataGrid `emptyMessage` back to `string`, read from `src/pages/it-support/index.tsx` and `src/components/ui/data-grid.tsx`. Nothing else re-checked.
@@ -2387,6 +2389,12 @@ handler with no `userId`, no `userRole` and no orgId on the context.
 > boot the worker or hit a DB. They pin shape, not behaviour: a handler can be structurally
 > correct and still return the wrong rows. Treat "covered" here as "a rename or a deletion
 > trips CI", nothing stronger.
+
+**Every Claude call** (scan, rule distilling, agent brain, AI assistant, announcement
+translation) goes through `claudeFetch` in `src/api/lib/claude-fetch.ts`. On Pages it uses
+the `CLAUDE_FORWARDER` service binding to `claude-forwarder-worker/`, a Worker pinned to
+Singapore, because Anthropic refuses requests from some Cloudflare regions (BUG-2026-10-13-284).
+Do not add a new direct `fetch("https://api.anthropic.com/...")`. Guard `tests/claude-fetch.test.mjs`.
 
 ---
 

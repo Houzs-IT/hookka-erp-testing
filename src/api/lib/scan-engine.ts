@@ -48,6 +48,7 @@
 import type { Env } from "../worker";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import { matchByCompanyName } from "../../lib/company-name-match";
+import { claudeFetch } from "./claude-fetch";
 
 // ---------- Anthropic config ------------------------------------------------
 // Owner ruling 2026-06-29 evening: scans were timing out on Sonnet
@@ -70,7 +71,6 @@ const BOUNDARY_MODEL = "claude-haiku-4-5-20251001";
 export function ocrModelFor(kind: "po" | "supplier"): string {
   return kind === "supplier" ? SUPPLIER_MODEL : PO_MODEL;
 }
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 // Hard ceiling on a single Anthropic call. WITHOUT this, a request the model
 // never finishes (a page it chokes on, an upstream stall) hangs the fetch
@@ -936,7 +936,7 @@ async function runSupplierExtract(
   let errorMsg: string | null = null;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1142,7 +1142,7 @@ async function runPoExtract(
   let cacheCreated = false;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1351,7 +1351,7 @@ export async function detectSupplierDocBoundaries(
   };
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",
