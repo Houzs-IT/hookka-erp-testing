@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: Balance Sheet stock = the P&L's closing stock (#840) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/bs-stock-from-pnl-closing` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-orders-scored-apart-main` (to `main`): the urgent orders KPI entry below (scored apart, order list, item 5 score breakdown) brought from staging.
 > **Last verified: 2026-10-13**: Stock Summary blank-month FG / WIP (#830) prod-verified.
@@ -137,20 +138,25 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
 
-## 2026-10-13 — 🔵 Balance Sheet stock = the P&L's closing stock (owner「balance sheet 就让他的 closing stock 和 P&L closing stock 一样」→「做」)(branch `feat/bs-stock-from-pnl-closing` → `main`)
+## 2026-10-13 — ✅ Balance Sheet stock = the P&L's closing stock (owner「balance sheet 就让他的 closing stock 和 P&L closing stock 一样」→「做」)(#840 973232c7, prod-verified)
 
-1. 🔵 The Balance Sheet's stock accounts (the stock map's 330-x homes: each material group, WIP, FG) show the same
+1. ✅ The Balance Sheet's stock accounts (the stock map's 330-x homes: each material group, WIP, FG) show the same
    closing stock the P&L uses for that month-end (the Stock Summary figure, including a blank month's production-order
    FG / WIP). Report layer only — nothing is posted to the ledger. The ledger's own balance on those accounts (none
    today) is replaced, and the difference goes to Current Year Earnings (unclosed), so the sheet still balances and a
    year-end stock entry by the accountant would not be counted twice. Months before the opening month get nothing.
-2. 🔵 The same rule in the dashboard's balance-sheet figures (assets / current assets / inventory) and in the finance
+2. ✅ The same rule in the dashboard's balance-sheet figures (assets / current assets / inventory) and in the finance
    series (assets and equity per month); the dashboard payload version moves up.
-3. 🔵 The Balance Sheet drill on a stock line shows the Stock Summary movement per material group (b/f = last
+3. ✅ The Balance Sheet drill on a stock line shows the Stock Summary movement per material group (b/f = last
    month-end's closing stock, c/f = this month-end's).
-4. 🔵 The Stock Summary's old "Post closing stock to GL" button is hidden (not needed; its posting rule would mis-date
+4. ✅ The Stock Summary's old "Post closing stock to GL" button is hidden (not needed; its posting rule would mis-date
    reversals). The endpoint is left in place.
-5. ⚪ Check on prod after deploy.
+5. ✅ Prod (2026-10-13, read-only): for every closed month since the opening month the sheet's stock lines equal the
+   Stock Summary's closing to the sen, per account and in total; total assets and Current Year Earnings each moved by
+   exactly that amount against a baseline taken before the deploy; every sheet still balances; the P&L's net profit for
+   those months is unchanged to the sen. The running month carries the P&L's live closing (no raw-material count yet).
+   The drill on a stock line shows last month-end → this month-end per group (the opening month starts from zero). The
+   dashboard's inventory and assets match the sheet. The Stock Summary no longer shows the post button.
 
 ## 2026-10-13 — 🔵 On-time delivery KPI: urgent orders scored apart, full score tables on the card (branch `feat/kpi-urgent-orders-scored-apart` → `staging`)
 
