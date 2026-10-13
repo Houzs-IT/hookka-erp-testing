@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder` (to `staging`, BUG-2026-10-13-284) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
 > **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
@@ -203,6 +204,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 4. ✅ Report form: card capped at ~768px and centred (header too), padding p-6 / p-8, dropzone py-6 (previews stay below it), Send / Cancel larger (px-5 py-2.5, rounded-lg) in a gap-3 row.
 5. ✅ Phone app: IT Support in the /m side menu (Service & Support) opens /m/it-support, which runs the same page (list, report, ticket, reply, confirm). It stays light when /m is in dark mode.
 6. ⬜ NOT yet seen in a browser. Check on the staging site after deploy at 320px, 375px and desktop, and /m/it-support on a phone (light and dark).
+
+## 2026-10-13 — 🔵 Claude calls from Singapore so scans work on any network (branch `fix/claude-calls-via-sg-forwarder` → `staging`, BUG-2026-10-13-284)
+
+1. ✅ New Worker `claude-forwarder-worker/` pinned to Singapore (`[placement] region = "aws:ap-southeast-1"`), no public URL.
+2. ✅ All five Claude call sites (scan, rule distilling, agent brain, AI assistant, announcement translation) go through `claudeFetch` (`src/api/lib/claude-fetch.ts`), which uses the `CLAUDE_FORWARDER` service binding when present.
+3. ⬜ Owner: deploy the forwarder BEFORE this merges (`cd claude-forwarder-worker && npx wrangler deploy`).
+4. ⬜ After the staging deploy: run a scan on the staging site while `npx wrangler tail` runs in `claude-forwarder-worker/`, and confirm the log shows a Singapore placement and status 200.
 
 ## 2026-10-12 — 🔵 IT Support: high-contrast ticket table (branch `feat/it-support-table-style` → `staging`, local only)
 

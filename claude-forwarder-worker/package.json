@@ -1,0 +1,14 @@
+{
+  "name": "hookka-claude-forwarder",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Standalone Cloudflare Worker pinned to Singapore that makes the ERP's Claude API calls, so they never leave from a region Anthropic refuses.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.84.1"
+  }
+}

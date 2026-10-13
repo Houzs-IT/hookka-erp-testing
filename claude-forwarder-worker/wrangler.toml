@@ -1,0 +1,21 @@
+# hookka-claude-forwarder: sends the ERP's Claude calls to Anthropic from
+# Singapore. Anthropic refuses requests from some regions (Hong Kong among
+# them), and the ERP runs in whichever data centre the user's ISP routes to.
+# The ERP reaches this Worker only through the CLAUDE_FORWARDER service
+# binding in the root wrangler.toml; it has no public URL.
+#
+# Deploy (needs a Cloudflare login on the Hookka account):
+#   cd claude-forwarder-worker && npx wrangler deploy
+# Check where it runs (cf-placement should read remote-SIN or similar):
+#   npx wrangler tail
+name = "hookka-claude-forwarder"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+workers_dev = false
+preview_urls = false
+
+[placement]
+region = "aws:ap-southeast-1"
+
+[observability]
+enabled = true
