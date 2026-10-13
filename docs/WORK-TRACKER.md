@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `feat/stock-summary-blank-month-fg-wip` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: blank-month FG / WIP from the production orders (#829) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-live-fg-wip` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-to-main` (IT Support staging to `main`) added below (its entry is the newest).
@@ -136,6 +137,15 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+## 2026-10-13 — 🔵 Stock Summary carries the same blank-month FG / WIP as the P&L (owner「Stock Summary 也一起改」)(branch `feat/stock-summary-blank-month-fg-wip` → `main`)
+
+1. 🔵 `stockSummaryRange` (the Stock Summary page and the closing-stock post) uses `blankMonthStock` for its opening and
+   closing WIP / FG, so a month the Stock Take leaves blank shows the production-order valuation the P&L carries. The
+   eligibility rule is one helper (`blankStockParts`) for both; the doc-date context loads only when there is a blank
+   month to value.
+2. ⚪ Check on prod after deploy.
+
 ## 2026-10-13 — ✅ P&L: FG and WIP of a month the Stock Take leaves blank, valued from the production orders (owner「10 月的 FG 可以计算还没送的货，然后在我的 P&L 出现吗」→ 1.A, WIP the same method, cost ratio without factory overhead, 「人工用这个月的，做」, 「已经出车…那就不能算 wip 了，上线」)(#829 475f181a, prod-verified)
 
 1. ✅ A month-end with no FG / WIP in Stock Take (FG only under "stock take only") is valued live from the production
@@ -149,7 +159,7 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 3. ✅ Checked before shipping on production data: September's FG by this method matches the figure keyed on 2026-10-09
    to within 0.1% (same units); September's WIP differs only by the owner's two rules (service charges, orders already
    out) plus later scans. Dashboard payload `v17`.
-4. ⚪ Not changed: the Stock Summary page still shows the engine's own WIP / FG for a blank month.
+4. ✅ The Stock Summary page follows since the next branch (`feat/stock-summary-blank-month-fg-wip`).
 5. ✅ Prod (2026-10-13, read-only): the running month's P&L now carries FG and WIP closing figures (both were blank
    / the engine's own before); the typed months before it read exactly as before the deploy. An independent browser
    run of the same core on the same data gives the server's FG to within a few ringgit once service orders are included
