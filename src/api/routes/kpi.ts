@@ -796,6 +796,9 @@ app.put("/rules/:kpiKey", async (c) => {
   if (rules.earlyStepPct !== undefined && rules.earlyStepPct <= 0) {
     return c.json({ success: false, error: "earlyStepPct must be more than 0" }, 400);
   }
+  if (rules.urgentStepPct !== undefined && rules.urgentStepPct <= 0) {
+    return c.json({ success: false, error: "urgentStepPct must be more than 0" }, 400);
+  }
 
   await c.var.DB.prepare(
     `INSERT INTO kpi_rule_settings (kpiKey, orgId, rules, updatedBy, updatedAt)
