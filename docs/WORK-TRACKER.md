@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `feat/kpi-urgent-orders-scored-apart-main` (to `main`): the urgent orders KPI entry below (scored apart, order list, item 5 score breakdown) brought from staging.
 > **Last verified: 2026-10-13**: Stock Summary blank-month FG / WIP (#830) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/stock-summary-blank-month-fg-wip` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: blank-month FG / WIP from the production orders (#829) prod-verified.
@@ -141,6 +142,7 @@ Owner ask, with the points table Violet sent on 2026-10-05. Owner answers 2026-1
 1. 🔵 Urgent orders (promised within the urgent days of the order date) leave the late % and early %. Their on-time-or-early % earns 0% → 5, +5 per 10%, 90% → 50, 100% → 60. Replaces the "late urgent order counts as X% of a late one" rule.
 2. 🔵 The calculation panel lists every value: late %, early % and urgent % to points, built from the saved rules.
 3. 🔵 The card summary line always shows the urgent orders (how many, how many on time or early).
+5. 🔵 Follow-up ask (branch `feat/kpi-delivery-score-breakdown`): "Your result" on the delivery card lists each part on its own line: orders, %, the sum and the points (late, early, urgent).
 3b. 🔵 The card's order list: Late / Early / On time count only the non-urgent orders (so they match the card), and a new Urgent filter lists the urgent ones. The result line shows late + early + urgent points.
 4. ⬜ Staging check after deploy.
 

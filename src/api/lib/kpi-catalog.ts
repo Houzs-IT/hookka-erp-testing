@@ -255,6 +255,13 @@ export function urgentPoints(onTimePct: number): number {
   return URGENT_POINTS.find(([pct]) => onTimePct + 1e-9 >= pct)?.[1] ?? 0;
 }
 
+/** The URGENT_POINTS band a % falls in, as the card words it: "0% to under 10%". */
+function urgentBand(onTimePct: number): string {
+  const i = URGENT_POINTS.findIndex(([pct]) => onTimePct + 1e-9 >= pct);
+  if (i < 0) return "";
+  return i === 0 ? `${URGENT_POINTS[0][0]}%` : `${URGENT_POINTS[i][0]}% to under ${URGENT_POINTS[i - 1][0]}%`;
+}
+
 /**
  * The delivery KPI's wording, built from its numbers so the card can never
  * describe a rule different from the one that scored it.
@@ -653,6 +660,37 @@ export function penaltyParts(
         : 0,
     urgent: urgentOnTimePct == null ? 0 : urgentPoints(urgentOnTimePct),
   };
+}
+
+/**
+ * The delivery card's "Your result" lines: each part's orders, % and points,
+ * from the same penaltyParts the score is added up from.
+ */
+export function deliveryBreakdown(
+  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus">>,
+  actual: number,
+  earlyPct: number | null | undefined,
+  urgentOnTimePct: number | null | undefined,
+  n: { late: number; early: number; judged: number; urgentOnTime: number; urgentJudged: number },
+): string[] {
+  const p = penaltyParts(def, actual, earlyPct, urgentOnTimePct);
+  const per = Number.isFinite(Number(def.penaltyPerPct)) ? Number(def.penaltyPerPct) : 10;
+  const step = Number(def.earlyStepPct) || 0;
+  const bonus = Number(def.earlyBonusPerStep) || 0;
+  const raw = Math.round((100 - actual * per) * 10) / 10;
+  const steps = step > 0 ? Math.floor((Number(earlyPct) || 0) / step + 1e-9) : 0;
+  return [
+    `Late: ${n.late} of ${n.judged} orders = ${actual}% late → ${p.late} points` +
+      ` (100 − ${actual} × ${per} = ${raw}${raw < 0 ? ", never below 0" : ""})`,
+    `Early: ${n.early} of ${n.judged} orders = ${earlyPct ?? 0}% early → +${p.early} points` +
+      (step > 0 && bonus > 0
+        ? ` (${steps} full ${step}% step(s) × +${bonus} = +${steps * bonus}${steps * bonus > p.early ? `, capped at +${p.early}` : ""})`
+        : ""),
+    urgentOnTimePct == null
+      ? "Urgent: no urgent orders this month → +0 points"
+      : `Urgent: ${n.urgentOnTime} of ${n.urgentJudged} urgent orders on time or early = ${urgentOnTimePct}% → +${p.urgent} points` +
+        ` (${urgentBand(urgentOnTimePct)} → ${p.urgent})`,
+  ];
 }
 
 /**
