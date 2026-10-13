@@ -605,11 +605,11 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
   const columns = useMemo<Column<TicketRow>[]>(
     () => [
       {
-        key: "code", label: "Ticket", width: "110px", type: "docno", sortable: true,
+        key: "code", label: "Ticket", width: "110px", type: "docno", sortable: true, noFilter: true,
         render: (_v, r) => <span className="whitespace-nowrap font-semibold text-slate-900">{r.code}</span>,
       },
       {
-        key: "title", label: "Issue", sortable: true,
+        key: "title", label: "Issue", sortable: true, noFilter: true,
         render: (_v, r, _i, highlight) => (
           <span className={cn("text-slate-800", r.unread && "font-semibold text-slate-900")}>
             {highlight(r.title)}
@@ -646,7 +646,7 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
           ),
       },
       {
-        key: "updated_at", label: "Last update", width: "170px", sortable: true,
+        key: "updated_at", label: "Last update", width: "170px", sortable: true, noFilter: true,
         render: (v) => <span className="whitespace-nowrap text-slate-500">{formatDateTime(String(v))}</span>,
       },
     ],

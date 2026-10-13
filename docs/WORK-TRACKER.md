@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `fix/it-support-header-filters` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`, bell events) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder` (to `staging`, BUG-2026-10-13-284) added below (its entry is the newest).
@@ -196,6 +197,12 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 IT Support: no header filter on Ticket, Issue, Last update (branch `fix/it-support-header-filters` → `staging`)
+
+1. ✅ New opt-in `Column.noFilter` on the shared DataGrid hides a column's header ▼ value filter. No other grid sets it, so every other list is unchanged.
+2. ✅ IT Support sets it on Ticket, Issue and Last update (every row differs, so the tick-box list was just every ticket again). Status, Urgency and Handled by keep theirs. Search still finds a ticket by code or title.
+3. ⬜ NOT yet seen in a browser. Check on the staging site after deploy.
 
 ## 2026-10-13 — 🔵 IT Support: ticket updates in the top-bar bell (branch `feat/it-support-mobile-cards` → `staging`, PR #823)
 
