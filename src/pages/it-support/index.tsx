@@ -14,7 +14,7 @@
 // A failed load is shown as a failure. An empty list is only ever drawn when
 // the server actually answered with one.
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, FileText, Film, Paperclip, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -109,6 +109,7 @@ const TYPE_LABEL: Record<string, string> = { bug: "Bug", development: "Developme
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const FILE_ACCEPT = "image/*,video/mp4,video/quicktime,application/pdf";
+const FORM_BUTTON = "h-auto rounded-lg px-5 py-2.5 text-sm font-medium";
 const FIELD =
   "w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm text-[#1F1D1B] placeholder:text-[#9CA3AF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]";
 
@@ -225,7 +226,7 @@ function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) 
     <div className="space-y-3">
       <label
         className={cn(
-          "flex cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-5 text-center text-sm transition-colors focus-within:ring-2 focus-within:ring-[#6B5C32]",
+          "flex cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-6 text-center text-sm transition-colors focus-within:ring-2 focus-within:ring-[#6B5C32]",
           dragging ? "border-[#6B5C32] bg-[#F5F2ED]" : "border-[#E2DDD8] hover:border-[#6B5C32] hover:bg-[#FAF9F7]",
         )}
         onDragOver={(e) => {
@@ -349,7 +350,7 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
 
   return (
     <Card>
-      <CardContent className="space-y-4 p-6">
+      <CardContent className="space-y-4 p-6 sm:p-8">
         <FormField label="What is the issue?" required>
           <Input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Sales order page shows blank after saving" />
         </FormField>
@@ -372,9 +373,9 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
           <FilePicker files={files} onChange={setFiles} />
         </FormField>
         {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
-        <div className="flex gap-2">
-          <LoadingButton variant="primary" loading={saving} loadingText="Sending" onClick={submit}>Send</LoadingButton>
-          <Button variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>
+        <div className="flex items-center gap-3 pt-2">
+          <LoadingButton variant="primary" className={FORM_BUTTON} loading={saving} loadingText="Sending" onClick={submit}>Send</LoadingButton>
+          <Button variant="outline" className={FORM_BUTTON} onClick={onCancel} disabled={saving}>Cancel</Button>
         </div>
       </CardContent>
     </Card>
@@ -652,30 +653,77 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
     [],
   );
 
+  const tabs = [
+    { key: "all" as const, label: "All", count: byTab.all.length },
+    { key: "active" as const, label: "Active", count: byTab.active.length },
+    { key: "resolved" as const, label: "Resolved", count: byTab.resolved.length },
+  ];
+  const emptyMessage = { all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab];
 
   return (
-    <div className={TABLE_SKIN}>
-      <DataGrid
-        gridId="it-support-my-tickets"
-        keyField="code"
-        columns={columns}
-        data={byTab[tab]}
-        loading={rows === null}
-        onRowClick={(r) => onOpen(r.code)}
-        toolbarStart={
-          <Tabs
-            className="-my-1.5 border-b-0"
-            value={tab}
-            onChange={setTab}
-            tabs={[
-              { key: "all", label: "All", count: byTab.all.length },
-              { key: "active", label: "Active", count: byTab.active.length },
-              { key: "resolved", label: "Resolved", count: byTab.resolved.length },
-            ]}
-          />
-        }
-        emptyMessage={{ all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab]}
-      />
+    <>
+      <div className={cn(TABLE_SKIN, "hidden md:block")}>
+        <DataGrid
+          gridId="it-support-my-tickets"
+          keyField="code"
+          columns={columns}
+          data={byTab[tab]}
+          loading={rows === null}
+          onRowClick={(r) => onOpen(r.code)}
+          toolbarStart={<Tabs className="-my-1.5 border-b-0" value={tab} onChange={setTab} tabs={tabs} />}
+          emptyMessage={emptyMessage}
+        />
+      </div>
+      <TicketCards rows={rows === null ? null : byTab[tab]} tabBar={<Tabs className="w-max flex-nowrap border-b-0" value={tab} onChange={setTab} tabs={tabs} />} emptyMessage={emptyMessage} onOpen={onOpen} />
+    </>
+  );
+}
+
+// Phones get one card per ticket instead of the grid (no Columns menu, no pager).
+function TicketCards({ rows, tabBar, emptyMessage, onOpen }: {
+  rows: TicketRow[] | null; tabBar: ReactNode; emptyMessage: string; onOpen: (code: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const shown = (rows ?? []).filter((r) =>
+    !q || [r.code, r.title, r.assignee_name ?? "", STATUS_LABEL[r.status] ?? r.status, PRIORITY_LABEL[r.priority] ?? r.priority]
+      .some((s) => s.toLowerCase().includes(q)),
+  );
+
+  return (
+    <div className="space-y-3 md:hidden">
+      <div className="overflow-x-auto border-b border-[#E6E0D9] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{tabBar}</div>
+      <Input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets" aria-label="Search tickets" />
+      {rows === null ? (
+        [0, 1, 2].map((i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)
+      ) : shown.length === 0 ? (
+        <p className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">{emptyMessage}</p>
+      ) : (
+        shown.map((r) => (
+          <button
+            key={r.code}
+            type="button"
+            onClick={() => onOpen(r.code)}
+            className="block w-full space-y-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]"
+          >
+            <span className="flex items-center justify-between gap-3">
+              <span className="font-semibold text-slate-900">{r.code}</span>
+              <span className="whitespace-nowrap text-xs text-slate-400">{formatDateTime(r.updated_at)}</span>
+            </span>
+            <span className={cn("line-clamp-2 font-medium text-slate-900", r.unread && "font-semibold")}>
+              {r.unread && <span className="mr-2 rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white">New reply</span>}
+              {r.title}
+            </span>
+            <span className="flex flex-wrap items-center gap-2">
+              <StatusChip status={r.status} />
+              <PriorityChip priority={r.priority} />
+              {r.assignee_name
+                ? <span className="text-xs font-medium text-slate-700">{r.assignee_name}</span>
+                : <span className="text-xs italic text-slate-400">Not picked up yet</span>}
+            </span>
+          </button>
+        ))
+      )}
     </div>
   );
 }
@@ -710,7 +758,7 @@ export default function ItSupport() {
 
   if (isNew) {
     return (
-      <div className="space-y-4">
+      <div className="mx-auto w-full max-w-3xl space-y-4">
         <PageHeader title="Report an issue" subtitle="Goes straight to the IT team. You will see their reply here." breadcrumbs={["IT Support", "New"]} />
         <NewTicket
           fromUrl={fromUrl}

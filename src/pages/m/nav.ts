@@ -20,6 +20,7 @@ import {
   Receipt,
   UserSquare,
   Wrench,
+  LifeBuoy,
   UserPlus,
   Shapes,
   HardHat,
@@ -110,6 +111,7 @@ export const MORE_GROUPS: ModuleGroup[] = [
     items: [
       { label: "Service Cases", icon: Wrench, path: "/m/servicecases" },
       { label: "Service Orders", icon: Wrench, path: "/m/serviceorders" },
+      { label: "IT Support", icon: LifeBuoy, path: "/m/it-support" },
     ],
   },
   {
