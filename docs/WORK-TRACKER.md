@@ -206,6 +206,7 @@ Owner ask, with the points table Violet sent on 2026-10-05. Owner answers 2026-1
 1. 🔵 Urgent orders (promised within the urgent days of the order date) leave the late % and early %. Their on-time-or-early % earns 0% → 5, +5 per 10%, 90% → 50, 100% → 60. Replaces the "late urgent order counts as X% of a late one" rule.
 2. 🔵 The calculation panel lists every value: late %, early % and urgent % to points, built from the saved rules.
 3. 🔵 The card summary line always shows the urgent orders (how many, how many on time or early).
+3b. 🔵 The card's order list: Late / Early / On time count only the non-urgent orders (so they match the card), and a new Urgent filter lists the urgent ones. The result line shows late + early + urgent points.
 4. ⬜ Staging check after deploy.
 
 ## 2026-10-13 — 🔵 Grid sort: third click clears it; IT Support Issue not sortable (branch `fix/it-support-sort-cycle` → `staging`)

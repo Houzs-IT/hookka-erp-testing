@@ -1430,7 +1430,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
   period: string; evidence: string; urgentDays?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [show, setShow] = useState<DeliveryStatus | "ALL">("ALL");
+  const [show, setShow] = useState<DeliveryStatus | "ALL" | "URGENT">("ALL");
   const { data, loading, error } = useCachedJson<{
     data?: Array<{
       id: string; companySOId: string | null; customerName: string | null;
@@ -1439,8 +1439,13 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
     }>;
   }>(open ? `/api/sales-orders/late-to-customer?period=${period}&all=1` : "");
   const rows = data?.data ?? [];
-  const count = (s: DeliveryStatus) => rows.filter((r) => r.status === s).length;
-  const shown = show === "ALL" ? rows : rows.filter((r) => r.status === show);
+  const isUrgent = (r: (typeof rows)[number]) =>
+    urgentDays != null && r.leadDays != null && r.leadDays <= urgentDays;
+  // Urgent orders are scored apart, so Late / Early / On time count only the
+  // others and match the card; Urgent lists them on their own.
+  const pick = (s: DeliveryStatus | "ALL" | "URGENT") =>
+    s === "ALL" ? rows : s === "URGENT" ? rows.filter(isUrgent) : rows.filter((r) => r.status === s && !isUrgent(r));
+  const shown = pick(show);
 
   return (
     <div className="mt-1.5">
@@ -1466,7 +1471,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
           ) : (
             <>
               <div className="flex flex-wrap gap-1.5 border-b border-[#E2DDD8] p-2">
-                {(["ALL", "LATE", "EARLY", "ON_TIME"] as const).map((s) => (
+                {(["ALL", "LATE", "EARLY", "ON_TIME", "URGENT"] as const).map((s) => (
                   <button
                     key={s}
                     type="button"
@@ -1477,7 +1482,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
                         : "border-[#E2DDD8] bg-white text-[#5A5550]"
                     }`}
                   >
-                    {s === "ALL" ? "All" : DELIVERY_STATUS[s].label} {s === "ALL" ? rows.length : count(s)}
+                    {s === "ALL" ? "All" : s === "URGENT" ? "Urgent" : DELIVERY_STATUS[s].label} {pick(s).length}
                   </button>
                 ))}
               </div>
@@ -1496,7 +1501,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
                       <span className="text-[#9CA3AF] tabular-nums">
                         promised {r.customerDeliveryDate ?? "—"} · delivered {r.deliveredOn ?? "—"}
                       </span>
-                      {urgentDays != null && r.leadDays != null && r.leadDays <= urgentDays && (
+                      {isUrgent(r) && (
                         <span
                           title={`Promised ${r.leadDays} day(s) after the order date`}
                           className="rounded-full bg-[#FBEFD5] px-2 py-0.5 text-[10.5px] font-semibold text-[#8A5A00]"
