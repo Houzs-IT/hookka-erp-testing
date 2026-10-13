@@ -83,6 +83,8 @@ export interface MetricResult {
   earlyPct?: number;
   /** customer_delivery_date only — % of urgent orders on time or early; null with none. */
   urgentOnTimePct?: number | null;
+  /** customer_delivery_date only — the order counts behind the three parts. */
+  counts?: { late: number; early: number; judged: number; urgentOnTime: number; urgentJudged: number };
   /** department_efficiency only: the same pool per day, for the card's chart. */
   daily?: Array<{ date: string; pct: number }>;
 }
@@ -156,6 +158,7 @@ export function deliveryMetric(
         : "no urgent orders"),
     earlyPct,
     urgentOnTimePct,
+    counts: { late: s.late, early: s.early, judged: s.judged, urgentOnTime: u.onTime, urgentJudged: u.judged },
   };
 }
 

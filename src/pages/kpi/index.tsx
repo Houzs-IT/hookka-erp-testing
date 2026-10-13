@@ -45,6 +45,7 @@ type Line = {
   evidence: string;
   daily?: Array<{ date: string; pct: number }>;
   scoreParts?: { late: number; early: number; urgent: number };
+  breakdown?: string[];
 };
 type CardData = {
   period: string; locked: boolean; lines: Line[];
@@ -1219,7 +1220,11 @@ export default function KpiPage() {
                             <p>{l.evidence || "No result yet this month."}</p>
                           ) : (
                             <ol className="ml-4 list-decimal space-y-0.5">
-                              <li>Measured: <b>{fmt(l.actual, l.unit)}</b>{l.evidence && <> · {l.evidence}</>}</li>
+                              {l.breakdown ? (
+                                l.breakdown.map((b) => <li key={b}>{b}</li>)
+                              ) : (
+                                <li>Measured: <b>{fmt(l.actual, l.unit)}</b>{l.evidence && <> · {l.evidence}</>}</li>
+                              )}
                               <li>
                                 Score for this KPI:{" "}
                                 {l.scoreParts && (
