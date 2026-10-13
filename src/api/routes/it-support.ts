@@ -21,6 +21,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
+import { memoizeSelfApply, runSelfApply } from "../lib/self-apply";
+import { DEFAULT_ORG_ID } from "../lib/tenant";
 
 const app = new Hono<Env>();
 
@@ -218,5 +220,78 @@ app.get("/attachments/:id", async (c) => {
   if (disposition) headers.set("Content-Disposition", disposition);
   return new Response(res.body, { status: 200, headers });
 });
+
+// ---- Hub -> Hookka: IT replied on, or moved, a ticket -----------------------
+// The hub POSTs one event per developer reply or status change to
+// /api/it-support/hub-events (mounted in worker.ts BEFORE authMiddleware, gated
+// on IT_HUB_WEBHOOK_SECRET). Each becomes one bell row addressed to the
+// reporter alone. The row id is the hub's event id, so a retry is a no-op.
+
+// The reporter's words for each status, same as the IT Support page.
+const STATUS_LABEL: Record<string, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  on_hold: "On hold",
+  testing: "Testing",
+  waiting_reporter: "Waiting for you",
+  resolved: "Done, please confirm",
+  closed: "Closed",
+  rejected: "Rejected",
+};
+// Statuses that ask the reporter to do something.
+const NEEDS_REPORTER = new Set(["waiting_reporter", "resolved"]);
+
+let notificationsUserColumn: Promise<void> | null = null;
+const ensureNotificationsUserColumn = (db: Parameters<typeof runSelfApply>[0]) =>
+  memoizeSelfApply(
+    () => notificationsUserColumn,
+    (p) => { notificationsUserColumn = p; },
+    () => runSelfApply(db, "notifications.user_id", ["ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id TEXT"]),
+  );
+
+const str = (v: unknown, max: number): string => (typeof v === "string" || typeof v === "number" ? String(v).trim().slice(0, max) : "");
+
+export async function recordHubEvent(c: Context<Env>): Promise<Response> {
+  const e = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!e || typeof e !== "object") return c.json({ ok: false, error: "invalid payload" }, 400);
+
+  // A reporter's own reply or Confirm is not news to them.
+  if (e.author_kind !== "developer") return c.json({ ok: true, skipped: "not from IT" });
+
+  const eventId = str(e.event_id, 64);
+  const kind = e.kind;
+  const code = str(e.ticket_code, 20);
+  const reporterId = str(e.reporter_id, 128);
+  const toStatus = str(e.to_status, 32);
+  if (!/^[A-Za-z0-9_-]+$/.test(eventId) || !TICKET_CODE.test(code) || !reporterId) {
+    return c.json({ ok: false, error: "event_id, ticket_code and reporter_id are required" }, 400);
+  }
+  if (kind !== "comment" && !(kind === "status" && TICKET_STATUSES.has(toStatus))) {
+    return c.json({ ok: false, error: "kind must be comment, or status with a known to_status" }, 400);
+  }
+
+  type UserRow = { orgId?: string | null; org_id?: string | null };
+  const user = await c.var.DB.prepare("SELECT orgId FROM users WHERE id = ?").bind(reporterId).first<UserRow>();
+  if (!user) return c.json({ ok: false, error: "unknown reporter" }, 404);
+
+  const ticketTitle = str(e.ticket_title, 200);
+  const snippet = str(e.body, 200).replace(/\s+/g, " ");
+  const title = kind === "comment" ? `IT replied on ${code}` : `IT ticket ${code}: ${STATUS_LABEL[toStatus]}`;
+  const message = kind === "comment" && snippet ? `${ticketTitle}: ${snippet}` : ticketTitle;
+  const severity = kind === "status" && NEEDS_REPORTER.has(toStatus) ? "WARNING" : "INFO";
+
+  await ensureNotificationsUserColumn(c.var.DB);
+  // type is SYSTEM: the column's CHECK has no IT value, and the title names IT.
+  const res = await c.var.DB.prepare(
+    `INSERT INTO notifications (id, type, title, message, severity, is_read, link, created_at, org_id, user_id)
+     VALUES (?, 'SYSTEM', ?, ?, ?, 0, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+  )
+    .bind(
+      `it-hub-${eventId}`, title, message, severity, `/it-support?ticket=${code}`,
+      new Date().toISOString(), user.orgId ?? user.org_id ?? DEFAULT_ORG_ID, reporterId,
+    )
+    .run();
+  return c.json({ ok: true, created: (res.meta?.changes ?? 0) > 0 });
+}
 
 export default app;

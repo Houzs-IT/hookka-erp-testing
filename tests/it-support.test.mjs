@@ -305,3 +305,99 @@ test("every handler takes the reporter from the session", () => {
   }
   assert.doesNotMatch(src, /c\.req\.(query|param|header)\("(userId|reporterId|X-Reporter-Id)"\)/i);
 });
+
+// ---- Hub -> Hookka: ticket events land in the reporter's bell ---------------
+const { recordHubEvent } = await import("../src/api/routes/it-support.ts");
+
+/** users + notifications, enough for recordHubEvent. Insert is keyed on id. */
+function makeEventDb() {
+  const rows = new Map();
+  const ddl = [];
+  const db = {
+    rows, ddl,
+    prepare(sql) {
+      if (/^ALTER TABLE/.test(sql)) return { run: async () => { ddl.push(sql); } };
+      if (/FROM users/.test(sql)) return { bind: (id) => ({ first: async () => (id === "user-aina" ? { orgId: "hookka" } : null) }) };
+      assert.match(sql, /INSERT INTO notifications .* ON CONFLICT \(id\) DO NOTHING/s);
+      return {
+        bind: (...b) => ({
+          run: async () => {
+            const [id, title, message, severity, link, createdAt, orgId, userId] = b;
+            if (rows.has(id)) return { meta: { changes: 0 } };
+            rows.set(id, { id, title, message, severity, link, createdAt, orgId, userId });
+            return { meta: { changes: 1 } };
+          },
+        }),
+      };
+    },
+  };
+  return db;
+}
+
+function eventApp(db) {
+  const app = new Hono();
+  app.use("*", async (c, next) => { c.set("DB", db); await next(); });
+  app.post("/e", (c) => recordHubEvent(c));
+  return (body) => app.request("/e", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+const EVENT = { event_id: 501, author_kind: "developer", ticket_code: "HK-0012", ticket_title: "Printer not working", reporter_id: "user-aina" };
+
+test("hub events: an IT reply and a status change each become one bell row for the reporter", async () => {
+  const db = makeEventDb();
+  const post = eventApp(db);
+
+  let res = await post({ ...EVENT, kind: "comment", body: "Please   restart it\nand try again" });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, created: true });
+  res = await post({ ...EVENT, event_id: 502, kind: "status", to_status: "resolved" });
+  assert.equal(res.status, 200);
+
+  const reply = db.rows.get("it-hub-501");
+  assert.equal(reply.title, "IT replied on HK-0012");
+  assert.equal(reply.message, "Printer not working: Please restart it and try again");
+  assert.equal(reply.severity, "INFO");
+  assert.equal(reply.link, "/it-support?ticket=HK-0012");
+  assert.equal(reply.userId, "user-aina");
+  assert.equal(reply.orgId, "hookka");
+
+  const done = db.rows.get("it-hub-502");
+  assert.equal(done.title, "IT ticket HK-0012: Done, please confirm");
+  assert.equal(done.severity, "WARNING");
+  assert.equal(db.ddl.length, 1, "user_id self-apply runs once per isolate");
+});
+
+test("hub events: a retried event is stored once", async () => {
+  const db = makeEventDb();
+  const post = eventApp(db);
+  await post({ ...EVENT, kind: "comment", body: "hi" });
+  const res = await post({ ...EVENT, kind: "comment", body: "hi" });
+  assert.deepEqual(await res.json(), { ok: true, created: false });
+  assert.equal(db.rows.size, 1);
+});
+
+test("hub events: the reporter's own actions, bad payloads and unknown reporters write nothing", async () => {
+  const db = makeEventDb();
+  const post = eventApp(db);
+  const own = await post({ ...EVENT, author_kind: "reporter", kind: "comment", body: "thanks" });
+  assert.equal(own.status, 200);
+  for (const bad of [
+    { ...EVENT, kind: "comment", ticket_code: "../x" },
+    { ...EVENT, kind: "comment", event_id: "" },
+    { ...EVENT, kind: "comment", reporter_id: "" },
+    { ...EVENT, kind: "status", to_status: "bogus" },
+    { ...EVENT, kind: "assign" },
+  ]) {
+    assert.equal((await post(bad)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await post({ ...EVENT, kind: "comment", reporter_id: "user-ghost" })).status, 404);
+  assert.equal(db.rows.size, 0);
+});
+
+test("hub events: mounted before the login gate, behind the shared secret", () => {
+  const worker = readFileSync(resolve(import.meta.dirname, "../src/api/worker.ts"), "utf8");
+  const at = worker.indexOf('app.post("/api/it-support/hub-events"');
+  assert.ok(at > 0 && at < worker.indexOf('app.use("/api/*", authMiddleware)'));
+  const handler = worker.slice(at, worker.indexOf("\n});", at));
+  assert.match(handler, /IT_HUB_WEBHOOK_SECRET[\s\S]*expected\.length < 16[\s\S]*constantTimeEqual\(given, expected\)[\s\S]*recordHubEvent/);
+});

@@ -214,6 +214,9 @@ const EXPECTED_PRE_AUTH_ROUTES = [
   "POST /api/internal/warm-lists",
   "POST /api/qc-pending/trigger",
   "POST /api/mail-center/inbound",
+  // IT Hub ticket events (added 2026-10-13): the hub pushes IT replies and status
+  // changes into the reporter's bell. Gated by IT_HUB_WEBHOOK_SECRET (x-it-hub-secret).
+  "POST /api/it-support/hub-events",
 ];
 
 test("pre-auth routes (mounted before authMiddleware) are locked in", () => {
