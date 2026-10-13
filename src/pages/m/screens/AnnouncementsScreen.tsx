@@ -12,18 +12,23 @@
 // read-receipt roster).
 //
 // ADDITIVE: replaces ONLY the /m/announcements L1 view (CUSTOM_L1).
+//
+// 2026-10-13 (mobile Updates): the body is split out so /m/updates renders the
+// SAME list under its Announcements view — `AnnouncementsList` (search, chips,
+// cards), `NewAnnouncementButton`, and `useNewAnnouncementSheet` (the + create
+// sheet, lib/use-new-announcement-sheet.tsx). This screen composes them exactly as before. Nothing here marks an
+// announcement read or touches worker acknowledgements.
 // ===========================================================================
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Plus, Pin } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { MobileHeader, FormSheet } from "../components";
+import { MobileHeader } from "../components";
 import { M, M_ACCENT } from "../theme";
 import { announcementsConfig } from "../config/modules";
-import { newAnnouncementSpec } from "../config/forms";
-import { type FormSpec } from "../config/form-types";
 import { str, dateOnly, shortDate } from "../config/helpers";
 import { useDebounced } from "../lib/use-debounced";
+import { useNewAnnouncementSheet } from "../lib/use-new-announcement-sheet";
 
 const CHIPS: { key: string; label: string }[] = [
   { key: "all", label: "All" },
@@ -32,11 +37,55 @@ const CHIPS: { key: string; label: string }[] = [
 
 export function AnnouncementsScreen() {
   const navigate = useNavigate();
+  const create = useNewAnnouncementSheet();
+
+  return (
+    <>
+      <MobileHeader
+        title="Announcements"
+        onBack={() => navigate(-1)}
+        menu
+        trailing={<NewAnnouncementButton onClick={create.open} />}
+      />
+
+      <AnnouncementsList />
+
+      {create.sheet}
+    </>
+  );
+}
+
+export function NewAnnouncementButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label="New announcement"
+      style={{
+        width: 34,
+        height: 34,
+        borderRadius: 10,
+        border: "none",
+        backgroundColor: M.taupe,
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        WebkitTapHighlightColor: "transparent",
+      }}
+    >
+      <Plus size={20} strokeWidth={2.2} />
+    </button>
+  );
+}
+
+/** Search + All/Pinned chips + announcement cards (tap → /m/announcements/:id). */
+export function AnnouncementsList() {
+  const navigate = useNavigate();
   const source = announcementsConfig.sources[0];
   const { data, loading, error } = useCachedJson<unknown>(source.url);
   const [q, setQ] = useState("");
   const [chip, setChip] = useState("all");
-  const [createSpec, setCreateSpec] = useState<FormSpec | null>(null);
 
   const allRows = useMemo(() => (data ? source.select(data) : []), [data, source]);
 
@@ -58,33 +107,6 @@ export function AnnouncementsScreen() {
 
   return (
     <>
-      <MobileHeader
-        title="Announcements"
-        onBack={() => navigate(-1)}
-        menu
-        trailing={
-          <button
-            onClick={() => setCreateSpec(newAnnouncementSpec())}
-            aria-label="New announcement"
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 10,
-              border: "none",
-              backgroundColor: M.taupe,
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <Plus size={20} strokeWidth={2.2} />
-          </button>
-        }
-      />
-
       <div style={{ padding: "12px 18px 4px" }}>
         <div
           style={{
@@ -193,16 +215,6 @@ export function AnnouncementsScreen() {
           })}
         </div>
       )}
-
-      <FormSheet
-        open={createSpec != null}
-        onClose={() => setCreateSpec(null)}
-        spec={createSpec}
-        onSaved={(to) => {
-          setCreateSpec(null);
-          if (to) navigate(to);
-        }}
-      />
     </>
   );
 }

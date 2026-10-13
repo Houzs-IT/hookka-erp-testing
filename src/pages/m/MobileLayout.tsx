@@ -39,6 +39,7 @@ import { SalesDetailScreen } from "./screens/SalesDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
 import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
+import { UpdatesScreen } from "./screens/UpdatesScreen";
 import { MailCenterScreen, MailThreadScreen } from "./screens/MailCenterScreen";
 import { MODULE_CONFIGS } from "./config/modules";
 import { preloadMobileCritical } from "./lib/preload";
@@ -234,6 +235,9 @@ export default function MobileLayout() {
           <Route path="dashboard" element={<DashboardRoute />} />
           <Route path="dashboard/:tab" element={<DashboardRoute />} />
           <Route path="it-support" element={<ItSupportRoute />} />
+          {/* Updates: Notifications | Announcements (?view=). Not a module
+              config, so it sits beside the module routes, not inside them. */}
+          <Route path="updates" element={<UpdatesScreen />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders

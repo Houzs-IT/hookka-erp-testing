@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, mobile Updates Phase 1) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below.
 > **Last verified: 2026-10-13**: branch `feat/kpi-delivery-score-breakdown` (to `staging`) added item 5 to the urgent orders KPI entry below.
 > **Last verified: 2026-10-13**: branch `chore/sync-staging-from-main-1013` (to `staging`, staging<-main sync) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/it-support-sort-cycle` (to `staging`) added below (its entry is the newest).
@@ -235,6 +236,26 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 Mobile Updates: Notifications | Announcements, Phase 1 (branch `design/mobile-home-dashboard` → `staging`, local only)
+
+Owner asks (planned, revised and Phase 1 approved 2026-10-13). Frontend only: no backend, DB, migration, API route or permission change.
+1. 🔵 One `/m/updates` page with a Notifications | Announcements switch (the existing `SegmentedSwitch`). Notifications by default; the view is kept in `?view=` so Back from an announcement returns to it.
+2. 🔵 Numeric unread badge on the Notifications tab only, from the real `/api/notifications` rows. No Announcements badge (no per-user tracking exists yet).
+3. 🔵 Opening a notification marks only that one read; switching tabs marks nothing. Explicit "Mark all read" stays.
+4. 🔵 Announcements view = the existing list (search, All/Pinned, + create, detail with read-receipts), unchanged. `/m/announcements` routes unchanged.
+5. 🔵 Home bell: the hardcoded red dot replaced by a real unread-notifications dot; the bell opens `/m/updates`.
+6. 🔵 Loading, error and empty states; an error is not shown as "no notifications".
+7. 🔵 Notification links are desktop paths: only same-origin paths with a known mobile screen navigate; anything else expands the card instead.
+8. 🔵 Tablet and desktop behaviour preserved. Checks and tests run.
+9. ⚪ Phase 2 (NOT approved): per-user office announcement views. Owner notes: versioned migration (not runtime CREATE TABLE), pre-launch announcements count as viewed, confirm which announcements count as unread, worker acknowledgements untouched.
+10. ⚪ Separate fix (to `main`, not in this branch): the desktop bell's optimistic mark-read never self-corrects on a failed PUT (the change broadcast only fires on success).
+11. 🟡 Needs prod access: count of broadcast notifications (`user_id IS NULL`) still unread. UNMEASURED.
+12. 🔵 (approved 2026-10-13, card + search/filter) Notification card follows the desktop: severity dot beside the title + 3px severity left bar (brand colours, dark-mode tokens), subtle plain-text "Critical / Warning / Info" label, no severity pills, no unread dot; unread title 600, read 500; category pill + date + icon + chevron only when it opens.
+13. 🔵 Search (title, message, link reference; every word must match) + one filter sheet: Category (All types + 7) · Read status (All / Unread / Read) · Severity (All + 3), single-select each, AND together. Reset, Show N results, active-filter count on the button, removable active-filter row, no-results state. State kept in the URL (`q`, `cat`, `read`, `sev`, replace) so Back restores it.
+14. 🔵 All / Unread chips removed; desktop summary cards NOT copied.
+16. 🔵 (approved 2026-10-13, card polish) Severity word uses the same colour as its dot + bar (all widths); light `--m-sev-warning` #9C6F1E → #976B1C (4.73:1 as text). PHONE only (<720px): title 15px / -0.2px / up to 2 lines (600 unread, 500 read), description + date in M.body, chevron M.muted, padding 13/15/13/18, 11px between cards, 4px title→description, 10px above the meta row. Tablet card unchanged.
+15. 🔵 Mark all read still marks ALL unread. No confirm when nothing is filtered (as today and as desktop); with a search/filter active it asks first with the /m `window.confirm` pattern, because the list on screen is not "all".
 
 ## 2026-10-13 — 🔵 Phone Home: Operations | Performance views (branch `design/mobile-home-dashboard` → `staging`, local only)
 

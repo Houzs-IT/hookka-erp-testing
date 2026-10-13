@@ -1,14 +1,25 @@
 // SegmentedSwitch — slim full-width view switch (phone Home: Operations |
-// Performance, owner 2026-10-13).
+// Performance, owner 2026-10-13; /m/updates: Notifications | Announcements).
 //
 // 44px warm-neutral track (M.divider + 1px M.border), equal-width text-only
 // segments; the active one is an M.card surface with a hairline border and a
 // very soft shadow. Tokens only, so dark mode follows body[data-theme].
 // A group of two pressed/not-pressed buttons: Tab reaches each, Enter/Space
 // selects (native <button>).
+//
+// Optional per-option `badge`: a small count pill after the label, rendered
+// only when the number is > 0 (capped "99+"). Pass a REAL count or nothing.
+// An option without a badge renders exactly as before (bare label).
 import { M } from "../theme";
 
-type Option<K extends string> = { key: K; label: string };
+type Option<K extends string> = {
+  key: K;
+  label: string;
+  /** Real count to show after the label; hidden when missing or 0. */
+  badge?: number;
+  /** Accessible name while the badge shows, e.g. "Notifications, 3 unread". */
+  badgeLabel?: string;
+};
 
 type Props<K extends string> = {
   options: Option<K>[];
@@ -37,11 +48,13 @@ export function SegmentedSwitch<K extends string>({ options, value, onChange, ar
     >
       {options.map((o) => {
         const on = o.key === value;
+        const count = typeof o.badge === "number" && o.badge > 0 ? Math.floor(o.badge) : 0;
         return (
           <button
             key={o.key}
             type="button"
             aria-pressed={on}
+            aria-label={count > 0 ? (o.badgeLabel ?? `${o.label}, ${count}`) : undefined}
             onClick={() => onChange(o.key)}
             style={{
               minWidth: 0,
@@ -62,7 +75,33 @@ export function SegmentedSwitch<K extends string>({ options, value, onChange, ar
               WebkitTapHighlightColor: "transparent",
             }}
           >
-            {o.label}
+            {count > 0 ? (
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, maxWidth: "100%" }}>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>
+                <span
+                  aria-hidden
+                  style={{
+                    flex: "none",
+                    minWidth: 18,
+                    height: 18,
+                    boxSizing: "border-box",
+                    padding: "0 5px",
+                    borderRadius: 9,
+                    backgroundColor: M.taupe,
+                    color: M.card,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    lineHeight: "18px",
+                    textAlign: "center",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {count > 99 ? "99+" : count}
+                </span>
+              </span>
+            ) : (
+              o.label
+            )}
           </button>
         );
       })}
