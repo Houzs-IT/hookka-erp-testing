@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`, bell events) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder` (to `staging`, BUG-2026-10-13-284) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
@@ -195,6 +196,12 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-13 — 🔵 IT Support: ticket updates in the top-bar bell (branch `feat/it-support-mobile-cards` → `staging`, PR #823)
+
+1. ✅ `POST /api/it-support/hub-events` (before the login gate, secret `IT_HUB_WEBHOOK_SECRET` in header `x-it-hub-secret`): each IT reply or status change becomes one bell row for the reporter only, linking to `/it-support?ticket=<code>`. A retried event is stored once. Tests in `tests/it-support.test.mjs`; full suite 5693 pass, 0 fail. tsc and lint skipped.
+2. ⬜ Hub repo (not here): after saving a developer reply or status change on a ticket filed from Hookka, POST JSON `{ event_id, kind: "comment" | "status", author_kind: "developer", ticket_code, ticket_title, reporter_id, body?, to_status? }` with header `x-it-hub-secret`. `reporter_id` is the `X-Reporter-Id` Hookka sent. Treat 2xx as done, retry on 5xx or network failure, do not retry 4xx.
+3. ⬜ Set `IT_HUB_WEBHOOK_SECRET` on Pages Preview (staging) and in the hub, then check end to end on the staging site.
 
 ## 2026-10-13 — 🔵 IT Support: ticket cards on phones, tidier report form, /m screen (branch `feat/it-support-mobile-cards` → `staging`, local only)
 
