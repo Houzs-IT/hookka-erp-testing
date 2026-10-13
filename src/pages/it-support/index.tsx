@@ -609,7 +609,7 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
         render: (_v, r) => <span className="whitespace-nowrap font-semibold text-slate-900">{r.code}</span>,
       },
       {
-        key: "title", label: "Issue", sortable: true, noFilter: true,
+        key: "title", label: "Issue", sortable: false, noFilter: true,
         render: (_v, r, _i, highlight) => (
           <span className={cn("text-slate-800", r.unread && "font-semibold text-slate-900")}>
             {highlight(r.title)}

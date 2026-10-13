@@ -2613,9 +2613,11 @@ export function DataGrid<T extends Record<string, any>>({
   // ── Handlers ──
   const handleSort = useCallback((col: Column<T>) => {
     if (col.sortable === false) return;
-    if (sortKey === col.key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(col.key); setSortDir("asc"); }
-  }, [sortKey]);
+    // asc → desc → off (back to the order the page supplied).
+    if (sortKey !== col.key) { setSortKey(col.key); setSortDir("asc"); }
+    else if (sortDir === "asc") setSortDir("desc");
+    else { setSortKey(null); setSortDir("asc"); }
+  }, [sortKey, sortDir]);
 
   const handleRowClick = useCallback((e: React.MouseEvent, row: T, index: number) => {
     const key = String(getNestedValue(row, keyField));
@@ -3192,10 +3194,12 @@ export function DataGrid<T extends Record<string, any>>({
                         onClick={() => handleSort(col)}
                       >
                         <span>{col.label}</span>
+                        {col.sortable !== false && (
                         <span className="inline-flex flex-col text-[10px] leading-none ml-0.5">
                           <span className={sortKey === col.key && sortDir === "asc" ? "text-[#333]" : "text-[#CCC]"}>▲</span>
                           <span className={sortKey === col.key && sortDir === "desc" ? "text-[#333]" : "text-[#CCC]"}>▼</span>
                         </span>
+                        )}
                       </span>
                       {/* Filter funnel: bumped 16px → 28px (h-7 w-7) for
                           tablet tap target. Glyph also bumped from 8px
