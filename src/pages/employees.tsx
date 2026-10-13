@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, startTransition, Fragment } from "react";
 import { usePermissions } from "@/lib/use-permission";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { laborCostInclPayroll, loggedDayShare } from "@/lib/labor-cost-incl-payroll";
 import { humanizeError } from "@/lib/humanize-error";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -17,6 +18,7 @@ import {
   toAttendanceRules,
   payrollDayRateSen,
   payrollHourDivisor,
+  payrollHourRateSen,
   DEFAULT_PAY_RULES,
   minToHhmm,
   type PayRuleVersion,
@@ -4847,7 +4849,7 @@ function DepartmentLaborTab({
               0,
               Math.round((dockH * S) / actualWorkingDays / owStd) -
                 Math.round(
-                  (dockH * dockDayRate) / payrollHourDivisor(ow?.workingHoursPerDay, cfgDeptEnd),
+                  dockH * payrollHourRateSen(dockDayRate, ow?.workingHoursPerDay, cfgDeptEnd),
                 ),
             );
           }
@@ -6761,7 +6763,9 @@ function RuleDraftExplainer({ d }: { d: Record<string, string> }) {
       : hourMode === "hoursOnly"
         ? "the worker's daily hours (9h worker → ÷9)"
         : `the worker's daily hours + ${lunchH}h lunch (9h worker → ÷${9 + lunchH})`;
-  const hourRate = dayRate / Math.max(1, hourDiv);
+  // Rounded to the sen like the engine (payrollHourRateSen), so the example
+  // multiplies the same rate a payslip does.
+  const hourRate = Math.round((dayRate / Math.max(1, hourDiv)) * 100) / 100;
   const grace = Number(d.lateGraceMin) || 0;
   const block = Math.max(1, Number(d.lateBlockMin) || 15);
   const sun = Number(d.sundayOtMultiplier) || 2;
@@ -6807,14 +6811,13 @@ function RuleDraftExplainer({ d }: { d: Record<string, string> }) {
 function PayrollTab({ workers }: { workers: Worker[] }) {
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
-  // Per-worker contracted hours, for the payslip "Hourly Rate" formula label.
-  // The rate itself is already computed from each worker's real hours; only the
-  // "(26 x 9)" divisor text was hardcoded and lied for anyone not on 9h/day
-  // (e.g. ANN at 7.5). Look the hours up by employeeId so the label matches the
-  // number shown. BUG-2026-07-17-012.
-  const hoursByWorkerId = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const w of workers) if (w.id) m.set(w.id, w.workingHoursPerDay);
+  // Per-worker hours / pay mode, for the payslip "Hourly Rate" formula label.
+  // The "(26 x 9)" divisor text was hardcoded and lied for anyone not on 9h/day
+  // (e.g. ANN at 7.5, BUG-2026-07-17-012), and later for everyone: it left the
+  // lunch hour out while the engine put it in (BUG-2026-10-08-269).
+  const workerById = useMemo(() => {
+    const m = new Map<string, Worker>();
+    for (const w of workers) if (w.id) m.set(w.id, w);
     return m;
   }, [workers]);
   const now = new Date();
@@ -7374,6 +7377,22 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
   };
 
   const fmtSen = (sen: number) => `RM ${(sen / 100).toFixed(2)}`;
+  // The sum behind the "Hourly Rate" figure, as the engine did it: the day rate
+  // (salary ÷ days, or a per-day person's agreed rate) ÷ the hour divisor the
+  // month-end pay rules give (lunch in or out per the mode). A per-day person
+  // used to read "RM 0.00 / (26 x 9)".
+  const hourlyRateFormula = (r: PayslipData): string => {
+    const w = workerById.get(r.employeeId);
+    const [py, pm] = period.split("-").map(Number);
+    const cfg = resolvePayRulesAsOf(
+      payRuleVersionList,
+      `${period}-${String(new Date(py, pm, 0).getDate()).padStart(2, "0")}`,
+    );
+    const div = Number(payrollHourDivisor(w?.workingHoursPerDay, cfg).toFixed(2));
+    return w && isDailyPaidWorker(w)
+      ? `${fmtSen(w.dailyRateSen ?? 0)}/day / ${div}`
+      : `${fmtSen(r.basicSalary)} / (${r.workingDays} x ${div})`;
+  };
   // OT hours for DISPLAY. The payslip stores them in an INTEGER column, so a
   // real 0.15h of overtime is stored as 0 and the panel printed the nonsense
   // "0 hrs x RM 13.59 x 1.5 = RM 3.06" (owner 2026-08-01: 「OT 可是0hours？」).
@@ -7504,7 +7523,8 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
         : cfg.hourRateDivisorMode === "hoursOnly"
           ? "the worker's daily hours (9h worker → ÷9)"
           : `the worker's daily hours + ${lunchTxt} lunch (9h worker → ÷${9 + lunchH})`;
-    const hourRate = dayRate / Math.max(1, hourDiv);
+    // Rounded to the sen like the engine (payrollHourRateSen).
+    const hourRate = Math.round((dayRate / Math.max(1, hourDiv)) * 100) / 100;
     const rm = (v: number) => `RM${v.toFixed(2)}`;
     const grace = cfg.lateGraceMin;
     const block = cfg.lateBlockMin;
@@ -7860,7 +7880,7 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
                                 <h4 className="text-xs font-semibold text-[#6B5C32] uppercase tracking-wide">OT Calculation</h4>
                                 <div className="text-xs space-y-1 text-[#374151] bg-white rounded-lg p-3 border border-[#E2DDD8]">
                                   <p className="text-[#6B7280]">
-                                    Hourly Rate: {fmtSen(r.basicSalary)} / ({r.workingDays} x {hoursByWorkerId.get(r.employeeId) ?? 9}) = <span className="font-semibold text-[#1F1D1B]">{fmtSen(r.hourlyRate)}/hr</span>
+                                    Hourly Rate: {hourlyRateFormula(r)} = <span className="font-semibold text-[#1F1D1B]">{fmtSen(r.hourlyRate)}/hr</span>
                                   </p>
                                   <hr className="border-[#E2DDD8]" />
                                   <p>
@@ -8930,6 +8950,26 @@ function LaborCostTab({
     () => asArray(reconPayslipResp) as PayslipData[],
     [reconPayslipResp],
   );
+  // A month still running with no payslips generated yet → the same LIVE
+  // estimate the Payroll tab shows (GET /api/payslips/projected — the month-end
+  // engine, never stored), so the "Labor Cost incl. EPF & Allowances" card
+  // (owner 2026-10-12) still has a payroll side. Fetched only when that card can
+  // show: an un-filtered, whole single month that isn't over yet.
+  const cardMonthRunning =
+    !categoryFilter && isFullSingleMonth(from, to) && !monthIsFinished(from.slice(0, 7));
+  const { data: projectedPayslipResp } = useCachedJson<unknown>(
+    cardMonthRunning && reconPayslipResp !== null && reconPayslips.length === 0
+      ? `/api/payslips/projected?period=${payrollPeriod}`
+      : null,
+  );
+  const projectedPayslips: PayslipData[] = useMemo(
+    () => asArray(projectedPayslipResp) as PayslipData[],
+    [projectedPayslipResp],
+  );
+  // The payslips the per-payslip bridges below read: the stored ones, else the
+  // live estimate. Everything the reconciliation shows needs STORED payslips
+  // (hasPayroll), so it reads exactly what it read before.
+  const bridgePayslips = reconPayslips.length > 0 ? reconPayslips : projectedPayslips;
 
   // Each worker's day-weighted EFFECTIVE salary for the period (handles a
   // mid-month / past raise) so the reconciliation rates match the payslips. With
@@ -9292,7 +9332,7 @@ function LaborCostTab({
       hY && hM
         ? Math.max(1, countElapsedWorkingDays(hY, hM, new Date(hY, hM, 0).getDate(), holidayList))
         : 26;
-    for (const p of reconPayslips) {
+    for (const p of bridgePayslips) {
       const absent = Number(p.absentDays) || 0;
       if (absent <= 0) continue;
       // UNIFIED ÷26 model (owner 2026-06-11): everyone — full-month, joiner,
@@ -9307,7 +9347,7 @@ function LaborCostTab({
       if (leniency !== 0) m.set(p.id, leniency);
     }
     return m;
-  }, [reconPayslips, period, from, holidayList, workersById]);
+  }, [bridgePayslips, period, from, holidayList, workersById]);
   // OT pay-vs-cost adjustment — the SAME idea as the absence line, for overtime.
   // The labor buckets + loggedValue value OT at the production-cost rate
   // (÷ workingDaysPerMonth(26) ÷ workingHoursPerDay(9)); payroll now PAYS OT at the
@@ -9318,7 +9358,7 @@ function LaborCostTab({
   // difference lands on the department line instead of silently in the Overhead plug.
   const otAdjustmentByPayslip = useMemo(() => {
     const m = new Map<string, number>();
-    for (const p of reconPayslips) {
+    for (const p of bridgePayslips) {
       // Day-typed OT cost at the ÷stdHours production rate — the SAME weighting
       // the logged cost buckets now use (weekday×mult + Sunday×2 + holiday×3).
       // The adjustment then bridges this to the day-typed PAID OT (p.totalOT, at
@@ -9351,7 +9391,7 @@ function LaborCostTab({
       if (adj !== 0) m.set(p.id, adj);
     }
     return m;
-  }, [reconPayslips, workersById, payRuleVersions]);
+  }, [bridgePayslips, workersById, payRuleVersions]);
   // Late/short-hour dock bridge — same idea as the absence leniency, for the
   // Deduct action (and AUTO punch docks). The dock reduces gross at the
   // UNIFIED pay rate (salary ÷ 26 ÷ 10 — RM7.88/h on RM2,050) but the
@@ -9379,7 +9419,7 @@ function LaborCostTab({
         (dockHoursByWorker.get(r.workerId) ?? 0) + (Number(r.hours) || 0),
       );
     }
-    for (const p of reconPayslips) {
+    for (const p of bridgePayslips) {
       const wid = p.employeeId;
       if (!wid) continue;
       const h = dockHoursByWorker.get(wid) ?? 0;
@@ -9400,12 +9440,12 @@ function LaborCostTab({
         { workingDaysPerMonth: wDays, calendarDays: calDays, workingDaysInMonth: aWD },
         cfgDock,
       );
-      const dockSen = Math.round((h * dockDayRate) / payrollHourDivisor(w?.workingHoursPerDay, cfgDock));
+      const dockSen = Math.round(h * payrollHourRateSen(dockDayRate, w?.workingHoursPerDay, cfgDock));
       const adj = Math.max(0, costEquivalentSen - dockSen);
       if (adj > 0) m.set(p.id, adj);
     }
     return m;
-  }, [deductionsResp, reconPayslips, period, from, holidayList, workersById, payRuleVersions]);
+  }, [deductionsResp, bridgePayslips, period, from, holidayList, workersById, payRuleVersions]);
   // We only have payroll figures once payslips exist for the period. Hide the
   // reconciliation panel (rather than show a misleading negative residual)
   // when there are none or when a category filter is narrowing the buckets.
@@ -9695,6 +9735,58 @@ function LaborCostTab({
     underRecordedReconSen;
   const reconcileDiffSen = reconciledSumSen - totalPayrollCostSen;
 
+  // ---- Labor Cost incl. EPF & Allowances (owner 2026-10-12) ---------------
+  // One card beside the five above; nothing else on the page changes. A
+  // finished month shows the payroll itself (= the Total Payroll Cost below); a
+  // month still running shows the logged-hours labour so far plus the payslips'
+  // allowances and employer EPF / SOCSO / EIS pro-rated to the working days
+  // logged, plus the absent-day / OT / docked-hours differences already
+  // incurred (src/lib/labor-cost-incl-payroll.ts). Payroll can't be split by
+  // category, so — like the reconciliation — it needs an un-filtered, whole
+  // single month.
+  const fullCostCard = useMemo(() => {
+    if (categoryFilter || !isFullSingleMonth(from, to)) return null;
+    const ym = from.slice(0, 7);
+    const finished = monthIsFinished(ym);
+    const slips = finished ? reconPayslips : bridgePayslips;
+    if (!slips.length) return null;
+    const [y, mo] = ym.split("-").map(Number);
+    const monthDays = countElapsedWorkingDays(y, mo, new Date(y, mo, 0).getDate(), holidayList);
+    // The latest day with logged hours — the running figure covers exactly the
+    // days the logged side covers.
+    let lastLogged = "";
+    if (!finished) {
+      const entries = (entriesResp?.success ? entriesResp.data ?? [] : []) as WorkingHourEntry[];
+      for (const e of entries) {
+        const d = String(e.date ?? "").slice(0, 10);
+        if (d.startsWith(ym) && d > lastLogged) lastLogged = d;
+      }
+      if (!lastLogged) return null;
+    }
+    const loggedDays = finished
+      ? monthDays
+      : countElapsedWorkingDays(y, mo, Number(lastLogged.slice(8, 10)), holidayList);
+    const sen = laborCostInclPayroll({
+      monthFinished: finished,
+      loggedSen: totalLaborCostSen,
+      payslips: slips.map((p) => ({
+        id: p.id,
+        departmentCode: p.departmentCode,
+        grossSen: Number(p.grossPay) || 0,
+        statutorySen:
+          (Number(p.epfEmployer) || 0) + (Number(p.socsoEmployer) || 0) + (Number(p.eisEmployer) || 0),
+        allowancesSen: Number(p.allowances) || 0,
+      })),
+      isFactoryDept: (code) => factoryDeptCodes.has(code),
+      bridgeSen: (id) =>
+        (absenceLeniencyByPayslip.get(id) ?? 0) +
+        (otAdjustmentByPayslip.get(id) ?? 0) +
+        (lateDockAdjByPayslip.get(id) ?? 0),
+      share: loggedDayShare(loggedDays, monthDays),
+    });
+    return { sen, asOf: finished ? null : lastLogged, loggedDays, monthDays };
+  }, [categoryFilter, from, to, reconPayslips, bridgePayslips, holidayList, entriesResp, totalLaborCostSen, factoryDeptCodes, absenceLeniencyByPayslip, otAdjustmentByPayslip, lateDockAdjByPayslip]);
+
   const loading = entriesLoading || plLoading;
 
   // Print Report — prints the Production Breakdown rows (the headline view) for
@@ -9899,7 +9991,7 @@ function LaborCostTab({
       </CardHeader>
       <CardContent>
         {/* KPI strip */}
-        <div className="grid gap-3 grid-cols-2 md:grid-cols-5 mb-4 max-md:grid-cols-2 max-sm:grid-cols-1">
+        <div className={`grid gap-3 grid-cols-2 ${fullCostCard && canSeeRevenue ? "md:grid-cols-6" : "md:grid-cols-5"} mb-4 max-md:grid-cols-2 max-sm:grid-cols-1`}>
           <Card>
             <CardContent className="p-3">
               <p className="text-xs text-[#6B7280]">Production Labor Cost</p>
@@ -9923,6 +10015,24 @@ function LaborCostTab({
               <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(totalLaborCostSen)}</p>
             </CardContent>
           </Card>
+          {fullCostCard && (
+            <Card>
+              <CardContent
+                className="p-3"
+                title={
+                  fullCostCard.asOf
+                    ? `Logged-hours labor to ${formatDateDMY(fullCostCard.asOf)}, plus allowances and employer EPF / SOCSO / EIS pro-rated to the working days logged (${fullCostCard.loggedDays} of ${fullCostCard.monthDays}), plus the absent-day, OT and docked-hours pay differences so far. An estimate until the month's payslips are final.`
+                    : "The month's payroll: gross pay plus employer EPF / SOCSO / EIS — the Total Payroll Cost in the reconciliation below."
+                }
+              >
+                <p className="text-xs text-[#6B7280]">Labor Cost incl. EPF &amp; Allowances</p>
+                <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(fullCostCard.sen)}</p>
+                {fullCostCard.asOf && (
+                  <p className="text-[10px] text-[#9CA3AF]">to {formatDateDMY(fullCostCard.asOf)} · estimate</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
           {/* Owner 2026-08-05: HR keeps the labour bill, not the revenue beside
               it. The API refuses /production-revenue for them either way; this
               is so the page reads as a labour report rather than as a broken
