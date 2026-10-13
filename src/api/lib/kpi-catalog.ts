@@ -169,9 +169,15 @@ export interface KpiDef {
   /**
    * PENALTY_PER_PCT only — an order promised within `urgentDays` of its order
    * date is urgent. Urgent orders leave the late % and early % and earn
-   * URGENT_POINTS on their own (owner 2026-10-13).
+   * urgent points on their own (owner 2026-10-13): `urgentBasePoints` at 0%
+   * on time or early, plus `urgentPointsPerStep` for every `urgentStepPct`,
+   * and `urgentFullPoints` at 100%.
    */
   urgentDays?: number;
+  urgentBasePoints?: number;
+  urgentStepPct?: number;
+  urgentPointsPerStep?: number;
+  urgentFullPoints?: number;
   /** PENALTY_PER_UNIT only — points lost per whole unit of the actual. */
   penaltyPerUnit?: number;
   /**
@@ -233,6 +239,7 @@ export const GATE_FAIL_CAP = 60;
 export const EDITABLE_RULES = {
   customer_delivery_date: [
     "penaltyPerPct", "earlyStepPct", "earlyBonusPerStep", "earlyMaxBonus", "urgentDays",
+    "urgentBasePoints", "urgentStepPct", "urgentPointsPerStep", "urgentFullPoints",
   ],
 } as const satisfies Record<string, ReadonlyArray<keyof KpiDef>>;
 
@@ -243,23 +250,30 @@ export function editableRules(key: string): readonly RuleField[] {
   return (EDITABLE_RULES as Record<string, readonly RuleField[]>)[key] ?? [];
 }
 
-/**
- * Points for the share of urgent orders delivered on time or early, highest
- * band first. Violet's table, owner 2026-10-13.
- */
-export const URGENT_POINTS: ReadonlyArray<readonly [pct: number, points: number]> = [
-  [100, 60], [90, 50], [80, 45], [70, 40], [60, 35], [50, 30], [40, 25], [30, 20], [20, 15], [10, 10], [0, 5],
-];
+type UrgentRule = "urgentBasePoints" | "urgentStepPct" | "urgentPointsPerStep" | "urgentFullPoints";
 
-export function urgentPoints(onTimePct: number): number {
-  return URGENT_POINTS.find(([pct]) => onTimePct + 1e-9 >= pct)?.[1] ?? 0;
+/**
+ * The urgent points rule with Violet's numbers as the fallback (owner
+ * 2026-10-13): 0% → 5, +5 per 10%, 100% → 60. Editable from the Library.
+ */
+function urgentRule(def: Partial<Pick<KpiDef, UrgentRule>>) {
+  const n = (v: unknown, d: number) => (Number.isFinite(Number(v)) && v != null ? Number(v) : d);
+  return {
+    base: n(def.urgentBasePoints, 5),
+    step: n(def.urgentStepPct, 10),
+    per: n(def.urgentPointsPerStep, 5),
+    full: n(def.urgentFullPoints, 60),
+  };
 }
 
-/** The URGENT_POINTS band a % falls in, as the card words it: "0% to under 10%". */
-function urgentBand(onTimePct: number): string {
-  const i = URGENT_POINTS.findIndex(([pct]) => onTimePct + 1e-9 >= pct);
-  if (i < 0) return "";
-  return i === 0 ? `${URGENT_POINTS[0][0]}%` : `${URGENT_POINTS[i][0]}% to under ${URGENT_POINTS[i - 1][0]}%`;
+/** Full steps of `step`% in a share below 100%. */
+const urgentSteps = (pct: number, step: number) => (step > 0 ? Math.floor(pct / step + 1e-9) : 0);
+
+/** Points for the share of urgent orders delivered on time or early. */
+export function urgentPoints(def: Partial<Pick<KpiDef, UrgentRule>>, onTimePct: number): number {
+  const r = urgentRule(def);
+  if (onTimePct + 1e-9 >= 100) return r.full;
+  return r.base + urgentSteps(onTimePct, r.step) * r.per;
 }
 
 /**
@@ -268,6 +282,7 @@ function urgentBand(onTimePct: number): string {
  */
 function deliveryText(
   per: number, step: number, bonus: number, max: number, urgentDays: number,
+  urgent: Partial<Pick<KpiDef, UrgentRule>>,
 ): Pick<KpiDef, "detail" | "formula" | "measurement"> {
   const zeroAt = per > 0 ? Math.round((100 / per) * 10) / 10 : null;
   const lateRows: string[] = [];
@@ -283,7 +298,14 @@ function deliveryText(
       earlyRows.push(`${k * step}%${k === steps ? " or more" : ""} → +${Math.min(max, k * bonus)}`);
     }
   }
-  const urgentRows = [...URGENT_POINTS].reverse().map(([pct, pts]) => `${pct}% → ${pts}`);
+  const u = urgentRule(urgent);
+  const urgentRows: string[] = [];
+  if (u.step > 0) {
+    for (let k = 0; k * u.step < 100; k++) urgentRows.push(`${k * u.step}% → ${u.base + k * u.per}`);
+  } else {
+    urgentRows.push(`under 100% → ${u.base}`);
+  }
+  urgentRows.push(`100% → ${u.full}`);
   return {
     detail: `Every 1% of orders delivered late costs ${per} points`,
     formula:
@@ -322,7 +344,7 @@ export function withRules(def: KpiDef, rules?: KpiRules): KpiDef {
   }
   if (d.key === "customer_delivery_date") {
     Object.assign(d, deliveryText(d.penaltyPerPct!, d.earlyStepPct!, d.earlyBonusPerStep!, d.earlyMaxBonus!,
-      d.urgentDays!));
+      d.urgentDays!, d));
   }
   return d;
 }
@@ -331,7 +353,7 @@ export const KPI_CATALOG: KpiDef[] = [
   {
     key: "customer_delivery_date",
     label: "On-time delivery to the customer's promised date",
-    ...deliveryText(10, 10, 1, 5, 7),
+    ...deliveryText(10, 10, 1, 5, 7, {}),
     shape: "RATIO",
     direction: "LOWER_IS_BETTER",
     unit: "%",
@@ -344,6 +366,11 @@ export const KPI_CATALOG: KpiDef[] = [
     earlyMaxBonus: 5,
     // Owner 2026-10-08: ordered 1/10, promised 7/10 is urgent.
     urgentDays: 7,
+    // Owner 2026-10-13: 0% on time or early → 5, +5 per 10%, 100% → 60.
+    urgentBasePoints: 5,
+    urgentStepPct: 10,
+    urgentPointsPerStep: 5,
+    urgentFullPoints: 60,
     purpose:
       "A late delivery is the one failure the customer always notices. Everything else in the factory can slip; this is the promise we made.",
     definition:
@@ -641,7 +668,7 @@ export function kpisForRole(role: string): KpiDef[] {
  * a full bonus scores the bonus, not 0 (owner 2026-10-08).
  */
 export function penaltyParts(
-  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus">>,
+  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus" | UrgentRule>>,
   actual: number,
   earlyPct?: number | null,
   urgentOnTimePct?: number | null,
@@ -658,7 +685,7 @@ export function penaltyParts(
             Math.floor(early / step + 1e-9) * (Number(def.earlyBonusPerStep) || 0),
           )
         : 0,
-    urgent: urgentOnTimePct == null ? 0 : urgentPoints(urgentOnTimePct),
+    urgent: urgentOnTimePct == null ? 0 : urgentPoints(def, urgentOnTimePct),
   };
 }
 
@@ -667,7 +694,7 @@ export function penaltyParts(
  * from the same penaltyParts the score is added up from.
  */
 export function deliveryBreakdown(
-  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus">>,
+  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus" | UrgentRule>>,
   actual: number,
   earlyPct: number | null | undefined,
   urgentOnTimePct: number | null | undefined,
@@ -679,6 +706,8 @@ export function deliveryBreakdown(
   const bonus = Number(def.earlyBonusPerStep) || 0;
   const raw = Math.round((100 - actual * per) * 10) / 10;
   const steps = step > 0 ? Math.floor((Number(earlyPct) || 0) / step + 1e-9) : 0;
+  const u = urgentRule(def);
+  const uSteps = urgentOnTimePct == null ? 0 : urgentSteps(urgentOnTimePct, u.step);
   return [
     `Late: ${n.late} of ${n.judged} orders = ${actual}% late → ${p.late} points` +
       ` (100 − ${actual} × ${per} = ${raw}${raw < 0 ? ", never below 0" : ""})`,
@@ -689,7 +718,9 @@ export function deliveryBreakdown(
     urgentOnTimePct == null
       ? "Urgent: no urgent orders this month → +0 points"
       : `Urgent: ${n.urgentOnTime} of ${n.urgentJudged} urgent orders on time or early = ${urgentOnTimePct}% → +${p.urgent} points` +
-        ` (${urgentBand(urgentOnTimePct)} → ${p.urgent})`,
+        (urgentOnTimePct + 1e-9 >= 100
+          ? ` (100% → ${u.full})`
+          : ` (${u.base} + ${uSteps} full ${u.step}% step(s) × ${u.per} = ${p.urgent})`),
   ];
 }
 
@@ -710,6 +741,7 @@ export function attainment(
         | "earlyStepPct"
         | "earlyBonusPerStep"
         | "earlyMaxBonus"
+        | UrgentRule
         | "penaltyPerUnit"
         | "graceDays"
         | "efficiencyFloorPct"

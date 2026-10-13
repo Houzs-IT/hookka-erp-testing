@@ -70,7 +70,8 @@ type LibItem = {
   current: number | null; evidence: string;
   editableRules?: string[];
   penaltyPerPct?: number; earlyStepPct?: number; earlyBonusPerStep?: number; earlyMaxBonus?: number;
-  urgentDays?: number;
+  urgentDays?: number; urgentBasePoints?: number; urgentStepPct?: number;
+  urgentPointsPerStep?: number; urgentFullPoints?: number;
   assignedTo: Array<{ userId: string; name: string; role: string; scope?: string }>;
 };
 type PersonRow = {
@@ -1542,6 +1543,10 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
     earlyBonusPerStep: String(item.earlyBonusPerStep ?? 1),
     earlyMaxBonus: String(item.earlyMaxBonus ?? 5),
     urgentDays: String(item.urgentDays ?? 7),
+    urgentBasePoints: String(item.urgentBasePoints ?? 5),
+    urgentStepPct: String(item.urgentStepPct ?? 10),
+    urgentPointsPerStep: String(item.urgentPointsPerStep ?? 5),
+    urgentFullPoints: String(item.urgentFullPoints ?? 60),
   });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -1593,7 +1598,13 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
       </p>
       <p className="text-[11.5px] text-[#3A3733] leading-loose">
         An order promised within{num("urgentDays", "Urgent order days")}days of its order date is urgent.
-        Urgent orders are scored on their own share delivered on time or early (0% → 5 points up to 100% → 60) and are left out of the late and early %.
+        Urgent orders are left out of the late and early % and scored on their own share delivered on time or early.
+      </p>
+      <p className="text-[11.5px] text-[#3A3733] leading-loose">
+        Urgent orders earn{num("urgentBasePoints", "Urgent points at 0 percent")}points at 0% on time or early, plus
+        {num("urgentPointsPerStep", "Urgent points per step")}point(s) for every
+        {num("urgentStepPct", "Urgent percent per step")}%, and
+        {num("urgentFullPoints", "Urgent points at 100 percent")}points at 100%.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button
