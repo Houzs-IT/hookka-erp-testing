@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder-main` (to `main`, BUG-2026-10-13-284) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: running-month labour to date (#818) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/pnl-running-month-labour-to-date` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: Labor Cost incl. EPF & Allowances card (#814) prod-verified.
@@ -130,6 +131,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+## 2026-10-13 — 🔵 Claude calls from Singapore so scans work on any network (branch `fix/claude-calls-via-sg-forwarder-main` → `main`, BUG-2026-10-13-284)
+
+1. ✅ New Worker `claude-forwarder-worker/` pinned to Singapore (`[placement] region = "aws:ap-southeast-1"`), no public URL.
+2. ✅ All five Claude call sites (scan, rule distilling, agent brain, AI assistant, announcement translation) go through `claudeFetch` (`src/api/lib/claude-fetch.ts`), which uses the `CLAUDE_FORWARDER` service binding when present.
+3. ⬜ Owner: deploy the forwarder BEFORE this merges (`cd claude-forwarder-worker && npx wrangler deploy`).
+4. ⬜ After the prod deploy: run a scan on erp.hookka.com while `npx wrangler tail` runs in `claude-forwarder-worker/`, and confirm the log shows a Singapore placement and status 200.
 
 ## 2026-10-12 — ✅ P&L + finance dashboard: the running month's labour is labour TO DATE (owner「然后我任何的 payroll 还没 confirm 都拿这个新卡显示的数据可以吗？就算我的 pnl, dash board 这些」→「做」)(#818 2108559e, prod-verified)
 
