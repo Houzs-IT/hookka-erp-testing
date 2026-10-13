@@ -7,6 +7,7 @@ export { BottomTabBar } from "./BottomTabBar";
 export { Sheet } from "./Sheet";
 export { MobileHeader } from "./MobileHeader";
 export { SubTabs } from "./SubTabs";
+export { SegmentedSwitch } from "./SegmentedSwitch";
 export { FilterSheet } from "./FilterSheet";
 export { FormSheet } from "./FormSheet";
 export { QrModal } from "./QrModal";
