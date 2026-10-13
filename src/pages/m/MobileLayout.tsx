@@ -5,7 +5,7 @@
 // cookie-based auth/session as the desktop dashboard (gated by <RequireAuth>
 // in router.tsx — the user is already logged in), the SAME global fetch
 // interceptor (CSRF + credentials), and the SAME design tokens. It does NOT
-// touch or import any desktop layout/page, so the existing app is unchanged.
+// touch any desktop layout; the one desktop page it imports is IT Support.
 //
 // The shell:
 //   • centers content to ~414px (phone width) on any viewport,
@@ -19,9 +19,10 @@
 // a ComingSoon detail until Phase 3 supplies the real detail screen.
 // ===========================================================================
 import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useNavigate } from "react-router-dom";
+import { ToastProvider } from "@/components/ui/toast";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { BottomTabBar, LeftRail } from "./components";
+import { BottomTabBar, LeftRail, MobileHeader } from "./components";
 import { M, M_FONT, M_MAX_WIDTH } from "./theme";
 import MobileHome from "./screens/Home";
 import MobileMore from "./screens/More";
@@ -48,6 +49,23 @@ import "./theme-vars.css";
 const DashboardScreen = lazy(() =>
   import("./screens/dashboard/DashboardScreen").then((m) => ({ default: m.DashboardScreen })),
 );
+// IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
+// ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
+const ItSupportPage = lazy(() => import("@/pages/it-support"));
+function ItSupportRoute() {
+  const navigate = useNavigate();
+  return (
+    <ToastProvider>
+      <MobileHeader title="IT Support" onBack={() => navigate("/m/more")} />
+      <div className="bg-[#FAF8F4] p-4">
+        <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+          <ItSupportPage />
+        </Suspense>
+      </div>
+    </ToastProvider>
+  );
+}
+
 function DashboardRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -145,6 +163,7 @@ export default function MobileLayout() {
               the query string — see screens/dashboard/DashboardScreen.tsx. */}
           <Route path="dashboard" element={<DashboardRoute />} />
           <Route path="dashboard/:tab" element={<DashboardRoute />} />
+          <Route path="it-support" element={<ItSupportRoute />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders

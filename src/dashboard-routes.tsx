@@ -172,6 +172,7 @@ const AdminHealth = lazy(() => import('./pages/admin/health'))
 // one-click controls for every agent (run-now / pause / kill-all / rollback).
 const AgentConsole = lazy(() => import('./pages/agents'))
 const KpiPage = lazy(() => import('./pages/kpi'))
+const ItSupport = lazy(() => import('./pages/it-support'))
 
 // 2FA setup (any authenticated user — soft-prompt destination from /login).
 const Setup2FA = lazy(() => import('./pages/setup-2fa'))
@@ -548,6 +549,13 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
     // id, and every cross-user route re-checks SUPER_ADMIN on the server.
     path: '/kpi',
     element: <S><KpiPage /></S>,
+  },
+  {
+    // IT Support: every login reports issues and sees only its own tickets,
+    // so no gate, same as /kpi. /api/it-support reads the reporter off the
+    // session and never takes a user id from the request.
+    path: '/it-support',
+    element: <S><ItSupport /></S>,
   },
   {
     path: '/agents',

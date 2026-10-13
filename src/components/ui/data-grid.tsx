@@ -168,6 +168,9 @@ export type Column<T> = {
   // the column wider reveals more. Set `noClip: true` for the rare cell that
   // must wrap or render multi-line content.
   noClip?: boolean;
+  // Hide the header ▼ value filter. For columns where every row differs (an ID,
+  // a title), whose filter is just the whole list again; search still finds them.
+  noFilter?: boolean;
   // Plain value this column contributes to a WYSIWYG export. Defaults to the
   // filterAccessor, then the raw path value (currency sen→RM number, date→day).
   // Set this for columns whose real value is computed in `render` and has no
@@ -201,6 +204,8 @@ export type DataGridProps<T> = {
   clearSelectionToken?: number;
   rowClassName?: (row: T) => string;
   emptyMessage?: string;
+  // Shown at the left of the toolbar (e.g. status tabs); search and buttons move to the right.
+  toolbarStart?: React.ReactNode;
   loading?: boolean;
   stickyHeader?: boolean;
   maxHeight?: string;
@@ -1633,6 +1638,7 @@ export function DataGrid<T extends Record<string, any>>({
   clearSelectionToken,
   rowClassName,
   emptyMessage = "No data found.",
+  toolbarStart,
   loading = false,
   stickyHeader = true,
   maxHeight,
@@ -2607,9 +2613,11 @@ export function DataGrid<T extends Record<string, any>>({
   // ── Handlers ──
   const handleSort = useCallback((col: Column<T>) => {
     if (col.sortable === false) return;
-    if (sortKey === col.key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(col.key); setSortDir("asc"); }
-  }, [sortKey]);
+    // asc → desc → off (back to the order the page supplied).
+    if (sortKey !== col.key) { setSortKey(col.key); setSortDir("asc"); }
+    else if (sortDir === "asc") setSortDir("desc");
+    else { setSortKey(null); setSortDir("asc"); }
+  }, [sortKey, sortDir]);
 
   const handleRowClick = useCallback((e: React.MouseEvent, row: T, index: number) => {
     const key = String(getNestedValue(row, keyField));
@@ -2749,6 +2757,8 @@ export function DataGrid<T extends Record<string, any>>({
       {/* Tablet UX: bumped from py-1.5 / text-[11px] / h-~26px to h-9 (36px)
           search + h-9 buttons. Per-control sizing notes inline below. */}
       <div className="flex flex-wrap items-center gap-2 border border-b-0 border-[#E2DDD8] bg-[#FAFAF8] px-2 py-1.5 rounded-t">
+        {toolbarStart}
+        {toolbarStart && <div className="flex-1" />}
         {/* Search — h-9 / text-sm for finger-target on iPad Safari */}
         <div className="relative flex-1 max-w-[280px] max-md:max-w-full">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#999]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2782,7 +2792,7 @@ export function DataGrid<T extends Record<string, any>>({
           </button>
         )}
 
-        <div className="flex-1" />
+        {!toolbarStart && <div className="flex-1" />}
 
         {/* Group toggle + filter (only when groupBy prop is set) */}
         {groupBy && (
@@ -3184,14 +3194,17 @@ export function DataGrid<T extends Record<string, any>>({
                         onClick={() => handleSort(col)}
                       >
                         <span>{col.label}</span>
+                        {col.sortable !== false && (
                         <span className="inline-flex flex-col text-[10px] leading-none ml-0.5">
                           <span className={sortKey === col.key && sortDir === "asc" ? "text-[#333]" : "text-[#CCC]"}>▲</span>
                           <span className={sortKey === col.key && sortDir === "desc" ? "text-[#333]" : "text-[#CCC]"}>▼</span>
                         </span>
+                        )}
                       </span>
                       {/* Filter funnel: bumped 16px → 28px (h-7 w-7) for
                           tablet tap target. Glyph also bumped from 8px
                           to text-xs (12px) so it's actually visible. */}
+                      {!col.noFilter && (
                       <button
                         className={cn(
                           "ml-0.5 inline-flex items-center justify-center h-7 w-7 rounded hover:bg-[#D8D8D8] transition-colors text-xs",
@@ -3208,6 +3221,7 @@ export function DataGrid<T extends Record<string, any>>({
                       >
                         ▼
                       </button>
+                      )}
                     </span>
                     {/* Drag-to-resize handle on the column's right edge.
                         Persists per gridId (datagrid-colw-*); double-click
