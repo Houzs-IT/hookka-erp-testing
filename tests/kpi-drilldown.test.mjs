@@ -253,8 +253,11 @@ test("the drill-down list runs the metric's own SQL, not a copy of it", () => {
   // its one verdict function.
   const reads = METRICS.match(/await collectOnTimeOrders\(c\.var\.DB, start, end/g) ?? [];
   assert.ok(reads.length >= 2, `the metric and its drill-down must both read collectOnTimeOrders (found ${reads.length})`);
-  assert.ok((METRICS.match(/judgeOnTimeRow\(r\)/g) ?? []).length >= 2,
-    "the metric and the list must judge each row with the shared verdict");
+  // The metric judges through summarizeOnTimeRows, which calls judgeOnTimeRow.
+  assert.ok((METRICS.match(/summarizeOnTimeRows\(rows\.filter/g) ?? []).length >= 2,
+    "the metric must judge its rows with the shared summary");
+  assert.ok((METRICS.match(/judgeOnTimeRow\(r\)/g) ?? []).length >= 1,
+    "the list must judge each row with the shared verdict");
   // Same for the four setup checks.
   for (const f of ["price", "volume", "fabric", "bom"]) {
     const uses = METRICS.match(
