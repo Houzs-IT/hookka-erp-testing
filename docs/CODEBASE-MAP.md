@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-13 on branch `feat/bs-sort-by-account-code` (to `main`)**: the Balance Sheet stock note (line order), read from `src/api/routes/accounting.ts` (`/pl`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `fix/kpi-score-percent` (to `main`)**: the KPI row (Card headline is the KPI score as a percentage, the raw measurement moved to the small "result" line), read from `src/pages/kpi/index.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/bs-stock-from-pnl-closing` (to `main`)**: the Balance Sheet stock note, read from `src/lib/bs-stock.ts` and `src/api/routes/accounting.ts` (`sheetStockAt`, `closingStockAt`, `/pl`, `/bs-drill`, `loadFinanceSeries`, `/dashboard`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/kpi-delivery-score-breakdown` (to `main`)**: the kpi-catalog.ts row (`deliveryBreakdown`), read from `src/api/lib/kpi-catalog.ts`. Nothing else re-checked.
@@ -1909,7 +1910,8 @@ Cash Flow with Summary/Detail (`:1133`) → Balance Sheet (`:1200`) → Financia
   already hold); dashboard equity is equity accounts only, so only assets / inventory move there (payload `v18`).
   `/bs-drill` on a stock account returns the Stock Summary movement per group (`fromStockTake`). The Stock Summary's
   "Post closing stock to GL" button is gone (`POST /stock/close-post` left in place). Pure core `src/lib/bs-stock.ts`;
-  guard `tests/bs-stock.test.mjs`.
+  guard `tests/bs-stock.test.mjs`. The sheet's account lines are sorted by code (Current Year Earnings last in Equity);
+  guard `tests/bs-order.test.mjs`.
 - Money is integer sen end to end. `rm` / `rm2` (L83–86) divide by 100 **for display only**;
   every derived figure uses `Math.round(... * 10000) / 100` on sen ints.
 - **The forecast-percentage rule (BUG-2026-08-06-002) is load-bearing and is stated three
