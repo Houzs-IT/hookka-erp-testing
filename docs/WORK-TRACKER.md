@@ -236,14 +236,14 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 ## 2026-10-13 — 🔵 Sync `staging` from `main` (branch `chore/sync-staging-from-main-1013` → `staging`)
 
-189 `main` commits merged into `staging` (471 staging-only kept). Conflicts: 12 code/test files, 10 docs.
+190 `main` commits merged into `staging` (471 staging-only kept). Conflicts: 12 code/test files, 10 docs.
 1. 🔵 KPI on-time delivery (`kpi-catalog.ts`, `kpi-metrics.ts`, `kpi.ts`, `kpi/index.tsx`, three tests): staging's side, the newer 2026-10-13 rule (urgent orders scored apart) replaces main's 2026-10-08 `urgentLatePct` share.
 2. 🔵 New PO (`procurement/create.tsx`), worker home tiles (`worker/index.tsx`), worker translations (`worker-i18n.ts`): main's files, which already hold everything staging had. Git had silently merged `worker-i18n.ts` wrong (dropped Working Hours).
 3. 🔵 `production-revenue.ts` (added on both sides): both kept, main's monthly loader and staging's per-day query in one file. `worker.ts` takes main's v4 cache key. `/m` IT Support keeps staging's menu header; the row sits under System only (main's #832), not twice.
 4. 🔵 Two fixes the merge needed: main's double-click invoice guard (BUG-2026-10-07-266) was unreachable behind staging's nothing-left-to-bill gate, so it now runs first; the staging-only sequence-unlock refetch now invalidates the production-orders cache first, as main's cache test asks.
 5. 🔵 Docs: logs and stamps unioned, one copy of each entry. Staging's Plant Load bug BUG-2026-10-08-269 renumbered to 285 (main used 269). `API.md` regenerated (147 / 1034); production, employees and map anchors re-measured.
 
-`npm test` 5780 tests: 5777 pass, 0 fail, 3 skipped. Map, API.md and docs-freshness checks pass. tsc not run locally.
+`npm test` 5781 tests: 5778 pass, 0 fail, 3 skipped (after also merging the newest `staging`, #834). Map, API.md and docs-freshness checks pass. tsc not run locally.
 ## 2026-10-13 — 🔵 On-time delivery KPI: urgent orders scored apart, full score tables on the card (branch `feat/kpi-urgent-orders-scored-apart` → `staging`)
 
 Owner ask, with the points table Violet sent on 2026-10-05. Owner answers 2026-10-13: the urgent % is the share of urgent orders delivered on time or early; urgent orders are taken out of the late % and early % and get their own points, added to the score (capped at 100).
