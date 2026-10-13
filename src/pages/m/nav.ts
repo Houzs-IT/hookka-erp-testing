@@ -128,7 +128,6 @@ export const MORE_GROUPS: ModuleGroup[] = [
     items: [
       { label: "Service Cases", icon: Wrench, path: "/m/servicecases" },
       { label: "Service Orders", icon: Wrench, path: "/m/serviceorders" },
-      { label: "IT Support", icon: LifeBuoy, path: "/m/it-support" },
     ],
   },
   {
@@ -165,6 +164,7 @@ export const MORE_GROUPS: ModuleGroup[] = [
     title: "System",
     items: [
       { label: "User Management", icon: UserPlus, path: "/m/usermgmt" },
+      { label: "IT Support", icon: LifeBuoy, path: "/m/it-support" },
     ],
   },
 ];

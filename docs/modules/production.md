@@ -1,5 +1,6 @@
 # Production & BOM — Module Guide
 
+> **Last verified: 2026-10-13** (branch `chore/sync-staging-from-main-1013`, staging<-main merge): `ProductionPage` :632, `filteredOrders` :2964, `loadFgStickers` / `packingStickerUrl` :5717 / :5676, and the `bom.tsx` anchors (`BOMManagementPage` :5929, `EditBOMDialog` :2951, `MasterTemplatesDialog` :3813) re-measured on the merged files. Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `fix/bom-module-guide-anchors`, to `staging`): the `bom.tsx` anchors (`BOMManagementPage` :5922, `EditBOMDialog` :2945, `MasterTemplatesDialog` :3807), read from `src/pages/bom.tsx` after #752 moved the hard-coded variant lists to `src/lib/bom-variant-fields.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-07** (branch `chore/sync-staging-from-main-1007`, staging<-main merge): the `bom.tsx` anchors (`BOMManagementPage` :5957, `EditBOMDialog` :2957, `MasterTemplatesDialog` :3819) re-measured on the merged file; the `ProductionPage` / `filteredOrders` / `loadFgStickers` / `packingStickerUrl` anchors keep staging's (632 / 3014 / 5767 / 5726, re-checked). Nothing else re-checked.
 > **Last verified: 2026-10-07** (branch `feat/master-bom-two-pane`, to `staging`): the `bom.tsx` anchors (`BOMManagementPage` :6030, `EditBOMDialog` :2952, `MasterTemplatesDialog` :3839) and the 6,513-line count, read from `src/pages/bom.tsx` after Master BOM Templates moved to the two-pane layout and `SubWIPTree` was deleted. Nothing else re-checked.
@@ -18,6 +19,9 @@
 >
 > **Last verified: 2026-09-29** (branch `chore/sync-main-into-staging`, staging<-main merge): `ProductionPage` :564, `filteredOrders` :2930, `loadFgStickers` / `packingStickerUrl` :5643 / :5602 re-derived. Nothing else re-checked.
 >
+> **Last verified: 2026-10-08** (branch `feat/editable-wip-types-main-v2`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5922, `EditBOMDialog` :2945, `MasterTemplatesDialog` :3807), read from `src/pages/bom.tsx` after the hard-coded variant lists moved to `src/lib/bom-variant-fields.ts`. Nothing else re-checked.
+> **Last verified: 2026-10-07** (branch `perf/production-dept-tab-cache-main`, to `main`): the `filteredOrders` (:2894) and FG-sticker (:5607 / :5566) anchors, after the dead today seed was removed from `index.tsx`.
+> **Last verified: 2026-10-07** (branch `feat/master-bom-two-pane-main`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5957, `EditBOMDialog` :2957, `MasterTemplatesDialog` :3819), read from `src/pages/bom.tsx` after Master BOM Templates moved to the two-pane layout and `SubWIPTree` was deleted. Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `fix/bom-master-template-accessory`): only the `bom-master-templates.ts` line count, read from the file. Nothing else re-checked.
 >
 > **Last verified: 2026-10-05** (branch `fix/bom-minutes-leading-zero-main`): only the `bom.tsx` anchors (`BOMManagementPage`, `EditBOMDialog`, `MasterTemplatesDialog`), re-read after `parseMinutes` moved them 5 lines.
@@ -84,10 +88,10 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | Symbol / section | file:line | Role |
 |---|---|---|
 | `ProductionPage` | `src/pages/production/index.tsx:632` | WIP board; every column/row branches on `activeTab` |
-| `filteredOrders` (memo) | `src/pages/production/index.tsx:3014` | Dept-narrow + overdue-set grid filter |
-| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5767 / 5726` | FG sticker set (immediate paint → /p/ token upgrade) |
-| `BOMManagementPage` | `src/pages/bom.tsx:5922` | BOM page shell (tabs, list) |
-| `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2945 / 3807` | L1+WIP editor / master variants |
+| `filteredOrders` (memo) | `src/pages/production/index.tsx:2964` | Dept-narrow + overdue-set grid filter |
+| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5717 / 5676` | FG sticker set (immediate paint → /p/ token upgrade) |
+| `BOMManagementPage` | `src/pages/bom.tsx:5929` | BOM page shell (tabs, list) |
+| `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2951 / 3813` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
 | `applyWipInventoryChange` | `production-orders/_helpers.ts:2574` | WIP inventory change; idempotent ONLY when `orgId` passed |
 | `recomputePoStatusAndProgress` | `production-orders/_helpers.ts:4133` | Single source of truth for PO status/progress |

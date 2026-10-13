@@ -2,6 +2,7 @@
 
 > **Last verified: 2026-10-12** (branch `feat/it-support`, to `staging`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
 > **Last verified: 2026-09-30** (branch `feat/account-permissions-tab`) — added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
+> **Last verified: 2026-10-13** (branch `feat/it-support-to-main`, staging to `main`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `feat/permissions-tab-main`, ported from staging): added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
 >
 > **Last verified: 2026-09-29** — project refs replaced by their `.env` names (`SUPABASE_*_REF`); the old Tokyo staging project is retired. Nothing else re-checked.

@@ -67,6 +67,10 @@ type Row = {
   /** Wage bill per department (payslips-sourced) for the stacked salary card,
       with each department's forecast (dept: rows) beside it. */
   salaryByDept?: { dept: string; costSen: number; forecastSen?: number; nonProd?: boolean }[];
+  /** Production Revenue (owner 2026-10-12): orders whose last upholstery piece
+      completed in the period, at selling price — the Employees › Labor Cost vs
+      Revenue page's Total Revenue. null for a period wholly ahead. */
+  productionRevenue?: { bedframe: number; sofa: number; accessory: number; total: number } | null;
   cashFlow: {
     operating: number; investing: number; financing: number; net: number; freeCashFlow: number;
     inflow?: number; outflow?: number;
@@ -96,6 +100,23 @@ const CS_COLOURS = [
   "#C58B7F", "#4F7C3A", "#8FB07A", "#6B7280", "#A9A29B", "#D8CFC4",
 ];
 const TEAL = "#3E6570";
+
+// v as a percentage of base, 2 dp; null when either side is missing or the base is 0.
+const pctOf = (v: number | null, base: number | null) =>
+  v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
+
+// "share of sales / share of production revenue" (owner 2026-10-12: 「每个 cost
+// 也要除 production revenue，可以用 "/" 分辨」). The first keeps the card's colour
+// rule against the forecast share; the second has no plan to be read against.
+function PctPair({ p, pp, className }: { p: number | null; pp: number | null; className: string }) {
+  if (p === null && pp === null) return null;
+  return (
+    <span className="ml-1.5 text-[10px]">
+      <span className={className}>{p === null ? "-" : `${p.toFixed(2)}%`}</span>
+      <span className="text-[#6B7280]"> / {pp === null ? "-" : `${pp.toFixed(2)}%`}</span>
+    </span>
+  );
+}
 
 function ChartTip(props: {
   active?: boolean;
@@ -197,13 +218,13 @@ function SalaryDeptCard({
         const b = base[i];
         const amount = amt === null && fc === null ? (b?.amount ?? null) : amt;
         const forecast = amt === null && fc === null ? (b?.forecast ?? null) : fc;
-        const pctOf = (v: number | null, s: number | null) =>
-          v !== null && s !== null && s !== 0 ? Math.round((v / s) * 10000) / 100 : null;
+        const prod = (rec.__prod__ as number | null) ?? null;
         return {
           ...rec,
           __cardamt__: amount,
           __cardfc__: forecast,
           __cardpct__: pctOf(amount, sales),
+          __cardppct__: pctOf(amount, prod),
           __cardfcpct__: pctOf(forecast, fcSales),
           __drawnpct__: sales && sales !== 0 ? Math.round((drawn / sales) * 10000) / 100 : null,
         } as Record<string, number | string | null>;
@@ -217,7 +238,7 @@ function SalaryDeptCard({
         <div className="flex flex-wrap items-baseline gap-2">
           <h3 className="text-sm font-semibold text-[#1F1D1B] mr-2">{title}</h3>
           <span className="text-[11px] text-[#9CA3AF]">{subtitle}</span>
-          <span className="ml-1 text-[11px] text-[#9CA3AF]">RM + % of sales</span>
+          <span className="ml-1 text-[11px] text-[#9CA3AF]">RM · % of sales / % of production</span>
         </div>
         {depts.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -323,11 +344,22 @@ function SalaryDeptCard({
                 ))}
               </tr>
               <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
-                <td className={`${tdc} text-left font-semibold`}>REVENUE</td>
+                <td className={`${tdc} text-left font-semibold`}>SALES REVENUE</td>
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__sales__ as number | null)}</td>
                     <td className={`${tdc} font-semibold text-[#9A3A2D]`}>{rm(d.__fcsales__ as number | null)}</td>
+                  </Fragment>
+                ))}
+              </tr>
+              {/* Owner 2026-10-12: what production finished in the period, at
+                  selling price — no plan exists for it, so its Forecast is "-". */}
+              <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+                <td className={`${tdc} text-left font-semibold`}>PRODUCTION REVENUE</td>
+                {rowsData.map((d) => (
+                  <Fragment key={String(d.label)}>
+                    <td className={`${tdc} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__prod__ as number | null)}</td>
+                    <td className={`${tdc} font-semibold text-[#9A3A2D]`}>-</td>
                   </Fragment>
                 ))}
               </tr>
@@ -337,6 +369,7 @@ function SalaryDeptCard({
                   {rowsData.map((d) => {
                     const amt = (d[dept] as number | null) ?? null;
                     const p = (d[`__pct__${dept}`] as number | null) ?? null;
+                    const pp = (d[`__ppct__${dept}`] as number | null) ?? null;
                     const fc = (d[`__fc__${dept}`] as number | null) ?? null;
                     const fp = (d[`__fcpct__${dept}`] as number | null) ?? null;
                     const over = p !== null && fp !== null && p > fp;
@@ -346,9 +379,7 @@ function SalaryDeptCard({
                           {amt === null || amt === 0 ? "-" : (
                             <>
                               {rm(amt)}
-                              <span className={`ml-1.5 text-[10px] ${fp === null ? "text-[#6B5C32]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
-                                {p === null ? "" : `${p.toFixed(2)}%`}
-                              </span>
+                              <PctPair p={p} pp={pp} className={fp === null ? "text-[#6B5C32]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"} />
                             </>
                           )}
                         </td>
@@ -371,7 +402,7 @@ function SalaryDeptCard({
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} border-l border-[#E2DDD8]`}>
                       {rm(d.__cardamt__ as number | null)}
-                      {d.__cardpct__ !== null && <span className="ml-1.5 text-[10px] text-[#6B5C32]">{(d.__cardpct__ as number).toFixed(2)}%</span>}
+                      <PctPair p={d.__cardpct__ as number | null} pp={d.__cardppct__ as number | null} className="text-[#6B5C32]" />
                     </td>
                     <td className={`${tdc} text-[#9A3A2D]`}>
                       {rm(d.__cardfc__ as number | null)}
@@ -618,10 +649,13 @@ export default function FinanceDashboardPage() {
         const rec: Record<string, number | string | null> = { ...base };
         rec.__sales__ = sales;
         rec.__fcsales__ = fcSales;
+        const prod = r.productionRevenue?.total ?? null;
+        rec.__prod__ = prod;
         for (const d of r.salaryByDept ?? []) {
           if (d.costSen !== 0) {
             rec[d.dept] = d.costSen;
             if (sales && sales !== 0) rec[`__pct__${d.dept}`] = Math.round((d.costSen / sales) * 10000) / 100;
+            rec[`__ppct__${d.dept}`] = pctOf(d.costSen, prod);
           }
           const fc = d.forecastSen ?? 0;
           if (fc !== 0) {
@@ -728,6 +762,14 @@ export default function FinanceDashboardPage() {
     }
     return out;
   };
+  // Production revenue for the current line view (owner 2026-10-12). Sofa takes
+  // the accessories too — the same split as the sales side, where only bedframe
+  // sales have an account of their own.
+  const csLineProdRev = (r: Row): number | null => {
+    const p = r.productionRevenue;
+    if (!p) return null;
+    return csLine === "all" ? p.total : csLine === "bedframe" ? p.bedframe : p.sofa + p.accessory;
+  };
   const csLineSales = (r: Row): number => {
     const s = r.costStructure?.salesSplit;
     if (!s) return r.actual?.sales ?? 0;
@@ -773,10 +815,13 @@ export default function FinanceDashboardPage() {
         const point: Record<string, number | string | null> = { label: r.label + (r.partial ? " *" : "") };
         const sales = csLineSales(r);
         point.__sales__ = sales;
+        const prod = csLineProdRev(r);
+        point.__prod__ = prod;
         for (const cat of csCats) {
           const amt = csAmount(r, cat);
           point[cat] = amt;
           point[`__pct__${cat}`] = sales > 0 ? Math.round((amt / sales) * 10000) / 100 : null;
+          point[`__ppct__${cat}`] = pctOf(amt, prod);
           const fc = csMeasure === "spend" ? csForecastAmt(r, cat) : null; // targets are spend-side
           point[`__fc__${cat}`] = fc;
           const fcSales = csForecastSales(r);
@@ -818,6 +863,21 @@ export default function FinanceDashboardPage() {
         point.__drawn__ = drawn;
         point.__drawnpct__ =
           drawn !== null && sales > 0 ? Math.round((drawn / sales) * 10000) / 100 : null;
+        // TOTAL row (owner 2026-10-12 「这些 cost 和 percentage 我要一个 total 在
+        // 下面」): every material in the table — not only the ones drawn — and
+        // the plan for all of them, each against its own revenue.
+        let sum = 0;
+        let fcSum: number | null = null;
+        for (const cat of csCats) {
+          sum += point[cat] as number;
+          const f = point[`__fc__${cat}`] as number | null;
+          if (f !== null) fcSum = (fcSum ?? 0) + f;
+        }
+        point.__sum__ = sum;
+        point.__sumpct__ = pctOf(sum, sales);
+        point.__sumppct__ = pctOf(sum, prod);
+        point.__fcsum__ = fcSum;
+        point.__fcsumpct__ = pctOf(fcSum, csForecastSales(r));
         return point;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1028,7 +1088,7 @@ export default function FinanceDashboardPage() {
                     <button key={k} onClick={() => setCsLine(k)}
                       className={`rounded-md border px-2.5 py-1 text-xs cursor-pointer ${csLine === k ? "bg-[#3E6570] text-white border-[#3E6570]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{l}</button>
                   ))}
-                  <span className="ml-1 text-[11px] text-[#9CA3AF]">RM + % of sales</span>
+                  <span className="ml-1 text-[11px] text-[#9CA3AF]">RM · % of sales / % of production</span>
                 </div>
                 {csLine !== "all" && (
                   <p className="text-[11px] text-[#9CA3AF]">
@@ -1117,13 +1177,25 @@ export default function FinanceDashboardPage() {
                       {periodHeadSplit(csData.map((d) => String(d.label)))}
                       {/* The base every percentage divides by (owner 2026-07-30). */}
                       <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
-                        <td className={`${td} text-left font-semibold`}>REVENUE</td>
+                        <td className={`${td} text-left font-semibold`}>SALES REVENUE</td>
                         {csData.map((d, i) => (
                           <Fragment key={String(d.label)}>
                             <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__sales__ as number)}</td>
                             <td className={`${td} font-semibold text-[#9A3A2D]`}>
                               {(rows ?? [])[i]?.forecast?.sales != null ? rm((rows ?? [])[i]!.forecast!.sales!) : "-"}
                             </td>
+                          </Fragment>
+                        ))}
+                      </tr>
+                      {/* The second base every figure divides by (owner 2026-10-12):
+                          what production finished in the period, at selling price.
+                          No plan exists for it, so its Forecast is "-". */}
+                      <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+                        <td className={`${td} text-left font-semibold`}>PRODUCTION REVENUE</td>
+                        {csData.map((d) => (
+                          <Fragment key={String(d.label)}>
+                            <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__prod__ as number | null)}</td>
+                            <td className={`${td} font-semibold text-[#9A3A2D]`}>-</td>
                           </Fragment>
                         ))}
                       </tr>
@@ -1135,6 +1207,7 @@ export default function FinanceDashboardPage() {
                           {csData.map((d) => {
                             const amt = d[cat] as number | null;
                             const p = d[`__pct__${cat}`] as number | null;
+                            const pp = d[`__ppct__${cat}`] as number | null;
                             const fc = d[`__fc__${cat}`] as number | null;
                             const fp = d[`__fcpct__${cat}`] as number | null;
                             // Over the target reads rust, at or under reads green
@@ -1147,9 +1220,7 @@ export default function FinanceDashboardPage() {
                                   {amt === null || amt === 0 ? "-" : (
                                     <>
                                       {rm(amt)}
-                                      <span className={`ml-1.5 text-[10px] ${fp === null ? "text-[#9A3A2D]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
-                                        {p === null ? "" : `${p.toFixed(2)}%`}
-                                      </span>
+                                      <PctPair p={p} pp={pp} className={fp === null ? "text-[#9A3A2D]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"} />
                                     </>
                                   )}
                                 </td>
@@ -1166,6 +1237,36 @@ export default function FinanceDashboardPage() {
                           })}
                         </tr>
                       ))}
+                      <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF] font-semibold">
+                        <td className={`${td} text-left`}>TOTAL</td>
+                        {csData.map((d) => {
+                          const sum = d.__sum__ as number;
+                          const p = d.__sumpct__ as number | null;
+                          const fcSum = d.__fcsum__ as number | null;
+                          const fp = d.__fcsumpct__ as number | null;
+                          const over = p !== null && fp !== null && p > fp;
+                          return (
+                            <Fragment key={String(d.label)}>
+                              <td className={`${td} border-l border-[#E2DDD8]`}>
+                                {sum === 0 ? "-" : (
+                                  <>
+                                    {rm(sum)}
+                                    <PctPair p={p} pp={d.__sumppct__ as number | null} className={fp === null ? "text-[#6B5C32]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"} />
+                                  </>
+                                )}
+                              </td>
+                              <td className={`${td} text-[#9A3A2D]`}>
+                                {fcSum === null ? "-" : (
+                                  <>
+                                    {rm(fcSum)}
+                                    {fp !== null && <span className="ml-1.5 text-[10px]">{fp.toFixed(2)}%</span>}
+                                  </>
+                                )}
+                              </td>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
                     </tbody>
                   </table>
                 </div>

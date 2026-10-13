@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-13**: staging<-main sync (branch `chore/sync-staging-from-main-1013`): both sides kept, one copy of each entry. Staging's Plant Load entry, logged as BUG-2026-10-08-269, is now BUG-2026-10-08-285 because main used 269 first. Newest entry is still 284; 285 is the next number used.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder`, to staging; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-283 (branch `fix/fabric-meter-calc`, to staging; 282 is staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-281 (branch `fix/export-all-pages`, to staging; 279 and 280 are staging's); a log, so "verified" means the entry matches the code on its branch.
@@ -11,11 +12,25 @@
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-277 (branch `fix/credit-overdue-skip-pre-opening`, to staging; 273 to 276 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-09**: BUG-2026-10-09-272 follow-up (branch `fix/worker-i18n-single-words`, to staging then main): single-word worker labels translated; a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-272 (branch `fix/worker-i18n-popups-and-date`, to staging then main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
-> **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-269 (branch `feat/plant-load-14d`, to `staging`; 268 is taken on another branch).
+> **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-285, logged as 269 (branch `feat/plant-load-14d`, to `staging`; 268 is taken on another branch).
 > **Last verified: 2026-10-08**: entry BUG-2026-10-08-267 (branch `fix/kpi-delivered-last-leg-myt`, to `staging`; 264 to 266 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-07** (branch `chore/sync-staging-from-main-1007`, staging<-main merge): both logs merged, one copy of each entry. No id collisions: 260 to 262 are main's, 263 is staging's.
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-263 (branch `fix/sales-transfer-credit-block`, to staging; 260 to 262 are taken on `main`).
 > **Last verified: 2026-10-06** (branch `chore/sync-staging-from-main-1006`, staging<-main merge): both logs merged, one copy of each entry. No id collisions: 253, 257, 258 and 259 are the same bugs on both sides (257 and 259 take main's copy, which adds its main PR note). Main's 251, 254, 255 and 256 are added.
+> **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder-main`, to main, same fix as staging PR #822; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-276 (branch `fix/po-picker-duplicate-supplier-rows`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
+> **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-275 (branch `fix/undone-labour-post-hides-payroll`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
+> **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-274 (branch `fix/do-accessory-uom`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
+> **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-273 (branch `fix/stock-take-price-list-sen`; 272 is on `staging`); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
+> **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-271 (branch `fix/co-scan-po-creates-co`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-09**: BUG-2026-10-09-270 got a follow-up, the sync job timeout raised to 45 minutes (branch `fix/staging-sync-timeout`, to main).
+> **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-270 (branch `fix/staging-merge-copy-hang`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-08**: BUG-2026-10-08-269 got a follow-up, the ÷9 rule seeded from 2026-10-01 (branch `fix/ot-hourly-rate-display`, to `main`, second commit of #759).
+> **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-269 (branch `fix/ot-hourly-rate-display`, to `main`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-268 (branch `fix/worker-pwa-ios-start-url`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-267 (branch `fix/kpi-delivery-rules-main` (to `main`); the same entry is on staging's #749); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-266 (branch `fix/empty-auto-invoice-guard`, to main; 263 and 264 are staging's, 265 is main's).
+> **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-265 (branch `perf/production-dept-tab-cache-main`, to main; 263 and 264 are staging's).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-262 (branch `fix/rm-uom-bottle-main`, to main).
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-261 (branch `fix/bom-wip-delete-move`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-260 (branch `fix/production-overview-scrollbar`, to main; no open PR holds 260); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -250,6 +265,66 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-12-276 — New PO Select Materials search stopped filtering (typing "pearl" left plywood rows) `procurement` `ui-frontend` 🟢
+
+🟢 **Fixed** (branch `fix/po-picker-duplicate-supplier-rows` → `main`) · owner 2026-10-12, searching "pearl" with no supplier picked.
+
+**Symptom.** In New Purchase Order → Add Materials from Supplier, with no supplier picked, typing in the search box did not narrow the list. Rows such as "18MM 4' X 8' AA PLYWOOD" stayed on screen for any search.
+
+**Cause.** #794 (BUG-98 follow-up) split the popup into one row per supplier, keyed `${rm.id}|${supplierId}`. Prod has 31 supplier + material pairs stored twice for the same supplier (e.g. CLM ETERNAL's 18MM plywood at RM 68.00 twice), so those rows shared a React key. React then could not remove them on re-render, and stale rows piled up as the filter changed.
+
+**Fix.** `src/pages/procurement/create.tsx`: the popup options keep one row per supplier (first in main-first order), so keys are unique and the repeat row is gone. Add, for a row's supplier, takes the first binding from the same sorted list, so it uses the price the row shows. The duplicate rows in `supplier_material_bindings` are left as they are.
+
+**Regression.** `tests/po-picker-unique-rows.test.mjs`: options deduped by supplier, row key from that supplier, Add picks the same binding as the row. Two of its three checks fail on the unfixed file.
+
+**Verify.** On prod after deploy: New PO, no supplier, Add Materials from Supplier, type "pearl": only Pearl materials remain (BO315-1, BO315-21, CH141-5, HOK-BO315-21, KN390-1, M2402-1), and 18MM plywood shows once.
+
+---
+
+## BUG-2026-10-09-275 — A Labour post that was unposted still hid that month's payroll in the P&L `accounting` `pnl` 🟢
+
+🟢 **Fixed** (branch `fix/undone-labour-post-hides-payroll` → `main`) · owner 2026-10-09, while comparing July and August.
+
+**Symptom.** August showed no direct labour at all in the P&L. The month had been posted on the Labour tab and unposted a minute later.
+
+**Cause.** The P&L adds payroll from the payslips for any month and account the owner has not recorded through the salary accrual (410-0010). "Recorded" was decided by looking only at the legs that CREDIT the accrual, keyed by the exact sourceType + sourceId (`glWindowSigned` and the cost & expense classes report). Unpost appends a `labor_post_reversal` with the same sourceId, so the original `labor_post` legs still marked the month as recorded while the ledger netted to zero, and the payslip figures were skipped. A voided manual JV had the same flaw (bug class C5: a suffixed identity read by exact match).
+
+**Fix.** `recordedSalaryAccounts` (`src/lib/recorded-salary.ts`) takes the legs of one document together (posting, reversal, void, restate, via `stripLegSuffix` / `stripSourceIdSuffix`) and marks an account only while its NET debit in that document is above zero. Both readers use it through `salaryLegsIn`, with the same pre-opening / opening exclusions. A live post, a re-post after an unpost, an edited entry and an entry that accrues and pays at once still count.
+
+**Regression.** `tests/recorded-salary-net.test.mjs`: post, post + unpost, post + unpost + re-post, voided vs live JV, restated JV, accrue-and-pay in one entry, excluded legs, and both readers wired.
+
+**Verify.** On prod after deploy, read-only: August's direct labour should equal its payslip figures; other months unchanged.
+
+---
+
+## BUG-2026-10-09-274 — Delivery order quantity column printed accessory code tails ("1 MF", "1 SB02") `delivery` `do-cn-parity` 🟢
+
+🟢 **Fixed** (branch `fix/do-accessory-uom` → `main`; not yet deployed) · DEV-67, from the floor (DO-2610-036).
+
+**Cause.** `piecesFor` (`src/api/lib/print-extras-shared.ts`) gives a non-sofa, non-bedframe line the part of its product code after the dash, else its size label, else the code. Accessory BOMs are empty, so a back cushion `BC05-MF` printed "1 MF", a sandbag `SB02` printed "1 SB02", an armrest `A01` printed "1 A01". The same string feeds the DO and CN PDFs and the DO total row.
+
+**Fix.** Accessory codes starting `BC<digit>`, `SB<digit>` and `A<digit>` now print "Back Cushion", "Sandbag" and "Armrest". Pillows and `5543-HDRST` are unchanged (not in the request). The catalog names spell the sandbag "SANDBACK"; the DO uses the requested "Sandbag". Partial-repair lines still print "BC" via `normalizePartLabel`, so a repair of a back cushion and a back cushion accessory read differently on the same DO.
+
+**Regression.** `tests/print-extras-shared.test.mjs`: BC05-MF, BC01, SB02 (qty 3), A01, and a pillow keeping its size fallback.
+
+**Verify.** Unit test only. Not yet seen on a printed DO: print one with accessory lines on staging after deploy.
+
+---
+
+## BUG-2026-10-09-273 — Stock-take price-list hints read 100× too high `accounting` 🟢
+
+🟢 Fixed on `fix/stock-take-price-list-sen` (follow-up to #775, the priced stock-take count).
+
+Found while checking #775 on prod (read-only): an item never bought since the system started showed
+"price list RM 680.00" while the same supplier's invoices for its twin item were RM 6.80. The supplier price
+list (`supplier_material_bindings.unitPrice`) is kept in sen — the purchase-order screen takes it straight as
+`unitPriceSen` — and `GET /stock-take/purchase-prices` multiplied it by 100 as if it were RM. Only the hint text
+was wrong: hints are never used as a price, so no value was ever computed from it. It also misled the analysis
+given to the owner ("the price list's units don't match"), now corrected.
+
+Fix: read the price list as sen. Regression test: `tests/stock-take-priced-count.test.mjs` (pins the conversion
+and that the PO screen reads the same field as sen).
+
 ## BUG-2026-10-09-272 — Worker portal: scan pop-ups and ~45 strings were English-only; non-prod date pre-filled yesterday `worker-portal` `ui-frontend` 🟢
 
 🟢 **Fixed** (branch `fix/worker-i18n-popups-and-date` → `staging`, then `main`; not yet deployed) · Found scanning the worker pages before the Play Store work.
@@ -266,7 +341,37 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-08-269 — Plant Load backlog left out Foam Cutting (and Fibre) `dashboard` `production` 🟡
+## BUG-2026-10-09-271 — Scan PO on the Consignment Orders page created Sales Orders `consignment` `sales` `ocr` 🟡
+
+🟡 Fix on `fix/co-scan-po-creates-co` (to `main`). Reported as BUG-95: a consignment order scanned and saved landed as a draft on the Sales Order side.
+
+**Cause (from the code; the mis-filed drafts on prod are UNMEASURED).** `src/pages/consignment/index.tsx` was built on 2026-04-28 (`10799e76`) by copying the Sales Orders list page. The copy kept the Scan PO button and the shared `ScanPOModal`, which always posted to `POST /api/sales-orders`. A later commit (`dbd6ce97`) changed the success toast to "Created N Consignment Order(s)", which hid the mismatch. Every scan from the Consignment page made a DRAFT Sales Order.
+
+**Fix.** `ScanPOModal` takes `target="CO"`; the Consignment page passes it. Both create loops then post to `POST /api/consignment-orders` with the body re-shaped by `toConsignmentOrderBody` (`src/lib/scan-po-target.ts`): customer PO number to `customerCOId`, hub to `hubId` + `hubName`, order date to `companyCODate`; a sofa line's empty `sizeCode` gets the seat height (the SO save does that server-side, the CO save does not). Success reads `companyCOId`. A Consignment Order has no custom specials, so a batch with a "+ Custom" special is refused before anything is created (the CO save would drop the surcharge). The original-PO file copy and the "already an SO" duplicate check are skipped on CO; the done step says the original PO and the customer's S/O No. are not kept. Labels read "Consignment Order".
+
+**Known limits.** The scan queue is shared: a batch uploaded on the Sales page and resumed on the Consignment page creates Consignment Orders. The create button names the document type. There is no duplicate warning on the CO side: the CO save has no `duplicateOf` check, so scanning the same PO twice on the Consignment page creates two COs.
+
+**Guard.** `tests/scan-po-consignment-target.test.mjs`: the field mapping, the custom-specials check, and source pins that the Consignment page passes `target="CO"` and that no create call in the modal posts to `/api/sales-orders` unconditionally. No matching class in `BUG-CLASSES.md`; the other Consignment pages were swept for leftover Sales Order calls and have none.
+
+---
+
+## BUG-2026-10-09-270 — "Sync prod → staging" (merge mode) hung after attendance_records and timed out at 20 minutes `ci-cd` `staging` 🟡
+
+🟡 Fix on `fix/staging-merge-copy-hang` (to `main`). Reported 2026-10-09 from run #151 (2026-10-06, `mode=merge`), cancelled by the 20-minute job limit.
+
+**Symptom:** the merge step printed `235 attendance_records (new rows)` at 02:46 and then nothing until GitHub killed the job at 03:05. Sanitise and the PIN step never ran.
+
+**Root cause:** `scripts/merge-prod-into-staging.mjs` read every table through ONE prod connection (`max: 1`). With postgres.js 3.4.9, after a large `COPY ... TO STDOUT` stream ends (attendance_records is ~200 MB), that connection never answers another query. Measured locally, read-only against prod: copy attendance_records (198.5 MB in 5.6 s), then `SELECT 1` on the same connection: no reply after 60 s. `audit_dlq` (1 row, the next table) copies in 29 ms on its own. Table size is not the cause: audit_events (227 MB) copies in 12 s on a fresh connection.
+
+**Fix:** open a fresh read-only prod connection for each table's COPY and close it afterwards. Measured: attendance_records, audit_dlq, audit_events, balance_sheet_entries copied back to back in 22 s. The edited script ran clean in report mode against prod and staging (280 tables). `--apply` was NOT run locally (it would land unsanitised rows on staging); the next `mode=merge` run on GitHub is the live check.
+
+**Follow-up (same day, run #152):** the hang is gone (213 tables copied, no stall), but a fresh connection per table costs about 3 s extra, so the median table went from 2 s (run #151) to 5 s. 279 tables need about 25 minutes and the job limit was 20, so #152 was cancelled while still copying. `timeout-minutes` in `sync-staging.yml` raised to 45.
+
+---
+
+## BUG-2026-10-08-285 — Plant Load backlog left out Foam Cutting (and Fibre) `dashboard` `production` 🟡
+
+_Logged on `staging` as BUG-2026-10-08-269. Renumbered in the 2026-10-13 staging<-main sync because `main` had already used 269 for the payroll hourly-rate bug._
 
 🟡 Fix on `feat/plant-load-14d` (to `staging`).
 
@@ -275,6 +380,38 @@ Entries themselves stay newest-first.
 **Fix.** Foam Cutting and Fibre added to `DEPARTMENTS` in `dashboard-overview.ts`, and to its mirror `DEPT_FLOOR` in `src/pages/dashboards/ops-floor-lib.ts` (the Operations board joins two feeds through it; without it Foam Cutting would show as two rows).
 
 **Guard.** `tests/dashboard-plant-load-14d.test.mjs` requires the dashboard list, the Planning list and the Operations board list to hold the same codes in the same order. Same shape as C4: several copies of one list, only some of them updated.
+
+---
+
+## BUG-2026-10-08-269 — Payroll row: "4 hrs x RM 9.44 x 1.5 = RM 51.00", the hourly rate shown was not the rate paid `payroll` `employees` 🟡
+
+🟡 Fix on `fix/ot-hourly-rate-display` (to `main`). Reported 2026-10-08 from the expanded payroll row of a per-day worker (RM 85 a day, 9h day, 2h OT on 6 and 7 Oct).
+
+**Cause, read from the code.** The engine prices OT at day rate ÷ `payrollHourDivisor`, which under the default "hours + lunch" mode is 9 + 1 = 10: 85 ÷ 10 = 8.50, 4 × 8.50 × 1.5 = RM 51.00. The `hourlyRate` stored on the payslip and shown on the row was computed separately in `payslips.ts` (projected and generate) as day rate ÷ `workingHoursPerDay`, lunch left out: 85 ÷ 9 = 9.44. So the line multiplied 9.44 but printed the engine's 51.00. The label also read "RM 0.00 / (26 x 9)" for a per-day person, and every monthly worker's row overstated the rate the same way (RM 2,050: shown 8.76, paid at 7.88). The pay rule mode in force on staging and production was not queried; the RM 51.00 on the report fits "hours + lunch" and nothing else.
+
+**Owner ruling, 2026-10-08.** The hourly rate is day rate ÷ working hours, lunch NOT counted (85 ÷ 9 = 9.44, 2,050 ÷ 26 ÷ 9 = 8.76), and it is rounded to the sen before it is multiplied, like a calculator (9.44 × 1.5 × 4 = 56.64, not the unrounded 56.67). The lunch part is a pay-rule setting (Pay Rules › schedule "Worker's hours only (÷9)" from a date), not code; the rounding is code.
+
+**Fix.** `payrollHourRateSen` in `src/lib/pay-rules.ts` = round(day rate ÷ `payrollHourDivisor`). Every place that priced an hour now reads it: the engine (`otBaseHourlyRateSen` and the per-date OT loop, so OT pay and the short-hour dock), the payslip late/short detail (`payslips.ts`, two places) and the payslip `hourlyRate` (projected and generate, now with the month-end rules), the worker's own pay routes (`worker.ts`, two places), and the two labour-cost recon bridges in `employees.tsx`. The row label shows the real sum: "RM 85.00/day / 9" for a per-day person, "RM 2050.00 / (26 x 9)" for a monthly one, salary ÷ (working days × hours), with the divisor the rules give.
+
+**Effect on money.** Rounding the rate moves an OT or late figure by at most half a sen per hour × the multiplier (ANN, May fixture: OT 25,481 → 25,470 sen). It is not effective-dated: any month recomputed from now on (projected payroll, a regenerated draft, the worker pay view) uses the rounded rate. Stored payslips keep their stored money; ones already stored also keep their old `hourlyRateSen`, so their row can still show a rate that does not match their OT. Prod impact (how many open drafts move, by how much) is UNMEASURED.
+
+**Guard.** `tests/pay-rules.test.mjs`: `payrollHourRateSen` rounds (944, 876, 850), and the owner's two sums under "hours only" (per day RM 85, 4h weekday OT = 5,664 sen; monthly RM 2,050 = 5,256 sen). `tests/labor-engine.test.mjs` figures moved to the rounded ANN rate (1132 sen).
+
+**Not in this fix.** The department labour-cost tabs in `employees.tsx` (`otBaseRateSen = salary / monthDays / stdHours`) price OT cost with their own unrounded ÷hours rate and ignore per-day pay; they are an allocation, bridged to payroll on the Labor Cost screen, and were left as they are. The row label assumes the ÷26 day divisor (the default mode); under "calendar days" or "working days" it would still print "/ 26". Class: none fits exactly; nearest is C18 (one figure computed in two places, only one maintained).
+
+**Follow-up, same day: the ÷9 rule itself** (second commit of #759). The owner confirmed salary ÷ 26 ÷ 9, lunch not counted. Git history: ÷9 was the rule from the first engine (22 May) to 8 Jun; `acc0208a` (9 Jun, the owner's salary sheet, "the /10 = the 08:00-18:00 shift span") and `f830d0c8` / `815471d2` (11 Jun, "hours + lunch") moved pay to ÷10, and a rule saved from 2026-07-01 keeps "hours + lunch". A saved rule beats `DEFAULT_PAY_RULES`, so changing the default would have re-priced only May and June. `seedHoursOnlyRule` (`pay-rules-store.ts`, run once per isolate from `ensurePayRuleVersions`) inserts one row, id `prv-owner-20261008-hours-only`, from 2026-10-01, copying the rules in force on that date and switching only `hourRateDivisorMode` to `hoursOnly`. It reads through a batch (C29), skips when hours-only is already in force on 2026-10-01, uses `ON CONFLICT (id) DO NOTHING`, and wipes `worker_payslips_snapshot` / `worker_history_snapshot` when it inserts. Lunch (60 min) stays: it still sets the 9h day, when OT starts and the punch-clock lunch window. Not measured: whether a site already has a rule dated after 2026-10-01 that says "hours + lunch" (it would take over from its date), and plain reads of the rules can serve the pre-seed list for up to 60 s after deploy. Guard: `tests/pay-rule-hours-only-seed.test.mjs` (HR fields copied, one insert across two concurrent runs, September ÷10 vs October RM 26.28).
+
+---
+
+## BUG-2026-10-08-268 — Worker app added to an iPhone home screen opened the office app at /m `pwa` `worker` 🟡
+
+🟡 Fix on `fix/worker-pwa-ios-start-url` (to `main`). Report (owner, 2026-10-08): Add to Home Screen from erp.hookka.com/worker on an iPhone gave the white worker icon, but opening it went to /m.
+
+**Evidence.** Live erp.hookka.com/worker serves the shell with the office manifest (`/manifest-erp.webmanifest`, start page `/m`) and the office icon in the markup; an inline script then swapped the manifest, icon and theme colour to the worker set. Both manifests are right on prod (`/manifest.webmanifest` has start page `/worker`). The saved app had the swapped white icon but the office start page, so Safari took the icon after the swap and the manifest from before it. Not reproduced here (no iPhone); white icon plus /m is the user's observation.
+
+**Fix.** `index.html` no longer ships the office tags. The inline script picks one set by path (`/worker...` gets the worker manifest, icon and colour; everything else the office set) and writes it once with `document.write`, so there is no earlier manifest left to keep.
+
+**Not verified.** Needs an iPhone: delete the old worker icon, open erp.hookka.com/worker in Safari, Add to Home Screen, open it. Android reads icon and start page from the same manifest, so it was not affected.
 
 ---
 
@@ -289,6 +426,38 @@ Entries themselves stay newest-first.
 **Guard.** `tests/on-time-delivery.test.mjs`: last lorry late = late, 07:00 MYT the day after = late, 23:59 MYT on the day = on time, part-delivered left out, the KPI's late % equals the list's late rows. `tests/kpi-drilldown.test.mjs` requires both to read `collectOnTimeOrders`; `tests/kpi-sql-identifiers.test.mjs` now scans `on-time-delivery.ts`.
 
 **Not in this fix.** Other metrics still take the UTC date with `substr(x, 1, 10)`, for example `documentsStuck` (dispatch to invoice) in `kpi-metrics.ts`.
+
+---
+
+## BUG-2026-10-07-266 — A double-clicked Delivered posted a second, empty invoice (RM 0, no lines) and the customer was emailed that one `delivery-orders` 🔵
+
+🔵 Fixed on `fix/empty-auto-invoice-guard` (to `main`). Report (Violet, WhatsApp, with the PDF): Houzs Century received INV-2610-021 with no lines and RM 0.00.
+
+**Measured on prod (read-only, 2026-10-07).** DO-2610-013 has two live invoices: INV-2610-020 created 06:53:07.420 UTC with both lines (1013-(Q) RM 305 + 1005(HF)(W)-(Q) RM 610 = RM 915.00), and INV-2610-021 created 06:53:08.121 with zero `invoice_items`, total 0, status SENT. `audit_events` holds two `LOADED -> DELIVERED` updates on the DO from the same user, 06:53:08.559 and 06:53:09.126, both with `before = LOADED`. Both DO lines carry `invoiced_qty = 1`. INV-2610-021 is the only live invoice on prod with no lines, and DO-2610-013 the only DO with more than one live invoice.
+
+**Cause.** No status claim on the DO update, so both requests ran `buildDoDeliveredSoAndInvoice`. The second read `loadDoBillingState` before the first committed (not fully invoiced, so it went on), then `computeDoInvoiceLines` read the DO lines after the commit: every line had nothing left and the SO fallbacks are off for a DO already drawn on, so it returned no lines and RM 0. The auto path inserted the invoice anyway. The manual `POST /api/invoices` has refused exactly this case (`invItems.length === 0 && computedTotal === 0` -> 409) since partial billing landed; the auto path never got the same check. The delivered email attaches the newest live invoice for the DO, so the customer got the empty one and never got INV-2610-020.
+
+**Fix.** `buildDoDeliveredSoAndInvoice` (`src/api/routes/delivery-orders/_helpers.ts`) stops before allocating an invoice number when there is nothing to bill: no header, lines, A/R bump, ledger legs or draw-down. If the DO is fully billed by then (the race), it still pushes the SO -> INVOICED bumps (guarded on `status = 'DELIVERED'`) and DO -> INVOICED, because the same batch carries the stale SO -> DELIVERED and DO DELIVERED updates that would otherwise undo the winner's status. The double click itself is not blocked; it is now harmless.
+
+**Data.** The only invoice email for DO-2610-013 in `outbox_emails` is INV-2610-021 (06:53:17 UTC, operation@houzscentury.com); INV-2610-020 was never sent. INV-2610-021 voided on prod 2026-10-07 via `PUT /api/invoices/inv-4cb42a2b {status: CANCELLED}` (Super Admin). Measured after: 021 CANCELLED, 020 SENT RM 915.00, DO-2610-013 INVOICED, SO-2609-355 and SO-2609-387 INVOICED. Resend of the DO's invoice email (so 020 goes out) left to Violet.
+
+**Guard.** `tests/do-auto-invoice-empty-guard.test.mjs` replays the losing request against a book whose reads change underneath it (first billing read pre-commit, later reads see INV-2610-020): no invoice statements, and SOs and DO finish INVOICED. Fails on the old code (it goes on to `nextInvoiceNo`). `npm test` 5264 pass / 0 fail, strict typecheck clean.
+
+**On `staging` (2026-10-13 sync).** Staging already had its own gate from T-006 (`if (lines && (lines.invItems.length > 0 || lines.computedTotal > 0))`, no invoice for a DO whose lines all came back on a Delivery Return). It ran first, so this guard was never reached and the losing request left the SOs at DELIVERED. The guard now runs just before that gate, so both hold; the guard test and `tests/t006-r7-delivery-return.test.mjs` pass.
+
+---
+
+## BUG-2026-10-07-265 — Production dept pages downloaded the whole sheet again on every tab switch `production-orders` `ui-frontend` 🟡
+
+🟡 Fix on `perf/production-dept-tab-cache-main` (to `main`; the same change is #734 on `staging`). Reported by the owner, 2026-10-07.
+
+**Measured on staging.** Each dept sheet (`/api/production-orders?fields=minimal&dept=X&excludeCompleted=true`) is 1,168-1,333 orders, 5.7-7.0 MB decoded, 0.4-2.6 s. With the page visible, 10 s on Fab Sew, then back to Fab Cut with replies delayed 5 s: Fab Cut's saved copy was gone and the page showed "(loading…)" for 5.4 s. A cold dept page also sent a today-dated request that was aborted ~30 ms later.
+
+**Cause.** (1) The 8 s poll and the come-back-to-the-window refresh call `fetchOrders`, which called `invalidateCachePrefix("/api/production-orders")`: every dept's saved copy (and other browser tabs', via the broadcast) was wiped every 8 s. (2) A 6-7 MB body can be over the localStorage quota, so `writeCache` could fail silently. (3) The F1.1 "today" seed called `setUrlBatch` from a `useLayoutEffect` declared before `useUrlBatch()`; react-router's `navigate()` ignores calls until its own layout effect has run, so the seed was a silent no-op and only cost the extra request.
+
+**Fix.** `fetchOrders` refetches the sheet and the overdue chips without invalidating; the stock-PO create path invalidates first. `cached-fetch.ts` keeps a body that localStorage refuses in memory (up to 9 entries, ~6 MB heap each, measured), cleared by every invalidation path. The dead seed is removed; dept pages keep loading every open order (owner's choice). Same test, new code: 0.55 s, no "(loading…)".
+
+**Guard.** `tests/production-dept-tab-cache.test.mjs`.
 
 ---
 

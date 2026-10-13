@@ -1043,7 +1043,7 @@ app.get("/", async (c) => {
       { code: "FAB_CUT", name: "Fabric Cutting" },
       { code: "FAB_SEW", name: "Fabric Sewing" },
       { code: "WOOD_CUT", name: "Wood Cutting" },
-      // Was missing until 2026-10-08 (BUG-2026-10-08-269): its backlog fell
+      // Was missing until 2026-10-08 (BUG-2026-10-08-285): its backlog fell
       // out of the headline total and its "stalled" flag never showed.
       { code: "FOAM_CUTTING", name: "Foam Cutting" },
       { code: "FOAM", name: "Foam Bonding" },

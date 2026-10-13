@@ -4,7 +4,7 @@
 //   1. Daily Capacity averages the last 14 working days (was 7) for All-time
 //      and the current month, on the dashboard AND the Planning page. A past
 //      month keeps its own month average.
-//   2. BUG-2026-10-08-269: the dashboard's department list left out Foam
+//   2. BUG-2026-10-08-285: the dashboard's department list left out Foam
 //      Cutting (and Fibre), so their backlog fell out of the headline total.
 //   3. A finished month is frozen: stored on first view, served as-is after.
 //
