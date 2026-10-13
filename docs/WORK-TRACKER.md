@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: branch `feat/it-support-to-main` (IT Support staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder-main` (to `main`, BUG-2026-10-13-284) added below (its entry is the newest).
 > **Last verified: 2026-10-12**: running-month labour to date (#818) prod-verified.
 > **Last verified: 2026-10-12**: branch `feat/pnl-running-month-labour-to-date` (to `main`) added below (its entry is the newest).
@@ -131,6 +132,14 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+## 2026-10-13 — 🔵 IT Support, staging to main (branch `feat/it-support-to-main` → `main`)
+
+1. ✅ Cherry-picked the 9 IT Support code commits from staging (#812, #815, #816, #817, #821, #823, #825, #827): the module and hub proxy, report form, list tabs and empty state, table styling, phone cards and /m screen, bell events, header filters, sort cycle. Docs written fresh for main instead of picked.
+2. ✅ /m: main's shell has no side menu, so IT Support sits on the More screen (Service & Support) and its header has a back button to /m/more instead of the menu button.
+3. ✅ `npm test` 5405 pass, 0 fail. tsc and lint skipped.
+4. ⬜ Owner: set `IT_HUB_URL`, `IT_HUB_API_KEY` and `IT_HUB_WEBHOOK_SECRET` on Production. Without them the page says IT Support is not connected and the bell endpoint answers 503.
+5. ⬜ After deploy: open /it-support and /m/it-support on the live site, read and write path.
 
 ## 2026-10-13 — 🔵 Claude calls from Singapore so scans work on any network (branch `fix/claude-calls-via-sg-forwarder-main` → `main`, BUG-2026-10-13-284)
 
