@@ -105,6 +105,8 @@ const PRIORITY_LABEL: Record<string, string> = { urgent: "Urgent", high: "High",
 // The form offers no "urgent"; it stays here so an older ticket still reads.
 const FORM_PRIORITIES = ["high", "medium", "low"];
 const TYPE_LABEL: Record<string, string> = { bug: "Bug", development: "Development" };
+// The form asks in the reporter's words; the values are the same as TYPE_LABEL's.
+const FORM_TYPES = [["bug", "Something is not working"], ["development", "Ask for a change"]] as const;
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -226,7 +228,7 @@ function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) 
     <div className="space-y-3">
       <label
         className={cn(
-          "flex cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-6 text-center text-sm transition-colors focus-within:ring-2 focus-within:ring-[#6B5C32]",
+          "flex cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-3 text-center text-sm transition-colors focus-within:ring-2 focus-within:ring-[#6B5C32]",
           dragging ? "border-[#6B5C32] bg-[#F5F2ED]" : "border-[#E2DDD8] hover:border-[#6B5C32] hover:bg-[#FAF9F7]",
         )}
         onDragOver={(e) => {
@@ -253,8 +255,8 @@ function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) 
           }}
         />
         <Upload className="h-5 w-5 text-[#6B5C32]" />
-        <span className="font-medium text-[#1F1D1B]">Drop files here, click to browse, or paste a screenshot</span>
-        <span className="text-xs text-[#8A7F73]">Up to {MAX_FILES} files, 10 MB each: images, PDF, MP4 or MOV.</span>
+        <span className="font-medium text-[#1F1D1B]">Add a screenshot or file</span>
+        <span className="text-xs text-[#8A7F73]">Click, drop or paste. Pictures, MP4 or MOV video, or PDF. Up to {MAX_FILES} files, 10 MB each.</span>
       </label>
 
       {note && <p className="text-sm text-amber-700" role="status">{note}</p>}
@@ -350,20 +352,21 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
 
   return (
     <Card>
-      <CardContent className="space-y-4 p-6 sm:p-8">
-        <FormField label="What is the issue?" required>
-          <Input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Sales order page shows blank after saving" />
+      <CardContent className="space-y-4 p-4 sm:p-6">
+        <FormField label="What is the problem?" required>
+          <Input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="The sales order page goes blank after saving" />
         </FormField>
-        <FormField label="Details" hint="What you did, what you expected, and what happened instead.">
-          <textarea className={cn(FIELD, "min-h-32")} value={description} maxLength={10000} onChange={(e) => setDescription(e.target.value)} />
+        <FormField label="Details">
+          <textarea className={cn(FIELD, "min-h-32 resize-y")} value={description} maxLength={10000} onChange={(e) => setDescription(e.target.value)}
+            placeholder="What you did, what you expected, and what happened instead." />
         </FormField>
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Type">
+          <FormField label="Kind of request">
             <select className={cn(FIELD, "h-10")} value={type} onChange={(e) => setType(e.target.value)}>
-              {Object.entries(TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {FORM_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </FormField>
-          <FormField label="How urgent?">
+          <FormField label="How urgent">
             <select className={cn(FIELD, "h-10")} value={priority} onChange={(e) => setPriority(e.target.value)}>
               {FORM_PRIORITIES.map((v) => <option key={v} value={v}>{PRIORITY_LABEL[v]}</option>)}
             </select>
@@ -373,9 +376,9 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
           <FilePicker files={files} onChange={setFiles} />
         </FormField>
         {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
-        <div className="flex items-center gap-3 pt-2">
-          <LoadingButton variant="primary" className={FORM_BUTTON} loading={saving} loadingText="Sending" onClick={submit}>Send</LoadingButton>
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
           <Button variant="outline" className={FORM_BUTTON} onClick={onCancel} disabled={saving}>Cancel</Button>
+          <LoadingButton variant="primary" className={FORM_BUTTON} loading={saving} loadingText="Sending" onClick={submit}>Send to IT</LoadingButton>
         </div>
       </CardContent>
     </Card>
@@ -759,7 +762,17 @@ export default function ItSupport() {
   if (isNew) {
     return (
       <div className="mx-auto w-full max-w-3xl space-y-4">
-        <PageHeader title="Report an issue" subtitle="Goes straight to the IT team. You will see their reply here." breadcrumbs={["IT Support", "New"]} />
+        <PageHeader
+          title="Report a problem"
+          subtitle="Goes straight to IT. Their reply appears on this page."
+          breadcrumbs={["IT Support", "New"]}
+          actions={
+            <Button variant="outline" onClick={() => open({})}>
+              <ArrowLeft className="h-4 w-4" />
+              All my tickets
+            </Button>
+          }
+        />
         <NewTicket
           fromUrl={fromUrl}
           onCancel={() => open({})}
