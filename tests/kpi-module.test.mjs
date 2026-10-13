@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
-  KPI_CATALOG, GATE_FAIL_CAP, attainment, kpiByKey, kpisForRole, withRules, urgentPoints, penaltyParts,
+  KPI_CATALOG, GATE_FAIL_CAP, attainment, kpiByKey, kpisForRole, withRules, urgentPoints, penaltyParts, deliveryBreakdown,
 } from "../src/api/lib/kpi-catalog.ts";
 
 const ROUTE = readFileSync(resolve(process.cwd(), "src/api/routes/kpi.ts"), "utf8");
@@ -118,6 +118,19 @@ test("late deliveries cost points, early ones win some back, never past 100", ()
   assert.equal(d.penaltyPerPct, 10, "the catalogue entry itself is not mutated");
   assert.equal(withRules(kpiByKey("setup_completeness"), { penaltyPerPct: 5 }).penaltyPerPct, undefined,
     "a KPI with no editable rules ignores them");
+});
+
+test("the delivery result lists each part with its orders, % and points", () => {
+  const d = kpiByKey("customer_delivery_date");
+  const n = { late: 86, early: 193, judged: 292, urgentOnTime: 2, urgentJudged: 21 };
+  assert.deepEqual(deliveryBreakdown(d, 29.5, 66.1, 9.5, n), [
+    "Late: 86 of 292 orders = 29.5% late → 0 points (100 − 29.5 × 10 = -195, never below 0)",
+    "Early: 193 of 292 orders = 66.1% early → +5 points (6 full 10% step(s) × +1 = +6, capped at +5)",
+    "Urgent: 2 of 21 urgent orders on time or early = 9.5% → +5 points (0% to under 10% → 5)",
+  ]);
+  assert.equal(deliveryBreakdown(d, 3, 25, 100, n)[0].endsWith("→ 70 points (100 − 3 × 10 = 70)"), true);
+  assert.equal(deliveryBreakdown(d, 3, 25, 100, n)[2].endsWith("→ +60 points (100% → 60)"), true);
+  assert.equal(deliveryBreakdown(d, 3, 25, null, n)[2], "Urgent: no urgent orders this month → +0 points");
 });
 
 test("urgent orders earn their own points on the on-time-or-early share", () => {

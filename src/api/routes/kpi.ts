@@ -30,6 +30,7 @@ import {
   bandFor,
   attainment,
   penaltyParts,
+  deliveryBreakdown,
   editableRules,
   withRules,
   kpiByKey,
@@ -140,6 +141,8 @@ interface CardLine {
   daily?: Array<{ date: string; pct: number }>;
   /** PENALTY_PER_PCT only: the late, early and urgent points the score adds up. */
   scoreParts?: { late: number; early: number; urgent: number };
+  /** Delivery KPI only: one line per part, its orders, % and points. */
+  breakdown?: string[];
 }
 
 /**
@@ -274,6 +277,9 @@ async function buildCard(c: Context<Env>, userId: string, role: string, period: 
       evidence: m.detail, sampleSize: m.sampleSize, daily: m.daily,
       scoreParts: def.curve === "PENALTY_PER_PCT" && m.actual !== null
         ? penaltyParts(def, m.actual, m.earlyPct, m.urgentOnTimePct)
+        : undefined,
+      breakdown: m.counts && m.actual !== null
+        ? deliveryBreakdown(def, m.actual, m.earlyPct, m.urgentOnTimePct, m.counts)
         : undefined,
     });
   }
