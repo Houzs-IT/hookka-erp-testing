@@ -129,7 +129,7 @@ test("the dashboard's salary stacks for the running month are labour to date too
   assert.match(API, /toDateRun = await loadLabourToDate\(db, orgIdDash, runYmDash\)/);
   assert.match(API, /salByMonth\.set\(\n\s*runYmDash,/);
   assert.match(API, /for \(const \[wid, sen\] of toDateRun\.byWorker\) costByYmWorker\.set\(`\$\{runYmDash\}::\$\{wid\}`, sen\);/);
-  assert.match(API, /const DASH_PAYLOAD_V = "v16";/);
+  assert.match(API, /const DASH_PAYLOAD_V = "v(1[6-9]|[2-9]\d)";/); // v16 or later
   assert.match(API, /"departments",\n\s*"pay_rule_versions",/);
 });
 

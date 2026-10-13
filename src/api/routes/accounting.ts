@@ -46,6 +46,8 @@ import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../li
 import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
 import { projectedLabourByDept } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
+import { loadPreparedProduction } from "../lib/production-stock";
+import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
@@ -6798,6 +6800,10 @@ interface DocDateCtx {
   // debit lines). The dashboard walks many one-month windows on one ctx; a
   // dry payroll projection must run at most once per month per request.
   labourMemo?: Map<string, { account: string; sen: number }[]>;
+  // Per-request memo for the production-order FG / WIP valuation (2026-10-13):
+  // the loaded production data once, each month's figures once (key = ym).
+  prodStock?: Promise<PreparedProduction>;
+  liveStockMemo?: Map<string, Promise<{ fgSen: number; wipSen: number; ratio: number }>>;
 }
 
 // Report-layer labour for one month (owner 2026-08-31 「任何时候我看P&L 时你都
@@ -7950,6 +7956,106 @@ async function loadHistoricalPnl(
   return map;
 }
 
+// A "purchase account" = COST-type account that is not one of the dedicated
+// account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
+// overhead 780) — i.e. the 701~705 purchase band.
+function isPurchaseAccount(code: string, type: CoaRow["type"]): boolean {
+  return (
+    type === "COST" &&
+    defaultPnlBucket(code, type) === null &&
+    code !== "700-1015" &&
+    code !== "706-0000"
+  );
+}
+
+const lastDayIso = (ym: string): string => {
+  const [y, m] = ym.split("-").map(Number);
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+};
+
+// FG / WIP of month `ym` valued from the production orders (owner 2026-10-13:
+// 1.A — a month whose Stock Take has no FG / WIP figure; src/lib/production-stock.ts).
+// As of today (Malaysia) for the month still running, else as of its last day.
+// Cost ratio = last month's materials ÷ last month's completed goods at selling
+// price + this month's direct labour ÷ this month's completed goods (owner:
+// 「人工用这个月的」), no factory overhead (「先不加工厂费用」).
+async function liveStockFor(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string,
+  matData: MaterialCostData,
+  dc: DocDateCtx,
+  override: Record<string, string>,
+): Promise<{ fgSen: number; wipSen: number; ratio: number }> {
+  dc.liveStockMemo ??= new Map();
+  const hit = dc.liveStockMemo.get(ym);
+  if (hit) return hit;
+  const run = (async () => {
+    dc.prodStock ??= loadPreparedProduction(db, dc.openingDate);
+    const prepared = await dc.prodStock;
+    const asOf = ym === runningMonthYm() ? new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) : lastDayIso(ym);
+    const prev = prevMonthYm(ym);
+    const [glPrev, glThis] = await Promise.all([
+      glWindowSigned(db, orgId, prev, prev, dc),
+      glWindowSigned(db, orgId, ym, ym, dc),
+    ]);
+    const labourOf = (gl: { net: GlWindow; coa: Map<string, { name: string; type: CoaRow["type"] }> }) => {
+      let sen = 0;
+      for (const [code, v] of gl.net) {
+        const meta = gl.coa.get(code);
+        if (meta && pnlBucketFor(code, meta.type, override) === "DIRECT_LABOUR") sen += v;
+      }
+      return sen;
+    };
+    // Last month's materials used, as the statement's RAW MATERIALS line:
+    // opening − closing stock + the ledger purchases.
+    let prevMaterials = materialWindow(matData, prev, prev).rmGroups.reduce((s2, g) => s2 + g.openingSen - g.closingSen, 0);
+    for (const [code, v] of glPrev.net) {
+      const meta = glPrev.coa.get(code);
+      if (meta && isPurchaseAccount(code, meta.type)) prevMaterials += v;
+    }
+    const ratio = costRatio({
+      prevMaterialsSen: prevMaterials,
+      prevCompletedSen: completedPriceSen(prepared, `${prev}-01`, lastDayIso(prev)),
+      prevLabourSen: labourOf(glPrev),
+      labourSen: labourOf(glThis),
+      completedSen: completedPriceSen(prepared, `${ym}-01`, asOf),
+    });
+    const at = productionStockAt(prepared, asOf);
+    return { fgSen: Math.round(at.fgPriceSen * ratio), wipSen: Math.round(at.wipPriceSen * ratio), ratio };
+  })();
+  dc.liveStockMemo.set(ym, run);
+  return run;
+}
+
+// The month-end FG / WIP a window should use at `ym` when the Stock Take
+// carries none (owner 2026-10-13, 1.A): typed months keep their own figure, the
+// opening seed month keeps the seed, months before the books and months ahead
+// aren't valued. FG only under the "stock take only" mode — "auto" keeps its
+// batch figures. null = leave the material window's figure.
+async function blankMonthStock(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string | null,
+  matData: MaterialCostData,
+  dc: DocDateCtx,
+  override: Record<string, string>,
+): Promise<{ wip: number | null; fg: number | null } | null> {
+  if (!ym) return null;
+  const openingYm = dc.openingDate ? dc.openingDate.slice(0, 7) : null;
+  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return null;
+  if (matData.fgSeedYm && ym <= matData.fgSeedYm) return null;
+  const wipBlank = !matData.stockTakeByGroupYm.get("WIP")?.has(ym);
+  const fgBlank = matData.fgValuationMode === "stock_take_only" && !matData.stockTakeByGroupYm.get("FG")?.has(ym);
+  if (!wipBlank && !fgBlank) return null;
+  try {
+    const v = await liveStockFor(db, orgId, ym, matData, dc, override);
+    return { wip: wipBlank ? v.wipSen : null, fg: fgBlank ? v.fgSen : null };
+  } catch {
+    return null; // unreadable → the material window's figures, as before
+  }
+}
+
 async function computePnlWindow(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -7971,6 +8077,17 @@ async function computePnlWindow(
   ]);
   // Material window derived synchronously from the single-replay checkpoints.
   const mat = materialWindow(matData, startYm, endYm);
+  // A month-end the Stock Take leaves blank: FG / WIP from the production
+  // orders (owner 2026-10-13, 1.A) — the window's opening is the month before
+  // it starts, its close is its last month.
+  const [blankOpen, blankClose] = await Promise.all([
+    blankMonthStock(db, orgId, startYm ? prevMonthYm(startYm) : null, matData, dc, override),
+    blankMonthStock(db, orgId, endYm ?? matData.lastYm, matData, dc, override),
+  ]);
+  const matWipOpen = blankOpen?.wip ?? mat.wipOpenSen;
+  const matWipClose = blankClose?.wip ?? mat.wipCloseSen;
+  const matFgOpen = blankOpen?.fg ?? mat.fgOpenSen;
+  const matFgClose = blankClose?.fg ?? mat.fgCloseSen;
   const isAll = line === "all";
   const R = isAll ? 1 : line === "sofa" ? ratio.salesRatio.sofa : ratio.salesRatio.bedframe;
   // Helpers to read GL sums for an account band/predicate.
@@ -8031,14 +8148,7 @@ async function computePnlWindow(
       pnlPDefault
     );
   };
-  // A "purchase account" = COST-type account that is not one of the dedicated
-  // account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
-  // overhead 780) — i.e. the 701~705 purchase band.
-  const isPurchaseAcct = (code: string, type: CoaRow["type"]): boolean =>
-    type === "COST" &&
-    defaultPnlBucket(code, type) === null &&
-    code !== "700-1015" &&
-    code !== "706-0000";
+  const isPurchaseAcct = isPurchaseAccount;
   const acctRows = new Map<
     string,
     { openingSen: number; purchasesSen: number; closingSen: number; grpLines: Set<string> }
@@ -8118,10 +8228,10 @@ async function computePnlWindow(
   const overheadSen = overheadLines.reduce((s, l) => s + l.amountSen, 0);
 
   // --- WIP / FG movements (from the FIFO engine, as-of-date reconstructed) ---
-  const wipOpen = isAll ? mat.wipOpenSen : Math.round(mat.wipOpenSen * R);
-  const wipClose = isAll ? mat.wipCloseSen : Math.round(mat.wipCloseSen * R);
-  const fgOpen = isAll ? mat.fgOpenSen : Math.round(mat.fgOpenSen * R);
-  const fgClose = isAll ? mat.fgCloseSen : Math.round(mat.fgCloseSen * R);
+  const wipOpen = isAll ? matWipOpen : Math.round(matWipOpen * R);
+  const wipClose = isAll ? matWipClose : Math.round(matWipClose * R);
+  const fgOpen = isAll ? matFgOpen : Math.round(matFgOpen * R);
+  const fgClose = isAll ? matFgClose : Math.round(matFgClose * R);
 
   const manufacturingSen = rmConsumedSen + carriageSen + sstSen + labourSen + overheadSen + (wipOpen - wipClose);
   const cogsSen = fgOpen + manufacturingSen - fgClose;
@@ -13508,7 +13618,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v16"; // v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v17"; // v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -13552,6 +13662,12 @@ app.get("/dashboard", async (c) => {
         // effective-dated pay rules.
         "departments",
         "pay_rule_versions",
+        // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
+        // delivery order or consignment note.
+        "delivery_order_items",
+        "consignment_notes",
+        "consignment_items",
+        "stock_take",
       ],
     },
     dashOrgId,

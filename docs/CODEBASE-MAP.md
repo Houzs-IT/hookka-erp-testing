@@ -1,5 +1,6 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
+> **Last verified: 2026-10-13 on branch `feat/pnl-live-fg-wip` (to `main`)**: the Financial Dashboard notes gained the blank-month FG / WIP line, read from `src/lib/production-stock.ts`, `src/api/lib/production-stock.ts` and `src/api/routes/accounting.ts` (`liveStockFor`, `blankMonthStock`, `computePnlWindow`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `fix/claude-calls-via-sg-forwarder-main` (to `main`)**: the Claude-calls note in the Scanning/OCR/AI fragment (`claudeFetch` + `claude-forwarder-worker/`), read from `src/api/lib/claude-fetch.ts` and the five call sites.
 
 > **Last verified: 2026-10-12 on branch `feat/pnl-running-month-labour-to-date` (to `main`)**: the Financial Dashboard Production Revenue note gained the running-month labour line, read from `src/lib/labour-to-date.ts`, `src/api/lib/labour-to-date.ts`, `src/api/lib/labour-projection.ts` and `src/api/routes/accounting.ts` (`labourInjectionLines`, `GET /dashboard`). Nothing else re-checked.
@@ -1840,7 +1841,7 @@ you are changing auth behaviour you want L227–417 and nothing else.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13491`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
+| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:13601`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
 | `src/pages/forecast.tsx` — `/forecast` (`src/dashboard-routes.tsx:471`; sidebar FORECASTING → "Forecast P&L"); planning grid, zero contact with the books (575) | `src/api/routes/accounting.ts` — `GET /forecast` (`:10743`), `PUT /forecast` (`:10758`), `GET /coa` (`:829`), `GET /pnl/section-map` (`:9827`), `GET /labor/departments` (`:9561`) | `kv_config` row `key='forecast_pnl'` (`:10789`) — **no forecast table exists**; plus `chart_of_accounts` for the line structure | **NONE** |
 
 > **Name collision — read this before touching either.** `/forecast` (`src/pages/forecast.tsx`,
@@ -1878,6 +1879,15 @@ Cash Flow with Summary/Detail (`:1133`) → Balance Sheet (`:1200`) → Financia
   included), else `projectedPayslipsForMonth` (labour-projection's per-worker dry run). Finished months keep their
   payslips; recorded months keep the ledger. Payload `v16`; snapshot also watches `departments`, `pay_rule_versions`.
   Guard `tests/labour-to-date.test.mjs`.
+- **Blank Stock Take month's FG / WIP from the production orders (2026-10-13, owner 1.A)**: `computePnlWindow` asks
+  `blankMonthStock` for its opening (month before `startYm`) and close (`endYm`): a month after the opening seed, up to the
+  running month (Malaysia time), whose Stock Take has no WIP (or no FG under `fg_valuation_mode = stock_take_only`) is
+  valued by `liveStockFor` — `src/lib/production-stock.ts`: FG = orders closed and not out (delivery order / consignment
+  note) by D, WIP = open orders with work done at standard-minute completion, out orders and SERVICE CHARGE excluded, at
+  selling price × (last month's materials ÷ last month's completed goods + this month's direct labour ÷ this month's
+  completed goods); no overhead. D = today for the running month, else month end. Memoised on the doc-date ctx
+  (`prodStock`, `liveStockMemo`). Not wired into `stockSummaryRange` (Stock Summary page). Guard
+  `tests/production-stock.test.mjs`.
 - Money is integer sen end to end. `rm` / `rm2` (L83–86) divide by 100 **for display only**;
   every derived figure uses `Math.round(... * 10000) / 100` on sen ints.
 - **The forecast-percentage rule (BUG-2026-08-06-002) is load-bearing and is stated three
