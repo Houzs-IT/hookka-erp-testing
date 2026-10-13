@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `main`) added item 6 to the urgent orders KPI entry below.
 > **Last verified: 2026-10-13**: Balance Sheet lines in account-code order (#843) prod-verified.
@@ -144,21 +145,26 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
-## 2026-10-13 — 🔵 P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(branch `feat/pnl-running-month-expense-estimates` → `main`)
+## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
 
-1. 🔵 For the running month (Malaysia time) only: an operating expense, salaries & contribution or factory overhead
+1. ✅ For the running month (Malaysia time) only: an operating expense, salaries & contribution or factory overhead
    account with an amount in each of the last three months and nothing recorded so far this month shows last month's
    amount. As soon as anything is recorded on it this month the real figure replaces the estimate; months that have
    ended are never estimated. Report layer only — nothing is posted (trial balance / balance sheet / cash flow
    unchanged). Read from the same one-month ledger windows the statement shows for those months, before any estimate.
-2. 🔵 One place for every P&L consumer: `computePnlWindow` adds the estimates to a copy of the ledger window when the
+2. ✅ One place for every P&L consumer: `computePnlWindow` adds the estimates to a copy of the ledger window when the
    window reaches the running month, and tags each line (`estSen`, `estFrom`). The statement rows, the Monthly P&L
    matrix (`estValues` per column), the P&L drill (an `estimate` row so it still adds up) and the dashboard slices
    (`estimated`; payload version moves up) carry them.
-3. 🔵 The pages colour an estimate: amber text on a pale amber row (Monthly P&L: the cell), italic, an "est." tag,
+3. ✅ The pages colour an estimate: amber text on a pale amber row (Monthly P&L: the cell), italic, an "est." tag,
    a hover naming the month it came from, and a note under the table; the dashboard's Income Statement card adds an
    "incl. estimates" row.
-4. ⚪ Check on prod after deploy.
+4. ✅ Prod (2026-10-13, read-only): the running month gained exactly the estimate lines predicted from the three
+   months before it (operating expenses, salaries & contribution and factory overhead), its net profit moved by exactly
+   their total, and every closed month reads as before to the sen (statement, Monthly P&L, dashboard). The Monthly P&L
+   marks only the running month and Accumulated; the drill on an estimated line shows the estimate row and ties; the
+   dashboard carries the same total; the statement shows the amber rows with the note. The running month's statement
+   loads about half a second slower.
 
 ## 2026-10-13 — ✅ Balance Sheet lines in account-code order (owner「排序按科目编号，做」)(#843 8d546ce0, prod-verified)
 
