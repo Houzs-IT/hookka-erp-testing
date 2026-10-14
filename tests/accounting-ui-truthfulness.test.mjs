@@ -181,11 +181,13 @@ test("the Overview KPI cards read the ledger P&L and publish provenance", () => 
   // "no account posted" is not "RM 0.00" — the dash must exist and be used.
   has(src, /const NO_FIGURE = "—";/, "the NO_FIGURE dash is gone");
   has(src,
-    /const sourced = \(n: number, v: number \| undefined\) =>\s*\n?\s*n > 0 && v !== undefined \? formatCurrency\(roundSen\(v\)\) : NO_FIGURE;/,
+    // Since the finance UI refresh (2026-10-14) the figure is written the finance way
+    // (fmtAmount, no RM) and a real zero reads 0.00 — never the no-account dash.
+    /const sourced = \(n: number, v: number \| undefined\) =>\s*\n?\s*n > 0 && v !== undefined \? fmtAmount\(roundSen\(v\), \{ zero: "0\.00" \}\) : NO_FIGURE;/,
     "`sourced` must publish a figure only when an account behind it carries a posting",
   );
   has(src,
-    /const derived = \(deps: number\[\], v: number \| undefined\) =>\s*\n?\s*deps\.every\(\(n\) => n > 0\) && v !== undefined \? formatCurrency\(roundSen\(v\)\) : NO_FIGURE;/,
+    /const derived = \(deps: number\[\], v: number \| undefined\) =>\s*\n?\s*deps\.every\(\(n\) => n > 0\) && v !== undefined \? fmtAmount\(roundSen\(v\), \{ zero: "0\.00" \}\) : NO_FIGURE;/,
     "`derived` must inherit the dash from its weakest input",
   );
   // Every one of the three cards must go through one of those two guards.

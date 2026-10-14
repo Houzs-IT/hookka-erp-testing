@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
-import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
+import { formatCurrency, formatDateDMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
@@ -211,7 +211,7 @@ export default function DebitNotesPage() {
       align: "right",
       render: (_value, row) => (
         <span className="font-medium text-[#3E6570]">
-          +{formatRM(row.totalAmount)}
+          <Amount sen={row.totalAmount} />
         </span>
       ),
     },

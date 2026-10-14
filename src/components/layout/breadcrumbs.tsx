@@ -24,7 +24,7 @@ import { ChevronRight, Home } from "lucide-react";
 // Label table lives in a plain shared module (this component file can only
 // export components under react-refresh); the workspace tab strip reuses it too.
 import { titleForPath, normalise } from "@/lib/route-titles";
-import { financePage, FINANCE_GROUP_HOME } from "@/lib/finance-nav";
+import { financePage, FINANCE_GROUP_HOME, FINANCE_STANDALONE } from "@/lib/finance-nav";
 
 // Build progressive sub-paths from a full URL.
 //   /sales/123/edit → ['/sales', '/sales/123', '/sales/123/edit']
@@ -51,11 +51,19 @@ export function Breadcrumbs() {
   // Every finance page lives at /accounting?tab=… — its trail is Finance ›
   // menu group › page, named as the menu names it (owner 2026-10-14).
   const finance = path === "/accounting" ? financePage(new URLSearchParams(search).get("tab")) : null;
+  // Credit / Debit Notes and e-Invoice live outside /accounting but read the same way.
+  const standalone = finance ? undefined : FINANCE_STANDALONE[path];
   const trail = finance
     ? ["/accounting?tab=overview", `/accounting?tab=${FINANCE_GROUP_HOME[finance.group]}`, `/accounting?tab=${finance.key}`]
-    : progressivePaths(path);
+    : standalone
+      ? ["/accounting?tab=overview", ...(standalone.group ? [`/accounting?tab=${FINANCE_GROUP_HOME[standalone.group]}`] : []), path]
+      : progressivePaths(path);
   const labelOf = (p: string, idx: number) =>
-    finance ? [titleForPath("/accounting"), finance.group, finance.title][idx] : titleForPath(p);
+    finance
+      ? [titleForPath("/accounting"), finance.group, finance.title][idx]
+      : standalone
+        ? [titleForPath("/accounting"), ...(standalone.group ? [standalone.group] : []), standalone.title][idx]
+        : titleForPath(p);
 
   return (
     <nav

@@ -149,8 +149,10 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 ## 2026-10-14 — 🔵 Finance UI refresh, whole module in one go (owner「优化 finance 模块的整体显示」→ A+B+C+D+E →「不能全部一次性做完，然后我再测试？」→「做」)(branch `feat/finance-ui-refresh` → `main`, NOT merged until the owner approves on the canary)
 
-1. 🔵 Plan and findings: `docs/superpowers/specs/2026-10-14-finance-ui-refresh-design.md` (page frame + navigation, one table / control look, one money format, report key figures, daily-page summaries, phone layout). Display only — no figure, endpoint or posting changes.
-2. ⚪ Owner tests on the PR canary (real data: look, do not save / post / approve there); fixes on the same PR; merge after approval; prod check after deploy.
+1. ✅ Plan and findings: `docs/superpowers/specs/2026-10-14-finance-ui-refresh-design.md` (page frame + navigation, one table / control look, one money format, report key figures, daily-page summaries, phone layout). Display only — no figure or posting changes (the one API change, `/pl` `sheetStock.accounts`, is display metadata).
+2. ✅ Built on PR #849 in three steps (frame + names + money format; reports; daily pages + phone), full suite green on every commit.
+3. ✅ Canary read-only review (owner logged in): P&L / Monthly / Cost structure / Balance Sheet / Cash Flow / Trial Balance / Payment Vouchers / Receipts / AP Invoices / Cash Book / Credit Notes / e-Invoice render; key figures equal their statement rows; the sheet balances; phone checked in a 390 px frame. Fixed from it: the P&L year column's % of sales divided by the period's sales (now the year's); percentages bracket negatives; a note when the running month is compared with a whole month; the phone name column capped so pinned names no longer cover the figures; Overview figures without RM (a real zero reads 0.00); Finance breadcrumbs on Credit / Debit Notes and e-Invoice.
+4. ⚪ Owner tests on the PR canary (real data: look, do not save / post / approve there); fixes on the same PR; merge after approval; prod check after deploy.
 
 ## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
 

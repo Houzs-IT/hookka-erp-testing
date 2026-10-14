@@ -98,3 +98,14 @@ export function levelNames(max: number): string[] {
   out.push("All lines");
   return out;
 }
+
+/**
+ * Finance pages that live outside /accounting, named the way the menu shows
+ * them (owner 2026-10-14): the breadcrumb reads Finance › Debtors › Credit
+ * Notes; e-Invoice has a menu line of its own, outside the groups.
+ */
+export const FINANCE_STANDALONE: Record<string, { group?: FinanceGroup; title: string }> = {
+  "/invoices/credit-notes": { group: "Debtors", title: "Credit Notes" },
+  "/invoices/debit-notes": { group: "Debtors", title: "Debit Notes" },
+  "/invoices/e-invoice": { title: "e-Invoice" },
+};

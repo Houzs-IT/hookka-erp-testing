@@ -28,3 +28,10 @@ export function pctChange(cur: number, prev: number): number | null {
   if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return null;
   return ((cur - prev) / Math.abs(prev)) * 100;
 }
+
+/** A percentage the finance way: 12.3%, a negative in brackets (12.3%). */
+export function fmtPct(pct: number, digits = 1): string {
+  if (!Number.isFinite(pct)) return "";
+  const text = `${Math.abs(pct).toFixed(digits)}%`;
+  return pct < 0 && Number(Math.abs(pct).toFixed(digits)) !== 0 ? `(${text})` : text;
+}

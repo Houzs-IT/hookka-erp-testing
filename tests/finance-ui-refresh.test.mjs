@@ -260,3 +260,37 @@ test("phone: key figures two to a row; Cash Flow keeps its names in view", () =>
   assert.match(cf, /sticky left-0 z-\[1\] bg-\[#F7F4EF\]">PERIOD<\/td>/);
   assert.match(cf, /<td className=\{`py-1 whitespace-nowrap sticky left-0 z-\[1\] \$\{pinBg\}`\} style=\{pad\}>/);
 });
+
+// ---- Canary review fixes (2026-10-14) ------------------------------------------
+import { fmtPct } from "../src/lib/finance-money.ts";
+import { FINANCE_STANDALONE } from "../src/lib/finance-nav.ts";
+
+test("percentages read like the amounts; each P&L column is a share of its own sales", () => {
+  assert.equal(fmtPct(12.345), "12.3%");
+  assert.equal(fmtPct(-36.25), "(36.3%)");
+  assert.equal(fmtPct(-0.04), "0.0%", "rounds to nothing → no brackets");
+  assert.equal(fmtPct(Number.NaN), "");
+  const pl = slice(ui, "function PLStatementTab() {", "// =============== TAB: OTHER DEBTORS");
+  assert.match(pl, /const ytdNet = rows\.find\(\(r\) => r\.kind === "group" && r\.depth === 0 && r\.label === "SALES"\)\?\.ytdSen \?\? 0;/);
+  assert.equal((pl.match(/\{pctYtd\(row\.ytdSen\)\}<\/td>/g) ?? []).length, 4, "the year column divides by the year's sales");
+  assert.doesNotMatch(pl, /\{pct\(row\.ytdSen\)\}/);
+  assert.match(pl, /is still running — the changes compare it so far with the whole of \{vs\}\./);
+  assert.match(ui, /\{fmtPct\(r\.pctValues\[j\] \?\? 0\)\}<\/td>/, "Monthly P&L");
+});
+
+test("phone: a report's name column leaves room for the figures", () => {
+  const css = read("src/pages/accounting/finance-ui.css");
+  assert.match(css, /@media \(max-width: 767px\) \{\n  \[data-fin-ui\] table\[data-col-resize="first"\] tr > :first-child:not\(\[colspan\]\) \{\n    max-width: 9\.5rem;/);
+});
+
+test("Overview figures and the standalone pages follow the same rules", () => {
+  assert.match(ui, /n > 0 && v !== undefined \? fmtAmount\(roundSen\(v\), \{ zero: "0\.00" \}\) : NO_FIGURE;/, "a real zero is 0.00, never the no-figure dash");
+  assert.deepEqual(FINANCE_STANDALONE["/invoices/credit-notes"], { group: "Debtors", title: "Credit Notes" });
+  assert.deepEqual(FINANCE_STANDALONE["/invoices/e-invoice"], { title: "e-Invoice" });
+  const crumbs = read("src/components/layout/breadcrumbs.tsx");
+  assert.match(crumbs, /const standalone = finance \? undefined : FINANCE_STANDALONE\[path\];/);
+  for (const p of ["src/pages/invoices/credit-notes.tsx", "src/pages/invoices/debit-notes.tsx"]) {
+    assert.doesNotMatch(read(p), /[-+]<Amount /, `${p}: the sign belongs to the amount`);
+    assert.doesNotMatch(read(p), /formatRM/, `${p}: one amount format`);
+  }
+});

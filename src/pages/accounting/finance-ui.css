@@ -45,3 +45,14 @@
     gap: 8px;
   }
 }
+
+/* Phone: a report's first (name) column is capped so the figures beside it
+   stay in view — pinned on the Cash Flow / Monthly P&L, it used to fill the
+   whole screen. A spanning cell (a drill opened under a row) is left alone. */
+@media (max-width: 767px) {
+  [data-fin-ui] table[data-col-resize="first"] tr > :first-child:not([colspan]) {
+    max-width: 9.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

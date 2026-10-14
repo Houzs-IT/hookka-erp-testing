@@ -16,7 +16,7 @@ import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/dat
 import { MoneyInput } from "@/components/ui/money-input";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
-import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, roundSen, todayYmdMY } from "@/lib/utils";
 import { monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
@@ -100,7 +100,7 @@ import { Amount } from "@/components/finance/amount";
 import { FinKpis, KpiCard, KpiChange } from "@/components/finance/kpi-card";
 import { LevelPicker } from "@/components/finance/level-picker";
 import { acctName } from "@/lib/finance-names";
-import { fmtAmount, pctChange } from "@/lib/finance-money";
+import { fmtAmount, fmtPct, pctChange } from "@/lib/finance-money";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -2780,9 +2780,9 @@ function OverviewTab({
   // A figure is published only when an account behind it carries a posting;
   // a derived line is only as sourced as the weakest line it derives from.
   const sourced = (n: number, v: number | undefined) =>
-    n > 0 && v !== undefined ? formatCurrency(roundSen(v)) : NO_FIGURE;
+    n > 0 && v !== undefined ? fmtAmount(roundSen(v), { zero: "0.00" }) : NO_FIGURE;
   const derived = (deps: number[], v: number | undefined) =>
-    deps.every((n) => n > 0) && v !== undefined ? formatCurrency(roundSen(v)) : NO_FIGURE;
+    deps.every((n) => n > 0) && v !== undefined ? fmtAmount(roundSen(v), { zero: "0.00" }) : NO_FIGURE;
   // Cost & Expenses is COGS + OpEx so that the three cards tie by the server's
   // own arithmetic (netProfit = revenue − cogs − opex); summing only one of
   // them would leave Revenue − Expenses ≠ Net Profit on screen.
@@ -2838,7 +2838,7 @@ function OverviewTab({
       align: "right",
       render: (value, row) => {
         const total = row.lines.reduce((s, l) => s + l.debitSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
+        return <span className="amount font-medium"><Amount sen={total} /></span>;
       },
     },
     {
@@ -3743,7 +3743,7 @@ function JournalsTab({
       align: "right",
       render: (value, row) => {
         const total = row.lines.reduce((s, l) => s + l.debitSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
+        return <span className="amount font-medium"><Amount sen={total} /></span>;
       },
     },
     {
@@ -3752,7 +3752,7 @@ function JournalsTab({
       align: "right",
       render: (value, row) => {
         const total = row.lines.reduce((s, l) => s + l.creditSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
+        return <span className="amount font-medium"><Amount sen={total} /></span>;
       },
     },
     {
@@ -6053,7 +6053,7 @@ function MonthlyPlTab() {
                         <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${est ? EST_ROW : v < 0 ? "text-[#9A3A2D]" : ""}`} title={est ? estTitle(r.estFrom) : undefined}>
                           {fmt(v)}{est && <span className="ml-1 text-[9px] not-italic font-semibold">est.</span>}
                         </td>
-                        <td className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${est ? EST_ROW : "text-[#9CA3AF]"}`}>{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${est ? EST_ROW : "text-[#9CA3AF]"}`}>{fmtPct(r.pctValues[j] ?? 0)}</td>
                       </React.Fragment>
                       );
                     })}
@@ -6424,7 +6424,12 @@ function PLStatementTab() {
 
   const rows = data?.rows ?? [];
   const net = data?.netSalesSen || 0;
-  const pct = (v: number | undefined) => (net > 0 && v !== undefined ? `${((v / net) * 100).toFixed(1)}%` : "");
+  // % of sales: the period's figures of the period's sales, the year's of the
+  // year's sales (the year column used to divide by the period's sales, so
+  // Sales read 283%); a negative in brackets like the amounts.
+  const ytdNet = rows.find((r) => r.kind === "group" && r.depth === 0 && r.label === "SALES")?.ytdSen ?? 0;
+  const pct = (v: number | undefined) => (net > 0 && v !== undefined ? fmtPct((v / net) * 100) : "");
+  const pctYtd = (v: number | undefined) => (ytdNet > 0 && v !== undefined ? fmtPct((v / ytdNet) * 100) : "");
 
   // Walk rows honouring collapsed groups: when a group is collapsed, skip
   // its descendants and render the group row WITH its total; when open,
@@ -6444,7 +6449,9 @@ function PLStatementTab() {
   const kf = plKeyFigures(data);
   const prevKf = plKeyFigures(prev);
   const vs = prevYm ? shortMonth(prevYm) : "";
-  const ofSales = (v: number) => (net > 0 ? `${((v / net) * 100).toFixed(1)}% of sales` : "");
+  const ofSales = (v: number) => (net > 0 ? `${fmtPct((v / net) * 100)} of sales` : "");
+  // The running month is compared with a whole month — say so.
+  const running = period === new Date().toISOString().slice(0, 7);
 
   // Export: every row (indented by depth), with both money columns.
   const buildExport = (): Aoa => {
@@ -6457,7 +6464,7 @@ function PLStatementTab() {
         r.periodSen === undefined ? "" : (r.periodSen / 100).toFixed(2),
         pct(r.periodSen),
         r.ytdSen === undefined ? "" : (r.ytdSen / 100).toFixed(2),
-        pct(r.ytdSen),
+        pctYtd(r.ytdSen),
       ]);
     }
     return aoa;
@@ -6569,6 +6576,9 @@ function PLStatementTab() {
             </>} />
         </FinKpis>
       )}
+      {kf && !edit && prevKf && running && (
+        <p className="-mt-2 text-[11px] text-[#9CA3AF]">{shortMonth(period)} is still running — the changes compare it so far with the whole of {vs}.</p>
+      )}
       {edit && <p className="text-[11px] text-[#6B5C32]">Drag an account row onto a target group to reclassify it (within the same side: Revenue ↔ Other Income; Labour / Manufacturing / Operating Expenses / Payroll are interchangeable) · all months recompute under the new rule · Net Profit unchanged · drag back to undo</p>}
 
       <Card>
@@ -6604,7 +6614,7 @@ function PLStatementTab() {
                         <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                         <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
                         <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                        <td className="text-right px-2 text-[#6B7280]">{pctYtd(row.ytdSen)}</td>
                       </tr>
                     );
                   }
@@ -6615,7 +6625,7 @@ function PLStatementTab() {
                         <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                         <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
                         <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                        <td className="text-right px-2 text-[#6B7280]">{pctYtd(row.ytdSen)}</td>
                       </tr>
                     );
                   }
@@ -6631,7 +6641,7 @@ function PLStatementTab() {
                         <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                         <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
                         <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                        <td className="text-right px-2 text-[#6B7280]">{pctYtd(row.ytdSen)}</td>
                       </tr>
                     );
                   }
@@ -6660,7 +6670,7 @@ function PLStatementTab() {
                       <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                       <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
                       <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                      <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                      <td className="text-right px-2 text-[#6B7280]">{pctYtd(row.ytdSen)}</td>
                     </tr>
                     {drilled && drillCode && (
                       <tr><td colSpan={5} className="p-0"><PlDrillPanel period={period} account={drillCode} line={line} /></td></tr>
