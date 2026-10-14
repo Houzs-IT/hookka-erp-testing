@@ -147,7 +147,7 @@ test("the tab: six charts, the month-by-month table, aging with who makes up a b
   assert.match(ui, /\{pctChart\("dlPct", dlPctAxis, C\.dlLine, "Direct labour", "dl"\)\}/);
   assert.match(ui, /<LabelList dataKey="so" position="top" formatter=\{compactLabel\}/, "order amounts show without pointing");
   assert.match(ui, /<LabelList dataKey="inv" position="top" formatter=\{compactLabel\}/);
-  assert.equal((ui.match(/<CartesianGrid vertical=\{false\} stroke="#F0ECE9" syncWithTicks \/>/g) ?? []).length, 3, "a grid line on every tick");
+  assert.equal((ui.match(/<CartesianGrid vertical=\{false\} stroke="#EEF1F5" syncWithTicks \/>/g) ?? []).length, 3, "a grid line on every tick");
   assert.match(ui, /rounded-full bg-\[#F0ECE9\] text-\[9px\] font-semibold text-\[#6B7280\]">\{i \+ 1\}<\/span>/, "the rank is not read as part of the model number");
   assert.match(ui, /<TopList title="Sofa" items=\{m\.top\.SOFA\}/);
   assert.match(ui, /<TopList title="Bedframe" items=\{m\.top\.BEDFRAME\}/);

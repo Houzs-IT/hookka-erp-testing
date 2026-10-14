@@ -70,19 +70,19 @@ const pctLabel = (v: unknown) => (typeof v === "number" ? fmtPct(v) : "");
 const rm = (sen: number | null | undefined) => (sen === null || sen === undefined ? null : sen / 100);
 const pctOrNull = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
 
-// Chart colours (the finance palette).
+// Chart colours — palette E (owner 2026-10-14: navy + teal + gold).
 const C = {
-  order: "#C9B98F",
-  invoice: "#6B5C32",
-  profit: "#4F7C3A",
-  loss: "#9A3A2D",
-  line: "#1F1D1B",
-  rmLine: "#9C6F1E",
-  dlLine: "#6B4A6D",
-  sofa: "#6B5C32",
-  bed: "#3E6570",
+  order: "#D9BE85",
+  invoice: "#1F3B63",
+  profit: "#2A9D8F",
+  loss: "#D9534F",
+  line: "#1F2A44",
+  rmLine: "#C9A15E",
+  dlLine: "#1F3B63",
+  sofa: "#1F3B63",
+  bed: "#2A9D8F",
 };
-const axisTick = { fontSize: 11, fill: "#6B7280" };
+const axisTick = { fontSize: 11, fill: "#5F6B7A" };
 // Bars and lines draw in half a second (recharts' 1.5 s default reads as slow).
 const ANIM = 500;
 
@@ -447,11 +447,11 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
   const profitChart = (key: "gp" | "np", pctKey: "gpPct" | "npPct", axis: ReturnType<typeof niceAxis>, pctAxis: ReturnType<typeof niceAxis>, metric: OverviewMetric) => (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart data={data} margin={{ top: 18, right: 4, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="#F0ECE9" syncWithTicks />
+        <CartesianGrid vertical={false} stroke="#EEF1F5" syncWithTicks />
         <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
         <YAxis yAxisId="amt" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={axis.domain} ticks={axis.ticks} />
         <YAxis yAxisId="pct" orientation="right" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} domain={pctAxis.domain} ticks={pctAxis.ticks} />
-        <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, metric)} />
+        <Tooltip cursor={{ fill: "#F2F4F7" }} content={chartTip(byYm, metric)} />
         <Bar yAxisId="amt" dataKey={key} name="Amount" radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={56}>
           {data.map((d) => <Cell key={d.ym} fill={(d[key] ?? 0) < 0 ? C.loss : C.profit} />)}
           {/* The amount sits by the zero line — the % line follows the bar ends. */}
@@ -467,12 +467,12 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
   const pctChart = (key: "rmPct" | "dlPct", axis: ReturnType<typeof niceAxis>, color: string, name: string, metric: OverviewMetric) => (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data} margin={{ top: 18, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="#F0ECE9" syncWithTicks />
+        <CartesianGrid vertical={false} stroke="#EEF1F5" syncWithTicks />
         <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} padding={{ left: 28, right: 28 }} />
         <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} domain={axis.domain} ticks={axis.ticks} />
         <Tooltip content={chartTip(byYm, metric)} />
         <Line type="monotone" dataKey={key} name={name} stroke={color} strokeWidth={2} dot={{ r: 3 }} animationDuration={ANIM} connectNulls>
-          <LabelList dataKey={key} position="top" offset={8} formatter={pctLabel} style={{ fontSize: 10, fill: "#4B5563", fontWeight: 600 }} />
+          <LabelList dataKey={key} position="top" offset={8} formatter={pctLabel} style={{ fontSize: 10, fill: "#475467", fontWeight: 600 }} />
         </Line>
       </LineChart>
     </ResponsiveContainer>
@@ -514,17 +514,17 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data} margin={{ top: 18, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE9" syncWithTicks />
+                  <CartesianGrid vertical={false} stroke="#EEF1F5" syncWithTicks />
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={ordersAxis.domain} ticks={ordersAxis.ticks} />
-                  <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "orders")} />
+                  <Tooltip cursor={{ fill: "#F2F4F7" }} content={chartTip(byYm, "orders")} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />
                   {/* The amounts show on the bars without pointing (owner 2026-10-14). */}
                   <Bar dataKey="so" name="Sales orders" fill={C.order} radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={44}>
-                    <LabelList dataKey="so" position="top" formatter={compactLabel} style={{ fontSize: 10, fill: "#4B5563" }} />
+                    <LabelList dataKey="so" position="top" formatter={compactLabel} style={{ fontSize: 10, fill: "#475467" }} />
                   </Bar>
                   <Bar dataKey="inv" name="Sales invoices" fill={C.invoice} radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={44}>
-                    <LabelList dataKey="inv" position="top" formatter={compactLabel} style={{ fontSize: 10, fill: "#4B5563" }} />
+                    <LabelList dataKey="inv" position="top" formatter={compactLabel} style={{ fontSize: 10, fill: "#475467" }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
