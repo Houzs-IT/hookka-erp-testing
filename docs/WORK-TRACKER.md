@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-14**: branch `design/mobile-ui-foundation` (Phase 0 mobile UI foundation, local only) added below.
 > **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, mobile Updates Phase 1) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below.
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `staging`) added item 6 to the urgent orders KPI entry below.
@@ -237,6 +238,18 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-14 — 🟡 Mobile UI Foundation, Phase 0 (branch `design/mobile-ui-foundation`, local only; ready for owner review)
+
+Owner asks (approved Phase 0 specification). Foundation only: no screen migration or visual change.
+1. 🔵 Add mobile-scoped semantic typography and accessible light/dark text-colour tokens.
+2. 🔵 Add mobile spacing, gutter, radius, control, icon, elevation, focus, interaction and responsive tokens.
+3. 🔵 Use the existing Announcements/Notifications soft card shadow for `--m-shadow-card`.
+4. 🔵 Document mobile theme/type, flexible card variants, shadows, spacing/responsiveness, controls/chips, themes, accessibility and future adoption.
+5. 🔵 Keep Hookka's existing brand palette and font; do not change screens, shared components, desktop tokens, backend or business logic.
+6. ⚪ Phase 1: adopt the foundation in existing mobile components/screens only through separately approved migration tasks.
+
+Implemented locally and stopped for review. Verification: CSS parses with PostCSS; all 14 normal/status text pairs pass 4.5:1 on their lowest-contrast mobile surface (minimum 4.59:1); the exact card-shadow source and all 10 typography roles are present; docs freshness and codebase-map checks pass; 45 targeted mobile shell/Home/Updates tests pass; `git diff --check` passes; no mobile screen, shared component, desktop token, API or data file changed.
 
 ## 2026-10-13 — 🔵 Mobile Updates: Notifications | Announcements, Phase 1 (branch `design/mobile-home-dashboard` → `staging`, local only)
 

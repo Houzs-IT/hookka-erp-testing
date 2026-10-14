@@ -1,5 +1,6 @@
 # Documentation Index
 
+> **Last verified: 2026-10-14** — added the Phase 0 Mobile UI Foundation document; no other entries re-checked.
 > **Last verified: 2026-08-13** — every link below was checked; entries for docs that were
 > archived or corrected in the 2026-08-13 doc-vs-code reconciliation are updated.
 > Corrected 2026-08-13: `PROGRAM-90D-EXECUTION` and `UPGRADE-CONTROL-BOARD` were labelled
@@ -54,6 +55,7 @@ This file organizes key documentation so implementation and operations are easy 
 - `docs/archive/MODULES.md` — **(archived 2026-08-13)**. The old module reference; it documented a `/portal` module and `PortalLayout` that were never built, and declared auth unwired. Use `docs/modules/*.md` + `docs/CODEBASE-MAP.md`.
 - `docs/API.md` — **GENERATED** endpoint reference: the full mount table, every registered path, and the exact public/auth surface. Rebuild with `node scripts/gen-api-docs.mjs`; never hand-edit.
 - `docs/DESIGN-SYSTEM.md` — UI tokens and shared component conventions.
+- `docs/MOBILE-UI-FOUNDATION.md` — mobile-only `/m/*` theme, typography, card, spacing, interaction, responsive and accessibility standards; Phase 0 tokens are additive and screen adoption is deferred.
 - `docs/UI-DATA-DOCUMENT-STANDARDS.md` — standards for DataGrid columns, filters, sorting, numeric inputs, and business document layouts.
 
 ## Cloudflare / Deployment / Migration
