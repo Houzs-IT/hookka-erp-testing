@@ -352,12 +352,28 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
   const arRows: AgingRow[] = arData.map((a) => ({ name: a.customerName, currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen }));
   const apRows: AgingRow[] = apData.map((a) => ({ name: a.supplierName, currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen }));
 
+  // A profit chart's month tick: the month, and under it that month's % of sales.
+  const pctTick = (pctKey: "gpPct" | "npPct") =>
+    function PctTick(props: { x?: number | string; y?: number | string; payload?: { value?: string; index?: number } }) {
+      const d = data[props.payload?.index ?? -1];
+      const pct = d ? d[pctKey] : null;
+      return (
+        <g transform={`translate(${props.x ?? 0},${props.y ?? 0})`}>
+          <text dy={12} textAnchor="middle" fontSize={11} fill={axisTick.fill}>{props.payload?.value}</text>
+          {typeof pct === "number" && (
+            <text dy={26} textAnchor="middle" fontSize={11} fontWeight={600} fill={pct < 0 ? C.loss : C.line}>{fmtPct(pct)}</text>
+          )}
+        </g>
+      );
+    };
   // Profit: bars for the amount (labelled inside), a line for the share of sales (owner: 「line graph + diagram graph」).
   const profitChart = (key: "gp" | "np", pctKey: "gpPct" | "npPct", axis: ReturnType<typeof niceAxis>, pctAxis: ReturnType<typeof niceAxis>, metric: OverviewMetric) => (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart data={data} margin={{ top: 18, right: 4, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="#EEF1F5" syncWithTicks />
-        <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+        {/* The month's % of sales sits under its name — on the line it met the
+            amount whenever a bar was short (the points follow the bar ends). */}
+        <XAxis dataKey="label" tick={pctTick(pctKey)} height={34} interval={0} axisLine={false} tickLine={false} />
         <YAxis yAxisId="amt" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={axis.domain} ticks={axis.ticks} />
         <YAxis yAxisId="pct" orientation="right" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} domain={pctAxis.domain} ticks={pctAxis.ticks} />
         <Tooltip cursor={{ fill: "#F2F4F7" }} content={chartTip(byYm, metric)} />
@@ -368,11 +384,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
               is the zero-line end for a profit and a loss alike. */}
           <LabelList dataKey={key} position="insideBottom" formatter={compactLabel} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
         </Bar>
-        <Line yAxisId="pct" type="monotone" dataKey={pctKey} name="% of sales" stroke={C.line} strokeWidth={1.5} dot={{ r: 3, fill: "#FFFFFF" }} animationDuration={ANIM} connectNulls>
-          {/* The % above a profit's point, below a loss's — away from the amount at the zero line. */}
-          <LabelList dataKey={pctKey} position="top" formatter={(v: unknown) => (typeof v === "number" && v >= 0 ? pctLabel(v) : "")} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />
-          <LabelList dataKey={pctKey} position="bottom" formatter={(v: unknown) => (typeof v === "number" && v < 0 ? pctLabel(v) : "")} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />
-        </Line>
+        <Line yAxisId="pct" type="monotone" dataKey={pctKey} name="% of sales" stroke={C.line} strokeWidth={1.5} dot={{ r: 3, fill: "#FFFFFF" }} animationDuration={ANIM} connectNulls />
       </ComposedChart>
     </ResponsiveContainer>
   );

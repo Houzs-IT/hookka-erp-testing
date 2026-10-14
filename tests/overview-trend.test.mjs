@@ -176,3 +176,10 @@ test("material groups are named the short way", async () => {
   assert.equal(materialName("PURCHASES - PLYWOOD"), "Plywood");
   assert.equal(materialName("B.FILLER"), "B.FILLER");
 });
+
+test("profit charts: the month's % of sales sits under its name, never on a short bar's amount", () => {
+  const ui = read("src/pages/accounting/overview-tab.tsx");
+  assert.match(ui, /<XAxis dataKey="label" tick=\{pctTick\(pctKey\)\} height=\{34\} interval=\{0\}/);
+  assert.match(ui, /<Line yAxisId="pct" type="monotone" dataKey=\{pctKey\} [^>]*connectNulls \/>/, "the line keeps the trend, without labels");
+  assert.match(ui, /<LabelList dataKey=\{key\} position="insideBottom" formatter=\{compactLabel\}/, "the amount by the zero line");
+});
