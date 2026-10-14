@@ -1,5 +1,8 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
+> **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
+> **Last verified: 2026-10-14**: branch `design/mobile-ui-foundation` (Phase 0 mobile UI foundation, local only) added below.
 > **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, mobile Updates Phase 1) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below.
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `staging`) added item 6 to the urgent orders KPI entry below.
@@ -237,7 +240,7 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
-
+design/mobile-home-dashboard
 ## 2026-10-14 (later) — 🔵 Phone Sales Orders list: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks (approved 2026-10-14). Source: `Sales Orders.dc.html` + handoff README (premium card refresh). **Overrides the entry below where they differ.** PHONE only; tablet and desktop unchanged. Real data / API / logic / permissions / navigation unchanged; no prototype mock data. **Typography (family, sizes, weights, text colours, hierarchy) follows the repo**; every other visual follows the prototype.
@@ -256,6 +259,27 @@ Owner asks (planned and approved 2026-10-14). Frontend only, `src/pages/m/screen
 3. 🔵 Order Date removed from the card (still in the detail and the Filter sheet). Operational progress omitted until accurate data is wired in.
 4. 🔵 3px left rail + pill from the existing `SO_STATUS_COLOR` map; Notifications card shadow; Cancelled no longer dimmed.
 5. 🔵 Shared `MobileCard` untouched. Targeted tests + `tsc -p tsconfig.app.json` run.
+## 2026-10-14 — 🟢 BUG-87 re-test: second void fails, Finance can't void a PO-direct invoice (branch `fix/pi-revoid-and-finance-auto-receipt` → `staging`, #852, verified on staging)
+
+Staging re-test of #803/#805 on 2026-10-14 (DARK PINK SPONGE). Confirm puts stock in, void takes it out, unvoid puts it back, qty frozen / price free, a partly received PO only receives the rest, Office can create + confirm. Two bugs:
+
+1. ✅ BUG-2026-10-14-286: void → unvoid → void of any purchase invoice answers 500. Staging log: `duplicate key value violates unique constraint "idx_lje_idempotent"`. `buildPiDeltaLegs` numbers legs from 1 every time, and the first void already owns those leg numbers. Owner: fix on `staging`.
+2. ✅ BUG-2026-10-14-287: Finance may void, but the void cancels the auto receipt through the GRN route, which checks the caller's own `grn:delete`. Staging Finance holds 53 grants, none for `grn`, so the void is refused (409 "Forbidden"). Owner: ignore that permission for the auto receipt.
+3. ✅ After deploy (2026-10-14): PI-2610-023 and PI-2610-024 voided, PO-2610-022 / PO-2610-023 cancelled, stock back to 196. Void → unvoid → void and Finance void/unvoid all pass, also on fresh PI-2610-027 / PI-2610-028. All test POs (022 to 027) cancelled, all test PIs (023 to 028) voided.
+4. 🔵 BUG-2026-10-14-286 to `main` (branch `fix/pi-revoid-legno-main`): the same `buildPiDeltaLegs` fix, without the staging-only auto receipt.
+5. ⬜ Not checked: other ledger posters that number legs from 1 with a reused sourceId (e.g. `invoices.ts` `invoice_void`).
+
+## 2026-10-14 — 🟡 Mobile UI Foundation, Phase 0 (branch `design/mobile-ui-foundation`, local only; ready for owner review)
+
+Owner asks (approved Phase 0 specification). Foundation only: no screen migration or visual change.
+1. 🔵 Add mobile-scoped semantic typography and accessible light/dark text-colour tokens.
+2. 🔵 Add mobile spacing, gutter, radius, control, icon, elevation, focus, interaction and responsive tokens.
+3. 🔵 Use the existing Announcements/Notifications soft card shadow for `--m-shadow-card`.
+4. 🔵 Document mobile theme/type, flexible card variants, shadows, spacing/responsiveness, controls/chips, themes, accessibility and future adoption.
+5. 🔵 Keep Hookka's existing brand palette and font; do not change screens, shared components, desktop tokens, backend or business logic.
+6. ⚪ Phase 1: adopt the foundation in existing mobile components/screens only through separately approved migration tasks.
+
+Implemented locally and stopped for review. Verification: CSS parses with PostCSS; all 14 normal/status text pairs pass 4.5:1 on their lowest-contrast mobile surface (minimum 4.59:1); the exact card-shadow source and all 10 typography roles are present; docs freshness and codebase-map checks pass; 45 targeted mobile shell/Home/Updates tests pass; `git diff --check` passes; no mobile screen, shared component, desktop token, API or data file changed. staging
 
 ## 2026-10-13 — 🔵 Mobile Updates: Notifications | Announcements, Phase 1 (branch `design/mobile-home-dashboard` → `staging`, local only)
 

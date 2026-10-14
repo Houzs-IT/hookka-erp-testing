@@ -1,5 +1,8 @@
 # Bug History
 
+> **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
+> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: staging<-main sync (branch `chore/sync-staging-from-main-1013`): both sides kept, one copy of each entry. Staging's Plant Load entry, logged as BUG-2026-10-08-269, is now BUG-2026-10-08-285 because main used 269 first. Newest entry is still 284; 285 is the next number used.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder`, to staging; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-283 (branch `fix/fabric-meter-calc`, to staging; 282 is staging's); a log, so "verified" means the entry matches the code on its branch.
@@ -144,6 +147,48 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-14-288 — Table column headers showed through the notifications panel `ui` `layout` 🟡
+
+🟡 **Fixed on branch** (`fix/topbar-over-grid-header` → `staging`).
+
+**Symptom.** Seen on staging 2026-10-14 on /it-support: with the notifications panel open, the ticket table's header row (Urgency, Handled by, Last update) painted across the middle of the panel.
+
+**Root cause.** The top bar and breadcrumbs sit in one sticky wrapper in `src/layouts/DashboardLayout.tsx` at `z-30`, which caps every top bar dropdown at 30. The DataGrid sticky `<thead>` is also `z-30` and comes later in the page, so it wins. Every grid page had this, for every top bar dropdown. Global search hit the same thing earlier and was fixed only for itself by portalling its overlay.
+
+**Fix.** The wrapper is `z-[35]`: above the grid header (30), below the phone menu backdrop (40) and drawer (50), so the phone menu still covers the top bar.
+
+**Regression.** `tests/topbar-above-grid-header.test.mjs` reads the three z values from source and checks the order; fails on the old `z-30`.
+
+## BUG-2026-10-14-287 — Finance could not void a purchase invoice billed straight off a PO `procurement` `rbac` 🟢
+
+🟢 **Fixed and verified on staging** (#852, 2026-10-14). Follow-up to BUG-2026-10-12-279 (client tracker BUG-87). Staging-only: `main` has no auto receipt.
+
+**Symptom.** Measured on staging 2026-10-14, acting as the Finance user: voiding PI-2610-026 answered 409 "that receipt can't be cancelled: Forbidden". Stock and the invoice were left as they were.
+
+**Root cause.** Void is gated by `requireFinance` (Finance, Super Admin, Admin). For a PO-direct invoice it also cancels the auto receipt by calling the GRN route in-process as the same user (`grnRoute`), and `POST /api/grn/:id/cancel` checks that user's own `grn:delete`. Finance's grants live in `role_permissions`; on staging the role holds 53, none for `grn`. Unvoid and Confirm reach `POST /api/grn` the same way (`grn:create`). Prod grants UNMEASURED.
+
+**Fix.** Owner 2026-10-14: ignore that permission for the auto receipt. `grnRoute` sets an `autoReceipt` context var on its sub-request; `POST /api/grn` and `POST /api/grn/:id/cancel` skip their `requirePermission` when it is set. A context var cannot come from an outside request. `userRole` is left as the real role, so the GRN audit row keeps the real actor role.
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` "BUG-2026-10-14-287": a FINANCE caller voids and unvoids a PO-direct invoice; fails 409 without the fix.
+
+**Verified on staging (after #852 deployed, 2026-10-14).** As the Finance user (staging role switcher): PI-2610-024 void 200 (DARK PINK SPONGE 199 → 196, PO back to CONFIRMED) and unvoid 200 (196 → 199, PO RECEIVED). On fresh documents: Office created and confirmed PI-2610-028 (196 → 199), Office void still 403 by design, Finance void 200 (199 → 196).
+
+## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟢
+
+🟢 **Fixed and verified on staging** (#852, 2026-10-14). Found on the BUG-87 staging re-test. `main` fix on branch `fix/pi-revoid-legno-main`.
+
+**Symptom.** Void → unvoid → void of the same purchase invoice answered 500. Staging log 2026-10-14: `duplicate key value violates unique constraint "idx_lje_idempotent"` on `POST /api/purchase-invoices/:id/void`. Reproduced on PI-2610-023 and a fresh PI-2610-024. For a PO-direct invoice the void had already cancelled its auto receipt, so `receiveAfterFailedRemoval` received the goods again: stock stayed right, but each try left one more cancelled receipt (GRN-2610-008, 009, 011, 012).
+
+**Root cause.** `buildPiDeltaLegs` numbered legs from 1 on every call. Void, unvoid and `resync-gl` all post with `sourceId = <invoice id>` and a fixed sourceType, and the ledger is UNIQUE on `(orgId, sourceType, sourceId, legNo)`, so the second void (or unvoid, or re-sync) of an invoice reused leg numbers the first one owns. The note under the 2026-08 re-sync entry ("what makes void → unvoid → void safe") is about the amounts; the leg numbers were never covered. The `main` copy has the same code.
+
+**Fix.** `buildPiDeltaLegs` reads `MAX(legNo)` for its sourceType + sourceId and numbers on from there, the way the sales invoice cancel reversal does (`invoices.ts`). One place, all three callers. No bug class fits (closest is C5, which is about suffixed sourceTypes).
+
+**Not checked.** Other posters that number from 1 with a reused sourceId, e.g. `invoices.ts` `invoice_void` with `sourceId = inv.id`. Owner: fix this one first.
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` "BUG-2026-10-14-286": void, unvoid, void, unvoid all answer 200 and no void leg number repeats. The mock now reads the invoice's legs back and raises on a duplicate leg like the real index; the test fails 500 without the fix.
+
+**Verified on staging (after #852 deployed, 2026-10-14).** PI-2610-023 third void 200 (202 → 199). PI-2610-024: void, unvoid, void, unvoid, void all 200, stock moving 199 → 196 → 199 → 196 → 199 → 196. Fresh PI-2610-027: confirm, void, unvoid, void again all 200, and only two auto receipts (confirm, unvoid), no extra cancelled ones. Test documents cleaned up, stock back at 196.
 
 ## BUG-2026-10-13-284 — Scans failed for users whose internet provider routes to Cloudflare in Hong Kong `scanning` 🟡
 
