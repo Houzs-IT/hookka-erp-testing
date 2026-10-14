@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `main`) added item 6 to the urgent orders KPI entry below.
@@ -144,6 +145,15 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+## 2026-10-14 — 🔵 CN print: CO No. and fabric missing on a CN printed right after it was created (IT Hub HK-0093, Siti「COLOUR MISSING AND ALSO PLS CHECK SUPPOSELY HAVE NUMBER CO BUT DIDNT SHOW IT AT STICKER AND CO NOTE」→ Samuel「开始」)(branch `fix/hk0093-cn-print-co-fabric` → `main`, BUG-2026-10-14-285)
+
+1. 🔵 `GET /api/consignment-notes/:id/print-extras` returns each line's PO `companyCOId` + `fabricCode` (it already
+   joins `production_orders`), and `buildCnPdfData` prefers them over `poToCoNoMap` / `poToFabricMap`, which come from
+   the stale-while-revalidate `/ready-planning` snapshot and miss a CN created moments earlier.
+2. 🔵 Regression test + BUG-HISTORY entry + BUG-CLASSES C29 row.
+3. 🟡 Sticker missing the CO number: waiting on Siti for a photo and the page she printed it from.
+4. 🟡 "Colour": the CN prints the fabric code (`HG1313-01`); waiting on Siti whether the colour name is wanted too.
 
 ## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
 

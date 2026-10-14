@@ -81,6 +81,8 @@ type CnPrintExtraItem = Pick<
 > & {
   // The CO line's size (e.g. "28"); lands on CNPdfItem.coSizeLabel.
   sizeLabel?: string | null;
+  fabricCode?: string | null;
+  companyCOId?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -1410,10 +1412,12 @@ export default function ConsignmentNotePage() {
             productCode: it.productCode,
             productName: it.productName,
             sizeLabel: it.sizeLabel,
-            fabricCode: it.fabricCode,
+            // print-extras first: the row's values come from the
+            // /ready-planning snapshot, which can predate this CN (HK-0093).
+            fabricCode: ex?.fabricCode || it.fabricCode,
             quantity: it.quantity,
             itemM3: it.itemM3,
-            consignmentOrderNo: it.consignmentOrderNo,
+            consignmentOrderNo: ex?.companyCOId || it.consignmentOrderNo,
             // Overlay the print-extras detail when present (DO-parity rich
             // line); absent ⇒ undefined ⇒ the PDF falls back to base rows.
             itemCategory: ex?.itemCategory ?? null,

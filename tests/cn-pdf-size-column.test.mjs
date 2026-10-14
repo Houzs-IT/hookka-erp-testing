@@ -46,5 +46,5 @@ test("print-extras returns the PO / CO line size", () => {
 
 test("page maps print-extras sizeLabel to coSizeLabel, not the product sizeLabel", () => {
   assert.match(PAGE, /coSizeLabel: ex\?\.sizeLabel \?\? null,/);
-  assert.match(PAGE, /sizeLabel: it\.sizeLabel,\s*fabricCode: it\.fabricCode,/);
+  assert.match(PAGE, /sizeLabel: it\.sizeLabel,\s*(?:\/\/[^\n]*\s*)*fabricCode: ex\?\.fabricCode \|\| it\.fabricCode,/);
 });

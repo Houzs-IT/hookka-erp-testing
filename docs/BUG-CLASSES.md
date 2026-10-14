@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` adds C29 row 6, the CN print reading CO No. / fabric from a stale-while-revalidate snapshot (BUG-2026-10-14-285). Nothing else re-checked.
 > **Last verified: 2026-10-01**: branch `fix/worker-history-snapshot-stale` **adds C29 — a read right after a write, served from Hyperdrive's cache** (BUG-2026-10-01-245). Nothing else re-checked.
 > **Last verified: 2026-10-01**: branch `fix/dev08-accessory-so-ready` **adds C28 — UPHOLSTERY cards as the proxy for "made"** (BUG-2026-10-01-241, DEV-08). Nothing else re-checked.
 > **Last verified: 2026-09-25**: restamped on branch `feat/dashboard-kpi-no-icons` (PR #524): C15 gains row 5, the Worker Efficiency card that printed worker ids after a refused `/api/workers` read (BUG-2026-09-25-194). Nothing else re-checked.
@@ -1762,5 +1763,6 @@ Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return tr
 | 3 | worker penalties + payroll status reads | ✅ on `staging` (BUG-2026-10-01-236), `freshAll` |
 | 4 | worker `/history` + `/payslips` snapshot (`withWorkerSnapshot`) | ✅ 2026-10-01 on branch `fix/worker-history-snapshot-stale` (BUG-2026-10-01-245), not deployed |
 | 5 | `lib/snapshot.ts`, dashboard / delivery / invoice snapshots: probe and rebuild are plain reads | ⬜ open; needs `freshReads` on both, or the infra switch |
+| 6 | CN print CO No. / fabric from the `staleWhileRevalidate` `/ready-planning` snapshot (a snapshot that serves stale on purpose, the same read-after-write shape) | ✅ 2026-10-14 on branch `fix/hk0093-cn-print-co-fabric` (BUG-2026-10-14-285): the print reads them from `print-extras` instead; the CN grid columns still read the snapshot |
 
-Test: `tests/worker-history-snapshot-fresh.test.mjs` (row 4).
+Tests: `tests/worker-history-snapshot-fresh.test.mjs` (row 4), `tests/cn-pdf-co-fabric-fresh.test.mjs` (row 6).
