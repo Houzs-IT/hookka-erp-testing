@@ -19,7 +19,7 @@ import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, FileText, Film, Paperclip, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DataGrid, type Column } from "@/components/ui/data-grid";
+import { DataGrid, GridPager, type Column } from "@/components/ui/data-grid";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -553,6 +553,14 @@ function Ticket({ code, onChanged }: { code: string; onChanged: () => void }) {
 const DONE: Status[] = ["resolved", "closed", "rejected"];
 type ListTab = "all" | "active" | "resolved";
 
+const PAGE_SIZE = 10;
+
+function pageOf<T>(list: T[], page: number) {
+  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const p = Math.min(page, pages);
+  return { rows: list.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE), page: p, pages };
+}
+
 function NoTicketsArt() {
   return (
     <svg viewBox="0 0 180 150" className="h-36 w-44" aria-hidden="true">
@@ -594,6 +602,9 @@ function EmptyState({ onReport }: { onReport: () => void }) {
 
 function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code: string) => void }) {
   const [tab, setTab] = useState<ListTab>("all");
+  // The grid pages itself; this page number is the phone cards'.
+  const [page, setPage] = useState(1);
+  const changeTab = (t: ListTab) => { setTab(t); setPage(1); };
 
   // Counts come from every ticket, never from what the search box left.
   const byTab = useMemo(() => {
@@ -670,18 +681,19 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
           data={byTab[tab]}
           loading={rows === null}
           onRowClick={(r) => onOpen(r.code)}
-          toolbarStart={<Tabs className="-my-1.5 border-b-0" value={tab} onChange={setTab} tabs={tabs} />}
+          pageSize={PAGE_SIZE}
+          toolbarStart={<Tabs className="-my-1.5 border-b-0" value={tab} onChange={changeTab} tabs={tabs} />}
           emptyMessage={emptyMessage}
         />
       </div>
-      <TicketCards rows={rows === null ? null : byTab[tab]} tabBar={<Tabs className="w-max flex-nowrap border-b-0" value={tab} onChange={setTab} tabs={tabs} />} emptyMessage={emptyMessage} onOpen={onOpen} />
+      <TicketCards rows={rows === null ? null : byTab[tab]} page={page} onPage={setPage} tabBar={<Tabs className="w-max flex-nowrap border-b-0" value={tab} onChange={changeTab} tabs={tabs} />} emptyMessage={emptyMessage} onOpen={onOpen} />
     </>
   );
 }
 
-// Phones get one card per ticket instead of the grid (no Columns menu, no pager).
-function TicketCards({ rows, tabBar, emptyMessage, onOpen }: {
-  rows: TicketRow[] | null; tabBar: ReactNode; emptyMessage: string; onOpen: (code: string) => void;
+// Phones get one card per ticket instead of the grid (no Columns menu), ten to a page.
+function TicketCards({ rows, page, onPage, tabBar, emptyMessage, onOpen }: {
+  rows: TicketRow[] | null; page: number; onPage: (n: number) => void; tabBar: ReactNode; emptyMessage: string; onOpen: (code: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const q = search.trim().toLowerCase();
@@ -689,17 +701,18 @@ function TicketCards({ rows, tabBar, emptyMessage, onOpen }: {
     !q || [r.code, r.title, r.assignee_name ?? "", STATUS_LABEL[r.status] ?? r.status, PRIORITY_LABEL[r.priority] ?? r.priority]
       .some((s) => s.toLowerCase().includes(q)),
   );
+  const paged = pageOf(shown, page);
 
   return (
     <div className="space-y-3 md:hidden">
       <div className="overflow-x-auto border-b border-[#E6E0D9] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{tabBar}</div>
-      <Input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tickets" aria-label="Search tickets" />
+      <Input type="search" value={search} onChange={(e) => { setSearch(e.target.value); onPage(1); }} placeholder="Search tickets" aria-label="Search tickets" />
       {rows === null ? (
         [0, 1, 2].map((i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)
       ) : shown.length === 0 ? (
         <p className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">{emptyMessage}</p>
       ) : (
-        shown.map((r) => (
+        paged.rows.map((r) => (
           <button
             key={r.code}
             type="button"
@@ -724,6 +737,7 @@ function TicketCards({ rows, tabBar, emptyMessage, onOpen }: {
           </button>
         ))
       )}
+      <GridPager page={paged.page} pages={paged.pages} onPage={onPage} />
     </div>
   );
 }

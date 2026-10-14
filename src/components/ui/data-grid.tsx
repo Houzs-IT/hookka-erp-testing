@@ -21,6 +21,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { useToast } from "@/components/ui/toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { buildListingAoa, exportFilename, listingXlsxFormats, type ExportColumn } from "@/lib/grid-export";
 import { exportReportCsv, exportReportXlsx, type Aoa, type XlsxColFormat } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
@@ -320,6 +321,9 @@ export type DataGridProps<T> = {
   // cap is purely a rendering optimisation to keep DOM node count bounded on
   // grids with thousands of rows. Omit to disable (no cap, render everything).
   defaultRowCap?: number;
+  // Client-side paging after filter, sort and search, so those still cover every
+  // row. Back to page 1 when any of them or the row count changes. Omit to show all.
+  pageSize?: number;
 };
 
 type SavedView = {
@@ -1791,6 +1795,7 @@ export function DataGrid<T extends Record<string, any>>({
   ensureColumns,
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
+  pageSize,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -2626,10 +2631,20 @@ export function DataGrid<T extends Record<string, any>>({
   const [showAll, setShowAll] = useState(false);
   const rowCapActive =
     !!defaultRowCap && !showAll && sortedData.length > defaultRowCap;
+  const [page, setPage] = useState(1);
+  const pageInputs = [deferredSearch, columnFilters, columnValueFilters, groupFilter, sortKey, sortDir, data.length];
+  const [lastPageInputs, setLastPageInputs] = useState(pageInputs);
+  if (pageInputs.some((v, i) => !Object.is(v, lastPageInputs[i]))) {
+    setLastPageInputs(pageInputs);
+    setPage(1);
+  }
+  const pageCount = pageSize ? Math.max(1, Math.ceil(sortedData.length / pageSize)) : 1;
+  const currentPage = Math.min(page, pageCount);
   const displayedData = useMemo(() => {
+    if (pageSize) return sortedData.slice((currentPage - 1) * pageSize, currentPage * pageSize);
     if (!rowCapActive) return sortedData;
     return sortedData.slice(0, defaultRowCap!);
-  }, [sortedData, rowCapActive, defaultRowCap]);
+  }, [sortedData, rowCapActive, defaultRowCap, pageSize, currentPage]);
 
   // ── Virtualization ──
   // Only enable when explicitly opted-in AND no group headers are interleaved
@@ -3650,6 +3665,12 @@ export function DataGrid<T extends Record<string, any>>({
         </table>
       </div>
 
+      {pageCount > 1 && (
+        <div className="border-x border-[#E2DDD8]">
+          <GridPager page={currentPage} pages={pageCount} onPage={setPage} />
+        </div>
+      )}
+
       {/* Status bar */}
       <div className="flex items-center justify-between border border-t-0 border-[#E2DDD8] bg-[#F0ECE9] px-3 py-1 rounded-b text-[10px] text-[#777]">
         <span className="flex items-center gap-2">
@@ -3764,6 +3785,17 @@ export function DataGrid<T extends Record<string, any>>({
       {ctxMenu && resolvedCtxItems.length > 0 && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={resolvedCtxItems} onClose={() => setCtxMenu(null)} />
       )}
+    </div>
+  );
+}
+
+export function GridPager({ page, pages, onPage }: { page: number; pages: number; onPage: (n: number) => void }) {
+  if (pages <= 1) return null;
+  return (
+    <div className="flex items-center justify-end gap-3 px-3 py-2 text-sm">
+      <Button variant="outline" size="sm" onClick={() => onPage(page - 1)} disabled={page <= 1}>Prev</Button>
+      <span className="tabular-nums text-[#1F1D1B]">Page {page} of {pages}</span>
+      <Button variant="outline" size="sm" onClick={() => onPage(page + 1)} disabled={page >= pages}>Next</Button>
     </div>
   );
 }
