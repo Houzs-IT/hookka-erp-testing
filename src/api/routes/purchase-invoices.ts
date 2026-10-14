@@ -1304,6 +1304,9 @@ async function grnRoute(c: Context<Env>, path: string, body: unknown) {
   const sub = new Hono<Env>();
   sub.use("*", async (cc, next) => {
     for (const [k, v] of Object.entries(c.var)) cc.set(k as never, v as never);
+    // BUG-2026-10-14-287: the invoice route already gated this user; the GRN
+    // route skips its own grn permission for the auto receipt.
+    cc.set("autoReceipt" as never, true as never);
     await next();
   });
   sub.route("/", grnApp);
@@ -3152,17 +3155,28 @@ async function loadPiLedgerNet(
 }
 
 /** Legs that move the invoice's ledger position from `total` to `target`. */
-function buildPiDeltaLegs(
+async function buildPiDeltaLegs(
+  db: D1Database,
   target: Map<string, number>,
   total: Map<string, number>,
   opts: { sourceType: string; sourceId: string; description: string; actorUserId: string | null; orgId: string },
-): Parameters<typeof buildJournalEntryStatements>[2] {
+): Promise<Parameters<typeof buildJournalEntryStatements>[2]> {
   const accounts = new Set([...target.keys(), ...total.keys()]);
+  const deltas = [...accounts]
+    .map((accountCode) => ({ accountCode, delta: (target.get(accountCode) ?? 0) - (total.get(accountCode) ?? 0) }))
+    .filter((d) => d.delta !== 0);
+  if (deltas.length === 0) return [];
+  // BUG-2026-10-14-286: a second void / unvoid / re-sync of the same invoice
+  // reuses this sourceType + sourceId, and the ledger is UNIQUE on legNo.
+  const maxRow = await db
+    .prepare(
+      "SELECT COALESCE(MAX(legNo), 0) AS m FROM ledger_journal_entries WHERE sourceType = ? AND sourceId = ?",
+    )
+    .bind(opts.sourceType, opts.sourceId)
+    .first<{ m: number }>();
   const legs: Parameters<typeof buildJournalEntryStatements>[2] = [];
-  let legNo = 1;
-  for (const accountCode of accounts) {
-    const delta = (target.get(accountCode) ?? 0) - (total.get(accountCode) ?? 0);
-    if (delta === 0) continue;
+  let legNo = (Number(maxRow?.m) || 0) + 1;
+  for (const { accountCode, delta } of deltas) {
     legs.push({
       id: `lje-${crypto.randomUUID().slice(0, 12)}`,
       sourceType: opts.sourceType,
@@ -3256,7 +3270,7 @@ app.post("/:id/void", async (c) => {
 
   // 1. Move the invoice's ledger position to zero — target 0, delta = −total.
   const { total, orgId: legOrgId, legs } = await loadPiLedgerNet(db, id);
-  const revLegs = buildPiDeltaLegs(new Map(), total, {
+  const revLegs = await buildPiDeltaLegs(db, new Map(), total, {
     sourceType: "purchase_invoice_void",
     sourceId: id,
     description: `Void · PI ${pi.piNo ?? id} · ${pi.supplierName ?? ""}`,
@@ -3350,7 +3364,7 @@ app.post("/:id/unvoid", async (c) => {
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
 
   const { base, total, orgId: legOrgId, legs } = await loadPiLedgerNet(db, id);
-  const restoreLegs = buildPiDeltaLegs(base, total, {
+  const restoreLegs = await buildPiDeltaLegs(db, base, total, {
     sourceType: "purchase_invoice_unvoid",
     sourceId: id,
     description: `Unvoid · PI ${pi.piNo ?? id} · ${pi.supplierName ?? ""}`,
@@ -3536,7 +3550,7 @@ app.post("/:id/resync-gl", async (c) => {
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   const orgId = legOrgId ?? getOrgId(c);
-  const deltaLegs = buildPiDeltaLegs(target, total, {
+  const deltaLegs = await buildPiDeltaLegs(db, target, total, {
     sourceType: "purchase_invoice_restate_post",
     sourceId: id,
     description: `GL re-sync · PI ${pi.piNo ?? id} · ${pi.supplierName ?? ""}`,

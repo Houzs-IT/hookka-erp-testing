@@ -1,5 +1,6 @@
 # Procurement — Module Guide
 
+> **Last verified: 2026-10-14** (branch `fix/pi-revoid-and-finance-auto-receipt`, staging): anchors shifted by BUG-2026-10-14-286/287. `purchase-invoices.ts`: PI create :1395, PI edit :2303, void :3219, unvoid :3338, `grnRoute` :1303 (sets `autoReceipt`), `buildPiDeltaLegs` :3158 (numbers legs on from `MAX(legNo)`). `grn.ts`: `isGrnNumberCollision` :491, `postGRNToStock` :722, create :1520, cancel :2671 (both skip the grn permission for the auto receipt). Nothing else re-checked.
 > **Last verified: 2026-10-12** (branch `fix/bug87-po-overdue-stock-check`, staging): `purchase-invoices.ts` anchors re-derived after the BUG-87 auto receipt helpers were added: PI create :1392, PI edit :2300, `checkPoRemaining` :1017, `checkInvoicedQtyCeilingAfterEdit` :731, `mapPurchaseLinesToAccounts` :208. Nothing else re-checked.
 
 > **Last verified: 2026-10-01** (branch `fix/grn-number-collision`, staging): GRN create retries on a GRN number collision (`isGrnNumberCollision` `grn.ts:486`, retry loop in `app.post("/")` `:1515`). Every `grn.ts` anchor in this file re-derived against that branch (incl. `buildGRNStockStatements` :591, `resolveRmForGRNItem` :521), including the two flow anchors that were already stale (`:1306` is now `:1612`, `:1798` is now `:2086`). Nothing else re-checked.
