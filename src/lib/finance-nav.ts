@@ -20,7 +20,7 @@ export type FinancePage = {
 };
 
 export const FINANCE_PAGES: Record<string, FinancePage> = {
-  overview: { title: "Overview", group: "Reports", subtitle: "This month at a glance", money: true },
+  overview: { title: "Overview", group: "Reports", subtitle: "Sales, profit and production, month by month", money: true },
   pl: { title: "Profit & Loss", group: "Reports", subtitle: "Sales, cost of goods sold and expenses", money: true },
   plmonthly: { title: "Profit & Loss", group: "Reports", subtitle: "Sales, cost of goods sold and expenses", money: true, menuKey: "pl" },
   coststruct: { title: "Profit & Loss", group: "Reports", subtitle: "Sales, cost of goods sold and expenses", money: true, menuKey: "pl" },

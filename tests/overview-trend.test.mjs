@@ -82,6 +82,7 @@ test("the Overview's P&L is the statement's own totals", () => {
   const p = overviewPnl(W);
   assert.deepEqual(p.rm, { openingSen: 10000, purchasesSen: 35000, closingSen: 5000, usedSen: 40000 });
   assert.equal(p.estSen, 3500, "overhead and expense estimates");
+  assert.equal(p.estOverheadSen, 3000, "the overhead part sits in cost of goods sold");
   assert.equal(shareOfSales(p.grossProfitSen, p.netSalesSen), 45);
   assert.equal(shareOfSales(1, 0), null);
 });
@@ -94,6 +95,8 @@ test("how a figure is made adds up exactly", () => {
   const np = explainMonth(m, "np");
   assert.equal(sum(np.slice(0, 3)), np.find((l) => l.label === "= Net profit").sen, "gross profit + other income − expenses");
   assert.ok(np.some((l) => l.label === "incl. estimated costs" && l.sen === 3500));
+  assert.ok(gp.some((l) => l.label === "incl. estimated factory overhead" && l.sen === 3000), "gross profit carries only the overhead estimates");
+  assert.ok(!gp.some((l) => l.label === "incl. estimated costs"));
   const rmx = explainMonth(m, "rm");
   assert.equal(sum(rmx.slice(0, 3)), rmx.find((l) => l.label === "= Raw materials used").sen, "opening + purchases − closing");
   assert.equal(rmx.at(-1).pct, 40);
@@ -136,4 +139,5 @@ test("the tab: six charts, the month-by-month table, aging with who makes up a b
   assert.match(ui, /const cols = \[\.\.\.months\]\.reverse\(\);/, "the table reads newest month first, as the Monthly P&L");
   assert.match(ui, /<HoverDetail key=\{b\.period\} block detail=\{detail\(b\)\}>/, "an aging bucket shows its parties");
   assert.match(ui, /createPortal\(/, "the detail is drawn above a scrolling table");
+  assert.equal((ui.match(/domain=\{roomy\}/g) ?? []).length, 3, "bar labels clear of the month names");
 });

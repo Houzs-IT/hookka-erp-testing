@@ -23,8 +23,10 @@ export type OverviewPnl = {
   netProfitSen: number;
   rm: { openingSen: number; purchasesSen: number; closingSen: number; usedSen: number };
   labourSen: number;
-  /** The running month's estimated costs inside the figures (owner 2026-10-13). */
+  /** The running month's estimated costs inside the figures (owner 2026-10-13) … */
   estSen: number;
+  /** … of which factory overhead — the part inside cost of goods sold, so gross profit. */
+  estOverheadSen: number;
 };
 
 export type OverviewMonth = {
@@ -108,7 +110,8 @@ export function overviewPnl(w: PnlWindowLike): OverviewPnl {
     rm.purchasesSen += Math.round(g.purchasesSen);
     rm.closingSen += Math.round(g.closingSen);
   }
-  const estSen = [...w.overheadLines, ...w.expenseLines].reduce((sum, l) => sum + (l.estSen ?? 0), 0);
+  const estOverheadSen = w.overheadLines.reduce((sum, l) => sum + (l.estSen ?? 0), 0);
+  const estSen = estOverheadSen + w.expenseLines.reduce((sum, l) => sum + (l.estSen ?? 0), 0);
   return {
     netSalesSen: Math.round(w.netSalesSen),
     cogsSen: Math.round(w.cogsSen),
@@ -119,6 +122,7 @@ export function overviewPnl(w: PnlWindowLike): OverviewPnl {
     rm,
     labourSen: Math.round(w.labourSen),
     estSen: Math.round(estSen),
+    estOverheadSen: Math.round(estOverheadSen),
   };
 }
 
@@ -149,14 +153,18 @@ export function explainMonth(m: OverviewMonth, metric: OverviewMetric): ExplainL
   }
   const p = m.pnl;
   if (!p) return [{ label: "No P&L for this month", note: "before the books opened" }];
-  const est = p.estSen !== 0 ? [{ label: "incl. estimated costs", sen: p.estSen, note: "recurring costs not recorded yet, at last month's amount" }] : [];
+  // Estimates: gross profit carries the factory overhead ones only (they sit in
+  // cost of goods sold); net profit carries them all.
+  const estNote = "recurring costs not recorded yet, at last month's amount";
+  const estGp = p.estOverheadSen !== 0 ? [{ label: "incl. estimated factory overhead", sen: p.estOverheadSen, note: estNote }] : [];
+  const est = p.estSen !== 0 ? [{ label: "incl. estimated costs", sen: p.estSen, note: estNote }] : [];
   if (metric === "gp") {
     return [
       { label: "Net sales", sen: p.netSalesSen },
       { label: "− Cost of goods sold", sen: -p.cogsSen },
       { label: "= Gross profit", sen: p.grossProfitSen, total: true },
       { label: "of sales", pct: shareOfSales(p.grossProfitSen, p.netSalesSen) },
-      ...est,
+      ...estGp,
     ];
   }
   if (metric === "np") {
