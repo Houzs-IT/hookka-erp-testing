@@ -6,7 +6,7 @@
 //   - "how a figure is made" adds up exactly, in the statement's own terms;
 //   - the route: read-only, the P&L page's own month windows, drafts and
 //     cancelled documents left out, figures before SST;
-//   - the tab: charts + month-by-month table, aging below with who makes up a
+//   - the tab: charts (the month table went), aging below with who makes up a
 //     bucket, the recent-journal grid gone.
 // ---------------------------------------------------------------------------
 import { readFileSync } from "node:fs";
@@ -129,7 +129,7 @@ test("the route is read-only and reads the P&L page's own month windows", () => 
   assert.match(r, /pnl: w \? overviewPnl\(w\) : null,/);
 });
 
-test("the tab: six charts, the month-by-month table, aging with who makes up a bucket", () => {
+test("the tab: six charts, aging with who makes up a bucket, no month table", () => {
   const ui = read("src/pages/accounting/overview-tab.tsx");
   const page = read("src/pages/accounting/index.tsx");
   assert.match(page, /<OverviewTab arData=\{arData\} apData=\{apData\} \/>/);
@@ -162,11 +162,12 @@ test("the tab: six charts, the month-by-month table, aging with who makes up a b
 
 test("chart axes: round ticks, always through 0, room for the labels", async () => {
   const { niceAxis } = await import("../src/lib/overview-trend.ts");
-  assert.deepEqual(niceAxis([407462.28, 484714.12, 293453.53]), { domain: [0, 600000], ticks: [0, 200000, 400000, 600000] });
-  const np = niceAxis([-42567.44, 63819.47, -73741.18]);
+  // Made-up figures (the repo is public).
+  assert.deepEqual(niceAxis([412000.5, 487250.75, 298100.25]), { domain: [0, 600000], ticks: [0, 200000, 400000, 600000] });
+  const np = niceAxis([-41000.5, 62500.25, -72800.75]);
   assert.deepEqual(np.domain, [-100000, 100000]);
   assert.ok(np.ticks.includes(0), "a loss chart keeps its zero line");
-  assert.ok(np.domain[0] < -73741.18 * 1.3, "room below the deepest loss for its label");
+  assert.ok(np.domain[0] < -72800.75 * 1.3, "room below the deepest loss for its label");
   assert.deepEqual(niceAxis([0, 0]), { domain: [0, 1], ticks: [0, 1] });
 });
 
