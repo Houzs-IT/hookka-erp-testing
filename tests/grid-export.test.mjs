@@ -63,6 +63,19 @@ test("currency null → blank; date ISO → day; computed uses filterAccessor", 
   assert.deepEqual(aoa[1], ["", "2026-08-05", 3]);
 });
 
+// HK-0002: a money column whose grid type is "text" (it renders through
+// formatCurrency) used to export the raw sen integer — RM 1,234.50 came out as
+// 123450. The `...Sen` key IS the unit, so it exports as RM whatever the type.
+test("a ...Sen column exports RM even when its grid type is not currency", () => {
+  const cols = [
+    { key: "valueSen", label: "Amount", type: "text" },
+    { key: "basicSalarySen", label: "Basic Salary (RM)" },
+    { key: "totalSen", label: "Total", type: "currency" },
+  ];
+  const aoa = ge.buildListingAoa(cols, [{ valueSen: 123450, basicSalarySen: 180000, totalSen: 999 }]);
+  assert.deepEqual(aoa[1], [1234.5, 1800, 9.99]);
+});
+
 test("exportValue wins over everything", () => {
   const cols = [{ key: "totalSen", label: "T", type: "currency", exportValue: () => "custom" }];
   assert.equal(ge.buildListingAoa(cols, [{ totalSen: 999 }])[1][0], "custom");

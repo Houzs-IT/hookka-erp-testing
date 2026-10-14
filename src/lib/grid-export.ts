@@ -54,7 +54,12 @@ export function cellExportValue<T>(col: ExportColumn<T>, row: T): string | numbe
     ? col.filterAccessor(row)
     : (getPath(row, col.key) as string | number | null | undefined);
   if (raw == null) return "";
-  if (col.type === "currency" && typeof raw === "number") {
+  // A `...Sen` key is integer sen by house rule (HK-0002): many money columns
+  // are typed "text" because they render via formatCurrency, and exported the
+  // raw sen integer. Raw-path values only — a filterAccessor may already
+  // return RM or a label.
+  const senByKey = !col.filterAccessor && col.key.endsWith("Sen");
+  if ((col.type === "currency" || senByKey) && typeof raw === "number") {
     // Stored in sen → RM, real number (Excel formats/sums it).
     return Math.round(raw) / 100;
   }
