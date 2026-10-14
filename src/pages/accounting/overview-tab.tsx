@@ -71,7 +71,9 @@ const pctLabel = (v: unknown) => (typeof v === "number" ? fmtPct(v) : "");
 const rm = (sen: number | null | undefined) => (sen === null || sen === undefined ? null : sen / 100);
 const pctOrNull = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
 
-// Chart colours — palette E (owner 2026-10-14: navy + teal + gold).
+// Chart colours — palette E (owner 2026-10-14: navy + teal + gold). Only the
+// Overview's charts keep it: the pages went back to their own colours
+// (「全部恢复，只留总览图表」).
 const C = {
   order: "#D9BE85",
   invoice: "#1F3B63",
@@ -361,9 +363,10 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
         <Tooltip cursor={{ fill: "#F2F4F7" }} content={chartTip(byYm, metric)} />
         <Bar yAxisId="amt" dataKey={key} name="Amount" radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={56}>
           {data.map((d) => <Cell key={d.ym} fill={(d[key] ?? 0) < 0 ? C.loss : C.profit} />)}
-          {/* The amount sits by the zero line — the % line follows the bar ends. */}
-          <LabelList dataKey={key} position="insideBottom" formatter={(v: unknown) => (typeof v === "number" && v > 0 ? compactLabel(v) : "")} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
-          <LabelList dataKey={key} position="insideTop" formatter={(v: unknown) => (typeof v === "number" && v < 0 ? compactLabel(v) : "")} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
+          {/* The amount sits by the zero line — the % line follows the bar ends.
+              recharts measures a loss bar from its far end, so "insideBottom"
+              is the zero-line end for a profit and a loss alike. */}
+          <LabelList dataKey={key} position="insideBottom" formatter={compactLabel} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
         </Bar>
         <Line yAxisId="pct" type="monotone" dataKey={pctKey} name="% of sales" stroke={C.line} strokeWidth={1.5} dot={{ r: 3, fill: "#FFFFFF" }} animationDuration={ANIM} connectNulls>
           <LabelList dataKey={pctKey} position="top" formatter={pctLabel} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />

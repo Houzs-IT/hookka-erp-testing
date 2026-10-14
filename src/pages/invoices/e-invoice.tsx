@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,6 @@ import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { Amount } from "@/components/finance/amount";
 import { PageHeader } from "@/components/ui/page-header";
-import { ensureFinanceFonts } from "@/lib/finance-fonts";
 import "@/pages/accounting/finance-ui.css";
 
 type Invoice = {
@@ -39,8 +38,6 @@ type Invoice = {
 type TabId = "dashboard" | "generate" | "xml";
 
 export default function EInvoicePage() {
-  // The finance type (palette E, owner 2026-10-14) — fetched on the first finance page.
-  useEffect(() => { ensureFinanceFonts(); }, []);
   const { data: eResp, loading: eLoading, refresh: refreshEInvoices } = useCachedJson<{ success?: boolean; data?: EInvoice[] }>("/api/e-invoices");
   const { data: iResp, loading: iLoading, refresh: refreshInvoices } = useCachedJson<{ success?: boolean; data?: Invoice[] }>("/api/invoices");
   const eInvoices: EInvoice[] = useMemo(

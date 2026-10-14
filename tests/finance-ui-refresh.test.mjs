@@ -243,8 +243,8 @@ test("Balance Sheet: key figures with the balance check, two sides, one Inventor
 // ---- Step 3: daily pages and the phone ---------------------------------------
 test("Payment Vouchers: summary cards, one status pill, actions in the page header, cards on a phone", () => {
   const pv = slice(ui, "function PaymentsTab(", "// =============== TAB: OFFICIAL RECEIPT");
-  // Status colours: Draft grey · Prepared blue · Checked gold (palette E) · Approved green · Void red.
-  assert.match(ui, /CHECKED: "bg-\[#FBF3E4\] text-\[#7A5B12\]",/);
+  // Status colours: Draft grey · Prepared blue · Checked plum · Approved green · Void red.
+  assert.match(ui, /CHECKED: "bg-\[#F1E6F0\] text-\[#6B4A6D\]",/);
   assert.match(ui, /VOID: "bg-\[#F9E1DA\] text-\[#9A3A2D\]",/);
   assert.equal((pv.match(/\{statusChipOf\((row|g)\)\}/g) ?? []).length, 3, "table (both kinds of row) and phone card");
   assert.doesNotMatch(pv, /<span className="text-\[#9CA3AF\]">VOID<\/span>/, "void reads as a red pill now");
@@ -306,37 +306,20 @@ test("Overview figures and the standalone pages follow the same rules", () => {
   }
 });
 
-// ---- Palette E (owner 2026-10-14 「配色用 E 藏青青绿金，做」) -------------------------
-import { execFileSync } from "node:child_process";
-import { ensureFinanceFonts, FINANCE_FONTS_HREF } from "../src/lib/finance-fonts.ts";
-
-test("palette E: the generated colour layer is current and only touches finance pages", () => {
-  // Fails when a class names an old colour the layer has no rule for yet.
-  execFileSync(process.execPath, ["scripts/gen-finance-theme.mjs", "--check"], { stdio: "pipe" });
-  const theme = read("src/pages/accounting/finance-theme.css");
-  const rules = theme.split("\n").filter((l) => l.includes("{ ") && l.includes(": "));
-  assert.ok(rules.length > 150, "the layer covers the finance colours");
-  for (const r of rules) assert.match(r, /^\s*(@media [^{]+\{ )?:where\(\[data-fin-ui\]\) /, `scoped: ${r.trim().slice(0, 80)}`);
-  assert.match(theme, /^@layer utilities \{$/m, "same layer as Tailwind, so state variants keep working");
-  assert.ok(theme.includes(String.raw`:where([data-fin-ui]) .bg-\[\#6B5C32\] { background-color: #1F3B63; }`), "brown → navy");
-  assert.ok(theme.includes(String.raw`:where([data-fin-ui]) .text-\[\#9A3A2D\] { color: #C2413D; }`), "brick red → coral red");
-  assert.ok(theme.includes(String.raw`:where([data-fin-ui]) .bg-\[\#EAF3DE\] { background-color: #E4F4F1; }`), "green → teal");
+// ---- Colours (owner 2026-10-14) ----------------------------------------------
+// Palette E (navy + teal + gold) was tried across the module, then 「全部恢复，只留
+// 总览图表」: every finance page keeps the app's own colours and type; only the
+// Overview's charts use the palette.
+test("the pages keep their own colours and type; only the Overview charts use palette E", () => {
   const css = read("src/pages/accounting/finance-ui.css");
-  assert.match(css, /^@import "\.\/finance-theme\.css";$/m);
-  assert.match(css, /body:has\(\[data-fin-ui\]\) \{\n  background-color: #f4f5f7;/, "a cool grey canvas behind finance pages only");
-  assert.match(css, /\[data-fin-ui\] \{\n  font-family: Inter, var\(--font-sans\);/);
-});
-
-test("palette E: the fonts load on a finance page, once", () => {
-  assert.match(FINANCE_FONTS_HREF, /family=Inter:.*family=Montserrat:/);
-  const added = [];
-  const doc = { getElementById: (id) => added.find((l) => l.id === id) ?? null, createElement: () => ({}), head: { appendChild: (l) => added.push(l) } };
-  ensureFinanceFonts(doc);
-  ensureFinanceFonts(doc);
-  assert.equal(added.length, 1, "one link, however many pages open");
-  assert.equal(added[0].href, FINANCE_FONTS_HREF);
+  assert.doesNotMatch(css, /@import|finance-theme|font-family|body:has/, "no recolouring layer, no new type, no new canvas");
+  assert.match(css, /color: #6b7280;\n  background-color: #faf8f4;\n  border-bottom: 1px solid #e6e0d9;/, "table heads in the app's own cream");
   for (const p of ["src/pages/accounting/index.tsx", "src/pages/invoices/credit-notes.tsx", "src/pages/invoices/debit-notes.tsx", "src/pages/invoices/e-invoice.tsx"]) {
-    assert.match(read(p), /useEffect\(\(\) => \{ ensureFinanceFonts\(\); \}, \[\]\);/, `${p}: loads the finance type`);
+    assert.doesNotMatch(read(p), /ensureFinanceFonts|finance-fonts/, `${p}: no extra fonts`);
   }
-  assert.doesNotMatch(read("index.html"), /Montserrat|family=Inter/, "the rest of the app never fetches them");
+  const ov = read("src/pages/accounting/overview-tab.tsx");
+  assert.match(ov, /invoice: "#1F3B63",/, "the Overview charts: navy invoices");
+  assert.match(ov, /profit: "#2A9D8F",/, "teal profit");
+  assert.match(ov, /loss: "#D9534F",/, "coral loss");
+  assert.match(ov, /order: "#D9BE85",/, "gold orders");
 });

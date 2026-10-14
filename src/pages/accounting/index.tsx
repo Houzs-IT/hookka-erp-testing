@@ -94,7 +94,6 @@ import {
 } from "@/lib/party-alias-client";
 import { Amount } from "@/components/finance/amount";
 import { OverviewTab } from "./overview-tab";
-import { ensureFinanceFonts } from "@/lib/finance-fonts";
 import { FinKpis, KpiCard, KpiChange } from "@/components/finance/kpi-card";
 import { LevelPicker } from "@/components/finance/level-picker";
 import { acctName } from "@/lib/finance-names";
@@ -616,9 +615,6 @@ export default function AccountingPage() {
   useEffect(() => {
     if (tab === "ar" || tab === "ap") refreshAging();
   }, [tab, refreshAging]);
-
-  // The finance type (palette E, owner 2026-10-14) — fetched on the first finance page.
-  useEffect(() => { ensureFinanceFonts(); }, []);
 
   // A tab's main actions sit in the page header (owner 2026-10-14): Payment
   // Vouchers portals its Scan / New buttons into this slot.
@@ -9984,13 +9980,12 @@ type PvOpenBill = {
 };
 type PvStatusChip = "ALL" | "DRAFT" | "PREPARED" | "CHECKED" | "APPROVED" | "ADVANCE_OPEN" | "CANCELLED";
 // Status colours on the payment list, phone cards and popup (owner
-// 2026-10-14): Draft grey · Prepared blue · Checked gold (palette E) · Approved
-// green · Void red; amber = an advance still open; rose = approved but not yet
-// paid. finance-theme.css turns these into the navy / teal / gold palette.
+// 2026-10-14): Draft grey · Prepared blue · Checked plum · Approved green ·
+// Void red; amber = an advance still open; rose = approved but not yet paid.
 const PV_STATUS_STYLE = {
   DRAFT: "bg-[#F0ECE9] text-[#6B7280]",
   PREPARED: "bg-[#EEF2FB] text-[#2C4170]",
-  CHECKED: "bg-[#FBF3E4] text-[#7A5B12]",
+  CHECKED: "bg-[#F1E6F0] text-[#6B4A6D]",
   APPROVED: "bg-[#EAF3DE] text-[#27500A]",
   UNPAID: "bg-[#F7E5E1] text-[#9A3A2D]",
   WARN: "bg-[#FBF3E4] text-[#7A5B12]",

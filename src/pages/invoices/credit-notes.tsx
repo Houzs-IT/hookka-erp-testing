@@ -24,7 +24,6 @@ import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
 import { Amount } from "@/components/finance/amount";
 import { PageHeader } from "@/components/ui/page-header";
-import { ensureFinanceFonts } from "@/lib/finance-fonts";
 import "@/pages/accounting/finance-ui.css";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
@@ -81,8 +80,6 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
 }
 
 export default function CreditNotesPage() {
-  // The finance type (palette E, owner 2026-10-14) — fetched on the first finance page.
-  useEffect(() => { ensureFinanceFonts(); }, []);
   const { data: cnResp, loading, refresh: refreshCreditNotes } = useCachedJson<{ success?: boolean; data?: CreditNote[] }>("/api/credit-notes");
   const creditNotes: CreditNote[] = useMemo(
     () => (cnResp?.success ? cnResp.data ?? [] : Array.isArray(cnResp) ? cnResp : []),

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,6 @@ import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
 import { Amount } from "@/components/finance/amount";
 import { PageHeader } from "@/components/ui/page-header";
-import { ensureFinanceFonts } from "@/lib/finance-fonts";
 import "@/pages/accounting/finance-ui.css";
 
 const DNMutationSchema = mutationWithData(DebitNoteSchema);
@@ -80,8 +79,6 @@ function buildDebitNoteVoucher(dn: DebitNote): VoucherSpec {
 }
 
 export default function DebitNotesPage() {
-  // The finance type (palette E, owner 2026-10-14) — fetched on the first finance page.
-  useEffect(() => { ensureFinanceFonts(); }, []);
   const { data: dnResp, loading, refresh: refreshDebitNotes } = useCachedJson<{ success?: boolean; data?: DebitNote[] }>("/api/debit-notes");
   const debitNotes: DebitNote[] = useMemo(
     () => (dnResp?.success ? dnResp.data ?? [] : Array.isArray(dnResp) ? dnResp : []),
