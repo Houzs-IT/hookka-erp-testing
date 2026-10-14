@@ -37,3 +37,11 @@
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
 }
+
+/* Phone (owner 2026-10-14): key figures two to a row. */
+@media (max-width: 639px) {
+  [data-fin-ui] .fin-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+}

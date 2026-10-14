@@ -1,6 +1,7 @@
 ﻿import * as React from "react";
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { createPortal } from "react-dom";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { humanizeError } from "@/lib/humanize-error";
 import { useToast } from "@/components/ui/toast";
@@ -618,6 +619,11 @@ export default function AccountingPage() {
     if (tab === "ar" || tab === "ap") refreshAging();
   }, [tab, refreshAging]);
 
+  // A tab's main actions sit in the page header (owner 2026-10-14): Payment
+  // Vouchers portals its Scan / New buttons into this slot.
+  const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null);
+  const headerActions = tab === "payments";
+
   // Finance tables (owner 2026-10-01 「我不想要 wrap text」+「letterhead 可以
   // 左右拉」): no wrapping, and any column edge in a header can be dragged —
   // only that column changes, the rest move with it; widths remembered per
@@ -626,7 +632,8 @@ export default function AccountingPage() {
 
   return (
     <div ref={tablesRef} data-fin-tables data-fin-ui className="space-y-6 max-md:space-y-4">
-      <PageHeader title={page.title} subtitle={financeSubtitle(page)} />
+      <PageHeader title={page.title} subtitle={financeSubtitle(page)}
+        actions={headerActions ? <div ref={setHeaderSlot} className="flex flex-wrap items-center gap-2" /> : undefined} />
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -670,7 +677,7 @@ export default function AccountingPage() {
           {tab === "selfcheck" && <SelfCheckTab />}
           {tab === "corrections" && <CorrectionsTab />}
           {tab === "ocreditorpay" && <OtherPartyPaymentsTab accounts={accounts} side="CREDITOR" />}
-          {tab === "payments" && <PaymentsTab accounts={accounts} />}
+          {tab === "payments" && <PaymentsTab accounts={accounts} headerSlot={headerActions ? headerSlot : null} />}
           {tab === "receipts" && <ReceiptsHubTab accounts={accounts} />}
           {tab === "transfer" && <FundTransferTab accounts={accounts} />}
           {tab === "dailycash" && <DailyCashTab />}
@@ -10242,6 +10249,18 @@ type PvOpenBill = {
   currency: string; foreign: boolean; opening: boolean;
 };
 type PvStatusChip = "ALL" | "DRAFT" | "PREPARED" | "CHECKED" | "APPROVED" | "ADVANCE_OPEN" | "CANCELLED";
+// Status colours on the payment list, phone cards and popup (owner
+// 2026-10-14): Draft grey · Prepared blue · Checked plum · Approved green ·
+// Void red; amber = an advance still open; rose = approved but not yet paid.
+const PV_STATUS_STYLE = {
+  DRAFT: "bg-[#F0ECE9] text-[#6B7280]",
+  PREPARED: "bg-[#EEF2FB] text-[#2C4170]",
+  CHECKED: "bg-[#F1E6F0] text-[#6B4A6D]",
+  APPROVED: "bg-[#EAF3DE] text-[#27500A]",
+  UNPAID: "bg-[#F7E5E1] text-[#9A3A2D]",
+  WARN: "bg-[#FBF3E4] text-[#7A5B12]",
+  VOID: "bg-[#F9E1DA] text-[#9A3A2D]",
+} as const;
 const PV_STATUS_CHIPS: { key: PvStatusChip; label: string }[] = [
   { key: "ALL", label: "All" }, { key: "DRAFT", label: "Draft" }, { key: "PREPARED", label: "Prepared" }, { key: "CHECKED", label: "Checked" },
   { key: "APPROVED", label: "Approved" }, { key: "ADVANCE_OPEN", label: "Advance open" }, { key: "CANCELLED", label: "Cancelled" },
@@ -10466,7 +10485,7 @@ function parsePayLink(raw: string | null): { docKind: "PI" | "AP"; docId: string
 
 // One line of the voucher form. `hint` says where a scanned line's account came from.
 type PvLineDraft = { accountCode: string; description: string; amount: string; hint?: ScanHint };
-function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
+function PaymentsTab({ accounts, headerSlot = null }: { accounts: ChartOfAccount[]; headerSlot?: HTMLElement | null }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
   const [rows, setRows] = useState<PvRow[] | null>(null);
@@ -10690,6 +10709,46 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const bankHiddenSp = bankFilter ? payRows.filter((r) => r.door === "SP" && !r.via).length : 0;
 
   const pvSel = useRowSelection(visibleRows, (r) => r.key);
+
+  // Summary cards (owner 2026-10-14): what waits for approval, what is still a
+  // draft, what went out this month. A click filters the list below.
+  const thisYm = new Date().toISOString().slice(0, 7);
+  const sumOf = (rs: PayRow[]) => rs.reduce((sum, r) => sum + r.totalSen, 0);
+  const livePv = payRows.filter((r) => r.pv && r.state === "ACTIVE" && r.pv.status !== "VOID");
+  const inState = (st: PvApprovalState) => livePv.filter((r) => apState(r.pv!) === st);
+  const draftRows = inState("DRAFT");
+  const toCheck = inState("PREPARED");
+  const toApprove = inState("CHECKED");
+  // Paid = posted and not merely accrued; a transfer between our own banks is not money out.
+  const paidThisMonth = payRows.filter((r) => r.state === "ACTIVE" && r.date.startsWith(thisYm) && r.door !== "TR" && r.door !== "FT"
+    && (!r.pv || (isPosted(r.pv) && !(r.pv.accrued === 1 && !r.pv.settledAt))));
+  const monthName = new Date(`${thisYm}-01T00:00:00Z`).toLocaleString("en", { month: "long", year: "numeric", timeZone: "UTC" });
+  const lastDay = new Date(Date.UTC(Number(thisYm.slice(0, 4)), Number(thisYm.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const nVouchers = (n: number) => `${n} voucher${n === 1 ? "" : "s"}`;
+
+  // One status pill for a payment — the table, the phone cards and the popup
+  // read alike (PV_STATUS_STYLE).
+  const pill = (label: React.ReactNode, cls: string, title?: string) => (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${cls}`} title={title}>{label}</span>
+  );
+  const statusChipOf = (row: PayRow): React.ReactNode => {
+    if (!row.pv) {
+      if (row.state !== "ACTIVE") return pill(row.state === "VOID" ? "Void" : row.state.charAt(0) + row.state.slice(1).toLowerCase(), PV_STATUS_STYLE.VOID);
+      if (row.sp && spAdvanceOpenSen(row.sp) > 0) return pill(<>Approved · advance open <Amount sen={spAdvanceOpenSen(row.sp)} /></>, PV_STATUS_STYLE.WARN, "Unapplied supplier advance — knock it off on the Supplier Payment page");
+      return pill("Approved · paid", PV_STATUS_STYLE.APPROVED, `Posted on save — ${PAY_DOOR_HINT[row.door]}`);
+    }
+    const r = row.pv;
+    if (r.status === "VOID") return pill("Void", PV_STATUS_STYLE.VOID);
+    const st = apState(r);
+    if (st === "DRAFT") return pill("Draft", PV_STATUS_STYLE.DRAFT, (r.rejectReason ?? r.reject_reason) ? `Rejected: ${r.rejectReason ?? r.reject_reason}` : undefined);
+    if (st === "PREPARED") return pill("Prepared", PV_STATUS_STYLE.PREPARED);
+    if (st === "CHECKED") return pill("Checked · awaiting approval", PV_STATUS_STYLE.CHECKED, `Formal No. ${r.pvNo} — pending in Cash Position`);
+    if ((r.advanceOpenSen ?? 0) > 0) return pill(<>Approved · advance open <Amount sen={r.advanceOpenSen ?? 0} /></>, PV_STATUS_STYLE.WARN, "Unapplied supplier advance — knock it off on the Supplier Payment page");
+    return r.accrued === 1 && !r.settledAt ? pill("Approved · accrued, unpaid", PV_STATUS_STYLE.UNPAID) : pill("Approved · paid", PV_STATUS_STYLE.APPROVED);
+  };
+  // The main actions go to the page header when it has a slot for them.
+  const inHeader = (node: React.ReactNode) =>
+    headerSlot ? createPortal(node, headerSlot) : <div className="flex items-center gap-2 flex-wrap justify-end">{node}</div>;
 
   const resetForm = () => {
     setShowForm(false);
@@ -11217,11 +11276,11 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       {rowMenu.element}
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 max-md:flex-col max-md:items-start">
         <div>
           <p className="text-[11px] text-[#9CA3AF]">Every payment out, one door. <b>AP Payment</b> pays a creditor's bills (purchase invoices / other-creditor bills); <b>Payment Voucher</b> pays an expense. Draft → Prepared → Checked → Approved (posted), or Post now. Foreign-currency PIs, advance knock-off and trade-finance repayment: <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payment page</Link>. Payments recorded there and on <Link to="/accounting?tab=ocreditorpay" className="underline decoration-dotted text-[#6B5C32]">Other Creditor Payments</Link> are listed below too (badges <b>SP</b> / <b>OCP</b>) — same HPV number series, one list.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
+        {inHeader(<>
           <ScanVouchers accounts={accounts} bankCash={bankCash} onDone={load} onOpenInForm={openScanInForm} />
           <Button variant="primary" size="sm" onClick={() => (showForm && formKind === "AP" && !editingId ? resetForm() : openNew("AP"))} title="Pay a supplier's purchase invoices or an other creditor's bills">
             <Plus className="h-4 w-4" /> New AP Payment
@@ -11229,7 +11288,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <Button variant="outline" size="sm" onClick={() => (showForm && formKind === "EXPENSE" && !editingId ? resetForm() : openNew("EXPENSE"))} title="Pay an expense straight to its account">
             <Plus className="h-4 w-4" /> New Payment Voucher
           </Button>
-        </div>
+        </>)}
       </div>
       {migrationMissing && (
         <Card><CardContent className="p-4 text-sm text-[#9A3A2D]">Migration 0159 not applied yet — run the paste-version SQL first.</CardContent></Card>
@@ -11616,6 +11675,21 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           {payRows.length} payment{payRows.length === 1 ? "" : "s"} · {doorCount("PV")} voucher · {doorCount("AP")} AP · {doorCount("TR")} transfer · {doorCount("SP")} supplier · {doorCount("OCP")} other creditor · {doorCount("FT")} old fund transfer
         </div>
       )}
+      {!payLoading && (
+        <FinKpis label="Payment summary">
+          <KpiCard label="Waiting for approval" value={<Amount sen={sumOf([...toCheck, ...toApprove])} />}
+            active={statusFilter === "CHECKED" || statusFilter === "PREPARED"}
+            onClick={() => setStatusFilter(toApprove.length > 0 || toCheck.length === 0 ? "CHECKED" : "PREPARED")}
+            note={toCheck.length + toApprove.length === 0 ? "nothing waiting" : `${toApprove.length} to approve · ${toCheck.length} to check`} />
+          <KpiCard label="Drafts" value={<Amount sen={sumOf(draftRows)} />}
+            active={statusFilter === "DRAFT"} onClick={() => setStatusFilter("DRAFT")}
+            note={draftRows.length === 0 ? "none" : `${nVouchers(draftRows.length)} not submitted yet`} />
+          <KpiCard label="Paid this month" value={<Amount sen={sumOf(paidThisMonth)} />}
+            active={statusFilter === "APPROVED" && dateFrom === `${thisYm}-01` && dateTo === lastDay}
+            onClick={() => { setStatusFilter("APPROVED"); setDateFrom(`${thisYm}-01`); setDateTo(lastDay); }}
+            note={`${paidThisMonth.length} payment${paidThisMonth.length === 1 ? "" : "s"} · ${monthName} · transfers excluded`} />
+        </FinKpis>
+      )}
       <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
         {PV_STATUS_CHIPS.map((ch) => {
           const n = chipCount(ch.key);
@@ -11717,7 +11791,38 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         ]}
       />
 
-      <Card>
+      {/* Phone (owner 2026-10-14): one card per payment instead of the wide
+          table; a tap opens it (no double-click on a phone). */}
+      <div className="md:hidden space-y-2">
+        {payLoading ? (
+          <div className="py-8 text-center text-sm text-[#6B7280]">Loading…</div>
+        ) : visibleRows.length === 0 ? (
+          <div className="py-8 text-center text-sm text-[#9CA3AF]">No payments match</div>
+        ) : visibleRows.map((row) => {
+          const r = row.pv;
+          const toBank = r?.pvKind === "TRANSFER" ? shortBankName(accounts.find((a) => a.code === r.lines[0]?.accountCode)?.name) || (r.lines[0]?.accountCode ?? "") : "";
+          const who = r ? (r.pvKind === "TRANSFER" ? `Transfer to ${toBank}` : r.payee) : row.payee;
+          const what = r ? r.description : (row.ocp?.reference || row.ft?.description || "");
+          const bank = r ? (r.accrued === 1 && !r.settledAt ? `accrued → ${r.accrualAccount}` : r.payFrom) : row.via;
+          const open = () => (r ? setDetailPvId(r.id) : setDetailPayKey(row.key));
+          return (
+            <div key={row.key} role="button" tabIndex={0} onClick={open} onKeyDown={(e) => { if (e.key === "Enter") open(); }}
+              className={`rounded-lg border border-[#E2DDD8] bg-white px-3 py-2.5 cursor-pointer ${row.state !== "ACTIVE" || r?.status === "VOID" ? "opacity-60" : ""}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-1.5 text-xs tabular-nums text-[#6B7280]">{r ? r.pvNo : row.no}{payDoorChip(row.door)}</span>
+                <span className="text-sm font-semibold text-[#1F1D1B]"><Amount sen={row.totalSen} /></span>
+              </div>
+              <div className="mt-0.5 truncate text-sm font-medium text-[#1F1D1B]">{who || "—"}</div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-xs text-[#6B7280]">{[row.date, bank, what].filter(Boolean).join(" · ")}</span>
+                {statusChipOf(row)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Card className="max-md:hidden">
         <CardContent className="p-0 overflow-x-auto">
           {payLoading ? (
             <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
@@ -11771,11 +11876,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           </td>
                           <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={g.totalSen} /></td>
                           <td className="px-3 py-1.5 text-xs">
-                            {g.state !== "ACTIVE"
-                              ? <span className="text-[#9CA3AF]">{g.state}</span>
-                              : g.sp && spAdvanceOpenSen(g.sp) > 0
-                                ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#FBF3E4] text-[#7A5B12]" title="Unapplied supplier advance — knock it off on the Supplier Payment page">Approved · advance open <Amount sen={spAdvanceOpenSen(g.sp)} /></span>
-                                : <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title={`Posted on save — ${PAY_DOOR_HINT[g.door]}`}>Approved · paid</span>}
+                            {statusChipOf(g)}
                           </td>
                           <td className="px-1 py-1 text-right w-8">{rowMenu.button(g.key, () => payRowMenu(g))}</td>
                         </tr>
@@ -11815,16 +11916,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                     <td className="px-3 py-1.5 text-xs">
-                      {(() => {
-                        if (r.status === "VOID") return <span className="text-[#9CA3AF]">VOID</span>;
-                        const st = apState(r);
-                        const chip = (label: string, cls: string, title?: string) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`} title={title}>{label}</span>;
-                        if (st === "DRAFT") return chip("Draft", "bg-[#F0ECE9] text-[#6B7280]", (r.rejectReason ?? r.reject_reason) ? `Rejected: ${r.rejectReason ?? r.reject_reason}` : undefined);
-                        if (st === "PREPARED") return chip("Prepared", "bg-[#EEF2FB] text-[#2C4170]");
-                        if (st === "CHECKED") return chip("Checked · awaiting approval", "bg-[#FBF3E4] text-[#7A5B12]", `Formal No. ${r.pvNo} — pending in Cash Position`);
-                        if ((r.advanceOpenSen ?? 0) > 0) return chip(`Approved · advance open ${formatCurrency(r.advanceOpenSen ?? 0)}`, "bg-[#FBF3E4] text-[#7A5B12]", "Unapplied supplier advance — knock it off on the Supplier Payment page");
-                        return r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", "bg-[#F7E5E1] text-[#9A3A2D]") : chip("Approved · paid", "bg-[#EAF3DE] text-[#27500A]");
-                      })()}
+                      {statusChipOf(row)}
                       {(r.rejectReason ?? r.reject_reason) && apState(r) === "DRAFT" && r.status !== "VOID" && (
                         <div className="text-[10px] text-[#9A3A2D] mt-0.5 max-w-[16rem] truncate" title={r.rejectReason ?? r.reject_reason ?? ""}>↩ {r.rejectReason ?? r.reject_reason}</div>
                       )}
@@ -11851,11 +11943,11 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         const dmy = (iso?: string | null) => (iso ? String(iso).slice(0, 10) : "—");
         const rx = r as PvRow & { preparedByName?: string | null; checkedByName?: string | null; approvedByName?: string | null; createdByName?: string | null };
         const chip = (label: string, cls: string) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
-        const statusChip = r.status === "VOID" ? chip("CANCELLED", "bg-[#F0ECE9] text-[#9CA3AF]")
-          : st === "DRAFT" ? chip("Draft", "bg-[#F0ECE9] text-[#6B7280]")
-          : st === "PREPARED" ? chip("Prepared", "bg-[#EEF2FB] text-[#2C4170]")
-          : st === "CHECKED" ? chip("Checked · awaiting approval", "bg-[#FBF3E4] text-[#7A5B12]")
-          : r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", "bg-[#F7E5E1] text-[#9A3A2D]") : chip("Approved · paid", "bg-[#EAF3DE] text-[#27500A]");
+        const statusChip = r.status === "VOID" ? chip("Void", PV_STATUS_STYLE.VOID)
+          : st === "DRAFT" ? chip("Draft", PV_STATUS_STYLE.DRAFT)
+          : st === "PREPARED" ? chip("Prepared", PV_STATUS_STYLE.PREPARED)
+          : st === "CHECKED" ? chip("Checked · awaiting approval", PV_STATUS_STYLE.CHECKED)
+          : r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", PV_STATUS_STYLE.UNPAID) : chip("Approved · paid", PV_STATUS_STYLE.APPROVED);
         return (
           <DocDetailModal
             title={`${r.pvKind === "AP" ? "AP Payment" : "Payment Voucher"} ${r.pvNo}`}
@@ -16793,7 +16885,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
   const bg = "bg-[#FAF8F5]";
   if (!data || !data.found) {
     const msg = err ?? (data ? "This line is not on the statement any more — reload the page." : "Loading the payments…");
-    return <tr className={bg}><td className={`py-1 text-[12px] ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
+    return <tr className={bg}><td className={`py-1 text-[12px] sticky left-0 ${bg} ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
   }
   const amtCls = (sen: number) => `text-right px-2 tabular-nums whitespace-nowrap ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
   const amt = drillAmt;
@@ -16813,7 +16905,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
         const text = `${it.date.slice(8, 10)}/${it.date.slice(5, 7)} · ${it.description || "—"}${it.ref2 ? ` · ${it.ref2}` : ""} — ${it.ref1}`;
         return (
           <tr key={it.key} className={`${bg} text-[12px] text-[#4B5563]`} title={hover || undefined}>
-            <td className="py-1" style={pad}>
+            <td className={`py-1 sticky left-0 ${bg}`} style={pad}>
               <div className="truncate max-w-[34rem]">{text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
             </td>
             {cols.map((c) => {
@@ -16824,7 +16916,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
         );
       })}
       <tr className="bg-[#F7F4EF] text-[12px] font-semibold text-[#4B5563] border-t border-[#E2DDD8]">
-        <td className="py-1" style={pad}>
+        <td className="py-1 sticky left-0 bg-[#F7F4EF]" style={pad}>
           {data.items.length} entr{data.items.length === 1 ? "y" : "ies"}
           {accountCode && months.length > 0 && <> · <Link to={glHref(accountCode, months[0], months[months.length - 1])} className="underline decoration-dotted text-[#6B5C32]">open in GL</Link></>}
           {!data.tied && <span className="font-normal text-[#9A3412]"> · these payments do not add up to the line — please report it</span>}
@@ -17544,7 +17636,7 @@ function CashFlowTab() {
                 {/* PERIOD row bold on top (house rule), Accumulated tinted so
                     the cumulative column never reads as a 13th month. */}
                 <tr className="text-[12px] font-bold text-[#1F1D1B] border-b-2 border-[#1F1D1B] bg-[#F7F4EF]">
-                  <td className="px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-[#6B5C32]">PERIOD</td>
+                  <td className="px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-[#6B5C32] sticky left-0 z-[1] bg-[#F7F4EF]">PERIOD</td>
                   {cols.map((c) => (
                     <td key={c.key} className={`text-right px-2 py-1.5 whitespace-nowrap ${c.accum ? "bg-[#F6F1E7] text-[#6B5C32]" : ""}`}>{c.label}</td>
                   ))}
@@ -17569,6 +17661,8 @@ function CashFlowTab() {
                   const canDrill = !edit && r.kind === "line" && !!r.lineKey;
                   const drillKey = canDrill ? `${period}|${r.lineKey}` : "";
                   const drilled = canDrill && cfDrillOpen.has(drillKey);
+                  // The pinned name cell needs a solid colour — its row's.
+                  const pinBg = r.kind === "result" ? "bg-[#F0ECE9]" : r.kind === "total" ? "bg-[#EAF3DE]" : drilled ? "bg-[#F7F4EF]" : isGroup ? "bg-[#FBF9F8]" : "bg-white";
                   return (
                     <Fragment key={i}>
                     <tr
@@ -17587,7 +17681,7 @@ function CashFlowTab() {
                         else void moveTo(src, r.section);
                       } : undefined}
                       onClick={isGroup && !edit ? () => { const n = new Set(collapsed); if (n.has(r.groupId!)) n.delete(r.groupId!); else n.add(r.groupId!); setCollapsed(n); } : undefined}>
-                      <td className="py-1 whitespace-nowrap" style={pad}>
+                      <td className={`py-1 whitespace-nowrap sticky left-0 z-[1] ${pinBg}`} style={pad}>
                         {canDrill ? (
                           <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the payments behind this line"
                             onClick={() => setCfDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>

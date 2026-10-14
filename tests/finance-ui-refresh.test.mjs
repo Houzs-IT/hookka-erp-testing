@@ -92,7 +92,7 @@ test("one amount format: 1,234.00 · (1,234.00) · – for zero", () => {
 
 test("the page frame: header from the record, finance style on every finance page", () => {
   assert.match(ui, /const page = financePage\(tab\);/);
-  assert.match(ui, /<div ref=\{tablesRef\} data-fin-tables data-fin-ui className="space-y-6 max-md:space-y-4">\n      <PageHeader title=\{page\.title\} subtitle=\{financeSubtitle\(page\)\} \/>/);
+  assert.match(ui, /<div ref=\{tablesRef\} data-fin-tables data-fin-ui className="space-y-6 max-md:space-y-4">\n      <PageHeader title=\{page\.title\} subtitle=\{financeSubtitle\(page\)\}\n        actions=\{headerActions \? <div ref=\{setHeaderSlot\} className="flex flex-wrap items-center gap-2" \/> : undefined\} \/>/);
   assert.match(ui, /import "\.\/finance-ui\.css";/);
   assert.doesNotMatch(ui, /<h1[^>]*>Accounting<\/h1>/, "the old page title is gone");
   for (const t of ["Stock Group Mapping", "Accounts Receivable", "Accounts Payable", "Payment Vouchers", "Receipts", "Fund Transfer", "Statement of Cash Flow", "General Ledger"]) {
@@ -105,8 +105,13 @@ test("the page frame: header from the record, finance style on every finance pag
     assert.doesNotMatch(src, /className="p-6 space-y-6/, `${p}: no second padding inside the layout's`);
   }
   const css = read("src/pages/accounting/finance-ui.css");
-  for (const rule of css.match(/^[^\s/*}][^{]*\{/gm) ?? []) {
-    for (const sel of rule.replace(/\{$/, "").split(",")) assert.match(sel.trim(), /^\[data-fin-ui\] /, `scoped: ${sel.trim()}`);
+  // Every selector is scoped, at-rule blocks (@media) included: a selector is
+  // the text before a "{" since the last "}" or ";".
+  const pieces = css.replace(/\/\*[\s\S]*?\*\//g, "").split("{").slice(0, -1);
+  for (const piece of pieces) {
+    const sel = piece.slice(Math.max(piece.lastIndexOf("}"), piece.lastIndexOf(";")) + 1).trim();
+    if (!sel || sel.startsWith("@")) continue;
+    for (const one of sel.split(",")) assert.match(one.trim(), /^\[data-fin-ui\] /, `scoped: ${one.trim()}`);
   }
 });
 
@@ -223,4 +228,35 @@ test("Balance Sheet: key figures with the balance check, two sides, one Inventor
   // Hooks stay above the loading return.
   assert.ok(bs.indexOf("const [bsLevel, setBsLevel] = useState(2);") < bs.indexOf("if (bsLoading) {"));
   assert.equal((ui.match(/<table data-col-resize="first"/g) ?? []).length, 8, "still one sheet table in the source (rendered per side)");
+});
+
+// ---- Step 3: daily pages and the phone ---------------------------------------
+test("Payment Vouchers: summary cards, one status pill, actions in the page header, cards on a phone", () => {
+  const pv = slice(ui, "function PaymentsTab(", "// =============== TAB: OFFICIAL RECEIPT");
+  // Status colours: Draft grey · Prepared blue · Checked plum · Approved green · Void red.
+  assert.match(ui, /CHECKED: "bg-\[#F1E6F0\] text-\[#6B4A6D\]",/);
+  assert.match(ui, /VOID: "bg-\[#F9E1DA\] text-\[#9A3A2D\]",/);
+  assert.equal((pv.match(/\{statusChipOf\((row|g)\)\}/g) ?? []).length, 3, "table (both kinds of row) and phone card");
+  assert.doesNotMatch(pv, /<span className="text-\[#9CA3AF\]">VOID<\/span>/, "void reads as a red pill now");
+  // Summary cards filter the list.
+  assert.match(pv, /<KpiCard label="Waiting for approval"/);
+  assert.match(pv, /<KpiCard label="Drafts"/);
+  assert.match(pv, /<KpiCard label="Paid this month"/);
+  assert.match(pv, /r\.door !== "TR" && r\.door !== "FT"/, "a transfer between our own banks is not money out");
+  assert.match(pv, /!\(r\.pv\.accrued === 1 && !r\.pv\.settledAt\)/, "accrued, unpaid is not paid");
+  // Actions portalled into the page header's slot.
+  assert.match(ui, /\{tab === "payments" && <PaymentsTab accounts=\{accounts\} headerSlot=\{headerActions \? headerSlot : null\} \/>\}/);
+  assert.match(pv, /headerSlot \? createPortal\(node, headerSlot\)/);
+  assert.match(pv, /\{inHeader\(<>\n\s*<ScanVouchers /);
+  // Phone: cards below md, the table from md up.
+  assert.match(pv, /<div className="md:hidden space-y-2">/);
+  assert.match(pv, /<Card className="max-md:hidden">/);
+});
+
+test("phone: key figures two to a row; Cash Flow keeps its names in view", () => {
+  const css = read("src/pages/accounting/finance-ui.css");
+  assert.match(css, /@media \(max-width: 639px\) \{\n  \[data-fin-ui\] \.fin-kpis \{\n    grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  const cf = slice(ui, "function CashFlowTab() {", "\n}\n");
+  assert.match(cf, /sticky left-0 z-\[1\] bg-\[#F7F4EF\]">PERIOD<\/td>/);
+  assert.match(cf, /<td className=\{`py-1 whitespace-nowrap sticky left-0 z-\[1\] \$\{pinBg\}`\} style=\{pad\}>/);
 });
