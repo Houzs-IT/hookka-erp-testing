@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: staging<-main sync (branch `chore/sync-staging-from-main-1013`): both sides kept, one copy of each entry. Staging's Plant Load entry, logged as BUG-2026-10-08-269, is now BUG-2026-10-08-285 because main used 269 first. Newest entry is still 284; 285 is the next number used.
@@ -159,9 +160,9 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/topbar-above-grid-header.test.mjs` reads the three z values from source and checks the order; fails on the old `z-30`.
 
-## BUG-2026-10-14-287 — Finance could not void a purchase invoice billed straight off a PO `procurement` `rbac` 🟡
+## BUG-2026-10-14-287 — Finance could not void a purchase invoice billed straight off a PO `procurement` `rbac` 🟢
 
-🟡 **Fixed on branch** (`fix/pi-revoid-and-finance-auto-receipt` → `staging`). Follow-up to BUG-2026-10-12-279 (client tracker BUG-87).
+🟢 **Fixed and verified on staging** (#852, 2026-10-14). Follow-up to BUG-2026-10-12-279 (client tracker BUG-87). Staging-only: `main` has no auto receipt.
 
 **Symptom.** Measured on staging 2026-10-14, acting as the Finance user: voiding PI-2610-026 answered 409 "that receipt can't be cancelled: Forbidden". Stock and the invoice were left as they were.
 
@@ -171,9 +172,11 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/purchasing-convert-flow.test.mjs` "BUG-2026-10-14-287": a FINANCE caller voids and unvoids a PO-direct invoice; fails 409 without the fix.
 
-## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
+**Verified on staging (after #852 deployed, 2026-10-14).** As the Finance user (staging role switcher): PI-2610-024 void 200 (DARK PINK SPONGE 199 → 196, PO back to CONFIRMED) and unvoid 200 (196 → 199, PO RECEIVED). On fresh documents: Office created and confirmed PI-2610-028 (196 → 199), Office void still 403 by design, Finance void 200 (199 → 196).
 
-🟡 **Fixed on branch** (`fix/pi-revoid-and-finance-auto-receipt` → `staging`). Found on the BUG-87 staging re-test.
+## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟢
+
+🟢 **Fixed and verified on staging** (#852, 2026-10-14). Found on the BUG-87 staging re-test. `main` fix on branch `fix/pi-revoid-legno-main`.
 
 **Symptom.** Void → unvoid → void of the same purchase invoice answered 500. Staging log 2026-10-14: `duplicate key value violates unique constraint "idx_lje_idempotent"` on `POST /api/purchase-invoices/:id/void`. Reproduced on PI-2610-023 and a fresh PI-2610-024. For a PO-direct invoice the void had already cancelled its auto receipt, so `receiveAfterFailedRemoval` received the goods again: stock stayed right, but each try left one more cancelled receipt (GRN-2610-008, 009, 011, 012).
 
@@ -184,6 +187,8 @@ Entries themselves stay newest-first.
 **Not checked.** Other posters that number from 1 with a reused sourceId, e.g. `invoices.ts` `invoice_void` with `sourceId = inv.id`. Owner: fix this one first.
 
 **Regression.** `tests/purchasing-convert-flow.test.mjs` "BUG-2026-10-14-286": void, unvoid, void, unvoid all answer 200 and no void leg number repeats. The mock now reads the invoice's legs back and raises on a duplicate leg like the real index; the test fails 500 without the fix.
+
+**Verified on staging (after #852 deployed, 2026-10-14).** PI-2610-023 third void 200 (202 → 199). PI-2610-024: void, unvoid, void, unvoid, void all 200, stock moving 199 → 196 → 199 → 196 → 199 → 196. Fresh PI-2610-027: confirm, void, unvoid, void again all 200, and only two auto receipts (confirm, unvoid), no extra cancelled ones. Test documents cleaned up, stock back at 196.
 
 ## BUG-2026-10-13-284 — Scans failed for users whose internet provider routes to Cloudflare in Hong Kong `scanning` 🟡
 
