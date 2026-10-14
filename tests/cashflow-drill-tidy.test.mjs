@@ -71,7 +71,9 @@ test("the rows (owner 2026-10-01, monthly layout): a split shows its share, the 
   assert.match(rows, /This line's share of a payment of RM \$\{plDrillAmt\(it\.ofSen\)\} \(\$\{\(\(Math\.abs\(it\.sen\) \/ it\.ofSen\) \* 100\)\.toFixed\(1\)\}%\)/);
   assert.match(rows, /shortBankName\(o\.name\) \|\| o\.code/);
   assert.match(rows, /Bank: \$\{it\.otherSide\.map\(\(o\) => `\$\{o\.code\} \$\{o\.name\}`\)\.join\(", "\)\}/, "full bank name on hover");
-  assert.match(rows, /const amt = \(sen: number\) => \(sen < 0 \? `\(\$\{plDrillAmt\(-sen\)\}\)` : plDrillAmt\(sen\)\);/);
+  // Brackets for money out — the finance-wide format since 2026-10-14 (fmtAmount).
+  assert.match(rows, /const amt = drillAmt;/);
+  assert.match(ui, /const drillAmt = \(sen: number\) => fmtAmount\(sen\);/);
   assert.doesNotMatch(rows, /Money in|Money out|part of/, "the old two columns / inline note are not back");
   assert.match(rows, /const sen = c\.accum \? total : \(perMonth\.get\(c\.key\) \?\? 0\);/, "each month's subtotal = the line's figure");
 });

@@ -10546,8 +10546,9 @@ app.get("/pl", async (c) => {
       cogsByAccount,
       opexByAccount,
       balanceSheet,
-      // Which month's closing stock the sheet's stock lines carry (null = none).
-      sheetStock: sheetStock ? { month: sheetStock.month, totalSen: sheetStock.totalSen } : null,
+      // Which month's closing stock the sheet's stock lines carry (null = none),
+      // and on which accounts — the page groups them under Inventories.
+      sheetStock: sheetStock ? { month: sheetStock.month, totalSen: sheetStock.totalSen, accounts: [...sheetStock.balances.keys()] } : null,
       sheetStockError,
       manufacturing: {
         ...mfg,

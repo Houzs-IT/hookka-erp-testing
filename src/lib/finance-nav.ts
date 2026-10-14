@@ -84,3 +84,17 @@ export function financeMenuKey(tab: string | null | undefined): string {
 export function financeSubtitle(p: FinancePage): string {
   return p.money ? `${p.subtitle} · amounts in RM` : p.subtitle;
 }
+
+/**
+ * Names for a report's detail levels (owner 2026-10-14, in place of L1–L4):
+ * the first is the summary, the last shows every line.
+ */
+export function levelNames(max: number): string[] {
+  const n = Math.max(1, Math.floor(max));
+  if (n === 1) return ["All lines"];
+  const middle = ["Groups", "Sub-groups"];
+  const out = ["Summary"];
+  for (let i = 1; i < n - 1; i++) out.push(middle[i - 1] ?? `Level ${i + 1}`);
+  out.push("All lines");
+  return out;
+}

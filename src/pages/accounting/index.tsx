@@ -96,6 +96,10 @@ import {
   teachPartyAlias,
 } from "@/lib/party-alias-client";
 import { Amount } from "@/components/finance/amount";
+import { FinKpis, KpiCard, KpiChange } from "@/components/finance/kpi-card";
+import { LevelPicker } from "@/components/finance/level-picker";
+import { acctName } from "@/lib/finance-names";
+import { fmtAmount, pctChange } from "@/lib/finance-money";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -701,17 +705,22 @@ export default function AccountingPage() {
 // Cost Structure were three menu items for one report). The three tabs are
 // untouched; this just switches between them.
 function PlHubTab({ initialView }: { initialView: "statement" | "monthly" | "cost" }) {
-  const [view, setView] = useState(initialView);
-  const views: { key: typeof view; label: string; hint: string }[] = [
-    { key: "statement", label: "P&L Statement", hint: "One period, the full statement" },
-    { key: "monthly", label: "Monthly P&L", hint: "Month by month, side by side" },
-    { key: "cost", label: "Cost Structure", hint: "Fixed / variable / other cost classes" },
+  // The view lives in the URL (owner 2026-10-14): ?tab=pl / plmonthly /
+  // coststruct, so a refresh, the back button or a shared link opens the
+  // same view. The page remounts this tab on each, as the old links did.
+  const [, setSearchParams] = useSearchParams();
+  const view = initialView;
+  const views: { key: typeof view; tab: string; label: string; hint: string }[] = [
+    { key: "statement", tab: "pl", label: "Statement", hint: "One period, the full statement" },
+    { key: "monthly", tab: "plmonthly", label: "Monthly", hint: "Month by month, side by side" },
+    { key: "cost", tab: "coststruct", label: "Cost structure", hint: "Fixed / variable / other cost classes" },
   ];
   return (
     <div className="space-y-3">
-      <div className="inline-flex rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
+      <div role="tablist" aria-label="Profit & Loss view" className="inline-flex rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-sm">
         {views.map((v, i) => (
-          <button key={v.key} type="button" onClick={() => setView(v.key)} title={v.hint}
+          <button key={v.key} type="button" role="tab" aria-selected={view === v.key} title={v.hint}
+            onClick={() => { if (v.key !== view) setSearchParams((sp) => { const n = new URLSearchParams(sp); n.set("tab", v.tab); return n; }); }}
             className={`px-3 py-1.5 font-semibold cursor-pointer ${view === v.key ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${i > 0 ? "border-l border-[#F0ECE9]" : ""}`}>
             {v.label}
           </button>
@@ -2154,8 +2163,8 @@ function StockTakeTab() {
                             {missing > 0 && <span className="ml-1 text-[10px] text-[#9A3A2D]">({missing} no price)</span>}
                           </td>
                           <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={groupSen(g)} /></td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">{prev != null ? formatCurrency(prev) : "—"}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">{cur != null ? formatCurrency(cur) : "—"}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">{prev != null ? <Amount sen={prev} /> : "—"}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">{cur != null ? <Amount sen={cur} /> : "—"}</td>
                         </tr>
                       );
                     })}
@@ -2239,7 +2248,7 @@ function StockTakeTab() {
                               className={`w-28 rounded border px-2 py-0.5 text-sm text-right tabular-nums ${bad ? "border-[#9A3A2D]" : "border-[#E2DDD8]"}`}
                             />
                           </td>
-                          <td className="px-2 py-1 text-right tabular-nums">{v == null ? "—" : formatCurrency(v)}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{v == null ? "—" : <Amount sen={v} />}</td>
                           <td className="px-2 py-1 text-xs">
                             <div className="text-[#6B7280]">{pricedSource(i) || "—"}</div>
                             {note && <div className={!i.source && !i.listUnitStr ? "text-[#9A3A2D]" : "text-[#7A5B12]"}>{note}</div>}
@@ -3937,8 +3946,8 @@ function JournalsTab({
                         <tr key={i} className="border-t border-[#F0ECE9]">
                           <td className="px-3 py-1.5 whitespace-nowrap">{l.accountCode}{l.accountName ? ` · ${l.accountName}` : (accounts.find((a) => a.code === l.accountCode)?.name ? ` · ${accounts.find((a) => a.code === l.accountCode)?.name}` : "")}</td>
                           <td className="px-3 py-1.5 text-[#6B7280]">{l.description || ""}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{l.debitSen ? formatCurrency(l.debitSen) : ""}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{l.creditSen ? formatCurrency(l.creditSen) : ""}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{l.debitSen ? <Amount sen={l.debitSen} /> : ""}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{l.creditSen ? <Amount sen={l.creditSen} /> : ""}</td>
                         </tr>
                       ))}
                       <tr className="border-t-2 border-[#1F1D1B] font-semibold">
@@ -4452,8 +4461,8 @@ ${rows}
                       <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
                       <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
                       <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                       <td className="px-3 py-1.5 text-right font-medium"><Amount sen={r.runningSen} /></td>
                     </tr>
                   ))}
@@ -4564,11 +4573,11 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                           {ar.customerName}
                         </button>
                       </td>
-                      <td className={`py-3 px-4 text-right ${ar.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.currentSen !== 0 ? formatCurrency(ar.currentSen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.days30Sen !== 0 ? formatCurrency(ar.days30Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days60Sen < 0 ? "text-[#9A3A2D]" : ar.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ar.days60Sen !== 0 ? formatCurrency(ar.days60Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days90Sen < 0 ? "text-[#9A3A2D]" : ar.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ar.days90Sen !== 0 ? formatCurrency(ar.days90Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ar.over90Sen !== 0 ? formatCurrency(ar.over90Sen) : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ar.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.currentSen !== 0 ? <Amount sen={ar.currentSen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ar.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.days30Sen !== 0 ? <Amount sen={ar.days30Sen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ar.days60Sen < 0 ? "text-[#9A3A2D]" : ar.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ar.days60Sen !== 0 ? <Amount sen={ar.days60Sen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ar.days90Sen < 0 ? "text-[#9A3A2D]" : ar.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ar.days90Sen !== 0 ? <Amount sen={ar.days90Sen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ar.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ar.over90Sen !== 0 ? <Amount sen={ar.over90Sen} /> : "-"}</td>
                       <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]"><Amount sen={total} /></td>
                     </tr>
                     {open && (ar.docs ?? []).map((d, i) => (
@@ -4576,7 +4585,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                         <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
                         {[0, 1, 2, 3, 4].map((b) => (
                           <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
-                            {d.mo === b ? formatCurrency(d.amountSen) : ""}
+                            {d.mo === b ? <Amount sen={d.amountSen} /> : ""}
                           </td>
                         ))}
                         <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}><Amount sen={d.amountSen} /></td>
@@ -4750,8 +4759,8 @@ function APControlPanel({ company = "" }: { company?: string }) {
                       <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
                       <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
                       <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                       <td className="px-3 py-1.5 text-right font-medium"><Amount sen={r.runningSen} /></td>
                     </tr>
                   ))}
@@ -5284,7 +5293,7 @@ function SupplierDiscountTab() {
                             <input type="number" step="0.01" min="0" inputMode="decimal" value={editNet} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setEditNet(e.target.value)} placeholder="Net" className={`${inputCls} w-24 text-right`} />
                             <input type="number" step="0.01" min="0" inputMode="decimal" value={editSst} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setEditSst(e.target.value)} placeholder="SST" className={`${inputCls} w-20 text-right`} />
                           </div>
-                        ) : formatCurrency(n.totalAmount)}
+                        ) : <Amount sen={n.totalAmount} />}
                       </td>
                       <td className="px-3 py-1.5">
                         {n.status === "POSTED" ? (
@@ -5417,11 +5426,11 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                           {ap.supplierName}
                         </button>
                       </td>
-                      <td className={`py-3 px-4 text-right ${ap.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.currentSen !== 0 ? formatCurrency(ap.currentSen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.days30Sen !== 0 ? formatCurrency(ap.days30Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days60Sen < 0 ? "text-[#9A3A2D]" : ap.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ap.days60Sen !== 0 ? formatCurrency(ap.days60Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days90Sen < 0 ? "text-[#9A3A2D]" : ap.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ap.days90Sen !== 0 ? formatCurrency(ap.days90Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ap.over90Sen !== 0 ? formatCurrency(ap.over90Sen) : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ap.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.currentSen !== 0 ? <Amount sen={ap.currentSen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ap.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.days30Sen !== 0 ? <Amount sen={ap.days30Sen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ap.days60Sen < 0 ? "text-[#9A3A2D]" : ap.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ap.days60Sen !== 0 ? <Amount sen={ap.days60Sen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ap.days90Sen < 0 ? "text-[#9A3A2D]" : ap.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ap.days90Sen !== 0 ? <Amount sen={ap.days90Sen} /> : "-"}</td>
+                      <td className={`py-3 px-4 text-right ${ap.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ap.over90Sen !== 0 ? <Amount sen={ap.over90Sen} /> : "-"}</td>
                       <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]"><Amount sen={total} /></td>
                     </tr>
                     {open && (ap.docs ?? []).map((d, i) => (
@@ -5429,7 +5438,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                         <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
                         {[0, 1, 2, 3, 4].map((b) => (
                           <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
-                            {d.mo === b ? formatCurrency(d.amountSen) : ""}
+                            {d.mo === b ? <Amount sen={d.amountSen} /> : ""}
                           </td>
                         ))}
                         <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}><Amount sen={d.amountSen} /></td>
@@ -5531,7 +5540,7 @@ function CostStructureTab() {
 
   // Amounts shown WITHOUT the RM prefix (the section title carries "(RM)")
   // and slightly larger, so the table reads without scrolling far right.
-  const n = (v: number) => (v === 0 ? "-" : (v / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const n = (v: number) => fmtAmount(v);
   const groupsFor = (pred: (g: CsGroup) => boolean) => (data?.groups ?? []).filter(pred);
   // Rows are keyed by PURCHASE ACCOUNT now (same source as the P&L); the
   // bed/sofa/shared split reads the account NAME ("PURCHASE - B.M FABRIC" →
@@ -5716,7 +5725,7 @@ function CostExpenseClassesTab() {
   }, [fy]);
 
   const numTd = (v: number, key: string) => (
-    <td key={key} className="px-2 py-0.5 text-right tabular-nums whitespace-nowrap">{v === 0 ? "-" : v < 0 ? `(${formatCurrency(Math.abs(v))})` : formatCurrency(v)}</td>
+    <td key={key} className="px-2 py-0.5 text-right tabular-nums whitespace-nowrap">{v === 0 ? "-" : <Amount sen={v} />}</td>
   );
 
   const renderSection = (title: string, section: CeSection) => {
@@ -5763,7 +5772,7 @@ function CostExpenseClassesTab() {
               })}
               <tr className="bg-[#1F1D1B] text-white font-bold">
                 <td className="px-3 py-1.5 text-left sticky left-0 bg-[#1F1D1B]">TOTAL {title}</td>
-                {sectionMonths.map((m, i) => <td key={i} className="px-2 py-1.5 text-right tabular-nums">{m === 0 ? "-" : formatCurrency(m)}</td>)}
+                {sectionMonths.map((m, i) => <td key={i} className="px-2 py-1.5 text-right tabular-nums">{m === 0 ? "-" : <Amount sen={m} />}</td>)}
                 <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={sectionTotal} red={false} /></td>
               </tr>
             </tbody>
@@ -5931,7 +5940,7 @@ function MonthlyPlTab() {
   }, [line, anchor]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const fmt = (sen: number) => { const v = sen / 100; const s = Math.abs(v).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+  const fmt = (sen: number) => fmtAmount(sen);
 
   const cols = data?.columns ?? [];
   const rows = data?.rows ?? [];
@@ -5972,23 +5981,13 @@ function MonthlyPlTab() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-[#3E6570]">Monthly P&amp;L</h2>
-          <p className="text-xs text-[#9CA3AF]">{data ? `${data.fyLabel} · read-only · all amounts RM` : "Loading…"}</p>
-        </div>
-        <div className="flex items-center gap-2">
+        <p className="text-xs text-[#9CA3AF]">{data ? `${data.fyLabel} · month by month · read-only` : "Loading…"}</p>
+        <div className="flex flex-wrap items-center gap-2">
           <input type="month" value={anchor} onChange={(e) => setAnchor(e.target.value || thisMonth)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
           <select value={line} onChange={(e) => setLine(e.target.value as "all" | "sofa" | "bedframe")} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm">
             <option value="all">All</option><option value="sofa">Sofa</option><option value="bedframe">Bedframe</option>
           </select>
-          {data && maxLevel > 1 && (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-[#9CA3AF] mr-0.5">DETAIL</span>
-              {Array.from({ length: maxLevel }, (_, i) => i + 1).map((L) => (
-                <button key={L} onClick={() => applyLevel(L)} title={`Expand to level ${L}`} className={`rounded-md border px-2.5 py-1.5 text-xs cursor-pointer ${level === L ? "border-[#3E6570] bg-[#3E6570] text-white" : "border-[#E2DDD8] bg-white text-[#4B5563] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-              ))}
-            </div>
-          )}
+          {data && maxLevel > 1 && <LevelPicker max={maxLevel} level={level} onPick={applyLevel} />}
           {data && <ExportButtons build={buildExport} filenameBase={`monthly-pl-${data.anchor}-${line}`} title="Monthly P&L" subtitle={`${data.fyLabel} · ${line}`} />}
         </div>
       </div>
@@ -6030,15 +6029,15 @@ function MonthlyPlTab() {
                 return (
                   <Fragment key={i}>
                   <tr className={`${rowBg} ${rowCls} ${isGroup ? "cursor-pointer" : ""}`} onClick={isGroup && r.groupId ? () => toggle(r.groupId!) : undefined}>
-                    {/* uppercase = display-only: unifies the COA's ALL-CAPS names with the owner-keyed Title Case historical labels */}
-                    <td className={`px-3 py-1.5 sticky left-0 ${rowBg} uppercase whitespace-nowrap ${deepLine ? "text-[12px] text-[#6B7280]" : ""} ${isGroup && r.depth === 0 ? "tracking-wide" : ""}`} style={{ paddingLeft: `${12 + r.depth * 16}px` }}>
+                    {/* names in normal case (acctName): the COA's capitals and the owner-keyed historical labels read alike */}
+                    <td className={`px-3 py-1.5 sticky left-0 ${rowBg} whitespace-nowrap ${deepLine ? "text-[12px] text-[#6B7280]" : ""} ${isGroup && r.depth === 0 ? "tracking-wide" : ""}`} style={{ paddingLeft: `${12 + r.depth * 16}px` }}>
                       {isGroup ? (open ? "▾ " : "▸ ") : ""}
                       {drillCode ? (
-                        <button type="button" className="uppercase text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this row"
+                        <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this row"
                           onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillCode)) n.delete(drillCode); else n.add(drillCode); return n; })}>
-                          <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{r.label}
+                          <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{acctName(r.label)}
                         </button>
-                      ) : r.label}
+                      ) : acctName(r.label)}
                     </td>
                     {r.values.map((v, j) => {
                       const est = (r.estValues?.[j] ?? 0) !== 0;
@@ -6082,7 +6081,7 @@ const glHref = (account: string, fromYm: string, toYm: string) => {
   const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
   return `/accounting?tab=gl&account=${encodeURIComponent(account)}&from=${fromYm}-01&to=${last}`;
 };
-const drillCellAmt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
+const drillCellAmt = (sen: number) => fmtAmount(sen);
 function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   account: string;
   cols: { key: string; label: string; accum: boolean }[];
@@ -6217,6 +6216,8 @@ type PlDrillData = {
   debitSen: number; creditSen: number; netSen: number; tied?: boolean;
 };
 const plDrillAmt = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// A drill cell: 1,234.00 · (1,234.00) · – for zero (src/lib/finance-money.ts).
+const drillAmt = (sen: number) => fmtAmount(sen);
 // Owner 2026-09-30 「p&L 点开要看的东西和 cash flow 一样」: the same layout as
 // the Cash Flow drill — Description = the document's overall description,
 // Ref. 2 = who it is with (the related documents on hover), one Amount column
@@ -6236,7 +6237,7 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
   // Income accounts read credit as positive, everything else debit.
   const creditNormal = data?.account?.type === "REVENUE";
   const signed = (debitSen: number, creditSen: number) => (creditNormal ? creditSen - debitSen : debitSen - creditSen);
-  const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
+  const amt = drillAmt;
   const amtCls = (sen: number) => `py-1 pl-3 text-right tabular-nums whitespace-nowrap ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
   const lines = data?.lines ?? [];
   const months = [...new Set(lines.map((l) => l.date.slice(0, 7)))].sort();
@@ -6324,6 +6325,28 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
   );
 }
 
+// The month before a single month ("2026-10" → "2026-09"); null for a quarter or a year.
+function prevMonthOf(period: string): string | null {
+  if (!/^\d{4}-\d{2}$/.test(period)) return null;
+  const [y, m] = period.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
+}
+// "2026-09" → "Sep".
+const shortMonth = (ym: string) => new Date(`${ym}-01T00:00:00Z`).toLocaleString("en", { month: "short", timeZone: "UTC" });
+// The four figures on top of the P&L (owner 2026-10-14), read off the
+// statement's own rows so they always agree with it.
+function plKeyFigures(d: { rows: PnlStmtRow[]; netSalesSen: number } | null) {
+  if (!d) return null;
+  const period = (pred: (r: PnlStmtRow) => boolean) => d.rows.find(pred)?.periodSen ?? 0;
+  return {
+    sales: d.netSalesSen,
+    gross: period((r) => r.kind === "grandtotal" && r.label.startsWith("GROSS PROFIT")),
+    opex: period((r) => r.kind === "group" && r.depth === 0 && r.label === "OPERATING EXPENSES"),
+    net: period((r) => r.kind === "grandtotal" && r.label.startsWith("NET PROFIT")),
+    est: d.rows.reduce((sum, r) => sum + (r.kind === "line" ? r.estSen ?? 0 : 0), 0),
+  };
+}
+
 function PLStatementTab() {
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
@@ -6334,6 +6357,12 @@ function PLStatementTab() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [data, setData] = useState<{ rows: PnlStmtRow[]; netSalesSen: number; fyLabel: string; periodLabel: string; materialWarnings?: PnlMaterialWarnings } | null>(null);
   const loading = data === null;
+  // Last month's statement, for the key figures' "vs last month" (owner
+  // 2026-10-14). Only a single month compares; a quarter or a year shows none.
+  const [prevResp, setPrevResp] = useState<{ key: string; rows: PnlStmtRow[]; netSalesSen: number } | null>(null);
+  const prevYm = prevMonthOf(period);
+  const prevKey = `${prevYm}|${line}`;
+  const prev = prevYm && prevResp?.key === prevKey ? prevResp : null;
   const { toast } = useToast();
   const [edit, setEdit] = useState(false);
   const [showMatWarnings, setShowMatWarnings] = useState(false);
@@ -6357,6 +6386,15 @@ function PLStatementTab() {
   };
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => { load(); }, [period, line, edit]);
+  useEffect(() => {
+    if (!prevYm) return;
+    let dead = false;
+    fetch(`/api/accounting/pl-statement?period=${prevYm}&line=${line}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { rows: PnlStmtRow[]; netSalesSen: number } }>)
+      .then((j) => { if (!dead && j?.success && j.data) setPrevResp({ key: `${prevYm}|${line}`, ...j.data }); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [prevYm, line]);
   useEffect(() => { if (edit) fetch("/api/accounting/pnl/section-map").then((r) => r.json() as Promise<{ data?: { map?: Record<string, string> } }>).then((j) => setPmap(j?.data?.map ?? {})).catch(() => {}); }, [edit]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
@@ -6395,21 +6433,24 @@ function PLStatementTab() {
     if (r.kind === "group" && r.groupId && collapsed.has(r.groupId)) skipDepth = r.depth;
   }
 
-  const numCell = (v: number | undefined) =>
-    v === undefined ? "" : v < 0 ? `(${formatCurrency(Math.abs(v))})` : formatCurrency(v);
+  const numCell = (v: number | undefined) => (v === undefined ? "" : <Amount sen={v} />);
+  const kf = plKeyFigures(data);
+  const prevKf = plKeyFigures(prev);
+  const vs = prevYm ? shortMonth(prevYm) : "";
+  const ofSales = (v: number) => (net > 0 ? `${((v / net) * 100).toFixed(1)}% of sales` : "");
 
   // Export: every row (indented by depth), with both money columns.
   const buildExport = (): Aoa => {
-    const aoa: Aoa = [["ITEM", "FY YTD (RM)", "YTD %", `${data?.periodLabel ?? period} (RM)`, "%"]];
+    const aoa: Aoa = [["ITEM", `${data?.periodLabel ?? period} (RM)`, "%", "FY YTD (RM)", "YTD %"]];
     for (const r of rows) {
       if (r.kind === "gap") { aoa.push(["", "", "", "", ""]); continue; }
       const indent = "  ".repeat(r.depth) + (r.kind === "group" ? "› " : "");
       aoa.push([
         indent + r.label,
-        r.ytdSen === undefined ? "" : (r.ytdSen / 100).toFixed(2),
-        pct(r.ytdSen),
         r.periodSen === undefined ? "" : (r.periodSen / 100).toFixed(2),
         pct(r.periodSen),
+        r.ytdSen === undefined ? "" : (r.ytdSen / 100).toFixed(2),
+        pct(r.ytdSen),
       ]);
     }
     return aoa;
@@ -6500,14 +6541,27 @@ function PLStatementTab() {
             className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
             {edit ? "Done" : "Edit"}
           </button>
-          {[1, 2, 3, 4].map((L) => (
-            <button key={L} onClick={() => applyLevel(rows, L)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${level === L ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-          ))}
+          <LevelPicker max={4} level={level} onPick={(L) => applyLevel(rows, L)} />
           {!loading && rows.length > 0 && (
             <ExportButtons build={buildExport} filenameBase={`PL-${line}-${period}`} title={`P&L ${line === "all" ? "Overall" : line === "sofa" ? "Sofa" : "Bedframe"}`} subtitle={`Period: ${data?.periodLabel ?? period} · ${data?.fyLabel ?? ""}`} />
           )}
         </div>
       </div>
+      {kf && !edit && (
+        <FinKpis>
+          <KpiCard label="Net sales" value={<Amount sen={kf.sales} />}
+            note={prevKf ? <KpiChange cur={kf.sales} prev={prevKf.sales} vs={vs} /> : undefined} />
+          <KpiCard label="Gross profit" value={<Amount sen={kf.gross} />}
+            note={<>{ofSales(kf.gross)}{prevKf && pctChange(kf.gross, prevKf.gross) !== null && <>{ofSales(kf.gross) && " · "}<KpiChange cur={kf.gross} prev={prevKf.gross} vs={vs} /></>}</>} />
+          <KpiCard label="Operating expenses" value={<Amount sen={kf.opex} />}
+            note={<>{ofSales(kf.opex)}{prevKf && pctChange(kf.opex, prevKf.opex) !== null && <>{ofSales(kf.opex) && " · "}<KpiChange cur={kf.opex} prev={prevKf.opex} vs={vs} upIsGood={false} /></>}</>} />
+          <KpiCard label="Net profit" value={<Amount sen={kf.net} />} tone={kf.net < 0 ? "bad" : undefined}
+            note={<>
+              {ofSales(kf.net)}{prevKf && pctChange(kf.net, prevKf.net) !== null && <>{ofSales(kf.net) && " · "}<KpiChange cur={kf.net} prev={prevKf.net} vs={vs} /></>}
+              {kf.est !== 0 && <span className="block text-[#9C6F1E]">Includes <Amount sen={kf.est} /> of estimated costs</span>}
+            </>} />
+        </FinKpis>
+      )}
       {edit && <p className="text-[11px] text-[#6B5C32]">Drag an account row onto a target group to reclassify it (within the same side: Revenue ↔ Other Income; Labour / Manufacturing / Operating Expenses / Payroll are interchangeable) · all months recompute under the new rule · Net Profit unchanged · drag back to undo</p>}
 
       <Card>
@@ -6523,12 +6577,12 @@ function PLStatementTab() {
             <div className="overflow-x-auto">
             <table data-col-resize="first" className="w-full text-[13px]">
               <thead>
-                <tr className="text-[12px] text-[#6B7280]">
-                  <td />
-                  <td className="text-right px-2 pb-1">FY YTD (RM)</td>
-                  <td className="text-right px-2 pb-1 w-14">YTD %</td>
-                  <td className="text-right px-2 pb-1">{data?.periodLabel ?? period} (RM)</td>
-                  <td className="text-right px-2 pb-1 w-14">%</td>
+                <tr>
+                  <th className="text-left px-2 py-1.5">Item</th>
+                  <th className="text-right px-2 py-1.5">{data?.periodLabel ?? period}</th>
+                  <th className="text-right px-2 py-1.5 w-20">% of sales</th>
+                  <th className="text-right px-2 py-1.5">FY to date</th>
+                  <th className="text-right px-2 py-1.5 w-20">% of sales</th>
                 </tr>
               </thead>
               <tbody>
@@ -6539,22 +6593,22 @@ function PLStatementTab() {
                   if (row.kind === "grandtotal") {
                     return (
                       <tr key={i} className="border-t-2 border-[#1F1D1B] font-bold text-[#1F1D1B]">
-                        <td className="py-2" style={pad}>{row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                        <td className="py-2" style={pad}>{acctName(row.label)}</td>
                         <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                         <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
+                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
+                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
                       </tr>
                     );
                   }
                   if (row.kind === "total") {
                     return (
                       <tr key={i} className="border-t border-[#9CA3AF] font-semibold bg-[#F0ECE9]/40">
-                        <td className="py-1" style={pad}>{row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                        <td className="py-1" style={pad}>{acctName(row.label)}</td>
                         <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                         <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
+                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
+                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
                       </tr>
                     );
                   }
@@ -6566,11 +6620,11 @@ function PLStatementTab() {
                         onDragOver={dropOk ? (e) => { e.preventDefault(); setDragOverBucket(row.bucket!); } : undefined}
                         onDragLeave={dropOk ? () => { if (dragOverBucket === row.bucket) setDragOverBucket(null); } : undefined}
                         onDrop={dropOk ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverBucket(null); setDragCode(null); setDragClass(null); if (src && row.bucket) void moveTo(src, row.bucket); } : undefined}>
-                        <td className="py-1" style={pad}>{!edit ? (isOpen ? "▾" : "▸") : "•"} {row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
+                        <td className="py-1" style={pad}>{!edit ? (isOpen ? "▾" : "▸") : "•"} {acctName(row.label)}</td>
                         <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                         <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
+                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
+                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
                       </tr>
                     );
                   }
@@ -6590,16 +6644,16 @@ function PLStatementTab() {
                         {canDrill ? (
                           <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
                             onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{row.label}
+                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{acctName(row.label)}
                           </button>
-                        ) : <>{draggable ? "⠿ " : ""}{row.label}</>}
+                        ) : <>{draggable ? "⠿ " : ""}{acctName(row.label)}</>}
                         {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
                         {row.estSen ? <span className="ml-1.5 text-[9px] not-italic font-semibold">est.</span> : null}
                       </td>
-                      <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                      <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
                       <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
                       <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
+                      <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
+                      <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
                     </tr>
                     {drilled && drillCode && (
                       <tr><td colSpan={5} className="p-0"><PlDrillPanel period={period} account={drillCode} line={line} /></td></tr>
@@ -6900,7 +6954,7 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   }, [side]);
   if (!data || data.aging.length === 0) return null;
   const grand = data.aging.reduce((s, r) => s + r.totalSen, 0);
-  const cell = (v: number, danger = false) => <td className={`px-4 py-1.5 text-right tabular-nums ${danger && v ? "text-[#9A3A2D]" : ""}`}>{v ? formatCurrency(v) : "—"}</td>;
+  const cell = (v: number, danger = false) => <td className={`px-4 py-1.5 text-right tabular-nums ${danger && v ? "text-[#9A3A2D]" : ""}`}>{v ? <Amount sen={v} /> : "—"}</td>;
   return (
     <Card><CardContent className="p-0 overflow-x-auto">
       <div className="px-4 pt-3 pb-1 text-sm font-semibold text-[#3E6570]">Outstanding by {side === "DEBTOR" ? "debtor" : "creditor"} — aging</div>
@@ -7697,8 +7751,8 @@ function CorrectionsTab() {
                       <td className="px-3 py-1.5 text-xs"><span className="text-[#6B7280]">{docLabel(r.docType)}</span> · <span className="tabular-nums">{r.docNo}</span></td>
                       <td className="px-3 py-1.5 text-xs">{r.actor || <span className="text-[#9CA3AF]">system</span>}</td>
                       <td className="px-3 py-1.5 text-xs w-full max-w-0"><div className="truncate" title={r.reason}>{r.reason || <span className="text-[#C7C1BA]">—</span>}</div></td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-[#9A3A2D]">{r.reversedSen ? formatCurrency(r.reversedSen) : "—"}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{r.repostedSen ? formatCurrency(r.repostedSen) : "—"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-[#9A3A2D]">{r.reversedSen ? <Amount sen={r.reversedSen} /> : "—"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{r.repostedSen ? <Amount sen={r.repostedSen} /> : "—"}</td>
                     </tr>
                   );
                 })}
@@ -7880,8 +7934,8 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
                     <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{r.paidSen ? formatCurrency(r.paidSen) : "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{r.paidSen ? <Amount sen={r.paidSen} /> : "—"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{r.outstandingSen ? <Amount sen={r.outstandingSen} /> : "—"}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{r.status}</span>
                       {r.status === "OPEN" && r.partyId && (
@@ -8044,8 +8098,8 @@ function DocTrailBlock({ family, sourceId }: { family: "payment_voucher" | "supp
               {data.legs.map((l, i) => (
                 <tr key={i} className="border-t border-[#F0ECE9]">
                   <td className="px-3 py-1">{l.accountCode} · {l.accountName}</td>
-                  <td className="px-3 py-1 text-right tabular-nums">{l.debitSen ? formatCurrency(l.debitSen) : ""}</td>
-                  <td className="px-3 py-1 text-right tabular-nums">{l.creditSen ? formatCurrency(l.creditSen) : ""}</td>
+                  <td className="px-3 py-1 text-right tabular-nums">{l.debitSen ? <Amount sen={l.debitSen} /> : ""}</td>
+                  <td className="px-3 py-1 text-right tabular-nums">{l.creditSen ? <Amount sen={l.creditSen} /> : ""}</td>
                 </tr>
               ))}
               <tr className="border-t-2 border-[#1F1D1B] font-semibold">
@@ -9309,11 +9363,11 @@ function TrialBalanceTab() {
                   >
                     <td className="px-4 py-1.5">
                       <span className="tabular-nums text-xs text-[#6B7280] mr-2">{r.accountCode}</span>
-                      <span className="text-[#1F1D1B]">{r.accountName}</span>
+                      <span className="text-[#1F1D1B]">{acctName(r.accountName)}</span>
                     </td>
                     <td className="px-4 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                    <td className="px-4 py-1.5 text-right font-medium">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                    <td className="px-4 py-1.5 text-right font-medium">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                    <td className="px-4 py-1.5 text-right font-medium">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                    <td className="px-4 py-1.5 text-right font-medium">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                   </tr>
                 ))}
                 <tr className="border-t-2 border-[#1F1D1B] font-semibold">
@@ -9472,8 +9526,8 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
                           <td className="py-1 px-2 whitespace-nowrap">{r.date}</td>
                           <td className="py-1 px-2 font-mono text-xs">{r.ref}</td>
                           <td className="py-1 px-2 text-xs">{fmtType(r.type)}</td>
-                          <td className="py-1 px-2 text-right tabular-nums">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                          <td className="py-1 px-2 text-right tabular-nums">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                           <td className="py-1 px-2 text-right tabular-nums font-medium"><Amount sen={r.runningSen} /></td>
                         </tr>
                       ))}
@@ -9850,8 +9904,8 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                                     <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
                                   )}
                                 </td>
-                                <td className="px-3 py-1 text-right tabular-nums">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                                <td className="px-3 py-1 text-right tabular-nums">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                                <td className="px-3 py-1 text-right tabular-nums">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                                 <td className={`px-3 py-1 text-right tabular-nums ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}><Amount sen={r.runningSen} /></td>
                               </tr>
                             );
@@ -9914,8 +9968,8 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <span className="text-[#1F1D1B]">{t.accountName}</span>
                       </button>
                     </td>
-                    <td className="px-3 py-1.5 text-right">{t.debitSen ? formatCurrency(t.debitSen) : "-"}</td>
-                    <td className="px-3 py-1.5 text-right">{t.creditSen ? formatCurrency(t.creditSen) : "-"}</td>
+                    <td className="px-3 py-1.5 text-right">{t.debitSen ? <Amount sen={t.debitSen} /> : "-"}</td>
+                    <td className="px-3 py-1.5 text-right">{t.creditSen ? <Amount sen={t.creditSen} /> : "-"}</td>
                     <td className={`px-3 py-1.5 text-right font-medium ${t.debitSen - t.creditSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
                       <Amount sen={t.debitSen - t.creditSen} />
                     </td>
@@ -9977,8 +10031,8 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
                         )}
                       </td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                       <td className={`px-3 py-1.5 text-right font-medium ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}><Amount sen={r.runningSen} /></td>
                     </tr>
                   );
@@ -10036,8 +10090,8 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
                         )}
                       </td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.debitSen ? <Amount sen={r.debitSen} /> : ""}</td>
+                      <td className="px-3 py-1.5 text-right">{r.creditSen ? <Amount sen={r.creditSen} /> : ""}</td>
                     </tr>
                   );
                 })}
@@ -13044,7 +13098,7 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
                 <td className="px-3 py-1.5 text-xs text-[#6B7280]">{w.category || "—"}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={w.materialSen} /></td>
                 <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={w.labourSen} /></td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-[#9CA3AF]">{w.completedSen ? formatCurrency(w.completedSen) : "—"}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-[#9CA3AF]">{w.completedSen ? <Amount sen={w.completedSen} /> : "—"}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums font-medium"><Amount sen={w.wipSen} /></td>
               </tr>
             ))}
@@ -14991,7 +15045,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
               return (
               <table className="text-sm w-full max-w-md">
                 <tbody>
-                  <tr><td className="py-0.5 text-[#6B7280]">Bank statement closing balance</td><td className="py-0.5 text-right tabular-nums">{shown.statementClosingSen != null ? formatCurrency(shown.statementClosingSen) : "—"}</td></tr>
+                  <tr><td className="py-0.5 text-[#6B7280]">Bank statement closing balance</td><td className="py-0.5 text-right tabular-nums">{shown.statementClosingSen != null ? <Amount sen={shown.statementClosingSen} /> : "—"}</td></tr>
                   <tr><td className="py-0.5 text-[#6B7280]">Book balance {recoFinal ? "at finalising" : "today"} (GL {account})</td><td className="py-0.5 text-right tabular-nums"><Amount sen={shown.glSen} /></td></tr>
                   {diffSen != null && (
                     <tr className="border-t border-[#E2DDD8]">
@@ -15007,7 +15061,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         {diffSen === explainedSen ? "= explained to the sen by the two lines above ✓" : "= NOT fully explained — unexplained part"}
                       </td>
                       <td className={`py-0.5 text-right tabular-nums font-medium ${diffSen === explainedSen ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>
-                        {diffSen === explainedSen ? formatCurrency(Math.abs(explainedSen)) : formatCurrency(Math.abs(diffSen - explainedSen))}
+                        {diffSen === explainedSen ? <Amount sen={Math.abs(explainedSen)} /> : <Amount sen={Math.abs(diffSen - explainedSen)} />}
                       </td>
                     </tr>
                   )}
@@ -15046,9 +15100,9 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     return (
                       <tr key={d.day} className={`border-b border-[#F0ECE9] ${changed ? "bg-[#FBF3E4]" : ""}`}>
                         <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{d.day}{changed && <span className="ml-1 text-[10px] text-[#7A5B12]">▲ changed</span>}</td>
-                        <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap">{d.bankSen != null ? formatCurrency(d.bankSen) : "—"}</td>
+                        <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap">{d.bankSen != null ? <Amount sen={d.bankSen} /> : "—"}</td>
                         <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap"><Amount sen={d.bookSen} /></td>
-                        <td className={`px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap ${changed ? "font-semibold text-[#7A5B12]" : d.diffSen === 0 ? "text-[#27500A]" : ""}`}>{d.diffSen != null ? formatCurrency(d.diffSen) : "—"}</td>
+                        <td className={`px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap ${changed ? "font-semibold text-[#7A5B12]" : d.diffSen === 0 ? "text-[#27500A]" : ""}`}>{d.diffSen != null ? <Amount sen={d.diffSen} /> : "—"}</td>
                       </tr>
                     );
                   })}
@@ -15823,7 +15877,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     <td className="px-2 py-1.5 tabular-nums text-xs">{r.invoiceNo}</td>
                     <td className="px-2 py-1.5 text-xs text-[#6B7280]">{r.invoiceDate ?? ""}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-xs text-[#6B7280]">{r.paidAmount ? formatCurrency(r.paidAmount) : "-"}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-xs text-[#6B7280]">{r.paidAmount ? <Amount sen={r.paidAmount} /> : "-"}</td>
                     <td className="px-2 py-1.5 text-right">
                       {/* A seed created here can be deleted; a REAL invoice that
                           was merely flagged as opening must only be un-flagged —
@@ -16042,7 +16096,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                             <td className="px-2 py-1.5 text-xs text-[#6B7280]">{r.invoiceDate ?? ""}</td>
                             <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                             <td className="px-2 py-1.5 text-right tabular-nums text-xs text-[#6B7280]">
-                              {Number(r.paidAmount) ? formatCurrency(r.paidAmount) : "-"}
+                              {Number(r.paidAmount) ? <Amount sen={r.paidAmount} /> : "-"}
                             </td>
                             <td className="px-2 py-1.5 text-right whitespace-nowrap">
                               <button
@@ -16087,10 +16141,10 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     <span className="ml-2 text-[11px] text-[#9CA3AF]">{it.note}</span>
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums">
-                    {it.drSen != null ? formatCurrency(it.drSen) : <span className="text-[#9CA3AF]">—</span>}
+                    {it.drSen != null ? <Amount sen={it.drSen} /> : <span className="text-[#9CA3AF]">—</span>}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums">
-                    {it.crSen != null ? formatCurrency(it.crSen) : <span className="text-[#9CA3AF]">—</span>}
+                    {it.crSen != null ? <Amount sen={it.crSen} /> : <span className="text-[#9CA3AF]">—</span>}
                   </td>
                 </tr>
               ) : (
@@ -16294,20 +16348,20 @@ function GroupByCompanyCard({ period, options }: { period: string; options: Comp
                   <tr key={r.value} className="border-b border-[#F0ECE9]">
                     <td className="px-3 py-1.5 text-[#1F1D1B]">{r.label}</td>
                     <td className={`px-3 py-1.5 text-right font-medium ${r.netProfitSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                      {r.netProfitSen < 0 ? `(${formatCurrency(Math.abs(r.netProfitSen))})` : formatCurrency(r.netProfitSen)}
+                      <Amount sen={r.netProfitSen} />
                     </td>
                     <td className={`px-3 py-1.5 text-right font-medium ${r.equitySen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                      {r.equitySen < 0 ? `(${formatCurrency(Math.abs(r.equitySen))})` : formatCurrency(r.equitySen)}
+                      <Amount sen={r.equitySen} />
                     </td>
                   </tr>
                 ))}
                 <tr className="border-t-2 border-[#1F1D1B] font-semibold">
                   <td className="px-3 py-2 text-[#1F1D1B]">Group total</td>
                   <td className={`px-3 py-2 text-right ${totalNet < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                    {totalNet < 0 ? `(${formatCurrency(Math.abs(totalNet))})` : formatCurrency(totalNet)}
+                    <Amount sen={totalNet} />
                   </td>
                   <td className={`px-3 py-2 text-right ${totalEquity < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                    {totalEquity < 0 ? `(${formatCurrency(Math.abs(totalEquity))})` : formatCurrency(totalEquity)}
+                    <Amount sen={totalEquity} />
                   </td>
                 </tr>
               </tbody>
@@ -16346,7 +16400,7 @@ function BsDrillPanel({ period, account, company }: { period: string; account: s
     return () => { dead = true; };
   }, [period, account, company]);
   const signed = (l: PlDrillLine) => (data?.assetSide ? l.debitSen - l.creditSen : l.creditSen - l.debitSen);
-  const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
+  const amt = drillAmt;
   const amtCls = (sen: number) => `py-1 pl-3 text-right tabular-nums whitespace-nowrap ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
   const th = "py-1 pr-3 font-medium text-left";
   return (
@@ -16416,7 +16470,7 @@ function BalanceSheetTab() {
       months.push(d.toISOString().slice(0, 7));
     }
   }
-  const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp; sheetStock?: { month: string; totalSen: number } | null; sheetStockError?: string | null } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
+  const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp; sheetStock?: { month: string; totalSen: number; accounts?: string[] } | null; sheetStockError?: string | null } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
   const bsData: BalanceSheetEntry[] = useMemo(
     () => (bsResp?.success && bsResp.data?.balanceSheet ? bsResp.data.balanceSheet : []),
     [bsResp]
@@ -16451,6 +16505,11 @@ function BalanceSheetTab() {
     } catch { setBmap(prev); toast.error("Save failed"); }
   };
 
+  // Summary = section totals only; All lines = every account (owner
+  // 2026-10-14). The stock accounts fold under one Inventories line.
+  const [bsLevel, setBsLevel] = useState(2);
+  const [invOpen, setInvOpen] = useState(true);
+
   if (bsLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -16474,6 +16533,43 @@ function BalanceSheetTab() {
   const totalEquity = equityItems.reduce((s, e) => s + e.balance, 0);
   const totalLiabEquity = totalLiabilities + totalEquity;
 
+  // The stock accounts carry the P&L's closing stock (sheetStock); they sit
+  // together under one Inventories subtotal in current assets (owner
+  // 2026-10-14). A month with no stock figure lists them as plain accounts.
+  const stockCodes = new Set(bsStock?.accounts ?? []);
+  const showAccounts = bsLevel === 2 || edit;
+  const balanced = totalAssets === totalLiabEquity;
+
+  const renderEntry = (e: BalanceSheetEntry, nested: boolean) => {
+    const draggable = edit && e.accountCode !== "NP-CURRENT";
+    // The unclosed-earnings line is the P&L's result, not an account.
+    const canDrill = !edit && e.accountCode !== "NP-CURRENT";
+    const drillKey = `${period}|${company}|${e.accountCode}`;
+    const drilled = canDrill && bsDrillOpen.has(drillKey);
+    return (
+      <Fragment key={e.id}>
+      <tr className={`border-t border-[#E2DDD8]/50 ${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
+        draggable={draggable}
+        onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
+        onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
+        <td className={`px-4 py-1.5 ${nested ? "pl-12" : "pl-8"} text-[#6B7280] text-xs whitespace-nowrap`}>{draggable ? "⠿ " : ""}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
+        <td className="px-4 py-1.5 text-[#4B5563]">
+          {canDrill ? (
+            <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
+              onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+              <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{acctName(e.accountName)}
+            </button>
+          ) : acctName(e.accountName)}
+        </td>
+        <td className="px-4 py-1.5 text-right font-medium text-[#1F1D1B]"><Amount sen={e.balance} /></td>
+      </tr>
+      {drilled && (
+        <tr><td colSpan={3} className="p-0"><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
+      )}
+      </Fragment>
+    );
+  };
+
   const renderBSSection = (
     title: string,
     entries: BalanceSheetEntry[],
@@ -16481,50 +16577,61 @@ function BalanceSheetTab() {
     colorClass: string,
     bgClass: string,
     section: string,
-  ) => (
-    <>
-      <tr className={`${bgClass} ${edit && dragCode && dragOverSec === section ? "ring-2 ring-inset ring-[#6B5C32]" : ""}`}
-        onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
-        onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
-        onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
-        <td colSpan={3} className={`px-4 py-2 font-semibold ${colorClass}`}>{title}</td>
-      </tr>
-      {entries.map((e) => {
-        const draggable = edit && e.accountCode !== "NP-CURRENT";
-        // The unclosed-earnings line is the P&L's result, not an account.
-        const canDrill = !edit && e.accountCode !== "NP-CURRENT";
-        const drillKey = `${period}|${company}|${e.accountCode}`;
-        const drilled = canDrill && bsDrillOpen.has(drillKey);
-        return (
-          <Fragment key={e.id}>
-          <tr className={`border-t border-[#E2DDD8]/50 ${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
-            draggable={draggable}
-            onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
-            onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
-            <td className="px-4 py-1.5 pl-8 text-[#6B7280] text-xs">{draggable ? "⠿ " : ""}{e.accountCode}</td>
-            <td className="px-4 py-1.5 text-[#4B5563]">
-              {canDrill ? (
-                <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
-                  onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                  <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{e.accountName}
-                </button>
-              ) : e.accountName}
-            </td>
-            <td className={`px-4 py-1.5 text-right font-medium ${e.balance < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-              {e.balance < 0 ? `(${formatCurrency(Math.abs(e.balance))})` : formatCurrency(e.balance)}
-            </td>
+  ) => {
+    const stockRows = section === "CURRENT_ASSET" ? entries.filter((e) => stockCodes.has(e.accountCode)) : [];
+    const stockTotal = stockRows.reduce((sum, e) => sum + e.balance, 0);
+    const invShown = (invOpen || edit) && showAccounts;
+    let invPlaced = false;
+    return (
+      <>
+        <tr className={`${bgClass} ${edit && dragCode && dragOverSec === section ? "ring-2 ring-inset ring-[#6B5C32]" : ""}`}
+          onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
+          onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
+          onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
+          <td colSpan={3} className={`px-4 py-2 font-semibold ${colorClass}`}>{title}</td>
+        </tr>
+        {entries.map((e) => {
+          if (stockRows.length === 0 || !stockCodes.has(e.accountCode)) return showAccounts ? renderEntry(e, false) : null;
+          // The Inventories line takes the place of the first stock account (code order).
+          if (invPlaced) return null;
+          invPlaced = true;
+          return (
+            <Fragment key="inventories">
+              <tr className="border-t border-[#E2DDD8]/50 cursor-pointer hover:bg-[#F7F4EF]" onClick={() => setInvOpen((v) => !v)}
+                title={invShown ? "Fold the stock accounts" : "Show the stock accounts"}>
+                <td className="px-4 py-1.5 pl-8 text-xs text-[#9CA3AF]">{invShown ? "▾" : "▸"}</td>
+                <td className="px-4 py-1.5 font-medium text-[#1F1D1B]">
+                  Inventories
+                  {bsStock && <span className="ml-1 text-xs font-normal text-[#9CA3AF]">· P&amp;L closing stock, {drillMonthLabel(bsStock.month)}</span>}
+                </td>
+                <td className="px-4 py-1.5 text-right font-semibold text-[#1F1D1B]"><Amount sen={stockTotal} /></td>
+              </tr>
+              {invShown && stockRows.map((r) => renderEntry(r, true))}
+            </Fragment>
+          );
+        })}
+        <tr className={`border-t border-[#E2DDD8] ${bgClass} font-semibold`}>
+          <td colSpan={2} className={`px-4 py-2 ${colorClass}`}>Total {title}</td>
+          <td className={`px-4 py-2 text-right ${colorClass}`}><Amount sen={total} /></td>
+        </tr>
+      </>
+    );
+  };
+
+  // One table per side; on a wide screen assets sit beside liabilities + equity.
+  const bsTable = (label: string, body: React.ReactNode) => (
+    <div className="border border-[#E2DDD8] rounded-lg overflow-hidden overflow-x-auto">
+      <table data-col-resize="first" aria-label={label} className="w-full text-sm">
+        <thead>
+          <tr>
+            <th className="text-left px-4 py-2 w-28">Code</th>
+            <th className="text-left px-4 py-2">Account</th>
+            <th className="text-right px-4 py-2 w-40">Amount</th>
           </tr>
-          {drilled && (
-            <tr><td colSpan={3} className="p-0"><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
-          )}
-          </Fragment>
-        );
-      })}
-      <tr className={`border-t border-[#E2DDD8] ${bgClass} font-semibold`}>
-        <td colSpan={2} className={`px-4 py-2 ${colorClass}`}>Total {title}</td>
-        <td className={`px-4 py-2 text-right ${colorClass}`}><Amount sen={total} /></td>
-      </tr>
-    </>
+        </thead>
+        <tbody>{body}</tbody>
+      </table>
+    </div>
   );
 
   return (
@@ -16536,37 +16643,31 @@ function BalanceSheetTab() {
           {months.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
         <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
+        <LevelPicker max={2} level={showAccounts ? 2 : 1} onPick={setBsLevel} />
         <button onClick={() => setEdit((v) => !v)}
-          className={`ml-2 rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
+          className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
           {edit ? "Done" : "Edit"}
         </button>
         {edit && <span className="text-[11px] text-[#6B5C32]">Drag an account row onto a target section to reclassify it · Assets ↔ Liabilities is allowed too (the sign flips on the move, the statement still balances) · all months recompute under the new rule · drag back to undo</span>}
       </div>
+
+      {/* Key figures (owner 2026-10-14), the balance check among them. */}
+      <FinKpis>
+        <KpiCard label="Total assets" value={<Amount sen={totalAssets} />}
+          note={bsStock ? <>incl. stock <Amount sen={bsStock.totalSen} /></> : undefined} />
+        <KpiCard label="Total liabilities" value={<Amount sen={totalLiabilities} />}
+          note={totalLongTermLiab === 0 ? "all current" : <>long-term <Amount sen={totalLongTermLiab} /></>} />
+        <KpiCard label="Equity" value={<Amount sen={totalEquity} />}
+          note={equityItems.some((e) => e.accountCode === "NP-CURRENT") ? "incl. current year earnings" : undefined} />
+        <KpiCard label="Balance check" tone={balanced ? "good" : "bad"}
+          value={balanced ? "Balanced" : <>Out by <Amount sen={Math.abs(totalAssets - totalLiabEquity)} red={false} /></>}
+          note="Assets = liabilities + equity" />
+      </FinKpis>
+
       {/* Group P&L / net-worth by company — only on the consolidated (group)
           view; picking a single company hides it (you're already scoped). */}
       {company === "" && <GroupByCompanyCard period={period} options={companyOptions} />}
-      {/* Balance equation */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-[#6B7280]">Total Assets</p>
-            <p className="text-xl font-bold text-[#3E6570]"><Amount sen={totalAssets} /></p>
-          </CardContent>
-        </Card>
-        <Card className="flex items-center justify-center">
-          <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-[#6B5C32]">=</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-[#6B7280]">Liabilities + Equity</p>
-            <p className="text-xl font-bold text-[#6B4A6D]"><Amount sen={totalLiabEquity} /></p>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* Balance Sheet Table */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2">
@@ -16575,58 +16676,51 @@ function BalanceSheetTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="border border-[#E2DDD8] rounded-lg overflow-hidden overflow-x-auto">
-            <table data-col-resize="first" className="w-full text-sm">
-              <thead>
-                <tr className="bg-[#F0ECE9]">
-                  <th className="text-left px-4 py-2 font-semibold text-[#1F1D1B] w-28">Code</th>
-                  <th className="text-left px-4 py-2 font-semibold text-[#1F1D1B]">Account</th>
-                  <th className="text-right px-4 py-2 font-semibold text-[#1F1D1B] w-40">Amount (RM)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* ASSETS — INFO (teal) tint */}
-                <tr className={`${INFO.bg} border-t-2 ${INFO.border}`}>
-                  <td colSpan={3} className={`px-4 py-2 font-bold text-base ${INFO.text}`}>ASSETS</td>
-                </tr>
-                {renderBSSection("Current Assets", currentAssets, totalCurrentAssets, INFO.text, INFO.bg, "CURRENT_ASSET")}
-                {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, INFO.text, INFO.bg, "FIXED_ASSET")}
-                <tr className={`border-t-2 ${INFO.border} ${INFO.bg} font-bold`}>
-                  <td colSpan={2} className={`px-4 py-3 ${INFO.text}`}>TOTAL ASSETS</td>
-                  <td className={`px-4 py-3 text-right ${INFO.text}`}><Amount sen={totalAssets} /></td>
-                </tr>
+          <div className="grid gap-4 xl:grid-cols-2 xl:items-start">
+            {bsTable("Assets", <>
+              {/* ASSETS — INFO (teal) tint */}
+              <tr className={`${INFO.bg} border-t-2 ${INFO.border}`}>
+                <td colSpan={3} className={`px-4 py-2 font-bold text-base ${INFO.text}`}>ASSETS</td>
+              </tr>
+              {renderBSSection("Current Assets", currentAssets, totalCurrentAssets, INFO.text, INFO.bg, "CURRENT_ASSET")}
+              {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, INFO.text, INFO.bg, "FIXED_ASSET")}
+              <tr className={`border-t-2 ${INFO.border} ${INFO.bg} font-bold`}>
+                <td colSpan={2} className={`px-4 py-3 ${INFO.text}`}>TOTAL ASSETS</td>
+                <td className={`px-4 py-3 text-right ${INFO.text}`}><Amount sen={totalAssets} /></td>
+              </tr>
+            </>)}
+            {bsTable("Liabilities and equity", <>
+              {/* LIABILITIES — DANGER (red) tint */}
+              <tr className={`${DANGER.bg} border-t-2 ${DANGER.border}`}>
+                <td colSpan={3} className={`px-4 py-2 font-bold text-base ${DANGER.text}`}>LIABILITIES</td>
+              </tr>
+              {renderBSSection("Current Liabilities", currentLiabilities, totalCurrentLiab, DANGER.text, DANGER.bg, "CURRENT_LIABILITY")}
+              {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, DANGER.text, DANGER.bg, "LONG_TERM_LIABILITY")}
+              <tr className={`border-t border-[#E2DDD8] font-semibold ${DANGER.bg}`}>
+                <td colSpan={2} className={`px-4 py-2 ${DANGER.text}`}>Total Liabilities</td>
+                <td className={`px-4 py-2 text-right ${DANGER.text}`}><Amount sen={totalLiabilities} /></td>
+              </tr>
 
-                {/* LIABILITIES — DANGER (red) tint */}
-                <tr className={`${DANGER.bg} border-t-2 ${DANGER.border}`}>
-                  <td colSpan={3} className={`px-4 py-2 font-bold text-base ${DANGER.text}`}>LIABILITIES</td>
-                </tr>
-                {renderBSSection("Current Liabilities", currentLiabilities, totalCurrentLiab, DANGER.text, DANGER.bg, "CURRENT_LIABILITY")}
-                {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, DANGER.text, DANGER.bg, "LONG_TERM_LIABILITY")}
-                <tr className={`border-t border-[#E2DDD8] font-semibold ${DANGER.bg}`}>
-                  <td colSpan={2} className={`px-4 py-2 ${DANGER.text}`}>Total Liabilities</td>
-                  <td className={`px-4 py-2 text-right ${DANGER.text}`}><Amount sen={totalLiabilities} /></td>
-                </tr>
+              {/* EQUITY — ACCENT_PLUM tint */}
+              {renderBSSection("Equity", equityItems, totalEquity, ACCENT_PLUM.text, ACCENT_PLUM.bg, "EQUITY")}
 
-                {/* EQUITY — ACCENT_PLUM tint */}
-                {renderBSSection("Equity", equityItems, totalEquity, ACCENT_PLUM.text, ACCENT_PLUM.bg, "EQUITY")}
-
-                {/* Total L+E */}
-                <tr className="border-t-2 border-[#1F1D1B] bg-[#1F1D1B] text-white font-bold">
-                  <td colSpan={2} className="px-4 py-3">TOTAL LIABILITIES + EQUITY</td>
-                  <td className="px-4 py-3 text-right"><Amount sen={totalLiabEquity} red={false} /></td>
-                </tr>
-              </tbody>
-            </table>
+              {/* Total L+E */}
+              <tr className="border-t-2 border-[#1F1D1B] bg-[#1F1D1B] text-white font-bold">
+                <td colSpan={2} className="px-4 py-3">TOTAL LIABILITIES + EQUITY</td>
+                <td className="px-4 py-3 text-right"><Amount sen={totalLiabEquity} red={false} /></td>
+              </tr>
+            </>)}
           </div>
 
           {/* Balance check */}
-          <div className={`mt-3 p-3 rounded-lg text-sm border ${totalAssets === totalLiabEquity ? `${SUCCESS.bg} ${SUCCESS.text} ${SUCCESS.border}` : `${DANGER.bg} ${DANGER.text} ${DANGER.border}`}`}>
-            {totalAssets === totalLiabEquity ? (
+          <div className={`mt-3 p-3 rounded-lg text-sm border ${balanced ? `${SUCCESS.bg} ${SUCCESS.text} ${SUCCESS.border}` : `${DANGER.bg} ${DANGER.text} ${DANGER.border}`}`}>
+            {balanced ? (
               <span className="flex items-center gap-2"><Check className="h-4 w-4" /> Balance sheet is balanced. Assets = Liabilities + Equity</span>
             ) : (
               <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: <Amount sen={Math.abs(totalAssets - totalLiabEquity)} /></span>
             )}
           </div>
+          <p className="mt-2 text-xs text-[#6B7280]">Accounts are listed by code; click one to see the entries behind its balance.</p>
           {bsStock && (
             <p className="mt-2 text-xs text-[#6B7280]">
               Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
@@ -16702,7 +16796,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
     return <tr className={bg}><td className={`py-1 text-[12px] ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
   }
   const amtCls = (sen: number) => `text-right px-2 tabular-nums whitespace-nowrap ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
-  const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
+  const amt = drillAmt;
   const perMonth = new Map<string, number>();
   for (const it of data.items) perMonth.set(it.ym, (perMonth.get(it.ym) ?? 0) + it.sen);
   const total = data.items.reduce((sum, it) => sum + it.sen, 0);
@@ -17310,12 +17404,8 @@ function CashFlowTab() {
     } catch { toast.error("Save failed"); }
   };
 
-  const fmt = (v: number | null): string => {
-    if (v === null || v === undefined) return "";
-    if (v === 0) return "-";
-    const a = Math.abs(v / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return v < 0 ? `(${a})` : a;
-  };
+  // 1,234.00 · (1,234.00) · – for zero (src/lib/finance-money.ts); blank = no figure.
+  const fmt = (v: number | null): string => (v === null || v === undefined ? "" : fmtAmount(v));
   const months: string[] = [];
   { const now = new Date(); for (let i = 0; i < 18; i++) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); months.push(d.toISOString().slice(0, 7)); } }
 
@@ -17370,15 +17460,12 @@ function CashFlowTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-[#9CA3AF]">cash basis · full detail</span>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }}
             className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
             {edit ? "Done" : "Edit"}
           </button>
-          {[1, 2, 3].map((L) => (
-            <button key={L} onClick={() => applyLevel(L)}
-              className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${level === L ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-          ))}
+          <LevelPicker max={3} level={level} onPick={applyLevel} />
           <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
             {/* BUG-2026-08-13-092 — the Quarter ("2026-Q1") and Full-year
                 ("2026") options used to sit here. `fyMonths` (cashflow-engine)
@@ -17504,9 +17591,9 @@ function CashFlowTab() {
                         {canDrill ? (
                           <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the payments behind this line"
                             onClick={() => setCfDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{r.label}
+                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{acctName(r.label)}
                           </button>
-                        ) : <>{isGroup ? (isOpen ? "▾ " : "▸ ") : ""}{draggable ? "⠿ " : ""}{r.label}</>}
+                        ) : <>{isGroup ? (isOpen ? "▾ " : "▸ ") : ""}{draggable ? "⠿ " : ""}{acctName(r.label)}</>}
                       </td>
                       {r.values.map((v, j) => (
                         <td key={j} className={`text-right px-2 tabular-nums whitespace-nowrap ${typeof v === "number" && v < 0 ? "text-[#9A3A2D]" : ""} ${v === 0 ? "text-[#C7C1BA]" : ""} ${strong ? "font-semibold" : ""} ${cols[j]?.accum ? "bg-[#F6F1E7]" : ""}`}>{fmt(v)}</td>

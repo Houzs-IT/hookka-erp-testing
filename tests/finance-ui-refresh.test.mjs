@@ -130,3 +130,97 @@ test("amounts on the finance pages go through <Amount>, not formatCurrency, as J
   assert.doesNotMatch(read("src/pages/invoices/credit-notes.tsx"), /-<Amount /);
   assert.doesNotMatch(read("src/pages/invoices/debit-notes.tsx"), /\+<Amount /);
 });
+
+// ---- Step 2: the reports ----------------------------------------------------
+import { acctName } from "../src/lib/finance-names.ts";
+import { levelNames } from "../src/lib/finance-nav.ts";
+import { pctChange } from "../src/lib/finance-money.ts";
+
+const slice = (src, a, b) => {
+  const i = src.indexOf(a);
+  assert.ok(i >= 0, `marker ${a}`);
+  const j = src.indexOf(b, i + a.length);
+  return src.slice(i, j < 0 ? undefined : j);
+};
+
+test("account names in normal case; abbreviations and codes stay; hand-cased names untouched", () => {
+  assert.equal(acctName("INTEREST ON TRADE FINANCE"), "Interest on Trade Finance");
+  assert.equal(acctName("STOCK - FABRIC S.M"), "Stock - Fabric S.M");
+  assert.equal(acctName("STOCK - WORK-IN-PROGRESS"), "Stock - Work-in-Progress");
+  assert.equal(acctName("GROSS PROFIT / (LOSS)"), "Gross Profit / (Loss)");
+  assert.equal(acctName("WIP MOVEMENT (net)"), "WIP Movement (net)");
+  assert.equal(acctName("CASH AT BANK - HLBB"), "Cash at Bank - HLBB");
+  assert.equal(acctName("ACCRUAL - EPF"), "Accrual - EPF");
+  assert.equal(acctName("PRODUCTION - SOCSO"), "Production - SOCSO");
+  assert.equal(acctName("R&D EXPENSES"), "R&D Expenses");
+  assert.equal(acctName("STOCK - WD STRIP"), "Stock - WD Strip");
+  assert.equal(acctName("TOTAL B.FILLER"), "Total B.FILLER");
+  assert.equal(acctName("Current Year Earnings (unclosed)"), "Current Year Earnings (unclosed)");
+  assert.equal(acctName("Amount due to HOUZS"), "Amount due to HOUZS", "mostly small letters = cased by hand");
+  assert.equal(acctName(""), "");
+  assert.equal(acctName(undefined), "");
+});
+
+test("detail levels have names, not L1–L4", () => {
+  assert.deepEqual(levelNames(1), ["All lines"]);
+  assert.deepEqual(levelNames(2), ["Summary", "All lines"]);
+  assert.deepEqual(levelNames(3), ["Summary", "Groups", "All lines"]);
+  assert.deepEqual(levelNames(4), ["Summary", "Groups", "Sub-groups", "All lines"]);
+  assert.deepEqual(levelNames(5), ["Summary", "Groups", "Sub-groups", "Level 4", "All lines"]);
+  assert.doesNotMatch(ui, />L\{L\}</, "no L1–L4 buttons left on the finance page");
+  assert.match(ui, /<LevelPicker max=\{4\} level=\{level\} onPick=\{\(L\) => applyLevel\(rows, L\)\} \/>/, "P&L statement");
+  assert.match(ui, /<LevelPicker max=\{maxLevel\} level=\{level\} onPick=\{applyLevel\} \/>/, "Monthly P&L");
+  assert.match(ui, /<LevelPicker max=\{3\} level=\{level\} onPick=\{applyLevel\} \/>/, "Cash Flow");
+  assert.match(ui, /<LevelPicker max=\{2\} level=\{showAccounts \? 2 : 1\} onPick=\{setBsLevel\} \/>/, "Balance Sheet");
+});
+
+test("P&L: key figures from the statement's own rows, this period before the year to date", () => {
+  assert.equal(pctChange(110, 100), 10);
+  assert.equal(pctChange(-50, -100), 50, "a smaller loss is up");
+  assert.equal(pctChange(5, 0), null, "nothing to compare with");
+  const kf = slice(ui, "function plKeyFigures(", "\n}\n");
+  assert.match(kf, /r\.kind === "grandtotal" && r\.label\.startsWith\("GROSS PROFIT"\)/);
+  assert.match(kf, /r\.kind === "group" && r\.depth === 0 && r\.label === "OPERATING EXPENSES"/);
+  assert.match(kf, /r\.kind === "grandtotal" && r\.label\.startsWith\("NET PROFIT"\)/);
+  const pl = slice(ui, "function PLStatementTab() {", "// =============== TAB: OTHER DEBTORS");
+  assert.match(pl, /fetch\(`\/api\/accounting\/pl-statement\?period=\$\{prevYm\}&line=\$\{line\}`\)/, "last month for the comparison");
+  assert.match(pl, /<KpiChange cur=\{kf\.opex\} prev=\{prevKf\.opex\} vs=\{vs\} upIsGood=\{false\} \/>/, "costs going up reads red");
+  assert.match(pl, /const numCell = \(v: number \| undefined\) => \(v === undefined \? "" : <Amount sen=\{v\} \/>\);/);
+  const head = slice(pl, "<thead>", "</thead>");
+  assert.ok(head.indexOf("{data?.periodLabel ?? period}") < head.indexOf("FY to date"), "the period column comes first");
+  assert.equal((pl.match(/\{numCell\(row\.periodSen\)\}<\/td>\n\s*<td className="text-right px-2 text-\[#6B7280\]">\{pct\(row\.periodSen\)\}<\/td>\n\s*<td className="text-right px-2 tabular-nums">\{numCell\(row\.ytdSen\)\}/g) ?? []).length, 4, "every row kind in that order");
+  assert.equal((pl.match(/\{acctName\(row\.label\)\}/g) ?? []).length, 5, "names in normal case");
+});
+
+test("P&L views live in the URL", () => {
+  const hub = slice(ui, "function PlHubTab(", "\n}\n");
+  assert.match(hub, /n\.set\("tab", v\.tab\)/);
+  assert.match(hub, /\{ key: "statement", tab: "pl", label: "Statement"/);
+  assert.match(hub, /\{ key: "monthly", tab: "plmonthly", label: "Monthly"/);
+  assert.match(hub, /\{ key: "cost", tab: "coststruct", label: "Cost structure"/);
+  assert.doesNotMatch(hub, /useState\(initialView\)/, "no view state apart from the URL");
+});
+
+test("Monthly P&L and Cash Flow: one amount format, names in normal case", () => {
+  const monthly = slice(ui, "function MonthlyPlTab() {", "// Monthly P&L inline drill");
+  assert.match(monthly, /const fmt = \(sen: number\) => fmtAmount\(sen\);/);
+  assert.doesNotMatch(monthly, /uppercase/, "names are cased by acctName, not CSS capitals");
+  assert.equal((monthly.match(/acctName\(r\.label\)/g) ?? []).length, 2);
+  const cf = slice(ui, "function CashFlowTab() {", "\n}\n");
+  assert.match(cf, /const fmt = \(v: number \| null\): string => \(v === null \|\| v === undefined \? "" : fmtAmount\(v\)\);/);
+  assert.equal((cf.match(/acctName\(r\.label\)/g) ?? []).length, 2);
+});
+
+test("Balance Sheet: key figures with the balance check, two sides, one Inventories line", () => {
+  const bs = slice(ui, "function BalanceSheetTab() {", "// Phase 5.4 — Cash Flow");
+  assert.match(bs, /<KpiCard label="Balance check" tone=\{balanced \? "good" : "bad"\}/);
+  assert.match(bs, /<div className="grid gap-4 xl:grid-cols-2 xl:items-start">/, "assets beside liabilities + equity on a wide screen");
+  assert.match(bs, /const stockCodes = new Set\(bsStock\?\.accounts \?\? \[\]\);/);
+  assert.match(bs, /Inventories\n/);
+  assert.match(bs, /\{invShown && stockRows\.map\(\(r\) => renderEntry\(r, true\)\)\}/);
+  assert.match(bs, /<Amount sen=\{e\.balance\} \/>/);
+  assert.match(bs, /acctName\(e\.accountName\)/);
+  // Hooks stay above the loading return.
+  assert.ok(bs.indexOf("const [bsLevel, setBsLevel] = useState(2);") < bs.indexOf("if (bsLoading) {"));
+  assert.equal((ui.match(/<table data-col-resize="first"/g) ?? []).length, 8, "still one sheet table in the source (rendered per side)");
+});

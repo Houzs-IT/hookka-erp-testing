@@ -22,3 +22,9 @@ export function fmtAmount(sen: number, opts: { zero?: string } = {}): string {
 export function isNegativeAmount(sen: number): boolean {
   return Number.isFinite(sen) && sen < 0;
 }
+
+/** The move from `prev` to `cur` as a percentage of `prev`; null when there is no earlier figure to compare with. */
+export function pctChange(cur: number, prev: number): number | null {
+  if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return null;
+  return ((cur - prev) / Math.abs(prev)) * 100;
+}

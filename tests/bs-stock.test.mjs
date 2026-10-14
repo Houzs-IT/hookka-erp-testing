@@ -127,7 +127,8 @@ test("/pl: stock lines replace the ledger's, earnings carry the difference, the 
   assert.match(API, /const accounts = new Set\(\[\.\.\.stockAccounts\(map, resolve\)\]\.filter\(placeable\)\);/);
   assert.match(sheet, /const shown = stockSen === undefined \? bal : bsSectionClass\(section\) === "asset" \? stockSen : -stockSen;/);
   assert.match(sheet, /unclosedEarnings \+= sheetStock\?\.earningsSen \?\? 0;/);
-  assert.match(API, /sheetStock: sheetStock \? \{ month: sheetStock\.month, totalSen: sheetStock\.totalSen \} : null,\n\s*sheetStockError,/);
+  // …and on which accounts, so the page can fold them under Inventories (2026-10-14).
+  assert.match(API, /sheetStock: sheetStock \? \{ month: sheetStock\.month, totalSen: sheetStock\.totalSen, accounts: \[\.\.\.sheetStock\.balances\.keys\(\)\] \} : null,\n\s*sheetStockError,/);
 });
 
 test("the dashboard and the finance series use the same rule", () => {
