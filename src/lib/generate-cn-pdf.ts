@@ -252,7 +252,7 @@ export function renderCnInto(doc: jsPDF, data: CNPdfData) {
     return [
       String(i + 1),
       // Our CO + the customer's CO number, stacked like the DO's Order column.
-      `CO: ${it.consignmentOrderNo || "-"}\nPO: ${(it.customerPOId || "").trim() || "-"}`,
+      `Our CO: ${it.consignmentOrderNo || "-"}\nPO: ${(it.customerPOId || "").trim() || "-"}`,
       desc,
       it.coSizeLabel || "-",
       String(it.quantity ?? 0),

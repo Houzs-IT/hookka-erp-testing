@@ -69,7 +69,7 @@ test("CN PDF stacks our CO and the customer's PO in the Order column", () => {
   assert.match(PDF, /\{ content: "Order" \},/);
   assert.match(
     PDF,
-    /`CO: \$\{it\.consignmentOrderNo \|\| "-"\}\\nPO: \$\{\(it\.customerPOId \|\| ""\)\.trim\(\) \|\| "-"\}`/,
+    /`Our CO: \$\{it\.consignmentOrderNo \|\| "-"\}\\nPO: \$\{\(it\.customerPOId \|\| ""\)\.trim\(\) \|\| "-"\}`/,
   );
   assert.match(PDF, /1: \{ cellWidth: 32 \}, \/\/ Order/);
 });

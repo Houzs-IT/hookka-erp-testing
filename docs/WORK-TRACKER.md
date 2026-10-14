@@ -162,8 +162,9 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
    → Siti「ouh ya can put 2990 own CO number on sticker . consignment note also want Po No」→ Samuel: same PR, "PO No" line.
    🔵 Sticker: "PO No" on a CO-origin unit falls back to the CO's customer CO number (`customerSO` in the production-order
    payload, already filled from `consignment_orders.customer_co_id`). SO-origin stickers unchanged.
-   🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the CO No. cell stacks
-   `CO: <our CO>` / `PO: <2990's CO no.>`, widened like the DO's Order column.
+   🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the first column is Order,
+   stacked `Our CO: <our CO>` / `PO: <2990's CO no.>` like the DO's Order column (Siti「can put like this ? our CO and
+   their own PO」with a DO screenshot).
 4. ✅ "Colour": Siti「for colour HG1313-01 already okey, no need name」. No change.
 
 ## 2026-10-14 — ✅ Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(#851 a2770f0c, prod-verified)
