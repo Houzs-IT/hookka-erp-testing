@@ -1,5 +1,7 @@
 # Procurement — Module Guide
 
+> **Last verified: 2026-10-14** (`fix/pi-revoid-legno-main`, main): `purchase-invoices.ts` `buildPiDeltaLegs` :2713 now numbers void / unvoid / re-sync legs on from `MAX(legNo)` (BUG-2026-10-14-286); void :2774, unvoid :2879, resync-gl :2986. Nothing else re-checked.
+
 > **Last verified: 2026-09-28** (`feat/sp-bank-from-ledger`) — `supplier-payments.ts` anchors re-derived after `GET /` gained the ledger bank-leg lookup (+22 lines above them): POST `/` :146, `/knock-off` :643, `/un-knock` :804, `buildSupplierPaymentCreate` :432, `buildSupplierPaymentLifecycle` :898. `GET /api/supplier-payments` now returns `bankAccount` per payment (from the ledger's newest CR leg; the table has no bank column). Nothing else re-checked.
 >
 > **Last verified: 2026-09-24** (`feat/pi-line-discount-main`) — `purchase-invoices.ts` anchors re-derived (POST `/` :1085, PUT `/:id` :1939, `checkInvoicedQtyCeilingAfterEdit` :699) after the DEV-14 per-line discount added lines above them.

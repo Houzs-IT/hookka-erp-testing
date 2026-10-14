@@ -42,7 +42,7 @@ const H = SRC.slice(SRC.indexOf('app.post("/:id/resync-gl"'));
 test('it moves the ledger with the SAME primitive the void path uses', () => {
   assert.ok(H.length > 500, 'the handler must be found');
   assert.match(H, /const \{ total, orgId: legOrgId, legs \} = await loadPiLedgerNet\(db, id\);/);
-  assert.match(H, /const deltaLegs = buildPiDeltaLegs\(target, total, \{/);
+  assert.match(H, /const deltaLegs = await buildPiDeltaLegs\(db, target, total, \{/);
   // and it builds the TARGET through the same mapper + builder the original
   // posting used, so a correction lands in the same 70x accounts.
   assert.match(H, /await mapPurchaseLinesToAccounts\(db, lines\)/);
