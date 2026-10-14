@@ -39,18 +39,21 @@
 //
 // File storage strategy
 // ---------------------
-// Production: TEMPORARILY stash raw file bytes as base64 in
-// `scan_queue.file_bytes_b64`. 32MB max per file × Workers JSONB tolerates
-// it fine for a single-row read/write. The column is NULLed the moment the
-// row's status flips to 'done' or 'failed' — so the table doesn't grow
-// unbounded. Once the owner wires an R2 bucket binding (or Supabase
-// Storage `scans` bucket), swap the b64 column for an object key.
+// HK-0005 (2026-10-14): the original goes to the file store (Supabase Storage
+// + a `file_assets` row, resourceType 'scan-original', resourceId = the queue
+// row id) and the row keeps only `file_asset_id`. It is never deleted, so
+// every scanned original is kept. `file_bytes_b64` is now only a FALLBACK —
+// written when the store refuses the file (not configured, MIME sniff
+// mismatch) and read for rows queued before this change; consume still NULLs
+// it. `loadOriginal` is the one reader.
 //
 // Auth: same `requirePermission(c, "purchase-orders", "create")` gate as
 // the existing /api/scan-po + /api/scan-supplier routes.
 // ---------------------------------------------------------------------------
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
+import { storeUploadedFile } from "./files";
+import { getFile } from "../lib/supabase-storage";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import {
@@ -109,6 +112,48 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
     .join("");
 }
 
+// Put a scan original in the file store (HK-0005). Returns the file_assets id,
+// or null when the store refuses it — the caller then falls back to the b64
+// column, so a scan never fails because storage is down.
+export async function stashOriginal(
+  c: Context<Env>,
+  rowId: string,
+  buf: ArrayBuffer,
+  fileName: string,
+  mimeType: string,
+): Promise<string | null> {
+  try {
+    const stored = await storeUploadedFile(c, {
+      file: new File([buf], fileName, { type: mimeType }),
+      resourceType: "scan-original",
+      resourceId: rowId,
+    });
+    if (stored.ok) return stored.data.id;
+    console.warn("[scan-queue] original kept as b64:", stored.error);
+  } catch (e) {
+    console.warn("[scan-queue] original kept as b64:", (e as Error).message);
+  }
+  return null;
+}
+
+// Read a row's original: the file store first, then the b64 column (rows
+// queued before HK-0005, or a store fallback). null = nothing kept.
+export async function loadOriginal(
+  db: Env["Variables"]["DB"],
+  env: Env["Bindings"],
+  row: { fileAssetId?: string | null; fileBytesB64?: string | null },
+): Promise<ArrayBuffer | null> {
+  if (row.fileAssetId) {
+    const fa = await db
+      .prepare("SELECT r2Key FROM file_assets WHERE id = ?")
+      .bind(row.fileAssetId)
+      .first<{ r2Key: string | null }>();
+    const obj = fa?.r2Key ? await getFile(env, fa.r2Key) : null;
+    if (obj) return await new Response(obj.body).arrayBuffer();
+  }
+  return row.fileBytesB64 ? base64ToArrayBuffer(row.fileBytesB64) : null;
+}
+
 // Runtime self-apply — deploy doesn't auto-run migration files (per
 // CLAUDE.md). Idempotent; safe to call at the top of every handler.
 let scanQueueTableEnsured = false;
@@ -142,7 +187,8 @@ async function ensureScanQueueTable(
            org_id          TEXT,
            consumed_at     TIMESTAMP,
            sample_id       TEXT,
-           ocr_model       TEXT
+           ocr_model       TEXT,
+           file_asset_id   TEXT
          )`,
       )
       .run();
@@ -208,6 +254,12 @@ async function ensureScanQueueTable(
     await db
       .prepare(
         "ALTER TABLE scan_queue ADD COLUMN IF NOT EXISTS ocr_model TEXT",
+      )
+      .run();
+    // HK-0005 (2026-10-14): the original's file_assets id — see the header.
+    await db
+      .prepare(
+        "ALTER TABLE scan_queue ADD COLUMN IF NOT EXISTS file_asset_id TEXT",
       )
       .run();
     await db
@@ -342,10 +394,11 @@ type ProcessOutcome =
   | { kind: "error"; error: string };
 
 async function processOneRow(
-  db: Env["Variables"]["DB"],
-  env: Env["Bindings"],
+  c: Context<Env>,
   batchId: string,
 ): Promise<ProcessOutcome> {
+  const db = c.var.DB;
+  const env = c.env;
   {
     let next: ScanQueueRow | null = null;
     try {
@@ -413,18 +466,18 @@ async function processOneRow(
         // Re-fetch the bytes (we deliberately don't carry a 32MB string in
         // memory between the queue poll and the API call — read it now).
         const row = await db
-          .prepare("SELECT file_bytes_b64 FROM scan_queue WHERE id = ?")
+          .prepare("SELECT file_bytes_b64, file_asset_id FROM scan_queue WHERE id = ?")
           .bind(next.id)
-          .first<{ fileBytesB64: string | null }>();
-        const b64 = row?.fileBytesB64 ?? null;
-        if (!b64) {
+          .first<{ fileBytesB64: string | null; fileAssetId: string | null }>();
+        const original = row ? await loadOriginal(db, env, row) : null;
+        if (!original) {
           result = {
             ok: false,
             error:
               "File bytes evicted before processing (re-upload to re-queue)",
           };
         } else {
-          const bytes = base64ToArrayBuffer(b64);
+          const bytes = original;
           // Auto-split branch (owner ruling 2026-06-30). Multi-page PDFs may
           // bundle N separate supplier docs (e.g. an 85-page file with 16
           // PIs). Ask Haiku for the page-range boundaries BEFORE the heavy
@@ -500,14 +553,15 @@ async function processOneRow(
                         // Cache HIT — insert as 'cached'; keep child bytes
                         // so the PI link-to-source-doc upload step can grab
                         // them later via /api/scan-queue/:id/bytes.
-                        const childB64 = toBase64(childBytes);
+                        const childAsset = await stashOriginal(c, childId, childBytes, childFileName, "application/pdf");
+                        const childB64 = childAsset ? null : toBase64(childBytes);
                         await db
                           .prepare(
                             `INSERT INTO scan_queue
                                (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-                                file_bytes_b64, supplier_id, po_context, status, raw_json,
+                                file_bytes_b64, file_asset_id, supplier_id, po_context, status, raw_json,
                                 cache_source_id, created_by, created_at, completed_at, org_id)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
                           )
                           .bind(
                             childId,
@@ -518,6 +572,7 @@ async function processOneRow(
                             "application/pdf",
                             childBytes.byteLength,
                             childB64,
+                            childAsset,
                             next.supplierId,
                             next.poContext,
                             cacheSource.rawJson,
@@ -529,14 +584,15 @@ async function processOneRow(
                           )
                           .run();
                       } else {
-                        const childB64 = toBase64(childBytes);
+                        const childAsset = await stashOriginal(c, childId, childBytes, childFileName, "application/pdf");
+                        const childB64 = childAsset ? null : toBase64(childBytes);
                         await db
                           .prepare(
                             `INSERT INTO scan_queue
                                (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-                                file_bytes_b64, supplier_id, po_context, status, created_by,
+                                file_bytes_b64, file_asset_id, supplier_id, po_context, status, created_by,
                                 created_at, org_id)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
                           )
                           .bind(
                             childId,
@@ -547,6 +603,7 @@ async function processOneRow(
                             "application/pdf",
                             childBytes.byteLength,
                             childB64,
+                            childAsset,
                             next.supplierId,
                             next.poContext,
                             next.createdBy,
@@ -807,14 +864,15 @@ app.post("/upload", async (c) => {
       // queue page renders it without an extra hop. Also keep the bytes
       // (owner 2026-06-30) so the source-doc upload at PI creation time
       // can grab them via /api/scan-queue/:id/bytes — consume NULLs them.
-      const b64Cached = toBase64(buf);
+      const assetCached = await stashOriginal(c, id, buf, file.name, file.type || "application/octet-stream");
+      const b64Cached = assetCached ? null : toBase64(buf);
       try {
         await c.var.DB.prepare(
           `INSERT INTO scan_queue
              (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-              file_bytes_b64, supplier_id, po_context, status, raw_json,
+              file_bytes_b64, file_asset_id, supplier_id, po_context, status, raw_json,
               cache_source_id, created_by, created_at, completed_at, org_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
@@ -825,6 +883,7 @@ app.post("/upload", async (c) => {
             file.type || "application/octet-stream",
             file.size,
             b64Cached,
+            assetCached,
             supplierId,
             poContext,
             // raw_json comes back as a string from postgres.js when JSONB
@@ -845,15 +904,16 @@ app.post("/upload", async (c) => {
       }
       items.push({ id, fileName: file.name, status: "cached", cached: true, fileHash: hash });
     } else {
-      // Cache MISS — stash the bytes b64 and enqueue.
-      const b64 = toBase64(buf);
+      // Cache MISS — original to the file store (b64 only as fallback), enqueue.
+      const asset = await stashOriginal(c, id, buf, file.name, file.type || "application/octet-stream");
+      const b64 = asset ? null : toBase64(buf);
       try {
         await c.var.DB.prepare(
           `INSERT INTO scan_queue
              (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-              file_bytes_b64, supplier_id, po_context, status, created_by,
+              file_bytes_b64, file_asset_id, supplier_id, po_context, status, created_by,
               created_at, org_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
         )
           .bind(
             id,
@@ -864,6 +924,7 @@ app.post("/upload", async (c) => {
             file.type || "application/octet-stream",
             file.size,
             b64,
+            asset,
             supplierId,
             poContext,
             createdBy,
@@ -935,7 +996,7 @@ app.post("/batch/:batchId/work", async (c) => {
 
   // Loops only on a lost claim race.
   while (true) {
-    const r = await processOneRow(c.var.DB, c.env, batchId);
+    const r = await processOneRow(c, batchId);
     if (r.kind === "skipped") continue;
     if (r.kind === "error") {
       return c.json({ success: false, error: r.error }, 500);
@@ -1216,8 +1277,9 @@ app.get("/:id", async (c) => {
 // (possibly chunked) source document to /api/files so the resulting PI
 // links back to its source PDF (owner ruling 2026-06-30).
 //
-// Auth: same gate as upload — purchase-orders/create. Returns 404 once the
-// row has been consumed (bytes were NULLed during the consume step).
+// Auth: same gate as upload — purchase-orders/create. Rows stored in the file
+// store (HK-0005) keep serving after consume; a b64-only row returns 410 once
+// consume has NULLed it.
 // ---------------------------------------------------------------------------
 app.get("/:id/bytes", async (c) => {
   const denied = await requirePermission(c, "purchase-orders", "create");
@@ -1231,6 +1293,7 @@ app.get("/:id/bytes", async (c) => {
   try {
     row = await c.var.DB.prepare(
       `SELECT file_bytes_b64 AS "fileBytesB64",
+              file_asset_id  AS "fileAssetId",
               mime_type      AS "mimeType",
               file_name      AS "fileName"
          FROM scan_queue
@@ -1240,6 +1303,7 @@ app.get("/:id/bytes", async (c) => {
       .bind(id, orgId)
       .first<{
         fileBytesB64: string | null;
+        fileAssetId: string | null;
         mimeType: string | null;
         fileName: string | null;
       }>();
@@ -1252,7 +1316,16 @@ app.get("/:id/bytes", async (c) => {
   if (!row) {
     return c.json({ success: false, error: "Scan row not found." }, 404);
   }
-  if (!row.fileBytesB64) {
+  let bytes: ArrayBuffer | null;
+  try {
+    bytes = await loadOriginal(c.var.DB, c.env, row);
+  } catch (e) {
+    return c.json(
+      { success: false, error: `Original read failed: ${(e as Error).message}` },
+      500,
+    );
+  }
+  if (!bytes) {
     return c.json(
       {
         success: false,
@@ -1262,7 +1335,6 @@ app.get("/:id/bytes", async (c) => {
       410,
     );
   }
-  const bytes = base64ToArrayBuffer(row.fileBytesB64);
   const mime = row.mimeType || "application/pdf";
   const filename = row.fileName || "scan.pdf";
   return new Response(bytes, {
@@ -1290,10 +1362,10 @@ app.post("/:id/retry", async (c) => {
   let row;
   try {
     row = await c.var.DB.prepare(
-      "SELECT batch_id AS \"batchId\", file_bytes_b64 AS \"fileBytesB64\", status FROM scan_queue WHERE id = ? AND (org_id = ? OR org_id IS NULL)",
+      "SELECT batch_id AS \"batchId\", file_bytes_b64 AS \"fileBytesB64\", file_asset_id AS \"fileAssetId\", status FROM scan_queue WHERE id = ? AND (org_id = ? OR org_id IS NULL)",
     )
       .bind(id, orgId)
-      .first<{ batchId: string; fileBytesB64: string | null; status: string }>();
+      .first<{ batchId: string; fileBytesB64: string | null; fileAssetId: string | null; status: string }>();
   } catch (e) {
     return c.json(
       { success: false, error: `Query failed: ${(e as Error).message}` },
@@ -1309,7 +1381,7 @@ app.post("/:id/retry", async (c) => {
       400,
     );
   }
-  if (!row.fileBytesB64) {
+  if (!row.fileBytesB64 && !row.fileAssetId) {
     return c.json(
       {
         success: false,

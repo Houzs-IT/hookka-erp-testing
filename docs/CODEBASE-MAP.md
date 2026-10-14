@@ -14,6 +14,7 @@
 > **Last verified: 2026-10-13 on branch `feat/stock-summary-blank-month-fg-wip` (to `main`)**: the blank-month FG / WIP note (Stock Summary now wired), read from `src/api/routes/accounting.ts` (`stockSummaryRange`, `blankStockParts`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/pnl-live-fg-wip` (to `main`)**: the Financial Dashboard notes gained the blank-month FG / WIP line, read from `src/lib/production-stock.ts`, `src/api/lib/production-stock.ts` and `src/api/routes/accounting.ts` (`liveStockFor`, `blankMonthStock`, `computePnlWindow`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/it-support-to-main` (staging to `main`)**: the new IT Support bullet at the end of Customers & Platform (module, bell events, phone cards, header filters, sort cycle; /m wording adjusted for main's More screen), read from `src/api/routes/it-support.ts`, `src/pages/it-support/index.tsx`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/nav.ts` and `src/components/ui/data-grid.tsx`; also the three `src/api/worker.ts` middleware line refs, shifted by the hub-events endpoint. Nothing else re-checked.
+> **Last verified: 2026-10-14 on branch `feat/hk0005-scan-originals-storage` (to `main`)**: the scan-queue Originals paragraph and its re-anchored line refs, read from `src/api/routes/scan-queue.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `fix/claude-calls-via-sg-forwarder-main` (to `main`)**: the Claude-calls note in the Scanning/OCR/AI fragment (`claudeFetch` + `claude-forwarder-worker/`), read from `src/api/lib/claude-fetch.ts` and the five call sites.
 
 > **Last verified: 2026-10-12 on branch `feat/pnl-running-month-labour-to-date` (to `main`)**: the Financial Dashboard Production Revenue note gained the running-month labour line, read from `src/lib/labour-to-date.ts`, `src/api/lib/labour-to-date.ts`, `src/api/lib/labour-projection.ts` and `src/api/routes/accounting.ts` (`labourInjectionLines`, `GET /dashboard`). Nothing else re-checked.
@@ -2317,7 +2318,7 @@ handler with no `userId`, no `userRole` and no orgId on the context.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/components/scan-po-modal.tsx` — customer-PO scan wizard, in-modal queue polling; consumes ONLY scans whose SO was created (3519, re-measured 2026-10-09); `target="CO"` (Consignment Orders page) posts to `/api/consignment-orders` with the body re-shaped by `src/lib/scan-po-target.ts` (67) and refuses custom specials (BUG-2026-10-09-271) · `src/lib/so-original.ts` — keeps the customer's original PO on the SO for EVERY create path (94); extracted out of the modal because the in-modal version silently saved nothing for a month, see BUG-2026-08-19-155 | `src/api/routes/scan-queue.ts` — async OCR queue for PO + supplier scans (1598); **browser-driven since 2026-09-22** (BUG-2026-09-22-178): mounted `src/api/worker.ts:1414`; the modal holds `POST /batch/:id/work` requests open, one row per request — waitUntil is cancelled 30 s after the response and must never drive a Sonnet call; driver = `src/lib/scan-queue-client.ts` `createScanQueueDriver` | `scan_queue` (self-created, `src/api/routes/scan-queue.ts:121`) | `tests/ocr-accuracy-sampleid.test.mjs` |
+| `src/components/scan-po-modal.tsx` — customer-PO scan wizard, in-modal queue polling; consumes ONLY scans whose SO was created (3519, re-measured 2026-10-09); `target="CO"` (Consignment Orders page) posts to `/api/consignment-orders` with the body re-shaped by `src/lib/scan-po-target.ts` (67) and refuses custom specials (BUG-2026-10-09-271) · `src/lib/so-original.ts` — keeps the customer's original PO on the SO for EVERY create path (94); extracted out of the modal because the in-modal version silently saved nothing for a month, see BUG-2026-08-19-155 | `src/api/routes/scan-queue.ts` — async OCR queue for PO + supplier scans (1598); **browser-driven since 2026-09-22** (BUG-2026-09-22-178): mounted `src/api/worker.ts:1414`; the modal holds `POST /batch/:id/work` requests open, one row per request — waitUntil is cancelled 30 s after the response and must never drive a Sonnet call; driver = `src/lib/scan-queue-client.ts` `createScanQueueDriver` | `scan_queue` (self-created, `src/api/routes/scan-queue.ts:167`) | `tests/ocr-accuracy-sampleid.test.mjs` |
 | `src/components/scan-supplier-modal.tsx` — supplier PI/GRN scan wizard (5876) · `src/lib/scan-queue-client.ts` — consume + source-doc upload helpers (143) — the source-doc upload takes a local File OR a queue row, because a direct upload has no queue row (BUG-2026-08-19-156) | `src/api/routes/scan-po.ts` — customer-PO OCR + few-shot samples + per-customer prompt rules (1075); mounted `src/api/worker.ts:1396` | `po_scan_samples` (**no org column** — `migrations/0026_po_scan_samples.sql`) / `customers.ocrPromptRules` | `tests/ocr-accuracy-customer-grouping.test.mjs` |
 | `src/pages/do-scan.tsx` — PUBLIC driver scan page, routed `/d/:token` (`src/router.tsx:105`) (1031) | `src/api/routes/public-do-qr.ts` — **PUBLIC** DO / packing-list dispatch+deliver QR flow (1019); mounted `src/api/worker.ts:1210` | `delivery_orders` / `delivery_order_items` / `packing_lists` / `production_orders` / `sales_orders` / `job_cards` (+ everything the DO cascade writes) | `tests/do-qr-public.test.mjs` / `tests/security-public-endpoints.test.mjs` / `tests/delivery-incomplete-dual-key.test.mjs` |
 | `src/components/assistant/AssistantSlideOver.tsx` — chat panel (1318) · `src/components/assistant/FloatingChatButton.tsx` | `src/api/routes/assistant.ts` — Hookka AI SSE chat + tool loop (995); mounted `src/api/worker.ts:1441` (history router first at `src/api/worker.ts:1440`) | `audit_events` (one row per tool call) + whatever `src/api/lib/assistant-tools.ts` reads (60 tools incl. an arbitrary-SELECT tool) | `tests/assistant-agent-command-prompt.test.mjs` |
@@ -2360,16 +2361,22 @@ two roles. "Org-scoped" means the SQL carries an `org_id` / `orgId` bind.
 | POST `/api/scan-queue/:id/retry` | `src/api/routes/scan-queue.ts:1201` | `purchase-orders:create` | org-filtered SELECT, then an id-only UPDATE (transitively safe) |
 | POST `/api/scan-queue/:id/consume` | `src/api/routes/scan-queue.ts:1273` | `purchase-orders:create` | org-filtered |
 
-Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1495`)
+Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1566`)
 is exported and mounted by hand as `POST /api/internal/scan-queue-sweep`
 (`src/api/worker.ts:791`), registered **before** `authMiddleware` and gated by a
 constant-time `CRON_SECRET` compare that 503s when the secret is unset or under 16 chars
 (`src/api/worker.ts:791-798`). Its SQL is deliberately org-blind — it is a system sweep.
 
-Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:114`) ·
-`hydrateRow` (`src/api/routes/scan-queue.ts:248`) ·
-`processOneRow` (`src/api/routes/scan-queue.ts:334`, one claim + extract per `/work` request; returns processed | skipped | drained | error) ·
-`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1557`, the per-poll recovery path — Pages has
+Originals (HK-0005, 2026-10-14): every queued scan's file goes to the file store via `stashOriginal`
+(`storeUploadedFile`, resourceType `scan-original`, resourceId = queue row id) and the row keeps
+`file_asset_id`; `file_bytes_b64` is only a fallback when the store refuses, and `loadOriginal` is the
+one reader (worker, `/:id/bytes`). Consume NULLs the b64 only; the stored original is kept.
+Guard `tests/scan-original-file-store.test.mjs`.
+
+Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:160`) ·
+`hydrateRow` (`src/api/routes/scan-queue.ts:310`) ·
+`processOneRow` (`src/api/routes/scan-queue.ts:396`, one claim + extract per `/work` request; returns processed | skipped | drained | error) ·
+`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1642`, the per-poll recovery path — Pages has
 no cron, so the poll endpoints self-heal; re-queues ONLY, the open modal drives the row).
 
 ### `src/api/routes/scan-po.ts` — customer-PO OCR
