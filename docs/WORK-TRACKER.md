@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
 > **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
 > **Last verified: 2026-10-14**: branch `feat/finance-overview` (to `main`) added below.
@@ -144,6 +145,12 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-14 — 🔵 Second void of a purchase invoice answers 500 (branch `fix/pi-revoid-legno-main` → `main`, BUG-2026-10-14-286)
+
+1. ✅ Fixed and verified on staging first (#852): void, unvoid and void again all pass there.
+2. 🔵 Same `buildPiDeltaLegs` fix to `main`, without staging's PO-direct auto receipt.
+3. ⬜ After deploy: void, unvoid, void a test invoice on prod and check it answers 200 each time.
 
 
 

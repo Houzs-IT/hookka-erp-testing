@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-286 (branch `fix/pi-revoid-legno-main`, to main, same fix as staging #852); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-285 (branch `fix/hk0093-cn-print-co-fabric`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder-main`, to main, same fix as staging PR #822; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-276 (branch `fix/po-picker-duplicate-supplier-rows`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -94,6 +95,20 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
+
+🟡 **Fixed on branch** (`fix/pi-revoid-legno-main` → `main`). Same fix as staging #852, which was verified on the staging site 2026-10-14. Number shared with the staging entry.
+
+**Symptom.** Void → unvoid → void of the same purchase invoice answers 500. Seen on staging 2026-10-14 (log: `duplicate key value violates unique constraint "idx_lje_idempotent"`). `main` has the same code. Prod occurrences UNMEASURED.
+
+**Root cause.** `buildPiDeltaLegs` numbered legs from 1 on every call. Void, unvoid and `resync-gl` all post with `sourceId = <invoice id>` and a fixed sourceType, and the ledger is UNIQUE on `(orgId, sourceType, sourceId, legNo)`, so the second void (or unvoid, or re-sync) of an invoice reuses leg numbers the first one owns. The older note that void → unvoid → void is safe is about the amounts, not the leg numbers.
+
+**Fix.** `buildPiDeltaLegs` reads `MAX(legNo)` for its sourceType + sourceId and numbers on from there, the way the sales invoice cancel reversal does (`invoices.ts`). One place, all three callers.
+
+**Not checked.** Other posters that number from 1 with a reused sourceId (e.g. `invoices.ts` `invoice_void`).
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` "BUG-2026-10-14-286": confirm, then void, unvoid, void, unvoid all answer 200 and no void leg number repeats; fails 500 without the fix. The mock now keeps ledger legs, reads them back, raises on a duplicate leg like the real index, and applies `UPDATE purchase_invoices SET … WHERE id = ?`.
 
 ## BUG-2026-10-14-285 — A CN printed right after it was created had no CO No. and no fabric `consignment` `do-cn-parity` 🟡
 

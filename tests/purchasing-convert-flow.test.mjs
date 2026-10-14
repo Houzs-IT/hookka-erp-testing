@@ -113,7 +113,16 @@ function makeDb() {
         row[col] = binds[i];
       });
       if (table === "grn_items" && row.id == null) row.id = autoId++;
-      tables[table].push(row);
+      // Prod's idx_lje_idempotent: one leg per (org, sourceType, sourceId, legNo).
+      if (
+        table === "ledger_journal_entries" &&
+        (tables.ledger_journal_entries ?? []).some(
+          (l) => l.orgId === row.orgId && l.sourceType === row.sourceType && l.sourceId === row.sourceId && Number(l.legNo) === Number(row.legNo),
+        )
+      ) {
+        throw new Error('duplicate key value violates unique constraint "idx_lje_idempotent"');
+      }
+      (tables[table] ??= []).push(row);
       return;
     }
     // UPDATE grn_items SET invoiced_qty = COALESCE(invoiced_qty,0) + ? WHERE id = ?
@@ -154,6 +163,14 @@ function makeDb() {
       const id = binds[binds.length - 1];
       const g = tables.grns.find((r) => String(r.id) === String(id));
       if (g) applySet(g, m[1], binds.slice(0, -1));
+      return;
+    }
+    // UPDATE purchase_invoices SET ... WHERE id = ?  (last bind is id)
+    m = sql.match(/^UPDATE purchase_invoices SET (.+) WHERE id = \?$/i);
+    if (m) {
+      const id = binds[binds.length - 1];
+      const pi = tables.purchase_invoices.find((r) => String(r.id) === String(id));
+      if (pi) applySet(pi, m[1], binds.slice(0, -1));
       return;
     }
     // UPDATE purchase_orders SET ... WHERE id = ? [AND status IN (...)]
@@ -233,6 +250,17 @@ function makeDb() {
     if (/FROM grns WHERE grnNumber LIKE/i.test(sql)) return [];
     if (/FROM purchase_invoices WHERE piNo LIKE/i.test(sql)) return [];
     if (/FROM purchase_orders WHERE poNo LIKE/i.test(sql)) return [];
+
+    // The invoice's posted legs, and the highest leg number per source.
+    if (/FROM ledger_journal_entries WHERE sourceId = \? AND hidden = 0 AND sourceType LIKE 'purchase_invoice%'/i.test(sql)) {
+      return (tables.ledger_journal_entries ?? []).filter(
+        (l) => l.sourceId === binds[0] && !Number(l.hidden) && String(l.sourceType).startsWith("purchase_invoice"),
+      );
+    }
+    if (/SELECT COALESCE\(MAX\(legNo\), 0\) AS m FROM ledger_journal_entries WHERE sourceType = \? AND sourceId = \?/i.test(sql)) {
+      const legs = (tables.ledger_journal_entries ?? []).filter((l) => l.sourceType === binds[0] && l.sourceId === binds[1]);
+      return [{ m: legs.reduce((mx, l) => Math.max(mx, Number(l.legNo) || 0), 0) }];
+    }
 
     // RBAC role_permissions join — short-circuited by SUPER_ADMIN, but answer empty.
     if (/FROM role_permissions/i.test(sql)) return [];
@@ -942,4 +970,27 @@ test("explicit body.status DRAFT forces DRAFT even for arrived goods", async () 
   assert.equal(res.status, 201);
   const data = (await res.json()).data;
   assert.equal(data.status, "DRAFT");
+});
+
+test("BUG-2026-10-14-286 — void, unvoid, void again: each reversal gets new leg numbers", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+  const piRoot = mount(piApp, db);
+  const send = (path, method, body) =>
+    piRoot.request(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+  const created = await post(piRoot, {
+    purchaseOrderId: "po-9", supplierId: "sup-9", supplierName: "OPEN CO",
+    items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty: 5, unitPriceSen: 10000, poId: "po-9" }],
+  });
+  assert.equal(created.status, 200, await created.clone().text());
+  const pi = (await created.json()).data;
+  const confirm = await send(`/${pi.id}`, "PUT", { status: "CONFIRMED" });
+  assert.equal(confirm.status, 200, await confirm.clone().text());
+  for (const step of ["void", "unvoid", "void", "unvoid"]) {
+    const r = await send(`/${pi.id}/${step}`, "POST");
+    assert.equal(r.status, 200, `${step}: ${await r.clone().text()}`);
+  }
+  const voidLegs = (db.tables.ledger_journal_entries ?? []).filter((l) => l.sourceType === "purchase_invoice_void");
+  assert.ok(voidLegs.length >= 4, "two voids posted legs");
+  assert.equal(new Set(voidLegs.map((l) => l.legNo)).size, voidLegs.length, "no leg number reused");
 });
