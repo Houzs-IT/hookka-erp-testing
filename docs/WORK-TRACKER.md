@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest).
+> **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
+> **Last verified: 2026-10-14**: branch `feat/finance-overview` (to `main`) added below.
 > **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `main`) added item 6 to the urgent orders KPI entry below.
@@ -152,8 +153,17 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
    joins `production_orders`), and `buildCnPdfData` prefers them over `poToCoNoMap` / `poToFabricMap`, which come from
    the stale-while-revalidate `/ready-planning` snapshot and miss a CN created moments earlier.
 2. 🔵 Regression test + BUG-HISTORY entry + BUG-CLASSES C29 row.
-3. 🟡 Sticker missing the CO number: waiting on Siti for a photo and the page she printed it from.
-4. 🟡 "Colour": the CN prints the fabric code (`HG1313-01`); waiting on Siti whether the colour name is wanted too.
+3. 🟡 Sticker missing the CO number: Siti printed it from Foam Bonding → Print Packing Stickers. Previewed on prod
+   (read-only, 2026-10-14): Our SO = `CO-2610-010` / `-04/-05/-06` and Colour = `HG1313-01` are on it; PO No / Cust Ref /
+   Cust SO are `—`. 2990's own CO number `2990-PCO-2610-019` (`consignment_orders.customer_co_id`) is on neither the
+   sticker nor the CN (`production_orders.customer_po_id` is blank on all 166 CO-origin POs). Asked Siti which number she
+   meant; separate change if it is 2990's.
+4. ✅ "Colour": Siti「for colour HG1313-01 already okey, no need name」. No change.
+
+## 2026-10-14 — 🔵 Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(branch `feat/finance-overview` → `main`)
+
+1. ✅ Only the Overview from PR #849 — that PR stays open and unmerged with the rest of the finance UI refresh while the owner reworks it in Claude Design. Brought over: `overview-tab.tsx`, `overview-trend.ts`, `GET /accounting/overview-trend`, and the three small helpers the Overview uses (`finance-money.ts`, `amount.tsx`, `finance-names.ts`). The page header, money format, reports, payment pages and phone layout on `main` are untouched.
+2. ⚪ Prod check after deploy (read-only): the Overview loads; its gross profit, net profit, raw materials and direct labour equal the P&L statement's rows for the same months.
 
 ## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
 
