@@ -5186,7 +5186,10 @@ export default function ProductionPage({
             divanHeightInches: o.divanHeightInches ?? null,
             gapInches: o.gapInches ?? null,
             specialOrder: o.specialOrder ?? "",
-            customerPOId: o.customerPOId ?? "",
+            // A CO has no customer PO on the production order; its customer CO
+            // number (e.g. 2990-PCO-2610-019) arrives as customerSO (HK-0093).
+            customerPOId:
+              o.customerPOId || (o.consignmentOrderId ? o.customerSO : "") || "",
             customerRef: o.customerReference ?? "",
             customerSO: customerSOBySo.get(o.salesOrderId) ?? "",
           });

@@ -157,7 +157,12 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
    (read-only, 2026-10-14): Our SO = `CO-2610-010` / `-04/-05/-06` and Colour = `HG1313-01` are on it; PO No / Cust Ref /
    Cust SO are `—`. 2990's own CO number `2990-PCO-2610-019` (`consignment_orders.customer_co_id`) is on neither the
    sticker nor the CN (`production_orders.customer_po_id` is blank on all 166 CO-origin POs). Asked Siti which number she
-   meant; separate change if it is 2990's.
+   meant.
+   → Siti「ouh ya can put 2990 own CO number on sticker . consignment note also want Po No」→ Samuel: same PR, "PO No" line.
+   🔵 Sticker: "PO No" on a CO-origin unit falls back to the CO's customer CO number (`customerSO` in the production-order
+   payload, already filled from `consignment_orders.customer_co_id`). SO-origin stickers unchanged.
+   🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the CO No. cell stacks
+   `CO: <our CO>` / `PO: <2990's CO no.>`, widened like the DO's Order column.
 4. ✅ "Colour": Siti「for colour HG1313-01 already okey, no need name」. No change.
 
 ## 2026-10-14 — 🔵 Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(branch `feat/finance-overview` → `main`)

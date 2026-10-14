@@ -83,6 +83,7 @@ type CnPrintExtraItem = Pick<
   sizeLabel?: string | null;
   fabricCode?: string | null;
   companyCOId?: string | null;
+  customerPOId?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -1418,6 +1419,7 @@ export default function ConsignmentNotePage() {
             quantity: it.quantity,
             itemM3: it.itemM3,
             consignmentOrderNo: ex?.companyCOId || it.consignmentOrderNo,
+            customerPOId: ex?.customerPOId ?? null,
             // Overlay the print-extras detail when present (DO-parity rich
             // line); absent ⇒ undefined ⇒ the PDF falls back to base rows.
             itemCategory: ex?.itemCategory ?? null,
