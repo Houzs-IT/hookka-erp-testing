@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `design/mobile-ui-foundation` (Phase 0 mobile UI foundation, local only) added below.
 > **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, mobile Updates Phase 1) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below.
@@ -238,6 +239,14 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-14 — 🔵 BUG-87 re-test: second void fails, Finance can't void a PO-direct invoice (branch `fix/pi-revoid-and-finance-auto-receipt` → `staging`)
+
+Staging re-test of #803/#805 on 2026-10-14 (DARK PINK SPONGE). Confirm puts stock in, void takes it out, unvoid puts it back, qty frozen / price free, a partly received PO only receives the rest, Office can create + confirm. Two bugs:
+
+1. ⬜ BUG-2026-10-14-286: void → unvoid → void of any purchase invoice answers 500. Staging log: `duplicate key value violates unique constraint "idx_lje_idempotent"`. `buildPiDeltaLegs` numbers legs from 1 every time, and the first void already owns those leg numbers. Owner: fix on `staging`.
+2. ⬜ BUG-2026-10-14-287: Finance may void, but the void cancels the auto receipt through the GRN route, which checks the caller's own `grn:delete`. Staging Finance holds 53 grants, none for `grn`, so the void is refused (409 "Forbidden"). Owner: ignore that permission for the auto receipt.
+3. ⬜ After deploy: void PI-2610-023 and PI-2610-024 (each holds 3 pcs), cancel PO-2610-022 / PO-2610-023, stock back to 196; re-run void → unvoid → void and a Finance void.
 
 ## 2026-10-14 — 🟡 Mobile UI Foundation, Phase 0 (branch `design/mobile-ui-foundation`, local only; ready for owner review)
 

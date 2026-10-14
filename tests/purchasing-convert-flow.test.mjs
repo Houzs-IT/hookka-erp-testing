@@ -124,6 +124,15 @@ function makeDb() {
         row[col] = /^'[^']*'$/.test(vals[i] ?? "") ? vals[i].slice(1, -1) : binds[bi++];
       });
       if (table === "grn_items" && row.id == null) row.id = autoId++;
+      // Prod's idx_lje_idempotent: one leg per (org, sourceType, sourceId, legNo).
+      if (
+        table === "ledger_journal_entries" &&
+        (tables.ledger_journal_entries ?? []).some(
+          (l) => l.orgId === row.orgId && l.sourceType === row.sourceType && l.sourceId === row.sourceId && Number(l.legNo) === Number(row.legNo),
+        )
+      ) {
+        throw new Error('duplicate key value violates unique constraint "idx_lje_idempotent"');
+      }
       (tables[table] ??= []).push(row);
       return;
     }
@@ -273,6 +282,17 @@ function makeDb() {
     if (/FROM grns WHERE grnNumber LIKE/i.test(sql)) return [];
     if (/FROM purchase_invoices WHERE piNo LIKE/i.test(sql)) return [];
     if (/FROM purchase_orders WHERE poNo LIKE/i.test(sql)) return [];
+
+    // The invoice's posted legs, and the highest leg number per source.
+    if (/FROM ledger_journal_entries WHERE sourceId = \? AND hidden = 0 AND sourceType LIKE 'purchase_invoice%'/i.test(sql)) {
+      return (tables.ledger_journal_entries ?? []).filter(
+        (l) => l.sourceId === binds[0] && !Number(l.hidden) && String(l.sourceType).startsWith("purchase_invoice"),
+      );
+    }
+    if (/SELECT COALESCE\(MAX\(legNo\), 0\) AS m FROM ledger_journal_entries WHERE sourceType = \? AND sourceId = \?/i.test(sql)) {
+      const legs = (tables.ledger_journal_entries ?? []).filter((l) => l.sourceType === binds[0] && l.sourceId === binds[1]);
+      return [{ m: legs.reduce((mx, l) => Math.max(mx, Number(l.legNo) || 0), 0) }];
+    }
 
     // RBAC role_permissions join — short-circuited by SUPER_ADMIN, but answer empty.
     if (/FROM role_permissions/i.test(sql)) return [];
@@ -453,11 +473,11 @@ function makeDb() {
 
 // Wrap a route sub-app so c.var.DB + userRole are injected (SUPER_ADMIN
 // short-circuits RBAC). Mirrors what worker.ts middleware does in prod.
-function mount(routeApp, db) {
+function mount(routeApp, db, role = "SUPER_ADMIN") {
   const root = new Hono();
   root.use("*", async (c, next) => {
     c.set("DB", db);
-    c.set("userRole", "SUPER_ADMIN");
+    c.set("userRole", role);
     c.set("userId", "test-user");
     c.set("orgId", "org-test");
     await next();
@@ -1622,6 +1642,34 @@ test("BUG-87 — void takes the goods out, unvoid receives them again", async ()
   const live = db.tables.grns.filter((g) => g.status !== "CANCELLED");
   assert.equal(live.length, 1);
   assert.equal(db.tables.purchase_invoices[0].auto_grn_id, live[0].id);
+});
+
+test("BUG-2026-10-14-286 — void, unvoid, void again: each reversal gets new leg numbers", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  for (const [step, want] of [["void", 0], ["unvoid", 5], ["void", 0], ["unvoid", 5]]) {
+    const r = await send(piRoot, `/${pi.id}/${step}`, "POST");
+    assert.equal(r.status, 200, `${step}: ${await r.clone().text()}`);
+    assert.equal(lotQty(db), want, `${step} leaves ${want} in stock`);
+  }
+  const voidLegs = db.tables.ledger_journal_entries.filter((l) => l.sourceType === "purchase_invoice_void");
+  assert.ok(voidLegs.length >= 4, "two voids posted legs");
+  assert.equal(new Set(voidLegs.map((l) => l.legNo)).size, voidLegs.length, "no leg number reused");
+  assert.equal(db.tables.grns.filter((g) => g.status !== "CANCELLED").length, 1, "one live receipt");
+});
+
+test("BUG-2026-10-14-287 — Finance can void and unvoid a PO-direct invoice", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { pi } = await directConfirmed(db, 5);
+  const finance = mount(piApp, db, "FINANCE");
+  const v = await send(finance, `/${pi.id}/void`, "POST");
+  assert.equal(v.status, 200, await v.clone().text());
+  assert.equal(lotQty(db), 0, "the auto receipt was cancelled without Finance holding grn:delete");
+  const u = await send(finance, `/${pi.id}/unvoid`, "POST");
+  assert.equal(u.status, 200, await u.clone().text());
+  assert.equal(lotQty(db), 5);
 });
 
 test("BUG-87 — a void is refused when the received stock was already used", async () => {

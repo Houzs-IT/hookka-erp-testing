@@ -20,7 +20,7 @@
 // DRAFT/CONFIRMED/POSTED commitment lifecycle. Post-to-stock requires
 // arrival_state = 'ARRIVED'.
 // ---------------------------------------------------------------------------
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
@@ -40,6 +40,11 @@ import {
 import { PO_ITEMS_ORDER, ensurePoItemLineNo } from "./purchase-orders";
 
 const app = new Hono<Env>();
+
+/** Set only by the purchase-invoice route's in-process call (its auto receipt); never from a request. */
+function isAutoReceipt(c: Context<Env>): boolean {
+  return (c as unknown as { get: (k: string) => unknown }).get("autoReceipt") === true;
+}
 
 // ---------------------------------------------------------------------------
 // Runtime schema self-apply — runs once per isolate boot.
@@ -1514,7 +1519,7 @@ app.get("/stats", async (c) => {
 //     would bypass the arrival gate the PUT enforces.
 app.post("/", async (c) => {
   // RBAC gate (P3.3-followup) — grn:create.
-  const denied = await requirePermission(c, "grn", "create");
+  const denied = isAutoReceipt(c) ? null : await requirePermission(c, "grn", "create");
   if (denied) return denied;
 
   // Ensure arrival-pipeline columns exist before any INSERT
@@ -2665,7 +2670,7 @@ app.put("/:id/arrival", async (c) => {
 // ---------------------------------------------------------------------------
 app.post("/:id/cancel", async (c) => {
   // Cancelling destroys a receipt — gate it with delete, not update.
-  const denied = await requirePermission(c, "grn", "delete");
+  const denied = isAutoReceipt(c) ? null : await requirePermission(c, "grn", "delete");
   if (denied) return denied;
 
   await ensureGrnMigrations(c.var.DB);
