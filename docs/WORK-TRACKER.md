@@ -160,8 +160,9 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
    sticker nor the CN (`production_orders.customer_po_id` is blank on all 166 CO-origin POs). Asked Siti which number she
    meant.
    → Siti「ouh ya can put 2990 own CO number on sticker . consignment note also want Po No」→ Samuel: same PR, "PO No" line.
-   🔵 Sticker: "PO No" on a CO-origin unit falls back to the CO's customer CO number (`customerSO` in the production-order
-   payload, already filled from `consignment_orders.customer_co_id`). SO-origin stickers unchanged.
+   🔵 Production: Siti「ya for all production also need 2990's co number」→ `attachCustomerSO` sets `customerPOId` on a
+   CO-origin PO from `consignment_orders.customerCOId` (blank on all 166 today), so Customer PO on every dept sheet /
+   Overview / filter / search and "PO No" on the packing + job-card stickers all show it. SO-origin POs unchanged.
    🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the first column is Order,
    stacked `Our CO: <our CO>` / `PO: <2990's CO no.>` like the DO's Order column (Siti「can put like this ? our CO and
    their own PO」with a DO screenshot).
