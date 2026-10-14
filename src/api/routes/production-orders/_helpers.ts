@@ -1465,11 +1465,16 @@ export async function attachCustomerSO(
       soMap.get(p.salesOrderId) || coMap.get(p.consignmentOrderId) || "";
     // Enrich customerPOId / customerReference from the joined SO, preferring
     // the populated SO values over the (sparse) production_orders snapshot.
-    // CO-origin POs (no salesOrderId) keep their existing snapshot values.
+    // A CO-origin PO's production_orders.customerPOId is always blank; the
+    // customer's CO number is its PO from their side, so it fills Customer PO
+    // on every production page and sticker (HK-0093).
     const ref = soRefMap.get(p.salesOrderId);
     if (ref) {
       p.customerPOId = ref.customerPOId || p.customerPOId || "";
       p.customerReference = ref.reference || p.customerReference || "";
+    } else if (!p.salesOrderId && p.consignmentOrderId) {
+      p.customerPOId =
+        p.customerPOId || coMap.get(p.consignmentOrderId) || "";
     }
     const dates = soDatesMap.get(p.salesOrderId);
     p.customerDeliveryDate = dates?.customerDeliveryDate || "";

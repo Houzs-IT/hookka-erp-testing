@@ -1,7 +1,8 @@
 # Hookka ERP — Work Tracker
-> **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
-> **Last verified: 2026-10-14**: branch `feat/finance-overview` (to `main`) added below (its entry is the newest).
 
+> **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
+> **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
+> **Last verified: 2026-10-14**: branch `feat/finance-overview` (to `main`) added below.
 > **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `main`) added item 6 to the urgent orders KPI entry below.
@@ -146,6 +147,26 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+## 2026-10-14 — 🔵 CN print: CO No. and fabric missing on a CN printed right after it was created (IT Hub HK-0093, Siti「COLOUR MISSING AND ALSO PLS CHECK SUPPOSELY HAVE NUMBER CO BUT DIDNT SHOW IT AT STICKER AND CO NOTE」→ Samuel「开始」)(branch `fix/hk0093-cn-print-co-fabric` → `main`, BUG-2026-10-14-285)
+
+1. 🔵 `GET /api/consignment-notes/:id/print-extras` returns each line's PO `companyCOId` + `fabricCode` (it already
+   joins `production_orders`), and `buildCnPdfData` prefers them over `poToCoNoMap` / `poToFabricMap`, which come from
+   the stale-while-revalidate `/ready-planning` snapshot and miss a CN created moments earlier.
+2. 🔵 Regression test + BUG-HISTORY entry + BUG-CLASSES C29 row.
+3. 🟡 Sticker missing the CO number: Siti printed it from Foam Bonding → Print Packing Stickers. Previewed on prod
+   (read-only, 2026-10-14): Our SO = `CO-2610-010` / `-04/-05/-06` and Colour = `HG1313-01` are on it; PO No / Cust Ref /
+   Cust SO are `—`. 2990's own CO number `2990-PCO-2610-019` (`consignment_orders.customer_co_id`) is on neither the
+   sticker nor the CN (`production_orders.customer_po_id` is blank on all 166 CO-origin POs). Asked Siti which number she
+   meant.
+   → Siti「ouh ya can put 2990 own CO number on sticker . consignment note also want Po No」→ Samuel: same PR, "PO No" line.
+   🔵 Production: Siti「ya for all production also need 2990's co number」→ `attachCustomerSO` sets `customerPOId` on a
+   CO-origin PO from `consignment_orders.customerCOId` (blank on all 166 today), so Customer PO on every dept sheet /
+   Overview / filter / search and "PO No" on the packing + job-card stickers all show it. SO-origin POs unchanged.
+   🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the first column is Order,
+   stacked `Our CO: <our CO>` / `PO: <2990's CO no.>` like the DO's Order column (Siti「can put like this ? our CO and
+   their own PO」with a DO screenshot).
+4. ✅ "Colour": Siti「for colour HG1313-01 already okey, no need name」. No change.
 
 ## 2026-10-14 — ✅ Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(#851 a2770f0c, prod-verified)
 

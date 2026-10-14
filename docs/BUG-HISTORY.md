@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-285 (branch `fix/hk0093-cn-print-co-fabric`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder-main`, to main, same fix as staging PR #822; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-276 (branch `fix/po-picker-duplicate-supplier-rows`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-275 (branch `fix/undone-labour-post-hides-payroll`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -91,6 +92,22 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-14-285 — A CN printed right after it was created had no CO No. and no fabric `consignment` `do-cn-parity` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0093-cn-print-co-fabric` → `main`). Reported on IT Hub HK-0093 (Siti).
+
+**Symptom.** CGN-2610-002 (2990 HOME, 4 lines from CO-2610-010) printed `-` in every CO No. cell and no fabric in the Description, while the per-line racks (`Floor`) printed fine. Measured on prod 2026-10-14 (read-only): all 4 `consignment_items` carry `production_order_id`, and each PO has `company_co_id = CO-2610-010`, `fabric_code = HG1313-01`. The data was never missing. Printing the same CN again later on prod, with the `/ready-planning` snapshot rebuilt by then, put CO-2610-010 and HG1313-01 on every line.
+
+**Root cause.** `buildCnPdfData` took CO No. and fabric from the CN row, which reads them from `poToCoNoMap` / `poToFabricMap`. Those maps are built from `GET /api/consignment-notes/ready-planning` `poLookups`, which `withSnapshot` serves `staleWhileRevalidate`. The first read after a CN is created returns the blob built before the CN existed, so its POs are not in `poLookups` and both fields come back empty. The racks come from `GET /:id/print-extras`, which joins `production_orders` on every call, so they were unaffected. The DO is not affected: `delivery_order_items` stores `salesOrderNo` and `fabricCode` on the line itself.
+
+**Fix.** `print-extras` also returns `fabricCode` and `companyCOId` from the PO it already joins, and `buildCnPdfData` uses them first, falling back to the row's values. Every print path runs `ensureCnExtras` before `buildCnPdfData`, so the single CN, the packing list and the dispatch notice PDF get them. The CN grid's CO No. / Fabric columns still read the snapshot and can lag for the same reason until the next poll; printing no longer depends on them.
+
+**Same ticket, second ask (reporter, 2026-10-14).** The customer's own CO number (2990's `2990-PCO-2610-019`, `consignment_orders.customer_co_id`) was on neither the CN nor the packing sticker: `production_orders.customer_po_id` is blank on every CO-origin PO (0 of 166, measured), and the sticker's Cust SO only looks up sales orders. Siti asked for it on the sticker and as the CN's PO. `print-extras` now joins the line's CO (`COALESCE(po.consignmentOrderId, <CN's CO>)`) and returns `customerPOId`; the CN PDF's first column is now **Order**, stacked `Our CO: <our CO>` / `PO: <customer CO no.>` like the DO's Order column (`Our SO:` / `PO:`), the layout Siti picked from the DO (22 → 32 mm). Siti then asked for it on every production page too (「ya for all production also need 2990's co number」), so it is filled once at the source: `attachCustomerSO` (`production-orders/_helpers.ts`), which already joins `consignment_orders.customerCOId` into `customerSO`, now also sets `customerPOId` on a CO-origin PO whose own value is blank. That one field feeds the Customer PO column on every dept sheet and the Overview, its filter / sort / search, the packing sticker's "PO No" and the job-card stickers' "PO No". SO-origin POs are unchanged. The production list snapshot has no payload version, so an existing cached body shows the new value from the next `production_orders` / `job_cards` write (UNMEASURED how long that takes off-hours).
+
+**Regression.** `tests/cn-pdf-co-fabric-fresh.test.mjs` pins the two `print-extras` columns, the page's preference for them, and the `ensureCnExtras` call ahead of `buildCnPdfData`. It fails on the old code. `tests/cn-pdf-size-column.test.mjs` updated for the new `fabricCode` line. Not yet verified on the live site after deploy.
 
 ---
 
