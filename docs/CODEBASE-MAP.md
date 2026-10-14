@@ -14,6 +14,7 @@
 > **Last verified: 2026-10-13 on branch `feat/stock-summary-blank-month-fg-wip` (to `main`)**: the blank-month FG / WIP note (Stock Summary now wired), read from `src/api/routes/accounting.ts` (`stockSummaryRange`, `blankStockParts`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/pnl-live-fg-wip` (to `main`)**: the Financial Dashboard notes gained the blank-month FG / WIP line, read from `src/lib/production-stock.ts`, `src/api/lib/production-stock.ts` and `src/api/routes/accounting.ts` (`liveStockFor`, `blankMonthStock`, `computePnlWindow`). Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `feat/it-support-to-main` (staging to `main`)**: the new IT Support bullet at the end of Customers & Platform (module, bell events, phone cards, header filters, sort cycle; /m wording adjusted for main's More screen), read from `src/api/routes/it-support.ts`, `src/pages/it-support/index.tsx`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/nav.ts` and `src/components/ui/data-grid.tsx`; also the three `src/api/worker.ts` middleware line refs, shifted by the hub-events endpoint. Nothing else re-checked.
+> **Last verified: 2026-10-14 on branch `feat/hk0005-scan-timings` (to `main`)**: the Scan timings note in the Scanning/OCR/AI fragment, read from `src/api/lib/scan-timing.ts`, `scan-engine.ts` `runExtract`, `scan-queue.ts` `processOneRow`. Nothing else re-checked.
 > **Last verified: 2026-10-13 on branch `fix/claude-calls-via-sg-forwarder-main` (to `main`)**: the Claude-calls note in the Scanning/OCR/AI fragment (`claudeFetch` + `claude-forwarder-worker/`), read from `src/api/lib/claude-fetch.ts` and the five call sites.
 
 > **Last verified: 2026-10-12 on branch `feat/pnl-running-month-labour-to-date` (to `main`)**: the Financial Dashboard Production Revenue note gained the running-month labour line, read from `src/lib/labour-to-date.ts`, `src/api/lib/labour-to-date.ts`, `src/api/lib/labour-projection.ts` and `src/api/routes/accounting.ts` (`labourInjectionLines`, `GET /dashboard`). Nothing else re-checked.
@@ -2337,6 +2338,12 @@ translation) goes through `claudeFetch` in `src/api/lib/claude-fetch.ts`. On Pag
 the `CLAUDE_FORWARDER` service binding to `claude-forwarder-worker/`, a Worker pinned to
 Singapore, because Anthropic refuses requests from some Cloudflare regions (BUG-2026-10-13-284).
 Do not add a new direct `fetch("https://api.anthropic.com/...")`. Guard `tests/claude-fetch.test.mjs`.
+
+**Scan timings (HK-0005):** every scan logs one `scan_timing` JSON line and one ERP_METRICS point
+(`blob1 = 'scan'`) with per-stage ms: load / decode / detect / encode / prep / ai / parse / save.
+`scanTimer` in `src/api/lib/scan-timing.ts`; `runExtract` (`src/api/lib/scan-engine.ts`) owns the
+timer for direct `/extract` calls, the queue worker (`processOneRow`) passes its own and closes it.
+Guard `tests/scan-timing.test.mjs`.
 
 ---
 

@@ -49,6 +49,7 @@ import type { Env } from "../worker";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import { matchByCompanyName } from "../../lib/company-name-match";
 import { claudeFetch } from "./claude-fetch";
+import { scanTimer, type ScanTimer } from "./scan-timing";
 
 // ---------- Anthropic config ------------------------------------------------
 // Owner ruling 2026-06-29 evening: scans were timing out on Sonnet
@@ -751,6 +752,9 @@ export type ExtractOpts = {
   createdBy?: string | null;
   // When true, write a per-entity sample row for the learning loop.
   recordSample?: boolean;
+  // Stage timer (HK-0005). The queue passes its own so load/decode are on the
+  // same line; whoever creates the timer calls done().
+  timer?: ScanTimer;
 };
 
 type SupplierData = SupplierExtractionResult;
@@ -836,7 +840,10 @@ export async function runExtract(
     };
   }
 
+  const ownTimer = !opts.timer;
+  const timer = opts.timer ?? scanTimer(opts.kind);
   const base64 = toBase64(opts.bytes);
+  timer.mark("encode");
   const mediaBlock = buildMediaBlock({
     mimeType: opts.mimeType,
     fileName: opts.fileName,
@@ -849,10 +856,12 @@ export async function runExtract(
     };
   }
 
-  if (opts.kind === "supplier") {
-    return runSupplierExtract(db, env, opts, mediaBlock, apiKey);
-  }
-  return runPoExtract(db, env, opts, mediaBlock, apiKey);
+  const result =
+    opts.kind === "supplier"
+      ? await runSupplierExtract(db, env, opts, mediaBlock, apiKey, timer)
+      : await runPoExtract(db, env, opts, mediaBlock, apiKey, timer);
+  if (ownTimer) timer.done(env, result.sampleId ?? null, result.ok ? "ok" : "error");
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -864,6 +873,7 @@ async function runSupplierExtract(
   opts: ExtractOpts,
   mediaBlock: NonNullable<ReturnType<typeof buildMediaBlock>>,
   apiKey: string,
+  timer: ScanTimer,
 ): Promise<ExtractResult> {
   const orgId = opts.orgId;
   const supplierId = opts.supplierId ?? null;
@@ -935,6 +945,7 @@ async function runSupplierExtract(
   let parsed: SupplierExtractionResult | null = null;
   let errorMsg: string | null = null;
 
+  timer.mark("prep");
   try {
     const resp = await claudeFetch({
       method: "POST",
@@ -978,6 +989,7 @@ async function runSupplierExtract(
     });
 
     const bodyText = await resp.text();
+    timer.mark("ai");
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}`;
     } else {
@@ -1004,8 +1016,10 @@ async function runSupplierExtract(
       }
     }
   } catch (e) {
+    timer.mark("ai");
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
+  timer.mark("parse");
 
   // Sample row — fed back into distillSupplierRules for the learning loop.
   // Multi-doc shape since 2026-06-30: rawJson stores the full {docs:[...]}
@@ -1044,6 +1058,7 @@ async function runSupplierExtract(
     }
   }
 
+  timer.mark("save");
   if (!parsed) {
     return {
       ok: false,
@@ -1063,6 +1078,7 @@ async function runPoExtract(
   opts: ExtractOpts,
   mediaBlock: NonNullable<ReturnType<typeof buildMediaBlock>>,
   apiKey: string,
+  timer: ScanTimer,
 ): Promise<ExtractResult> {
   const orgId = opts.orgId;
 
@@ -1141,6 +1157,7 @@ async function runPoExtract(
   let cacheHit = false;
   let cacheCreated = false;
 
+  timer.mark("prep");
   try {
     const resp = await claudeFetch({
       method: "POST",
@@ -1178,6 +1195,7 @@ async function runPoExtract(
     });
 
     const bodyText = await resp.text();
+    timer.mark("ai");
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}`;
     } else {
@@ -1215,8 +1233,10 @@ async function runPoExtract(
       }
     }
   } catch (e) {
+    timer.mark("ai");
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
+  timer.mark("parse");
 
   // Sample insert. The legacy route writes one row per parsed PO (because
   // the route has the validated/enriched PO in hand by then). The queue
@@ -1261,6 +1281,7 @@ async function runPoExtract(
     }
   }
 
+  timer.mark("save");
   if (!parseOk || !parsed) {
     return {
       ok: false,

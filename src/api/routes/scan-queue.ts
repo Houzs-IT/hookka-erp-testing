@@ -60,6 +60,7 @@ import {
   getPdfPageCount,
   ocrModelFor,
 } from "../lib/scan-engine";
+import { scanTimer } from "../lib/scan-timing";
 
 const app = new Hono<Env>();
 
@@ -391,6 +392,7 @@ async function processOneRow(
     // counter; `next` was read pre-bump, so add 1. Drives the retry-vs-fail
     // decision in the result writer below.
     const attemptNo = (next.attempts ?? 0) + 1;
+    const timer = scanTimer(next.kind);
 
     // `sampleId` rides along so the completion UPDATE can persist it — the
     // wizards need a REAL scan-sample id to confirm against (see the sample_id
@@ -417,6 +419,7 @@ async function processOneRow(
           .bind(next.id)
           .first<{ fileBytesB64: string | null }>();
         const b64 = row?.fileBytesB64 ?? null;
+        timer.mark("load");
         if (!b64) {
           result = {
             ok: false,
@@ -425,6 +428,7 @@ async function processOneRow(
           };
         } else {
           const bytes = base64ToArrayBuffer(b64);
+          timer.mark("decode");
           // Auto-split branch (owner ruling 2026-06-30). Multi-page PDFs may
           // bundle N separate supplier docs (e.g. an 85-page file with 16
           // PIs). Ask Haiku for the page-range boundaries BEFORE the heavy
@@ -583,9 +587,11 @@ async function processOneRow(
               // on detection failure.
             }
           }
+          timer.mark("detect");
           if (!didSplit) {
             // Normal single-document extract.
             result = await runExtract(db, env, {
+              timer,
               kind: next.kind,
               bytes,
               mimeType: next.mimeType,
@@ -703,6 +709,8 @@ async function processOneRow(
       console.error("[scan-queue] result write failed:", (e as Error).message);
       return { kind: "error", error: `Result write failed: ${(e as Error).message}` };
     }
+    timer.mark("save");
+    timer.done(env, next.id, splitMarker ? "split" : result.ok ? "ok" : "error");
     return { kind: "processed", id: next.id };
   }
 }
