@@ -238,6 +238,25 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 2026-10-14 (later) — 🔵 Phone Sales Orders list: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-14). Source: `Sales Orders.dc.html` + handoff README (premium card refresh). **Overrides the entry below where they differ.** PHONE only; tablet and desktop unchanged. Real data / API / logic / permissions / navigation unchanged; no prototype mock data. **Typography (family, sizes, weights, text colours, hierarchy) follows the repo**; every other visual follows the prototype.
+1. 🔵 Header: the "+" moves out of the header (phone) into a gradient "New SO" pill on a new Sort + New SO row; Sort opens the existing FilterSheet.
+2. 🔵 Search: borderless shadowed field (radius 14), clear button, Scan PO as a gold 34px tile inside it; Filter button borderless + shadow, taupe when active.
+3. 🔵 Chips: borderless, shadow, `aria-pressed`.
+4. 🔵 Summary: card with Revenue + Total Orders and an expandable per-status breakdown (same revenue rule: Cancelled excluded).
+5. 🔵 Card: borderless + deeper shadow, 3px rail, borderless tile pill, customer name wraps, PO and Cust SO both shown, inset meta panel with icons, Cancelled dimmed (.55), press scale.
+6. 🔵 Test updated to the new decisions; `tsc -p tsconfig.app.json` run.
+
+## 2026-10-14 — 🔵 Phone Sales Orders list: search row + card refinement (branch `design/mobile-home-dashboard` → `staging`, local only)
+
+Owner asks (planned and approved 2026-10-14). Frontend only, `src/pages/m/screens/SalesScreen.tsx`; PHONE only (<720px), tablet and desktop unchanged. No API, DB, permission, detail or create-flow change.
+1. 🔵 Search row: the separate Scan button removed; the same `ScanPOSheet` opens from a trailing icon inside the search field, labelled "Scan PO to create Sales Order". Filter button stays separate on the right.
+2. 🔵 Card: Company SO + status pill; customer name up to 2 lines; Customer PO (`customerPOId ?? customerPO`, as desktop) with Customer SO only as fallback; Expected DD · Total Qty (sum of item quantities, "—" when items are absent, never the line count) · Amount (`totalSen`).
+3. 🔵 Order Date removed from the card (still in the detail and the Filter sheet). Operational progress omitted until accurate data is wired in.
+4. 🔵 3px left rail + pill from the existing `SO_STATUS_COLOR` map; Notifications card shadow; Cancelled no longer dimmed.
+5. 🔵 Shared `MobileCard` untouched. Targeted tests + `tsc -p tsconfig.app.json` run.
+
 ## 2026-10-13 — 🔵 Mobile Updates: Notifications | Announcements, Phase 1 (branch `design/mobile-home-dashboard` → `staging`, local only)
 
 Owner asks (planned, revised and Phase 1 approved 2026-10-13). Frontend only: no backend, DB, migration, API route or permission change.
