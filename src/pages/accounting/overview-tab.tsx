@@ -369,7 +369,9 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
           <LabelList dataKey={key} position="insideBottom" formatter={compactLabel} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
         </Bar>
         <Line yAxisId="pct" type="monotone" dataKey={pctKey} name="% of sales" stroke={C.line} strokeWidth={1.5} dot={{ r: 3, fill: "#FFFFFF" }} animationDuration={ANIM} connectNulls>
-          <LabelList dataKey={pctKey} position="top" formatter={pctLabel} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />
+          {/* The % above a profit's point, below a loss's — away from the amount at the zero line. */}
+          <LabelList dataKey={pctKey} position="top" formatter={(v: unknown) => (typeof v === "number" && v >= 0 ? pctLabel(v) : "")} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />
+          <LabelList dataKey={pctKey} position="bottom" formatter={(v: unknown) => (typeof v === "number" && v < 0 ? pctLabel(v) : "")} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />
         </Line>
       </ComposedChart>
     </ResponsiveContainer>
