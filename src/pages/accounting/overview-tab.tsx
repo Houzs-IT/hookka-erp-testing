@@ -151,6 +151,7 @@ function ChartCard({ title, headline, sub, children }: { title: string; headline
 }
 
 const axisTick = { fontSize: 11, fill: "#6B7280" };
+// Bars and lines draw in half a second (recharts' 1.5 s default reads as slow).
 
 function TopList({ title, items, color }: { title: string; items: ModelQty[]; color: string }) {
   const max = Math.max(1, ...items.map((i) => i.qty));
@@ -373,8 +374,8 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={ordersAxis.domain} ticks={ordersAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "orders")} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />
-                  <Bar dataKey="so" name="Sales orders" fill="#C9B98F" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="inv" name="Sales invoices" fill="#6B5C32" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="so" animationDuration={500} name="Sales orders" fill="#C9B98F" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="inv" animationDuration={500} name="Sales invoices" fill="#6B5C32" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
@@ -390,7 +391,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={gpAxis.domain} ticks={gpAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "gp")} />
-                  <Bar dataKey="gp" name="Gross profit" radius={[3, 3, 0, 0]}>
+                  <Bar dataKey="gp" animationDuration={500} name="Gross profit" radius={[3, 3, 0, 0]}>
                     {data.map((d) => <Cell key={d.ym} fill={(d.gp ?? 0) < 0 ? "#9A3A2D" : "#4F7C3A"} />)}
                     <LabelList dataKey="gpPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
                   </Bar>
@@ -409,7 +410,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={npAxis.domain} ticks={npAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "np")} />
-                  <Bar dataKey="np" name="Net profit" radius={[3, 3, 0, 0]}>
+                  <Bar dataKey="np" animationDuration={500} name="Net profit" radius={[3, 3, 0, 0]}>
                     {data.map((d) => <Cell key={d.ym} fill={(d.np ?? 0) < 0 ? "#9A3A2D" : "#4F7C3A"} />)}
                     <LabelList dataKey="npPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
                   </Bar>
@@ -428,7 +429,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} padding={{ left: 24, right: 24 }} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} />
                   <Tooltip content={chartTip(byYm, "rm")} />
-                  <Line type="monotone" dataKey="rmPct" name="Raw material cost" stroke="#9C6F1E" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                  <Line type="monotone" animationDuration={500} dataKey="rmPct" name="Raw material cost" stroke="#9C6F1E" strokeWidth={2} dot={{ r: 3 }} connectNulls>
                     <LabelList dataKey="rmPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
                   </Line>
                 </LineChart>
@@ -446,7 +447,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} padding={{ left: 24, right: 24 }} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} />
                   <Tooltip content={chartTip(byYm, "dl")} />
-                  <Line type="monotone" dataKey="dlPct" name="Direct labour" stroke="#6B4A6D" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                  <Line type="monotone" animationDuration={500} dataKey="dlPct" name="Direct labour" stroke="#6B4A6D" strokeWidth={2} dot={{ r: 3 }} connectNulls>
                     <LabelList dataKey="dlPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
                   </Line>
                 </LineChart>
