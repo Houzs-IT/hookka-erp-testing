@@ -186,7 +186,7 @@ test("the Overview's P&L figures are the P&L page's own, and a month without one
   has(route, /await computePnlWindow\(db, orgId, ym, ym, "all", matData, dc, override\)/,
     "the month's P&L must be the statement's own window, not a re-derived figure");
   // A month before the books with no history keyed has no P&L → "—", not 0.00.
-  has(ov, /m\.pnl \? cell\(m, "np", <Amount sen=\{m\.pnl\.netProfitSen\} \/>\) : "—"/, "a month with no P&L must read —");
+  has(ov, /m\.pnl \? hover\(m, "np", withPct\(m\.pnl\.netProfitSen, [^\n]*\) : "—"/, "a month with no P&L must read —");
   // The fabricated "(MTD)" caption over an unfiltered running balance stays gone.
   assert.equal(page().includes("(MTD)") || ov.includes("(MTD)"), false, 'the unfiltered "(MTD)" caption is back');
 });

@@ -6,6 +6,11 @@
 // table, with the receivable / payable aging below. Pointing at a bar, a
 // point or a figure shows how it is made (src/lib/overview-trend.ts
 // explainMonth; the P&L figures are the P&L page's own). Display only.
+//
+// Canary review (owner 2026-10-14): amounts on the bars without pointing;
+// profit as bars (amount) + a line (% of sales); raw materials explained per
+// material; grid lines on every tick; rank apart from the model number; a
+// calmer month table (sections, amount and % in one cell, top model only).
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -14,6 +19,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   LabelList,
   Legend,
   Line,
@@ -53,14 +59,38 @@ const compact = (v: number) => {
   if (a >= 1_000) return `${Math.round(v / 1_000)}k`;
   return String(Math.round(v));
 };
+// Bar labels in RM, one decimal: 407.5k, (73.7k).
+const compactLabel = (v: unknown) => {
+  if (typeof v !== "number" || v === 0) return "";
+  const a = Math.abs(v);
+  const text = a >= 1_000_000 ? `${(a / 1_000_000).toFixed(2)}M` : a >= 1_000 ? `${(a / 1_000).toFixed(1)}k` : a.toFixed(0);
+  return v < 0 ? `(${text})` : text;
+};
+const pctLabel = (v: unknown) => (typeof v === "number" ? fmtPct(v) : "");
 const rm = (sen: number | null | undefined) => (sen === null || sen === undefined ? null : sen / 100);
 const pctOrNull = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
+
+// Chart colours (the finance palette).
+const C = {
+  order: "#C9B98F",
+  invoice: "#6B5C32",
+  profit: "#4F7C3A",
+  loss: "#9A3A2D",
+  line: "#1F1D1B",
+  rmLine: "#9C6F1E",
+  dlLine: "#6B4A6D",
+  sofa: "#6B5C32",
+  bed: "#3E6570",
+};
+const axisTick = { fontSize: 11, fill: "#6B7280" };
+// Bars and lines draw in half a second (recharts' 1.5 s default reads as slow).
+const ANIM = 500;
 
 // ---- "How this figure is made" ---------------------------------------------
 
 function ExplainBox({ title, lines }: { title: string; lines: ExplainLine[] }) {
   return (
-    <div className="min-w-[16rem] max-w-[22rem] rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-xs text-[#1F1D1B] shadow-lg">
+    <div className="min-w-[17rem] max-w-[24rem] rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-xs text-[#1F1D1B] shadow-lg">
       <div className="mb-1 font-semibold">{title}</div>
       <table data-col-resize="off" className="w-full">
         <tbody>
@@ -70,8 +100,11 @@ function ExplainBox({ title, lines }: { title: string; lines: ExplainLine[] }) {
                 {l.label}
                 {l.note && <span className="block text-[10px] font-normal text-[#9CA3AF]">{l.note}</span>}
               </td>
-              <td className="py-0.5 text-right tabular-nums">
-                {l.sen !== undefined ? <Amount sen={l.sen} /> : l.pct !== undefined ? (l.pct === null ? "—" : fmtPct(l.pct)) : ""}
+              <td className="py-0.5 text-right align-top tabular-nums">
+                {l.sen !== undefined ? <Amount sen={l.sen} /> : l.pct !== undefined && l.pct !== null ? fmtPct(l.pct) : l.pct === null ? "—" : ""}
+              </td>
+              <td className="w-14 py-0.5 pl-2 text-right align-top tabular-nums text-[#6B7280]">
+                {l.sen !== undefined && l.pct !== undefined ? (l.pct === null ? "—" : fmtPct(l.pct)) : ""}
               </td>
             </tr>
           ))}
@@ -109,7 +142,7 @@ function HoverDetail({ children, detail, block = false }: { children: ReactNode;
   return (
     <Tag
       ref={(el: HTMLElement | null) => { ref.current = el; }}
-      className={block ? "block cursor-help" : "inline-block cursor-help underline decoration-dotted decoration-[#C9C2B9] underline-offset-2"}
+      className={block ? "block cursor-help" : "-mx-1 inline-block cursor-help rounded px-1 hover:bg-[#F0ECE9]"}
       onMouseEnter={show}
       onMouseLeave={() => setAt(null)}
       onClick={() => (at ? setAt(null) : show())}
@@ -144,31 +177,30 @@ function ChartCard({ title, headline, sub, children }: { title: string; headline
           {sub && <div className="truncate text-[11px] text-[#9CA3AF]">{sub}</div>}
         </div>
         <div className="mt-1 text-lg font-bold tabular-nums text-[#1F1D1B]">{headline}</div>
-        <div className="mt-2 h-44">{children}</div>
+        <div className="mt-2 h-48">{children}</div>
       </CardContent>
     </Card>
   );
 }
 
-const axisTick = { fontSize: 11, fill: "#6B7280" };
-// Bars and lines draw in half a second (recharts' 1.5 s default reads as slow).
-
 function TopList({ title, items, color }: { title: string; items: ModelQty[]; color: string }) {
   const max = Math.max(1, ...items.map((i) => i.qty));
   return (
     <div className="min-w-0">
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">{title}</div>
+      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">{title}</div>
       {items.length === 0 ? (
         <div className="text-xs text-[#9CA3AF]">Nothing completed</div>
       ) : (
-        <ol className="space-y-1.5">
+        <ol className="space-y-2">
           {items.map((it, i) => (
             <li key={it.model} className="text-xs" title={`${it.qty} made on ${it.orders} production order${it.orders === 1 ? "" : "s"}`}>
-              <div className="flex justify-between gap-2">
-                <span className="truncate">{i + 1}. {it.model}</span>
-                <span className="font-semibold tabular-nums">{it.qty}</span>
+              <div className="flex items-center gap-2">
+                {/* The rank in a small grey circle, so it never reads as part of a model number. */}
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#F0ECE9] text-[9px] font-semibold text-[#6B7280]">{i + 1}</span>
+                <span className="min-w-0 flex-1 truncate font-semibold text-[#1F1D1B]">{it.model}</span>
+                <span className="shrink-0 tabular-nums text-[#4B5563]">{it.qty} <span className="text-[10px] text-[#9CA3AF]">pcs</span></span>
               </div>
-              <div className="mt-0.5 h-1.5 rounded bg-[#F0ECE9]">
+              <div className="ml-6 mt-1 h-1.5 rounded bg-[#F0ECE9]">
                 <div className="h-full rounded" style={{ width: `${(it.qty / max) * 100}%`, background: color }} />
               </div>
             </li>
@@ -187,7 +219,7 @@ function TopModelsCard({ months }: { months: OverviewMonth[] }) {
       <CardContent className="p-4">
         <div className="flex items-baseline justify-between gap-2">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">Most produced models · top 5</div>
-          <div className="text-[11px] text-[#9CA3AF]">units completed</div>
+          <div className="text-[11px] text-[#9CA3AF]">pieces completed</div>
         </div>
         <div className="mt-2 flex flex-wrap gap-1">
           {months.map((x) => (
@@ -201,9 +233,9 @@ function TopModelsCard({ months }: { months: OverviewMonth[] }) {
             </button>
           ))}
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-4">
-          <TopList title="Sofa" items={m.top.SOFA} color="#6B5C32" />
-          <TopList title="Bedframe" items={m.top.BEDFRAME} color="#3E6570" />
+        <div className="mt-3 grid grid-cols-2 gap-5">
+          <TopList title="Sofa" items={m.top.SOFA} color={C.sofa} />
+          <TopList title="Bedframe" items={m.top.BEDFRAME} color={C.bed} />
         </div>
       </CardContent>
     </Card>
@@ -255,7 +287,7 @@ function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon
                 <div className="space-y-1 rounded-md px-1 py-0.5 hover:bg-[#FAF8F5]">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-[#4B5563]">{b.period}</span>
-                    <span className="font-medium text-[#1F1D1B] underline decoration-dotted decoration-[#C9C2B9] underline-offset-2"><Amount sen={b.amountSen} /></span>
+                    <span className="font-medium text-[#1F1D1B]"><Amount sen={b.amountSen} /></span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-[#F0ECE9]">
                     <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${Math.max(0, pct)}%` }} />
@@ -269,6 +301,100 @@ function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon
             <span className="text-[#1F1D1B]"><Amount sen={total} /></span>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---- The month-by-month table ------------------------------------------------
+
+type TableRow = { label: string; strong?: boolean; render: (m: OverviewMonth) => ReactNode };
+
+// A section heading row followed by its rows.
+function SectionRows({ title, span, children }: { title: string; span: number; children: ReactNode }) {
+  return (
+    <>
+      <tr className="bg-[#FAF8F4]">
+        <td colSpan={span} className="px-4 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wide text-[#6B5C32]">{title}</td>
+      </tr>
+      {children}
+    </>
+  );
+}
+
+function MonthTable({ months }: { months: OverviewMonth[] }) {
+  // Newest month first (as the Monthly P&L reads).
+  const cols = [...months].reverse();
+  const hover = (m: OverviewMonth, metric: OverviewMetric, body: ReactNode) => (
+    <HoverDetail detail={<ExplainBox title={monthTitle(m)} lines={explainMonth(m, metric)} />}>{body}</HoverDetail>
+  );
+  // An amount with its share beside it, small and grey.
+  const withPct = (sen: number, pct: number | null) => (
+    <span className="inline-flex items-baseline justify-end gap-2">
+      <Amount sen={sen} />
+      <span className="w-12 text-right text-[11px] font-normal text-[#9CA3AF]">{pct === null ? "—" : fmtPct(pct)}</span>
+    </span>
+  );
+  const top1 = (items: ModelQty[]) =>
+    items.length ? <span><span className="font-semibold">{items[0].model}</span> <span className="text-[11px] text-[#9CA3AF]">· {items[0].qty} pcs</span></span> : "—";
+  const sections: { title: string; rows: TableRow[] }[] = [
+    {
+      title: "Sales",
+      rows: [
+        { label: "Sales orders", render: (m) => hover(m, "orders", <Amount sen={m.so.sen} />) },
+        { label: "Sales invoices · % of orders", render: (m) => hover(m, "orders", withPct(m.inv.sen, m.so.sen > 0 ? (m.inv.sen / m.so.sen) * 100 : null)) },
+      ],
+    },
+    {
+      title: "Profit · % of sales",
+      rows: [
+        { label: "Net sales", render: (m) => (m.pnl ? <Amount sen={m.pnl.netSalesSen} /> : "—") },
+        { label: "Gross profit", strong: true, render: (m) => (m.pnl ? hover(m, "gp", withPct(m.pnl.grossProfitSen, shareOfSales(m.pnl.grossProfitSen, m.pnl.netSalesSen))) : "—") },
+        { label: "Net profit", strong: true, render: (m) => (m.pnl ? hover(m, "np", withPct(m.pnl.netProfitSen, shareOfSales(m.pnl.netProfitSen, m.pnl.netSalesSen))) : "—") },
+      ],
+    },
+    {
+      title: "Cost · % of sales",
+      rows: [
+        { label: "Raw materials", render: (m) => (m.pnl ? hover(m, "rm", withPct(m.pnl.rm.usedSen, shareOfSales(m.pnl.rm.usedSen, m.pnl.netSalesSen))) : "—") },
+        { label: "Direct labour", render: (m) => (m.pnl ? hover(m, "dl", withPct(m.pnl.labourSen, shareOfSales(m.pnl.labourSen, m.pnl.netSalesSen))) : "—") },
+      ],
+    },
+    {
+      title: "Most produced · top model",
+      rows: [
+        { label: "Sofa", render: (m) => top1(m.top.SOFA) },
+        { label: "Bedframe", render: (m) => top1(m.top.BEDFRAME) },
+      ],
+    },
+  ];
+  return (
+    <Card>
+      <CardContent className="overflow-x-auto p-0">
+        <table data-col-resize="first" className="text-sm">
+          <thead>
+            <tr>
+              <th className="w-56 px-4 py-2 text-left">Month by month</th>
+              {cols.map((m) => (
+                <th key={m.ym} className="w-52 px-4 py-2 text-right">{monthShort(m.ym)}{m.running ? " · so far" : ""}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sections.map((sec) => (
+              <SectionRows key={sec.title} title={sec.title} span={cols.length + 1}>
+                {sec.rows.map((r) => (
+                  <tr key={r.label} className={`border-t border-[#F0ECE9] ${r.strong ? "font-semibold" : ""}`}>
+                    <td className="px-4 py-1.5 pl-6 text-[#4B5563]">{r.label}</td>
+                    {cols.map((m) => (
+                      <td key={m.ym} className="px-4 py-1.5 text-right tabular-nums">{r.render(m)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </SectionRows>
+            ))}
+          </tbody>
+        </table>
       </CardContent>
     </Card>
   );
@@ -299,39 +425,56 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
       dlPct: p ? pctOrNull(shareOfSales(p.labourSen, p.netSalesSen)) : null,
     };
   });
-  const pctLabel = (v: unknown) => (typeof v === "number" ? fmtPct(v) : "");
-  // Round ticks through 0, with room for the bars' labels (niceAxis).
-  const ordersAxis = niceAxis(data.flatMap((d) => [d.so ?? 0, d.inv ?? 0]));
-  const gpAxis = niceAxis(data.map((d) => d.gp ?? 0));
-  const npAxis = niceAxis(data.map((d) => d.np ?? 0));
+  type Point = (typeof data)[number];
   const sub = last ? `${monthLong(last.ym)}${last.running ? " so far" : ""}` : "";
   const lp = last?.pnl;
   const ofSales = (sen: number | undefined) => (lp && sen !== undefined ? shareOfSales(sen, lp.netSalesSen) : null);
+  const pctCell = (v: number | null) => (v === null ? "—" : fmtPct(v));
+  // Round ticks through 0, with room for the labels (niceAxis) — the % axes too.
+  const nums = (key: keyof Point) => data.map((d) => (typeof d[key] === "number" ? (d[key] as number) : 0));
+  const ordersAxis = niceAxis([...nums("so"), ...nums("inv")]);
+  const gpAxis = niceAxis(nums("gp"));
+  const npAxis = niceAxis(nums("np"));
+  const gpPctAxis = niceAxis(nums("gpPct"), 1.3, 1.5);
+  const npPctAxis = niceAxis(nums("npPct"), 1.3, 1.5);
+  const rmPctAxis = niceAxis(nums("rmPct"), 1.3);
+  const dlPctAxis = niceAxis(nums("dlPct"), 1.3);
 
   const arRows: AgingRow[] = arData.map((a) => ({ name: a.customerName, currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen }));
   const apRows: AgingRow[] = apData.map((a) => ({ name: a.supplierName, currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen }));
 
-  // Month-by-month table, newest month first (as the Monthly P&L reads).
-  const cols = [...months].reverse();
-  const cell = (m: OverviewMonth, metric: OverviewMetric, body: ReactNode) => (
-    <HoverDetail detail={<ExplainBox title={monthTitle(m)} lines={explainMonth(m, metric)} />}>{body}</HoverDetail>
+  // Profit: bars for the amount (labelled inside), a line for the share of sales (owner: 「line graph + diagram graph」).
+  const profitChart = (key: "gp" | "np", pctKey: "gpPct" | "npPct", axis: ReturnType<typeof niceAxis>, pctAxis: ReturnType<typeof niceAxis>, metric: OverviewMetric) => (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={data} margin={{ top: 18, right: 4, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="#F0ECE9" syncWithTicks />
+        <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+        <YAxis yAxisId="amt" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={axis.domain} ticks={axis.ticks} />
+        <YAxis yAxisId="pct" orientation="right" tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} domain={pctAxis.domain} ticks={pctAxis.ticks} />
+        <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, metric)} />
+        <Bar yAxisId="amt" dataKey={key} name="Amount" radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={56}>
+          {data.map((d) => <Cell key={d.ym} fill={(d[key] ?? 0) < 0 ? C.loss : C.profit} />)}
+          <LabelList dataKey={key} position="inside" formatter={compactLabel} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
+        </Bar>
+        <Line yAxisId="pct" type="monotone" dataKey={pctKey} name="% of sales" stroke={C.line} strokeWidth={1.5} dot={{ r: 3, fill: "#FFFFFF" }} animationDuration={ANIM} connectNulls>
+          <LabelList dataKey={pctKey} position="top" formatter={pctLabel} style={{ fontSize: 10, fill: C.line, fontWeight: 600 }} />
+        </Line>
+      </ComposedChart>
+    </ResponsiveContainer>
   );
-  const pctCell = (v: number | null) => (v === null ? "—" : fmtPct(v));
-  const topText = (items: ModelQty[]) => (items.length ? items.map((i) => `${i.model} ×${i.qty}`).join(" · ") : "—");
-  const tableRows: { label: string; strong?: boolean; render: (m: OverviewMonth) => ReactNode }[] = [
-    { label: "Sales orders", render: (m) => cell(m, "orders", <Amount sen={m.so.sen} />) },
-    { label: "Sales invoices", render: (m) => cell(m, "orders", <Amount sen={m.inv.sen} />) },
-    { label: "Invoiced, of the orders", render: (m) => pctCell(m.so.sen > 0 ? (m.inv.sen / m.so.sen) * 100 : null) },
-    { label: "Net sales", render: (m) => (m.pnl ? cell(m, "gp", <Amount sen={m.pnl.netSalesSen} />) : "—") },
-    { label: "Gross profit", strong: true, render: (m) => (m.pnl ? cell(m, "gp", <Amount sen={m.pnl.grossProfitSen} />) : "—") },
-    { label: "Gross profit, of sales", render: (m) => (m.pnl ? cell(m, "gp", pctCell(shareOfSales(m.pnl.grossProfitSen, m.pnl.netSalesSen))) : "—") },
-    { label: "Net profit", strong: true, render: (m) => (m.pnl ? cell(m, "np", <Amount sen={m.pnl.netProfitSen} />) : "—") },
-    { label: "Net profit, of sales", render: (m) => (m.pnl ? cell(m, "np", pctCell(shareOfSales(m.pnl.netProfitSen, m.pnl.netSalesSen))) : "—") },
-    { label: "Raw material cost, of sales", render: (m) => (m.pnl ? cell(m, "rm", pctCell(shareOfSales(m.pnl.rm.usedSen, m.pnl.netSalesSen))) : "—") },
-    { label: "Direct labour, of sales", render: (m) => (m.pnl ? cell(m, "dl", pctCell(shareOfSales(m.pnl.labourSen, m.pnl.netSalesSen))) : "—") },
-    { label: "Most produced · Sofa", render: (m) => <span className="text-xs">{topText(m.top.SOFA)}</span> },
-    { label: "Most produced · Bedframe", render: (m) => <span className="text-xs">{topText(m.top.BEDFRAME)}</span> },
-  ];
+  const pctChart = (key: "rmPct" | "dlPct", axis: ReturnType<typeof niceAxis>, color: string, name: string, metric: OverviewMetric) => (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} margin={{ top: 18, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="#F0ECE9" syncWithTicks />
+        <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} padding={{ left: 28, right: 28 }} />
+        <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} domain={axis.domain} ticks={axis.ticks} />
+        <Tooltip content={chartTip(byYm, metric)} />
+        <Line type="monotone" dataKey={key} name={name} stroke={color} strokeWidth={2} dot={{ r: 3 }} animationDuration={ANIM} connectNulls>
+          <LabelList dataKey={key} position="top" offset={8} formatter={pctLabel} style={{ fontSize: 10, fill: "#4B5563", fontWeight: 600 }} />
+        </Line>
+      </LineChart>
+    </ResponsiveContainer>
+  );
 
   return (
     <div className="space-y-4">
@@ -368,54 +511,37 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
               headline={last ? <><Amount sen={last.inv.sen} /> <span className="text-xs font-normal text-[#6B7280]">invoiced of <Amount sen={last.so.sen} /> ordered</span></> : "—"}
             >
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE9" />
+                <BarChart data={data} margin={{ top: 18, right: 4, left: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="#F0ECE9" syncWithTicks />
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
                   <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={ordersAxis.domain} ticks={ordersAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "orders")} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />
-                  <Bar dataKey="so" animationDuration={500} name="Sales orders" fill="#C9B98F" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="inv" animationDuration={500} name="Sales invoices" fill="#6B5C32" radius={[3, 3, 0, 0]} />
+                  {/* The amounts show on the bars without pointing (owner 2026-10-14). */}
+                  <Bar dataKey="so" name="Sales orders" fill={C.order} radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={44}>
+                    <LabelList dataKey="so" position="top" formatter={compactLabel} style={{ fontSize: 10, fill: "#4B5563" }} />
+                  </Bar>
+                  <Bar dataKey="inv" name="Sales invoices" fill={C.invoice} radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={44}>
+                    <LabelList dataKey="inv" position="top" formatter={compactLabel} style={{ fontSize: 10, fill: "#4B5563" }} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
 
             <ChartCard
-              title="Gross profit"
+              title="Gross profit · % of sales"
               sub={sub}
               headline={lp ? <><Amount sen={lp.grossProfitSen} /> <span className="text-xs font-normal text-[#6B7280]">{pctCell(ofSales(lp.grossProfitSen))} of sales</span></> : "—"}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} margin={{ top: 16, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE9" />
-                  <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={gpAxis.domain} ticks={gpAxis.ticks} />
-                  <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "gp")} />
-                  <Bar dataKey="gp" animationDuration={500} name="Gross profit" radius={[3, 3, 0, 0]}>
-                    {data.map((d) => <Cell key={d.ym} fill={(d.gp ?? 0) < 0 ? "#9A3A2D" : "#4F7C3A"} />)}
-                    <LabelList dataKey="gpPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {profitChart("gp", "gpPct", gpAxis, gpPctAxis, "gp")}
             </ChartCard>
 
             <ChartCard
-              title="Net profit"
+              title="Net profit · % of sales"
               sub={sub}
               headline={lp ? <><Amount sen={lp.netProfitSen} /> <span className="text-xs font-normal text-[#6B7280]">{pctCell(ofSales(lp.netProfitSen))} of sales</span></> : "—"}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} margin={{ top: 16, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE9" />
-                  <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={npAxis.domain} ticks={npAxis.ticks} />
-                  <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "np")} />
-                  <Bar dataKey="np" animationDuration={500} name="Net profit" radius={[3, 3, 0, 0]}>
-                    {data.map((d) => <Cell key={d.ym} fill={(d.np ?? 0) < 0 ? "#9A3A2D" : "#4F7C3A"} />)}
-                    <LabelList dataKey="npPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {profitChart("np", "npPct", npAxis, npPctAxis, "np")}
             </ChartCard>
 
             <ChartCard
@@ -423,17 +549,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
               sub={sub}
               headline={lp ? <>{pctCell(ofSales(lp.rm.usedSen))} <span className="text-xs font-normal text-[#6B7280]"><Amount sen={lp.rm.usedSen} /> used</span></> : "—"}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE9" />
-                  <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} padding={{ left: 24, right: 24 }} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} />
-                  <Tooltip content={chartTip(byYm, "rm")} />
-                  <Line type="monotone" animationDuration={500} dataKey="rmPct" name="Raw material cost" stroke="#9C6F1E" strokeWidth={2} dot={{ r: 3 }} connectNulls>
-                    <LabelList dataKey="rmPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
-                  </Line>
-                </LineChart>
-              </ResponsiveContainer>
+              {pctChart("rmPct", rmPctAxis, C.rmLine, "Raw material cost", "rm")}
             </ChartCard>
 
             <ChartCard
@@ -441,49 +557,13 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
               sub={sub}
               headline={lp ? <>{pctCell(ofSales(lp.labourSen))} <span className="text-xs font-normal text-[#6B7280]"><Amount sen={lp.labourSen} /> labour</span></> : "—"}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE9" />
-                  <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} padding={{ left: 24, right: 24 }} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={40} />
-                  <Tooltip content={chartTip(byYm, "dl")} />
-                  <Line type="monotone" animationDuration={500} dataKey="dlPct" name="Direct labour" stroke="#6B4A6D" strokeWidth={2} dot={{ r: 3 }} connectNulls>
-                    <LabelList dataKey="dlPct" position="top" formatter={pctLabel} style={{ fontSize: 10, fill: "#6B7280" }} />
-                  </Line>
-                </LineChart>
-              </ResponsiveContainer>
+              {pctChart("dlPct", dlPctAxis, C.dlLine, "Direct labour", "dl")}
             </ChartCard>
 
             {months.length > 0 && <TopModelsCard months={months} />}
           </div>
 
-          <Card>
-            <CardContent className="overflow-x-auto p-0">
-              <table data-col-resize="first" className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="px-3 py-2 text-left">Month by month</th>
-                    {cols.map((m) => (
-                      <th key={m.ym} className="px-3 py-2 text-right">{monthShort(m.ym)}{m.running ? " ·" : ""}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableRows.map((r) => (
-                    <tr key={r.label} className={`border-t border-[#F0ECE9] ${r.strong ? "font-semibold" : ""}`}>
-                      <td className="px-3 py-1.5 text-[#4B5563]">{r.label}</td>
-                      {cols.map((m) => (
-                        <td key={m.ym} className="px-3 py-1.5 text-right tabular-nums">{r.render(m)}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {cols.some((m) => m.running) && (
-                <p className="px-3 pb-2 pt-1 text-[11px] text-[#9CA3AF]">· the month is still running.</p>
-              )}
-            </CardContent>
-          </Card>
+          <MonthTable months={months} />
         </>
       )}
 
@@ -494,4 +574,3 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
     </div>
   );
 }
-

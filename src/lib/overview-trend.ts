@@ -8,6 +8,7 @@
 // /overview-trend route (builds it) and the Overview tab (draws it).
 // ---------------------------------------------------------------------------
 import type { PnlWindowLike } from "./pnl-matrix";
+import { acctName } from "./finance-names";
 
 export type DocSum = { count: number; sen: number };
 export type ModelQty = { model: string; qty: number; orders: number };
@@ -21,7 +22,11 @@ export type OverviewPnl = {
   otherIncomeSen: number;
   expenseSen: number;
   netProfitSen: number;
-  rm: { openingSen: number; purchasesSen: number; closingSen: number; usedSen: number };
+  rm: {
+    openingSen: number; purchasesSen: number; closingSen: number; usedSen: number;
+    /** Each material group's use (opening + purchases − closing), largest first. */
+    groups: { name: string; usedSen: number }[];
+  };
   labourSen: number;
   /** The running month's estimated costs inside the figures (owner 2026-10-13) … */
   estSen: number;
@@ -102,14 +107,22 @@ export function topModelsByMonth(
   return new Map([...acc].map(([ym, b]) => [ym, { SOFA: rank(b.SOFA), BEDFRAME: rank(b.BEDFRAME) }]));
 }
 
+/** A material group as the Overview names it: "PURCHASE - B.M FABRIC" → "B.M Fabric". */
+export function materialName(description: string): string {
+  return acctName(String(description ?? "").replace(/^\s*PURCHASES?\s*-\s*/i, "").trim());
+}
+
 /** The Overview's view of one month's P&L window — the statement's own totals, nothing re-derived. */
 export function overviewPnl(w: PnlWindowLike): OverviewPnl {
-  const rm = { openingSen: 0, purchasesSen: 0, closingSen: 0, usedSen: Math.round(w.rmConsumedSen) };
+  const rm: OverviewPnl["rm"] = { openingSen: 0, purchasesSen: 0, closingSen: 0, usedSen: Math.round(w.rmConsumedSen), groups: [] };
   for (const g of w.rmGroups) {
     rm.openingSen += Math.round(g.openingSen);
     rm.purchasesSen += Math.round(g.purchasesSen);
     rm.closingSen += Math.round(g.closingSen);
+    const used = Math.round(g.openingSen + g.purchasesSen - g.closingSen);
+    if (used !== 0) rm.groups.push({ name: materialName(g.description || g.group), usedSen: used });
   }
+  rm.groups.sort((a, c) => c.usedSen - a.usedSen || a.name.localeCompare(c.name));
   const estOverheadSen = w.overheadLines.reduce((sum, l) => sum + (l.estSen ?? 0), 0);
   const estSen = estOverheadSen + w.expenseLines.reduce((sum, l) => sum + (l.estSen ?? 0), 0);
   return {
@@ -125,6 +138,9 @@ export function overviewPnl(w: PnlWindowLike): OverviewPnl {
     estOverheadSen: Math.round(estOverheadSen),
   };
 }
+
+// 1,234.56 for a note line (the boxes render amounts with <Amount>).
+const fmtSen = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** A share of net sales in percent; null when there are no sales to divide by. */
 export function shareOfSales(sen: number, netSalesSen: number): number | null {
@@ -178,13 +194,14 @@ export function explainMonth(m: OverviewMonth, metric: OverviewMetric): ExplainL
     ];
   }
   if (metric === "rm") {
+    // Owner 2026-10-14 「指的时候是每个 raw material 的 detail (包含 amount 和 percentage)」.
     return [
-      { label: "Opening stock", sen: p.rm.openingSen },
-      { label: "+ Purchases", sen: p.rm.purchasesSen },
-      { label: "− Closing stock", sen: -p.rm.closingSen },
-      { label: "= Raw materials used", sen: p.rm.usedSen, total: true },
-      { label: "÷ Net sales", sen: p.netSalesSen },
-      { label: "= of sales", pct: shareOfSales(p.rm.usedSen, p.netSalesSen), total: true },
+      ...p.rm.groups.map((g) => ({ label: g.name, sen: g.usedSen, pct: shareOfSales(g.usedSen, p.netSalesSen) })),
+      {
+        label: "= Raw materials used", sen: p.rm.usedSen, pct: shareOfSales(p.rm.usedSen, p.netSalesSen), total: true,
+        note: `opening ${fmtSen(p.rm.openingSen)} + purchases ${fmtSen(p.rm.purchasesSen)} − closing ${fmtSen(p.rm.closingSen)}`,
+      },
+      { label: "Net sales", sen: p.netSalesSen },
     ];
   }
   return [

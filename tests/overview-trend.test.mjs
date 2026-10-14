@@ -80,7 +80,10 @@ const W = {
 
 test("the Overview's P&L is the statement's own totals", () => {
   const p = overviewPnl(W);
-  assert.deepEqual(p.rm, { openingSen: 10000, purchasesSen: 35000, closingSen: 5000, usedSen: 40000 });
+  assert.deepEqual(p.rm, {
+    openingSen: 10000, purchasesSen: 35000, closingSen: 5000, usedSen: 40000,
+    groups: [{ name: "A", usedSen: 35000 }, { name: "B", usedSen: 5000 }],
+  });
   assert.equal(p.estSen, 3500, "overhead and expense estimates");
   assert.equal(p.estOverheadSen, 3000, "the overhead part sits in cost of goods sold");
   assert.equal(shareOfSales(p.grossProfitSen, p.netSalesSen), 45);
@@ -97,9 +100,14 @@ test("how a figure is made adds up exactly", () => {
   assert.ok(np.some((l) => l.label === "incl. estimated costs" && l.sen === 3500));
   assert.ok(gp.some((l) => l.label === "incl. estimated factory overhead" && l.sen === 3000), "gross profit carries only the overhead estimates");
   assert.ok(!gp.some((l) => l.label === "incl. estimated costs"));
+  // Raw materials: each material with its amount and share of sales (owner
+  // 2026-10-14), adding up to the total; the opening / purchases / closing in its note.
   const rmx = explainMonth(m, "rm");
-  assert.equal(sum(rmx.slice(0, 3)), rmx.find((l) => l.label === "= Raw materials used").sen, "opening + purchases − closing");
-  assert.equal(rmx.at(-1).pct, 40);
+  const total = rmx.find((l) => l.label === "= Raw materials used");
+  assert.deepEqual(rmx.slice(0, 2).map((l) => [l.label, l.sen, l.pct]), [["A", 35000, 35], ["B", 5000, 5]]);
+  assert.equal(sum(rmx.slice(0, 2)), total.sen, "the materials add up to the total");
+  assert.equal(total.pct, 40);
+  assert.match(total.note, /^opening 100\.00 \+ purchases 350\.00 − closing 50\.00$/);
   assert.equal(explainMonth(m, "dl").at(-1).pct, 12);
   assert.equal(explainMonth(m, "orders").at(-1).pct, 75, "invoiced, of the orders");
   assert.deepEqual(explainMonth({ ...m, pnl: null }, "np"), [{ label: "No P&L for this month", note: "before the books opened" }]);
@@ -131,17 +139,29 @@ test("the tab: six charts, the month-by-month table, aging with who makes up a b
   for (const t of ["Sales orders vs sales invoices", "Gross profit", "Net profit", "Raw material cost, of sales", "Direct labour, of sales", "Most produced models · top 5"]) {
     assert.ok(ui.includes(t), `chart: ${t}`);
   }
-  for (const metric of ["orders", "gp", "np", "rm", "dl"]) {
-    assert.match(ui, new RegExp(`content=\\{chartTip\\(byYm, "${metric}"\\)\\}`), `the ${metric} chart explains on hover`);
-  }
+  assert.match(ui, /content=\{chartTip\(byYm, "orders"\)\}/, "the orders chart explains on hover");
+  assert.equal((ui.match(/content=\{chartTip\(byYm, metric\)\}/g) ?? []).length, 2, "profit and % charts explain on hover");
+  assert.match(ui, /\{profitChart\("gp", "gpPct", gpAxis, gpPctAxis, "gp"\)\}/);
+  assert.match(ui, /\{profitChart\("np", "npPct", npAxis, npPctAxis, "np"\)\}/, "net profit: bars (amount) + a line (% of sales)");
+  assert.match(ui, /\{pctChart\("rmPct", rmPctAxis, C\.rmLine, "Raw material cost", "rm"\)\}/);
+  assert.match(ui, /\{pctChart\("dlPct", dlPctAxis, C\.dlLine, "Direct labour", "dl"\)\}/);
+  assert.match(ui, /<LabelList dataKey="so" position="top" formatter=\{compactLabel\}/, "order amounts show without pointing");
+  assert.match(ui, /<LabelList dataKey="inv" position="top" formatter=\{compactLabel\}/);
+  assert.equal((ui.match(/<CartesianGrid vertical=\{false\} stroke="#F0ECE9" syncWithTicks \/>/g) ?? []).length, 3, "a grid line on every tick");
+  assert.match(ui, /rounded-full bg-\[#F0ECE9\] text-\[9px\] font-semibold text-\[#6B7280\]">\{i \+ 1\}<\/span>/, "the rank is not read as part of the model number");
   assert.match(ui, /<TopList title="Sofa" items=\{m\.top\.SOFA\}/);
   assert.match(ui, /<TopList title="Bedframe" items=\{m\.top\.BEDFRAME\}/);
   assert.match(ui, /const cols = \[\.\.\.months\]\.reverse\(\);/, "the table reads newest month first, as the Monthly P&L");
   assert.match(ui, /<HoverDetail key=\{b\.period\} block detail=\{detail\(b\)\}>/, "an aging bucket shows its parties");
   assert.match(ui, /createPortal\(/, "the detail is drawn above a scrolling table");
-  for (const a of ["ordersAxis", "gpAxis", "npAxis"]) {
-    assert.match(ui, new RegExp(`domain=\\{${a}\\.domain\\} ticks=\\{${a}\\.ticks\\}`), `${a}: round ticks with room for the labels`);
+  assert.match(ui, /domain=\{ordersAxis\.domain\} ticks=\{ordersAxis\.ticks\}/, "round ticks with room for the labels");
+  assert.equal((ui.match(/domain=\{axis\.domain\} ticks=\{axis\.ticks\}/g) ?? []).length, 2, "profit and % charts too");
+  assert.match(ui, /domain=\{pctAxis\.domain\} ticks=\{pctAxis\.ticks\}/, "the % line on its own axis");
+  // The month table: sections, amount and % in one cell, the top model only.
+  for (const t of ['title: "Sales"', 'title: "Profit · % of sales"', 'title: "Cost · % of sales"', 'title: "Most produced · top model"']) {
+    assert.ok(ui.includes(t), `table section ${t}`);
   }
+  assert.match(ui, /const top1 = \(items: ModelQty\[\]\) =>/);
 });
 
 test("chart axes: round ticks, always through 0, room for the labels", async () => {
@@ -152,4 +172,11 @@ test("chart axes: round ticks, always through 0, room for the labels", async () 
   assert.ok(np.ticks.includes(0), "a loss chart keeps its zero line");
   assert.ok(np.domain[0] < -73741.18 * 1.3, "room below the deepest loss for its label");
   assert.deepEqual(niceAxis([0, 0]), { domain: [0, 1], ticks: [0, 1] });
+});
+
+test("material groups are named the short way", async () => {
+  const { materialName } = await import("../src/lib/overview-trend.ts");
+  assert.equal(materialName("PURCHASE - B.M FABRIC"), "B.M Fabric");
+  assert.equal(materialName("PURCHASES - PLYWOOD"), "Plywood");
+  assert.equal(materialName("B.FILLER"), "B.FILLER");
 });
