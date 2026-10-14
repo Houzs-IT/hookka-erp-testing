@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-14**: branch `feat/finance-overview` (to `main`) added below (its entry is the newest).
 
 > **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
@@ -144,6 +145,11 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+## 2026-10-14 — 🔵 Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(branch `feat/finance-overview` → `main`)
+
+1. ✅ Only the Overview from PR #849 — that PR stays open and unmerged with the rest of the finance UI refresh while the owner reworks it in Claude Design. Brought over: `overview-tab.tsx`, `overview-trend.ts`, `GET /accounting/overview-trend`, and the three small helpers the Overview uses (`finance-money.ts`, `amount.tsx`, `finance-names.ts`). The page header, money format, reports, payment pages and phone layout on `main` are untouched.
+2. ⚪ Prod check after deploy (read-only): the Overview loads; its gross profit, net profit, raw materials and direct labour equal the P&L statement's rows for the same months.
 
 ## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
 

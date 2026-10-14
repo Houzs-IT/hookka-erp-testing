@@ -15,7 +15,7 @@ import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/dat
 import { MoneyInput } from "@/components/ui/money-input";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
-import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
 import { monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
@@ -38,11 +38,7 @@ import { COA_TYPE_COLOR, SUCCESS, DANGER, INFO, ACCENT_PLUM } from "@/lib/design
 import {
   BookOpen,
   TrendingUp,
-  TrendingDown,
-  DollarSign,
   FileText,
-  ArrowUpRight,
-  ArrowDownRight,
   Plus,
   ChevronRight,
   ChevronDown as ChevronDownIcon,
@@ -92,6 +88,7 @@ import {
   usePartyAliases,
   teachPartyAlias,
 } from "@/lib/party-alias-client";
+import { OverviewTab } from "./overview-tab";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -630,7 +627,7 @@ export default function AccountingPage() {
       ) : (
         <>
           {tab === "overview" && (
-            <OverviewTab journals={journals} arData={arData} apData={apData} />
+            <OverviewTab arData={arData} apData={apData} />
           )}
           {/* One P&L entry, three views (owner 2026-09-22 sidebar slim-down);
               the old deep links still land on their view. */}
@@ -724,29 +721,6 @@ function PlHubTab({ initialView }: { initialView: "statement" | "monthly" | "cos
     </div>
   );
 }
-
-// A figure with no posted account behind it is UNKNOWN, not zero — it renders
-// as this dash, and any total derived from it inherits the dash.
-const NO_FIGURE = "—";
-
-// The ledger-truth P&L slice the Overview KPI cards read (GET /accounting/pl).
-// Same shape `src/pages/reports.tsx` consumes for the same three figures.
-type OverviewPlEntry = {
-  accountCode: string;
-  accountName: string;
-  category: "REVENUE" | "COGS" | "OPERATING_EXPENSE";
-  amount: number;
-};
-type OverviewPl = {
-  entries: OverviewPlEntry[];
-  totals: {
-    revenue: number;
-    cogs: number;
-    grossProfit: number;
-    operatingExpenses: number;
-    netProfit: number;
-  };
-};
 
 // =============== TAB 1: OVERVIEW ===============
 
@@ -2719,260 +2693,6 @@ function OpeningStockTab() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function OverviewTab({
-  journals,
-  arData,
-  apData,
-}: {
-  journals: JournalEntry[];
-  arData: ARAgingEntry[];
-  apData: APAgingEntry[];
-}) {
-  // BUG-2026-08-13-091 — these three cards used to be:
-  //   revenue  = Σ chart_of_accounts.balanceSen where type=REVENUE && parentCode
-  //   expenses = Σ  …                      where type=EXPENSE && parentCode
-  //   netProfit = revenue − expenses
-  // Three separate untruths in six lines:
-  //   (a) `balance` is `chart_of_accounts.balanceSen`, and the ONLY writers of
-  //       that column in the whole API are the manual-JV paths — accounting.ts
-  //       PUT /journals/:id (POSTED at :1378, REVERSED at :1447) and
-  //       POST /journals/:id/lifecycle (:1640). Every real posting — sales
-  //       invoices, purchase invoices, receipts, supplier payments, DOs,
-  //       credit/debit notes, trade finance — writes `ledger_journal_entries`
-  //       and never touches balanceSen. So the cards reported the net of hand-
-  //       keyed journals and called it the company's revenue.
-  //   (b) "(MTD)" was fabricated: nothing in this component filtered by date.
-  //       balanceSen is a running since-inception balance.
-  //   (c) EXPENSE was summed but the COST type was not, though the ledger
-  //       treats them alike (accounting.ts:1370-1375) — so Net Profit was
-  //       overstated by the entire cost-of-sales block.
-  // The fix is the one already blessed for these exact three figures on
-  // /reports (BUG-2026-08-13-009): read GET /accounting/pl, which nets the
-  // posted ledger per account and classifies by the account's own COA type,
-  // and publish "—" — never RM 0.00 — for a category no account has posted to.
-  const ym = todayYmdMY().slice(0, 7);
-  const { data: plResp } = useCachedJson<{ success?: boolean; data?: OverviewPl }>(
-    `/api/accounting/pl?period=${ym}`,
-  );
-  const pl = plResp?.success ? plResp.data : undefined;
-  const plEntries = pl?.entries ?? [];
-  const nAccts = (cat: OverviewPlEntry["category"]) =>
-    plEntries.filter((e) => e.category === cat).length;
-  const revenueAccts = nAccts("REVENUE");
-  const cogsAccts = nAccts("COGS");
-  const opexAccts = nAccts("OPERATING_EXPENSE");
-  // A figure is published only when an account behind it carries a posting;
-  // a derived line is only as sourced as the weakest line it derives from.
-  const sourced = (n: number, v: number | undefined) =>
-    n > 0 && v !== undefined ? formatCurrency(roundSen(v)) : NO_FIGURE;
-  const derived = (deps: number[], v: number | undefined) =>
-    deps.every((n) => n > 0) && v !== undefined ? formatCurrency(roundSen(v)) : NO_FIGURE;
-  // Cost & Expenses is COGS + OpEx so that the three cards tie by the server's
-  // own arithmetic (netProfit = revenue − cogs − opex); summing only one of
-  // them would leave Revenue − Expenses ≠ Net Profit on screen.
-  const costExpenseSen =
-    pl?.totals ? pl.totals.cogs + pl.totals.operatingExpenses : undefined;
-  const netProfitSen = pl?.totals?.netProfit;
-  const totalAR = arData.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
-  const totalAP = apData.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
-
-  // Aggregate aging buckets
-  const arBuckets = [
-    { period: "Current", amountSen: arData.reduce((s, a) => s + a.currentSen, 0) },
-    { period: "1 month", amountSen: arData.reduce((s, a) => s + a.days30Sen, 0) },
-    { period: "2 months", amountSen: arData.reduce((s, a) => s + a.days60Sen, 0) },
-    { period: "3 months", amountSen: arData.reduce((s, a) => s + a.days90Sen, 0) },
-    { period: "3+ months", amountSen: arData.reduce((s, a) => s + a.over90Sen, 0) },
-  ];
-  const apBuckets = [
-    { period: "Current", amountSen: apData.reduce((s, a) => s + a.currentSen, 0) },
-    { period: "1 month", amountSen: apData.reduce((s, a) => s + a.days30Sen, 0) },
-    { period: "2 months", amountSen: apData.reduce((s, a) => s + a.days60Sen, 0) },
-    { period: "3 months", amountSen: apData.reduce((s, a) => s + a.days90Sen, 0) },
-    { period: "3+ months", amountSen: apData.reduce((s, a) => s + a.over90Sen, 0) },
-  ];
-
-  const recentJournals = journals.slice(0, 5);
-
-  const recentColumns: Column<JournalEntry>[] = [
-    {
-      key: "entryNo",
-      label: "Entry No.",
-      render: (value, row) => <span className="doc-number font-medium">{row.entryNo}</span>,
-    },
-    {
-      key: "date",
-      label: "Date",
-      render: (value, row) => <span className="text-[#4B5563]">{formatDateDMY(row.date)}</span>,
-    },
-    {
-      key: "description",
-      label: "Description",
-      render: (value, row) => <span className="font-medium text-[#1F1D1B]">{row.description}</span>,
-    },
-    {
-      key: "totalDebit",
-      label: "Total Debit",
-      align: "right",
-      render: (value, row) => {
-        const total = row.lines.reduce((s, l) => s + l.debitSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
-      },
-    },
-    {
-      key: "status",
-      label: "Status",
-      render: (value, row) => (
-        <Badge variant="status" status={row.status}>
-          {row.status}
-        </Badge>
-      ),
-    },
-  ];
-
-  // BUG-2026-08-13-090: this menu was four `action: () => {}` no-ops — View,
-  // Edit, a separator and Refresh — on the Recent Journal Entries grid. "Edit"
-  // in particular advertised an action on a POSTED journal that does not exist.
-  // The grid now carries no context menu; the Journal Entries tab has the real
-  // one. Print is kept because it works from data already on screen.
-  const overviewContextMenu: ContextMenuItem[] = [
-    { label: "Print voucher", action: (r) => printVoucher(buildJvVoucher(r)) },
-  ];
-
-  return (
-    <>
-      {/* KPI Cards */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-5">
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">Revenue ({ym})</p>
-              <p className="text-xl font-bold text-[#4F7C3A]">{sourced(revenueAccts, pl?.totals?.revenue)}</p>
-            </div>
-            <ArrowUpRight className="h-5 w-5 text-[#4F7C3A]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">Cost &amp; Expenses ({ym})</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{derived([cogsAccts, opexAccts], costExpenseSen)}</p>
-            </div>
-            <ArrowDownRight className="h-5 w-5 text-[#9A3A2D]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">Net Profit ({ym})</p>
-              <p className={`text-xl font-bold ${(netProfitSen ?? 0) >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}`}>
-                {derived([revenueAccts, cogsAccts, opexAccts], netProfitSen)}
-              </p>
-            </div>
-            <DollarSign className="h-5 w-5 text-[#6B5C32]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">AR Outstanding</p>
-              <p className="text-xl font-bold text-[#9C6F1E]">{formatCurrency(totalAR)}</p>
-            </div>
-            <TrendingUp className="h-5 w-5 text-[#9C6F1E]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">AP Outstanding</p>
-              <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(totalAP)}</p>
-            </div>
-            <TrendingDown className="h-5 w-5 text-[#3E6570]" />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* AR & AP Aging Summary */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
-        <AgingCard title="Accounts Receivable Aging" icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />} buckets={arBuckets} barColor="bg-[#6B5C32]" />
-        <AgingCard title="Accounts Payable Aging" icon={<TrendingDown className="h-5 w-5 text-[#6B5C32]" />} buckets={apBuckets} barColor="bg-[#9C6F1E]" />
-      </div>
-
-      {/* Recent Journal Entries */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-[#6B5C32]" />
-            Recent Journal Entries
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <DataGrid
-            columns={recentColumns}
-            data={recentJournals}
-            keyField="id"
-            virtualize
-            gridId="accounting-overview-journals"
-            contextMenuItems={overviewContextMenu}
-          />
-        </CardContent>
-      </Card>
-    </>
-  );
-}
-
-function AgingCard({
-  title,
-  icon,
-  buckets,
-  barColor,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  buckets: { period: string; amountSen: number }[];
-  barColor: string;
-}) {
-  const total = buckets.reduce((s, b) => s + b.amountSen, 0);
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2">
-          {icon}
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {buckets.map((item) => {
-            const pct = total > 0 ? Math.round((item.amountSen / total) * 100) : 0;
-            return (
-              <div key={item.period} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-[#4B5563]">{item.period}</span>
-                  <span className="font-medium text-[#1F1D1B]">{formatCurrency(item.amountSen)}</span>
-                </div>
-                <div className="h-2 bg-[#F0ECE9] rounded-full overflow-hidden">
-                  <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-            );
-          })}
-          <div className="flex items-center justify-between text-sm font-semibold pt-2 border-t border-[#E2DDD8]">
-            <span className="text-[#1F1D1B]">Total</span>
-            <span className="text-[#1F1D1B]">{formatCurrency(total)}</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
