@@ -21,8 +21,9 @@
 // ---------------------------------------------------------------------------
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const OUT = join(ROOT, "src/pages/accounting/finance-theme.css");
 
 // Old colour → palette E. Neutrals go from warm beige to cool grey; the brand

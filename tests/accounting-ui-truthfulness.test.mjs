@@ -185,8 +185,10 @@ test("the Overview's P&L figures are the P&L page's own, and a month without one
   const route = api.slice(at, at + 6000);
   has(route, /await computePnlWindow\(db, orgId, ym, ym, "all", matData, dc, override\)/,
     "the month's P&L must be the statement's own window, not a re-derived figure");
-  // A month before the books with no history keyed has no P&L → "—", not 0.00.
-  has(ov, /m\.pnl \? hover\(m, "np", withPct\(m\.pnl\.netProfitSen, [^\n]*\) : "—"/, "a month with no P&L must read —");
+  // A month before the books with no history keyed has no P&L: a gap in the
+  // chart (null, never 0) and a dash in the headline, never 0.00.
+  has(ov, /np: rm\(p\?\.netProfitSen\),/, "a month with no P&L must be a gap in the chart, not 0");
+  has(ov, /headline=\{lp \? <><Amount sen=\{lp\.netProfitSen\} \/>[^\n]*: "—"\}/, "a headline with no P&L must read —");
   // The fabricated "(MTD)" caption over an unfiltered running balance stays gone.
   assert.equal(page().includes("(MTD)") || ov.includes("(MTD)"), false, 'the unfiltered "(MTD)" caption is back');
 });

@@ -2,15 +2,16 @@
 // Finance Overview (owner 2026-10-14 「overview 主要显示…」→「做」): the months
 // at a glance — sales orders vs sales invoices, gross and net profit, raw
 // material and direct labour as a share of sales, the most-produced models
-// (top 5, Sofa and Bedframe apart) — as six charts and one month-by-month
-// table, with the receivable / payable aging below. Pointing at a bar, a
-// point or a figure shows how it is made (src/lib/overview-trend.ts
+// (top 5, Sofa and Bedframe apart) — as six charts, with the receivable /
+// payable aging below. Pointing at a bar, a point or a figure shows how it
+// is made (src/lib/overview-trend.ts
 // explainMonth; the P&L figures are the P&L page's own). Display only.
 //
 // Canary review (owner 2026-10-14): amounts on the bars without pointing;
 // profit as bars (amount) + a line (% of sales); raw materials explained per
-// material; grid lines on every tick; rank apart from the model number; a
-// calmer month table (sections, amount and % in one cell, top model only).
+// material; grid lines on every tick; rank apart from the model number. The
+// month-by-month table went (「这个表不需要了吧，我看上面的 card 就行」) — the
+// six charts carry the months, and pointing at one shows how it is made.
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -306,100 +307,6 @@ function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon
   );
 }
 
-// ---- The month-by-month table ------------------------------------------------
-
-type TableRow = { label: string; strong?: boolean; render: (m: OverviewMonth) => ReactNode };
-
-// A section heading row followed by its rows.
-function SectionRows({ title, span, children }: { title: string; span: number; children: ReactNode }) {
-  return (
-    <>
-      <tr className="bg-[#FAF8F4]">
-        <td colSpan={span} className="px-4 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wide text-[#6B5C32]">{title}</td>
-      </tr>
-      {children}
-    </>
-  );
-}
-
-function MonthTable({ months }: { months: OverviewMonth[] }) {
-  // Newest month first (as the Monthly P&L reads).
-  const cols = [...months].reverse();
-  const hover = (m: OverviewMonth, metric: OverviewMetric, body: ReactNode) => (
-    <HoverDetail detail={<ExplainBox title={monthTitle(m)} lines={explainMonth(m, metric)} />}>{body}</HoverDetail>
-  );
-  // An amount with its share beside it, small and grey.
-  const withPct = (sen: number, pct: number | null) => (
-    <span className="inline-flex items-baseline justify-end gap-2">
-      <Amount sen={sen} />
-      <span className="w-12 text-right text-[11px] font-normal text-[#9CA3AF]">{pct === null ? "—" : fmtPct(pct)}</span>
-    </span>
-  );
-  const top1 = (items: ModelQty[]) =>
-    items.length ? <span><span className="font-semibold">{items[0].model}</span> <span className="text-[11px] text-[#9CA3AF]">· {items[0].qty} pcs</span></span> : "—";
-  const sections: { title: string; rows: TableRow[] }[] = [
-    {
-      title: "Sales",
-      rows: [
-        { label: "Sales orders", render: (m) => hover(m, "orders", <Amount sen={m.so.sen} />) },
-        { label: "Sales invoices · % of orders", render: (m) => hover(m, "orders", withPct(m.inv.sen, m.so.sen > 0 ? (m.inv.sen / m.so.sen) * 100 : null)) },
-      ],
-    },
-    {
-      title: "Profit · % of sales",
-      rows: [
-        { label: "Net sales", render: (m) => (m.pnl ? <Amount sen={m.pnl.netSalesSen} /> : "—") },
-        { label: "Gross profit", strong: true, render: (m) => (m.pnl ? hover(m, "gp", withPct(m.pnl.grossProfitSen, shareOfSales(m.pnl.grossProfitSen, m.pnl.netSalesSen))) : "—") },
-        { label: "Net profit", strong: true, render: (m) => (m.pnl ? hover(m, "np", withPct(m.pnl.netProfitSen, shareOfSales(m.pnl.netProfitSen, m.pnl.netSalesSen))) : "—") },
-      ],
-    },
-    {
-      title: "Cost · % of sales",
-      rows: [
-        { label: "Raw materials", render: (m) => (m.pnl ? hover(m, "rm", withPct(m.pnl.rm.usedSen, shareOfSales(m.pnl.rm.usedSen, m.pnl.netSalesSen))) : "—") },
-        { label: "Direct labour", render: (m) => (m.pnl ? hover(m, "dl", withPct(m.pnl.labourSen, shareOfSales(m.pnl.labourSen, m.pnl.netSalesSen))) : "—") },
-      ],
-    },
-    {
-      title: "Most produced · top model",
-      rows: [
-        { label: "Sofa", render: (m) => top1(m.top.SOFA) },
-        { label: "Bedframe", render: (m) => top1(m.top.BEDFRAME) },
-      ],
-    },
-  ];
-  return (
-    <Card className="w-fit max-w-full">
-      <CardContent className="overflow-x-auto p-0">
-        <table data-col-resize="first" className="text-sm">
-          <thead>
-            <tr>
-              <th className="w-56 px-4 py-2 text-left">Month by month</th>
-              {cols.map((m) => (
-                <th key={m.ym} className="w-52 px-4 py-2 text-right">{monthShort(m.ym)}{m.running ? " · so far" : ""}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sections.map((sec) => (
-              <SectionRows key={sec.title} title={sec.title} span={cols.length + 1}>
-                {sec.rows.map((r) => (
-                  <tr key={r.label} className={`border-t border-[#F0ECE9] ${r.strong ? "font-semibold" : ""}`}>
-                    <td className="px-4 py-1.5 pl-6 text-[#4B5563]">{r.label}</td>
-                    {cols.map((m) => (
-                      <td key={m.ym} className="px-4 py-1.5 text-right tabular-nums">{r.render(m)}</td>
-                    ))}
-                  </tr>
-                ))}
-              </SectionRows>
-            ))}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
-  );
-}
-
 // ---- The tab ------------------------------------------------------------------
 
 export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData: APAgingEntry[] }) {
@@ -565,7 +472,6 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
             {months.length > 0 && <TopModelsCard months={months} />}
           </div>
 
-          <MonthTable months={months} />
         </>
       )}
 

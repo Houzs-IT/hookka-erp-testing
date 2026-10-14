@@ -151,17 +151,13 @@ test("the tab: six charts, the month-by-month table, aging with who makes up a b
   assert.match(ui, /rounded-full bg-\[#F0ECE9\] text-\[9px\] font-semibold text-\[#6B7280\]">\{i \+ 1\}<\/span>/, "the rank is not read as part of the model number");
   assert.match(ui, /<TopList title="Sofa" items=\{m\.top\.SOFA\}/);
   assert.match(ui, /<TopList title="Bedframe" items=\{m\.top\.BEDFRAME\}/);
-  assert.match(ui, /const cols = \[\.\.\.months\]\.reverse\(\);/, "the table reads newest month first, as the Monthly P&L");
   assert.match(ui, /<HoverDetail key=\{b\.period\} block detail=\{detail\(b\)\}>/, "an aging bucket shows its parties");
-  assert.match(ui, /createPortal\(/, "the detail is drawn above a scrolling table");
+  assert.match(ui, /createPortal\(/, "the detail is drawn in a layer of its own");
   assert.match(ui, /domain=\{ordersAxis\.domain\} ticks=\{ordersAxis\.ticks\}/, "round ticks with room for the labels");
   assert.equal((ui.match(/domain=\{axis\.domain\} ticks=\{axis\.ticks\}/g) ?? []).length, 2, "profit and % charts too");
   assert.match(ui, /domain=\{pctAxis\.domain\} ticks=\{pctAxis\.ticks\}/, "the % line on its own axis");
-  // The month table: sections, amount and % in one cell, the top model only.
-  for (const t of ['title: "Sales"', 'title: "Profit · % of sales"', 'title: "Cost · % of sales"', 'title: "Most produced · top model"']) {
-    assert.ok(ui.includes(t), `table section ${t}`);
-  }
-  assert.match(ui, /const top1 = \(items: ModelQty\[\]\) =>/);
+  // The month-by-month table went (owner 2026-10-14 「这个表不需要了吧，我看上面的 card 就行」).
+  assert.doesNotMatch(ui, /MonthTable|Month by month/, "the charts carry the months");
 });
 
 test("chart axes: round ticks, always through 0, room for the labels", async () => {
