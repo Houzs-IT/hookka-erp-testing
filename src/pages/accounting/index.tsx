@@ -28,6 +28,9 @@ import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFro
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
+import { PageHeader } from "@/components/ui/page-header";
+import { financePage, financeSubtitle } from "@/lib/finance-nav";
+import "./finance-ui.css";
 import { useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
 import { useRowMenu, lifecycleMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
@@ -92,6 +95,7 @@ import {
   usePartyAliases,
   teachPartyAlias,
 } from "@/lib/party-alias-client";
+import { Amount } from "@/components/finance/amount";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -581,6 +585,9 @@ export default function AccountingPage() {
   // from the sidebar's deep links (/accounting?tab=<key>); the in-page tab bar
   // was removed as a duplicate of the sidebar (owner 2026-06).
   const tab: TabKey = (TABS.some((t) => t.key === urlTab) ? urlTab : "overview") as TabKey;
+  // The page's own name — the same as its menu item — and what it shows
+  // (owner 2026-10-14 「菜单名 = 页面名」; src/lib/finance-nav.ts).
+  const page = financePage(tab);
   const { data: coaResp, loading: coaLoading, refresh: refreshCoa } = useCachedJson<{ success?: boolean; data?: ChartOfAccount[] }>("/api/accounting/coa");
   const { data: jeResp, loading: jeLoading, refresh: refreshJe } = useCachedJson<{ success?: boolean; data?: JournalEntry[] }>("/api/accounting/journals");
   const { data: agingResp, loading: agingLoading, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[] } }>("/api/accounting/aging");
@@ -614,14 +621,8 @@ export default function AccountingPage() {
   const tablesRef = useResizableTables(`accounting:${tab}`);
 
   return (
-    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-[#1F1D1B]">Accounting</h1>
-          <p className="text-xs text-[#6B7280]">General ledger, accounts receivable, and accounts payable</p>
-        </div>
-      </div>
+    <div ref={tablesRef} data-fin-tables data-fin-ui className="space-y-6 max-md:space-y-4">
+      <PageHeader title={page.title} subtitle={financeSubtitle(page)} />
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -676,7 +677,6 @@ export default function AccountingPage() {
           {tab === "opening" && <OpeningBalanceTab accounts={accounts} onRefresh={fetchAll} />}
           {tab === "stockmap" && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-[#1F1D1B]">Stock Group Mapping</h2>
               <StockMapCard accounts={accounts} />
             </div>
           )}
@@ -684,7 +684,6 @@ export default function AccountingPage() {
           {tab === "stocktake" && <StockTakeTab />}
           {tab === "maint" && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-[#1F1D1B]">Account Maintenance</h2>
               <GstRateCard />
               <FyeCard />
               <CleanupReportCard />
@@ -786,7 +785,7 @@ function CleanupReportCard() {
                 <p className="text-xs font-semibold text-[#9A3A2D] mb-1">Production orders with cost but no product line ({data.posWithoutCategory.length}) — set Sofa/Bedframe on the order:</p>
                 <div className="flex flex-wrap gap-2">
                   {data.posWithoutCategory.slice(0, 40).map((p) => (
-                    <span key={p.poNumber} className="inline-flex items-center gap-1.5 rounded-full border border-[#F7C1C1] bg-[#FCEBEB] px-2 py-0.5 text-xs tabular-nums">{p.poNumber} · {formatCurrency(p.costSen)}</span>
+                    <span key={p.poNumber} className="inline-flex items-center gap-1.5 rounded-full border border-[#F7C1C1] bg-[#FCEBEB] px-2 py-0.5 text-xs tabular-nums">{p.poNumber} · <Amount sen={p.costSen} /></span>
                   ))}
                 </div>
               </div>
@@ -910,7 +909,7 @@ function ContraCard() {
             </select>
           </div>
           {customerId && (
-            <span className="text-sm text-[#6B7280] pb-2">Customer owes <span className="font-medium text-[#1F1D1B] tabular-nums">{formatCurrency(arUnpaidSen)}</span></span>
+            <span className="text-sm text-[#6B7280] pb-2">Customer owes <span className="font-medium text-[#1F1D1B] tabular-nums"><Amount sen={arUnpaidSen} /></span></span>
           )}
           <Button variant="primary" size="sm" disabled={!canPost || busy} onClick={handlePost}>
             {busy ? "Posting…" : `Contra ${formatCurrency(totalSen)}`}
@@ -941,7 +940,7 @@ function ContraCard() {
                     </td>
                     <td className="px-2 py-1 tabular-nums text-xs">{p.piNo}</td>
                     <td className="px-2 py-1 text-xs text-[#6B7280]">{p.invoiceDate ?? ""}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(p.amountSen)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums"><Amount sen={p.amountSen} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -1061,10 +1060,10 @@ function LandedCostCard() {
                 <tr key={b.id} className="border-b border-[#F0ECE9]">
                   <td className="px-2 py-1"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{b.itemCode ?? ""}</span>{b.name ?? ""}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{b.originalQty}</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(b.unitCostSen)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(b.valueSen)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums font-medium">{formatCurrency(b.allocSen)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(b.newUnitCostSen)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums"><Amount sen={b.unitCostSen} /></td>
+                  <td className="px-2 py-1 text-right tabular-nums"><Amount sen={b.valueSen} /></td>
+                  <td className="px-2 py-1 text-right tabular-nums font-medium"><Amount sen={b.allocSen} /></td>
+                  <td className="px-2 py-1 text-right tabular-nums"><Amount sen={b.newUnitCostSen} /></td>
                 </tr>
               ))}
             </tbody>
@@ -2011,7 +2010,6 @@ function StockTakeTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Month-End Stock Take</h2>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Enter the closing stock value per material group at each month-end. The P&amp;L
             uses it as that month&apos;s closing (and the next month&apos;s opening), so material
@@ -2155,7 +2153,7 @@ function StockTakeTab() {
                             {n}
                             {missing > 0 && <span className="ml-1 text-[10px] text-[#9A3A2D]">({missing} no price)</span>}
                           </td>
-                          <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(groupSen(g))}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={groupSen(g)} /></td>
                           <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">{prev != null ? formatCurrency(prev) : "—"}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">{cur != null ? formatCurrency(cur) : "—"}</td>
                         </tr>
@@ -2165,7 +2163,7 @@ function StockTakeTab() {
                       <td />
                       <td className="px-2 py-1.5">Ticked groups</td>
                       <td />
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(totalOn)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={totalOn} /></td>
                       <td />
                       <td />
                     </tr>
@@ -2613,7 +2611,6 @@ function OpeningStockTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Opening Stock</h2>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Per-material cutover layer for the FIFO material-cost report: the
             quantity on hand and its unit cost as of the switch date. Fill once
@@ -2885,7 +2882,7 @@ function OverviewTab({
           <CardContent className="p-2.5 flex items-center justify-between">
             <div>
               <p className="text-xs text-[#6B7280]">AR Outstanding</p>
-              <p className="text-xl font-bold text-[#9C6F1E]">{formatCurrency(totalAR)}</p>
+              <p className="text-xl font-bold text-[#9C6F1E]"><Amount sen={totalAR} /></p>
             </div>
             <TrendingUp className="h-5 w-5 text-[#9C6F1E]" />
           </CardContent>
@@ -2894,7 +2891,7 @@ function OverviewTab({
           <CardContent className="p-2.5 flex items-center justify-between">
             <div>
               <p className="text-xs text-[#6B7280]">AP Outstanding</p>
-              <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(totalAP)}</p>
+              <p className="text-xl font-bold text-[#3E6570]"><Amount sen={totalAP} /></p>
             </div>
             <TrendingDown className="h-5 w-5 text-[#3E6570]" />
           </CardContent>
@@ -2958,7 +2955,7 @@ function AgingCard({
               <div key={item.period} className="space-y-1">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-[#4B5563]">{item.period}</span>
-                  <span className="font-medium text-[#1F1D1B]">{formatCurrency(item.amountSen)}</span>
+                  <span className="font-medium text-[#1F1D1B]"><Amount sen={item.amountSen} /></span>
                 </div>
                 <div className="h-2 bg-[#F0ECE9] rounded-full overflow-hidden">
                   <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
@@ -2968,7 +2965,7 @@ function AgingCard({
           })}
           <div className="flex items-center justify-between text-sm font-semibold pt-2 border-t border-[#E2DDD8]">
             <span className="text-[#1F1D1B]">Total</span>
-            <span className="text-[#1F1D1B]">{formatCurrency(total)}</span>
+            <span className="text-[#1F1D1B]"><Amount sen={total} /></span>
           </div>
         </div>
       </CardContent>
@@ -3239,7 +3236,7 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
     <div className="space-y-4">
       {confirmDialog}
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Chart of Accounts</h2>
+        <span aria-hidden="true" />
         <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
           <Plus className="h-4 w-4" /> Add Account
         </Button>
@@ -3491,7 +3488,7 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
                         </select>
                       )}
                       <span className={`font-medium ${node.balance < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                        {formatCurrency(Math.abs(node.balance))}
+                        <Amount sen={Math.abs(node.balance)} />
                         {node.balance < 0 ? " CR" : ""}
                       </span>
                       <div className="flex gap-1">
@@ -3549,7 +3546,7 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
                 </span>
               </div>
               <span className="font-semibold text-[#1F1D1B]">
-                {formatCurrency(typeAccounts.filter((a) => a.isPostable !== false).reduce((s, a) => s + a.balance, 0))}
+                <Amount sen={typeAccounts.filter((a) => a.isPostable !== false).reduce((s, a) => s + a.balance, 0)} />
               </span>
             </div>
             {isExpanded && (
@@ -3832,7 +3829,7 @@ function JournalsTab({
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Journal Entries</h2>
+        <span aria-hidden="true" />
         <Button variant="primary" size="sm" onClick={() => { setEditingJv(null); setShowForm(!showForm); }}>
           <FileText className="h-4 w-4" /> New Journal Entry
         </Button>
@@ -3945,9 +3942,9 @@ function JournalsTab({
                         </tr>
                       ))}
                       <tr className="border-t-2 border-[#1F1D1B] font-semibold">
-                        <td className="px-3 py-1.5" colSpan={2}>Total{dr !== cr && <span className="ml-2 text-xs font-normal text-[#9A3A2D]">not balanced — DR {formatCurrency(dr)} vs CR {formatCurrency(cr)}</span>}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(dr)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(cr)}</td>
+                        <td className="px-3 py-1.5" colSpan={2}>Total{dr !== cr && <span className="ml-2 text-xs font-normal text-[#9A3A2D]">not balanced — DR <Amount sen={dr} /> vs CR <Amount sen={cr} /></span>}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={dr} /></td>
+                        <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={cr} /></td>
                       </tr>
                     </tbody>
                   </table>
@@ -4212,15 +4209,15 @@ function JournalEntryForm({
                 <tr className="border-t-2 border-[#E2DDD8]">
                   <td className="py-2 px-2 font-semibold text-[#1F1D1B]">Totals</td>
                   <td className={`py-2 px-2 text-right font-semibold ${isBalanced ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}`}>
-                    {formatCurrency(totalDebit)}
+                    <Amount sen={totalDebit} />
                   </td>
                   <td className={`py-2 px-2 text-right font-semibold ${isBalanced ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}`}>
-                    {formatCurrency(totalCredit)}
+                    <Amount sen={totalCredit} />
                   </td>
                   <td colSpan={2} className="py-2 px-2">
                     {!isBalanced && totalDebit > 0 && (
                       <span className="text-xs text-[#9A3A2D]">
-                        Difference: {formatCurrency(Math.abs(totalDebit - totalCredit))}
+                        Difference: <Amount sen={Math.abs(totalDebit - totalCredit)} />
                       </span>
                     )}
                     {droppedJeLines > 0 && (
@@ -4376,13 +4373,13 @@ ${rows}
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-[#6B7280]">Debtor control (ledger{data.controls.filter((x) => x.code !== "305-0000").map((x) => ` ${x.code}`).join(",")})</p>
-              <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(data.tradeControlSen)}</p>
+              <p className="text-xl font-bold text-[#3E6570]"><Amount sen={data.tradeControlSen} /></p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-[#6B7280]">Outstanding from invoices (gross)</p>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.invoiceOutstandingSen)}</p>
+              <p className="text-xl font-bold text-[#1F1D1B]"><Amount sen={data.invoiceOutstandingSen} /></p>
               <div className="mt-1">{drift(data.driftControlVsInvoicesSen)}</div>
             </CardContent>
           </Card>
@@ -4394,7 +4391,7 @@ ${rows}
                   {rebuilding ? "Recalculating…" : "Recalculate"}
                 </Button>
               </div>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.customerCounterSen)}</p>
+              <p className="text-xl font-bold text-[#1F1D1B]"><Amount sen={data.customerCounterSen} /></p>
               <div className="mt-1">{drift(data.driftCounterVsInvoicesSen)}</div>
             </CardContent>
           </Card>
@@ -4448,7 +4445,7 @@ ${rows}
                 <tbody>
                   <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
                     <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
+                    <td className="px-3 py-1.5 text-right font-medium"><Amount sen={stmt.openingSen} /></td>
                   </tr>
                   {stmt.rows.map((r, i) => (
                     <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
@@ -4457,12 +4454,12 @@ ${rows}
                       <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
                       <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
                       <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
+                      <td className="px-3 py-1.5 text-right font-medium"><Amount sen={r.runningSen} /></td>
                     </tr>
                   ))}
                   <tr className="border-t border-[#1F1D1B] font-semibold">
                     <td className="px-3 py-2" colSpan={5}>Closing balance</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
+                    <td className="px-3 py-2 text-right"><Amount sen={stmt.closingSen} /></td>
                   </tr>
                 </tbody>
               </table>
@@ -4525,8 +4522,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
       <ARControlPanel company={company} />
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Accounts Receivable</h2>
-          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#9C6F1E]">{formatCurrency(totalOutstanding)}</span></p>
+          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#9C6F1E]"><Amount sen={totalOutstanding} /></span></p>
           <p className="text-xs text-[#9CA3AF]">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>.</p>
         </div>
         <ExportButtons
@@ -4573,7 +4569,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                       <td className={`py-3 px-4 text-right ${ar.days60Sen < 0 ? "text-[#9A3A2D]" : ar.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ar.days60Sen !== 0 ? formatCurrency(ar.days60Sen) : "-"}</td>
                       <td className={`py-3 px-4 text-right ${ar.days90Sen < 0 ? "text-[#9A3A2D]" : ar.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ar.days90Sen !== 0 ? formatCurrency(ar.days90Sen) : "-"}</td>
                       <td className={`py-3 px-4 text-right ${ar.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ar.over90Sen !== 0 ? formatCurrency(ar.over90Sen) : "-"}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
+                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]"><Amount sen={total} /></td>
                     </tr>
                     {open && (ar.docs ?? []).map((d, i) => (
                       <tr key={`d-${i}`} className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
@@ -4583,7 +4579,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                             {d.mo === b ? formatCurrency(d.amountSen) : ""}
                           </td>
                         ))}
-                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
+                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}><Amount sen={d.amountSen} /></td>
                       </tr>
                     ))}
                     {open && !(ar.docs ?? []).length && (
@@ -4598,12 +4594,12 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
               <tfoot>
                 <tr className="bg-[#F0ECE9]/50 font-semibold">
                   <td className="py-3 px-4 text-[#1F1D1B]">Total</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.currentSen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days30Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days60Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.over90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(totalOutstanding)}</td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.currentSen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.days30Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.days60Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.days90Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.over90Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={totalOutstanding} /></td>
                 </tr>
               </tfoot>
             </table>
@@ -4683,18 +4679,18 @@ function APControlPanel({ company = "" }: { company?: string }) {
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-[#6B7280]">Creditor control (ledger{data.controls.filter((x) => x.code !== "405-0000").map((x) => ` ${x.code}`).join(",")})</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{formatCurrency(data.tradeControlSen)}</p>
+              <p className="text-xl font-bold text-[#9A3A2D]"><Amount sen={data.tradeControlSen} /></p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-[#6B7280]">Net owed to suppliers (bills − advances)</p>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.netOutstandingSen ?? data.piOutstandingSen)}</p>
+              <p className="text-xl font-bold text-[#1F1D1B]"><Amount sen={data.netOutstandingSen ?? data.piOutstandingSen} /></p>
               <div className="mt-1 flex items-center gap-2 flex-wrap">
                 {drift(data.driftControlVsPiSen)}
                 {(data.unappliedAdvanceSen ?? 0) > 0 && (
                   <span className="text-xs text-[#6B7280]">
-                    bills {formatCurrency(data.piOutstandingSen)} − un-knocked advances {formatCurrency(data.unappliedAdvanceSen ?? 0)}
+                    bills <Amount sen={data.piOutstandingSen} /> − un-knocked advances <Amount sen={data.unappliedAdvanceSen ?? 0} />
                   </span>
                 )}
               </div>
@@ -4747,7 +4743,7 @@ function APControlPanel({ company = "" }: { company?: string }) {
                 <tbody>
                   <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
                     <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
+                    <td className="px-3 py-1.5 text-right font-medium"><Amount sen={stmt.openingSen} /></td>
                   </tr>
                   {stmt.rows.map((r, i) => (
                     <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
@@ -4756,12 +4752,12 @@ function APControlPanel({ company = "" }: { company?: string }) {
                       <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
                       <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
                       <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
+                      <td className="px-3 py-1.5 text-right font-medium"><Amount sen={r.runningSen} /></td>
                     </tr>
                   ))}
                   <tr className="border-t border-[#1F1D1B] font-semibold">
                     <td className="px-3 py-2" colSpan={5}>Closing balance</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
+                    <td className="px-3 py-2 text-right"><Amount sen={stmt.closingSen} /></td>
                   </tr>
                 </tbody>
               </table>
@@ -5077,7 +5073,6 @@ function SupplierDiscountTab() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Supplier Discount</h2>
         <p className="text-xs text-[#6B7280]">Record a discount/credit from a supplier. Optionally knock it off specific unpaid bills.</p>
       </div>
 
@@ -5180,8 +5175,8 @@ function SupplierDiscountTab() {
                             </td>
                             <td className="px-3 py-1.5 tabular-nums text-xs font-medium">{pi.piNo}</td>
                             <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{formatDateDMY(pi.invoiceDate)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-xs">{formatCurrency(pi.amountSen)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-xs font-medium">{formatCurrency(outstandingOf(pi))}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-xs"><Amount sen={pi.amountSen} /></td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-xs font-medium"><Amount sen={outstandingOf(pi)} /></td>
                             <td className="px-3 py-1.5 text-right">
                               <input
                                 type="number" step="0.01" min="0" inputMode="decimal"
@@ -5211,9 +5206,9 @@ function SupplierDiscountTab() {
               )}
               {/* Live footer */}
               <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-[#6B7280] pt-1">
-                <span>Allocated: <span className="font-semibold text-[#1F1D1B]">{formatCurrency(allocatedSen)}</span></span>
-                <span>Discount total: <span className="font-semibold text-[#1F1D1B]">{formatCurrency(discountTotalSen)}</span></span>
-                <span>Unallocated: <span className={`font-semibold ${unallocatedSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(unallocatedSen)}</span></span>
+                <span>Allocated: <span className="font-semibold text-[#1F1D1B]"><Amount sen={allocatedSen} /></span></span>
+                <span>Discount total: <span className="font-semibold text-[#1F1D1B]"><Amount sen={discountTotalSen} /></span></span>
+                <span>Unallocated: <span className={`font-semibold ${unallocatedSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}><Amount sen={unallocatedSen} /></span></span>
               </div>
             </div>
           )}
@@ -5380,8 +5375,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       <TradeFinanceBlock />
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Accounts Payable</h2>
-          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#3E6570]">{formatCurrency(totalOutstanding)}</span></p>
+          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#3E6570]"><Amount sen={totalOutstanding} /></span></p>
           <p className="text-xs text-[#9CA3AF]">Read-only. Pay a supplier bill on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>.</p>
         </div>
         <ExportButtons
@@ -5428,7 +5422,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                       <td className={`py-3 px-4 text-right ${ap.days60Sen < 0 ? "text-[#9A3A2D]" : ap.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ap.days60Sen !== 0 ? formatCurrency(ap.days60Sen) : "-"}</td>
                       <td className={`py-3 px-4 text-right ${ap.days90Sen < 0 ? "text-[#9A3A2D]" : ap.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ap.days90Sen !== 0 ? formatCurrency(ap.days90Sen) : "-"}</td>
                       <td className={`py-3 px-4 text-right ${ap.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ap.over90Sen !== 0 ? formatCurrency(ap.over90Sen) : "-"}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
+                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]"><Amount sen={total} /></td>
                     </tr>
                     {open && (ap.docs ?? []).map((d, i) => (
                       <tr key={`d-${i}`} className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
@@ -5438,7 +5432,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                             {d.mo === b ? formatCurrency(d.amountSen) : ""}
                           </td>
                         ))}
-                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
+                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}><Amount sen={d.amountSen} /></td>
                       </tr>
                     ))}
                     {open && !(ap.docs ?? []).length && (
@@ -5453,12 +5447,12 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
               <tfoot>
                 <tr className="bg-[#F0ECE9]/50 font-semibold">
                   <td className="py-3 px-4 text-[#1F1D1B]">Total</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.currentSen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days30Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days60Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.over90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(totalOutstanding)}</td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.currentSen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.days30Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.days60Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.days90Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={rows.reduce((s, a) => s + a.over90Sen, 0)} /></td>
+                  <td className="py-3 px-4 text-right"><Amount sen={totalOutstanding} /></td>
                 </tr>
               </tfoot>
             </table>
@@ -5770,7 +5764,7 @@ function CostExpenseClassesTab() {
               <tr className="bg-[#1F1D1B] text-white font-bold">
                 <td className="px-3 py-1.5 text-left sticky left-0 bg-[#1F1D1B]">TOTAL {title}</td>
                 {sectionMonths.map((m, i) => <td key={i} className="px-2 py-1.5 text-right tabular-nums">{m === 0 ? "-" : formatCurrency(m)}</td>)}
-                <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(sectionTotal)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={sectionTotal} red={false} /></td>
               </tr>
             </tbody>
           </table>
@@ -6926,13 +6920,13 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
               <tr className="border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5]" onClick={() => setOpenParty(openParty === r.partyId ? null : r.partyId)}>
                 <td className="px-4 py-1.5 font-medium">{openParty === r.partyId ? "▾ " : "▸ "}{r.partyName}</td>
                 {cell(r.current)}{cell(r.d31_60)}{cell(r.d61_90)}{cell(r.d91_120)}{cell(r.d120plus, true)}
-                <td className="px-4 py-1.5 text-right tabular-nums font-semibold">{formatCurrency(r.totalSen)}</td>
+                <td className="px-4 py-1.5 text-right tabular-nums font-semibold"><Amount sen={r.totalSen} /></td>
               </tr>
               {openParty === r.partyId && data.bills.filter((b) => b.partyId === r.partyId).map((b) => (
                 <tr key={b.billNo} className="border-b border-[#F0ECE9] bg-[#FAF8F5] text-xs text-[#6B7280]">
                   <td className="px-4 py-1 pl-8">{b.billNo} · {b.billDate}</td>
                   <td colSpan={5} />
-                  <td className="px-4 py-1 text-right tabular-nums">{formatCurrency(b.outstandingSen)}</td>
+                  <td className="px-4 py-1 text-right tabular-nums"><Amount sen={b.outstandingSen} /></td>
                 </tr>
               ))}
             </React.Fragment>
@@ -6940,7 +6934,7 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
           <tr className="border-t border-[#C9C2BA] bg-[#F7F5F2] font-semibold">
             <td className="px-4 py-1.5">Total outstanding</td>
             <td colSpan={5} />
-            <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(grand)}</td>
+            <td className="px-4 py-1.5 text-right tabular-nums"><Amount sen={grand} /></td>
           </tr>
         </tbody>
       </table>
@@ -7397,7 +7391,7 @@ function ScanVouchers({ accounts, bankCash, onDone, onOpenInForm }: {
                                 const hint = scanGuessHint(l.guess);
                                 return (
                                   <div key={`${d.key}:${li}`} className="mb-1.5">
-                                    <div className="flex justify-between gap-2 text-[11px] text-[#6B7280]"><span className="truncate" title={l.description}>{l.description || "—"}</span><span className="tabular-nums">{formatCurrency(l.amountSen)}</span></div>
+                                    <div className="flex justify-between gap-2 text-[11px] text-[#6B7280]"><span className="truncate" title={l.description}>{l.description || "—"}</span><span className="tabular-nums"><Amount sen={l.amountSen} /></span></div>
                                     {l.isTax ? (
                                       <div className="text-[11px] text-[#1F1D1B]">706-0000 · SST, its own line</div>
                                     ) : locked ? (
@@ -7412,7 +7406,7 @@ function ScanVouchers({ accounts, bankCash, onDone, onOpenInForm }: {
                                 );
                               }))}
                             </td>
-                            <td className="py-1.5 pr-2 text-right tabular-nums whitespace-nowrap">{formatCurrency(scanVoucherTotal(v))}</td>
+                            <td className="py-1.5 pr-2 text-right tabular-nums whitespace-nowrap"><Amount sen={scanVoucherTotal(v)} /></td>
                             <td className="py-1.5 min-w-[9rem]">
                               {!done && dups.map((d) => <div key={d.key} className="text-[#9A3A2D] font-semibold">Already recorded: {d.billNo} → {knownRefLabel(d.duplicateOf ?? "")}</div>)}
                               {v.state === "created" && <span className="rounded-full bg-[#EAF3DE] text-[#27500A] px-2 py-0.5 font-semibold">{v.result}</span>}
@@ -7598,7 +7592,6 @@ function SelfCheckTab() {
     <div className="space-y-4">
       <div className="flex justify-between items-start flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Self-check</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every consistency probe on one page. Green = ties to the sen · Red = something to fix · Amber = needs a look. Read-only; each card links to where the fix lives.</p>
         </div>
         <div className="flex items-center gap-3">
@@ -7630,7 +7623,7 @@ function SelfCheckTab() {
                       {k.items.map((it, i) => (
                         <tr key={i} className="border-t border-[#F0ECE9]">
                           <td className="py-1 pr-3 w-full max-w-0"><div className="truncate" title={it.note ?? it.label}>{it.label}</div>{it.note && <div className="text-[10px] text-[#9CA3AF] truncate" title={it.note}>{it.note}</div>}</td>
-                          {it.amount !== undefined && <td className={`py-1 text-right tabular-nums whitespace-nowrap ${it.amount < 0 ? "text-[#9A3A2D]" : ""}`}>{formatCurrency(it.amount)}</td>}
+                          {it.amount !== undefined && <td className={`py-1 text-right tabular-nums whitespace-nowrap ${it.amount < 0 ? "text-[#9A3A2D]" : ""}`}><Amount sen={it.amount} /></td>}
                         </tr>
                       ))}
                     </tbody>
@@ -7669,7 +7662,6 @@ function CorrectionsTab() {
     <div className="space-y-4">
       <div className="flex justify-between items-start flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Corrections</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every posted document that was later edited or cancelled, and every reconciliation month re-opened — who, when, how much reversed and re-posted. Read from the ledger itself.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -7811,7 +7803,6 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
     <div className="space-y-4">
       <div className="flex justify-between items-start flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">AP Invoices</h2>
           <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
         </div>
         <div className="flex gap-2">
@@ -7821,9 +7812,9 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
       </div>
       {data && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · all</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.openSen)}</div><div className="text-[11px] text-[#9CA3AF]">{data.totals.openCount} invoice{data.totals.openCount === 1 ? "" : "s"}</div></CardContent></Card>
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · AP bills</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.apOpenSen)}</div></CardContent></Card>
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · purchase invoices</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.piOpenSen)}</div></CardContent></Card>
+          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · all</div><div className="text-lg font-semibold tabular-nums"><Amount sen={data.totals.openSen} /></div><div className="text-[11px] text-[#9CA3AF]">{data.totals.openCount} invoice{data.totals.openCount === 1 ? "" : "s"}</div></CardContent></Card>
+          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · AP bills</div><div className="text-lg font-semibold tabular-nums"><Amount sen={data.totals.apOpenSen} /></div></CardContent></Card>
+          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · purchase invoices</div><div className="text-lg font-semibold tabular-nums"><Amount sen={data.totals.piOpenSen} /></div></CardContent></Card>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -7851,7 +7842,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <SearchableSelect value={supplier} onChange={setSupplier} options={supplierOpts} placeholder="All suppliers" allowClear />
         </div>
         <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search no / supplier / ref" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-56" />
-        <span className="ml-auto text-xs text-[#6B7280]">Shown outstanding <span className="font-semibold tabular-nums text-[#1F1D1B]">{formatCurrency(shownSen)}</span></span>
+        <span className="ml-auto text-xs text-[#6B7280]">Shown outstanding <span className="font-semibold tabular-nums text-[#1F1D1B]"><Amount sen={shownSen} /></span></span>
       </div>
       <Card>
         <CardContent className="p-0 overflow-x-auto">
@@ -7888,7 +7879,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.supplierRef}</td>
                     <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
                     <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{r.paidSen ? formatCurrency(r.paidSen) : "—"}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
@@ -7935,9 +7926,9 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <DetailField label="Bill date">{b.billDate}</DetailField>
               <DetailField label="Reference">{b.referenceNo || "—"}</DetailField>
               <DetailField label="Description" span={4}>{b.description || "—"}</DetailField>
-              <DetailField label="Total"><span className="tabular-nums">{formatCurrency(b.totalSen)}</span></DetailField>
-              <DetailField label="Paid"><span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span></DetailField>
-              <DetailField label="Outstanding"><span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span></DetailField>
+              <DetailField label="Total"><span className="tabular-nums"><Amount sen={b.totalSen} /></span></DetailField>
+              <DetailField label="Paid"><span className="tabular-nums"><Amount sen={b.paidAmountSen} /></span></DetailField>
+              <DetailField label="Outstanding"><span className="tabular-nums"><Amount sen={b.outstandingSen} /></span></DetailField>
               {b.isOpening && <DetailField label="Kind">Opening balance</DetailField>}
             </div>
             <div className="border border-[#E2DDD8] rounded-md overflow-x-auto">
@@ -7945,10 +7936,10 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Account</th><th className="text-left px-3 py-1.5 font-medium">Description</th><th className="text-right px-3 py-1.5 font-medium">Amount</th></tr></thead>
                 <tbody>
                   {b.items.map((it, i) => (
-                    <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap">{accountLabel(accounts, it.counterAccount)}</td><td className="px-3 py-1.5 text-[#6B7280]">{it.description || "—"}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(it.amountSen)}</td></tr>
+                    <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap">{accountLabel(accounts, it.counterAccount)}</td><td className="px-3 py-1.5 text-[#6B7280]">{it.description || "—"}</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={it.amountSen} /></td></tr>
                   ))}
-                  {b.taxSen ? <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5" colSpan={2}>Tax / SST</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(b.taxSen)}</td></tr> : null}
-                  <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(b.totalSen)}</td></tr>
+                  {b.taxSen ? <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5" colSpan={2}>Tax / SST</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={b.taxSen} /></td></tr> : null}
+                  <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={b.totalSen} /></td></tr>
                 </tbody>
               </table>
             </div>
@@ -8059,8 +8050,8 @@ function DocTrailBlock({ family, sourceId }: { family: "payment_voucher" | "supp
               ))}
               <tr className="border-t-2 border-[#1F1D1B] font-semibold">
                 <td className="px-3 py-1">Total</td>
-                <td className="px-3 py-1 text-right tabular-nums">{formatCurrency(dr)}</td>
-                <td className="px-3 py-1 text-right tabular-nums">{formatCurrency(cr)}</td>
+                <td className="px-3 py-1 text-right tabular-nums"><Amount sen={dr} /></td>
+                <td className="px-3 py-1 text-right tabular-nums"><Amount sen={cr} /></td>
               </tr>
             </tbody>
           </table>
@@ -8073,7 +8064,7 @@ function DocTrailBlock({ family, sourceId }: { family: "payment_voucher" | "supp
             <div className="text-[#9CA3AF]">No bank / cash line on the ledger yet.</div>
           ) : data.bank.map((b, i) => (
             <div key={i}>
-              <div className="font-medium text-[#1F1D1B]">{shortBankName(b.accountName) || b.accountCode} · {b.sen < 0 ? "out" : "in"} {formatCurrency(Math.abs(b.sen))}</div>
+              <div className="font-medium text-[#1F1D1B]">{shortBankName(b.accountName) || b.accountCode} · {b.sen < 0 ? "out" : "in"} <Amount sen={Math.abs(b.sen)} /></div>
               {b.matched
                 ? <div className="text-[#27500A]">✓ On the bank statement {b.statementDate}{b.statementText ? ` — ${b.statementText}` : ""}</div>
                 : b.hasStatements
@@ -8714,9 +8705,9 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
                     <td className="px-4 py-1.5">{b.partyName}</td>
                     <td className="px-4 py-1.5 text-xs text-[#6B7280] max-w-[16rem] truncate">{[b.referenceNo, b.description].filter(Boolean).join(" · ")}</td>
                     <td className="px-4 py-1.5">{b.billDate}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(b.totalSen)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(b.paidAmountSen)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums font-medium">{formatCurrency(b.outstandingSen)}</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums"><Amount sen={b.totalSen} /></td>
+                    <td className="px-4 py-1.5 text-right tabular-nums"><Amount sen={b.paidAmountSen} /></td>
+                    <td className="px-4 py-1.5 text-right tabular-nums font-medium"><Amount sen={b.outstandingSen} /></td>
                     <td className="px-4 py-1.5 text-center text-xs">
                       <LifecycleBadge state={b.lifecycleState} />
                       {(b.lifecycleState ?? "ACTIVE") === "ACTIVE" && b.status}
@@ -8775,7 +8766,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
                                         <span className="text-[#1F1D1B]">{acct?.name ?? ""}</span>
                                       </td>
                                       <td className="px-3 py-1.5 text-[#5A5550]">{it.description || <span className="text-[#C7C1BA]">—</span>}</td>
-                                      <td className="px-4 py-1.5 text-right tabular-nums font-medium text-[#1F1D1B]">{formatCurrency(it.amountSen)}</td>
+                                      <td className="px-4 py-1.5 text-right tabular-nums font-medium text-[#1F1D1B]"><Amount sen={it.amountSen} /></td>
                                     </tr>
                                   );
                                 })}
@@ -8785,20 +8776,20 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
                               {b.taxSen ? (
                                 <div className="flex justify-between text-[#6B7280]">
                                   <span>Tax / SST</span>
-                                  <span className="tabular-nums">{formatCurrency(b.taxSen)}</span>
+                                  <span className="tabular-nums"><Amount sen={b.taxSen} /></span>
                                 </div>
                               ) : null}
                               <div className="flex justify-between font-semibold text-[#1F1D1B] border-b border-[#E2DDD8] pb-1.5">
                                 <span>Total</span>
-                                <span className="tabular-nums">{formatCurrency(b.totalSen)}</span>
+                                <span className="tabular-nums"><Amount sen={b.totalSen} /></span>
                               </div>
                               <div className="flex justify-between text-[#6B7280]">
                                 <span>Paid</span>
-                                <span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span>
+                                <span className="tabular-nums"><Amount sen={b.paidAmountSen} /></span>
                               </div>
                               <div className={`flex justify-between font-semibold ${b.outstandingSen > 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
                                 <span>Outstanding</span>
-                                <span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span>
+                                <span className="tabular-nums"><Amount sen={b.outstandingSen} /></span>
                               </div>
                             </div>
                           </div>
@@ -9004,7 +8995,7 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
                 return (
                   <tr key={b.id} className="border-t border-[#F0ECE9]">
                     <td className="py-1 font-mono text-xs">{b.billNo}</td>
-                    <td className="py-1 text-right tabular-nums">{formatCurrency(b.outstandingSen)}</td>
+                    <td className="py-1 text-right tabular-nums"><Amount sen={b.outstandingSen} /></td>
                     <td className="py-1 text-right">
                       <input type="text" inputMode="decimal" disabled={row.full}
                         value={row.full ? (b.outstandingSen / 100).toFixed(2) : row.amountStr}
@@ -9142,7 +9133,7 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
                   <td className="px-4 py-1.5 font-mono text-xs">{g.paymentNo}</td>
                   <td className="px-4 py-1.5">{g.partyName}</td>
                   <td className="px-4 py-1.5">{g.date}</td>
-                  <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(g.totalSen)}</td>
+                  <td className="px-4 py-1.5 text-right tabular-nums"><Amount sen={g.totalSen} /></td>
                   <td className="px-4 py-1.5 text-center">{g.lines.length}</td>
                   <td className="px-4 py-1.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <span className="mr-2"><LifecycleBadge state={g.lifecycleState} /></span>
@@ -9166,7 +9157,7 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
               <div className="grid grid-cols-2 gap-3">
                 <div><p className="text-[#9CA3AF]">{side === "CREDITOR" ? "Creditor" : "Debtor"}</p><p className="font-medium">{detail.partyName}</p></div>
                 <div><p className="text-[#9CA3AF]">Date</p><p className="font-medium">{detail.date}</p></div>
-                <div><p className="text-[#9CA3AF]">Total</p><p className="font-bold text-[#3E6570]">{formatCurrency(detail.totalSen)}</p></div>
+                <div><p className="text-[#9CA3AF]">Total</p><p className="font-bold text-[#3E6570]"><Amount sen={detail.totalSen} /></p></div>
                 <div><p className="text-[#9CA3AF]">Status</p><p><LifecycleBadge state={detail.lifecycleState} /></p></div>
               </div>
               <div>
@@ -9178,7 +9169,7 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
                       {detail.lines.map((l) => (
                         <tr key={l.billId} className="border-t border-[#F0ECE9]">
                           <td className="px-3 py-1.5 font-mono">{l.billNo}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(l.amountSen)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={l.amountSen} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -9272,7 +9263,7 @@ function TrialBalanceTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Trial Balance</h2>
+        <span aria-hidden="true" />
         <div className="flex items-end gap-3">
           <div className="pb-0.5">
             <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
@@ -9327,8 +9318,8 @@ function TrialBalanceTab() {
                 ))}
                 <tr className="border-t-2 border-[#1F1D1B] font-semibold">
                   <td className="px-4 py-2" colSpan={2}>TOTAL</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(tb.totalDr)}</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(tb.totalCr)}</td>
+                  <td className="px-4 py-2 text-right"><Amount sen={tb.totalDr} /></td>
+                  <td className="px-4 py-2 text-right"><Amount sen={tb.totalCr} /></td>
                 </tr>
               </tbody>
             </table>
@@ -9454,9 +9445,9 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
         <div className="space-y-4">
           <Card>
             <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-              <span>TOTAL DR {formatCurrency(grandDrSen)}</span>
-              <span>TOTAL CR {formatCurrency(grandCrSen)}</span>
-              <span>Balance {formatCurrency(grandBalSen)}</span>
+              <span>TOTAL DR <Amount sen={grandDrSen} /></span>
+              <span>TOTAL CR <Amount sen={grandCrSen} /></span>
+              <span>Balance <Amount sen={grandBalSen} /></span>
             </CardContent>
           </Card>
           {data.parties.map((pl) => (
@@ -9464,7 +9455,7 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-semibold text-[#3E6570]">{pl.party.code ? `${pl.party.code} · ` : ""}{pl.party.name}</h3>
-                  <span className="text-sm text-[#6B7280]">Balance <span className="font-bold text-[#1F1D1B] tabular-nums">{formatCurrency(pl.closingSen)}</span></span>
+                  <span className="text-sm text-[#6B7280]">Balance <span className="font-bold text-[#1F1D1B] tabular-nums"><Amount sen={pl.closingSen} /></span></span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -9475,7 +9466,7 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr className="text-[#9CA3AF] italic"><td className="py-1 px-2" colSpan={5}>Balance b/f</td><td className="py-1 px-2 text-right tabular-nums">{formatCurrency(pl.openingSen)}</td></tr>
+                      <tr className="text-[#9CA3AF] italic"><td className="py-1 px-2" colSpan={5}>Balance b/f</td><td className="py-1 px-2 text-right tabular-nums"><Amount sen={pl.openingSen} /></td></tr>
                       {pl.rows.map((r, i) => (
                         <tr key={i} className="border-t border-[#F0ECE9]">
                           <td className="py-1 px-2 whitespace-nowrap">{r.date}</td>
@@ -9483,14 +9474,14 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
                           <td className="py-1 px-2 text-xs">{fmtType(r.type)}</td>
                           <td className="py-1 px-2 text-right tabular-nums">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
                           <td className="py-1 px-2 text-right tabular-nums">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                          <td className="py-1 px-2 text-right tabular-nums font-medium">{formatCurrency(r.runningSen)}</td>
+                          <td className="py-1 px-2 text-right tabular-nums font-medium"><Amount sen={r.runningSen} /></td>
                         </tr>
                       ))}
                       <tr className="border-t border-[#E2DDD8] bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                         <td className="py-1.5 px-2" colSpan={3}>TOTAL</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">{formatCurrency(partyDr(pl))}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">{formatCurrency(partyCr(pl))}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums bg-[#EAF3DE]">{formatCurrency(pl.closingSen)}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums"><Amount sen={partyDr(pl)} /></td>
+                        <td className="py-1.5 px-2 text-right tabular-nums"><Amount sen={partyCr(pl)} /></td>
+                        <td className="py-1.5 px-2 text-right tabular-nums bg-[#EAF3DE]"><Amount sen={pl.closingSen} /></td>
                       </tr>
                     </tbody>
                   </table>
@@ -9500,9 +9491,9 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
           ))}
           <Card>
             <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-              <span>TOTAL DR {formatCurrency(grandDrSen)}</span>
-              <span>TOTAL CR {formatCurrency(grandCrSen)}</span>
-              <span>Balance {formatCurrency(grandBalSen)}</span>
+              <span>TOTAL DR <Amount sen={grandDrSen} /></span>
+              <span>TOTAL CR <Amount sen={grandCrSen} /></span>
+              <span>Balance <Amount sen={grandBalSen} /></span>
             </CardContent>
           </Card>
         </div>
@@ -9669,7 +9660,6 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   if (ledger === "sales" || ledger === "purchase") {
     return (
       <div className="space-y-4">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">General Ledger</h2>
         <Card>
           <CardContent className="p-4 bg-[#F7F4EF] rounded-lg">
             <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Ledger</label>
@@ -9693,7 +9683,6 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">General Ledger</h2>
 
       {/* Filter bar — deliberately loud (owner: "不够明显") */}
       <Card>
@@ -9774,7 +9763,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
         <p className="text-sm text-[#6B7280]">
           <span className="tabular-nums text-xs mr-1">{gl.account.code}</span>
           <span className="font-medium text-[#1F1D1B]">{gl.account.name}</span>
-          {" · "}Opening {formatCurrency(gl.openingSen)} · Total DR {formatCurrency(gl.totalDebitSen ?? 0)} · Total CR {formatCurrency(gl.totalCreditSen ?? 0)} · Closing {formatCurrency(gl.closingSen)} ({gl.account.type})
+          {" · "}Opening <Amount sen={gl.openingSen} /> · Total DR <Amount sen={gl.totalDebitSen ?? 0} /> · Total CR <Amount sen={gl.totalCreditSen ?? 0} /> · Closing <Amount sen={gl.closingSen} /> ({gl.account.type})
         </p>
       )}
       {!account && view === "flat" && all && (
@@ -9799,8 +9788,8 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
             {report.accounts.length > 0 && (
               <Card>
                 <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-                  <span>TOTAL DR {formatCurrency(report.grandDr)}</span>
-                  <span>TOTAL CR {formatCurrency(report.grandCr)}</span>
+                  <span>TOTAL DR <Amount sen={report.grandDr} /></span>
+                  <span>TOTAL CR <Amount sen={report.grandCr} /></span>
                   <span className={report.grandDr - report.grandCr !== 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}>
                     {report.grandDr - report.grandCr === 0 ? "Balanced ✓" : `Diff ${formatCurrency(report.grandDr - report.grandCr)}`}
                   </span>
@@ -9826,7 +9815,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         {open ? "▾" : "▸"} Acc. No.: <span className="tabular-nums">{a.code}</span> {a.name}
                       </span>
                       <span className="text-xs text-[#6B7280] tabular-nums">
-                        DR = {formatCurrency(a.totalDr)} · CR = {formatCurrency(a.totalCr)} · Balance = <span className={a.closingSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}>{formatCurrency(a.closingSen)}</span>
+                        DR = <Amount sen={a.totalDr} /> · CR = <Amount sen={a.totalCr} /> · Balance = <span className={a.closingSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}><Amount sen={a.closingSen} /></span>
                       </span>
                     </button>
                     {open && (
@@ -9845,7 +9834,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <tbody>
                           <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
                             <td className="px-3 py-1" colSpan={6}>BALANCE B/F</td>
-                            <td className={`px-3 py-1 text-right tabular-nums ${a.openingSen < 0 ? "text-[#9A3A2D]" : ""}`}>{formatCurrency(a.openingSen)}</td>
+                            <td className={`px-3 py-1 text-right tabular-nums ${a.openingSen < 0 ? "text-[#9A3A2D]" : ""}`}><Amount sen={a.openingSen} /></td>
                           </tr>
                           {a.rows.map((r) => {
                             const href = sourceHref(r.sourceType, r.sourceId);
@@ -9863,15 +9852,15 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                                 </td>
                                 <td className="px-3 py-1 text-right tabular-nums">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
                                 <td className="px-3 py-1 text-right tabular-nums">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                                <td className={`px-3 py-1 text-right tabular-nums ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(r.runningSen)}</td>
+                                <td className={`px-3 py-1 text-right tabular-nums ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}><Amount sen={r.runningSen} /></td>
                               </tr>
                             );
                           })}
                           <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                             <td className="px-3 py-1.5" colSpan={4} />
-                            <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.totalDr)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.totalCr)}</td>
-                            <td className={`px-3 py-1.5 text-right tabular-nums ${a.closingSen < 0 ? "text-[#9A3A2D]" : ""} bg-[#EAF3DE]`}>{formatCurrency(a.closingSen)}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={a.totalDr} /></td>
+                            <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={a.totalCr} /></td>
+                            <td className={`px-3 py-1.5 text-right tabular-nums ${a.closingSen < 0 ? "text-[#9A3A2D]" : ""} bg-[#EAF3DE]`}><Amount sen={a.closingSen} /></td>
                           </tr>
                         </tbody>
                       </table>
@@ -9883,8 +9872,8 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
             })}
             <Card>
               <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-                <span>TOTAL DR {formatCurrency(report.grandDr)}</span>
-                <span>TOTAL CR {formatCurrency(report.grandCr)}</span>
+                <span>TOTAL DR <Amount sen={report.grandDr} /></span>
+                <span>TOTAL CR <Amount sen={report.grandCr} /></span>
                 <span className={report.grandDr - report.grandCr !== 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}>
                   {report.grandDr - report.grandCr === 0 ? "Balanced ✓" : `Diff ${formatCurrency(report.grandDr - report.grandCr)}`}
                 </span>
@@ -9928,15 +9917,15 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1.5 text-right">{t.debitSen ? formatCurrency(t.debitSen) : "-"}</td>
                     <td className="px-3 py-1.5 text-right">{t.creditSen ? formatCurrency(t.creditSen) : "-"}</td>
                     <td className={`px-3 py-1.5 text-right font-medium ${t.debitSen - t.creditSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                      {formatCurrency(t.debitSen - t.creditSen)}
+                      <Amount sen={t.debitSen - t.creditSen} />
                     </td>
                   </tr>
                 ))}
                 <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                   <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen, 0))}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.creditSen, 0))}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen - t.creditSen, 0))}</td>
+                  <td className="px-3 py-2 text-right"><Amount sen={all.accountTotals!.reduce((s, t) => s + t.debitSen, 0)} /></td>
+                  <td className="px-3 py-2 text-right"><Amount sen={all.accountTotals!.reduce((s, t) => s + t.creditSen, 0)} /></td>
+                  <td className="px-3 py-2 text-right"><Amount sen={all.accountTotals!.reduce((s, t) => s + t.debitSen - t.creditSen, 0)} /></td>
                 </tr>
               </tbody>
             </table>
@@ -9969,7 +9958,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     which the 10-row overscan absorbs. */}
                 <tr className="border-b border-[#F0ECE9] text-[#6B7280]" style={{ height: GL_ROW_PX }}>
                   <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(gl.openingSen)}</td>
+                  <td className="px-3 py-1.5 text-right font-medium"><Amount sen={gl.openingSen} /></td>
                 </tr>
                 {inquiryVirt.topSpacer}
                 {(inquiryVirt.active ? inquiryVirt.indices.map((i) => gl.rows[i]) : gl.rows).map((r) => {
@@ -9990,7 +9979,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       </td>
                       <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
                       <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className={`px-3 py-1.5 text-right font-medium ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(r.runningSen)}</td>
+                      <td className={`px-3 py-1.5 text-right font-medium ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}><Amount sen={r.runningSen} /></td>
                     </tr>
                   );
                 })}
@@ -9999,9 +9988,9 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     picked date range, with the closing balance alongside. */}
                 <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                   <td className="px-3 py-2" colSpan={3}>TOTAL{from || to ? " (filtered period)" : ""}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.totalDebitSen ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.totalCreditSen ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.closingSen)}</td>
+                  <td className="px-3 py-2 text-right"><Amount sen={gl.totalDebitSen ?? 0} /></td>
+                  <td className="px-3 py-2 text-right"><Amount sen={gl.totalCreditSen ?? 0} /></td>
+                  <td className="px-3 py-2 text-right"><Amount sen={gl.closingSen} /></td>
                 </tr>
               </tbody>
             </table>
@@ -10907,7 +10896,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     <table className="w-full text-xs">
       <thead><tr className="text-[#9CA3AF] text-left"><th className="py-1 pr-4 font-medium">From</th><th className="py-1 pr-4 font-medium">To</th><th className="py-1 font-medium text-right">Amount</th></tr></thead>
       <tbody>
-        <tr className="border-t border-[#F0ECE9]"><td className="py-1 pr-4">{accountLabel(accounts, row.ft.fromAccount)}</td><td className="py-1 pr-4">{accountLabel(accounts, row.ft.toAccount)}</td><td className="py-1 text-right tabular-nums">{formatCurrency(row.ft.amountSen)}</td></tr>
+        <tr className="border-t border-[#F0ECE9]"><td className="py-1 pr-4">{accountLabel(accounts, row.ft.fromAccount)}</td><td className="py-1 pr-4">{accountLabel(accounts, row.ft.toAccount)}</td><td className="py-1 text-right tabular-nums"><Amount sen={row.ft.amountSen} /></td></tr>
       </tbody>
     </table>
   ) : (
@@ -10922,19 +10911,19 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       <tbody>
         {row.sp?.lines.map((l) => (
           <tr key={l.id} className="border-t border-[#F0ECE9]">
-            <td className="py-1 pr-4 whitespace-nowrap tabular-nums">{l.piNo || <span>Advance / unallocated{l.amountSen > 0 ? <span className="ml-1 text-[10px] text-[#7A5B12]">· {formatCurrency(l.amountSen)} still unapplied</span> : null}</span>}</td>
+            <td className="py-1 pr-4 whitespace-nowrap tabular-nums">{l.piNo || <span>Advance / unallocated{l.amountSen > 0 ? <span className="ml-1 text-[10px] text-[#7A5B12]">· <Amount sen={l.amountSen} /> still unapplied</span> : null}</span>}</td>
             <td className="py-1 pr-4 text-[#6B7280]">{l.supplierInvoiceNo || ""}</td>
-            <td className="py-1 text-right tabular-nums">{formatCurrency(l.amountSen)}</td>
+            <td className="py-1 text-right tabular-nums"><Amount sen={l.amountSen} /></td>
           </tr>
         ))}
         {row.ocp?.lines.map((l) => (
           <tr key={l.billId} className="border-t border-[#F0ECE9]">
             <td className="py-1 pr-4 whitespace-nowrap tabular-nums">{l.billNo} <span className="text-[10px] text-[#9CA3AF]">other-creditor bill</span></td>
             <td className="py-1 pr-4" />
-            <td className="py-1 text-right tabular-nums">{formatCurrency(l.amountSen)}</td>
+            <td className="py-1 text-right tabular-nums"><Amount sen={l.amountSen} /></td>
           </tr>
         ))}
-        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="py-1 pr-4" colSpan={2}>Total</td><td className="py-1 text-right tabular-nums">{formatCurrency(row.totalSen)}</td></tr>
+        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="py-1 pr-4" colSpan={2}>Total</td><td className="py-1 text-right tabular-nums"><Amount sen={row.totalSen} /></td></tr>
       </tbody>
     </table>
   );
@@ -11176,7 +11165,6 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       {rowMenu.element}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Payment Vouchers</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every payment out, one door. <b>AP Payment</b> pays a creditor's bills (purchase invoices / other-creditor bills); <b>Payment Voucher</b> pays an expense. Draft → Prepared → Checked → Approved (posted), or Post now. Foreign-currency PIs, advance knock-off and trade-finance repayment: <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payment page</Link>. Payments recorded there and on <Link to="/accounting?tab=ocreditorpay" className="underline decoration-dotted text-[#6B5C32]">Other Creditor Payments</Link> are listed below too (badges <b>SP</b> / <b>OCP</b>) — same HPV number series, one list.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -11325,10 +11313,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               <td className="px-2.5 py-1 text-[#6B7280]">{b.ref}</td>
                               <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.date}</td>
                               <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.dueDate ?? "—"}</td>
-                              <td className="px-2.5 py-1 text-right tabular-nums">{formatCurrency(b.totalSen)}</td>
+                              <td className="px-2.5 py-1 text-right tabular-nums"><Amount sen={b.totalSen} /></td>
                               <td className="px-2.5 py-1 text-right tabular-nums">
-                                {formatCurrency(b.outstandingSen)}
-                                {b.reservedSen > 0 && <div className="text-[10px] text-[#9A3A2D]" title={`Already ticked on ${b.reservedBy.join(", ")}`}>−{formatCurrency(b.reservedSen)} on {b.reservedBy.join(", ")}</div>}
+                                <Amount sen={b.outstandingSen} />
+                                {b.reservedSen > 0 && <div className="text-[10px] text-[#9A3A2D]" title={`Already ticked on ${b.reservedBy.join(", ")}`}><Amount sen={-b.reservedSen} /> on {b.reservedBy.join(", ")}</div>}
                               </td>
                               <td className="px-2.5 py-1 text-right">
                                 <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={b.foreign || b.availableSen <= 0}
@@ -11342,7 +11330,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     </table>
                   </div>
                 )}
-                {apOverAlloc && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apOverAlloc.no}: more than the {formatCurrency(apOverAlloc.availableSen)} still payable.</div>}
+                {apOverAlloc && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apOverAlloc.no}: more than the <Amount sen={apOverAlloc.availableSen} /> still payable.</div>}
                 {apMoneyError && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apMoneyError}</div>}
               </div>
 
@@ -11351,10 +11339,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   <div>
                     <label className="text-xs font-medium text-[#6B7280] mb-1 block">Advance / unallocated (RM) <span className="ml-1 text-[#B4B2A9] cursor-help" title="Paid on top of the bills — sits as a prepayment on this supplier's ledger; knock it off later on the Supplier Payment page">ⓘ</span></label>
                     <input type="text" placeholder="0.00" value={apForm.advance} onChange={(e) => setApForm({ ...apForm, advance: e.target.value })} className={`${selCls} w-40 text-right tabular-nums ${isUnreadableMoney(apForm.advance) ? "text-[#9A3A2D]" : ""}`} />
-                    {(apBills?.advanceOpenSen ?? 0) > 0 && <div className="text-[11px] text-[#7A5B12] mt-1">This supplier already holds {formatCurrency(apBills!.advanceOpenSen)} unapplied advance — apply it on <Link to="/invoices/supplier-payments" className="underline decoration-dotted">Supplier Payment</Link> before paying more.</div>}
+                    {(apBills?.advanceOpenSen ?? 0) > 0 && <div className="text-[11px] text-[#7A5B12] mt-1">This supplier already holds <Amount sen={apBills!.advanceOpenSen} /> unapplied advance — apply it on <Link to="/invoices/supplier-payments" className="underline decoration-dotted">Supplier Payment</Link> before paying more.</div>}
                   </div>
                 ) : <div />}
-                <span className="text-sm text-[#6B7280]">Total <span className="text-lg font-semibold text-[#1F1D1B] tabular-nums">{apMoneyError ? "—" : formatCurrency(apTotalSen)}</span>{apAdvanceSen > 0 && <span className="ml-2 text-[11px] text-[#9CA3AF]">incl. advance {formatCurrency(apAdvanceSen)}</span>}</span>
+                <span className="text-sm text-[#6B7280]">Total <span className="text-lg font-semibold text-[#1F1D1B] tabular-nums">{apMoneyError ? "—" : formatCurrency(apTotalSen)}</span>{apAdvanceSen > 0 && <span className="ml-2 text-[11px] text-[#9CA3AF]">incl. advance <Amount sen={apAdvanceSen} /></span>}</span>
               </div>
                   </div>
                 </section>
@@ -11504,7 +11492,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-[11px] font-bold uppercase tracking-wide text-[#6B7280]">Line {i + 1}</span>
                             <div className="flex items-center gap-3">
-                              <span className="text-sm font-semibold tabular-nums text-[#1F1D1B]">{formatCurrency(toSen(l.amount))}</span>
+                              <span className="text-sm font-semibold tabular-nums text-[#1F1D1B]"><Amount sen={toSen(l.amount)} /></span>
                               <button onClick={() => setLines(lines.length > 1 ? lines.filter((_, j) => j !== i) : lines)} title="Remove line" className="text-[#B4B2A9] hover:text-[#9A3A2D] text-sm cursor-pointer">✕</button>
                             </div>
                           </div>
@@ -11727,12 +11715,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               ? <span title={g.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n")}>{g.sp.lines.filter((l) => l.purchaseInvoiceId).length} invoice{g.sp.lines.filter((l) => l.purchaseInvoiceId).length === 1 ? "" : "s"}{spAdvanceOpenSen(g.sp) > 0 ? " + advance" : ""}</span>
                               : <span title={(g.ocp?.lines ?? []).map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n")}>{g.ocp?.lines.length ?? 0} bill{(g.ocp?.lines.length ?? 0) === 1 ? "" : "s"}</span>}
                           </td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(g.totalSen)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={g.totalSen} /></td>
                           <td className="px-3 py-1.5 text-xs">
                             {g.state !== "ACTIVE"
                               ? <span className="text-[#9CA3AF]">{g.state}</span>
                               : g.sp && spAdvanceOpenSen(g.sp) > 0
-                                ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#FBF3E4] text-[#7A5B12]" title="Unapplied supplier advance — knock it off on the Supplier Payment page">Approved · advance open {formatCurrency(spAdvanceOpenSen(g.sp))}</span>
+                                ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#FBF3E4] text-[#7A5B12]" title="Unapplied supplier advance — knock it off on the Supplier Payment page">Approved · advance open <Amount sen={spAdvanceOpenSen(g.sp)} /></span>
                                 : <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title={`Posted on save — ${PAY_DOOR_HINT[g.door]}`}>Approved · paid</span>}
                           </td>
                           <td className="px-1 py-1 text-right w-8">{rowMenu.button(g.key, () => payRowMenu(g))}</td>
@@ -11771,7 +11759,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           ? <span>→ {shortBankName(accounts.find((a) => a.code === r.lines[0]?.accountCode)?.name) || r.lines[0]?.accountCode}</span>
                           : `${r.lines.length} line${r.lines.length === 1 ? "" : "s"}`}
                     </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                     <td className="px-3 py-1.5 text-xs">
                       {(() => {
                         if (r.status === "VOID") return <span className="text-[#9CA3AF]">VOID</span>;
@@ -11857,7 +11845,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <DetailField label="PV #">{r.pvNo.startsWith("DRAFT-") ? "(assigned at Check)" : r.pvNo}</DetailField>
                 <DetailField label="Voucher date">{r.date}</DetailField>
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
-                <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
+                <DetailField label="Total"><span className="tabular-nums"><Amount sen={r.totalSen} /></span></DetailField>
                 <DetailField label="Kind">{r.pvKind === "AP" ? "AP payment" : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
                 <DetailField label={r.pvKind === "AP" ? "Reference" : "Description (printed)"} span={4}>{r.description || "—"}</DetailField>
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
@@ -11878,10 +11866,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Bill</th><th className="text-left px-3 py-1.5 font-medium">Ref</th><th className="text-right px-3 py-1.5 font-medium">Paid</th></tr></thead>
                       <tbody>
                         {(r.allocs ?? []).map((a, i) => (
-                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
+                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={a.amountSen} /></td></tr>
                         ))}
-                        {(r.advanceSen ?? 0) > 0 && <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5">Advance / unallocated{(r.advanceOpenSen ?? 0) > 0 && isPosted(r) ? <span className="ml-1 text-[10px] text-[#7A5B12]">· {formatCurrency(r.advanceOpenSen ?? 0)} still unapplied</span> : null}</td><td /><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.advanceSen ?? 0)}</td></tr>}
-                        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>
+                        {(r.advanceSen ?? 0) > 0 && <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5">Advance / unallocated{(r.advanceOpenSen ?? 0) > 0 && isPosted(r) ? <span className="ml-1 text-[10px] text-[#7A5B12]">· <Amount sen={r.advanceOpenSen ?? 0} /> still unapplied</span> : null}</td><td /><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.advanceSen ?? 0} /></td></tr>}
+                        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td></tr>
                       </tbody>
                     </table>
                   ) : (
@@ -11889,10 +11877,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Account</th><th className="text-left px-3 py-1.5 font-medium">Description</th><th className="text-right px-3 py-1.5 font-medium">Amount</th></tr></thead>
                       <tbody>
                         {r.lines.map((l, i) => (
-                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap">{accountLabel(accounts, l.accountCode)}</td><td className="px-3 py-1.5 text-[#6B7280]">{l.description ?? ""}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(l.amountSen)}</td></tr>
+                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap">{accountLabel(accounts, l.accountCode)}</td><td className="px-3 py-1.5 text-[#6B7280]">{l.description ?? ""}</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={l.amountSen} /></td></tr>
                         ))}
                         {r.lines.length === 0 && <tr><td colSpan={3} className="px-3 py-2 text-xs text-[#9CA3AF]">No line detail.</td></tr>}
-                        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>
+                        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td></tr>
                       </tbody>
                     </table>
                   )}
@@ -11943,7 +11931,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <DetailField label={g.sp ? "Supplier" : g.ft ? "Transfer" : "Other creditor"} span={2}>{g.payee || "—"}</DetailField>
               <DetailField label="Paid from">{g.via ? accountLabel(accounts, g.via) : <span title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</DetailField>
               <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.ocp?.reference) || "—"}</DetailField>
-              <DetailField label="Total"><span className="tabular-nums">{formatCurrency(g.totalSen)}</span></DetailField>
+              <DetailField label="Total"><span className="tabular-nums"><Amount sen={g.totalSen} /></span></DetailField>
             </div>
             {/* Per door (owner 2026-10-02 「FUND TRANSFER无法edit?」): this line used to
                 say every door edits on its page — the old Fund Transfer page never
@@ -12240,16 +12228,16 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <tr key={a.invoiceId} className="border-t border-[#F0ECE9]">
             <td className="py-1 pr-4 font-mono">{a.invoiceNumber || <span className="text-[#9A3A2D]">(invoice missing)</span>}</td>
             <td className="py-1 pr-4 text-[#6B7280]">{a.invoiceDate ? formatDateDMY(a.invoiceDate) : "-"}</td>
-            <td className="py-1 text-right tabular-nums">{formatCurrency(a.amount)}</td>
+            <td className="py-1 text-right tabular-nums"><Amount sen={a.amount} /></td>
           </tr>
         ))}
         {r.cust && r.cust.allocations.length === 0 && <tr><td colSpan={3} className="py-1 text-[#6B7280]">Unallocated — money on account, not knocked off yet.</td></tr>}
-        {r.cust && r.cust.allocations.length > 0 && unallocatedSen(r.cust) > 0 && <tr><td colSpan={3} className="py-1 text-blue-600">{formatCurrency(unallocatedSen(r.cust))} still on account — not knocked off yet</td></tr>}
+        {r.cust && r.cust.allocations.length > 0 && unallocatedSen(r.cust) > 0 && <tr><td colSpan={3} className="py-1 text-blue-600"><Amount sen={unallocatedSen(r.cust)} /> still on account — not knocked off yet</td></tr>}
         {r.od && r.od.lines.map((l) => (
           <tr key={l.billId} className="border-t border-[#F0ECE9]">
             <td className="py-1 pr-4 font-mono">{l.billNo}</td>
             <td className="py-1 pr-4" />
-            <td className="py-1 text-right tabular-nums">{formatCurrency(l.amountSen)}</td>
+            <td className="py-1 text-right tabular-nums"><Amount sen={l.amountSen} /></td>
           </tr>
         ))}
         {r.or && r.or.lines.map((l, i) => {
@@ -12258,11 +12246,11 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <tr key={i} className="border-t border-[#F0ECE9]">
               <td className="py-1 pr-4 whitespace-nowrap">{l.accountCode}{nm ? ` · ${nm}` : ""}</td>
               <td className="py-1 pr-4">{l.description ?? ""}</td>
-              <td className="py-1 text-right tabular-nums">{formatCurrency(l.amountSen)}</td>
+              <td className="py-1 text-right tabular-nums"><Amount sen={l.amountSen} /></td>
             </tr>
           );
         })}
-        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="py-1 pr-4" colSpan={2}>Total</td><td className="py-1 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>
+        <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="py-1 pr-4" colSpan={2}>Total</td><td className="py-1 text-right tabular-nums"><Amount sen={r.totalSen} /></td></tr>
       </tbody>
     </table>
   );
@@ -12320,7 +12308,6 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       {rowMenu.element}
       <div className="flex justify-between items-center flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Receipts</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every payment in, one door. <b>Customer Receipt</b> settles sales invoices; <b>Other Debtor Receipt</b> settles other-debtor bills; <b>Official Receipt</b> books sundry income. Each posts on save.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -12413,7 +12400,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <td className="px-3 py-1.5">{r.from}</td>
                       <td className="px-3 py-1.5 text-xs">{r.via}</td>
                       <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.note}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                       <td className="px-3 py-1.5 text-xs"><LifecycleBadge state={r.lifecycleState} />{r.lifecycleState === "ACTIVE" && (r.cust ? r.cust.status : "POSTED")}</td>
                       <td className="px-1 py-1 text-right w-8" onClick={(e) => e.stopPropagation()}>{rowMenu.button(r.key, () => receiptRowMenu(r))}</td>
                     </tr>
@@ -12458,7 +12445,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <DetailField label="From" span={2}>{r.from || "—"}</DetailField>
               <DetailField label={r.cust ? "Method" : "Deposit to"}>{r.via ? (r.cust ? r.via : accountLabel(accounts, r.via)) : "—"}</DetailField>
               <DetailField label="Note" span={3}>{r.note || "—"}</DetailField>
-              <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
+              <DetailField label="Total"><span className="tabular-nums"><Amount sen={r.totalSen} /></span></DetailField>
             </div>
             <div className="border border-[#E2DDD8] rounded-md px-3 py-2">{detailTable(r)}</div>
           </DocDetailModal>
@@ -12536,7 +12523,7 @@ function FtDescriptionEditor({ ft, onClose, onSaved }: { ft: FtRow; onClose: () 
         <div className="p-5 space-y-4 text-sm">
           <div className="grid grid-cols-2 gap-3">
             <DetailField label="Date">{ft.date}</DetailField>
-            <DetailField label="Amount"><span className="tabular-nums">{formatCurrency(ft.amountSen)}</span></DetailField>
+            <DetailField label="Amount"><span className="tabular-nums"><Amount sen={ft.amountSen} /></span></DetailField>
             <DetailField label="From" span={2}>{ft.fromAccount} · {ft.fromName}</DetailField>
             <DetailField label="To" span={2}>{ft.toAccount} · {ft.toName}</DetailField>
           </div>
@@ -12677,7 +12664,6 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       {rowMenu.element}
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Fund Transfer</h2>
 
       <Card>
         <CardContent className="p-4 space-y-3">
@@ -12783,7 +12769,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1.5 text-xs">{r.fromAccount} {r.fromName}</td>
                     <td className="px-3 py-1.5 text-center text-[#6B7280]">→</td>
                     <td className="px-3 py-1.5 text-xs">{r.toAccount} {r.toName}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.amountSen} /></td>
                     <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.description ?? ""}</td>
                     <td className="px-3 py-1.5 text-right whitespace-nowrap">
                       {/* Owner 2026-08-28 「fund transfer 没有办法 print out
@@ -12822,12 +12808,12 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <DetailField label="Date">{r.date}</DetailField>
-              <DetailField label="Amount"><span className="tabular-nums">{formatCurrency(r.amountSen)}</span></DetailField>
+              <DetailField label="Amount"><span className="tabular-nums"><Amount sen={r.amountSen} /></span></DetailField>
               <DetailField label="From" span={2}>{r.fromAccount} · {r.fromName}</DetailField>
               <DetailField label="To" span={2}>{r.toAccount} · {r.toName}</DetailField>
               <DetailField label="Description" span={2}>{r.description || "—"}</DetailField>
             </div>
-            <div className="rounded-md bg-[#FAF8F5] border border-[#F0ECE9] px-3 py-2 text-xs text-[#6B7280]">Posted as DR {r.toAccount} / CR {r.fromAccount} — {formatCurrency(r.amountSen)}. Its description can be edited; to change the accounts, amount or date, void it and post it again.</div>
+            <div className="rounded-md bg-[#FAF8F5] border border-[#F0ECE9] px-3 py-2 text-xs text-[#6B7280]">Posted as DR {r.toAccount} / CR {r.fromAccount} — <Amount sen={r.amountSen} />. Its description can be edited; to change the accounts, amount or date, void it and post it again.</div>
           </DocDetailModal>
         );
       })()}
@@ -12906,7 +12892,6 @@ function StockSummaryTab() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Stock Summary</h2>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
           <div>
@@ -12939,30 +12924,30 @@ function StockSummaryTab() {
                 {data.rows.map((r) => (
                   <tr key={r.group} className="border-b border-[#F0ECE9]">
                     <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{r.accounts.stock}</span>{r.description}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.openingSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.purchasesSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.consumptionSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(r.closingSen)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.openingSen} /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.purchasesSen} /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.consumptionSen} /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-medium"><Amount sen={r.closingSen} /></td>
                   </tr>
                 ))}
                 <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
                   <td className="px-3 py-1.5">330-8000 WORK IN PROGRESS</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(data.wip.openingSen)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={data.wip.openingSen} /></td>
                   <td className="px-3 py-1.5 text-right" colSpan={2} />
-                  <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(data.wip.closingSen)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums font-medium"><Amount sen={data.wip.closingSen} /></td>
                 </tr>
                 <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
                   <td className="px-3 py-1.5">330-9000 FINISHED GOODS</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(data.fg.openingSen)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={data.fg.openingSen} /></td>
                   <td className="px-3 py-1.5 text-right" colSpan={2} />
-                  <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(data.fg.closingSen)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums font-medium"><Amount sen={data.fg.closingSen} /></td>
                 </tr>
                 <tr className="bg-[#F0ECE9]/60 font-semibold">
                   <td className="px-3 py-2">RAW MATERIAL TOTAL</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.openingSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.purchasesSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.consumptionSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.closingSen)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={data.totals.openingSen} /></td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={data.totals.purchasesSen} /></td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={data.totals.consumptionSen} /></td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={data.totals.closingSen} /></td>
                 </tr>
               </tbody>
             </table>
@@ -12987,29 +12972,29 @@ function StockSummaryTab() {
               <tbody>
                 <tr className="border-b border-[#F0ECE9]">
                   <td className="px-3 py-1.5">Sofa <span className="text-[11px] text-[#9CA3AF]">(incl. Accessory)</span></td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.sofa.materialSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.sofa.labourSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.salesByLine.sofa)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.sofa.materialSen} /></td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.sofa.labourSen} /></td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.salesByLine.sofa} /></td>
                 </tr>
                 <tr className="border-b border-[#F0ECE9]">
                   <td className="px-3 py-1.5">Bedframe</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.bedframe.materialSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.bedframe.labourSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.salesByLine.bedframe)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.bedframe.materialSen} /></td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.bedframe.labourSen} /></td>
+                  <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.salesByLine.bedframe} /></td>
                 </tr>
                 {(byLine.unallocated.materialSen !== 0 || byLine.unallocated.labourSen !== 0) && (
                   <tr className="border-b border-[#F0ECE9] text-[#9A3A2D]">
                     <td className="px-3 py-1.5">Unallocated <span className="text-[11px]">(issue/labour with no PO category — fix the PO)</span></td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.unallocated.materialSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.unallocated.labourSen)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.unallocated.materialSen} /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={byLine.unallocated.labourSen} /></td>
                     <td className="px-3 py-1.5 text-right" />
                   </tr>
                 )}
                 <tr className="bg-[#F0ECE9]/60 font-semibold">
                   <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.totalMaterialSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.totalLabourSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.salesByLine.sofa + byLine.salesByLine.bedframe)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={byLine.totalMaterialSen} /></td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={byLine.totalLabourSen} /></td>
+                  <td className="px-3 py-2 text-right tabular-nums"><Amount sen={byLine.salesByLine.sofa + byLine.salesByLine.bedframe} /></td>
                 </tr>
               </tbody>
             </table>
@@ -13057,15 +13042,15 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
               <tr key={w.poId} className="border-b border-[#F0ECE9]">
                 <td className="px-3 py-1.5 tabular-nums text-xs">{w.poNumber}{w.status ? <span className="text-[#9CA3AF]"> · {w.status}</span> : null}</td>
                 <td className="px-3 py-1.5 text-xs text-[#6B7280]">{w.category || "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(w.materialSen)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(w.labourSen)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={w.materialSen} /></td>
+                <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={w.labourSen} /></td>
                 <td className="px-3 py-1.5 text-right tabular-nums text-[#9CA3AF]">{w.completedSen ? formatCurrency(w.completedSen) : "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(w.wipSen)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums font-medium"><Amount sen={w.wipSen} /></td>
               </tr>
             ))}
             <tr className="bg-[#F0ECE9]/60 font-semibold">
               <td className="px-3 py-2" colSpan={5}>TOTAL WIP{wip.rows.length > 200 ? ` (showing top 200 of ${wip.rows.length})` : ""}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(wip.totalSen)}</td>
+              <td className="px-3 py-2 text-right tabular-nums"><Amount sen={wip.totalSen} /></td>
             </tr>
           </tbody>
         </table>
@@ -13189,7 +13174,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Labour — Month-end Posting</h2>
+        <span aria-hidden="true" />
         <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>Department → Account map</Button>
       </div>
 
@@ -13245,7 +13230,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
           </div>
           {data && (
             <>
-              <span className="text-sm text-[#6B7280] pb-1">Total labour cost <span className="font-semibold text-[#1F1D1B] tabular-nums">{formatCurrency(data.totalSen)}</span></span>
+              <span className="text-sm text-[#6B7280] pb-1">Total labour cost <span className="font-semibold text-[#1F1D1B] tabular-nums"><Amount sen={data.totalSen} /></span></span>
               {data.posted ? (
                 <>
                   <span className="text-xs text-[#27500A] pb-2">Already posted ✓ (CR {(data.postedCredits ?? []).map((c) => c.code).join(", ") || data.accrualAccount})</span>
@@ -13290,7 +13275,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <td className="px-3 py-1.5">{d.departmentCode}</td>
                       <td className="px-3 py-1.5 text-xs"><span className="tabular-nums text-[#6B7280] mr-1">{d.account}</span>{d.accountName}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{d.workers}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(d.costSen)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={d.costSen} /></td>
                     </tr>
                   ))}
                   {data.byDept.length === 0 && (
@@ -13314,7 +13299,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   {data.accounts.map((a) => (
                     <tr key={a.code} className="border-b border-[#F0ECE9]">
                       <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{a.code}</span>{a.name}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.costSen)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={a.costSen} /></td>
                       <td className="px-3 py-1.5 text-right" />
                     </tr>
                   ))}
@@ -13322,13 +13307,13 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <tr key={cr.code} className="border-b border-[#F0ECE9]">
                       <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{cr.code}</span>{cr.name}</td>
                       <td className="px-3 py-1.5 text-right" />
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(cr.sen)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={cr.sen} /></td>
                     </tr>
                   ))}
                   <tr className="bg-[#F0ECE9]/60 font-semibold">
                     <td className="px-3 py-2">TOTAL</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totalSen)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totalSen)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums"><Amount sen={data.totalSen} /></td>
+                    <td className="px-3 py-2 text-right tabular-nums"><Amount sen={data.totalSen} /></td>
                   </tr>
                 </tbody>
               </table>
@@ -13504,7 +13489,7 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Fixed Assets · Depreciation</h2>
+        <span aria-hidden="true" />
         <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
           <Plus className="h-4 w-4" /> Add Asset
         </Button>
@@ -13598,12 +13583,12 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <td className="px-3 py-1.5">{r.name}</td>
                       <td className="px-3 py-1.5 text-xs tabular-nums">{r.expenseAccount}</td>
                       <td className="px-3 py-1.5 text-xs tabular-nums">{r.accumAccount}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.amountSen} /></td>
                     </tr>
                   ))}
                   <tr className="bg-[#F0ECE9]/60 font-semibold">
                     <td className="px-3 py-2" colSpan={3}>TOTAL</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(preview.totalSen)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums"><Amount sen={preview.totalSen} /></td>
                   </tr>
                 </tbody>
               </table>
@@ -13638,9 +13623,9 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1.5">{r.name}{r.disposedAt ? " (disposed)" : ""}</td>
                     <td className="px-3 py-1.5 text-xs tabular-nums text-[#6B7280]">{r.assetAccount} / {r.accumAccount} / {r.expenseAccount}</td>
                     <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.purchaseDate}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.costSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.accumSen)}{r.lastMonth ? <span className="text-[11px] text-[#9CA3AF]"> (to {r.lastMonth})</span> : null}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(nbv(r))}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.costSen} /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums"><Amount sen={r.accumSen} />{r.lastMonth ? <span className="text-[11px] text-[#9CA3AF]"> (to {r.lastMonth})</span> : null}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-medium"><Amount sen={nbv(r)} /></td>
                     <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
                     <td className="px-3 py-1.5 text-right whitespace-nowrap">
                       {!r.disposedAt && (
@@ -13758,12 +13743,12 @@ function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope,
                     {list.map((r) => (
                       <tr key={`${m}-${r.name}`} className="border-b border-[#F0ECE9]">
                         <td className="px-4 py-1 text-xs w-full max-w-0"><div className="truncate" title={amountOf(r) < 0 ? `${r.name} — received, not yet knocked to invoices` : r.name}>{r.name}{amountOf(r) < 0 && <span className="ml-1 text-[10px] text-[#27500A]">· money in hand</span>}</div></td>
-                        <td className={`px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap ${amountOf(r) < 0 ? "text-[#27500A]" : ""}`}>{formatCurrency(amountOf(r))}</td>
+                        <td className={`px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap ${amountOf(r) < 0 ? "text-[#27500A]" : ""}`}><Amount sen={amountOf(r)} /></td>
                       </tr>
                     ))}
                     <tr className="border-b border-[#E2DDD8]">
                       <td className="px-4 py-1 text-xs font-medium">Total {monthLabel(m)}</td>
-                      <td className={`px-4 py-1 text-right tabular-nums text-xs font-medium whitespace-nowrap ${sub < 0 ? "text-[#27500A]" : ""}`}>{formatCurrency(sub)}</td>
+                      <td className={`px-4 py-1 text-right tabular-nums text-xs font-medium whitespace-nowrap ${sub < 0 ? "text-[#27500A]" : ""}`}><Amount sen={sub} /></td>
                     </tr>
                   </Fragment>
                 );
@@ -13771,12 +13756,12 @@ function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope,
               {collapsedCount > 0 && (
                 <tr className="border-b border-[#E2DDD8]">
                   <td className="px-4 py-1 text-[11px] text-[#9CA3AF]">{collapseLabel ?? "Opening era"} — {collapsedCount} part{collapsedCount === 1 ? "y" : "ies"}, handled in Aging / 期初</td>
-                  <td className="px-4 py-1 text-right tabular-nums text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatCurrency(collapsedSen)}</td>
+                  <td className="px-4 py-1 text-right tabular-nums text-[11px] text-[#9CA3AF] whitespace-nowrap"><Amount sen={collapsedSen} /></td>
                 </tr>
               )}
               <tr className={tone === "pay" ? "bg-[#F7E5E1]/60" : "bg-[#EAF3DE]/60"}>
                 <td className="px-4 py-1.5 text-sm font-semibold">{tone === "pay" ? "TOTAL TO REPAY" : "TOTAL TO RECEIVE"}</td>
-                <td className="px-4 py-1.5 text-right tabular-nums font-bold whitespace-nowrap">{formatCurrency(grand)}</td>
+                <td className="px-4 py-1.5 text-right tabular-nums font-bold whitespace-nowrap"><Amount sen={grand} /></td>
               </tr>
             </tbody>
           </table>
@@ -14084,7 +14069,7 @@ function DailyCashTab() {
         </div>
       )}
       <div className="flex justify-between items-center flex-wrap gap-2">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Daily Cash Position</h2>
+        <span aria-hidden="true" />
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => { const v = !showPlanned; setShowPlanned(v); try { localStorage.setItem("cashpos-planned", v ? "1" : "0"); } catch { /* ignore */ } }}>
             {showPlanned ? "Hide planned" : "Show planned"}
@@ -14124,11 +14109,11 @@ function DailyCashTab() {
               <CardContent className="p-0">
                 <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-[#1F2937] rounded-t-lg">
                   <div className="text-sm font-semibold text-white">{a.code} {a.name}{!a.reconciled && <span className="ml-2 text-[10px] font-normal text-[#D1D5DB]">book only — no statements imported</span>}</div>
-                  <div className="text-sm text-white">Bank balance (est.) <span className="font-bold tabular-nums">{formatCurrency(a.bankEstSen)}</span></div>
+                  <div className="text-sm text-white">Bank balance (est.) <span className="font-bold tabular-nums"><Amount sen={a.bankEstSen} red={false} /></span></div>
                 </div>
                 {a.unbookedCount > 0 && (
                   <div className="px-4 py-1.5 text-[11px] text-[#7A5B12] bg-[#FBF3E4]">
-                    Includes {a.unbookedCount} bank item{a.unbookedCount === 1 ? "" : "s"} not booked yet ({formatCurrency(a.unbookedSen)}) — record them via the Cash Book.
+                    Includes {a.unbookedCount} bank item{a.unbookedCount === 1 ? "" : "s"} not booked yet: <Amount sen={a.unbookedSen} /> — record them via the Cash Book.
                   </div>
                 )}
                 {a.pending.length > 0 && (() => {
@@ -14178,8 +14163,8 @@ function DailyCashTab() {
                               <td colSpan={6} className="px-3 py-1.5 text-xs">
                                 <button type="button" onClick={() => setShowTicked((m) => ({ ...m, [a.code]: !m[a.code] }))} className="text-[#27500A] hover:text-[#1F1D1B] cursor-pointer" title="Ticked = seen in the banking app; they leave the pending list. Open to review or untick.">
                                   {showing ? "▾" : "▸"} ✓ Ticked as gone through: {ticked.length}
-                                  {tickedOut > 0 && <span className="ml-2 tabular-nums">out {formatCurrency(tickedOut)}</span>}
-                                  {tickedIn > 0 && <span className="ml-2 tabular-nums">in {formatCurrency(tickedIn)}</span>}
+                                  {tickedOut > 0 && <span className="ml-2 tabular-nums">out <Amount sen={tickedOut} /></span>}
+                                  {tickedIn > 0 && <span className="ml-2 tabular-nums">in <Amount sen={tickedIn} /></span>}
                                   <span className="ml-2 text-[#9CA3AF]">{showing ? "hide" : "show"}</span>
                                 </button>
                               </td>
@@ -14193,12 +14178,12 @@ function DailyCashTab() {
                 })()}
                 {a.oldPendingCount > 0 && (
                   <div className="px-4 py-1.5 text-[11px] text-[#9CA3AF] border-t border-[#F0ECE9]">
-                    Older reconciliation items (before the last finalised month): {a.oldPendingCount} · {formatCurrency(a.oldPendingSen)} — handle them in the Cash Book. Still counted in the maths above.
+                    Older reconciliation items (before the last finalised month): {a.oldPendingCount} · <Amount sen={a.oldPendingSen} /> — handle them in the Cash Book. Still counted in the maths above.
                   </div>
                 )}
                 <div className="flex justify-between px-4 py-2.5 bg-[#EAF3DE]/60 rounded-b-lg text-sm font-medium">
                   <span>Available (after pending)</span>
-                  <span className="tabular-nums font-bold">{formatCurrency(a.availableSen)}</span>
+                  <span className="tabular-nums font-bold"><Amount sen={a.availableSen} /></span>
                 </div>
               </CardContent>
             </Card>
@@ -14206,7 +14191,7 @@ function DailyCashTab() {
           <Card>
             <CardContent className="p-4 flex justify-between items-center">
               <span className="text-sm font-semibold text-[#1F1D1B]">CURRENT CASH AVAILABLE</span>
-              <span className="text-xl font-bold tabular-nums text-[#27500A]">{formatCurrency(cur.totalAvailableSen + (isFuture ? -plannedDueSen : 0))}</span>
+              <span className="text-xl font-bold tabular-nums text-[#27500A]"><Amount sen={cur.totalAvailableSen + (isFuture ? -plannedDueSen : 0)} /></span>
             </CardContent>
           </Card>
           {showPlanned && (
@@ -14220,7 +14205,7 @@ function DailyCashTab() {
                         <tr key={p.id} className="border-b border-[#F0ECE9]">
                           <td className="px-4 py-1 text-xs text-[#6B7280] whitespace-nowrap">{p.expectedDate}</td>
                           <td className="px-4 py-1 text-xs w-full max-w-0"><div className="truncate">{p.partyName}{p.ref ? ` · ${p.ref}` : ""}</div></td>
-                          <td className="px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap">{formatCurrency(p.amountSen)}</td>
+                          <td className="px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap"><Amount sen={p.amountSen} /></td>
                           <td className="px-4 py-1 text-right"><button onClick={() => void deletePlanned(p.id)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer">del</button></td>
                         </tr>
                       ))}
@@ -14254,8 +14239,8 @@ function DailyCashTab() {
                       <span className="ml-2 text-[11px] text-[#9CA3AF]">Approve them on the Payment Vouchers page; posted ones move into pending above.</span>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-bold tabular-nums text-[#7A5B12]">{formatCurrency(checkedSen)} <span className="text-[11px] font-normal text-[#9CA3AF]">checked, ready to approve</span></div>
-                      {softSen > 0 && <div className="text-[11px] text-[#9CA3AF] tabular-nums">+ {formatCurrency(softSen)} still in draft / prepared</div>}
+                      <div className="text-lg font-bold tabular-nums text-[#7A5B12]"><Amount sen={checkedSen} /> <span className="text-[11px] font-normal text-[#9CA3AF]">checked, ready to approve</span></div>
+                      {softSen > 0 && <div className="text-[11px] text-[#9CA3AF] tabular-nums">+ <Amount sen={softSen} /> still in draft / prepared</div>}
                     </div>
                   </div>
                   <table className="w-full text-xs">
@@ -14267,7 +14252,7 @@ function DailyCashTab() {
                           <td className="py-1 pr-3 w-full max-w-0"><div className="truncate">{[v.payee, v.description].filter(Boolean).join(" · ")}</div></td>
                           <td className="py-1 pr-3 text-[#6B7280] whitespace-nowrap">{v.payFrom}</td>
                           <td className="py-1 pr-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${stateChip(v.state)}`}>{v.state === "CHECKED" ? "Checked" : v.state === "PREPARED" ? "Prepared" : "Draft"}</span></td>
-                          <td className="py-1 text-right tabular-nums whitespace-nowrap">{formatCurrency(v.amountSen)}</td>
+                          <td className="py-1 text-right tabular-nums whitespace-nowrap"><Amount sen={v.amountSen} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -14300,10 +14285,10 @@ function DailyCashTab() {
             <CardContent className="p-4">
               <div className="flex justify-between items-center">
                 <span className="text-sm font-semibold text-[#1F1D1B]">CASH AFTER REPAY &amp; RECEIVE</span>
-                <span className={`text-xl font-bold tabular-nums ${netAfterSen >= 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>{formatCurrency(netAfterSen)}</span>
+                <span className={`text-xl font-bold tabular-nums ${netAfterSen >= 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}><Amount sen={netAfterSen} /></span>
               </div>
               <div className="text-[11px] text-[#9CA3AF] text-right mt-0.5">
-                = available {formatCurrency(cur.totalAvailableSen)} − to repay {formatCurrency(repayShownSen)} + to receive {formatCurrency(recvShownSen)} (current scopes)
+                = available <Amount sen={cur.totalAvailableSen} /> − to repay <Amount sen={repayShownSen} /> + to receive <Amount sen={recvShownSen} /> (current scopes)
               </div>
             </CardContent>
           </Card>
@@ -14836,7 +14821,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Cash Book · Bank Reconciliation</h2>
+        <span aria-hidden="true" />
         <div className="flex gap-2">
           <input
             ref={pdfInputRef}
@@ -14929,10 +14914,10 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Opening</div><div className="tabular-nums">{formatCurrency(preview.meta.openingSen)}</div></div>
-              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Money in ({preview.meta.countIn})</div><div className="tabular-nums">{formatCurrency(preview.meta.totalInSen)}</div></div>
-              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Money out ({preview.meta.countOut})</div><div className="tabular-nums">{formatCurrency(preview.meta.totalOutSen)}</div></div>
-              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Closing</div><div className="tabular-nums font-semibold">{formatCurrency(preview.meta.closingSen)}</div></div>
+              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Opening</div><div className="tabular-nums"><Amount sen={preview.meta.openingSen} /></div></div>
+              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Money in ({preview.meta.countIn})</div><div className="tabular-nums"><Amount sen={preview.meta.totalInSen} /></div></div>
+              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Money out ({preview.meta.countOut})</div><div className="tabular-nums"><Amount sen={preview.meta.totalOutSen} /></div></div>
+              <div className="rounded-md bg-[#F7F4EF] p-2"><div className="text-[11px] text-[#6B7280]">Closing</div><div className="tabular-nums font-semibold"><Amount sen={preview.meta.closingSen} /></div></div>
             </div>
             {preview.warnings.length > 0 && (
               <ul className="text-[11px] text-[#9A3A2D] list-disc pl-4">
@@ -14965,7 +14950,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   const lock = recoFinal ? "🔒 Finalised · " : "";
                   if (!shown.balanced) return (
                     <span className="rounded-full bg-[#F7E5E1] text-[#9A3A2D] text-xs font-semibold px-2.5 py-0.5">
-                      {lock}NOT TALLY — out by {formatCurrency(Math.abs(out))} · book {out < 0 ? "above" : "below"} bank
+                      {lock}NOT TALLY — out by <Amount sen={Math.abs(out)} /> · book {out < 0 ? "above" : "below"} bank
                     </span>
                   );
                   if (shown.unbookedStmtCount > 0) return (
@@ -14993,7 +14978,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </div>
             {finalDrift && report && recoFinal && (
               <div className="mb-2 rounded-md bg-[#FBF3E4] border border-[#E0C989] px-3 py-2 text-xs text-[#7A5B12]">
-                ⚠ The books have MOVED since this month was finalised — book balance now {formatCurrency(report.glSen)} vs saved {formatCurrency(recoFinal.glSen)}.
+                ⚠ The books have MOVED since this month was finalised — book balance now <Amount sen={report.glSen} /> vs saved <Amount sen={recoFinal.glSen} />.
                 Something dated in or before {month} was added or changed. Check what, then Re-open and finalise again.
               </div>
             )}
@@ -15007,15 +14992,15 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <table className="text-sm w-full max-w-md">
                 <tbody>
                   <tr><td className="py-0.5 text-[#6B7280]">Bank statement closing balance</td><td className="py-0.5 text-right tabular-nums">{shown.statementClosingSen != null ? formatCurrency(shown.statementClosingSen) : "—"}</td></tr>
-                  <tr><td className="py-0.5 text-[#6B7280]">Book balance {recoFinal ? "at finalising" : "today"} (GL {account})</td><td className="py-0.5 text-right tabular-nums">{formatCurrency(shown.glSen)}</td></tr>
+                  <tr><td className="py-0.5 text-[#6B7280]">Book balance {recoFinal ? "at finalising" : "today"} (GL {account})</td><td className="py-0.5 text-right tabular-nums"><Amount sen={shown.glSen} /></td></tr>
                   {diffSen != null && (
                     <tr className="border-t border-[#E2DDD8]">
                       <td className="py-0.5 font-semibold">Difference — book {diffSen >= 0 ? "above" : "below"} bank</td>
-                      <td className="py-0.5 text-right tabular-nums font-semibold">{formatCurrency(Math.abs(diffSen))}</td>
+                      <td className="py-0.5 text-right tabular-nums font-semibold"><Amount sen={Math.abs(diffSen)} /></td>
                     </tr>
                   )}
-                  <tr><td className="py-0.5 text-[#6B7280] pl-4">+ In the book, not yet in the bank ({shown.unclearedBookCount})</td><td className="py-0.5 text-right tabular-nums">{formatCurrency(shown.unclearedBookSen)}</td></tr>
-                  <tr><td className="py-0.5 text-[#6B7280] pl-4">− In the bank, not yet in the book ({shown.unbookedStmtCount})</td><td className="py-0.5 text-right tabular-nums">{formatCurrency(shown.unbookedStmtSen)}</td></tr>
+                  <tr><td className="py-0.5 text-[#6B7280] pl-4">+ In the book, not yet in the bank ({shown.unclearedBookCount})</td><td className="py-0.5 text-right tabular-nums"><Amount sen={shown.unclearedBookSen} /></td></tr>
+                  <tr><td className="py-0.5 text-[#6B7280] pl-4">− In the bank, not yet in the book ({shown.unbookedStmtCount})</td><td className="py-0.5 text-right tabular-nums"><Amount sen={shown.unbookedStmtSen} /></td></tr>
                   {diffSen != null && (
                     <tr className="border-t border-[#E2DDD8]">
                       <td className={`py-0.5 font-medium ${diffSen === explainedSen ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>
@@ -15062,7 +15047,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <tr key={d.day} className={`border-b border-[#F0ECE9] ${changed ? "bg-[#FBF3E4]" : ""}`}>
                         <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{d.day}{changed && <span className="ml-1 text-[10px] text-[#7A5B12]">▲ changed</span>}</td>
                         <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap">{d.bankSen != null ? formatCurrency(d.bankSen) : "—"}</td>
-                        <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap">{formatCurrency(d.bookSen)}</td>
+                        <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap"><Amount sen={d.bookSen} /></td>
                         <td className={`px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap ${changed ? "font-semibold text-[#7A5B12]" : d.diffSen === 0 ? "text-[#27500A]" : ""}`}>{d.diffSen != null ? formatCurrency(d.diffSen) : "—"}</td>
                       </tr>
                     );
@@ -15108,7 +15093,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 First row is a header
               </label>
               <span className="text-sm text-[#6B7280] pb-2">
-                {parsedRows.length} rows parsed · net {formatCurrency(parsedRows.reduce((s, r) => s + r.amountSen, 0))}
+                {parsedRows.length} rows parsed · net <Amount sen={parsedRows.reduce((s, r) => s + r.amountSen, 0)} />
                 {unreadableAmtRows > 0 && (
                   <span className="block text-[11px] text-[#9A3A2D]">
                     {unreadableAmtRows} dated row{unreadableAmtRows === 1 ? "" : "s"} had an amount this parser could not read and {unreadableAmtRows === 1 ? "was" : "were"} skipped — check the column mapping before importing.
@@ -15135,7 +15120,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 const cands = unmatchedLegs.filter((l) => l.amountSen === sum);
                 return (
                   <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-[#FBF3E4] border-b border-[#E0C989] text-xs">
-                    <span className="font-semibold text-[#7A5B12]">{sel.length} lines selected · {formatCurrency(Math.abs(sum))} {sum < 0 ? "out" : "in"}</span>
+                    <span className="font-semibold text-[#7A5B12]">{sel.length} lines selected · <Amount sen={Math.abs(sum)} /> {sum < 0 ? "out" : "in"}</span>
                     {cands.length > 0 ? (
                       <select defaultValue="" onChange={(e) => { void handleGroupMatch(e.target.value); e.currentTarget.value = ""; }} className="rounded border border-[#E0C989] bg-white px-1 py-0.5 text-[11px] max-w-72">
                         <option value="">combine &amp; match to…</option>
@@ -15210,7 +15195,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <td colSpan={5} className="px-3 py-2">
                             <div className="flex flex-wrap items-end gap-2 text-xs">
                               <span className="font-semibold text-[#27500A] mr-1">
-                                {s.amountSen < 0 ? "Book as expense" : "Book as receipt"} · {formatCurrency(Math.abs(s.amountSen))} on {s.txnDate}
+                                {s.amountSen < 0 ? "Book as expense" : "Book as receipt"} · <Amount sen={Math.abs(s.amountSen)} /> on {s.txnDate}
                               </span>
                               <label className="flex flex-col gap-0.5">
                                 <span className="text-[10px] text-[#6B7280]">{s.amountSen < 0 ? "Expense account (DR)" : "Income account (CR)"}</span>
@@ -15239,7 +15224,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <tr className="border-b border-[#F0ECE9] bg-[#EEF2FB]/50">
                             <td colSpan={5} className="px-3 py-2 text-xs">
                               <div className="flex flex-wrap items-center gap-2 mb-1">
-                                <span className="font-semibold text-[#2C4170]">Split {formatCurrency(Math.abs(s.amountSen))} across book entries · picked {formatCurrency(Math.abs(sum))}{exact ? " ✓ exact" : picked.length ? ` (${formatCurrency(Math.abs(s.amountSen - sum))} to go)` : ""}</span>
+                                <span className="font-semibold text-[#2C4170]">Split <Amount sen={Math.abs(s.amountSen)} /> across book entries · picked <Amount sen={Math.abs(sum)} />{exact ? " ✓ exact" : picked.length ? ` (${formatCurrency(Math.abs(s.amountSen - sum))} to go)` : ""}</span>
                                 <Button variant="primary" size="sm" disabled={!exact || busy} onClick={() => void handleSplitMatch()}>Match all {picked.length}</Button>
                                 <Button variant="outline" size="sm" onClick={() => setSplitFor(null)}>Cancel</Button>
                               </div>
@@ -15249,7 +15234,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                                     <input type="checkbox" checked={splitFor.legIds.has(l.id)} onChange={() => setSplitFor((cur) => { if (!cur) return cur; const n = new Set(cur.legIds); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return { ...cur, legIds: n }; })} />
                                     <span className="text-[#6B7280] whitespace-nowrap">{l.day}</span>
                                     <span className="truncate flex-1" title={l.description}>{l.description}</span>
-                                    <span className="tabular-nums whitespace-nowrap">{formatCurrency(Math.abs(l.amountSen))}</span>
+                                    <span className="tabular-nums whitespace-nowrap"><Amount sen={Math.abs(l.amountSen)} /></span>
                                   </label>
                                 ))}
                               </div>
@@ -15307,7 +15292,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               {det === "loading" ? "Loading…" : det.length === 0 ? "No allocation rows — advance / unallocated payment." :
                                 det.map((d, i) => (
                                   <div key={i}>
-                                    {d.supplierName} · {d.piNo ? `${d.piNo}${d.opening ? " (opening bill)" : ""}` : d.method === "TF_REPAYMENT" ? "Trade finance repayment" : "Advance / unallocated"} · {formatCurrency(d.bookedSen)}
+                                    {d.supplierName} · {d.piNo ? `${d.piNo}${d.opening ? " (opening bill)" : ""}` : d.method === "TF_REPAYMENT" ? "Trade finance repayment" : "Advance / unallocated"} · <Amount sen={d.bookedSen} />
                                   </div>
                                 ))}
                             </td>
@@ -15750,7 +15735,6 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Opening Balance</h2>
 
       {data?.migrationMissing && (
         <Card>
@@ -15780,9 +15764,9 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
           </div>
           <div className="text-sm">
             <span className="text-[#6B7280] mr-2">Total DR</span>
-            <span className="font-medium tabular-nums">{formatCurrency(totalDr)}</span>
+            <span className="font-medium tabular-nums"><Amount sen={totalDr} /></span>
             <span className="text-[#6B7280] mx-2">· Total CR</span>
-            <span className="font-medium tabular-nums">{formatCurrency(totalCr)}</span>
+            <span className="font-medium tabular-nums"><Amount sen={totalCr} /></span>
             <span className={`ml-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium border ${diff === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
               {diff === 0 ? "Balanced ✓" : `Difference ${formatCurrency(Math.abs(diff))} ${diff > 0 ? "DR" : "CR"}`}
             </span>
@@ -15807,7 +15791,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
             <h3 className="text-sm font-semibold text-[#1F1D1B]">
               Debtor opening invoices <span className="font-normal text-[#6B7280]">(per customer — feeds aging, statements and the control account)</span>
             </h3>
-            <span className="text-sm text-[#6B7280]">Total <span className="font-medium text-[#1F1D1B] tabular-nums">{formatCurrency(data?.arTotalSen ?? 0)}</span> DR</span>
+            <span className="text-sm text-[#6B7280]">Total <span className="font-medium text-[#1F1D1B] tabular-nums"><Amount sen={data?.arTotalSen ?? 0} /></span> DR</span>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <select value={arForm.customerId} onChange={(e) => setArForm({ ...arForm, customerId: e.target.value })} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm w-56">
@@ -15838,7 +15822,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     <td className="px-2 py-1.5">{r.customerName}</td>
                     <td className="px-2 py-1.5 tabular-nums text-xs">{r.invoiceNo}</td>
                     <td className="px-2 py-1.5 text-xs text-[#6B7280]">{r.invoiceDate ?? ""}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-xs text-[#6B7280]">{r.paidAmount ? formatCurrency(r.paidAmount) : "-"}</td>
                     <td className="px-2 py-1.5 text-right">
                       {/* A seed created here can be deleted; a REAL invoice that
@@ -15867,7 +15851,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
             <h3 className="text-sm font-semibold text-[#1F1D1B]">
               Creditor opening invoices <span className="font-normal text-[#6B7280]">(per supplier — feeds aging, statements and 400-0000)</span>
             </h3>
-            <span className="text-sm text-[#6B7280]">Total <span className="font-medium text-[#1F1D1B] tabular-nums">{formatCurrency(data?.apTotalSen ?? 0)}</span> CR</span>
+            <span className="text-sm text-[#6B7280]">Total <span className="font-medium text-[#1F1D1B] tabular-nums"><Amount sen={data?.apTotalSen ?? 0} /></span> CR</span>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <select value={apForm.supplierId} onChange={(e) => setApForm({ ...apForm, supplierId: e.target.value })} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm w-56">
@@ -15897,7 +15881,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     <td className="px-2 py-1.5">{r.supplierName}</td>
                     <td className="px-2 py-1.5 tabular-nums text-xs">{r.piNo}</td>
                     <td className="px-2 py-1.5 text-xs text-[#6B7280]">{r.invoiceDate ?? ""}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={r.amountSen} /></td>
                     <td className="px-2 py-1.5 text-right">
                       <button onClick={() => handleDelete("ap", r.id)} className="text-[#9A3A2D] hover:text-[#791F1F] text-xs underline decoration-dotted cursor-pointer">remove</button>
                     </td>
@@ -15929,11 +15913,11 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
               <span className="text-sm text-[#6B7280]">
                 Included{" "}
                 <span className="font-medium text-[#1F1D1B] tabular-nums">
-                  {formatCurrency((data?.preExistingAp ?? []).filter((r) => !r.excluded).reduce((s, r) => s + (Number(r.amountSen) || 0), 0))}
+                  <Amount sen={(data?.preExistingAp ?? []).filter((r) => !r.excluded).reduce((s, r) => s + (Number(r.amountSen) || 0), 0)} />
                 </span>
                 {" "}· Excluded{" "}
                 <span className="font-medium text-[#9A3A2D] tabular-nums">
-                  {formatCurrency((data?.preExistingAp ?? []).filter((r) => r.excluded).reduce((s, r) => s + (Number(r.amountSen) || 0), 0))}
+                  <Amount sen={(data?.preExistingAp ?? []).filter((r) => r.excluded).reduce((s, r) => s + (Number(r.amountSen) || 0), 0)} />
                 </span>
               </span>
             </button>
@@ -15956,7 +15940,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                       <td className="px-2 py-1.5">{r.supplierName}</td>
                       <td className="px-2 py-1.5 tabular-nums text-xs">{r.piNo}</td>
                       <td className="px-2 py-1.5 text-xs text-[#6B7280]">{r.invoiceDate ?? ""}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={r.amountSen} /></td>
                       <td className="px-2 py-1.5 text-xs text-[#6B7280]">
                         {r.excluded ? <span className="text-[#9A3A2D] font-medium">EXCLUDED</span> : "counted as opening"}
                       </td>
@@ -16003,7 +15987,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                 <span className="text-sm text-[#6B7280]">
                   Face value{" "}
                   <span className="font-medium text-[#1F1D1B] tabular-nums">
-                    {formatCurrency(rows.reduce((s, r) => s + (Number(r.totalSen) || 0), 0))}
+                    <Amount sen={rows.reduce((s, r) => s + (Number(r.totalSen) || 0), 0)} />
                   </span>
                 </span>
               </button>
@@ -16026,7 +16010,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     <span className="text-xs text-[#6B7280]">
                       Showing {shown.length} ·{" "}
                       <span className="tabular-nums font-medium text-[#1F1D1B]">
-                        {formatCurrency(shown.reduce((s, r) => s + (Number(r.totalSen) || 0), 0))}
+                        <Amount sen={shown.reduce((s, r) => s + (Number(r.totalSen) || 0), 0)} />
                       </span>
                     </span>
                   </div>
@@ -16056,7 +16040,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                             <td className="px-2 py-1.5">{r.customerName}</td>
                             <td className="px-2 py-1.5 tabular-nums text-xs">{r.invoiceNo}</td>
                             <td className="px-2 py-1.5 text-xs text-[#6B7280]">{r.invoiceDate ?? ""}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums"><Amount sen={r.totalSen} /></td>
                             <td className="px-2 py-1.5 text-right tabular-nums text-xs text-[#6B7280]">
                               {Number(r.paidAmount) ? formatCurrency(r.paidAmount) : "-"}
                             </td>
@@ -16139,8 +16123,8 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
               {obVirt.bottomSpacer}
               <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                 <td className="px-3 py-2">TOTAL (incl. auto control rows)</td>
-                <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(totalDr)}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(totalCr)}</td>
+                <td className="px-3 py-2 text-right tabular-nums"><Amount sen={totalDr} /></td>
+                <td className="px-3 py-2 text-right tabular-nums"><Amount sen={totalCr} /></td>
               </tr>
             </tbody>
           </table>
@@ -16217,7 +16201,7 @@ function YearCloseCard() {
             <span className="text-[#6B7280]">nothing to close</span>
           ) : (
             <span className={preview.netSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
-              net {preview.netSen >= 0 ? "profit" : "loss"} {formatCurrency(Math.abs(preview.netSen))} un-closed
+              net {preview.netSen >= 0 ? "profit" : "loss"} <Amount sen={Math.abs(preview.netSen)} /> un-closed
             </span>
           )}
         </div>
@@ -16538,7 +16522,7 @@ function BalanceSheetTab() {
       })}
       <tr className={`border-t border-[#E2DDD8] ${bgClass} font-semibold`}>
         <td colSpan={2} className={`px-4 py-2 ${colorClass}`}>Total {title}</td>
-        <td className={`px-4 py-2 text-right ${colorClass}`}>{formatCurrency(total)}</td>
+        <td className={`px-4 py-2 text-right ${colorClass}`}><Amount sen={total} /></td>
       </tr>
     </>
   );
@@ -16566,7 +16550,7 @@ function BalanceSheetTab() {
         <Card>
           <CardContent className="p-4 text-center">
             <p className="text-xs text-[#6B7280]">Total Assets</p>
-            <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(totalAssets)}</p>
+            <p className="text-xl font-bold text-[#3E6570]"><Amount sen={totalAssets} /></p>
           </CardContent>
         </Card>
         <Card className="flex items-center justify-center">
@@ -16577,7 +16561,7 @@ function BalanceSheetTab() {
         <Card>
           <CardContent className="p-4 text-center">
             <p className="text-xs text-[#6B7280]">Liabilities + Equity</p>
-            <p className="text-xl font-bold text-[#6B4A6D]">{formatCurrency(totalLiabEquity)}</p>
+            <p className="text-xl font-bold text-[#6B4A6D]"><Amount sen={totalLiabEquity} /></p>
           </CardContent>
         </Card>
       </div>
@@ -16609,7 +16593,7 @@ function BalanceSheetTab() {
                 {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, INFO.text, INFO.bg, "FIXED_ASSET")}
                 <tr className={`border-t-2 ${INFO.border} ${INFO.bg} font-bold`}>
                   <td colSpan={2} className={`px-4 py-3 ${INFO.text}`}>TOTAL ASSETS</td>
-                  <td className={`px-4 py-3 text-right ${INFO.text}`}>{formatCurrency(totalAssets)}</td>
+                  <td className={`px-4 py-3 text-right ${INFO.text}`}><Amount sen={totalAssets} /></td>
                 </tr>
 
                 {/* LIABILITIES — DANGER (red) tint */}
@@ -16620,7 +16604,7 @@ function BalanceSheetTab() {
                 {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, DANGER.text, DANGER.bg, "LONG_TERM_LIABILITY")}
                 <tr className={`border-t border-[#E2DDD8] font-semibold ${DANGER.bg}`}>
                   <td colSpan={2} className={`px-4 py-2 ${DANGER.text}`}>Total Liabilities</td>
-                  <td className={`px-4 py-2 text-right ${DANGER.text}`}>{formatCurrency(totalLiabilities)}</td>
+                  <td className={`px-4 py-2 text-right ${DANGER.text}`}><Amount sen={totalLiabilities} /></td>
                 </tr>
 
                 {/* EQUITY — ACCENT_PLUM tint */}
@@ -16629,7 +16613,7 @@ function BalanceSheetTab() {
                 {/* Total L+E */}
                 <tr className="border-t-2 border-[#1F1D1B] bg-[#1F1D1B] text-white font-bold">
                   <td colSpan={2} className="px-4 py-3">TOTAL LIABILITIES + EQUITY</td>
-                  <td className="px-4 py-3 text-right">{formatCurrency(totalLiabEquity)}</td>
+                  <td className="px-4 py-3 text-right"><Amount sen={totalLiabEquity} red={false} /></td>
                 </tr>
               </tbody>
             </table>
@@ -16640,7 +16624,7 @@ function BalanceSheetTab() {
             {totalAssets === totalLiabEquity ? (
               <span className="flex items-center gap-2"><Check className="h-4 w-4" /> Balance sheet is balanced. Assets = Liabilities + Equity</span>
             ) : (
-              <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: {formatCurrency(Math.abs(totalAssets - totalLiabEquity))}</span>
+              <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: <Amount sen={Math.abs(totalAssets - totalLiabEquity)} /></span>
             )}
           </div>
           {bsStock && (
@@ -17385,7 +17369,6 @@ function CashFlowTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Statement of Cash Flow</h2>
         <span className="text-xs text-[#9CA3AF]">cash basis · full detail</span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }}

@@ -22,6 +22,9 @@ import { amountInWords } from "@/lib/amount-in-words";
 import { printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
+import { Amount } from "@/components/finance/amount";
+import { PageHeader } from "@/components/ui/page-header";
+import "@/pages/accounting/finance-ui.css";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
 
@@ -335,7 +338,7 @@ export default function CreditNotesPage() {
 
   if (loading) {
     return (
-      <div className="p-6">
+      <div>
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded w-1/3" />
           <div className="h-64 bg-gray-200 rounded" />
@@ -345,19 +348,16 @@ export default function CreditNotesPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Credit Notes</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage credit notes for returns, price adjustments, and damages
-          </p>
-        </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-2" /> New Credit Note
-        </Button>
-      </div>
+    <div data-fin-ui className="space-y-6 max-md:space-y-4">
+      <PageHeader
+        title="Credit Notes"
+        subtitle="Manage credit notes for returns, price adjustments, and damages · amounts in RM"
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" /> New Credit Note
+          </Button>
+        }
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -366,7 +366,7 @@ export default function CreditNotesPage() {
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm text-gray-500">Total CN Value</p>
-                <p className="text-xl font-bold text-[#9A3A2D] truncate">-{formatCurrency(totalCNValue)}</p>
+                <p className="text-xl font-bold text-[#9A3A2D] truncate"><Amount sen={-totalCNValue} /></p>
               </div>
               <FileX className="h-8 w-8 text-[#9A3A2D] shrink-0" />
             </div>
@@ -557,7 +557,7 @@ export default function CreditNotesPage() {
                         }}
                       />
                       <span className="text-sm text-gray-500 py-2 w-28 text-right">
-                        {formatCurrency(item.quantity * item.unitPriceSen)}
+                        <Amount sen={item.quantity * item.unitPriceSen} />
                       </span>
                       {items.length > 1 && (
                         <button onClick={() => removeItem(idx)} className="p-2 text-[#9A3A2D] hover:text-[#7A2E24]">
@@ -568,7 +568,7 @@ export default function CreditNotesPage() {
                   ))}
                 </div>
                 <div className="mt-3 text-right font-medium text-sm">
-                  Total: <span className="text-[#9A3A2D]">-{formatCurrency(totalAmount)}</span>
+                  Total: <span className="text-[#9A3A2D]"><Amount sen={-totalAmount} /></span>
                 </div>
               </div>
             </div>

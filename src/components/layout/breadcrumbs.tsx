@@ -24,6 +24,7 @@ import { ChevronRight, Home } from "lucide-react";
 // Label table lives in a plain shared module (this component file can only
 // export components under react-refresh); the workspace tab strip reuses it too.
 import { titleForPath, normalise } from "@/lib/route-titles";
+import { financePage, FINANCE_GROUP_HOME } from "@/lib/finance-nav";
 
 // Build progressive sub-paths from a full URL.
 //   /sales/123/edit → ['/sales', '/sales/123', '/sales/123/edit']
@@ -39,7 +40,7 @@ function progressivePaths(full: string): string[] {
 }
 
 export function Breadcrumbs() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const path = normalise(pathname);
 
   // Don't render on the dashboard root — there's nowhere to go up to.
@@ -47,7 +48,14 @@ export function Breadcrumbs() {
     return null;
   }
 
-  const trail = progressivePaths(path);
+  // Every finance page lives at /accounting?tab=… — its trail is Finance ›
+  // menu group › page, named as the menu names it (owner 2026-10-14).
+  const finance = path === "/accounting" ? financePage(new URLSearchParams(search).get("tab")) : null;
+  const trail = finance
+    ? ["/accounting?tab=overview", `/accounting?tab=${FINANCE_GROUP_HOME[finance.group]}`, `/accounting?tab=${finance.key}`]
+    : progressivePaths(path);
+  const labelOf = (p: string, idx: number) =>
+    finance ? [titleForPath("/accounting"), finance.group, finance.title][idx] : titleForPath(p);
 
   return (
     <nav
@@ -63,9 +71,9 @@ export function Breadcrumbs() {
       </Link>
       {trail.map((p, idx) => {
         const isLast = idx === trail.length - 1;
-        const label = titleForPath(p);
+        const label = labelOf(p, idx);
         return (
-          <Fragment key={p}>
+          <Fragment key={`${idx}:${p}`}>
             <ChevronRight className="w-3.5 h-3.5 text-[#C9C2B9] flex-shrink-0" />
             {isLast ? (
               <span className="text-[#1F1D1B] font-medium truncate" title={label}>

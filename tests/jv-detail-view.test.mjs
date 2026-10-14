@@ -25,7 +25,7 @@ test("the detail shows every line with DR / CR totals and flags an unbalanced en
   assert.match(jv, /\{je\.lines\.map\(\(l, i\) => \(/);
   assert.match(jv, /const dr = je\.lines\.reduce\(\(s, l\) => s \+ l\.debitSen, 0\);/);
   assert.match(jv, /const cr = je\.lines\.reduce\(\(s, l\) => s \+ l\.creditSen, 0\);/);
-  assert.match(jv, /not balanced — DR \{formatCurrency\(dr\)\} vs CR \{formatCurrency\(cr\)\}/);
+  assert.match(jv, /not balanced — DR <Amount sen=\{dr\} \/> vs CR <Amount sen=\{cr\} \/>/);
   // Actions mirror the ⋮ menu, gated the same way.
   assert.match(jv, /je\.status === "DRAFT" && \(/);
   assert.match(jv, /je\.status !== "DRAFT" && state === "ACTIVE" && \(/);

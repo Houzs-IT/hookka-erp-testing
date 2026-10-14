@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-14**: branch `feat/finance-ui-refresh` (to `main`, held for the owner's canary test) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `main`) added item 6 to the urgent orders KPI entry below.
@@ -144,6 +145,12 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 
 
+
+
+## 2026-10-14 — 🔵 Finance UI refresh, whole module in one go (owner「优化 finance 模块的整体显示」→ A+B+C+D+E →「不能全部一次性做完，然后我再测试？」→「做」)(branch `feat/finance-ui-refresh` → `main`, NOT merged until the owner approves on the canary)
+
+1. 🔵 Plan and findings: `docs/superpowers/specs/2026-10-14-finance-ui-refresh-design.md` (page frame + navigation, one table / control look, one money format, report key figures, daily-page summaries, phone layout). Display only — no figure, endpoint or posting changes.
+2. ⚪ Owner tests on the PR canary (real data: look, do not save / post / approve there); fixes on the same PR; merge after approval; prod check after deploy.
 
 ## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
 

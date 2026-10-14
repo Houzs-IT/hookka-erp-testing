@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   FileCheck,
@@ -21,6 +21,9 @@ import {
 import type { EInvoice } from "@/types";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
+import { Amount } from "@/components/finance/amount";
+import { PageHeader } from "@/components/ui/page-header";
+import "@/pages/accounting/finance-ui.css";
 
 type Invoice = {
   id: string;
@@ -254,21 +257,17 @@ export default function EInvoicePage() {
   }
 
   return (
-    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-[#1F1D1B]">e-Invoice</h1>
-          <p className="text-xs text-[#6B7280]">
-            LHDN MyInvois - Malaysian e-Invoice XML generation. Transmission to
-            LHDN is not connected.
-          </p>
-        </div>
-        <Button variant="outline" onClick={fetchData} className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
+    <div ref={tablesRef} data-fin-tables data-fin-ui className="space-y-6 max-md:space-y-4">
+      <PageHeader
+        title="e-Invoice"
+        subtitle="LHDN MyInvois - Malaysian e-Invoice XML generation. Transmission to LHDN is not connected. · amounts in RM"
+        actions={
+          <Button variant="outline" onClick={fetchData} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Standing notice. Until BUG-2026-08-13-014 the Submit button minted a
           random `LHDN-SUB-…` id and a random 15-char UUID, marked the row
@@ -628,7 +627,7 @@ export default function EInvoicePage() {
                             {formatDate(inv.invoiceDate)}
                           </td>
                           <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            {formatCurrency(inv.totalSen)}
+                            <Amount sen={inv.totalSen} />
                           </td>
                           <td className="py-3 px-4">
                             <Badge variant="status" status={inv.status} />

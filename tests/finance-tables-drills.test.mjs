@@ -53,7 +53,7 @@ test("the finance pages carry it; reports resize the description only and stop s
   for (const p of ["src/pages/invoices/supplier-payments.tsx", "src/pages/invoices/payments.tsx", "src/pages/invoices/e-invoice.tsx"]) {
     const src = read(p);
     assert.match(src, /const tablesRef = useResizableTables\("[a-z-]+"\);\n\n  if \(loading\) \{/, `${p}: hooked before the loading screen`);
-    assert.match(src, /<div ref=\{tablesRef\} data-fin-tables className=/, `${p}: root marked`);
+    assert.match(src, /<div ref=\{tablesRef\} data-fin-tables(?: data-fin-ui)? className=/, `${p}: root marked`);
   }
   assert.equal((ui.match(/<table data-col-resize="first"/g) ?? []).length, 8, "P&L, Monthly P&L, Cost structure, Cost classes, Monthly trend, TB, Balance sheet, Cash Flow");
   assert.doesNotMatch(slice(ui, "function MonthlyPlTab(", "\nfunction "), /min-w-full/, "Monthly P&L no longer stretched to the full width");

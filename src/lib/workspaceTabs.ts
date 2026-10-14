@@ -22,6 +22,7 @@
 
 import { getCurrentUser } from "./auth";
 import { titleForPath, normalise } from "./route-titles";
+import { financePage } from "./finance-nav";
 
 export const WORKSPACE_TABS_KEY = "hookka.workspaceTabs.v1";
 
@@ -104,7 +105,14 @@ export function sectionKeyFor(pathname: string): string {
 /** Tab label for a tab's current href = its SECTION's name, so a detail tab
  *  (e.g. one SO) keeps its list's label ("Sales Orders"), browser-tab style. */
 export function workspaceTabLabel(href: string): string {
-  return titleForPath(sectionKeyFor(href));
+  const section = sectionKeyFor(href);
+  // Every finance page lives at /accounting?tab=… — name the page, not
+  // the section (owner 2026-10-14 「菜单名 = 页面名」).
+  if (section === "/accounting") {
+    const q = href.includes("?") ? href.slice(href.indexOf("?") + 1).split("#")[0] : "";
+    return financePage(new URLSearchParams(q).get("tab")).title;
+  }
+  return titleForPath(section);
 }
 
 // ── Persistence ─────────────────────────────────────────────────────────────

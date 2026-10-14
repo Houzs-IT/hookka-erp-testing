@@ -61,6 +61,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { prefetchRoute } from "@/dashboard-routes";
 import { markWorkspaceOpenIntent } from "@/lib/workspaceTabs";
+import { financeMenuKey } from "@/lib/finance-nav";
 
 interface NavItem {
   name: string;
@@ -217,7 +218,7 @@ const navigationGroups: NavGroup[] = [
       {
         name: "Reports", href: "/accounting?tab=overview", icon: BarChart3, children: [
           { name: "Overview", href: "/accounting?tab=overview", icon: LayoutDashboard },
-          { name: "P&L", href: "/accounting?tab=pl", icon: BarChart3 },
+          { name: "Profit & Loss", href: "/accounting?tab=pl", icon: BarChart3 },
           { name: "Cash Flow", href: "/accounting?tab=cashflow", icon: Wallet },
           { name: "Balance Sheet", href: "/accounting?tab=bs", icon: Scale },
           { name: "Trial Balance", href: "/accounting?tab=tb", icon: Scale },
@@ -624,7 +625,11 @@ export function Sidebar({
       const [hp, hq] = href.split("?");
       const wantTab = new URLSearchParams(hq).get("tab");
       const curTab = new URLSearchParams(search).get("tab") ?? "overview";
-      return pathname === hp && (wantTab ?? "overview") === curTab;
+      // A finance page with no menu item of its own (Monthly P&L, Fund
+      // Transfer, Other Creditor Bills…) lights up the item it belongs to
+      // (owner 2026-10-14; src/lib/finance-nav.ts).
+      const lit = hp === "/accounting" ? financeMenuKey(curTab) : curTab;
+      return pathname === hp && (wantTab ?? "overview") === lit;
     }
     if (href === "/production/scan") {
       return pathname === "/production/scan" || pathname.startsWith("/production/scan/");

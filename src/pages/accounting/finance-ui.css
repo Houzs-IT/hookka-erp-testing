@@ -1,0 +1,39 @@
+/* Finance UI (owner 2026-10-14 「优化 finance 模块的整体显示」): one table and
+   control look on every finance page — the accounting page root and the
+   standalone finance pages carry [data-fin-ui]. Per-table padding and widths
+   stay as each table sets them; this unifies what reads as "style". */
+
+/* Column headings: small uppercase labels on cream (docs/DESIGN-SYSTEM.md,
+   "Table cell header"). */
+[data-fin-ui] table > thead > tr > th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  background-color: #faf8f4;
+  border-bottom: 1px solid #e6e0d9;
+}
+
+/* Figures line up digit under digit in every table. */
+[data-fin-ui] table td,
+[data-fin-ui] table th {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Filter controls: one height, one border colour, one radius. */
+[data-fin-ui] select,
+[data-fin-ui] input[type="date"],
+[data-fin-ui] input[type="month"] {
+  min-height: 34px;
+  border-radius: 8px;
+  border-color: #e2ddd8;
+  font-size: 13px;
+}
+
+/* Key-figure cards (FinKpis). */
+[data-fin-ui] .fin-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
