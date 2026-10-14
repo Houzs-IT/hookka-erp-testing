@@ -369,7 +369,7 @@ function MonthTable({ months }: { months: OverviewMonth[] }) {
     },
   ];
   return (
-    <Card>
+    <Card className="w-fit max-w-full">
       <CardContent className="overflow-x-auto p-0">
         <table data-col-resize="first" className="text-sm">
           <thead>
@@ -454,10 +454,12 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
         <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, metric)} />
         <Bar yAxisId="amt" dataKey={key} name="Amount" radius={[3, 3, 0, 0]} animationDuration={ANIM} maxBarSize={56}>
           {data.map((d) => <Cell key={d.ym} fill={(d[key] ?? 0) < 0 ? C.loss : C.profit} />)}
-          <LabelList dataKey={key} position="inside" formatter={compactLabel} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
+          {/* The amount sits by the zero line — the % line follows the bar ends. */}
+          <LabelList dataKey={key} position="insideBottom" formatter={(v: unknown) => (typeof v === "number" && v > 0 ? compactLabel(v) : "")} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
+          <LabelList dataKey={key} position="insideTop" formatter={(v: unknown) => (typeof v === "number" && v < 0 ? compactLabel(v) : "")} style={{ fontSize: 10, fill: "#FFFFFF", fontWeight: 600 }} />
         </Bar>
         <Line yAxisId="pct" type="monotone" dataKey={pctKey} name="% of sales" stroke={C.line} strokeWidth={1.5} dot={{ r: 3, fill: "#FFFFFF" }} animationDuration={ANIM} connectNulls>
-          <LabelList dataKey={pctKey} position="top" formatter={pctLabel} style={{ fontSize: 10, fill: C.line, fontWeight: 600 }} />
+          <LabelList dataKey={pctKey} position="top" formatter={pctLabel} style={{ fontSize: 10, fill: C.line, fontWeight: 600, paintOrder: "stroke", stroke: "#FFFFFF", strokeWidth: 3 }} />
         </Line>
       </ComposedChart>
     </ResponsiveContainer>
