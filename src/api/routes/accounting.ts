@@ -46,7 +46,7 @@ import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../li
 import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
 import { projectedLabourByDept } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
-import { loadPreparedProduction } from "../lib/production-stock";
+import { loadPreparedProduction, mytDay } from "../lib/production-stock";
 import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
 import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
@@ -77,6 +77,7 @@ import {
 } from "../../lib/other-party-payment";
 import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
 import { buildPnlMatrix, type PnlMatrixCol } from "../../lib/pnl-matrix";
+import { lastMonths, sumByMonth, topModelsByMonth, overviewPnl, type OverviewMonth } from "../../lib/overview-trend";
 import { selectHistoricalWindow, sumPnlWindows, buildHistoricalMap } from "../../lib/pnl-historical";
 import { buildHistIdentityRemap } from "../../lib/pnl-hist-remap";
 import { rmLineOf, rmScale } from "../../lib/product-line-rm";
@@ -9356,6 +9357,94 @@ app.get("/pl-monthly", async (c) => {
 
   const matrix = buildPnlMatrix(cols);
   return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, columns: matrix.columns, rows: matrix.rows } });
+});
+
+// Finance Overview, month by month (owner 2026-10-14 「overview 主要显示…」→「做」;
+// src/lib/overview-trend.ts). The last 3 / 6 / 12 months up to the running
+// one (Malaysia time):
+//   • sales orders vs sales invoices — raised / issued in the month, before
+//     SST (an order carries none; an invoice's subtotal), drafts and cancelled
+//     left out; the order date falls back to when it was keyed;
+//   • the P&L's own month windows — the same per-month logic as /pl-monthly
+//     (history before the books opened, the running month with its estimates);
+//   • the most-produced models — production orders completed in the month,
+//     quantities per model series, Sofa and Bedframe apart, top 5 each.
+// Read-only.
+app.get("/overview-trend", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const asked = Number(c.req.query("months"));
+  const n = asked === 6 || asked === 12 ? asked : 3;
+  const runYm = runningMonthYm();
+  const months = lastMonths(runYm, n);
+
+  const pick = (r: Record<string, unknown>, ...keys: string[]) => {
+    for (const k of keys) if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k];
+    return null;
+  };
+  const ymOf = (v: unknown) => mytDay(v).slice(0, 7);
+  const [soRes, invRes, poRes, prodRes] = await Promise.all([
+    db.prepare(`SELECT companySODate, createdAt, subtotalSen FROM sales_orders WHERE status NOT IN ('DRAFT','CANCELLED')`)
+      .all<Record<string, unknown>>(),
+    db.prepare(`SELECT invoiceDate, createdAt, subtotalSen FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`)
+      .all<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT completedDate, quantity, itemCategory, productCode, productName
+         FROM production_orders
+        WHERE completedDate IS NOT NULL AND status <> 'CANCELLED'`,
+    ).all<Record<string, unknown>>(),
+    db.prepare(`SELECT code, baseModel, category FROM products`).all<Record<string, unknown>>(),
+  ]);
+  const soBy = sumByMonth((soRes.results ?? []).map((r) => ({
+    ym: ymOf(pick(r, "companySODate", "companySoDate", "company_so_date", "createdAt", "created_at")),
+    sen: Number(pick(r, "subtotalSen", "subtotal_sen")) || 0,
+  })), months);
+  const invBy = sumByMonth((invRes.results ?? []).map((r) => ({
+    ym: ymOf(pick(r, "invoiceDate", "invoice_date", "createdAt", "created_at")),
+    sen: Number(pick(r, "subtotalSen", "subtotal_sen")) || 0,
+  })), months);
+  const products = new Map<string, { model: string | null; category: string | null }>();
+  for (const p of prodRes.results ?? []) {
+    products.set(String(p.code ?? ""), {
+      model: (pick(p, "baseModel", "base_model") as string | null) ?? null,
+      category: (pick(p, "category") as string | null) ?? null,
+    });
+  }
+  const topBy = topModelsByMonth((poRes.results ?? []).map((r) => {
+    const code = String(pick(r, "productCode", "product_code") ?? "");
+    const prod = products.get(code);
+    return {
+      ym: ymOf(pick(r, "completedDate", "completed_date")),
+      category: (pick(r, "itemCategory", "item_category") as string | null) ?? prod?.category ?? null,
+      model: prod?.model ?? ((pick(r, "productName", "product_name") as string | null) ?? code),
+      qty: Number(pick(r, "quantity")) || 1,
+    };
+  }), months);
+
+  // The P&L, month by month — /pl-monthly's own loop.
+  await ensurePnlHistorical(db);
+  const orgId = getOrgId(c);
+  const override = await getPnlSectionMap(db);
+  const matData = await loadMaterialCostData(db, orgId, runYm);
+  const dc = await loadDocDateResolver(db);
+  const [historical, openingDateRaw] = await Promise.all([loadHistoricalPnl(db, orgId), getOpeningDate(db)]);
+  const openingMonth = openingDateRaw ? openingDateRaw.slice(0, 7) : null;
+  const out: OverviewMonth[] = [];
+  for (const ym of months) {
+    const hist = selectHistoricalWindow(historical, openingMonth, ym, "all");
+    const w = hist
+      ?? (openingMonth && ym < openingMonth ? null : await computePnlWindow(db, orgId, ym, ym, "all", matData, dc, override));
+    out.push({
+      ym,
+      running: ym === runYm,
+      so: soBy.get(ym) ?? { count: 0, sen: 0 },
+      inv: invBy.get(ym) ?? { count: 0, sen: 0 },
+      pnl: w ? overviewPnl(w) : null,
+      top: topBy.get(ym) ?? { SOFA: [], BEDFRAME: [] },
+    });
+  }
+  return c.json({ success: true, data: { months: out, runningYm: runYm } });
 });
 
 // Finance dashboard tab feed (routes/dashboard-finance.ts → lib/dashboard-finance.ts).

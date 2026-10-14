@@ -146,66 +146,49 @@ test("no context-menu item on this page is a no-op", () => {
 });
 
 // ===========================================================================
-// BUG-2026-08-13-091 — the Overview KPI cards come from the ledger
+// BUG-2026-08-13-091 — the Overview's figures come from the books
 // ===========================================================================
+// The KPI cards this bug fixed were replaced by the owner's Overview on
+// 2026-10-14 (src/pages/accounting/overview-tab.tsx: sales orders vs invoices,
+// gross / net profit, raw-material and labour share, most-produced models).
+// The rule the bug taught still holds: no figure from chart_of_accounts.balanceSen
+// (only manual JVs move it), and a month with no P&L shows a dash, never 0.00.
 
-test("the Overview KPI cards do not sum chart_of_accounts.balanceSen", () => {
+test("the Overview does not sum chart_of_accounts.balanceSen", () => {
   const src = page();
-  // `a.balance` is rowToCoa's `balanceSen`. Reducing it over REVENUE/EXPENSE
-  // accounts is the exact expression that reported manual journals as revenue.
-  // NOTE the `[\s\S]{0,40}?` after `reduce(` rather than `[^)]*`. The first
-  // draft used `[^)]*`, which cannot cross the `)` in the reducer's own
-  // `(s, a) =>` parameter list — so it never matched the real expression and
-  // this guard passed with the bug put back. Caught by watching it fail.
+  const ov = stripComments(read("src/pages/accounting/overview-tab.tsx"));
+  for (const s of [src, ov]) {
+    // NOTE the lazy `[\s\S]{0,40}?` after `reduce(` — a `[^)]*` cannot cross
+    // the reducer's own `(s, a) =>` and would pass with the bug put back.
+    assert.ok(
+      !(/type === "REVENUE"[\s\S]{0,160}?reduce\([\s\S]{0,40}?a\.balance/.test(s)),
+      "Overview revenue is summing chart_of_accounts.balanceSen again — only manual JVs move that column",
+    );
+    assert.ok(
+      !(/type === "EXPENSE"[\s\S]{0,160}?reduce\([\s\S]{0,40}?a\.balance/.test(s)),
+      "Overview expenses are summing chart_of_accounts.balanceSen again",
+    );
+  }
+  // It takes the aging and nothing else — no chart of accounts, no journals.
   assert.ok(
-    !(/type === "REVENUE"[\s\S]{0,160}?reduce\([\s\S]{0,40}?a\.balance/.test(src)),
-    "Overview revenue is summing chart_of_accounts.balanceSen again — only manual JVs move that column",
-  );
-  assert.ok(
-    !(/type === "EXPENSE"[\s\S]{0,160}?reduce\([\s\S]{0,40}?a\.balance/.test(src)),
-    "Overview expenses are summing chart_of_accounts.balanceSen again",
-  );
-  // And the prop that fed it is gone from OverviewTab entirely.
-  assert.ok(
-    /<OverviewTab journals=\{journals\} arData=\{arData\} apData=\{apData\} \/>/.test(src),
-    "OverviewTab took the chart-of-accounts list back as a prop — it has no truthful use for it",
+    /<OverviewTab arData=\{arData\} apData=\{apData\} \/>/.test(src),
+    "OverviewTab took another list back as a prop — its figures come from /overview-trend",
   );
 });
 
-test("the Overview KPI cards read the ledger P&L and publish provenance", () => {
-  const src = page();
-  has(src,
-    /useCachedJson<[^>]*OverviewPl[^>]*>\(\s*`\/api\/accounting\/pl\?period=\$\{ym\}`/,
-    "the Overview cards must read GET /accounting/pl (the posted ledger), scoped to a month",
-  );
-  // "no account posted" is not "RM 0.00" — the dash must exist and be used.
-  has(src, /const NO_FIGURE = "—";/, "the NO_FIGURE dash is gone");
-  has(src,
-    // Since the finance UI refresh (2026-10-14) the figure is written the finance way
-    // (fmtAmount, no RM) and a real zero reads 0.00 — never the no-account dash.
-    /const sourced = \(n: number, v: number \| undefined\) =>\s*\n?\s*n > 0 && v !== undefined \? fmtAmount\(roundSen\(v\), \{ zero: "0\.00" \}\) : NO_FIGURE;/,
-    "`sourced` must publish a figure only when an account behind it carries a posting",
-  );
-  has(src,
-    /const derived = \(deps: number\[\], v: number \| undefined\) =>\s*\n?\s*deps\.every\(\(n\) => n > 0\) && v !== undefined \? fmtAmount\(roundSen\(v\), \{ zero: "0\.00" \}\) : NO_FIGURE;/,
-    "`derived` must inherit the dash from its weakest input",
-  );
-  // Every one of the three cards must go through one of those two guards.
-  for (const [card, guard] of [
-    ["Revenue", /Revenue \(\{ym\}\)[\s\S]{0,200}?\{sourced\(revenueAccts, pl\?\.totals\?\.revenue\)\}/],
-    ["Cost & Expenses", /Cost &amp; Expenses \(\{ym\}\)[\s\S]{0,200}?\{derived\(\[cogsAccts, opexAccts\], costExpenseSen\)\}/],
-    ["Net Profit", /Net Profit \(\{ym\}\)[\s\S]{0,260}?\{derived\(\[revenueAccts, cogsAccts, opexAccts\], netProfitSen\)\}/],
-  ]) {
-    has(src, guard, `the ${card} card no longer renders through the provenance guard`);
-  }
-  // The three cards must TIE: revenue − (cogs + opex) === netProfit is the
-  // server's own arithmetic, so Cost & Expenses must carry BOTH components.
-  has(src,
-    /costExpenseSen\s*=\s*\n?\s*pl\?\.totals \? pl\.totals\.cogs \+ pl\.totals\.operatingExpenses : undefined;/,
-    "Cost & Expenses must be COGS + OpEx, or the three cards stop tying to each other",
-  );
-  // The fabricated "(MTD)" caption over an unfiltered running balance is gone.
-  assert.equal(src.includes("(MTD)"), false, 'the unfiltered "(MTD)" caption is back');
+test("the Overview's P&L figures are the P&L page's own, and a month without one shows a dash", () => {
+  const ov = stripComments(read("src/pages/accounting/overview-tab.tsx"));
+  const api = stripComments(read("src/api/routes/accounting.ts"));
+  has(ov, /`\/api\/accounting\/overview-trend\?months=\$\{range\}`/, "the Overview must read /overview-trend");
+  const at = api.indexOf('app.get("/overview-trend"');
+  assert.ok(at >= 0, "the /overview-trend route is gone");
+  const route = api.slice(at, at + 6000);
+  has(route, /await computePnlWindow\(db, orgId, ym, ym, "all", matData, dc, override\)/,
+    "the month's P&L must be the statement's own window, not a re-derived figure");
+  // A month before the books with no history keyed has no P&L → "—", not 0.00.
+  has(ov, /m\.pnl \? cell\(m, "np", <Amount sen=\{m\.pnl\.netProfitSen\} \/>\) : "—"/, "a month with no P&L must read —");
+  // The fabricated "(MTD)" caption over an unfiltered running balance stays gone.
+  assert.equal(page().includes("(MTD)") || ov.includes("(MTD)"), false, 'the unfiltered "(MTD)" caption is back');
 });
 
 // ===========================================================================

@@ -284,7 +284,8 @@ test("phone: a report's name column leaves room for the figures", () => {
 });
 
 test("Overview figures and the standalone pages follow the same rules", () => {
-  assert.match(ui, /n > 0 && v !== undefined \? fmtAmount\(roundSen\(v\), \{ zero: "0\.00" \}\) : NO_FIGURE;/, "a real zero is 0.00, never the no-figure dash");
+  const ov = read("src/pages/accounting/overview-tab.tsx");
+  assert.doesNotMatch(ov, /formatCurrency|formatRM/, "the Overview writes amounts one way (<Amount>)");
   assert.deepEqual(FINANCE_STANDALONE["/invoices/credit-notes"], { group: "Debtors", title: "Credit Notes" });
   assert.deepEqual(FINANCE_STANDALONE["/invoices/e-invoice"], { title: "e-Invoice" });
   const crumbs = read("src/components/layout/breadcrumbs.tsx");
