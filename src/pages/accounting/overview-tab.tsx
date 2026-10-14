@@ -30,6 +30,7 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { fmtPct } from "@/lib/finance-money";
 import {
   explainMonth,
+  niceAxis,
   shareOfSales,
   type ExplainLine,
   type ModelQty,
@@ -150,11 +151,6 @@ function ChartCard({ title, headline, sub, children }: { title: string; headline
 }
 
 const axisTick = { fontSize: 11, fill: "#6B7280" };
-// Room above (and below a loss) so a bar's label never sits on the month names.
-const roomy: [(min: number) => number, (max: number) => number] = [
-  (min) => (min < 0 ? min * 1.35 : 0),
-  (max) => (max > 0 ? max * 1.2 : 0),
-];
 
 function TopList({ title, items, color }: { title: string; items: ModelQty[]; color: string }) {
   const max = Math.max(1, ...items.map((i) => i.qty));
@@ -303,6 +299,10 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
     };
   });
   const pctLabel = (v: unknown) => (typeof v === "number" ? fmtPct(v) : "");
+  // Round ticks through 0, with room for the bars' labels (niceAxis).
+  const ordersAxis = niceAxis(data.flatMap((d) => [d.so ?? 0, d.inv ?? 0]));
+  const gpAxis = niceAxis(data.map((d) => d.gp ?? 0));
+  const npAxis = niceAxis(data.map((d) => d.np ?? 0));
   const sub = last ? `${monthLong(last.ym)}${last.running ? " so far" : ""}` : "";
   const lp = last?.pnl;
   const ofSales = (sen: number | undefined) => (lp && sen !== undefined ? shareOfSales(sen, lp.netSalesSen) : null);
@@ -370,7 +370,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                 <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="#F0ECE9" />
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={roomy} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={ordersAxis.domain} ticks={ordersAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "orders")} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />
                   <Bar dataKey="so" name="Sales orders" fill="#C9B98F" radius={[3, 3, 0, 0]} />
@@ -388,7 +388,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                 <BarChart data={data} margin={{ top: 16, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="#F0ECE9" />
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={roomy} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={gpAxis.domain} ticks={gpAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "gp")} />
                   <Bar dataKey="gp" name="Gross profit" radius={[3, 3, 0, 0]}>
                     {data.map((d) => <Cell key={d.ym} fill={(d.gp ?? 0) < 0 ? "#9A3A2D" : "#4F7C3A"} />)}
@@ -407,7 +407,7 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
                 <BarChart data={data} margin={{ top: 16, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke="#F0ECE9" />
                   <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={roomy} />
+                  <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={compact} width={44} domain={npAxis.domain} ticks={npAxis.ticks} />
                   <Tooltip cursor={{ fill: "#F7F4EF" }} content={chartTip(byYm, "np")} />
                   <Bar dataKey="np" name="Net profit" radius={[3, 3, 0, 0]}>
                     {data.map((d) => <Cell key={d.ym} fill={(d.np ?? 0) < 0 ? "#9A3A2D" : "#4F7C3A"} />)}

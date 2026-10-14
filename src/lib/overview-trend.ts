@@ -193,3 +193,22 @@ export function explainMonth(m: OverviewMonth, metric: OverviewMetric): ExplainL
     { label: "= of sales", pct: shareOfSales(p.labourSen, p.netSalesSen), total: true },
   ];
 }
+
+/**
+ * A chart axis with round ticks (0, 50k, 100k …), always through 0, with room
+ * above the tallest bar and below the deepest loss for their labels.
+ */
+export function niceAxis(values: number[], padTop = 1.15, padBottom = 1.35): { domain: [number, number]; ticks: number[] } {
+  const finite = values.filter((v) => Number.isFinite(v));
+  const hi = Math.max(0, ...finite) * padTop;
+  const lo = Math.min(0, ...finite) * padBottom;
+  if (hi === 0 && lo === 0) return { domain: [0, 1], ticks: [0, 1] };
+  const raw = (hi - lo) / 4;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = ([1, 2, 2.5, 5, 10].find((f) => f * mag >= raw) ?? 10) * mag;
+  const top = Math.ceil(hi / step) * step;
+  const bottom = Math.floor(lo / step) * step;
+  const ticks: number[] = [];
+  for (let t = bottom; t <= top + step / 1000; t += step) ticks.push(Math.round(t * 100) / 100);
+  return { domain: [bottom, top], ticks };
+}

@@ -139,5 +139,17 @@ test("the tab: six charts, the month-by-month table, aging with who makes up a b
   assert.match(ui, /const cols = \[\.\.\.months\]\.reverse\(\);/, "the table reads newest month first, as the Monthly P&L");
   assert.match(ui, /<HoverDetail key=\{b\.period\} block detail=\{detail\(b\)\}>/, "an aging bucket shows its parties");
   assert.match(ui, /createPortal\(/, "the detail is drawn above a scrolling table");
-  assert.equal((ui.match(/domain=\{roomy\}/g) ?? []).length, 3, "bar labels clear of the month names");
+  for (const a of ["ordersAxis", "gpAxis", "npAxis"]) {
+    assert.match(ui, new RegExp(`domain=\\{${a}\\.domain\\} ticks=\\{${a}\\.ticks\\}`), `${a}: round ticks with room for the labels`);
+  }
+});
+
+test("chart axes: round ticks, always through 0, room for the labels", async () => {
+  const { niceAxis } = await import("../src/lib/overview-trend.ts");
+  assert.deepEqual(niceAxis([407462.28, 484714.12, 293453.53]), { domain: [0, 600000], ticks: [0, 200000, 400000, 600000] });
+  const np = niceAxis([-42567.44, 63819.47, -73741.18]);
+  assert.deepEqual(np.domain, [-100000, 100000]);
+  assert.ok(np.ticks.includes(0), "a loss chart keeps its zero line");
+  assert.ok(np.domain[0] < -73741.18 * 1.3, "room below the deepest loss for its label");
+  assert.deepEqual(niceAxis([0, 0]), { domain: [0, 1], ticks: [0, 1] });
 });
