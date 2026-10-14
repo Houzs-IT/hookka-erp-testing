@@ -108,7 +108,7 @@ test("the topbar block stays on screen when the page scrolls", () => {
   const layout = readFileSync(new URL("../src/layouts/DashboardLayout.tsx", import.meta.url), "utf8");
   // The sticky has to be on the wrapper: a sticky child cannot leave a parent
   // that is only as tall as itself, so the API button scrolled away.
-  assert.match(layout, /<div (?:ref=\{\w+\} )?className="sticky top-0 z-30 print:hidden">\s*<Topbar \/>\s*<Breadcrumbs \/>/);
+  assert.match(layout, /<div (?:ref=\{\w+\} )?className="sticky top-0 z-(?:\d+|\[\d+\]) print:hidden">\s*<Topbar \/>\s*<Breadcrumbs \/>/);
   // A page's own sticky header docks under this block, not over it.
   assert.match(layout, /setProperty\("--app-sticky-h"/);
   const dash = readFileSync(new URL("../src/pages/dashboards/dashboard-prototype.tsx", import.meta.url), "utf8");

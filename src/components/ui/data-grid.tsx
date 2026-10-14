@@ -3792,7 +3792,7 @@ export function DataGrid<T extends Record<string, any>>({
 export function GridPager({ page, pages, onPage }: { page: number; pages: number; onPage: (n: number) => void }) {
   if (pages <= 1) return null;
   return (
-    <div className="flex items-center justify-end gap-3 px-3 py-2 text-sm">
+    <div className="flex select-none items-center justify-end gap-3 px-3 py-2 text-sm">
       <Button variant="outline" size="sm" onClick={() => onPage(page - 1)} disabled={page <= 1}>Prev</Button>
       <span className="tabular-nums text-[#1F1D1B]">Page {page} of {pages}</span>
       <Button variant="outline" size="sm" onClick={() => onPage(page + 1)} disabled={page >= pages}>Next</Button>

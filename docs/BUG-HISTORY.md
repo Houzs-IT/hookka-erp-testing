@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: staging<-main sync (branch `chore/sync-staging-from-main-1013`): both sides kept, one copy of each entry. Staging's Plant Load entry, logged as BUG-2026-10-08-269, is now BUG-2026-10-08-285 because main used 269 first. Newest entry is still 284; 285 is the next number used.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder`, to staging; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
@@ -145,6 +146,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-14-288 — Table column headers showed through the notifications panel `ui` `layout` 🟡
+
+🟡 **Fixed on branch** (`fix/topbar-over-grid-header` → `staging`).
+
+**Symptom.** Seen on staging 2026-10-14 on /it-support: with the notifications panel open, the ticket table's header row (Urgency, Handled by, Last update) painted across the middle of the panel.
+
+**Root cause.** The top bar and breadcrumbs sit in one sticky wrapper in `src/layouts/DashboardLayout.tsx` at `z-30`, which caps every top bar dropdown at 30. The DataGrid sticky `<thead>` is also `z-30` and comes later in the page, so it wins. Every grid page had this, for every top bar dropdown. Global search hit the same thing earlier and was fixed only for itself by portalling its overlay.
+
+**Fix.** The wrapper is `z-[35]`: above the grid header (30), below the phone menu backdrop (40) and drawer (50), so the phone menu still covers the top bar.
+
+**Regression.** `tests/topbar-above-grid-header.test.mjs` reads the three z values from source and checks the order; fails on the old `z-30`.
 
 ## BUG-2026-10-14-287 — Finance could not void a purchase invoice billed straight off a PO `procurement` `rbac` 🟡
 
