@@ -3765,7 +3765,7 @@ export default function ProductsPage() {
                   unitM3: p.unitM3,
                   status: p.status,
                   costPriceSen: (p.costPriceSen ?? 0) / 100,
-                  basePriceSen: (p.basePriceSen ?? 0) / 100,
+                  basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
                 })),
                 `products-${new Date().toISOString().slice(0, 10)}.xlsx`,
               )
@@ -5298,7 +5298,7 @@ export default function ProductsPage() {
           unitM3: p.unitM3,
           status: p.status,
           costPriceSen: (p.costPriceSen ?? 0) / 100,
-          basePriceSen: (p.basePriceSen ?? 0) / 100,
+          basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
         }))}
       />
 
