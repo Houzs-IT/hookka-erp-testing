@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `docs/hk0052-already-delivered-dev36` (to `main`, IT Hub HK-0052) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk0094-so-customer-edit` (to `main`, IT Hub HK-0094) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue-main` (to `main`, department revenue + Bedframe/Sofa split, from staging #860, plus the phone dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
@@ -147,6 +148,15 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-15 — ⬜ IT Hub HK-0052: department option on Production Time Efficiency is already shipped as DEV-36; one ask left for the owner (branch `docs/hk0052-already-delivered-dev36` → `main`, docs only)
+
+Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TESTING 2026-10-14) asks for a Department field on the Production Time Efficiency KPI, the existing Overall kept, and assignment to the workers of that department. Read from the code on `main`, no change made:
+
+1. 🔵 Department option, Overall kept, scored on that department only: shipped as DEV-36 (see the 2026-10-07 entry below). `src/pages/kpi/index.tsx` offers every production department as All / Sofa / Bedframe; `PUT /api/kpi/assignments/:kpiKey` stores it in `kpi_assignments.scope`; `parseEfficiencyScope` is covered by `tests/efficiency-allowance.test.mjs`. Nothing ticked is Overall.
+2. 🔵 "Fab Cut Sofa", "Fab Sew Sofa", "Upholstery Bedframe", "Packing Sofa" etc. are the department + category pairs of item 1. Whether "foam bonding" and "Packing" exist as production departments on prod is UNMEASURED (no prod access from this session).
+3. ❓ "Assign to individual workers within that department": not built, on purpose. Owner decision 2026-10-06 (DEV-36): holders are office login accounts, not floor workers; `9af643c9` removed the floor-worker half. The people list is every login, with no department filter. OWNER QUESTION: keep it so (close HK-0052 as delivered), or should the people list narrow to accounts linked to the chosen department? If the latter, which field links a login account to a department is not decided.
+4. ⬜ Violet / Laphii: say what failed when Laphii reopened it; the ticket carries no comment.
 
 ## 2026-10-15 — 🔵 SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(branch `feat/hk0094-so-customer-edit` → `main`)
 
