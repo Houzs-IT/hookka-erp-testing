@@ -279,3 +279,63 @@ export async function productionRevenueByDay(
   const rows = r.results ?? [];
   return day ? rows.filter((x) => x.date === day) : rows;
 }
+
+// HK-0092: the SAME rule once per department. Department X books a PO's full
+// value on the day its LAST department-X job card completes, and only once
+// every department-X card of that PO is COMPLETED/TRANSFERRED with a completed
+// date. A PO with no card in a department books nothing there. The UPHOLSTERY
+// rows equal productionRevenueByDay's. Every department books the FULL order
+// value, so the rows are not meant to sum to anything.
+export async function productionRevenueByDeptDay(
+  db: Db,
+  orgId: string,
+): Promise<(ProductionRevenueDay & { dept: string })[]> {
+  const r = await db
+    .prepare(
+      `WITH per_po AS (
+         SELECT production_order_id, department_code,
+                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
+                              AND completed_date IS NOT NULL
+                         THEN completed_date END) AS unit_completed_at
+           FROM job_cards
+          WHERE department_code IS NOT NULL
+          GROUP BY production_order_id, department_code
+         HAVING COUNT(*) > 0
+            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
+                              AND completed_date IS NOT NULL
+                         THEN 1 ELSE 0 END) = COUNT(*)
+       ), priced AS (
+         SELECT to_char(per_po.unit_completed_at::date, 'YYYY-MM-DD') AS day,
+                per_po.department_code AS dept,
+                COALESCE(
+                  soi.unit_price_sen,
+                  coi.unit_price_sen,
+                  (SELECT COALESCE(p.base_price_sen, p.price1_sen)
+                     FROM products p
+                    WHERE p.code = po.product_code
+                    ORDER BY p.base_price_sen DESC NULLS LAST, p.id
+                    LIMIT 1),
+                  0
+                ) * po.quantity AS sen
+           FROM per_po
+           JOIN production_orders po ON po.id = per_po.production_order_id
+           LEFT JOIN sales_order_items soi
+                  ON soi.sales_order_id = po.sales_order_id AND soi.line_no = po.line_no
+           LEFT JOIN consignment_order_items coi
+                  ON coi.consignment_order_id = po.consignment_order_id AND coi.line_no = po.line_no
+          WHERE po.org_id = ?
+            AND po.item_category IN ('SOFA','BEDFRAME','ACCESSORY')
+            AND per_po.unit_completed_at IS NOT NULL
+       )
+       SELECT day AS "date",
+              dept AS "dept",
+              COUNT(*) AS "orders",
+              SUM(CASE WHEN sen > 0 THEN 0 ELSE 1 END) AS "unpricedOrders",
+              COALESCE(SUM(sen), 0) AS "revenueSen"
+         FROM priced
+        GROUP BY day, dept`,
+    )
+    .bind(orgId)
+    .all<ProductionRevenueDay & { dept: string }>();
+  return r.results ?? [];
+}

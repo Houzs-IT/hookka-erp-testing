@@ -27,6 +27,10 @@
 //    It is the value of what production finished, NOT invoiced or delivered
 //    revenue. Orders whose price resolves to 0 are counted in
 //    `unpricedOrders`, not hidden.
+//    HK-0092: `byDept` is the same rule once per department — department X
+//    books a PO's full value on the day its last department-X card completes,
+//    once every one of them is COMPLETED/TRANSFERRED. `byDay` stays the
+//    upholstery line (= byDept's UPHOLSTERY rows).
 // ---------------------------------------------------------------------------
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
 
@@ -53,6 +57,8 @@ export type DailyRevenueRow = {
   revenueSen: number | string;
 };
 
+export type DeptRevenueRow = DailyRevenueRow & { dept: string };
+
 export type StageDay = {
   date: string; dept: string;
   plan: number; actual: number;
@@ -69,6 +75,8 @@ export type DailySlice = {
   revenue: {
     byDay: { date: string; orders: number; unpricedOrders: number; revenueSen: number }[];
     unpricedOrders: number;
+    // null when only the per-department load failed (byDay is still good).
+    byDept: { date: string; dept: string; orders: number; unpricedOrders: number; revenueSen: number }[] | null;
   } | null;
   revenueError?: string;
 };
@@ -88,12 +96,18 @@ export function buildDailySlice(
   cards: DailyJc[],
   revenueByDay: DailyRevenueRow[] | null,
   revenueError?: string,
+  deptRevenue?: DeptRevenueRow[] | null,
 ): DailySlice {
   const poById = new Map(pos.map((p) => [p.id, p]));
 
   const rev = (revenueByDay ?? []).flatMap((r) => {
     const d = day(r.date);
     return d ? [{ date: d, orders: num(r.orders), unpricedOrders: num(r.unpricedOrders), revenueSen: Math.round(num(r.revenueSen)) }] : [];
+  });
+
+  const byDept = (deptRevenue ?? []).flatMap((r) => {
+    const d = day(r.date);
+    return d && r.dept ? [{ date: d, dept: r.dept, orders: num(r.orders), unpricedOrders: num(r.unpricedOrders), revenueSen: Math.round(num(r.revenueSen)) }] : [];
   });
 
   const stg = new Map<string, StageDay>();
@@ -134,7 +148,13 @@ export function buildDailySlice(
   const byDate = <T extends { date: string }>(a: T, b: T) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   return {
     stages: { byDay: [...stg.values()].sort(byDate), cardsWithoutDue },
-    revenue: revenueByDay ? { byDay: rev.sort(byDate), unpricedOrders: rev.reduce((a, r) => a + r.unpricedOrders, 0) } : null,
+    revenue: revenueByDay
+      ? {
+          byDay: rev.sort(byDate),
+          unpricedOrders: rev.reduce((a, r) => a + r.unpricedOrders, 0),
+          byDept: deptRevenue ? byDept.sort(byDate) : null,
+        }
+      : null,
     ...(revenueError ? { revenueError } : {}),
   };
 }

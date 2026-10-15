@@ -53,7 +53,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
-import { productionRevenueByDay } from "../lib/production-revenue";
+import { productionRevenueByDay, productionRevenueByDeptDay } from "../lib/production-revenue";
 import { requirePermission, hasPermission, dashboardReadsFor } from "../lib/rbac";
 import { buildServiceSlice } from "../lib/dashboard-service-slice";
 import { isCustomerScoped } from "../lib/customer-scope";
@@ -1268,6 +1268,11 @@ app.get("/", async (c) => {
   const prodRevSec = await section("production revenue", () =>
     productionRevenueByDay(c.var.DB, orgId),
   );
+  // HK-0092: the same rule per department. Its own section so a failure here
+  // leaves the upholstery line standing (byDept = null, "unavailable" on screen).
+  const deptRevSec = await section("production revenue by department", () =>
+    productionRevenueByDeptDay(c.var.DB, orgId),
+  );
 
   // Bucketed by day so the frontend can slice "Aug 2026 only" the SAME way
   // it already does for every Sales metric (sum matching day rows; sum ALL
@@ -1702,7 +1707,7 @@ app.get("/", async (c) => {
       productionCost,
     },
     // "Daily (Lim)" tab — see ../lib/dashboard-daily-slice.ts for definitions.
-    lim: buildDailySlice(prodOrdSec.rows, jcAllSec.rows, prodRevSec.error ? null : prodRevSec.rows, prodRevSec.error ?? undefined),
+    lim: buildDailySlice(prodOrdSec.rows, jcAllSec.rows, prodRevSec.error ? null : prodRevSec.rows, prodRevSec.error ?? undefined, deptRevSec.error ? null : deptRevSec.rows),
     inventory: {
       groups: [...groups.values()].sort((a, b) => b.items - a.items),
       totals: {

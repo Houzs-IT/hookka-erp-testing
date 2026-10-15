@@ -17,6 +17,7 @@ import {
 } from "../../../../dashboards/dashboard-shared-lib";
 import { ListRow, MobileCard } from "../../../components";
 import { M, M_ACCENT, M_DELTA } from "../../../theme";
+import { deptRevenueRows } from "../../../../dashboards/ops-floor-lib";
 import { compactSen, tapBucket } from "../dashboard-m-lib";
 import { useDashboardSub } from "../hooks";
 import { MChartCard, MFocusChip, MKpi, MKpiGrid, MRankList, MSection, MState, MSubPills } from "../primitives";
@@ -76,6 +77,7 @@ type Feed = {
     stages?: { byDay: { date: string; dept: string; plan: number; actual: number }[]; cardsWithoutDue: number };
     revenue?: {
       byDay: { date: string; orders: number; unpricedOrders: number; revenueSen: number }[];
+      byDept?: { date: string; dept: string; orders: number; unpricedOrders: number; revenueSen: number }[] | null;
       unpricedOrders: number;
     } | null;
     revenueError?: string;
@@ -523,6 +525,11 @@ function CostPanel({ data, period, setPeriod }: PanelProps) {
       ),
     [revenue, period],
   );
+  // HK-0092: the same rule per department (null = feed older than the key, or its query failed).
+  const deptRev = useMemo(
+    () => (revenue?.byDept ? deptRevenueRows(revenue.byDept.filter((d) => inFocus(period, d.date))) : null),
+    [revenue, period],
+  );
   const costChart = useMemo<Pt[]>(
     () =>
       bucket((cost?.byDay ?? []).filter((d) => inPeriod(period, d.date)), period,
@@ -576,6 +583,26 @@ function CostPanel({ data, period, setPeriod }: PanelProps) {
             <Note>
               Value of production orders whose last upholstery job card completed on the {unit}: quantity × its sales-order
               line price. Sofa, bedframe and accessory only — same as the main Dashboard's Production line. Not invoiced revenue.
+            </Note>
+          </MSection>
+          <MSection title="Production revenue by department" hint={periodLabel(period)}>
+            {deptRev ? (
+              <MRankList
+                items={deptRev.map((r) => ({
+                  key: r.code,
+                  label: r.name,
+                  sub: `${fmtN(r.orders)} orders${r.unpriced ? ` · ${fmtN(r.unpriced)} no price` : ""}`,
+                  value: r.sen,
+                  valueLabel: money(r.sen),
+                }))}
+                valueHeading="Revenue"
+              />
+            ) : (
+              <Missing what="Production revenue by department" reason="the feed carries no per-department figures yet (reload in a minute)" />
+            )}
+            <Note>
+              Each department books an order's full value the day its last card for that order completes, so rows do not add
+              up: equal rows mean balanced output. Upholstery is the figure above.
             </Note>
           </MSection>
         </>

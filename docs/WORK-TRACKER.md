@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/hk0092-production-revenue-by-dept` (to `staging`, IT Hub HK-0092) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -242,6 +243,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 — 🔵 Production Revenue per department on Operations > Revenue & Cost (IT Hub HK-0092, Violet, High; branch `feat/hk0092-production-revenue-by-dept` → `staging`)
+
+Ask (HK-0092, Violet, 13 Oct, type Development): "Production Revenue only displays the Upholstery department; give each department its own Production Revenue. The calculation stays exactly the same."
+1. 🔵 Operations > Revenue & Cost (desktop `ProductionDailyPanels`, phone `OperationsTab`): a "Production revenue by department" table / ranked list under the upholstery chart. Same recognition rule per department (full order value, the day the last department-X card completes, all department-X cards COMPLETED/TRANSFERRED). Feed key `lim.revenue.byDept`; `byDay` (upholstery) unchanged; the e-mail's `productionRevenueByDay` unchanged.
+2. 🔵 /dashboard "Department Revenue" (staging #860 / main #862) already shows the same per-department figure on the main dashboard; this entry covers the Operations tab, which was still upholstery-only.
+3. ❓ Owner: which screen did Violet mean? The Finance dashboard's PRODUCTION REVENUE row (Cost Structure + salary cards) is still upholstery-only by design (owner 2026-10-12) and was NOT changed here.
+4. ⬜ Not checked against real data (staging or prod): needs a sign-in; check Fabric Cutting ... Packing rows after deploy, and that UPHOLSTERY equals the chart's total.
+
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
 Owner asks (2026-10-15, decisions confirmed in chat):

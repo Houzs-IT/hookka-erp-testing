@@ -60,3 +60,30 @@ export function deptStatusRows<B extends { d: { dept: string } }>(
   const idx = (n: string) => FLOOR_IDX.get(n) ?? DEPT_FLOOR.length;
   return [...rows.values()].sort((a, b) => idx(a.name) - idx(b.name));
 }
+
+/**
+ * HK-0092: production revenue per department. Takes the feed's per-(day,
+ * department) rows ALREADY filtered to the period, sums them per department
+ * and returns them in floor order. Every floor department appears (a zero row
+ * is information: that department finished nothing); unknown codes follow.
+ * Each department books an order's FULL value, so rows are not meant to add up.
+ */
+export function deptRevenueRows(
+  rows: { dept: string; orders: number; unpricedOrders: number; revenueSen: number }[],
+) {
+  const m = new Map<string, { code: string; name: string; orders: number; unpriced: number; sen: number }>();
+  const row = (code: string) => {
+    let r = m.get(code);
+    if (!r) m.set(code, (r = { code, name: deptName(code), orders: 0, unpriced: 0, sen: 0 }));
+    return r;
+  };
+  for (const [code] of DEPT_FLOOR) row(code);
+  for (const r of rows) {
+    const e = row(r.dept);
+    e.orders += r.orders;
+    e.unpriced += r.unpricedOrders;
+    e.sen += r.revenueSen;
+  }
+  const idx = (n: string) => FLOOR_IDX.get(n) ?? DEPT_FLOOR.length;
+  return [...m.values()].sort((a, b) => idx(a.name) - idx(b.name));
+}

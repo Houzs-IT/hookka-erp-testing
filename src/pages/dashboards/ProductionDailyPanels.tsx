@@ -10,6 +10,7 @@ import {
 } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import type { EmployeeSlice } from "./EmployeesInsights";
+import { deptRevenueRows } from "./ops-floor-lib";
 
 // The day-by-day production panels, mounted by the tab that owns each one:
 //   plan      Operations > Plan vs Actual   (definitions are in the card
@@ -28,6 +29,8 @@ type DailySlice = {
   stages: { byDay: StageDay[]; cardsWithoutDue: number };
   revenue: {
     byDay: { date: string; orders: number; unpricedOrders: number; revenueSen: number }[];
+    // HK-0092: same rule per department; null when that load failed, absent on an older cached feed.
+    byDept?: { date: string; dept: string; orders: number; unpricedOrders: number; revenueSen: number }[] | null;
     unpricedOrders: number;
   } | null;
   revenueError?: string;
@@ -209,6 +212,11 @@ export function ProductionDailyPanels({
     );
   }, [lim, period]);
 
+  const deptRev = useMemo(
+    () => (lim?.revenue?.byDept ? deptRevenueRows(lim.revenue.byDept.filter((d) => inFocus(period, d.date))) : null),
+    [lim, period],
+  );
+
   if (loading) return <div className="py-16 text-center text-sm text-[#6B7280]">Loading…</div>;
   if (error || !data?.success) {
     return (
@@ -369,6 +377,42 @@ export function ProductionDailyPanels({
                 <Bar dataKey="Revenue" fill={TAUPE} radius={[3, 3, 0, 0]} />
               ), 48, fmtRMAxis)}
               <p className="mt-2 text-[11px] text-[#6B7280]">Click a bar to focus that {unit === "month" ? "month" : "day"}.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>Production revenue · by department</CardTitle>
+              <p className="text-xs text-[#6B7280] max-w-3xl">
+                {period.day ? dayLabel(period.day) : periodLabel(period)}. The same rule as above, once per department: a department
+                books an order's <b>full value</b> the day its last job card for that order completes (all of its cards done). A
+                RM 2,000 sofa through 9 departments shows RM 2,000 on each row, so the rows do not add up; equal rows mean balanced
+                output. Upholstery is the figure above.
+              </p>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!deptRev ? (
+                <p className="px-4 py-6 text-sm text-[#B5701A]">Per-department revenue isn't available in this feed (older cached response, or the query failed). Reload in a minute.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12.5px]">
+                    <thead>
+                      <tr className="border-t border-b border-[#E2DDD8]">
+                        {th("Department", false)}{th("Orders", true)}{th("No price", true)}{th("Production revenue", true)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deptRev.map((r) => (
+                        <tr key={r.code} className="border-b border-[#E2DDD8]">
+                          <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{r.name}</td>
+                          <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.orders)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.unpriced)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-semibold">{formatCurrency(r.sen)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </>
