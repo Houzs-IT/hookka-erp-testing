@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -242,6 +243,20 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 — 🔵 HK-0025: Send Notification (order priority) from the Production Overview (branch `feat/hk-0025-production-notify` → `staging`)
+
+Ticket HK-0025 (Violet, 2026-09-23, support.houzscentury.com), asks 1 to 7.
+
+1. **Send Notification button** — Overview, tick order(s), Send Notification (`SendOrderNotificationDialog`, max 10 orders per send, one announcement each).
+2. **Priority** — URGENT / OVERDUE / PRIORITY (`src/lib/order-notification.ts`); URGENT and OVERDUE are forced to the WARNING category, which the worker phone already shows as a red card plus must-ack popup.
+3. **Recipients** — departments (multi), individual workers, or all; this is the existing announcement targeting, unchanged.
+4. **Content** — order no., model, required date, status, priority, optional supervisor note, built by `buildOrderNotice`.
+5. **Mobile** — announcement feed + Web Push, unchanged. Not done: tapping the notice does not open a dedicated order screen (the order details are in the notice text).
+6. **History** — /announcements shows priority, order no., "by <sender>" (`createdByName`) and the existing read-receipt panel (acked vs pending). Not done: a history view filtered to order notices only.
+7. Columns `priority`, `order_no`, `order_id` on `announcements`, runtime self-apply (nullable, no backfill).
+
+Tests: `tests/order-notification.test.mjs`. Prod state: UNMEASURED (not deployed; staging check pending).
+
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
 Owner asks (2026-10-15, decisions confirmed in chat):

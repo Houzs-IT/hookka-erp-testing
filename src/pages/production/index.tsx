@@ -79,6 +79,7 @@ import { WorkOrderCard } from "./components/OverviewCards";
 import { CheckboxMultiSelect } from "@/components/checkbox-multi-select";
 import { ProductDetailLine } from "./components/ProductDetailLine";
 import { CreateStockPODialog } from "./components/CreateStockPODialog";
+import { SendOrderNotificationDialog } from "./components/SendOrderNotificationDialog";
 import {
   BatchActionToolbar,
   ApplyBatchDateDialog,
@@ -1289,6 +1290,7 @@ export default function ProductionPage({
   const [selectedOverviewIds, setSelectedOverviewIds] = useState<Set<string>>(new Set());
   const [overviewBatchDept, setOverviewBatchDept] = useState<string>("ALL");
   const [overviewBatchDueDateOpen, setOverviewBatchDueDateOpen] = useState(false);
+  const [overviewNotifyOpen, setOverviewNotifyOpen] = useState(false);
 
   // ── Overview stages + layout ──
   // Stage columns = today's DEPARTMENTS (fixed order + labels) plus any other
@@ -8656,6 +8658,14 @@ export default function ProductionPage({
             </button>
             <button
               type="button"
+              onClick={() => setOverviewNotifyOpen(true)}
+              title="Send the selected orders to workers' phones with a priority"
+              className="h-8 rounded-md border border-[#6B5C32] bg-white px-3 text-[12px] font-semibold text-[#6B5C32] hover:bg-[#F5F2ED]"
+            >
+              Send Notification
+            </button>
+            <button
+              type="button"
               onClick={() => setSelectedOverviewIds(new Set())}
               className="h-8 rounded-md border border-[#D4CFC7] bg-white px-3 text-[12px] text-[#5A5550] hover:bg-[#F5F2ED]"
             >
@@ -8667,6 +8677,14 @@ export default function ProductionPage({
                 : `Sets the date on the ${overviewStages.find((d) => d.code === overviewBatchDept)?.name} job card of the selected orders.`}
             </span>
           </div>
+        )}
+
+        {overviewNotifyOpen && (
+          <SendOrderNotificationDialog
+            orders={selectedOverviewOrders}
+            onClose={() => setOverviewNotifyOpen(false)}
+            onSent={(n) => toast.success(`Notification sent for ${n} order${n === 1 ? "" : "s"}.`)}
+          />
         )}
 
         <ApplyBatchDueDateDialog

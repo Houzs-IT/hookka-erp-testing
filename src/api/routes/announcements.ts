@@ -37,6 +37,11 @@ import {
 // subscribed worker devices, RESPECTING the same targeting the worker GET uses.
 // Best-effort: wrapped in try/catch so a push failure NEVER faults the create.
 import { sendPushToSubscribers } from "./push";
+import {
+  orderNoticeCategory,
+  readOrderPriority,
+  type OrderPriority,
+} from "../../lib/order-notification";
 
 // ---- runtime schema self-apply (idempotent, once per isolate) ----
 let _announcementsMig: Promise<void> | null = null;
@@ -200,6 +205,21 @@ function ensureAnnouncementsTable(db: D1Database): Promise<void> {
     } catch {
       _announcementsMig = null;
     }
+    // Order notices (HK-0025, 2026-10-15). priority = URGENT | OVERDUE |
+    // PRIORITY (NULL for an ordinary announcement); order_no / order_id name the
+    // production order the notice is about. Nullable, so existing rows are
+    // untouched. Same self-heal posture as the columns above.
+    try {
+      for (const col of ["priority", "order_no", "order_id"]) {
+        await db
+          .prepare(
+            `ALTER TABLE announcements ADD COLUMN IF NOT EXISTS ${col} TEXT`,
+          )
+          .run();
+      }
+    } catch {
+      _announcementsMig = null;
+    }
   })();
   return _announcementsMig;
 }
@@ -305,6 +325,12 @@ type AnnouncementRow = {
   // column, so the PG driver hands it back as `category` unchanged; declared
   // dual-keyed defensively. Missing/unknown normalizes to GENERAL on read.
   category?: string | null;
+  // Order notice (HK-0025) — all null on an ordinary announcement.
+  priority?: string | null;
+  order_no?: string | null;
+  orderNo?: string | null;
+  order_id?: string | null;
+  orderId?: string | null;
 };
 
 // Targeting kinds. ALL = everyone (the back-compat default); the others narrow
@@ -423,6 +449,10 @@ function toPublic(r: AnnouncementRow) {
     // Category — normalized (uppercase, unknown/missing → GENERAL) so the office
     // list + worker portal always get one of the four known values.
     category: readCategory(r.category),
+    // Order notice (HK-0025): null / null / null on an ordinary announcement.
+    priority: readOrderPriority(r.priority) as OrderPriority | null,
+    orderNo: r.orderNo ?? r.order_no ?? null,
+    orderId: r.orderId ?? r.order_id ?? null,
   };
 }
 
@@ -466,7 +496,33 @@ admin.get("/", async (c) => {
   )
     .bind(orgId)
     .all<AnnouncementRow>();
-  return c.json({ success: true, data: (res.results ?? []).map(toPublic) });
+  const rows = res.results ?? [];
+  // "Sent by" for the notification history: created_by holds a user id.
+  const senderIds = [
+    ...new Set(
+      rows
+        .map((r) => r.createdBy ?? r.created_by)
+        .filter((v): v is string => !!v),
+    ),
+  ];
+  const nameById = new Map<string, string>();
+  if (senderIds.length > 0) {
+    const u = await c.var.DB.prepare(
+      `SELECT id, displayName FROM users WHERE id IN (${senderIds.map(() => "?").join(",")})`,
+    )
+      .bind(...senderIds)
+      .all<{ id: string; displayName?: string | null }>();
+    for (const x of u.results ?? []) {
+      if (x.displayName) nameById.set(x.id, x.displayName);
+    }
+  }
+  return c.json({
+    success: true,
+    data: rows.map((r) => ({
+      ...toPublic(r),
+      createdByName: nameById.get(r.createdBy ?? r.created_by ?? "") ?? null,
+    })),
+  });
 });
 
 // GET /api/announcements/:id/acks — read-receipt for one announcement. Splits
@@ -594,7 +650,19 @@ admin.post("/", async (c) => {
   );
   const targetType = deriveTargetType(reqDeptCodes, reqWorkerIds);
   // Category — GENERAL | WARNING | SOP | LEARNING; default/invalid → GENERAL.
-  const category = readCategory((body as { category?: unknown }).category);
+  // Order notice (HK-0025): URGENT / OVERDUE are always WARNING so the phone
+  // highlights them whatever category the client sent.
+  const priority = readOrderPriority((body as { priority?: unknown }).priority);
+  const orderNo = priority
+    ? String((body as { orderNo?: unknown }).orderNo ?? "").trim() || null
+    : null;
+  const orderId = priority
+    ? String((body as { orderId?: unknown }).orderId ?? "").trim() || null
+    : null;
+  const category =
+    priority && orderNoticeCategory(priority) === "WARNING"
+      ? "WARNING"
+      : readCategory((body as { category?: unknown }).category);
   const userId =
     (c as unknown as { get: (k: string) => string | undefined }).get(
       "userId",
@@ -614,8 +682,8 @@ admin.post("/", async (c) => {
     `INSERT INTO announcements
        (id, org_id, title, body, is_active, expires_at, created_by, created_at,
         translations, attachments, target_type, target_dept_codes, target_worker_ids,
-        category)
-     VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        category, priority, order_no, order_id)
+     VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -631,6 +699,9 @@ admin.post("/", async (c) => {
       reqDeptCodes.length ? JSON.stringify(reqDeptCodes) : null,
       reqWorkerIds.length ? JSON.stringify(reqWorkerIds) : null,
       category,
+      priority,
+      orderNo,
+      orderId,
     )
     .run();
   const row = await c.var.DB.prepare(
