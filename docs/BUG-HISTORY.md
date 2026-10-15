@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
@@ -115,6 +116,20 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-15-292 — Picking the MTR row of a material added the ROLL one to the PO `procurement` `inventory` 🟡
+
+🟡 **Fixed on branch** (`fix/po-pick-exact-rm-row` → `main`).
+
+**Symptom.** Reported 2026-10-15 on PO-2610-036: the user picked PC151-17 in MTR ("Comfy HK 1 - Frost Linen"), but the line was saved and printed as "FABRIC" in ROLL.
+
+**Root cause.** Measured on prod (read-only, 2026-10-15): PC151-17 is three active raw materials: "FABRIC" in ROLL, and two MTR rows "HK COMFY 1 -FROST LINEN" and "COMFY 1 -FROST LINEN". Duplicate item codes are allowed on purpose (`raw-materials.ts` `ensureDupCodesUnlocked`). New PO's Select Materials lists each row, but Add passed only `rm.itemCode`, and `addItemFromRM` took `rawMaterials.find(r => r.itemCode === code)`, the first row: ROLL / FABRIC. The server keeps the unit the page sends (`poLineUnit`), so the line saved as ROLL. Edit PO (`detail.tsx` `addLineFromRM`) and the older PO popup (`index.tsx` `addItemFromRM`) had the same code-only lookup. New PO also marked rows "Added" by code, so adding one PC151-17 greyed out the other two.
+
+**Fix.** All three add helpers take the clicked `RawMaterial` row instead of its code. New PO lines carry `rmId`, and "Added" is keyed by RM id + supplier.
+
+**Not changed.** Typing a code into a PO line's code box, and the `?prefillRm=` link from the fabric shortage chip, still resolve by code (a typed code cannot say which row). PO-2610-036 itself still holds the ROLL / FABRIC line and needs editing by hand. The two near-identical MTR rows look like a duplicate to merge; left to the owner.
+
+**Regression.** `tests/po-add-picked-rm-row.test.mjs`.
 
 ## FEATURE-2026-10-15-HK0005 — Document scanning: originals kept and viewable, corrections learned, leaner prompts `ocr` `scan-queue` 🟡
 
