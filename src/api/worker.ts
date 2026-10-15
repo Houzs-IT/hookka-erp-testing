@@ -1068,6 +1068,7 @@ import publicRackWrite from "./routes/public-rack-write";
 // See routes/public-kpi-survey.ts.
 import publicKpiSurvey from "./routes/public-kpi-survey";
 import cncTemplates from "./routes/cnc-templates";
+import cncJobs from "./routes/cnc-jobs";
 import invoices from "./routes/invoices";
 import payments from "./routes/payments";
 import supplierPayments from "./routes/supplier-payments";
@@ -1284,6 +1285,7 @@ app.route("/api/public/rack-write", publicRackWrite);
 // no session), with the tightened public ceiling (30/min, 300/hr).
 app.route("/api/public/survey", publicKpiSurvey);
 app.route("/api/cnc-templates", cncTemplates);
+app.route("/api/cnc-jobs", cncJobs);
 app.route("/api/invoices", invoices);
 app.route("/api/payments", payments);
 app.route("/api/supplier-payments", supplierPayments);

@@ -103,6 +103,10 @@ export const ALL_RESOURCES = [
   "forecasts",
   // Products & master data
   "products", "product-configs", "sofa-combos", "rd-projects", "cnc-templates",
+  // The CNC machine's job feed + result report (HK-0036). Its own resource so
+  // it is NOT reachable through `cnc-templates`, which every role holds. Left
+  // out of QA / R&D / Sales / HR on purpose; Office gets it via allExcept().
+  "cnc-jobs",
   // Two figures that travel WITH other data rather than on a page of their own,
   // so they need a gate of their own or they ride in on whoever can read the
   // page. Owner 2026-08-05: "我们卖价不需要给他们知道，我们只需要给他们看到成本

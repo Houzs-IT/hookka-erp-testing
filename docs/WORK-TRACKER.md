@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/hk-0036-cnc-cut-jobs` (to `staging`, HK-0036 CNC integration seam) added below; only that entry was re-checked.
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -242,6 +243,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 — 🟡 HK-0036: ERP <-> CNC fabric cutter integration, seam only (branch `feat/hk-0036-cnc-cut-jobs` → `staging`)
+
+Ticket HK-0036 (Violet, Hookka, type Development): on PO creation send the PO to the CNC for nesting + cutting; send cutting status and quantity back.
+1. 🔵 Outbound: `GET /api/cnc-jobs` lists open FAB_CUT job cards with PO details (pull model; covers every PO-creation path because the card exists from PO creation).
+2. 🔵 Inbound: `POST /api/cnc-jobs/:jobCardId/result {status: CUTTING|DONE, cutQty}` recorded in `cnc_cut_results` (upsert). The job card is NOT completed from it.
+2b. Review fixes: own `cnc-jobs` permission resource (was the any-role `cnc-templates`; Office + admins only until the owner decides machine auth); a skipped late CUTTING returns `ignored:true` and is not audited (RETURNING row check); feed paged (200 default, 500 max); `cutQty` <= 100000.
+3. 🟡 Needs owner: CNC vendor/protocol/auth, whether a DONE report should complete the card (and run the WIP cascade), whether a sofa merged FAB_CUT card maps to one nesting job. Tests: `tests/cnc-jobs.test.mjs`.
 ## 2026-10-15 — 🔵 Phone Home: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks (approved 2026-10-15 after a read-only audit). Source: Claude Design `Home.dc.html` + `design_handoff_home_mobile/README.md`. Branch fast-forwarded to `upstream/staging` (80ad740f) first, so the Mobile UI Foundation is present. PHONE only; tablet and desktop unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. Prototype shadows kept (owner). **Typography follows the repo** (decision 8).
