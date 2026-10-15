@@ -1838,6 +1838,7 @@ export default function ProductionPage({
   // R7 — same (resource, action) POST /production-orders/stock enforces.
   const { hasPermission } = usePermissions();
   const canCreateStockPO = hasPermission("production-orders", "create");
+  const canSendNotice = hasPermission("announcements", "create");
   // Print Schedule mode toggle. "detailed" → handlePrintSchedule (one row
   // per PO/JC). "total" → handlePrintTotalListing (rows merged on
   // model+spec so the floor sees "make N of X").
@@ -8656,6 +8657,7 @@ export default function ProductionPage({
             >
               Apply Due Date
             </button>
+            {canSendNotice && (
             <button
               type="button"
               onClick={() => setOverviewNotifyOpen(true)}
@@ -8664,6 +8666,7 @@ export default function ProductionPage({
             >
               Send Notification
             </button>
+            )}
             <button
               type="button"
               onClick={() => setSelectedOverviewIds(new Set())}
