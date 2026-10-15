@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `fix/hk0037-rm-uom-propagation` (to `main`, HK-0037) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `docs/hk0052-already-delivered-dev36` (to `main`, IT Hub HK-0052) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: SO customer pencil (#864, HK-0094) prod-verified.
@@ -52,7 +53,6 @@
 > **Last verified: 2026-10-07**: branch `perf/production-dept-tab-cache-main` (#734 to `main`, BUG-2026-10-07-265) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev39-kpi-view-calculation-to-main` (DEV-39 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev36-kpi-department-to-main` (DEV-36 staging to `main`) added below (its entry is the newest).
-=======
 > **Last verified: 2026-10-07**: branch `fix/bug06-do-duplicate-guard-main` (BUG-06 to `main`, BUG-2026-09-30-223) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev37-kpi-self-view-to-main` (DEV-37 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/rm-uom-bottle-main` (DEV-20 follow-up to `main`, BUG-2026-10-07-262) added below (its entry is the newest).
@@ -153,6 +153,10 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 2026-10-15 — 🔵 RM unit follows the material (HK-0037, branch `fix/hk0037-rm-uom-propagation` → `main`, PR #863)
+
+1. 🔵 RM create rejects an unlisted unit; PO line unit from the RM base unit; Adjustments and GRN show the real unit.
+2. ⬜ Owner questions: per-category unit lists, ROLL/MTR conversion, BOM unit display; other PO writers (`procurement-backfills.ts`, `convert-from-po-modal.tsx`).
 ## 2026-10-15 — ⬜ IT Hub HK-0052: department option on Production Time Efficiency is already shipped as DEV-36; one ask left for the owner (branch `docs/hk0052-already-delivered-dev36` → `main`, docs only)
 
 Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TESTING 2026-10-14) asks for a Department field on the Production Time Efficiency KPI, the existing Overall kept, and assignment to the workers of that department. Read from the code on `main`, no change made:
@@ -594,7 +598,6 @@ Reporter ask (Violet, DEV-36): pick a department when assigning the Production T
 4. 🔵 Staging check 2026-10-07, September 2026 data, 11 of 11 passed: several departments pooled (Fabric Cutting + Fabric Sewing 107.3% from 108,817 min on 1,690 h), Overall unchanged (91%), worker route gone (404), Department efficiency equal to the dashboard for Upholstery (66.1%), Framing (62.1%), Upholstery + Framing (64.0%) and the whole floor (93.3%, the Overall Efficiency tile), bad scopes refused, test assignments removed. Part 1 was checked 2026-10-06 (10 of 10).
 5. Notes, not blocking: the card names departments by code (`FAB_CUT + FAB_SEW`); the Efficiency tab's department ledger "Factory total" (90.7% in September) only sums workers with a department, so it reads lower than the Overall Efficiency tile (93.3%) that the whole-floor KPI follows; phones are sent to `/m`, which has no KPI page (as before).
 6. ⬜ After deploy: Super Admin check on prod (Library pickers, one scoped assignment, card figure against the dashboard), then remove the test assignment.
-=======
 ## 2026-10-07 — 🔵 BUG-06: Transfer / Convert duplicate guard to main (branch `fix/bug06-do-duplicate-guard-main` → `main`, BUG-2026-09-30-223)
 
 Ask: BUG-06 was finished and tested on staging (2026-09-30, #593); bring it to production. PR #448 (all of T-006) was closed for conflicts, so only the BUG-06 pieces come over, as patches onto `main`.

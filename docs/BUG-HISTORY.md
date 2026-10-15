@@ -19,7 +19,6 @@
 > **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-267 (branch `fix/kpi-delivery-rules-main` (to `main`); the same entry is on staging's #749); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-266 (branch `fix/empty-auto-invoice-guard`, to main; 263 and 264 are staging's, 265 is main's).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-265 (branch `perf/production-dept-tab-cache-main`, to main; 263 and 264 are staging's).
-=======
 > **Last verified: 2026-10-07**: newest entry BUG-2026-09-30-223 (branch `fix/bug06-do-duplicate-guard-main`, to main; the same fix reached staging on 2026-09-30 through #593).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-262 (branch `fix/rm-uom-bottle-main`, to main).
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-261 (branch `fix/bom-wip-delete-move`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -99,6 +98,19 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-15-HK0037 — RM unit shown as "ea" / defaulted to "pcs" after DEV-20 `inventory` `procurement` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0037-rm-uom-propagation`, PR #863). Prod occurrences UNMEASURED.
+
+**Symptom.** DEV-20 (#720) made the RM unit list selectable, but the unit did not follow the material: Inventory Adjustments showed a hardcoded "ea", a PO line took "pcs" unless the client sent a unit, and RM create silently turned an unlisted unit into PCS.
+
+**Root cause.** Four readers/writers each had their own fallback instead of the RM's `baseUOM`: `adjustments.tsx`, `purchase-orders.ts` POST/PUT, `inventory.ts` RM create, and the GRN receive row.
+
+**Fix.** RM create rejects a unit not on the list (same check as `raw-materials.ts`). PO POST/PUT take the line unit from the RM base unit (`poLineUnit`) only when the client sent none or the legacy "pcs" default; a unit chosen on purpose (the phone form's free-text Unit field) is kept as sent, no conversion. A line with receipts keeps its stored unit, matched by id, else by materialCode and line order. The RM base-unit lookup is chunked at 90 codes per query (D1 100-parameter cap). Adjustments show `baseUOM`; the GRN row shows the PO line unit.
+
+**Not changed.** Per-category lists and ROLL/MTR conversion (owner rulings 2026-09-29 / 2026-10-07); other PO writers (`import-completion/procurement-backfills.ts`, `convert-from-po-modal.tsx`) still pick their own unit.
+
+**Regression.** `tests/rm-uom-options.test.mjs`: `poLineUnit`, `rmUnitMap`, create rejects an unlisted unit, no `|| "ea"`, PUT keeps a received line's unit (`tests/po-put-line-unit.test.mjs`: PUT through the route with ids dropped, chunked lookup, explicit unit kept).
 ## BUG-2026-10-15-289 — Bulk-generated BOMs were stuck on DRAFT, so WIP times never listed them `bom` `production` 🟡
 
 🟡 **Fixed on branch** (`feat/bom-draft-activate-main` → `main`; same change as staging #875).
@@ -330,7 +342,6 @@ and that the PO screen reads the same field as sen).
 **Fix.** `fetchOrders` refetches the sheet and the overdue chips without invalidating; the stock-PO create path invalidates first. `cached-fetch.ts` keeps a body that localStorage refuses in memory (up to 9 entries, ~6 MB heap each, measured), cleared by every invalidation path. The dead seed is removed; dept pages keep loading every open order (owner's choice). Same test, new code: 0.55 s, no "(loading…)".
 
 **Guard.** `tests/production-dept-tab-cache.test.mjs`.
-=======
 ## BUG-2026-09-30-223 — "Transfer to Delivery Order" skipped the once-only-delivery guard, so one production order could be delivered twice `delivery-orders` 🔵
 
 🔵 Fixed on `fix/bug06-do-duplicate-guard-main` (to `main`). Already on `staging` since 2026-09-30 (#593, T-006 R1 before it); this brings the same code to main.

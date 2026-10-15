@@ -1171,6 +1171,9 @@ function GRNCreatePage() {
                                 )
                               }
                             />
+                            <div className="text-[10px] text-[#9CA3AF] mt-0.5">
+                              {poItem?.unit ?? ""}
+                            </div>
                             {overReceipt && (
                               <div className="text-[10px] text-[#9A3A2D] mt-0.5">
                                 Exceeds 110%
