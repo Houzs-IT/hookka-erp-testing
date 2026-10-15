@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -242,6 +243,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 — ⬜ HK-0055: Department Efficiency access per employee: triage, no code (branch `docs/hk0055-dept-efficiency-triage` → `staging`)
+
+Ticket HK-0055 (High, type Development, reporter Violet, created 2026-10-05): assign department efficiency to an employee (specific / multiple / Overall), the employee's dashboard shows only those, admin can assign / change / remove, the system records who has what. [Violet, Houzs Hub HK-0055, 2026-10-05]
+
+1. 🔵 Already built under DEV-36 / DEV-37, so no code change is made here. Assign: Library > KPI > Production time efficiency or Department efficiency, per-person department chips, any number ticked, none = Overall [code: src/api/routes/kpi.ts:974-1015]. Sofa / Bedframe split per department gives "Fab Cut Sofa + Fab Sew Sofa" [code: src/api/routes/kpi.ts:1006]. Employee sees only their own card, view only (DEV-37). Remove = `isActive: false`. Record = `kpi_assignments.scope` + `assigned_by` + `updated_at` [code: src/api/routes/kpi.ts:1020-1034].
+2. 🔵 The ticket's floor-worker reading ("Employee A" on the worker app) was built on staging as #714 and taken back as #715 by owner decision 2026-10-06 ("KPIs go to login accounts only, no worker app card", see the DEV-36 entry below). Re-adding it would reverse that decision, so it is not done without the owner.
+3. ⬜ Owner questions (unanswered): (a) is HK-0055 satisfied by DEV-36 / DEV-37, so it can close? (b) if not, which "Employee Dashboard": the KPI Card, Dashboard Experimental > Employees, or the worker app? (c) must floor workers (no ERP login) see it, which reverses #715? (d) is last-writer `assigned_by` enough for "record which departments are assigned", or is a change history wanted (who / when / old scope)? (e) the card names departments by code (`FAB_CUT + FAB_SEW`); wanted as names?
+4. Prod state UNMEASURED: no prod access from this branch; whether assignments exist for these staff was not queried.
+
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
 Owner asks (2026-10-15, decisions confirmed in chat):
