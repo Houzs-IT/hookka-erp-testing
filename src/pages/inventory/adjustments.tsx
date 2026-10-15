@@ -303,7 +303,7 @@ export default function StockAdjustmentsPage() {
     if (row.type === "RM") {
       const r = rmList.find((x) => x.id === row.itemId);
       return r
-        ? { code: r.itemCode, name: r.itemName, qty: r.balanceQty, uom: r.baseUOM ?? "" }
+        ? { code: r.itemCode, name: r.itemName, qty: r.balanceQty, uom: r.baseUOM || "PCS" }
         : null;
     }
     if (row.type === "WIP") {

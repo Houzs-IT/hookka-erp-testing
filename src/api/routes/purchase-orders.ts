@@ -903,7 +903,16 @@ app.put("/:id", async (c) => {
         }
       }
       const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
+      // What is stored now decides whether a line was already received: the
+      // payload's receivedQty is client-supplied and can be 0 or missing.
+      const { results: storedLines } = await c.var.DB
+        .prepare("SELECT id, unit, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ?")
+        .bind(id)
+        .all<{ id: string; unit: string | null; receivedQty: number | null }>();
+      const stored = new Map((storedLines ?? []).map((l) => [l.id, l]));
       const newItems = rawItems.map((item) => {
+        const prior = stored.get(String(item.id ?? ""));
+        const wasReceived = Number(prior?.receivedQty) > 0 || Number(item.receivedQty) > 0;
         const quantity = Number(item.quantity) || 0;
         const unitPriceSen = Number(item.unitPriceSen) || 0;
         return {
@@ -917,10 +926,9 @@ app.put("/:id", async (c) => {
           totalSen: quantity * unitPriceSen,
           receivedQty: Number(item.receivedQty) || 0,
           // A line already (part-)received keeps its recorded unit: no conversion.
-          unit:
-            Number(item.receivedQty) > 0
-              ? ((item.unit as string) ?? "pcs")
-              : poLineUnit(rmUom, item.materialCode, item.unit),
+          unit: wasReceived
+            ? (prior?.unit || (item.unit as string) || "pcs")
+            : poLineUnit(rmUom, item.materialCode, item.unit),
         };
       });
 

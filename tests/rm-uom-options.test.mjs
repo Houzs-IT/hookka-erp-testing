@@ -144,3 +144,9 @@ test("HK-0037 propagation: create rejects a unit outside the list; adjustments n
   assert.ok(post.indexOf("isUomAllowed(uom, units)") < post.indexOf("INSERT INTO raw_materials"));
   assert.doesNotMatch(read("src/pages/inventory/adjustments.tsx"), /\|\| "ea"/);
 });
+
+test("HK-0037 review: a stored (part-)received PO line keeps its unit even if the payload says receivedQty 0", () => {
+  const po = read("src/api/routes/purchase-orders.ts");
+  assert.match(po, /SELECT id, unit, receivedQty FROM purchase_order_items WHERE purchaseOrderId = \?/);
+  assert.match(po, /Number\(prior\?\.receivedQty\) > 0 \|\| Number\(item\.receivedQty\) > 0/);
+});

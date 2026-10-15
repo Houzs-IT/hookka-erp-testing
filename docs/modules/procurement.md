@@ -85,7 +85,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `ThreeWayMatchPanel` | `src/pages/procurement/detail.tsx:1392` | PO↔GRN↔PI variance panel (derived) |
 | `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:452` | PO create; `body.status` verbatim |
 | `app.put("/:id")` (PO edit) | `src/api/routes/purchase-orders.ts:783` | PO edit + status lifecycle |
-| `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1091` | Runtime column self-apply |
+| `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1099` | Runtime column self-apply |
 | `postGRNToStock` | `src/api/routes/grn.ts:527` | Post GRN lines to stock + cost_ledger |
 | `cascadePOStatusAfterGRNPost` | `src/api/routes/grn.ts:817` | Flip parent PO → RECEIVED/PARTIAL_RECEIVED |
 | `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:676` | Compensating DELTA for POSTED-line edit |
