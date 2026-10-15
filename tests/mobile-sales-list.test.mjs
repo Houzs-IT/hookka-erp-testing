@@ -8,8 +8,9 @@
 //   • the reference line shows BOTH Customer PO and Cust SO, empty parts
 //     omitted;
 //   • the screen: phone-only search row (Scan PO tile inside the field, one
-//     ScanPOSheet), New SO moved from the header to the sort row on phones,
-//     summary card with the Cancelled-excluded revenue rule, phone card with
+//     ScanPOSheet), round "+" in the phone header (2026-10-15; the sort row is
+//     gone), summary card on top with the Cancelled-excluded revenue rule,
+//     Filter on the "N ORDERS" bar, removable filter chips, phone card with
 //     rail + borderless pill keyed off SO_STATUS_COLOR, Cancelled dimmed,
 //     repo typography (Amount 13/600); tablet keeps SoCard; MobileCard is
 //     not edited.
@@ -22,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
 
-const { soTotalQty, soRefLine } = await import(
+const { soTotalQty, soRefLine, activeFilterChips } = await import(
   pathToFileURL(resolve(process.cwd(), "src/pages/m/lib/so-card.ts")).href
 );
 const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
@@ -72,17 +73,83 @@ test("phone: Scan PO tile inside the search field; one ScanPOSheet", () => {
   assert.match(screen, /setCreateSpec\(newSalesOrderSpec\(prefill\)\)/);
 });
 
-test("phone: New SO leaves the header and sits on the sort row", () => {
-  assert.match(screen, /trailing=\{\s*phone \? undefined :/);
-  const sortRow = screen.slice(screen.indexOf("function PhoneSortRow"), screen.indexOf("function PhoneSoCard"));
-  assert.match(sortRow, /aria-label="New Sales Order"/);
-  assert.match(sortRow, /New SO/);
-  assert.match(screen, /onSort=\{\(\) => setFilterOpen\(true\)\}/);
+// Owner 2026-10-15 (live prototype): "+" back in the phone header, Sort row gone,
+// Filter on the "N ORDERS" bar, summary on top.
+test("phone: round + in the header opens the same FormSheet; no sort row", () => {
+  assert.match(screen, /trailing=\{\s*phone \? \(\s*<PhoneNewButton onClick=\{openCreate\} \/>/);
+  const btn = screen.slice(screen.indexOf("function PhoneNewButton"), screen.indexOf("function PhoneListBar"));
+  assert.match(btn, /aria-label="New Sales Order"/);
+  assert.match(screen, /const openCreate = \(\) => setCreateSpec\(newSalesOrderSpec\(\)\);/);
+  assert.doesNotMatch(screen, /PhoneSortRow/);
+});
+
+test("phone: Filter lives on the list bar and opens the filter sheet", () => {
+  const bar = screen.slice(screen.indexOf("function PhoneListBar"), screen.indexOf("function PhoneActiveFilters"));
+  assert.match(bar, /aria-label=\{active \? `Filter orders, \$\{fCount\} active` : "Filter orders"\}/);
+  assert.match(screen, /<PhoneListBar[\s\S]*?onFilter=\{\(\) => setFilterOpen\(true\)\}/);
+  const search = screen.slice(screen.indexOf("function PhoneSearchRow"), screen.indexOf("function PhoneChips"));
+  assert.doesNotMatch(search, /Filter orders/);
+  assert.equal(screen.match(/<FilterSheet/g).length, 1);
+});
+
+test("phone: summary sits above search", () => {
+  const phoneBlock = screen.slice(screen.indexOf("{phone ? (\n        <>"), screen.indexOf("<PhoneActiveFilters"));
+  assert.ok(phoneBlock.indexOf("<PhoneSummary") < phoneBlock.indexOf("<PhoneSearchRow"));
 });
 
 test("summary revenue still excludes Cancelled", () => {
   assert.match(screen, /if \(str\(r, "status"\) === "CANCELLED"\) continue;/);
   assert.match(screen, /b\.key === "CANCELLED" \? "excluded"/);
+});
+
+// ── Active filter chips ────────────────────────────────────────────────────
+
+const COLS = [
+  { key: "customer", label: "Customer" },
+  { key: "expectedDD", label: "Expected DD" },
+  { key: "amount", label: "Amount" },
+  { key: "status", label: "Status" },
+];
+
+// Amount filters are sen; the chip formats them as RM (2026-10-15).
+const OPTS = { today: "2026-10-15", money: (sen) => "RM " + (sen / 100).toFixed(2) };
+
+test("filter chips: one per active filter, in column order; Amount shown in RM", () => {
+  const chips = activeFilterChips(
+    {
+      status: { type: "enum", selected: ["IN_PRODUCTION"] },
+      customer: { type: "text", contains: " Mewah " },
+      amount: { type: "number", op: "gte", a: 5000, b: null },
+      expectedDD: { type: "date", from: "2026-10-01", to: null },
+    },
+    COLS,
+    OPTS,
+  );
+  assert.deepEqual(chips.map((c) => c.label), [
+    "Customer: Mewah",
+    "Expected DD from 2026-10-01",
+    "Amount ≥ RM 50.00",
+    "Status: In Production",
+  ]);
+});
+
+test("filter chips skip inactive filters, matching activeFilterCount", () => {
+  const chips = activeFilterChips(
+    {
+      customer: { type: "text", contains: "  " },
+      amount: { type: "number", op: "eq", a: null, b: null },
+      expectedDD: { type: "date", from: null, to: null },
+      status: { type: "enum", selected: ["DRAFT", "CONFIRMED"] },
+    },
+    COLS,
+    OPTS,
+  );
+  assert.deepEqual(chips, [{ key: "status", label: "Status: 2 selected" }]);
+});
+
+test("removing a chip deletes only that key from the filters state", () => {
+  assert.match(screen, /const next = \{ \.\.\.f \};\s*delete next\[key\];/);
+  assert.match(screen, /onClear=\{\(\) => setFilters\(\{\}\)\}/);
 });
 
 test("phone card: status colours, both refs, dimmed Cancelled, repo typography", () => {

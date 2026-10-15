@@ -28,8 +28,17 @@
 //   • PhoneSoCard: 3px status rail, borderless tile pill, customer wraps,
 //     "PO · Cust SO" line, inset meta panel (Expected DD · Total Qty ·
 //     Amount), Cancelled dimmed.
+//
+// Owner 2026-10-15, PHONE ONLY: re-arranged to the LIVE prototype (newer than
+// the handoff README above; typography still the repo's):
+//   • header "+" is back (round gradient) and the Sort + New SO row is gone;
+//   • the summary moves to the top as a gradient card (fixed taupe hex, so
+//     its white text stays readable in dark mode, where the logo tokens turn
+//     light gold), titled after the active chip, "By status" breakdown;
+//   • search row = search + Scan PO only; Filter moves to a round
+//     button on a new "N ORDERS" row, with removable active-filter chips.
 // ===========================================================================
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
@@ -43,6 +52,8 @@ import {
   Calendar,
   Package,
   Wallet,
+  ShoppingCart,
+  SearchX,
   type LucideIcon,
 } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
@@ -54,11 +65,11 @@ import {
   FormSheet,
   ScanPOSheet,
 } from "../components";
-import { M, M_ACCENT, titleCaseStatus, type SemanticStyle } from "../theme";
+import { M, M_ACCENT, SEMANTIC, titleCaseStatus, type SemanticStyle } from "../theme";
 import { salesConfig } from "../config/modules";
 import { newSalesOrderSpec, type SOCreatePrefill } from "../config/forms";
 import { type FormSpec } from "../config/form-types";
-import { type ActiveFilter, type ColumnDef } from "../config/types";
+import { type ActiveFilter } from "../config/types";
 import {
   resolveStatus,
   STATUS_MAPS,
@@ -72,16 +83,24 @@ import {
 } from "../config/helpers";
 import { useDebounced } from "../lib/use-debounced";
 import { useResponsiveLayout } from "../lib/responsive-layout";
-import { soRefLine, soTotalQty } from "../lib/so-card";
+import { activeFilterChips, soRefLine, soTotalQty } from "../lib/so-card";
+import { localToday } from "../lib/so-filter-presets";
+import { SalesFilterSheet } from "./SalesFilterSheet";
 
 // Prototype shadows (Sales Orders.dc.html).
 const SHADOW_CONTROL = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
-const SHADOW_SUMMARY = "0 1px 2px rgba(31,29,27,.05),0 10px 28px -12px rgba(31,29,27,.20)";
 const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 30px -14px rgba(31,29,27,.24)";
 const SHADOW_CHIP = "0 1px 2px rgba(31,29,27,.06),0 3px 8px -4px rgba(31,29,27,.10)";
 const SHADOW_CHIP_ON = "0 4px 12px -6px rgba(107,92,50,.45)";
 const SHADOW_PRIMARY = "0 8px 18px -8px rgba(107,92,50,.65),inset 0 1px 0 rgba(255,255,255,.18)";
 const SHADOW_FILTER_ON = "0 8px 18px -8px rgba(107,92,50,.6)";
+const SHADOW_HERO = "0 16px 32px -18px rgba(107,92,50,.75),inset 0 1px 0 rgba(255,255,255,.14)";
+// Fixed light-theme taupe gradient (not M.logoFrom/To): in dark mode those
+// turn light gold and the hero's white text would lose contrast.
+const HERO_BG = "linear-gradient(140deg,#8B7A4E 0%,#6B5C32 62%)";
+// Prototype KPI columns; KPI_FIXED = the two 14px gaps + the 1px divider.
+const KPI_COLS = "minmax(0,1.4fr) 1px minmax(0,.9fr)";
+const KPI_FIXED = 29;
 // Repo label colour (v20 SoCard / DocCard).
 const LABEL = "#A89F8D";
 
@@ -158,8 +177,26 @@ export function SalesScreen() {
   }, [rows]);
 
   const fCount = activeFilterCount(filters);
+  const fChips = useMemo(
+    () => activeFilterChips(filters, source.columns, { today: localToday(), money }),
+    [filters, source],
+  );
   const openCreate = () => setCreateSpec(newSalesOrderSpec());
   const narrowed = !!q || chip !== "all" || (phone && fCount > 0);
+  // Phone: the main chip and the sheet's Status never disagree — picking a chip
+  // replaces any sheet Status filter (lib/so-filter-presets.ts splitStatus).
+  const pickChip = (k: string) => {
+    setChip(k);
+    if (phone) removeFilter("status");
+  };
+  const chipLabel = chip === "all" ? "ALL SALES ORDERS" : (CHIPS.find((c) => c.key === chip)?.label ?? "").toUpperCase();
+  const heroTitle = fCount > 0 ? (chip === "all" ? "FILTERED SALES ORDERS" : `${chipLabel} · FILTERED`) : chipLabel;
+  const removeFilter = (key: string) =>
+    setFilters((f) => {
+      const next = { ...f };
+      delete next[key];
+      return next;
+    });
 
   return (
     <>
@@ -168,7 +205,9 @@ export function SalesScreen() {
         onBack={() => navigate(-1)}
         menu
         trailing={
-          phone ? undefined : (
+          phone ? (
+            <PhoneNewButton onClick={openCreate} />
+          ) : (
           <button
             onClick={openCreate}
             aria-label="New Sales Order"
@@ -194,16 +233,9 @@ export function SalesScreen() {
 
       {phone ? (
         <>
-          <PhoneSearchRow
-            q={q}
-            setQ={setQ}
-            fCount={fCount}
-            onScan={() => setScanOpen(true)}
-            onFilter={() => setFilterOpen(true)}
-          />
-          <PhoneChips chip={chip} setChip={setChip} counts={chipCounts} />
           {data ? (
             <PhoneSummary
+              title={heroTitle}
               rows={rows}
               count={summary.count}
               rev={summary.rev}
@@ -211,12 +243,20 @@ export function SalesScreen() {
               onToggle={() => setSummaryOpen((o) => !o)}
             />
           ) : null}
-          <PhoneSortRow
-            sort={sort}
-            columns={source.columns}
-            onSort={() => setFilterOpen(true)}
-            onNew={openCreate}
+          <PhoneSearchRow q={q} setQ={setQ} onScan={() => setScanOpen(true)} />
+          <PhoneChips chip={chip} setChip={pickChip} counts={chipCounts} />
+          <PhoneListBar
+            count={data ? rows.length : null}
+            fCount={fCount}
+            onFilter={() => setFilterOpen(true)}
           />
+          {fChips.length > 0 ? (
+            <PhoneActiveFilters
+              chips={fChips}
+              onRemove={removeFilter}
+              onClear={() => setFilters({})}
+            />
+          ) : null}
         </>
       ) : (
       <>
@@ -368,13 +408,8 @@ export function SalesScreen() {
         <Msg text="Couldn’t load sales orders." />
       ) : rows.length === 0 ? (
         <Msg
-          text={
-            narrowed
-              ? "No matching sales orders."
-              : phone
-                ? "No sales orders. Tap New SO to create one."
-                : "No sales orders. Tap ＋ to create one."
-          }
+          text={narrowed ? "No matching sales orders." : "No sales orders. Tap ＋ to create one."}
+          icon={phone}
           onReset={
             phone && narrowed
               ? () => {
@@ -387,7 +422,7 @@ export function SalesScreen() {
           }
         />
       ) : phone ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 18px 120px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11, padding: "8px 18px 120px" }}>
           {rows.map((r) => (
             <PhoneSoCard
               key={str(r, "id", "companySO") || str(r, "companySO")}
@@ -416,17 +451,34 @@ export function SalesScreen() {
         </div>
       )}
 
-      <FilterSheet
-        open={filterOpen}
-        onClose={() => setFilterOpen(false)}
-        columns={source.columns}
-        filters={filters}
-        sort={sort}
-        onApply={(nextFilters, nextSort) => {
-          setFilters(nextFilters);
-          setSort(nextSort);
-        }}
-      />
+      {phone ? (
+        <SalesFilterSheet
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          columns={source.columns}
+          rows={allRows}
+          search={dq}
+          filters={filters}
+          chip={chip}
+          chipKeys={CHIPS.map((c) => c.key).filter((k) => k !== "all")}
+          onApply={(nextFilters, nextChip) => {
+            setFilters(nextFilters);
+            setChip(nextChip);
+          }}
+        />
+      ) : (
+        <FilterSheet
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          columns={source.columns}
+          filters={filters}
+          sort={sort}
+          onApply={(nextFilters, nextSort) => {
+            setFilters(nextFilters);
+            setSort(nextSort);
+          }}
+        />
+      )}
       <FormSheet
         open={createSpec != null}
         onClose={() => setCreateSpec(null)}
@@ -480,19 +532,14 @@ function usePressed() {
 function PhoneSearchRow({
   q,
   setQ,
-  fCount,
   onScan,
-  onFilter,
 }: {
   q: string;
   setQ: (v: string) => void;
-  fCount: number;
   onScan: () => void;
-  onFilter: () => void;
 }) {
-  const active = fCount > 0;
   return (
-    <div style={{ display: "flex", gap: 8, padding: "12px 18px 4px", minWidth: 0 }}>
+    <div style={{ display: "flex", gap: 8, padding: "14px 18px 4px", minWidth: 0 }}>
       <label
         style={{
           flex: 1,
@@ -600,34 +647,6 @@ function PhoneSearchRow({
           </span>
         </button>
       </label>
-      <button
-        type="button"
-        onClick={onFilter}
-        aria-label={active ? `Filter and sort, ${fCount} active` : "Filter and sort"}
-        style={{
-          height: 44,
-          minWidth: 44,
-          boxSizing: "border-box",
-          padding: active ? "0 14px" : 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 6,
-          flexShrink: 0,
-          border: "none",
-          borderRadius: 14,
-          backgroundColor: active ? M.taupe : M.card,
-          color: active ? "#fff" : M.ink,
-          boxShadow: active ? SHADOW_FILTER_ON : SHADOW_CONTROL,
-          fontSize: 13,
-          fontWeight: 700,
-          cursor: "pointer",
-          WebkitTapHighlightColor: "transparent",
-        }}
-      >
-        <SlidersHorizontal size={19} strokeWidth={1.75} />
-        {active ? fCount : null}
-      </button>
     </div>
   );
 }
@@ -647,7 +666,7 @@ function PhoneChips({
         display: "flex",
         gap: 7,
         overflowX: "auto",
-        padding: "12px 18px 8px",
+        padding: "12px 18px 10px",
         scrollbarWidth: "none",
         WebkitOverflowScrolling: "touch",
       }}
@@ -689,12 +708,14 @@ function PhoneChips({
 }
 
 function PhoneSummary({
+  title,
   rows,
   count,
   rev,
   open,
   onToggle,
 }: {
+  title: string;
   rows: Record<string, unknown>[];
   count: number;
   rev: number;
@@ -719,81 +740,122 @@ function PhoneSummary({
         const ib = order.indexOf(b);
         return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
       })
-      .map(([key, b]) => ({ key, ...b, style: resolveStatus(key, STATUS_MAPS.so).style }));
+      .map(([key, b]) => ({ key, ...b }));
   }, [rows]);
+
+  // Money is never ellipsised (owner 2026-10-15): when either value is wider
+  // than its 1.4fr / .9fr column, the two figures stack full-width instead.
+  // The value spans are inline-block + nowrap, so offsetWidth is their natural
+  // width whatever the current layout; re-checked on resize and value change.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const revRef = useRef<HTMLSpanElement>(null);
+  const cntRef = useRef<HTMLSpanElement>(null);
+  const [stacked, setStacked] = useState(false);
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const check = () => {
+      const avail = box.clientWidth - KPI_FIXED;
+      const revW = revRef.current?.offsetWidth ?? 0;
+      const cntW = cntRef.current?.offsetWidth ?? 0;
+      setStacked(revW > (avail * 1.4) / 2.3 || cntW > (avail * 0.9) / 2.3);
+    };
+    check();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(check);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [rev, count]);
 
   return (
     <div style={{ padding: "6px 18px 0" }}>
       <div
         role="status"
         style={{
-          backgroundColor: M.card,
-          borderRadius: 16,
-          boxShadow: SHADOW_SUMMARY,
+          borderRadius: 20,
+          background: HERO_BG,
+          boxShadow: SHADOW_HERO,
+          color: "#fff",
           overflow: "hidden",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-end",
-            gap: 12,
-            padding: "14px 12px 14px 16px",
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <SummaryLabel>REVENUE</SummaryLabel>
-            <SummaryValue>{money(rev)}</SummaryValue>
-          </div>
-          <div style={{ flex: "none", textAlign: "right" }}>
-            <SummaryLabel>TOTAL ORDERS</SummaryLabel>
-            <SummaryValue>{count}</SummaryValue>
-          </div>
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label={open ? "Hide status breakdown" : "Show status breakdown"}
-            aria-expanded={open}
+        <div style={{ padding: "16px 16px 14px" }}>
+          <div
             style={{
-              flex: "none",
-              width: 44,
-              height: 44,
-              margin: "-6px -4px -6px 0",
-              padding: 0,
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
+              justifyContent: "space-between",
+              gap: 8,
             }}
           >
-            <span
+            <SummaryLabel color="rgba(255,255,255,.88)">{title}</SummaryLabel>
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-label={open ? "Hide status breakdown" : "Show status breakdown"}
+              aria-expanded={open}
               style={{
-                width: 30,
-                height: 30,
-                borderRadius: 999,
-                backgroundColor: M.divider,
-                color: M.taupe,
+                flex: "none",
+                height: 44,
+                margin: "-12px -6px -12px 0",
+                padding: 0,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                transform: open ? "rotate(180deg)" : "none",
-                transition: "transform .18s ease",
+                background: "none",
+                border: "none",
+                color: "#fff",
+                cursor: "pointer",
+                WebkitTapHighlightColor: "transparent",
               }}
             >
-              <ChevronDown size={16} strokeWidth={2} />
-            </span>
-          </button>
+              <span
+                style={{
+                  height: 28,
+                  padding: "0 8px 0 10px",
+                  borderRadius: 999,
+                  backgroundColor: "rgba(255,255,255,.14)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                By status
+                <ChevronDown
+                  size={14}
+                  strokeWidth={2.2}
+                  style={{
+                    transform: open ? "rotate(180deg)" : "none",
+                    transition: "transform .18s ease",
+                  }}
+                />
+              </span>
+            </button>
+          </div>
+          <div
+            ref={boxRef}
+            style={{
+              display: "grid",
+              gridTemplateColumns: stacked ? "minmax(0,1fr)" : KPI_COLS,
+              gap: 14,
+              marginTop: 12,
+              alignItems: "stretch",
+            }}
+          >
+            <HeroFigure icon={Wallet} label="REVENUE" value={money(rev)} valueRef={revRef} />
+            <div style={{ backgroundColor: "rgba(255,255,255,.2)", height: stacked ? 1 : undefined }} />
+            <HeroFigure icon={ShoppingCart} label="TOTAL ORDERS" value={String(count)} valueRef={cntRef} />
+          </div>
         </div>
         {open && breakdown.length > 0 ? (
           <div
             style={{
               display: "grid",
-              gap: 8,
+              gap: 9,
               padding: "12px 16px 14px",
-              backgroundColor: M.paper,
+              backgroundColor: "rgba(31,29,27,.14)",
             }}
           >
             {breakdown.map((b) => (
@@ -807,20 +869,34 @@ function PhoneSummary({
                     width: 7,
                     height: 7,
                     borderRadius: 999,
-                    backgroundColor: b.style.hex,
+                    backgroundColor: "#fff",
+                    opacity: b.key === "CANCELLED" ? 0.45 : 1,
                     flex: "none",
                   }}
                 />
-                <span style={{ flex: 1, minWidth: 0, color: M.ink }}>
+                {/* Name wraps on narrow phones rather than truncating; the count and
+                    amount keep fixed right-aligned columns so the figures line up. */}
+                <span style={{ flex: 1, minWidth: 0, color: "#fff", overflowWrap: "anywhere" }}>
                   {titleCaseStatus(b.key || "—")}
                 </span>
-                <span style={{ color: M.muted, fontVariantNumeric: "tabular-nums" }}>{b.n}</span>
                 <span
                   style={{
-                    width: 104,
+                    width: 36,
+                    flex: "none",
+                    textAlign: "right",
+                    color: "rgba(255,255,255,.8)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {b.n}
+                </span>
+                <span
+                  style={{
+                    minWidth: 108,
+                    flex: "none",
                     textAlign: "right",
                     fontWeight: 600,
-                    color: M.raisin,
+                    color: "#fff",
                     fontVariantNumeric: "tabular-nums",
                     whiteSpace: "nowrap",
                   }}
@@ -836,13 +912,64 @@ function PhoneSummary({
   );
 }
 
-function SummaryLabel({ children }: { children: string }) {
+/** One hero figure: icon tile, value (repo 20/700), label below (repo 10/600). */
+function HeroFigure({
+  icon: Icon,
+  label,
+  value,
+  valueRef,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  valueRef: React.RefObject<HTMLSpanElement | null>;
+}) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 9,
+          backgroundColor: "rgba(255,255,255,.16)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon size={16} strokeWidth={1.9} color="#fff" />
+      </span>
+      <div style={{ marginTop: 10 }}>
+        <span
+          ref={valueRef}
+          style={{
+            display: "inline-block",
+            fontSize: 20,
+            fontWeight: 700,
+            lineHeight: 1.1,
+            letterSpacing: "-0.3px",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {value}
+        </span>
+      </div>
+      <div style={{ marginTop: 4 }}>
+        <SummaryLabel color="rgba(255,255,255,.9)">{label}</SummaryLabel>
+      </div>
+    </div>
+  );
+}
+
+function SummaryLabel({ children, color }: { children: string; color: string }) {
   return (
     <div
       style={{
         fontSize: 10,
         fontWeight: 600,
-        color: LABEL,
+        color,
         whiteSpace: "nowrap",
       }}
     >
@@ -851,108 +978,218 @@ function SummaryLabel({ children }: { children: string }) {
   );
 }
 
-function SummaryValue({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        marginTop: 3,
-        fontSize: 20,
-        fontWeight: 700,
-        color: M.raisin,
-        letterSpacing: "-0.3px",
-        fontVariantNumeric: "tabular-nums",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function PhoneSortRow({
-  sort,
-  columns,
-  onSort,
-  onNew,
-}: {
-  sort: Sort;
-  columns: ColumnDef[];
-  onSort: () => void;
-  onNew: () => void;
-}) {
+/** Round gradient "+" for the phone header (prototype); same FormSheet. */
+function PhoneNewButton({ onClick }: { onClick: () => void }) {
   const { pressed, handlers } = usePressed();
-  const col = sort ? columns.find((c) => c.key === sort.key) : undefined;
-  const sortLabel = sort && col ? `${col.label} ${sort.dir === "asc" ? "↑" : "↓"}` : "Default";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="New Sales Order"
+      title="New SO"
+      {...handlers}
+      style={{
+        width: 44,
+        height: 44,
+        flex: "none",
+        padding: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "none",
+        border: "none",
+        cursor: "pointer",
+        WebkitTapHighlightColor: "transparent",
+      }}
+    >
+      <span
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 999,
+          background: `linear-gradient(135deg, ${M.logoFrom}, ${M.logoTo})`,
+          color: M.paper,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: SHADOW_PRIMARY,
+          opacity: pressed ? 0.86 : 1,
+        }}
+      >
+        <Plus size={20} strokeWidth={2.2} />
+      </span>
+    </button>
+  );
+}
+
+/** "N ORDERS" ── round Filter button (opens the phone SalesFilterSheet; filter only). */
+function PhoneListBar({
+  count,
+  fCount,
+  onFilter,
+}: {
+  count: number | null;
+  fCount: number;
+  onFilter: () => void;
+}) {
+  const active = fCount > 0;
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
         gap: 10,
-        padding: "14px 18px 2px",
+        padding: "5px 15px 1px 18px",
       }}
     >
-      <button
-        type="button"
-        onClick={onSort}
-        style={{
-          height: 44,
-          minWidth: 0,
-          marginLeft: -4,
-          padding: "0 4px",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          background: "none",
-          border: "none",
-          color: M.muted,
-          cursor: "pointer",
-          WebkitTapHighlightColor: "transparent",
-        }}
-      >
-        <ArrowDownUp size={15} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-        <span style={{ fontSize: 12 }}>Sort</span>
+      {count != null ? (
         <span
           style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: M.raisin,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1,
+            color: M.muted,
             whiteSpace: "nowrap",
+            fontVariantNumeric: "tabular-nums",
           }}
         >
-          {sortLabel}
+          {count} {count === 1 ? "ORDER" : "ORDERS"}
         </span>
-      </button>
+      ) : null}
+      <span style={{ flex: 1, minWidth: 8, height: 1, backgroundColor: M.hairline }} />
       <button
         type="button"
-        onClick={onNew}
-        aria-label="New Sales Order"
-        {...handlers}
+        onClick={onFilter}
+        aria-label={active ? `Filter orders, ${fCount} active` : "Filter orders"}
+        aria-haspopup="dialog"
+        title="Filter orders"
         style={{
-          height: 38,
-          padding: "0 16px 0 12px",
+          width: 44,
+          height: 44,
           flex: "none",
+          padding: 0,
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          borderRadius: 999,
+          justifyContent: "center",
+          background: "none",
           border: "none",
-          background: `linear-gradient(135deg, ${M.logoFrom}, ${M.logoTo})`,
-          color: "#fff",
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: "nowrap",
-          boxShadow: SHADOW_PRIMARY,
-          opacity: pressed ? 0.86 : 1,
           cursor: "pointer",
           WebkitTapHighlightColor: "transparent",
         }}
       >
-        <Plus size={17} strokeWidth={2.2} />
-        New SO
+        <span
+          style={{
+            position: "relative",
+            width: 38,
+            height: 38,
+            borderRadius: 999,
+            backgroundColor: active ? M.taupe : M.card,
+            color: active ? M.paper : M.taupe,
+            boxShadow: active ? SHADOW_FILTER_ON : SHADOW_CONTROL,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <ArrowDownUp size={16} strokeWidth={1.9} />
+          {active ? (
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: -3,
+                right: -3,
+                minWidth: 17,
+                height: 17,
+                padding: "0 4px",
+                boxSizing: "border-box",
+                borderRadius: 999,
+                backgroundColor: SEMANTIC.DANGER.hex,
+                color: "#fff",
+                fontSize: 10,
+                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: `0 0 0 2px ${M.paper}`,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {fCount}
+            </span>
+          ) : null}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+/** Removable chips for the active FilterSheet filters + "Clear all". */
+function PhoneActiveFilters({
+  chips,
+  onRemove,
+  onClear,
+}: {
+  chips: { key: string; label: string }[];
+  onRemove: (key: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 18px 2px",
+      }}
+    >
+      {chips.map((c) => (
+        <button
+          key={c.key}
+          type="button"
+          onClick={() => onRemove(c.key)}
+          aria-label={`Remove filter: ${c.label}`}
+          style={{
+            height: 30,
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "0 10px 0 12px",
+            borderRadius: 999,
+            border: "none",
+            backgroundColor: M_ACCENT.gold.bg,
+            color: M.taupe,
+            fontSize: 12,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+            boxShadow: SHADOW_CHIP_ON,
+            cursor: "pointer",
+            WebkitTapHighlightColor: "transparent",
+          }}
+        >
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
+          <X size={13} strokeWidth={2.2} style={{ flexShrink: 0 }} />
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={onClear}
+        style={{
+          height: 30,
+          padding: "0 6px",
+          border: "none",
+          background: "transparent",
+          color: M.taupe,
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        Clear all
       </button>
     </div>
   );
@@ -1342,20 +1579,46 @@ function SoCard({
   );
 }
 
-function Msg({ text, onReset }: { text: string; onReset?: () => void }) {
+/** Phone (icon): prototype empty state; the reset button only renders on phones. */
+function Msg({
+  text,
+  icon,
+  onReset,
+}: {
+  text: string;
+  icon?: boolean;
+  onReset?: () => void;
+}) {
   return (
     <div
       style={{
-        padding: "40px 18px",
+        padding: icon ? "44px 18px" : "40px 18px",
         textAlign: "center",
         color: M.muted,
         fontSize: 14,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        gap: 12,
+        gap: icon ? 14 : 12,
       }}
     >
+      {icon ? (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 52,
+            height: 52,
+            borderRadius: 16,
+            backgroundColor: M.divider,
+            color: M.taupe,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <SearchX size={22} strokeWidth={1.75} />
+        </span>
+      ) : null}
       {text}
       {onReset ? (
         <button
@@ -1363,13 +1626,14 @@ function Msg({ text, onReset }: { text: string; onReset?: () => void }) {
           onClick={onReset}
           style={{
             height: 44,
-            padding: "0 16px",
-            borderRadius: 12,
-            border: `1px solid ${M.border}`,
+            padding: "0 18px",
+            borderRadius: 999,
+            border: "none",
             backgroundColor: M.card,
             color: M.ink,
             fontSize: 14,
             fontWeight: 700,
+            boxShadow: SHADOW_CONTROL,
             cursor: "pointer",
             WebkitTapHighlightColor: "transparent",
           }}
