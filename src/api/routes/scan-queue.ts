@@ -49,10 +49,11 @@
 // Auth: same `requirePermission(c, "purchase-orders", "create")` gate as
 // the existing /api/scan-po + /api/scan-supplier routes.
 // ---------------------------------------------------------------------------
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { stashScanBytes, readScanBytes, originalDisposition } from "../lib/scan-file-store";
 import {
   runExtract,
   detectSupplierDocBoundaries,
@@ -80,27 +81,6 @@ function genItemId(): string {
 }
 
 // ---------- helpers ----------------------------------------------------
-// ArrayBuffer → base64. Chunked to keep stack bounded on a 32MB file —
-// same pattern as scan-po.ts / scan-supplier.ts. Workers don't have Node's
-// Buffer.
-function toBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode.apply(null, Array.from(chunk));
-  }
-  return btoa(binary);
-}
-
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
-}
-
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buf);
   const bytes = new Uint8Array(digest);
@@ -213,6 +193,24 @@ async function ensureScanQueueTable(
     await db
       .prepare(
         "CREATE INDEX IF NOT EXISTS scan_queue_pending_idx ON scan_queue (created_by, created_at) WHERE consumed_at IS NULL",
+      )
+      .run();
+    // HK-0005: original bytes live in object storage; the row keeps the key.
+    // file_bytes_b64 stays as the fallback where storage is not configured.
+    await db
+      .prepare("ALTER TABLE scan_queue ADD COLUMN IF NOT EXISTS file_key TEXT")
+      .run();
+    // Who opened which original, and when.
+    await db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS scan_original_access (
+           id         TEXT PRIMARY KEY,
+           scan_id    TEXT NOT NULL,
+           org_id     TEXT,
+           user_id    TEXT,
+           via        TEXT NOT NULL,
+           created_at TEXT NOT NULL
+         )`,
       )
       .run();
     scanQueueTableEnsured = true;
@@ -413,18 +411,18 @@ async function processOneRow(
         // Re-fetch the bytes (we deliberately don't carry a 32MB string in
         // memory between the queue poll and the API call — read it now).
         const row = await db
-          .prepare("SELECT file_bytes_b64 FROM scan_queue WHERE id = ?")
+          .prepare('SELECT file_bytes_b64 AS "fileBytesB64", file_key AS "fileKey" FROM scan_queue WHERE id = ?')
           .bind(next.id)
-          .first<{ fileBytesB64: string | null }>();
-        const b64 = row?.fileBytesB64 ?? null;
-        if (!b64) {
+          .first<{ fileBytesB64: string | null; fileKey: string | null }>();
+        const fileBytes = row ? await readScanBytes(env, row) : null;
+        if (!fileBytes) {
           result = {
             ok: false,
             error:
               "File bytes evicted before processing (re-upload to re-queue)",
           };
         } else {
-          const bytes = base64ToArrayBuffer(b64);
+          const bytes = fileBytes;
           // Auto-split branch (owner ruling 2026-06-30). Multi-page PDFs may
           // bundle N separate supplier docs (e.g. an 85-page file with 16
           // PIs). Ask Haiku for the page-range boundaries BEFORE the heavy
@@ -500,14 +498,14 @@ async function processOneRow(
                         // Cache HIT — insert as 'cached'; keep child bytes
                         // so the PI link-to-source-doc upload step can grab
                         // them later via /api/scan-queue/:id/bytes.
-                        const childB64 = toBase64(childBytes);
+                        const stored = await stashScanBytes(env, next.orgId, childHash, childBytes, "application/pdf");
                         await db
                           .prepare(
                             `INSERT INTO scan_queue
                                (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-                                file_bytes_b64, supplier_id, po_context, status, raw_json,
+                                file_bytes_b64, file_key, supplier_id, po_context, status, raw_json,
                                 cache_source_id, created_by, created_at, completed_at, org_id)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
                           )
                           .bind(
                             childId,
@@ -517,7 +515,8 @@ async function processOneRow(
                             childFileName,
                             "application/pdf",
                             childBytes.byteLength,
-                            childB64,
+                            stored.b64,
+                            stored.fileKey,
                             next.supplierId,
                             next.poContext,
                             cacheSource.rawJson,
@@ -529,14 +528,14 @@ async function processOneRow(
                           )
                           .run();
                       } else {
-                        const childB64 = toBase64(childBytes);
+                        const stored = await stashScanBytes(env, next.orgId, childHash, childBytes, "application/pdf");
                         await db
                           .prepare(
                             `INSERT INTO scan_queue
                                (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-                                file_bytes_b64, supplier_id, po_context, status, created_by,
+                                file_bytes_b64, file_key, supplier_id, po_context, status, created_by,
                                 created_at, org_id)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
                           )
                           .bind(
                             childId,
@@ -546,7 +545,8 @@ async function processOneRow(
                             childFileName,
                             "application/pdf",
                             childBytes.byteLength,
-                            childB64,
+                            stored.b64,
+                            stored.fileKey,
                             next.supplierId,
                             next.poContext,
                             next.createdBy,
@@ -807,14 +807,14 @@ app.post("/upload", async (c) => {
       // queue page renders it without an extra hop. Also keep the bytes
       // (owner 2026-06-30) so the source-doc upload at PI creation time
       // can grab them via /api/scan-queue/:id/bytes — consume NULLs them.
-      const b64Cached = toBase64(buf);
+      const stored = await stashScanBytes(c.env, orgId, hash, buf, file.type);
       try {
         await c.var.DB.prepare(
           `INSERT INTO scan_queue
              (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-              file_bytes_b64, supplier_id, po_context, status, raw_json,
+              file_bytes_b64, file_key, supplier_id, po_context, status, raw_json,
               cache_source_id, created_by, created_at, completed_at, org_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
@@ -824,7 +824,8 @@ app.post("/upload", async (c) => {
             file.name,
             file.type || "application/octet-stream",
             file.size,
-            b64Cached,
+            stored.b64,
+            stored.fileKey,
             supplierId,
             poContext,
             // raw_json comes back as a string from postgres.js when JSONB
@@ -846,14 +847,14 @@ app.post("/upload", async (c) => {
       items.push({ id, fileName: file.name, status: "cached", cached: true, fileHash: hash });
     } else {
       // Cache MISS — stash the bytes b64 and enqueue.
-      const b64 = toBase64(buf);
+      const stored = await stashScanBytes(c.env, orgId, hash, buf, file.type);
       try {
         await c.var.DB.prepare(
           `INSERT INTO scan_queue
              (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
-              file_bytes_b64, supplier_id, po_context, status, created_by,
+              file_bytes_b64, file_key, supplier_id, po_context, status, created_by,
               created_at, org_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
         )
           .bind(
             id,
@@ -863,7 +864,8 @@ app.post("/upload", async (c) => {
             file.name,
             file.type || "application/octet-stream",
             file.size,
-            b64,
+            stored.b64,
+            stored.fileKey,
             supplierId,
             poContext,
             createdBy,
@@ -1219,18 +1221,22 @@ app.get("/:id", async (c) => {
 // Auth: same gate as upload — purchase-orders/create. Returns 404 once the
 // row has been consumed (bytes were NULLed during the consume step).
 // ---------------------------------------------------------------------------
-app.get("/:id/bytes", async (c) => {
+// HK-0005: one sender for both routes. /bytes is the download the modals
+// fetch(); /original renders PDFs and images inline for "view original".
+// Every read leaves a scan_original_access row.
+async function sendOriginal(c: Context<Env>, via: "bytes" | "original") {
   const denied = await requirePermission(c, "purchase-orders", "create");
   if (denied) return denied;
 
   await ensureScanQueueTable(c.var.DB);
-  const id = c.req.param("id");
+  const id = c.req.param("id") ?? "";
   const orgId = getOrgId(c);
 
   let row;
   try {
     row = await c.var.DB.prepare(
       `SELECT file_bytes_b64 AS "fileBytesB64",
+              file_key       AS "fileKey",
               mime_type      AS "mimeType",
               file_name      AS "fileName"
          FROM scan_queue
@@ -1240,6 +1246,7 @@ app.get("/:id/bytes", async (c) => {
       .bind(id, orgId)
       .first<{
         fileBytesB64: string | null;
+        fileKey: string | null;
         mimeType: string | null;
         fileName: string | null;
       }>();
@@ -1252,29 +1259,50 @@ app.get("/:id/bytes", async (c) => {
   if (!row) {
     return c.json({ success: false, error: "Scan row not found." }, 404);
   }
-  if (!row.fileBytesB64) {
+  const bytes = await readScanBytes(c.env, row);
+  if (!bytes) {
     return c.json(
       {
         success: false,
         error:
-          "File bytes evicted — the row was already consumed or pre-dates the source-doc-link rollout.",
+          "Original not available - this scan pre-dates original retention or its file bytes were evicted.",
       },
       410,
     );
   }
-  const bytes = base64ToArrayBuffer(row.fileBytesB64);
+  try {
+    await c.var.DB.prepare(
+      `INSERT INTO scan_original_access (id, scan_id, org_id, user_id, via, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        `soa-${crypto.randomUUID().slice(0, 12)}`,
+        id,
+        orgId,
+        (c.get("userId" as never) as string | undefined) ?? null,
+        via,
+        new Date().toISOString(),
+      )
+      .run();
+  } catch (e) {
+    console.warn("[scan-queue] access trail:", (e as Error).message);
+  }
   const mime = row.mimeType || "application/pdf";
-  const filename = row.fileName || "scan.pdf";
+  const disposition = via === "original" ? originalDisposition(mime) : "attachment";
+  const filename = (row.fileName || "scan.pdf").replace(/"/g, "");
   return new Response(bytes, {
     status: 200,
     headers: {
       "Content-Type": mime,
       "Content-Length": String(bytes.byteLength),
-      "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+      "Content-Disposition": `${disposition}; filename="${filename}"`,
       "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "sandbox",
     },
   });
-});
+}
+app.get("/:id/bytes", (c) => sendOriginal(c, "bytes"));
+app.get("/:id/original", (c) => sendOriginal(c, "original"));
 
 // ---------------------------------------------------------------------------
 // POST /api/scan-queue/:id/retry — flip a 'failed' row back to 'queued'
@@ -1290,10 +1318,10 @@ app.post("/:id/retry", async (c) => {
   let row;
   try {
     row = await c.var.DB.prepare(
-      "SELECT batch_id AS \"batchId\", file_bytes_b64 AS \"fileBytesB64\", status FROM scan_queue WHERE id = ? AND (org_id = ? OR org_id IS NULL)",
+      "SELECT batch_id AS \"batchId\", file_bytes_b64 AS \"fileBytesB64\", file_key AS \"fileKey\", status FROM scan_queue WHERE id = ? AND (org_id = ? OR org_id IS NULL)",
     )
       .bind(id, orgId)
-      .first<{ batchId: string; fileBytesB64: string | null; status: string }>();
+      .first<{ batchId: string; fileBytesB64: string | null; fileKey: string | null; status: string }>();
   } catch (e) {
     return c.json(
       { success: false, error: `Query failed: ${(e as Error).message}` },
@@ -1309,7 +1337,7 @@ app.post("/:id/retry", async (c) => {
       400,
     );
   }
-  if (!row.fileBytesB64) {
+  if (!row.fileBytesB64 && !row.fileKey) {
     return c.json(
       {
         success: false,
@@ -1381,8 +1409,7 @@ app.post("/:id/consume", async (c) => {
     try {
       result = await c.var.DB.prepare(
         `UPDATE scan_queue
-            SET consumed_at = ?,
-                file_bytes_b64 = NULL
+            SET consumed_at = ?
           WHERE id = ?
             AND (org_id = ? OR org_id IS NULL)`,
       )
@@ -1447,8 +1474,7 @@ app.post("/:id/consume", async (c) => {
       await c.var.DB.prepare(
         `UPDATE scan_queue
             SET consumed_doc_idxs = ?::jsonb,
-                consumed_at = ?,
-                file_bytes_b64 = NULL
+                consumed_at = ?
           WHERE id = ?
             AND (org_id = ? OR org_id IS NULL)`,
       )
