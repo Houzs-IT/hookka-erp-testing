@@ -19,6 +19,8 @@
 > **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-267 (branch `fix/kpi-delivery-rules-main` (to `main`); the same entry is on staging's #749); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-266 (branch `fix/empty-auto-invoice-guard`, to main; 263 and 264 are staging's, 265 is main's).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-265 (branch `perf/production-dept-tab-cache-main`, to main; 263 and 264 are staging's).
+=======
+> **Last verified: 2026-10-07**: newest entry BUG-2026-09-30-223 (branch `fix/bug06-do-duplicate-guard-main`, to main; the same fix reached staging on 2026-09-30 through #593).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-262 (branch `fix/rm-uom-bottle-main`, to main).
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-261 (branch `fix/bom-wip-delete-move`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-260 (branch `fix/production-overview-scrollbar`, to main; no open PR holds 260); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -328,6 +330,24 @@ and that the PO screen reads the same field as sen).
 **Fix.** `fetchOrders` refetches the sheet and the overdue chips without invalidating; the stock-PO create path invalidates first. `cached-fetch.ts` keeps a body that localStorage refuses in memory (up to 9 entries, ~6 MB heap each, measured), cleared by every invalidation path. The dead seed is removed; dept pages keep loading every open order (owner's choice). Same test, new code: 0.55 s, no "(loading…)".
 
 **Guard.** `tests/production-dept-tab-cache.test.mjs`.
+=======
+## BUG-2026-09-30-223 — "Transfer to Delivery Order" skipped the once-only-delivery guard, so one production order could be delivered twice `delivery-orders` 🔵
+
+🔵 Fixed on `fix/bug06-do-duplicate-guard-main` (to `main`). Already on `staging` since 2026-09-30 (#593, T-006 R1 before it); this brings the same code to main.
+
+**Symptom (BUG-06).** The Sales page "Transfer to Delivery Order" posted `{ salesOrderId, items }` with items copied from the SO and no `productionOrderIds`. `validateDoComposition`, the once-only-delivery guard, only ran over `productionOrderIds`, so the same SO could be transferred again and again. A direct API call could do the same with `items` naming an already-delivered production order, with or without a sales order.
+
+**Cause.** `createDeliveryOrderForPOs` writes `body.items` as sent but guarded only `body.productionOrderIds`.
+
+**Fix.**
+- Server: create guards every production order named in `productionOrderIds` or in `items`. An SO-linked create with no production orders at all is refused 400.
+- Sales page: the dialog lists the SO's production orders that are ready to deliver (`/api/delivery-orders/ready-planning`, the Delivery page's own source) and sends their ids. The button is disabled when nothing is ready.
+- Consignment page: its "Transfer to Delivery Order" sent the same refused shape and could never succeed (a consignment PO is already refused on a DO). It is now "Create Consignment Note", which opens `/consignment/note`.
+- Review fixes (2026-10-15): the production_orders lookup in create now filters `orgId = ?` (the ids can come from `items[].productionOrderId`, so an unscoped lookup would read another org's rows); with `productionOrderIds` non-empty, a line with no `productionOrderId`, or one not among the loaded orders, is refused 400. Still open and documented, not fixed: no per-line selection on the Sales dialog, and the ready-planning fetch is large.
+
+**Verified.** Staging, 2026-09-30, all 10 BUG-06 cases passed on the same code. On main: tests only. Prod not checked yet (UNMEASURED).
+
+**Guard.** `tests/do-create-requires-production-orders.test.mjs` runs the real create function on a fake DB (no DO row written for the refused shapes). `tests/t006-r1-transfer-to-do.test.mjs` checks the Sales page request body.
 
 ---
 
