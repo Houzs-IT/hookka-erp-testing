@@ -12,6 +12,8 @@ import {
   diffCorrections,
   applyCorrections,
   correctionMapKey,
+  learnFromConfirm,
+  loadCorrections,
 } from "../src/api/lib/scan-corrections.ts";
 
 const RAW_PO = {
@@ -100,4 +102,53 @@ test("applyCorrections: only touches the alias-able string fields", () => {
 test("correctionKey folds case and runs of whitespace", () => {
   assert.equal(correctionKey("  a   b\tc "), "A B C");
   assert.equal(correctionKey(null), "");
+});
+
+test("diffCorrections: an inserted/deleted line yields nothing (no index mis-pairing)", () => {
+  const raw = { items: [{ productCode: "A1" }, { productCode: "B2" }] };
+  const corrected = { items: [{ productCode: "NEW" }, { productCode: "A1-X" }, { productCode: "B2" }] };
+  assert.deepEqual(diffCorrections("po", raw, corrected), []);
+});
+
+// Stub DB: scan_field_corrections kept in memory; customers owned by org o1.
+function corrDb() {
+  const rows = [];
+  const stmt = (sql, b = []) => ({
+    bind: (...a) => stmt(sql, a),
+    run: async () => {
+      if (/INSERT INTO scan_field_corrections/i.test(sql)) {
+        const [, org, kind, scope, field, norm, , corrected] = b;
+        const hit = rows.find((r) => r.org === org && r.kind === kind && r.scope === scope && r.field === field && r.norm === norm);
+        if (hit) { hit.corrected = corrected; hit.hits++; }
+        else rows.push({ org, kind, scope, field, norm, corrected, hits: 1 });
+      }
+      return {};
+    },
+    first: async () => (/FROM customers/i.test(sql) && b[0] === "c1" && b[1] === "o1" ? { id: "c1" } : null),
+    all: async () => {
+      const [kind, scope, org] = b;
+      const min = /hits >= 2/.test(sql) ? 2 : 0;
+      return { results: rows.filter((r) => r.kind === kind && r.scope === scope && r.org === org && r.hits >= min)
+        .map((r) => ({ field: r.field, rawNorm: r.norm, correctedValue: r.corrected })) };
+    },
+  });
+  return { rows, prepare: (sql) => stmt(sql) };
+}
+
+test("learnFromConfirm + loadCorrections: replays only after the pair was confirmed twice", async () => {
+  const db = corrDb();
+  const o = { orgId: "o1", kind: "po", scopeId: "c1", raw: JSON.stringify(RAW_PO), corrected: CORRECTED_PO };
+  assert.equal(await learnFromConfirm(db, o), 2);
+  assert.equal((await loadCorrections(db, o)).size, 0, "one confirm is not enough");
+  await learnFromConfirm(db, o);
+  const map = await loadCorrections(db, o);
+  assert.equal(map.get(correctionMapKey("productCode", "SL 13.5 (E)")), "SL-13.5-E");
+  assert.equal((await loadCorrections(db, { ...o, orgId: "o2" })).size, 0, "other org sees nothing");
+});
+
+test("learnFromConfirm: scope that is not this org's customer learns nothing", async () => {
+  const db = corrDb();
+  const n = await learnFromConfirm(db, { orgId: "o1", kind: "po", scopeId: "c-foreign", raw: RAW_PO, corrected: CORRECTED_PO });
+  assert.equal(n, 0);
+  assert.equal(db.rows.length, 0);
 });

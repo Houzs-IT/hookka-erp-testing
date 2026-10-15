@@ -213,6 +213,11 @@ async function ensureScanQueueTable(
          )`,
       )
       .run();
+    await db
+      .prepare(
+        "CREATE INDEX IF NOT EXISTS scan_original_access_scan_idx ON scan_original_access (org_id, scan_id)",
+      )
+      .run();
     scanQueueTableEnsured = true;
   } catch (e) {
     // No DDL perms in some environments — let the route's first INSERT fail
@@ -1241,7 +1246,7 @@ async function sendOriginal(c: Context<Env>, via: "bytes" | "original") {
               file_name      AS "fileName"
          FROM scan_queue
         WHERE id = ?
-          AND (org_id = ? OR org_id IS NULL)`,
+          AND (org_id = ?${via === "bytes" ? " OR org_id IS NULL" : ""})`,
     )
       .bind(id, orgId)
       .first<{
@@ -1285,7 +1290,10 @@ async function sendOriginal(c: Context<Env>, via: "bytes" | "original") {
       )
       .run();
   } catch (e) {
-    console.warn("[scan-queue] access trail:", (e as Error).message);
+    // Fail closed: no audit row, no file. A read that leaves no trail is
+    // exactly what the trail exists to prevent.
+    console.error("[scan-queue] access trail:", (e as Error).message);
+    return c.json({ success: false, error: "Could not record access; original not served." }, 500);
   }
   const mime = row.mimeType || "application/pdf";
   const disposition = via === "original" ? originalDisposition(mime) : "attachment";
@@ -1409,7 +1417,8 @@ app.post("/:id/consume", async (c) => {
     try {
       result = await c.var.DB.prepare(
         `UPDATE scan_queue
-            SET consumed_at = ?
+            SET consumed_at = ?,
+                file_bytes_b64 = CASE WHEN file_key IS NULL THEN NULL ELSE file_bytes_b64 END
           WHERE id = ?
             AND (org_id = ? OR org_id IS NULL)`,
       )
@@ -1474,7 +1483,8 @@ app.post("/:id/consume", async (c) => {
       await c.var.DB.prepare(
         `UPDATE scan_queue
             SET consumed_doc_idxs = ?::jsonb,
-                consumed_at = ?
+                consumed_at = ?,
+                file_bytes_b64 = CASE WHEN file_key IS NULL THEN NULL ELSE file_bytes_b64 END
           WHERE id = ?
             AND (org_id = ? OR org_id IS NULL)`,
       )

@@ -167,9 +167,9 @@ app.post("/samples/:id/confirm", async (c) => {
 
   // HK-0005: keep the mistake, not only the corrected answer.
   const srow = await c.var.DB.prepare(
-    "SELECT supplierId, rawJson FROM supplier_scan_samples WHERE id = ?",
+    "SELECT supplierId, rawJson FROM supplier_scan_samples WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, orgId)
     .first<{ supplierId: string | null; rawJson: string | null }>()
     .catch(() => null);
   await learnFromConfirm(c.var.DB as never, {
