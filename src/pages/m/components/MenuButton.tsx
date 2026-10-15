@@ -7,16 +7,18 @@ import { Menu } from "lucide-react";
 import { M } from "../theme";
 import { useResponsiveLayout } from "../lib/responsive-layout";
 import { NAV_DRAWER_ID, useNavDrawer } from "../lib/nav-drawer";
+import { useItUnread } from "../lib/it-unread";
 
 export function MenuButton({ edge = -10 }: { edge?: number }) {
   const { mode } = useResponsiveLayout();
   const drawer = useNavDrawer();
+  const itUnread = useItUnread();
   if (mode !== "phone" || !drawer) return null;
   return (
     <button
       type="button"
       onClick={drawer.open}
-      aria-label="Open menu"
+      aria-label={itUnread > 0 ? `Open menu, ${itUnread} new from IT` : "Open menu"}
       aria-haspopup="dialog"
       aria-expanded={drawer.isOpen}
       aria-controls={NAV_DRAWER_ID}
@@ -35,11 +37,16 @@ export function MenuButton({ edge = -10 }: { edge?: number }) {
         flex: "none",
         cursor: "pointer",
         color: M.raisin,
+        position: "relative",
         WebkitTapHighlightColor: "transparent",
       }}
     >
       {/* 20px glyph (owner 2026-10-13: 24 read too large next to the 18px title). */}
       <Menu size={20} strokeWidth={1.9} />
+      {/* IT replied on a request: the drawer's IT Support row carries the number. */}
+      {itUnread > 0 && (
+        <span aria-hidden style={{ position: "absolute", top: 10, right: 9, width: 8, height: 8, borderRadius: 4, background: "#C0463A" }} />
+      )}
     </button>
   );
 }
