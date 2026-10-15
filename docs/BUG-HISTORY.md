@@ -96,6 +96,20 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-15-HK0037 — RM unit shown as "ea" / defaulted to "pcs" after DEV-20 `inventory` `procurement` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0037-rm-uom-propagation`, PR #863). Prod occurrences UNMEASURED.
+
+**Symptom.** DEV-20 (#720) made the RM unit list selectable, but the unit did not follow the material: Inventory Adjustments showed a hardcoded "ea", a PO line took "pcs" unless the client sent a unit, and RM create silently turned an unlisted unit into PCS.
+
+**Root cause.** Four readers/writers each had their own fallback instead of the RM's `baseUOM`: `adjustments.tsx`, `purchase-orders.ts` POST/PUT, `inventory.ts` RM create, and the GRN receive row.
+
+**Fix.** RM create rejects a unit not on the list (same check as `raw-materials.ts`). PO POST/PUT take the line unit from the RM base unit (`poLineUnit`); a line with receipts keeps its stored unit. Adjustments show `baseUOM`; the GRN row shows the PO line unit.
+
+**Not changed.** Per-category lists and ROLL/MTR conversion (owner rulings 2026-09-29 / 2026-10-07); other PO writers (`import-completion/procurement-backfills.ts`, `convert-from-po-modal.tsx`) still pick their own unit.
+
+**Regression.** `tests/rm-uom-options.test.mjs`: `poLineUnit`, `rmUnitMap`, create rejects an unlisted unit, no `|| "ea"`, PUT keeps a received line's unit.
+
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 
 🟡 **Fixed on branch** (`fix/pi-revoid-legno-main` → `main`). Same fix as staging #852, which was verified on the staging site 2026-10-14. Number shared with the staging entry.

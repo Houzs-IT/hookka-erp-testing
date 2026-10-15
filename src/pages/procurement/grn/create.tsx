@@ -1172,9 +1172,7 @@ function GRNCreatePage() {
                               }
                             />
                             <div className="text-[10px] text-[#9CA3AF] mt-0.5">
-                              {allRawMaterials.find(
-                                (r) => (r.itemCode ?? "").trim().toUpperCase() === (poItem?.materialCode ?? "").trim().toUpperCase(),
-                              )?.baseUOM ?? poItem?.unit ?? ""}
+                              {poItem?.unit ?? ""}
                             </div>
                             {overReceipt && (
                               <div className="text-[10px] text-[#9A3A2D] mt-0.5">

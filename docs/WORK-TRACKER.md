@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `fix/hk0037-rm-uom-propagation` (to `main`, HK-0037) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
 > **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
@@ -145,6 +146,11 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-15 — 🔵 RM unit follows the material (HK-0037, branch `fix/hk0037-rm-uom-propagation` → `main`, PR #863)
+
+1. 🔵 RM create rejects an unlisted unit; PO line unit from the RM base unit; Adjustments and GRN show the real unit.
+2. ⬜ Owner questions: per-category unit lists, ROLL/MTR conversion, BOM unit display; other PO writers (`procurement-backfills.ts`, `convert-from-po-modal.tsx`).
 
 ## 2026-10-14 — 🔵 Second void of a purchase invoice answers 500 (branch `fix/pi-revoid-legno-main` → `main`, BUG-2026-10-14-286)
 
