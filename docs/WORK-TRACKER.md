@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: SO customer pencil (#864, HK-0094) prod-verified.
 > **Last verified: 2026-10-15**: branch `feat/hk0094-so-customer-edit` (to `main`, IT Hub HK-0094) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue-main` (to `main`, department revenue + Bedframe/Sofa split, from staging #860, plus the phone dashboard) added below (its entry is the newest).
@@ -148,6 +149,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-15 — 🔵 Dashboard: idle Sundays out of every per-day chart and average (branch `feat/hide-idle-sundays` → `main`)
+
+Owner asks (2026-10-15): 「礼拜天 remove 掉，因为没开工，除非礼拜天开工才拉进来 … 全部的 chart 和数据都是，不要被这个影响了我们的数据」.
+1. 🔵 Charts (/dashboard Revenue + Department Revenue, /m Revenue, Completed per-day list): a Sunday whose every plotted value is 0 is left off the axis; a Sunday with any figure stays. Weekday zeros still show. `src/lib/idle-sundays.ts`.
+2. 🔵 Averages (Daily Capacity, Backlog days of queue): working days were Mon–Sat minus holidays, so a WORKED Sunday's output was dropped. Now a Sunday or public holiday counts only when production happened on it (completed job-card minutes > 0). `src/api/lib/working-days.ts`.
+3. 🔵 Not covered: /dashboard-experimental's Daily tab; frozen past months keep the figures they were frozen with.
 
 ## 2026-10-15 — ✅ SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(#864 9688216, prod-verified)
 
