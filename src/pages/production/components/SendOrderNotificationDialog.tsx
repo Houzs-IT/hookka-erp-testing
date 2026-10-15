@@ -1,8 +1,8 @@
 // "Send Notification" dialog for the Production Overview (HK-0025).
 //
 // Overview -> tick order(s) -> Send Notification -> pick priority -> pick
-// individuals / departments / everyone -> Send. Each ticked order becomes ONE
-// announcement via POST /api/announcements (so targeting, the worker-phone feed,
+// individuals / departments / everyone -> Send. The ticked orders become ONE
+// announcement (one push) via POST /api/announcements (so targeting, the worker-phone feed,
 // Web Push and read-receipts are the existing announcement machinery); the
 // notice text is built by src/lib/order-notification.ts.
 import { useEffect, useMemo, useState } from "react";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   ORDER_PRIORITIES,
   ORDER_PRIORITY_LABEL,
-  buildOrderNotice,
+  MAX_NOTICE_ORDERS,
   type OrderPriority,
 } from "@/lib/order-notification";
 import type { ProductionOrder } from "../types";
@@ -20,10 +20,7 @@ type Dept = { code: string; name: string };
 type Person = { id: string; name: string; empNo: string; departmentCode: string };
 type Audience = "ALL" | "DEPTS" | "WORKERS";
 
-// One announcement (and one translation call) per order, sent one after the
-// other - so a "select all" of hundreds of rows must not become hundreds of
-// phone alerts. Raise only if the floor asks for it.
-const MAX_ORDERS = 10;
+const MAX_ORDERS = MAX_NOTICE_ORDERS;
 
 function localToday(): string {
   const d = new Date();
@@ -106,38 +103,26 @@ export function SendOrderNotificationDialog({
   async function send() {
     setBusy(true);
     setError(null);
-    let sent = 0;
     try {
-      for (const o of orders) {
-        const { title, body } = buildOrderNotice({
+      // ONE request = one announcement listing every order = one push. The
+      // server looks the orders up and builds the text.
+      const res = await fetch("/api/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           priority,
-          poNo: o.poNo,
-          model: o.productName || o.productCode,
-          requiredDate: o.hookkaExpectedDD || o.targetEndDate,
-          status: o.status,
+          orderIds: orders.map((o) => o.id),
           note,
-        });
-        const res = await fetch("/api/announcements", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title,
-            body,
-            priority,
-            orderNo: o.poNo,
-            orderId: o.id,
-            targetDeptCodes: audience === "DEPTS" ? [...selDepts] : [],
-            targetWorkerIds: audience === "WORKERS" ? [...selPeople] : [],
-          }),
-        });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          setError(`${o.poNo}: ${j.error ?? `error ${res.status}`}. ${sent} of ${orders.length} sent.`);
-          return;
-        }
-        sent++;
+          targetDeptCodes: audience === "DEPTS" ? [...selDepts] : [],
+          targetWorkerIds: audience === "WORKERS" ? [...selPeople] : [],
+        }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error ?? `error ${res.status}`);
+        return;
       }
-      onSent(sent);
+      onSent(orders.length);
       onClose();
     } finally {
       setBusy(false);
@@ -151,7 +136,7 @@ export function SendOrderNotificationDialog({
         <p className="mb-3 text-[12px] text-[#6B5E50]">
           {orders.length === 1
             ? `Order ${orders[0].poNo}`
-            : `${orders.length} orders - one notification each`}
+            : `${orders.length} orders - one notification listing them all`}
           . Workers get it on their phone and must acknowledge it.
         </p>
 

@@ -38,6 +38,8 @@ import {
 // Best-effort: wrapped in try/catch so a push failure NEVER faults the create.
 import { sendPushToSubscribers } from "./push";
 import {
+  MAX_NOTICE_ORDERS,
+  buildOrderNotice,
   orderNoticeCategory,
   readOrderPriority,
   type OrderPriority,
@@ -508,9 +510,9 @@ admin.get("/", async (c) => {
   const nameById = new Map<string, string>();
   if (senderIds.length > 0) {
     const u = await c.var.DB.prepare(
-      `SELECT id, displayName FROM users WHERE id IN (${senderIds.map(() => "?").join(",")})`,
+      `SELECT id, displayName FROM users WHERE orgId = ? AND id IN (${senderIds.map(() => "?").join(",")})`,
     )
-      .bind(...senderIds)
+      .bind(orgId, ...senderIds)
       .all<{ id: string; displayName?: string | null }>();
     for (const x of u.results ?? []) {
       if (x.displayName) nameById.set(x.id, x.displayName);
@@ -609,8 +611,83 @@ admin.post("/", async (c) => {
   await ensureAnnouncementsTable(c.var.DB);
   const orgId = adminOrgId(c);
   const body = await c.req.json().catch(() => ({}));
-  const title = String((body as { title?: unknown }).title ?? "").trim();
-  const text = String((body as { body?: unknown }).body ?? "").trim();
+  let title = String((body as { title?: unknown }).title ?? "").trim();
+  let text = String((body as { body?: unknown }).body ?? "").trim();
+  // Order notice (HK-0025): the client sends priority + orderIds (+ note); the
+  // server looks the orders up by id AND org and builds the text itself, so a
+  // client cannot name an order it does not own or spoof its number.
+  const priority = readOrderPriority((body as { priority?: unknown }).priority);
+  let orderNo: string | null = null;
+  let orderId: string | null = null;
+  if (priority) {
+    const ids = [
+      ...new Set(
+        readStringArray(
+          (body as { orderIds?: unknown }).orderIds as string[] | undefined,
+        ),
+      ),
+    ];
+    if (ids.length === 0 || ids.length > MAX_NOTICE_ORDERS) {
+      return c.json(
+        {
+          success: false,
+          error: `Select 1 to ${MAX_NOTICE_ORDERS} orders per notification`,
+        },
+        400,
+      );
+    }
+    const found = await c.var.DB.prepare(
+      `SELECT po.id, po.poNo, po.productName, po.productCode, po.status,
+              po.targetEndDate,
+              (SELECT so.hookkaExpectedDD FROM sales_orders so
+                WHERE so.id = po.salesOrderId) AS hookkaExpectedDD
+         FROM production_orders po
+        WHERE po.orgId = ? AND po.id IN (${ids.map(() => "?").join(",")})`,
+    )
+      .bind(orgId, ...ids)
+      .all<Record<string, string | null>>();
+    const byId = new Map((found.results ?? []).map((r) => [String(r.id), r]));
+    const missing = ids.filter((i) => !byId.has(i));
+    if (missing.length > 0) {
+      return c.json(
+        { success: false, error: `Order not found: ${missing.join(", ")}` },
+        404,
+      );
+    }
+    const orders = ids.map((i) => byId.get(i)!);
+    const built = buildOrderNotice({
+      priority,
+      orders: orders.map((r) => ({
+        poNo: String(r.poNo ?? ""),
+        model: String(r.productName || r.productCode || ""),
+        requiredDate: String(r.hookkaExpectedDD || r.targetEndDate || ""),
+        status: String(r.status ?? ""),
+      })),
+      note: String((body as { note?: unknown }).note ?? "").slice(0, 300),
+    });
+    title = built.title;
+    text = built.body;
+    orderNo = orders.map((r) => r.poNo).join(", ");
+    orderId = ids.slice().sort().join(",");
+    // Dedupe: the same orders + priority already sent today (UTC) -> 409, so a
+    // retry / double click never re-alerts the floor.
+    const dup = await c.var.DB.prepare(
+      `SELECT id FROM announcements
+        WHERE org_id = ? AND priority = ? AND order_id = ? AND created_at >= ?
+        LIMIT 1`,
+    )
+      .bind(orgId, priority, orderId, new Date().toISOString().slice(0, 10))
+      .first<{ id: string }>();
+    if (dup) {
+      return c.json(
+        {
+          success: false,
+          error: "This notification was already sent today for these orders",
+        },
+        409,
+      );
+    }
+  }
   if (!title) {
     return c.json({ success: false, error: "Title is required" }, 400);
   }
@@ -652,13 +729,6 @@ admin.post("/", async (c) => {
   // Category — GENERAL | WARNING | SOP | LEARNING; default/invalid → GENERAL.
   // Order notice (HK-0025): URGENT / OVERDUE are always WARNING so the phone
   // highlights them whatever category the client sent.
-  const priority = readOrderPriority((body as { priority?: unknown }).priority);
-  const orderNo = priority
-    ? String((body as { orderNo?: unknown }).orderNo ?? "").trim() || null
-    : null;
-  const orderId = priority
-    ? String((body as { orderId?: unknown }).orderId ?? "").trim() || null
-    : null;
   const category =
     priority && orderNoticeCategory(priority) === "WARNING"
       ? "WARNING"

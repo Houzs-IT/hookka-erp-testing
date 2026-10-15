@@ -51,27 +51,43 @@ function titleCase(s: string): string {
     .join(" ");
 }
 
-export function buildOrderNotice(o: {
-  priority: OrderPriority;
+/** Hard cap per notice - enforced by POST /api/announcements, mirrored in the dialog. */
+export const MAX_NOTICE_ORDERS = 10;
+
+export type NoticeOrder = {
   poNo: string;
   model: string;
   requiredDate: string;
   status: string;
+};
+
+/** One notice for one OR several orders (HK-0025 review: one push per batch). */
+export function buildOrderNotice(o: {
+  priority: OrderPriority;
+  orders: NoticeOrder[];
   note?: string;
 }): { title: string; body: string } {
   const note = (o.note ?? "").trim();
+  const one = (x: NoticeOrder) => [
+    `Order No.: ${x.poNo}`,
+    `Model: ${x.model || "-"}`,
+    `Required Date: ${ddmmyyyy(x.requiredDate)}`,
+    `Current Status: ${titleCase(x.status) || "-"}`,
+  ];
+  const blocks = o.orders.map((x) => one(x).join("\n"));
   const lines = [
-    `Order No.: ${o.poNo}`,
-    `Model: ${o.model || "-"}`,
-    `Required Date: ${ddmmyyyy(o.requiredDate)}`,
-    `Current Status: ${titleCase(o.status) || "-"}`,
+    blocks.join("\n\n"),
     `Priority: ${o.priority}`,
     "",
     ...(note ? [note, ""] : []),
     ASK[o.priority],
   ];
+  const n = o.orders.length;
   return {
-    title: `${o.priority} ORDER - ${o.poNo}`,
+    title:
+      n === 1
+        ? `${o.priority} ORDER - ${o.orders[0].poNo}`
+        : `${o.priority} ORDERS - ${n} orders`,
     body: lines.join("\n"),
   };
 }

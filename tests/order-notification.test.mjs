@@ -2,8 +2,8 @@
 // order-notification.test.mjs — HK-0025: "Send Notification" on the Production
 // Overview. An order notice is an announcement carrying priority + order no.
 //   1. pure builder (src/lib/order-notification.ts): title/body, priority set
-//   2. POST /api/announcements stores priority/order_no/order_id, forces the
-//      WARNING category (the worker phone's highlight) for URGENT/OVERDUE
+//   2. POST /api/announcements: ONE announcement + ONE push per batch, text
+//      built server-side from orders looked up by id + org, cap + dedupe + RBAC
 //   3. GET /api/announcements publishes priority, orderNo and the sender name
 // ---------------------------------------------------------------------------
 import test from "node:test";
@@ -36,10 +36,7 @@ test("highlight: URGENT and OVERDUE are WARNING, PRIORITY is GENERAL", () => {
 test("builder: ticket wording, dd/mm/yyyy date, optional supervisor note", () => {
   const n = lib.buildOrderNotice({
     priority: "URGENT",
-    poNo: "PO-001",
-    model: "Sofa 8211",
-    requiredDate: "2026-09-25",
-    status: "PENDING",
+    orders: [{ poNo: "PO-001", model: "Sofa 8211", requiredDate: "2026-09-25", status: "PENDING" }],
     note: "Customer collecting Friday",
   });
   assert.equal(n.title, "URGENT ORDER - PO-001");
@@ -58,17 +55,39 @@ test("builder: ticket wording, dd/mm/yyyy date, optional supervisor note", () =>
     ].join("\n"),
   );
   const p = lib.buildOrderNotice({
-    priority: "PRIORITY", poNo: "PO-2", model: "", requiredDate: "", status: "IN_PROGRESS", note: "  ",
+    priority: "PRIORITY",
+    orders: [{ poNo: "PO-2", model: "", requiredDate: "", status: "IN_PROGRESS" }],
+    note: "  ",
   });
   assert.equal(p.title, "PRIORITY ORDER - PO-2");
   assert.match(p.body, /Required Date: -\nCurrent Status: In Progress/);
   assert.ok(!p.body.includes("\n\n\n"));
+  const m = lib.buildOrderNotice({
+    priority: "OVERDUE",
+    orders: [
+      { poNo: "PO-1", model: "A", requiredDate: "2026-01-02", status: "PENDING" },
+      { poNo: "PO-2", model: "B", requiredDate: "2026-01-03", status: "PENDING" },
+    ],
+  });
+  assert.equal(m.title, "OVERDUE ORDERS - 2 orders");
+  assert.ok(m.body.includes("Order No.: PO-1") && m.body.includes("Order No.: PO-2"));
 });
 
 // ---- route -----------------------------------------------------------------
+// The fake DB routes by table/clause, never by column NAMES in the INSERT's
+// value order beyond the parsed column list; pushes are counted via the one
+// workers lookup sendPushToSubscribers issues per call.
+const ORDERS = {
+  "po-1": { id: "po-1", orgId: "hookka", poNo: "PO-001", productName: "Sofa 8211", productCode: "S1", status: "PENDING", targetEndDate: "2026-09-20", hookkaExpectedDD: "2026-09-25" },
+  "po-2": { id: "po-2", orgId: "hookka", poNo: "PO-002", productName: "Bed 1", productCode: "B1", status: "IN_PROGRESS", targetEndDate: "2026-09-21", hookkaExpectedDD: null },
+  "po-other": { id: "po-other", orgId: "other-org", poNo: "PO-X", productName: "x", productCode: "x", status: "PENDING", targetEndDate: "", hookkaExpectedDD: null },
+};
+
 function makeDb(seed = []) {
   const rows = new Map(seed.map((r) => [r.id, r]));
   const inserts = [];
+  const userLookups = [];
+  const pushQueries = [];
   const prepare = (sql) => {
     const s = sql.trim();
     let bound = [];
@@ -76,12 +95,27 @@ function makeDb(seed = []) {
       bind(...a) { bound = a; return o; },
       async first() {
         if (/FROM announcements WHERE id = \?/i.test(s)) return rows.get(bound[0]) ?? null;
+        if (/FROM announcements\s+WHERE org_id = \? AND priority = \? AND order_id = \?/i.test(s)) {
+          const [org, pr, oid, since] = bound;
+          return [...rows.values()].find(
+            (r) => r.org_id === org && r.priority === pr && r.order_id === oid && r.created_at >= since,
+          ) ?? null;
+        }
         return null;
       },
       async all() {
         if (/FROM announcements WHERE org_id = \?/i.test(s)) return { results: [...rows.values()] };
-        if (/FROM users WHERE id IN/i.test(s)) {
+        if (/FROM users WHERE orgId = \? AND id IN/i.test(s)) {
+          userLookups.push(bound);
           return { results: [{ id: "user-1", displayName: "Supervisor Sam" }] };
+        }
+        if (/FROM production_orders po/i.test(s)) {
+          const [org, ...ids] = bound;
+          return { results: ids.map((i) => ORDERS[i]).filter((r) => r && r.orgId === org) };
+        }
+        if (/FROM workers WHERE status = 'ACTIVE'/i.test(s)) {
+          pushQueries.push(bound.slice(0, bound.length / 2));
+          return { results: [] };
         }
         return { results: [] };
       },
@@ -99,52 +133,95 @@ function makeDb(seed = []) {
     };
     return o;
   };
-  return { db: { prepare }, inserts };
+  return { db: { prepare }, inserts, userLookups, pushQueries };
 }
 
-async function adminApp(db, tag) {
+async function adminApp(db, tag, role = "SUPER_ADMIN") {
   const mod = await import(
     pathToFileURL(resolve(process.cwd(), "src/api/routes/announcements.ts")).href + `?t=${tag}`
   );
   const parent = new Hono();
   parent.use("*", async (c, next) => {
     c.set("DB", db);
-    c.set("userRole", "SUPER_ADMIN");
+    c.set("userRole", role);
     c.set("userId", "user-1");
     await next();
   });
   parent.route("/", mod.announcementsAdmin);
   return parent;
 }
+const ENV = { VAPID_PUBLIC_KEY: "pub", VAPID_PRIVATE_KEY: "priv" };
 const post = (app, body) =>
   app.request("/", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  }, {});
+  }, ENV);
 
-test("POST stores priority + order and forces WARNING for URGENT", async () => {
-  const { db, inserts } = makeDb();
-  const app = await adminApp(db, "post-urgent");
+test("POST: one announcement for several orders, server-built text, ONE push", async () => {
+  const { db, inserts, pushQueries } = makeDb();
+  const app = await adminApp(db, "post-batch");
   const res = await post(app, {
-    title: "URGENT ORDER - PO-001",
-    body: "x",
     priority: "urgent",
-    orderNo: "PO-001",
-    orderId: "po-1",
+    orderIds: ["po-1", "po-2"],
+    note: "Friday pickup",
+    title: "spoofed title",
+    orderNo: "SPOOF",
     category: "GENERAL",
     targetDeptCodes: ["FAB_CUT", "UPHOLSTERY"],
   });
   assert.equal(res.status, 201);
   assert.equal(inserts.length, 1);
-  assert.equal(inserts[0].priority, "URGENT");
-  assert.equal(inserts[0].order_no, "PO-001");
-  assert.equal(inserts[0].order_id, "po-1");
-  assert.equal(inserts[0].category, "WARNING");
-  assert.equal(inserts[0].target_type, "DEPTS");
+  const r = inserts[0];
+  assert.equal(r.priority, "URGENT");
+  assert.equal(r.category, "WARNING");
+  assert.equal(r.target_type, "DEPTS");
+  assert.equal(r.title, "URGENT ORDERS - 2 orders");
+  assert.equal(r.order_no, "PO-001, PO-002");
+  assert.equal(r.order_id, "po-1,po-2");
+  assert.ok(r.body.includes("Required Date: 25/09/2026"));
+  assert.ok(r.body.includes("Friday pickup"));
+  assert.equal(pushQueries.length, 1, "exactly one push fan-out");
+  assert.deepEqual(pushQueries[0], ["FAB_CUT", "UPHOLSTERY"]);
   const j = await res.json();
   assert.equal(j.data.priority, "URGENT");
-  assert.equal(j.data.orderNo, "PO-001");
+});
+
+test("POST: unknown / other-org order is 404, nothing stored or pushed", async () => {
+  const { db, inserts, pushQueries } = makeDb();
+  const app = await adminApp(db, "post-foreign");
+  const res = await post(app, { priority: "URGENT", orderIds: ["po-1", "po-other"] });
+  assert.equal(res.status, 404);
+  assert.equal(inserts.length, 0);
+  assert.equal(pushQueries.length, 0);
+});
+
+test("POST: more than 10 orders is rejected server-side", async () => {
+  const { db, inserts } = makeDb();
+  const app = await adminApp(db, "post-cap");
+  const orderIds = Array.from({ length: 11 }, (_, i) => `po-${i}`);
+  const res = await post(app, { priority: "URGENT", orderIds });
+  assert.equal(res.status, 400);
+  assert.equal(inserts.length, 0);
+});
+
+test("POST: same orders + priority twice in a day is 409, one push total", async () => {
+  const { db, inserts, pushQueries } = makeDb();
+  const app = await adminApp(db, "post-dup");
+  const body = { priority: "OVERDUE", orderIds: ["po-2", "po-1"], targetDeptCodes: ["FAB_CUT"] };
+  assert.equal((await post(app, body)).status, 201);
+  assert.equal((await post(app, { ...body, orderIds: ["po-1", "po-2"] })).status, 409);
+  assert.equal(inserts.length, 1);
+  assert.equal(pushQueries.length, 1);
+});
+
+test("POST: a role without announcements:create gets 403 and nothing is written", async () => {
+  const { db, inserts, pushQueries } = makeDb();
+  const app = await adminApp(db, "post-denied", "READ_ONLY");
+  const res = await post(app, { priority: "URGENT", orderIds: ["po-1"] });
+  assert.equal(res.status, 403);
+  assert.equal(inserts.length, 0);
+  assert.equal(pushQueries.length, 0);
 });
 
 test("POST without priority keeps today's behaviour (no order columns set)", async () => {
@@ -157,8 +234,8 @@ test("POST without priority keeps today's behaviour (no order columns set)", asy
   assert.equal(inserts[0].category, "SOP");
 });
 
-test("GET list publishes priority, orderNo and who sent it", async () => {
-  const { db } = makeDb([
+test("GET list publishes priority, orderNo and who sent it (org-scoped lookup)", async () => {
+  const { db, userLookups } = makeDb([
     {
       id: "ann-1", org_id: "hookka", title: "t", body: "", is_active: true,
       created_by: "user-1", created_at: "2026-10-15T01:00:00Z",
@@ -166,9 +243,10 @@ test("GET list publishes priority, orderNo and who sent it", async () => {
     },
   ]);
   const app = await adminApp(db, "get");
-  const res = await app.request("/", {}, {});
+  const res = await app.request("/", {}, ENV);
   const j = await res.json();
   assert.equal(j.data[0].priority, "OVERDUE");
   assert.equal(j.data[0].orderNo, "PO-9");
   assert.equal(j.data[0].createdByName, "Supervisor Sam");
+  assert.equal(userLookups[0][0], "hookka");
 });
