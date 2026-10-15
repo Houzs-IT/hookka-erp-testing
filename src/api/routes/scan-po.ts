@@ -22,6 +22,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { toIsoDate } from "../lib/iso-date";
 import { distillCustomerRules } from "../lib/ocr-distill";
 import { matchByCompanyName } from "../../lib/company-name-match";
 import { cleanCustomerHint } from "../../lib/customer-hint";
@@ -302,6 +303,22 @@ function validateAndEnrichPO(po: ExtractedPO, catalog: Catalog): Warning[] {
   const customerByName = new Map(
     catalog.customers.map((c) => [c.name.toUpperCase(), c]),
   );
+  // HK-0080: the model is only ASKED for YYYY-MM-DD; nothing enforced it, and
+  // a DD/MM/YYYY string compares as "overdue" against today's ISO date in SQL.
+  if (po.deliveryDate) {
+    const iso = toIsoDate(po.deliveryDate);
+    if (iso !== po.deliveryDate) {
+      warnings.push({
+        field: "deliveryDate",
+        value: po.deliveryDate,
+        message: iso
+          ? `Delivery date converted to ${iso}.`
+          : "Delivery date is not a valid date and was cleared; enter it by hand.",
+      });
+      po.deliveryDate = iso;
+    }
+  }
+
   const hubShortNames = new Set(
     catalog.customers.flatMap((c) =>
       c.hubs.map((h) => h.shortName.toUpperCase()),

@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-288 (branch `fix/hk0080-po-scan-date-iso`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate-main`, to main, same fix as staging #875; 287 and 288 are staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-286 (branch `fix/pi-revoid-legno-main`, to main, same fix as staging #852); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-285 (branch `fix/hk0093-cn-print-co-fabric`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -98,6 +99,19 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-15-288 — A scanned PO's delivery date was never forced to ISO, so a day-first date read as overdue `production` `ocr-scan` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0080-po-scan-date-iso` -> `main`). Ticket HK-0080 (Violet, 2026-10-07: "why are there many PO overdue? is OCR using convert?"). Whether this is THE cause of the volume she saw is UNMEASURED (no prod access from this branch); it is a real hole on the path she named.
+
+**Symptom.** Production Overview shows many overdue orders; the reporter suspects scanned POs.
+
+**Cause.** Overview overdue is `NULLIF(sales_orders.hookkaExpectedDD,'') < today` on a TEXT column (`src/api/routes/production-orders.ts` overdue-counts). The scan prompt only ASKS the model for YYYY-MM-DD (`scan-engine.ts` rule 8); nothing on the server checked it, and `POST /api/sales-orders` stored `body.customerDeliveryDate` / `body.hookkaExpectedDD` verbatim. A `15/10/2026` string sorts before `2026-10-15`, so the order is overdue from the day it is created. Answer to "is OCR using convert": only inside the prompt, never enforced in code.
+
+**Fix.** New `src/api/lib/iso-date.ts` `toIsoDate` (ISO passes, DD/MM/YYYY, DD.MM.YYYY, DD-MM-YY convert day-first, impossible dates -> null). Used in `scan-po.ts` `validateAndEnrichPO` (converted or cleared, with a warning on the card) and in the SO create handler (covers the template-fallback scan path and manual API callers).
+
+**Not fixed / not checked.** (1) Rows already stored non-ISO: UNMEASURED; read-only check `SELECT count(*) FROM sales_orders WHERE hookkaExpectedDD <> '' AND hookkaExpectedDD !~ '^\d{4}-\d{2}-\d{2}'`. (2) Review fix: `POST /` and `PUT /:id` now answer 400 when a supplied customer / expected delivery date cannot be read (never a silent blank); on PUT only a CHANGED value is validated, so echoing a legacy stored value is not blocked. Day-first is an ASSUMPTION: `03/06/2026` is read as 3 June (Malaysian paper); a US-style sheet would be misread, and the scan card keeps the "converted to ..." warning so the operator sees it. (3) The template-fallback scan path sends `hookkaExpectedDD = customer delivery date` with no buffer (`scan-po-modal.tsx` ~1254); left for the owner. (4) The ticket's "PO" could mean Purchase Order; the Purchase Order list was not changed.
+
+**Regression.** `tests/scan-delivery-date-iso.test.mjs` (helper + the create route's 400).
 ## BUG-2026-10-15-HK0037 — RM unit shown as "ea" / defaulted to "pcs" after DEV-20 `inventory` `procurement` 🟡
 
 🟡 **Fixed on branch** (`fix/hk0037-rm-uom-propagation`, PR #863). Prod occurrences UNMEASURED.

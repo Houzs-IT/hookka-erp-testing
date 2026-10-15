@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `fix/hk0080-po-scan-date-iso` (to `main`, BUG-2026-10-15-288) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `fix/hk0037-rm-uom-propagation` (to `main`, HK-0037) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `docs/hk0052-already-delivered-dev36` (to `main`, IT Hub HK-0052) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
@@ -153,6 +154,12 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 2026-10-15 — 🔵 HK-0080 PO overdue: scanned delivery dates not forced to ISO (Violet「can cross check why there are many PO overdue? is OCR using convert?」)(branch `fix/hk0080-po-scan-date-iso` -> `main`, BUG-2026-10-15-288)
+
+1. DONE on branch: `toIsoDate` in scan route + SO create; regression `tests/scan-delivery-date-iso.test.mjs`.
+1b. Review fixes DONE: SO create / PUT 400 on an unreadable date (was silent blank); day-first assumption documented.
+2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
+3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
 ## 2026-10-15 — 🔵 RM unit follows the material (HK-0037, branch `fix/hk0037-rm-uom-propagation` → `main`, PR #863)
 
 1. 🔵 RM create rejects an unlisted unit; PO line unit from the RM base unit; Adjustments and GRN show the real unit.
