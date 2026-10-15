@@ -242,6 +242,23 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 (later) — 🔵 Phone Sales Orders list: follow the live `Sales Orders.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-15 after a read-only audit). Source: the live `Sales Orders.dc.html` in the Claude Design project (newer than the handoff README behind the 2026-10-14 entry). PHONE only; tablet, desktop and shared components unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. **Typography follows the repo**; text on the gradient summary turns white (unavoidable).
+1. 🔵 Header: round gradient "+" (New Sales Order) back in the phone header `trailing`; the Sort + New SO row is removed.
+2. 🔵 Summary moves to the top as a gradient card (fixed taupe hex in both themes for contrast), icon tiles, "By status" toggle, title follows the chip; breakdown restyled; Cancelled revenue still excluded.
+3. 🔵 Search row: search + Scan PO only; Filter moves to (4).
+4. 🔵 New "N ORDERS" row with a round Filter & Sort button (same `FilterSheet`) + count badge.
+5. 🔵 Removable active-filter chips + "Clear all" (each removes its key from the existing `filters` state).
+6. 🔵 Empty state: icon tile + pill reset. Card gap 11.
+7. 🟡 OVERDUE indicator: audited, business rule awaiting owner approval. Not implemented.
+8. 🔵 Test updated; `tsc -p tsconfig.app.json` run.
+9. 🔵 (approved later 2026-10-15) Summary card spacing: KPI columns 1.4fr | 1px | .9fr, KPI value line-height 1.1, fixed right-aligned count column in the breakdown; money never ellipsised (KPIs stack when the revenue cannot fit; breakdown status names wrap).
+10. 🔵 Phone-only `SalesFilterSheet` (prototype "Filter orders"): Sort | Filter switch keeping every existing sort; Status, Expected DD presets (week = Mon–Sun), Amount presets (< RM 10k · RM 10k–50k · > RM 50k, non-overlapping), RM inputs → sen; every existing filter under More filters; sticky Reset + live "Show N orders". Main status chip and sheet Status never disagree. Shared `FilterSheet` untouched (tablet + other modules).
+11. 🔵 Log the shared `FilterSheet` Amount-in-sen bug in `BUG-HISTORY.md` (not fixed here).
+12. 🔵 Checks: tsc, Sales tests, 320 / 375 / 390 px incl. long revenue, light + dark.
+13. 🔵 (owner, later 2026-10-15) Sort | Filter switch removed: the phone sheet is "Filter orders" only, as the prototype. No new sort UI; the list keeps its sort state, default (Expected DD, soonest first) and applySort. Phone users can no longer change the sort order; tablet still can (shared FilterSheet).
+
 ## 2026-10-15 — 🔵 Phone Home: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks (approved 2026-10-15 after a read-only audit). Source: Claude Design `Home.dc.html` + `design_handoff_home_mobile/README.md`. Branch fast-forwarded to `upstream/staging` (80ad740f) first, so the Mobile UI Foundation is present. PHONE only; tablet and desktop unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. Prototype shadows kept (owner). **Typography follows the repo** (decision 8).

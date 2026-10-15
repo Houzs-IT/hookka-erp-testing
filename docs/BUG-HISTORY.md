@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `design/mobile-home-dashboard`, to staging; open, logged only; 289 unused on `upstream/staging` and `upstream/main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
@@ -147,6 +148,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-15-289 — Mobile filter sheet's Amount filter reads the typed number as sen, not RM `mobile` `money` 🔴
+
+🔴 **Open, not fixed.** Logged on branch `design/mobile-home-dashboard` (to `staging`) during the phone Sales Orders filter work; owner asked to log it and leave the shared component alone in that task.
+
+**Symptom (from the code; not reproduced in a browser).** In the shared `/m` `FilterSheet`, typing `10000` in Sales Orders → Amount with `≥` keeps orders of **RM 100.00** and up, not RM 10,000. The box has no unit and the placeholder just says "Value".
+
+**Root cause.** `src/pages/m/components/FilterSheet.tsx` number control stores `Number(input)` as is. `applyFilters` (`src/pages/m/config/helpers.ts`) compares it with the column value, and money columns return **sen** (Sales `amount` = `num(r, "totalSen")`; Delivery `amount` = `valueSen`). So every money column on every `/m` screen that uses the shared sheet is off by ×100. The removable filter chips on the phone Sales list did the same until they started labelling Amount in RM.
+
+**Workaround in place.** The phone Sales Orders screen no longer uses the shared sheet: its own `SalesFilterSheet` takes RM and converts to sen (`rmToSen` in `src/pages/m/lib/so-filter-presets.ts`). Tablet Sales and the other modules still have the bug.
+
+**Fix (not done).** Give `ColumnDef` a money flag (or a `numCol` variant) and convert RM → sen in `FilterSheet` for those columns, then label the box "RM". Regression: a test that a money column filter of `10000` keeps a 1,000,000-sen row.
 
 ## BUG-2026-10-14-288 — Table column headers showed through the notifications panel `ui` `layout` 🟡
 
