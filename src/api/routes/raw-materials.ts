@@ -720,13 +720,14 @@ app.post("/bulk-import", async (c) => {
     return c.json({ success: true, data: { created: 0, updated: 0, rejected: [] } });
   }
 
+  const orgId = getOrgId(c);
   // Fetch existing itemCodes in one shot for the match test.
   // itemGroup rides along so a bulk sheet cannot RE-GROUP materials
   // silently — see the audit note on the single-row update.
   // baseUOM / balanceQty ride along for the DEV-20 UOM rules below.
   const existingRes = await c.var.DB.prepare(
-    "SELECT id, itemCode, itemGroup, baseUOM, balanceQty, description, status, minStock, maxStock, notes, uomCount, itemType, stockControl, mainSupplierCode FROM raw_materials",
-  ).all<{
+    "SELECT id, itemCode, itemGroup, baseUOM, balanceQty, description, status, minStock, maxStock, notes, uomCount, itemType, stockControl, mainSupplierCode FROM raw_materials WHERE orgId = ?",
+  ).bind(orgId).all<{
     id: string;
     itemCode: string;
     itemGroup: string | null;
@@ -857,7 +858,7 @@ app.post("/bulk-import", async (c) => {
              minStock = ?, maxStock = ?, status = ?,
              notes = ?, updated_at = ?,
              uomCount = ?, itemType = ?, stockControl = ?, mainSupplierCode = ?
-           WHERE id = ?`,
+           WHERE id = ? AND orgId = ?`,
         ).bind(
           itemCode,
           description,
@@ -874,6 +875,7 @@ app.post("/bulk-import", async (c) => {
           stockControl,
           mainSupplierCode,
           existingId,
+          orgId,
         ),
       );
       codeToId.set(itemCode, existingId);
@@ -890,8 +892,8 @@ app.post("/bulk-import", async (c) => {
              (id, itemCode, description, baseUOM, itemGroup, isActive,
               balanceQty, minStock, maxStock, status, notes,
               created_at, updated_at,
-              uomCount, itemType, stockControl, mainSupplierCode)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              uomCount, itemType, stockControl, mainSupplierCode, orgId)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id,
           itemCode,
@@ -910,6 +912,7 @@ app.post("/bulk-import", async (c) => {
           itemType,
           stockControl,
           mainSupplierCode,
+          orgId,
         ),
       );
       codeToId.set(itemCode, id);

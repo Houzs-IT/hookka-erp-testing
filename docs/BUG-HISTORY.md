@@ -43,7 +43,7 @@
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
-> **Last verified: 2026-10-15**: entry BUG-2026-10-15-287 (branch `fix/hk0002-import-blank-keeps`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: entry BUG-2026-10-15-287 (branch `fix/hk0002-import-blank-keeps`, to main; review fixes applied same day); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
@@ -777,11 +777,11 @@ fixed print layout.
 
 **Root cause.** `POST /api/raw-materials/bulk-import` built every UPDATE from the sheet row alone: description fell back to the item code, group to "OTHERS", `minStock`/`maxStock` to 0, `notes`/`itemType`/`mainSupplierCode` to NULL, `uomCount` to 1, `stockControl` to 1. The template carries none of the last seven, so every re-import reset them on every row it touched; a blank group cell re-grouped the material to OTHERS and with it its GL accounts (BUG-2026-08-21-160). Separately, the products and inventory FG exports wrote `(basePriceSen ?? 0) / 100`, so a SKU with no price exported as 0 and re-imported as a real RM 0.
 
-**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell.
+**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell. Review fixes: the route's stored-value read and UPDATE/INSERT are scoped by `orgId`; `[CLEAR]` in a notes / main supplier code / item type cell sets NULL (blank still keeps; documented in the RM import template); whitespace-only notes keep; an unrecognised `stockControl` keeps. `products.basePriceSen` is nullable (`0001_init.sql:90`, so the blank export is live; `:425` is `sales_order_items`), while `products.costPriceSen` is NOT NULL DEFAULT 0 (`:89`) so a never-priced cost cannot be told from 0 and now also exports blank (imports back as keep = 0).
 
 **Not done (needs the ticket's PRD, not visible to this session).** Preview and audit row already exist (dialog diff preview; `products` bulk-import audit; RM audit only on re-group). Other modules' exports (customers, suppliers, ...) were not swept.
 
-**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix).
+**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix; now drives the route with two orgs).
 
 ## BUG-2026-10-15-292 — Picking the MTR row of a material added the ROLL one to the PO `procurement` `inventory` 🟡
 
