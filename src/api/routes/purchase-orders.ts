@@ -15,6 +15,7 @@ import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { poLineUnit, rmUnitMap } from "../../lib/material-variants";
 import { supplierPoEmailTemplate } from "../lib/email";
 import { enqueueEmail } from "../lib/email-outbox";
 import { emitAudit } from "../lib/audit";
@@ -210,6 +211,23 @@ function fillBlankSupplierSku(
 function genPoId(): string {
   return `po-${crypto.randomUUID().slice(0, 8)}`;
 }
+/** HK-0037: baseUOM of every raw material named by these lines (org-scoped). */
+async function rmBaseUoms(
+  db: D1Database,
+  orgId: string,
+  items: Array<Record<string, unknown>>,
+): Promise<Map<string, string>> {
+  const codes = [...new Set(items.map((i) => String(i.materialCode ?? "").trim().toUpperCase()).filter(Boolean))];
+  if (codes.length === 0) return new Map();
+  const { results } = await db
+    .prepare(
+      `SELECT itemCode, baseUOM FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${codes.map(() => "?").join(",")})`,
+    )
+    .bind(orgId, ...codes)
+    .all<{ itemCode: string; baseUOM: string | null }>();
+  return rmUnitMap(results ?? []);
+}
+
 function genItemId(): string {
   return `poi-${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -503,6 +521,7 @@ app.post("/", async (c) => {
         return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
       }
     }
+    const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), poItems);
     const items = poItems.map((item) => {
       const quantity = Number(item.quantity) || 0;
       const unitPriceSen = Number(item.unitPriceSen) || 0;
@@ -516,7 +535,7 @@ app.post("/", async (c) => {
         unitPriceSen,
         totalSen: quantity * unitPriceSen,
         receivedQty: 0,
-        unit: (item.unit as string) ?? "pcs",
+        unit: poLineUnit(rmUom, item.materialCode, item.unit),
       };
     });
     const subtotalSen = items.reduce((sum, i) => sum + i.totalSen, 0);
@@ -883,6 +902,7 @@ app.put("/:id", async (c) => {
           return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
         }
       }
+      const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
       const newItems = rawItems.map((item) => {
         const quantity = Number(item.quantity) || 0;
         const unitPriceSen = Number(item.unitPriceSen) || 0;
@@ -896,7 +916,11 @@ app.put("/:id", async (c) => {
           unitPriceSen,
           totalSen: quantity * unitPriceSen,
           receivedQty: Number(item.receivedQty) || 0,
-          unit: (item.unit as string) ?? "pcs",
+          // A line already (part-)received keeps its recorded unit: no conversion.
+          unit:
+            Number(item.receivedQty) > 0
+              ? ((item.unit as string) ?? "pcs")
+              : poLineUnit(rmUom, item.materialCode, item.unit),
         };
       });
 

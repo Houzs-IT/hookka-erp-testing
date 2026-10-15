@@ -21,6 +21,8 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { fetchFilteredPOs } from "./production-orders";
+import { loadUomConfig, uomNotAllowedMsg } from "./raw-materials";
+import { isUomAllowed } from "../../lib/material-variants";
 import { deriveFGStock, splitFgDeltas, type FgStockPO } from "../../lib/fg-stock";
 
 const app = new Hono<Env>();
@@ -491,7 +493,11 @@ app.post("/raw-materials", async (c) => {
     const isActive = body.isActive === false ? 0 : 1;
     const itemGroup = body.itemGroup ?? "General";
     const balanceQty = Number(body.balanceQty) || 0;
-    const uom = baseUOM || "PCS";
+    const uom = baseUOM == null || baseUOM === "" ? "PCS" : String(baseUOM).trim() || "PCS";
+    const { units } = await loadUomConfig(c.var.DB);
+    if (!isUomAllowed(uom, units)) {
+      return c.json({ success: false, error: uomNotAllowedMsg(uom, units) }, 400);
+    }
 
     await c.var.DB.prepare(
       `INSERT INTO raw_materials (id, itemCode, description, baseUOM, itemGroup,
