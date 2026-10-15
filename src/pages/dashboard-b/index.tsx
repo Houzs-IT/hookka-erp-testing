@@ -17,6 +17,7 @@ import { useCachedJson, isUnknownOutcome } from "@/lib/cached-fetch";
 import { OcrAccuracyCard } from "./OcrAccuracyCard";
 import { DeptRevenueCard, CatToggle } from "./DeptRevenueCard";
 import { pickCat, type RevCat, type RevenueSplitResp } from "./revenue-split";
+import { dropIdleSundays } from "@/lib/idle-sundays";
 // recharts (~357 KB) is loaded lazily so the KPI numbers paint first; the
 // chart code streams in behind a placeholder. See ./charts.tsx.
 const RevenueChart = lazy(() =>
@@ -856,15 +857,21 @@ export default function DashboardBPage() {
     () =>
       // All keeps the overview's own lines (frozen months stay as frozen);
       // Bedframe / Sofa come from the split endpoint on the same buckets.
+      // Idle Sundays (every line 0) are left off the per-day axis; a Sunday
+      // with any figure stays (owner 2026-10-15).
       revCat === "all"
-        ? weekRev.map((r) => ({
+        ? dropIdleSundays(weekRev, (r) => r.week, (r) => [r.salesOrderSen, r.invoiceSen, r.productionSen]).map((r) => ({
             // All-time → "MM-DD" of the week-start; month → "MM-DD" of the day.
             m: r.week.slice(5),
             "Sales Orders": Math.round(r.salesOrderSen / 100),
             Invoices: Math.round(r.invoiceSen / 100),
             Production: Math.round(r.productionSen / 100),
           }))
-        : (splitRaw?.revenue ?? []).map((r) => ({
+        : dropIdleSundays(
+            splitRaw?.revenue ?? [],
+            (r) => r.bucket,
+            (r) => [pickCat(r.salesOrder, revCat), pickCat(r.invoice, revCat), pickCat(r.production, revCat)],
+          ).map((r) => ({
             m: r.bucket.slice(5),
             "Sales Orders": Math.round(pickCat(r.salesOrder, revCat) / 100),
             Invoices: Math.round(pickCat(r.invoice, revCat) / 100),
@@ -1583,7 +1590,11 @@ export default function DashboardBPage() {
                     node: (
                       <MiniTable
                         cols={["Date", "Bedframe units", "Sofa sets"]}
-                        rows={prod.completedLast7.map((d) => [
+                        rows={dropIdleSundays(
+                          prod.completedLast7,
+                          (d) => d.date,
+                          (d) => [d.bedframeUnits, d.sofaSets],
+                        ).map((d) => [
                           d.date,
                           d.bedframeUnits.toLocaleString(),
                           d.sofaSets.toLocaleString(),
