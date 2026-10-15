@@ -2,6 +2,7 @@
 
 design/mobile-home-dashboard
 > **Last verified: 2026-10-15 on branch `design/mobile-home-dashboard` (to `staging`, phone Home redesign)**: `/m` Home phone-layout row updated for `HomePhone.tsx`, read from `Home.tsx` / `HomePhone.tsx`. Nothing else re-checked.
+> **Last verified: 2026-10-15 on branch `design/mobile-home-dashboard` (to `staging`, phone Products hub)**: `/m/products` row added under Products & MDM, read from `ProductsScreen.tsx` and `lib/products-hub.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-15 on branch `design/mobile-home-dashboard` (to `staging`, phone Sales Orders list re-arranged + phone filter sheet)**: `/m/sales` row rewritten, read from `SalesScreen.tsx` and `lib/so-card.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-14 on branch `design/mobile-home-dashboard` (to `staging`, phone Sales Orders list)**: `/m/sales` row rewritten for the Claude Design phone list, read from `SalesScreen.tsx` and `lib/so-card.ts`. Nothing else re-checked.
 
@@ -977,6 +978,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | `src/pages/products/MaintenanceConfigHistoryDialog.tsx` — effective-dated config | `src/api/routes/product-configs.ts` — dept config defaults (88) | `maintenance_config_history` | |
 | `src/pages/products/MaintenanceItemHistoryDialog.tsx` — per-item history | `src/api/routes/mdm.ts` — detection-only review queue | `mdm_review_queue` / `kv_config` | |
 | `src/pages/products/MasterPriceHistoryDialog.tsx` — master price history | `src/api/routes/maintenance-config.ts` — append-only effective-dated | | |
+| `/m/products` **mobile Products** (`src/pages/m/screens/ProductsScreen.tsx`, CUSTOM_L1; 2026-10-15). PHONE only (Claude Design `Products Hub.dc.html`, typography + controls from the phone Sales screen); tablets render the unchanged `ModuleListScreen(productsConfig)`, and `/m/products/:id` stays the config `DocumentDetailScreen` (BOM, dept times, files). SKU Master \| Catalog switch, search, category chips, Filter & sort sheet (Name/Code, real size labels); view / category / q in the URL (replace) so Back keeps the view. Prices only with `product-pricing:read`: Sofa "View prices" sheet = `seatHeightPrices` × P1/P2/P3 (untiered = P2; rows = `useSofaSeatHeights()` + any priced extra height; tier in desktop's `hookka.products.sofaTier`), Bedframe Price 1 / Price 2, Accessory base; missing = "No price" / "—", never RM 0.00; no "from" prices, no setup completeness, no ⋮ menu. Catalog = `familyOf` families (mirror of `buildModelGroups` in `catalog.tsx`) with cover from `/api/files?resourceType=modular` (lowest `sortOrder`, then newest; image types only) and a "No photo" fallback (also on load error). Pure logic: `src/pages/m/lib/products-hub.ts` | `GET /api/products`, `GET /api/files?resourceType=modular`, `GET /api/files/:id/download` (read only) | `products` / `product_prices` / `file_assets` (read) | `tests/m-products-hub.test.mjs` |
 
 **Big-file section index**
 - `src/pages/products/index.tsx`

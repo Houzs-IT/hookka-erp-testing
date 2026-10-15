@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -242,6 +243,20 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
+1. 🔵 Audit (read-only): desktop SKU Master / Catalog, `/api/products` (server strips selling prices without `product-pricing:read`), seat × tier pricing, modular family photos, BOM on the existing detail, /m dispatch.
+2. 🔵 `src/pages/m/screens/ProductsScreen.tsx` (phone hub; tablet renders the unchanged `ModuleListScreen`) + `src/pages/m/lib/products-hub.ts` (pure) + one `CUSTOM_L1` line in `MobileLayout.tsx`.
+3. 🔵 Real SKUs only, no SKU images; families via `familyOf`; family cover from `/api/files?resourceType=modular`, "No photo" fallback.
+4. 🔵 Prices per category; missing = "No price" / "—", never RM 0.00; prices hidden without `product-pricing:read`.
+5. 🔵 Search (SKU + family, exact code first), category chips, sort, size filter, family sheet → SKU detail, SKU card → detail; view / category / q in URL.
+6. 🔵 BOM stays on the existing detail; setup completeness and ⋮ menu not on the page.
+7. 🔵 `tests/m-products-hub.test.mjs` (9); tsc strict 0; eslint clean on touched files (`MobileLayout.tsx` set-state-in-effect error pre-exists on HEAD); full `npm test` 5890 pass / 0 fail; `npm run build` ok.
+8. 🔵 390px harness (local Vite + Edge, fixture /api, no DB): 29/29 checks incl. no overflow, no RM 0.00, P1/P2 sheet, broken photo fallback, no-pricing role, tablet unchanged, dark mode.
+9. 🟡 UNMEASURED on real data: family photo coverage, real `tier` values on sofa rows, real size labels / SKU count. Needs a staging look after merge.
+10. 🟡 Not changed (owner): existing tablet list + product detail still print RM 0.00 for an unpriced SKU (`money(sen || 0)` in `config/helpers.ts`).
+
 ## 2026-10-15 (later) — 🔵 Phone Sales Orders list: follow the live `Sales Orders.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks (approved 2026-10-15 after a read-only audit). Source: the live `Sales Orders.dc.html` in the Claude Design project (newer than the handoff README behind the 2026-10-14 entry). PHONE only; tablet, desktop and shared components unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. **Typography follows the repo**; text on the gradient summary turns white (unavoidable).
