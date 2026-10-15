@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
@@ -147,6 +148,20 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## FEATURE-2026-10-15-HK0005 — Document scanning: originals kept and viewable, corrections learned, leaner prompts `ocr` `scan-queue` 🟡
+
+🟡 **Built on branch** (`feat/hk0005-scan-originals-learning` → `staging`). Ticket HK-0005 (support.houzscentury.com, size L, Development).
+
+**Symptom.** Scans were slow; the learning loop only saw the corrected answer, never the mistake; originals were kept for two document types and were downloaded, not shown.
+
+**Root cause.** File bytes sat as base64 text in a `scan_queue` row, re-read and decoded per worker, and NULLed on consume. Every customer's rules (including empty stubs) were packed into every PO prompt. `po_scan_samples` held raw and corrected JSON but nothing diffed them into reusable pairs.
+
+**Fix.** (1) `src/api/lib/scan-file-store.ts`: bytes go to object storage keyed by org + content hash, the row keeps `file_key`; base64 stays only as the fallback where storage is not configured; consume no longer evicts. (2) `formatCustomerRules` drops customers with no rules, and narrows to one block when the file-name hint is exactly a customer code or name. (3) `src/api/lib/scan-corrections.ts`: the confirm routes diff raw vs corrected into `scan_field_corrections` (scope = picked customer / supplier, field, raw, corrected); the next extraction replays them after the sample row is written. (4) `GET /api/scan-queue/:id/original` serves PDFs and images inline and writes `scan_original_access`; OCR dashboard links use it.
+
+**Regression.** `tests/scan-corrections.test.mjs`, `tests/scan-customer-rules-focus.test.mjs`, `tests/scan-originals.test.mjs`.
+
+**Not measured.** The "scan time drops by a third" acceptance is UNMEASURED: no staging or prod timing was taken. The row-size effect and the prompt-size effect are real by construction; the wall-clock effect is not proven.
 
 ## BUG-2026-10-14-288 — Table column headers showed through the notifications panel `ui` `layout` 🟡
 

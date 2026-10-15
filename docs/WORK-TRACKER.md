@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -242,6 +243,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
+
+Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:
+1. 🟡 Move file bytes out of the database row into object storage (`scan_queue.file_key`, `scan-file-store.ts`).
+2. 🟡 Inject only the matching customer's rules (exact code/name hint) and drop empty stubs. 🔵 Identify-the-customer-first by a model pre-pass is NOT built (owner question below).
+3. 🟡 Log every correction into an alias table (`scan_field_corrections`) and replay it on the next scan of the same customer / supplier.
+4. 🟡 Keep every original (consume no longer evicts), inline view (`GET /api/scan-queue/:id/original`) and an access trail (`scan_original_access`).
+5. 🔵 Acceptance "scan time down by a third": UNMEASURED, needs a before/after timing on staging.
+Owner questions: see the PR body and the ticket's internal note.
+
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
 Owner asks (2026-10-15, decisions confirmed in chat):

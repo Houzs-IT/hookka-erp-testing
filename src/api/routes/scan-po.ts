@@ -23,6 +23,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { distillCustomerRules } from "../lib/ocr-distill";
+import { learnFromConfirm } from "../lib/scan-corrections";
 import { matchByCompanyName } from "../../lib/company-name-match";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import {
@@ -791,6 +792,20 @@ app.post("/samples/:id/confirm", async (c) => {
       404,
     );
   }
+
+  // HK-0005: keep the mistake, not only the corrected answer.
+  const rawRow = await (c.var.DB as unknown as DBLike)
+    .prepare("SELECT rawExtracted FROM po_scan_samples WHERE id = ?")
+    .bind(id)
+    .first<{ rawExtracted: string | null }>()
+    .catch(() => null);
+  await learnFromConfirm(c.var.DB as never, {
+    orgId: getOrgId(c),
+    kind: "po",
+    scopeId: pickedCustomerId,
+    raw: rawRow?.rawExtracted,
+    corrected,
+  });
 
   let distillQueued = false;
   if (goldFlag === 1) {

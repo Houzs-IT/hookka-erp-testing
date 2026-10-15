@@ -1,6 +1,8 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
 design/mobile-home-dashboard
+> **Last verified: 2026-10-15 on branch `feat/hk0005-scan-originals-learning` (HK-0005, to `staging`)**: the scan-queue section only: new `src/api/lib/scan-file-store.ts`, `src/api/lib/scan-corrections.ts`, `GET /api/scan-queue/:id/original`. Line refs re-anchored by `check-codebase-map.mjs --fix`.
+
 > **Last verified: 2026-10-14 on branch `design/mobile-home-dashboard` (to `staging`, phone Sales Orders list)**: `/m/sales` row rewritten for the Claude Design phone list, read from `SalesScreen.tsx` and `lib/so-card.ts`. Nothing else re-checked.
 
 > **Last verified: 2026-10-14 on branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`)**: the Procurement gotcha on PO-direct purchase invoices gained the auto receipt permission skip and the void leg numbering (BUG-2026-10-14-286/287), read from `purchase-invoices.ts` and `grn.ts`. Nothing else re-checked.
@@ -2504,6 +2506,8 @@ two roles. "Org-scoped" means the SQL carries an `org_id` / `orgId` bind.
 
 ### `src/api/routes/scan-queue.ts` — async OCR queue
 
+**HK-0005 (2026-10-15):** original bytes live in object storage (`scan_queue.file_key`, key `scan-originals/<org>/<sha256>`, `src/api/lib/scan-file-store.ts`); `file_bytes_b64` is only the fallback when storage is not configured and consume no longer evicts. `GET /api/scan-queue/:id/original` serves PDF / raster images inline and writes `scan_original_access`; `/:id/bytes` stays the attachment the modals fetch. Operator corrections are diffed into `scan_field_corrections` at `POST /api/scan-po/samples/:id/confirm` and `POST /api/scan-supplier/samples/:id/confirm` (`src/api/lib/scan-corrections.ts`) and replayed by `runPoExtract` / `runSupplierExtract` in `scan-engine.ts` after the sample row is written. Tests: `tests/scan-corrections.test.mjs`, `tests/scan-customer-rules-focus.test.mjs`, `tests/scan-originals.test.mjs`.
+
 | Method + path | Ref | Posture | Org scope |
 |---|---|---|---|
 | POST `/api/scan-queue/upload` | `src/api/routes/scan-queue.ts:698` | `purchase-orders:create` | writes `org_id` from `getOrgId` |
@@ -2515,16 +2519,16 @@ two roles. "Org-scoped" means the SQL carries an `org_id` / `orgId` bind.
 | POST `/api/scan-queue/:id/retry` | `src/api/routes/scan-queue.ts:1201` | `purchase-orders:create` | org-filtered SELECT, then an id-only UPDATE (transitively safe) |
 | POST `/api/scan-queue/:id/consume` | `src/api/routes/scan-queue.ts:1273` | `purchase-orders:create` | org-filtered |
 
-Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1495`)
+Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1521`)
 is exported and mounted by hand as `POST /api/internal/scan-queue-sweep`
 (`src/api/worker.ts:791`), registered **before** `authMiddleware` and gated by a
 constant-time `CRON_SECRET` compare that 503s when the secret is unset or under 16 chars
 (`src/api/worker.ts:791-798`). Its SQL is deliberately org-blind — it is a system sweep.
 
-Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:114`) ·
+Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:95`) ·
 `hydrateRow` (`src/api/routes/scan-queue.ts:248`) ·
 `processOneRow` (`src/api/routes/scan-queue.ts:334`, one claim + extract per `/work` request; returns processed | skipped | drained | error) ·
-`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1557`, the per-poll recovery path — Pages has
+`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1597`, the per-poll recovery path — Pages has
 no cron, so the poll endpoints self-heal; re-queues ONLY, the open modal drives the row).
 
 ### `src/api/routes/scan-po.ts` — customer-PO OCR
