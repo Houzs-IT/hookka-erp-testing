@@ -35,6 +35,7 @@ import { LineItemDetailScreen } from "./screens/LineItemDetailScreen";
 import { WarehouseScreen } from "./screens/WarehouseScreen";
 import { ProductionScreen } from "./screens/ProductionScreen";
 import { SalesScreen } from "./screens/SalesScreen";
+import { ProductsScreen } from "./screens/ProductsScreen";
 import { SalesDetailScreen } from "./screens/SalesDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
@@ -99,6 +100,9 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // design v12) — the generic list flattens that signal. Detail route stays
   // generic via productionConfig.detail.
   production: ProductionScreen,
+  // Phone: SKU Master | Catalog hub. Tablet: ProductsScreen renders the
+  // generic ModuleListScreen itself, so tablet is unchanged.
+  products: ProductsScreen,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -174,9 +178,15 @@ export default function MobileLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
-  useEffect(() => {
+  // Reset during render when the route or phone mode changes (React's
+  // "adjusting state when a prop changes" pattern) instead of in an effect,
+  // so there is no extra render with a stale open drawer.
+  const drawerKey = `${pathname}|${phone}`;
+  const [prevDrawerKey, setPrevDrawerKey] = useState(drawerKey);
+  if (drawerKey !== prevDrawerKey) {
+    setPrevDrawerKey(drawerKey);
     setDrawerOpen(false);
-  }, [pathname, phone]);
+  }
   const drawer = useMemo(
     () => (phone ? { isOpen: drawerOpen, open: openDrawer, close: closeDrawer } : null),
     [phone, drawerOpen, openDrawer, closeDrawer],
