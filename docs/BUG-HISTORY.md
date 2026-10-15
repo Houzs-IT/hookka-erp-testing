@@ -1,6 +1,6 @@
 # Bug History
 
-> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-287 (branch `fix/hk0080-po-scan-date-iso`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-288 (branch `fix/hk0080-po-scan-date-iso`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-286 (branch `fix/pi-revoid-legno-main`, to main, same fix as staging #852); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-285 (branch `fix/hk0093-cn-print-co-fabric`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder-main`, to main, same fix as staging PR #822; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
@@ -97,7 +97,7 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-15-287 — A scanned PO's delivery date was never forced to ISO, so a day-first date read as overdue `production` `ocr-scan` 🟡
+## BUG-2026-10-15-288 — A scanned PO's delivery date was never forced to ISO, so a day-first date read as overdue `production` `ocr-scan` 🟡
 
 🟡 **Fixed on branch** (`fix/hk0080-po-scan-date-iso` -> `main`). Ticket HK-0080 (Violet, 2026-10-07: "why are there many PO overdue? is OCR using convert?"). Whether this is THE cause of the volume she saw is UNMEASURED (no prod access from this branch); it is a real hole on the path she named.
 
