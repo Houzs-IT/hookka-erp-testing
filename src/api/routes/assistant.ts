@@ -3,8 +3,9 @@
 //
 // POST /api/assistant/chat
 //   Body:   { messages: [{role: "user"|"assistant", content: string}] }
-//   Auth:   SUPER_ADMIN only (defense-in-depth — we already check role here,
-//           the global authMiddleware ensures the user is logged in).
+//   Auth:   any logged-in staff (authMiddleware). Non-super-admins get only
+//           the agent-management + schedule-proposal tools (STAFF_TOOL_NAMES);
+//           the proposal tools enforce production-orders read/update (HK-0033).
 //   Reply:  text/event-stream of one of these JSON-encoded events:
 //             { "type": "text", "value": "..." }
 //             { "type": "tool_call_start", "name": "...", "args": {...} }
@@ -231,7 +232,7 @@ You cover EVERY Hookka module. For each area: the LIST tool browses/filters many
 - **Find anything fuzzy:** \`smart_lookup\` (your first call for any name or number) · \`lookup_customer_po\` · \`search_anything\`.
 - **Files in / files out:** \`analyze_image\` · \`parse_spreadsheet\` · \`match_uploaded_data_to_hookka\` · \`generate_csv\` / \`generate_excel\` / \`generate_pdf\` · \`export_query_to_excel\` · \`run_report_template\` · \`list_export_templates\`.
 - **How-to questions:** \`explain_feature\`. **Last resort only:** \`run_select_query\` (ad-hoc read-only SELECT when nothing above fits — never as a quick retry after a failed lookup).
-- **AI agents & scheduling (write-capable — the one exception):** \`agent_overview\` (status, pending proposals, spend) · \`agent_control\` (pause/resume/full-auto/run-now; SUPER_ADMIN) · \`teach_agent\` (persistent standing rules) · \`list_schedule_proposals\` · \`decide_schedule_proposals\` (approve/reject AFTER showing the user + explicit yes; SUPER_ADMIN).
+- **AI agents & scheduling (write-capable — the one exception):** \`agent_overview\` (status, pending proposals, spend) · \`agent_control\` (pause/resume/full-auto/run-now; SUPER_ADMIN) · \`teach_agent\` (persistent standing rules) · \`list_schedule_proposals\` (needs production-orders read; super admin always) · \`decide_schedule_proposals\` (approve/reject AFTER showing the user + explicit yes; needs production-orders update, super admin always).
 
 Module facts worth remembering:
 - **Invoice statuses:** DRAFT → ISSUED → PAID, plus OVERDUE and VOID.
@@ -436,8 +437,8 @@ All generated files return a 1-hour signed download link; hard caps are 10,000 r
 - **\`agent_overview\`** (no params) — Live agent workforce status: paused/running per agent, full-auto gates, kill switch, last runs, PENDING proposal counts, LLM spend vs budget. **Pick when** he asks how the agents are doing / whether they ran / what's waiting.
 - **\`agent_control\`** (action*, agent, task) — SUPER_ADMIN. pause/resume an agent, auto_on/auto_off (full-auto gate), kill_all_on/off, or run_now with task=proposals (regenerate production due-date proposals) / learning / delivery. **Pick when** he says "跑一下 / regenerate the schedule / pause the delivery agent".
 - **\`teach_agent\`** (action*, agent, instruction, id) — The agents' NOTEBOOK. add = record a persistent standing rule the agent follows on every future run ("以后周五不要排东马的车"); list = what it's been taught; retire = remove one. Corrections to NUMBERS (capacity, transit days) go through parameter proposals / the console instead.
-- **\`list_schedule_proposals\`** (status, limit — default PENDING/50) — The due-date change queue. ALWAYS show these to the user before deciding.
-- **\`decide_schedule_proposals\`** (action*, ids*, confirmed*) — SUPER_ADMIN. Approve/reject specific proposals; approve writes the new due dates onto still-open job cards (rollbackable batch). confirmed:true ONLY after the user's explicit yes to the exact set you showed them.
+- **\`list_schedule_proposals\`** (status, limit — default PENDING/50) — needs production-orders read permission (super admin always). The due-date change queue. ALWAYS show these to the user before deciding.
+- **\`decide_schedule_proposals\`** (action*, ids*, confirmed*) — needs production-orders update permission (super admin always). Approve/reject specific proposals; approve writes the new due dates onto still-open job cards (rollbackable batch). confirmed:true ONLY after the user's explicit yes to the exact set you showed them.
 
 ## When the user attaches a file (image / PDF / Excel / CSV)
 
@@ -921,24 +922,39 @@ app.post("/chat", async (c) => {
           const toolResultBlocks: AnthropicContentBlock[] = [];
           for (const tu of toolUses) {
             const filteredArgs = filterArgsForAudit(tu.input);
-            // Audit one row per tool call. The route is SUPER_ADMIN only,
-            // so we don't have to gate further.
-            await emitAudit(c, {
-              resource: "assistant-tool",
-              resourceId: tu.id,
-              action: tu.name,
-              after: { args: filteredArgs },
-              source: "ui",
-            });
-
             // Defense-in-depth: even if the model somehow calls a tool a
             // non-super-admin isn't allowed (it shouldn't — the schemas were
             // filtered), the dispatcher refuses it. Owner-only data/SQL/finance
-            // tools can never run for staff.
+            // tools can never run for staff. Staff may reach STAFF_TOOL_NAMES;
+            // the proposal tools then enforce production-orders read/update
+            // themselves (HK-0033).
             const res =
               isSuperAdminRole || STAFF_TOOL_NAMES.has(tu.name)
                 ? await runTool(c, tu.name, tu.input)
                 : { ok: false as const, error: "This tool is restricted to the owner." };
+            // Audit one row per tool call, AFTER dispatch so it records the
+            // outcome: a tool that refuses on permission returns
+            // { ok:false, error } as its result, so look inside it too.
+            const inner =
+              res.ok && res.result && typeof res.result === "object"
+                ? (res.result as { ok?: unknown; error?: unknown })
+                : null;
+            const refusal = !res.ok
+              ? res.error
+              : inner && inner.ok === false && typeof inner.error === "string"
+                ? inner.error
+                : null;
+            await emitAudit(c, {
+              resource: "assistant-tool",
+              resourceId: tu.id,
+              action: tu.name,
+              after: {
+                args: filteredArgs,
+                outcome: refusal === null ? "ok" : "refused",
+                ...(refusal !== null ? { error: refusal.slice(0, 200) } : {}),
+              },
+              source: "ui",
+            });
             const content = res.ok
               ? JSON.stringify(res.result)
               : JSON.stringify({ error: res.error });
