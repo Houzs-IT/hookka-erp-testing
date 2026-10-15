@@ -81,6 +81,7 @@ import { resolveTotalHeightPriceSen } from "../../lib/total-height-surcharge";
 import { loadSpecialsConfig, loadHeightsConfig } from "../lib/specials-config";
 import { validateRepairScopeInput } from "../../lib/repair-scope";
 import { buildOrderFootprint } from "../lib/order-footprint";
+import { toIsoDate } from "../lib/iso-date";
 
 import {
   parseCustomSpecials,
@@ -2324,11 +2325,12 @@ app.post("/", async (c) => {
     // away (don't wait for confirm cascade). Operator can still override
     // by passing body.hookkaExpectedDD explicitly. Mirrors what
     // production-order-builder does on confirm — but eagerly.
-    let resolvedHookkaExpectedDD =
-      typeof body.hookkaExpectedDD === "string" && body.hookkaExpectedDD
-        ? body.hookkaExpectedDD
-        : "";
-    if (!resolvedHookkaExpectedDD && body.customerDeliveryDate) {
+    // HK-0080: both dates are compared as TEXT against today's ISO date by the
+    // overdue SQL, so a DD/MM/YYYY string from a scan reads as overdue forever.
+    // Coerce to ISO here (the single create choke point); unparseable -> blank.
+    const customerDD = toIsoDate(body.customerDeliveryDate) ?? "";
+    let resolvedHookkaExpectedDD = toIsoDate(body.hookkaExpectedDD) ?? "";
+    if (!resolvedHookkaExpectedDD && customerDD) {
       try {
         const buf = await loadHookkaDDBuffer(c.var.DB);
         // Use the dominant item category — mixed-category SOs are
@@ -2338,7 +2340,7 @@ app.post("/", async (c) => {
           (items[0]?.itemCategory as string | undefined) || "BEDFRAME";
         const days = hookkaDDBufferFor(buf, dominantCat);
         resolvedHookkaExpectedDD = addDays(
-          String(body.customerDeliveryDate).slice(0, 10),
+          customerDD,
           -days,
         );
       } catch {
@@ -2389,7 +2391,7 @@ app.post("/", async (c) => {
           `${isServiceOrder ? "Service Order" : "Sales Order"} ${soNo.split("-").pop()}`,
         soNo,
         body.companySODate ?? today,
-        body.customerDeliveryDate ?? "",
+        customerDD,
         resolvedHookkaExpectedDD,
         body.hookkaDeliveryOrder ?? "",
         subtotalSen,
