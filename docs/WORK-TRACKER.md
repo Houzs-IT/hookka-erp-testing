@@ -248,6 +248,7 @@ design/mobile-home-dashboard
 Ticket HK-0036 (Violet, Hookka, type Development): on PO creation send the PO to the CNC for nesting + cutting; send cutting status and quantity back.
 1. 🔵 Outbound: `GET /api/cnc-jobs` lists open FAB_CUT job cards with PO details (pull model; covers every PO-creation path because the card exists from PO creation).
 2. 🔵 Inbound: `POST /api/cnc-jobs/:jobCardId/result {status: CUTTING|DONE, cutQty}` recorded in `cnc_cut_results` (upsert). The job card is NOT completed from it.
+2b. Review fixes: own `cnc-jobs` permission resource (was the any-role `cnc-templates`; Office + admins only until the owner decides machine auth); a skipped late CUTTING returns `ignored:true` and is not audited (RETURNING row check); feed paged (200 default, 500 max); `cutQty` <= 100000.
 3. 🟡 Needs owner: CNC vendor/protocol/auth, whether a DONE report should complete the card (and run the WIP cascade), whether a sofa merged FAB_CUT card maps to one nesting job. Tests: `tests/cnc-jobs.test.mjs`.
 
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
