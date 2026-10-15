@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useDeferredValue, useMemo, useRef, useTransition, startTransition, createContext, useContext } from "react";
+import { usePermissions } from "@/lib/use-permission";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
@@ -1830,9 +1831,7 @@ export default function ProductionPage({
   // by product+size+fabric for FG), so the picker only shows SKUs the
   // factory has actually built before — no need to prefill a catalog.
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
-  // R7 — same (resource, action) POST /production-orders/stock enforces.
   const { hasPermission } = usePermissions();
-  const canCreateStockPO = hasPermission("production-orders", "create");
   const canSendNotice = hasPermission("announcements", "create");
   // Print Schedule mode toggle. "detailed" → handlePrintSchedule (one row
   // per PO/JC). "total" → handlePrintTotalListing (rows merged on
