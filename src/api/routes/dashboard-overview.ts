@@ -44,6 +44,15 @@ import {
   freezeMonth,
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
+import {
+  allocateDocsByCategory,
+  loadDeptRevenue,
+  loadInvoiceLines,
+  loadSoLines,
+  productionByCategory,
+  revenueBuckets,
+  summarizeDeptRevenue,
+} from "../lib/dept-revenue";
 
 // DO statuses that mean goods have shipped — same set the all-time
 // "Delivered" figure uses (loadDeliveredItemsValueSen) so This-Month
@@ -2646,6 +2655,52 @@ app.get("/purchasing-compare", async (c) => {
         amountSen: num(r.amountSen),
         paidSen: num(r.paidSen),
       })),
+    };
+  });
+  return c.json({ success: true, ...data });
+});
+
+// ---------------------------------------------------------------------------
+// GET /revenue-split?period=all|YYYY-MM — owner 2026-10-15.
+//   departments: revenue per production department, Production-Revenue rule
+//                per department (see lib/dept-revenue.ts), split by category.
+//   revenue:     the Revenue chart's three lines split Bedframe / Sofa /
+//                Accessory / Unclassified, on the chart's own buckets.
+// Its own endpoint, computed fresh: the main payload is snapshotted and a past
+// month's is frozen (freezeMonth), so a field added there would be missing
+// from every month already frozen. Same mount, so the same access rule as the
+// Revenue chart.
+// ---------------------------------------------------------------------------
+app.get("/revenue-split", async (c) => {
+  const orgId = getOrgId(c);
+  const { cached } = await import("../lib/kv-cache");
+  const periodRaw = c.req.query("period") ?? "all";
+  const period = /^\d{4}-\d{2}$/.test(periodRaw) ? periodRaw : "all";
+  const data = await cached(c, `dashboard:revenue-split:${orgId}:v1:${period}`, 60, async () => {
+    const db = c.var.DB;
+    // Same "today" as the main overview (server clock, UTC on Workers).
+    const todayISO = fmtISO(new Date());
+    const { from, to, buckets, bucketOf } = revenueBuckets(period, todayISO);
+    const [deptRows, soLines, invLines] = await Promise.all([
+      loadDeptRevenue(db, orgId, from, to),
+      loadSoLines(db, orgId, from, to),
+      loadInvoiceLines(db, orgId, from, to),
+    ]);
+    const so = allocateDocsByCategory(soLines, buckets, bucketOf);
+    const inv = allocateDocsByCategory(invLines, buckets, bucketOf);
+    const prod = productionByCategory(deptRows, buckets, bucketOf);
+    return {
+      period,
+      from,
+      to,
+      granularity: period === "all" ? "week" : "day",
+      revenue: buckets.map((bucket, i) => ({
+        bucket,
+        salesOrder: so[i],
+        invoice: inv[i],
+        production: prod[i],
+      })),
+      departments: summarizeDeptRevenue(deptRows, buckets, bucketOf),
     };
   });
   return c.json({ success: true, ...data });

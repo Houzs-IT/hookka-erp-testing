@@ -52,15 +52,18 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | `KTile` | `src/pages/dashboard-b/index.tsx:424` | The KPI card used by the four Command Center cards |
 | `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:379 / 406` | Sparkline + delta-% chip |
 | `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:506` | Per-section loading placeholder |
-| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:607 / 535 / 582` | Presentational helpers |
+| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:640 / 568 / 615` | Presentational helpers |
 | KPI rail JSX | `src/pages/dashboard-b/index.tsx:1117` | Sales · Invoices · Pending Delivery · Outstanding cards |
 | Revenue chart + Plant Load JSX | `src/pages/dashboard-b/index.tsx:1374` | Area chart + backlog-vs-capacity gauge |
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |
 | Revenue by Customer JSX | `src/pages/dashboard-b/index.tsx:1749` | Concentration exhibit (donut + category modes) |
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
+| Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1628` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa |
+| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:248` | One line per production department |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2674` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
-| `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:66` | Single ~2000-line aggregate handler |
-| `captureTodayState` | `src/api/routes/dashboard-overview.ts:102` | Extract + upsert today's state snapshot |
+| `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:75` | Single ~2000-line aggregate handler |
+| `captureTodayState` | `src/api/routes/dashboard-overview.ts:111` | Extract + upsert today's state snapshot |
 | `readSnapshot` / `writeSnapshot` / `isSnapshotFresh` | `src/api/lib/dashboard-snapshot.ts:100 / 211 / 187` | Read-through snapshot (Layer 1) |
 | `getMaxSourceUpdatedAt` | `src/api/lib/dashboard-snapshot.ts:155` | Data-change probe for freshness |
 | `writeStateSnapshot` / `readStateSnapshotForMonth` | `src/api/lib/dashboard-state-snapshot.ts:63 / 108` | Daily state UPSERT + past-month read |
