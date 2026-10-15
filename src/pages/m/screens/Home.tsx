@@ -56,6 +56,8 @@ import {
   CircleCheck,
   ChevronDown,
   Check,
+  Factory,
+  ShoppingBag,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
@@ -79,6 +81,27 @@ import {
   newDeliveryOrderSpec,
   newPurchaseOrderSpec,
 } from "../config/forms";
+import {
+  SHADOW_HEADER_BTN,
+  PhoneSectionHeading,
+  PhonePeriodPill,
+  PhonePeriodList,
+  PhoneHero,
+  PhoneQuickActions,
+  PhoneDailyReport,
+  PhoneOrdersDue,
+  PhonePipeline,
+  PhonePlantLoad,
+  PhoneDeptBacklog,
+  PhoneStockAlerts,
+  PhonePurchasing,
+  PhoneRevenue,
+  PhoneWorkerEfficiency,
+  PhoneSalesByCustomer,
+  PhoneTopSellers,
+  PhoneFabricUsage,
+  type LoadState,
+} from "./HomePhone";
 
 // ---------- API response shapes (subset of the desktop dashboard's) ----------
 type StatsResp = {
@@ -296,6 +319,19 @@ const HOME_VIEWS: { key: HomeView; label: string }[] = [
   { key: "performance", label: "Performance" },
 ];
 
+/** Where each Daily Report chip lands (for its accessible name). */
+const DAILY_DEST: Record<string, string> = {
+  "/m/sales": "Sales Orders",
+  "/m/procurement": "Purchase Orders",
+  "/m/employees": "Employees",
+};
+
+/** Section fetch state: data wins; an error only counts when there is none. */
+function loadState(data: unknown, error: string | null, enabled = true): LoadState {
+  if (data != null) return "ready";
+  return enabled && error ? "error" : "loading";
+}
+
 /** Local time-of-day greeting (design says "Good morning,"). */
 function greeting(): string {
   const h = new Date().getHours();
@@ -312,7 +348,7 @@ export default function MobileHome() {
   // rail as 4 columns instead of 2×2. Other dashboard cards stay stacked
   // vertically (the design has a 2-col grid there too — bigger refactor,
   // deferred).
-  const { mode } = useResponsiveLayout();
+  const { mode, contentWidth } = useResponsiveLayout();
   const expanded = mode === "tablet-landscape";
   // Phone only (owner 2026-10-13): one Home split into two views by a
   // switch, to cut scrolling. Tablets keep every section in one column, in
@@ -367,10 +403,10 @@ export default function MobileHome() {
     return () => window.clearTimeout(t);
   }, []);
 
-  const { data: stats } = useCachedJson<StatsResp>("/api/sales-orders/stats");
+  const { data: stats, error: statsError } = useCachedJson<StatsResp>("/api/sales-orders/stats");
   // Current-month overview = the dashboard's default Command Center period, so
   // salesThisMonthSen / invoicesThisMonthSen match the desktop KPI rail.
-  const { data: overview } = useCachedJson<OverviewResp>(
+  const { data: overview, error: overviewError } = useCachedJson<OverviewResp>(
     `/api/dashboard/overview?period=${period}`,
   );
   // ---- Orders due — the SIX rows this card renders, and nothing else.
@@ -388,13 +424,13 @@ export default function MobileHome() {
   // break the same way, same slice) — the rendered list is unchanged by
   // construction. `overdue` stays client-side because it compares against the
   // PHONE's local today, not the server's. ----
-  const { data: soList } = useCachedJson<OrdersDueResp>(ORDERS_DUE_URL);
+  const { data: soList, error: soListError } = useCachedJson<OrdersDueResp>(ORDERS_DUE_URL);
   // Stock alerts. perf 2026-08-13 (BUG-2026-08-13-021): the URL is now
   // STOCK_ALERTS_URL ("/api/inventory?buckets=rawMaterials") and is defined ONCE
   // in ../lib/preload.ts, because the preload warms it by URL string — see the
   // constant there for why the bucket projection is byte-identical for the
   // `rawMaterials` array this screen reads (line ~794).
-  const { data: inventory } = useCachedJson<InventoryResp>(STOCK_ALERTS_URL);
+  const { data: inventory, error: inventoryError } = useCachedJson<InventoryResp>(STOCK_ALERTS_URL);
 
   // ---- Pending Delivery — SAME two fetches + the same fold as the dashboard's
   // consolidated "Pending Delivery" KTile (src/pages/dashboard-b/index.tsx).
@@ -448,7 +484,7 @@ export default function MobileHome() {
   // client-side re-derivations used different date columns / status sets / a
   // 70% low-efficiency bar (desktop uses 60%), so the phone's total never
   // matched the desktop's. One source of truth: /api/reports/compliance.json.
-  const { data: complianceRaw } = useCachedJson<{
+  const { data: complianceRaw, error: complianceError } = useCachedJson<{
     success?: boolean;
     data?: {
       counts?: {
@@ -812,6 +848,8 @@ export default function MobileHome() {
       // Bottleneck (#1) red; hot (>20d) gold; rest brown — matches the design.
       color: i === 0 ? "#9A3A2D" : (d.backlogDays ?? Infinity) > 20 ? "#C9A961" : "#5E5129",
       dColor: i === 0 ? "#9A3A2D" : M.ink,
+      // Raw days for the phone card's own palette (same >20d rule).
+      raw: d.backlogDays,
     }));
   }, [overview]);
 
@@ -825,12 +863,16 @@ export default function MobileHome() {
       suppliers: (p.topSuppliers ?? []).slice(0, 5).map((s) => ({
         name: s.name,
         amt: formatCurrency(s.spendSen || 0),
+        // Raw sen for the phone card's relative bar.
+        sen: s.spendSen || 0,
       })),
     };
   }, [overview]);
 
   // ---- Stock alerts (raw materials at or below reorder / low threshold) ----
-  const stockAlerts = useMemo(() => {
+  // Every low material, lowest first; the card lists the first five. The
+  // phone heading counts all of them ("N low" used to count only the five).
+  const lowStock = useMemo(() => {
     const rms = inventory?.data?.rawMaterials ?? [];
     return rms
       .filter((rm) => {
@@ -839,9 +881,74 @@ export default function MobileHome() {
         const min = typeof rm.minStock === "number" ? rm.minStock : null;
         return min != null && min > 0 ? qty <= min : qty < 5;
       })
-      .sort((a, b) => (Number(a.balanceQty) || 0) - (Number(b.balanceQty) || 0))
-      .slice(0, 5);
+      .sort((a, b) => (Number(a.balanceQty) || 0) - (Number(b.balanceQty) || 0));
   }, [inventory]);
+  const stockAlerts = useMemo(() => lowStock.slice(0, 5), [lowStock]);
+
+  // ---- Phone presentation inputs (Claude Design, owner 2026-10-15). Only
+  // labels and load states; every figure is one computed above. ----
+  const statsState = loadState(stats, statsError);
+  const soListState = loadState(soList, soListError);
+  const inventoryState = loadState(inventory, inventoryError);
+  const complianceState = loadState(complianceRaw, complianceError, pdEnabled);
+  const isCurrentPeriod = period === CUR_YM;
+  // The MoM deltas compare the LAST two months of monthlyRevenue, i.e. the
+  // latest month with data, whatever period is picked. The hero shows a delta
+  // only when that month IS the selected period; otherwise it is hidden.
+  const revMonths = overview?.monthlyRevenue ?? [];
+  const deltaMonth = revMonths[revMonths.length - 1]?.month;
+  const heroDelta = (pct: number | null) =>
+    pct == null || deltaMonth !== period
+      ? null
+      : { text: `${pct >= 0 ? "+" : ""}${pct}% MoM`, good: pct >= 0 };
+  const overviewValue = (sen: number) =>
+    overview ? formatCurrency(sen) : overviewError ? "—" : "…";
+  const outstandingLive = !outTile.past && !stats;
+  const opsHeroCells = [
+    {
+      icon: Package,
+      label: "Pending Delivery",
+      value: tileValue(pdTile, pendingDeliveryLoading),
+      note: pdTile.past ? pdTile.tag : undefined,
+    },
+    {
+      icon: Clock,
+      label: "Outstanding",
+      value: outstandingLive ? (statsError ? "—" : "…") : tileValue(outTile, false),
+      note: outTile.past ? outTile.tag : undefined,
+    },
+  ];
+  const perfHeroCells = [
+    {
+      icon: DollarSign,
+      // "This Month" only when the selected period is this month.
+      label: isCurrentPeriod ? "This Month Sales" : "Sales",
+      value: overviewValue(salesThisMonthSen),
+      delta: heroDelta(salesDeltaPct),
+    },
+    {
+      icon: FileText,
+      label: isCurrentPeriod ? "This Month Invoices" : "Invoices",
+      value: overviewValue(invoicesThisMonthSen),
+      delta: heroDelta(invoiceDeltaPct),
+    },
+  ];
+  // Plant Load tiles: same values as plant.rows; sub-labels say what each
+  // number is. "Completed" is yesterday's count for the current month and the
+  // month's LAST day for a past month (dashboard-overview.ts, completed widget).
+  const lastDayLabel = (() => {
+    const yr = Number(period.slice(0, 4));
+    const mo = Number(period.slice(5, 7));
+    return `${new Date(yr, mo, 0).getDate()} ${MONTHS_SHORT[mo - 1] ?? ""}`.trim();
+  })();
+  const phonePlantTiles = plant
+    ? [
+        { ...plant.rows[0], sub: isCurrentPeriod ? "14-day avg" : `${periodLabel(period)} avg` },
+        { ...plant.rows[1], sub: "days · hours queued" },
+        { ...plant.rows[2], sub: "pending · bedframe / sofa" },
+        { ...plant.rows[3], sub: `${isCurrentPeriod ? "yesterday" : lastDayLabel} · bedframe / sofa` },
+      ]
+    : [];
 
   // Header pieces, shared by the phone and tablet header layouts below.
   const greetingBlock = (
@@ -862,7 +969,10 @@ export default function MobileHome() {
       </div>
     </div>
   );
-  const periodChip = (
+  const periodChip = isPhone ? (
+    // Phone (Claude Design): 36px pill with a calendar icon, same sheet.
+    <PhonePeriodPill label={periodLabel(period)} onClick={() => setPickerOpen(true)} />
+  ) : (
     <>
       {/* Period chip — dc12 design v12: tap to pick last 12 months,
           re-fetches every analytics card under it. Defaults to current
@@ -906,7 +1016,9 @@ export default function MobileHome() {
           height: 42,
           borderRadius: "50%",
           backgroundColor: M.card,
-          border: `1px solid ${M.hairline}`,
+          // Phone (Claude Design): borderless with a soft shadow.
+          border: isPhone ? "none" : `1px solid ${M.hairline}`,
+          boxShadow: isPhone ? SHADOW_HEADER_BTN : undefined,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -931,7 +1043,9 @@ export default function MobileHome() {
           height: 42,
           borderRadius: "50%",
           backgroundColor: M.card,
-          border: `1px solid ${M.hairline}`,
+          // Phone (Claude Design): borderless with a soft shadow.
+          border: isPhone ? "none" : `1px solid ${M.hairline}`,
+          boxShadow: isPhone ? SHADOW_HEADER_BTN : undefined,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -948,13 +1062,15 @@ export default function MobileHome() {
             aria-hidden
             style={{
               position: "absolute",
-              top: 8,
-              right: 9,
+              top: isPhone ? 9 : 8,
+              right: isPhone ? 10 : 9,
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: "#C0463A",
-              border: `1.5px solid ${M.card}`,
+              background: isPhone ? "#9A3A2D" : "#C0463A",
+              ...(isPhone
+                ? { boxShadow: `0 0 0 2px ${M.card}` }
+                : { border: `1.5px solid ${M.card}` }),
             }}
           />
         ) : null}
@@ -1024,9 +1140,20 @@ export default function MobileHome() {
           delta={null}
         />
   );
-  const pipelineNote = isPhone ? pipeline.liveNote : pipeline.note;
+  const pipelineNote = pipeline.note;
   // ===== Order Pipeline — header + rate badge + bars + note =====
-  const pipelineBlock = (
+  // Phone: one stacked bar; /api/sales-orders/stats has no date filter, so
+  // the phone card says "all months" (tablet keeps the month, WORK-TRACKER).
+  const pipelineBlock = isPhone ? (
+    <PhonePipeline
+      confirmed={stats?.csRevenueSen ?? 0}
+      delivered={stats?.deliveredItemsSen ?? 0}
+      outstanding={stats?.outstandingItemsSen ?? 0}
+      ratePct={pipeline.ratePct}
+      note={pipeline.liveNote}
+      state={statsState}
+    />
+  ) : (
     <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
       <div
         style={{
@@ -1037,10 +1164,10 @@ export default function MobileHome() {
       >
         <div>
           <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
-            {isPhone ? "Order Pipeline · Live" : <>Order Pipeline · {periodLabel(period)}</>}
+            Order Pipeline · {periodLabel(period)}
           </div>
           <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
-            {isPhone ? "shipped vs still to ship · all months" : "shipped vs still to ship"}
+            shipped vs still to ship
           </div>
         </div>
         {pipeline.ratePct != null ? (
@@ -1133,7 +1260,25 @@ export default function MobileHome() {
     </MobileCard>
   );
   // ===== Stock alerts =====
-  const stockAlertsBlock = (
+  const stockAlertsBlock = isPhone ? (
+    <PhoneStockAlerts
+      total={lowStock.length}
+      state={inventoryState}
+      onOpen={() => navigate("/m/inventory")}
+      rows={stockAlerts.map((rm) => {
+        const qty = Number(rm.balanceQty) || 0;
+        const min = typeof rm.minStock === "number" ? rm.minStock : null;
+        return {
+          id: rm.id,
+          title: rm.description || rm.itemCode,
+          code: `${rm.itemCode}${rm.itemGroup ? ` · ${rm.itemGroup}` : ""}`,
+          qty,
+          qtyText: `${qty} ${rm.baseUOM || ""}`.trim(),
+          minText: min != null ? `min ${min}` : "low",
+        };
+      })}
+    />
+  ) : (
     <>
       <SectionHeader
         title="Stock alerts"
@@ -1246,7 +1391,25 @@ export default function MobileHome() {
     </>
   );
   // ===== Orders due =====
-  const ordersDueBlock = (
+  // Phone title says what the list is: the six soonest open orders by
+  // Expected DD (overdue included), not "this week". Tablet keeps its title.
+  const ordersDueBlock = isPhone ? (
+    <PhoneOrdersDue
+      title="Orders due soonest"
+      state={soListState}
+      onOpen={() => navigate("/m/sales")}
+      onSeeAll={() => navigate("/m/sales")}
+      rows={ordersDue.map(({ so, overdue }) => ({
+        id: so.id,
+        so: so.companySO || so.companySOId,
+        customer: so.customerName,
+        status: so.status,
+        dd: (so.hookkaExpectedDD || "").slice(0, 10),
+        overdue,
+        amount: formatCurrency(so.totalSen || 0),
+      }))}
+    />
+  ) : (
     <>
       <SectionHeader
         title="Orders due this week"
@@ -1296,7 +1459,7 @@ export default function MobileHome() {
               sticky header row (hamburger | Home | search + bell), then a
               non-sticky row with the greeting and the period chip. */}
           <MobileHeader title="Home" menu trailing={headerActions} />
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px 16px" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, padding: "6px 18px 16px" }}>
             {greetingBlock}
             {periodChip}
           </div>
@@ -1344,8 +1507,31 @@ export default function MobileHome() {
         {isPhone && (
           <SegmentedSwitch options={HOME_VIEWS} value={view} onChange={setView} ariaLabel="Home view" />
         )}
-        {/* ===== Quick actions (FIRST per dc13 order) ===== */}
+        {/* Phone (owner 2026-10-15, decision 2): the view's KPI hero comes
+            BEFORE Quick Actions. Same values, notes and loading states as the
+            tablet KpiCards below. */}
+        {isPhone && (
+          <PhoneHero
+            eyebrow={view === "operations" ? "OPERATIONS" : "PERFORMANCE"}
+            periodText={periodLabel(period)}
+            cells={view === "operations" ? opsHeroCells : perfHeroCells}
+            width={contentWidth}
+          />
+        )}
+        {/* ===== Quick actions (FIRST per dc13 order on tablets) ===== */}
         {show("operations") && (
+          isPhone ? (
+            <PhoneQuickActions
+              actions={[
+                { icon: Plus, label: "New SO", hex: M_ACCENT.gold.fg, onClick: () => setFormSpec(newSalesOrderSpec()) },
+                { icon: Truck, label: "Delivery", hex: M_ACCENT.info.fg, onClick: () => setFormSpec(newDeliveryOrderSpec()) },
+                // Opens the New Purchase Order form, so it is labelled as one
+                // (it used to read "Receive", which is goods receiving).
+                { icon: ShoppingBag, label: "New PO", hex: M_ACCENT.moss.fg, onClick: () => setFormSpec(newPurchaseOrderSpec()) },
+                { icon: HardHat, label: "Staff", hex: M_ACCENT.plum.fg, onClick: () => navigate("/m/employees") },
+              ]}
+            />
+          ) : (
           <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
             <QuickAction
               icon={Plus}
@@ -1373,48 +1559,44 @@ export default function MobileHome() {
               onClick={() => navigate("/m/employees")}
             />
           </div>
+          )
         )}
 
         {/* ===== KPI grid — 2×2 on phone, 1×4 on fold (dc13 sizing — was
             too loose at 25px font, dc13 uses 18px + tighter padding). ===== */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: expanded ? "repeat(4, minmax(0, 1fr))" : "1fr 1fr",
-            gap: 9,
-            // Phone Performance: this row is the first card under the switch,
-            // so it gets the same 14px gap as Quick Actions in Operations.
-            marginTop: isPhone && view === "performance" ? 14 : 11,
-          }}
-        >
-          {/* Phone: Operations shows Pending Delivery + Outstanding, Performance
-              shows Sales + Invoices. Tablets: all four, original order. */}
-          {isPhone ? (
-            view === "operations" ? (
-              <>
-                {pendingKpi}
-                {outstandingKpi}
-              </>
-            ) : (
-              <>
-                {salesKpi}
-                {invoicesKpi}
-              </>
-            )
-          ) : (
-            <>
-              {salesKpi}
-              {invoicesKpi}
-              {pendingKpi}
-              {outstandingKpi}
-            </>
-          )}
-        </div>
+        {/* Tablets: all four, original order. Phones show the hero above. */}
+        {!isPhone && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: expanded ? "repeat(4, minmax(0, 1fr))" : "1fr 1fr",
+              gap: 9,
+              marginTop: 11,
+            }}
+          >
+            {salesKpi}
+            {invoicesKpi}
+            {pendingKpi}
+            {outstandingKpi}
+          </div>
+        )}
 
         {/* ===== Daily Report — dc12: total + 4 chips (Overdue / SO no DO /
             PO not received / Low efficiency). Each chip taps through to the
             relevant module screen. Chips with 0 count hide. */}
         {show("operations") && (
+          isPhone ? (
+            <PhoneDailyReport
+              total={dailyReportTotal}
+              state={complianceState}
+              chips={dailyChips.map((c) => ({
+                label: c.label,
+                count: c.count,
+                dest: DAILY_DEST[c.to] ?? c.to,
+                onClick: () => navigate(c.to),
+              }))}
+            />
+          ) : (
           <MobileCard
             radius={16}
             style={{ padding: "15px 16px", marginTop: 14 }}
@@ -1502,6 +1684,7 @@ export default function MobileHome() {
               </div>
             ) : null}
           </MobileCard>
+          )
         )}
 
         {/* Phone Operations: Orders due, then Order Pipeline. */}
@@ -1514,6 +1697,15 @@ export default function MobileHome() {
 
         {/* ===== Revenue — 3-line area chart (per-day x-axis) ===== */}
         {show("performance") && revenue ? (
+          isPhone ? (
+            <PhoneRevenue
+              periodText={periodLabel(period)}
+              lines={revenue.lines}
+              days={revenue.days}
+              hidden={revHide}
+              onToggle={(k) => setRevHide((p) => ({ ...p, [k]: !p[k] }))}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Revenue · {periodLabel(period)}
@@ -1603,10 +1795,25 @@ export default function MobileHome() {
               ))}
             </div>
           </MobileCard>
+          )
+        ) : null}
+
+        {/* Phone Operations: "Production" heading over Plant Load +
+            Department Backlog (owner decision 5). */}
+        {isPhone && view === "operations" && (plant || deptBacklog) ? (
+          <PhoneSectionHeading icon={Factory} title="Production" />
         ) : null}
 
         {/* ===== Plant Load — gauge + workforce/queue-load + 4 rows ===== */}
         {show("operations") && plant ? (
+          isPhone ? (
+            <PhonePlantLoad
+              queue={plant.queue}
+              loadPct={plant.loadPct}
+              workforce={plant.workforce}
+              tiles={phonePlantTiles}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: 16, marginTop: 14 }}>
             <div
               style={{
@@ -1749,6 +1956,7 @@ export default function MobileHome() {
               );
             })}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Order Pipeline ===== (phone: under Orders due) */}
@@ -1756,6 +1964,9 @@ export default function MobileHome() {
 
         {/* ===== Worker Efficiency — TOP 5 + LOWEST 5 ===== */}
         {show("performance") && workerEff ? (
+          isPhone ? (
+            <PhoneWorkerEfficiency periodText={periodLabel(period)} top={workerEff.top} low={workerEff.low} />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Worker Efficiency
@@ -1792,10 +2003,25 @@ export default function MobileHome() {
               <WorkerRow key={`wl${i}`} w={w} first={i === 0} />
             ))}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Sales by Customer — category tabs + donut + rows ===== */}
         {show("performance") && salesByCustomer ? (
+          isPhone ? (
+            <PhoneSalesByCustomer
+              cat={sbcCat}
+              onCat={setSbcCat}
+              rows={salesByCustomer.rows.map((r) => ({
+                name: r.name,
+                total: formatCurrency(r.total),
+                pct: r.pct,
+                sub: r.sub,
+              }))}
+              top3={salesByCustomer.top3}
+              total={formatCurrency(salesByCustomer.total)}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Sales by Customer
@@ -1962,10 +2188,14 @@ export default function MobileHome() {
               </div>
             ))}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Top Sellers — BEDFRAME by units · SOFA by sets ===== */}
         {show("performance") && topSellers ? (
+          isPhone ? (
+            <PhoneTopSellers bed={topSellers.bed} sofa={topSellers.sofa} />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Top Sellers
@@ -1990,10 +2220,19 @@ export default function MobileHome() {
               </>
             ) : null}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Fabric Usage — BEDFRAME + SOFA (code, metres, avg/m) ===== */}
         {show("performance") && fabricUsage ? (
+          isPhone ? (
+            <PhoneFabricUsage
+              bedAvg={fabricUsage.bedAvg}
+              sofaAvg={fabricUsage.sofaAvg}
+              bed={fabricUsage.bed}
+              sofa={fabricUsage.sofa}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div
               style={{
@@ -2024,10 +2263,14 @@ export default function MobileHome() {
               </>
             ) : null}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Department Backlog — bottleneck first ===== */}
         {show("operations") && deptBacklog ? (
+          isPhone ? (
+            <PhoneDeptBacklog rows={deptBacklog} />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Department Backlog
@@ -2093,6 +2336,7 @@ export default function MobileHome() {
               ))}
             </div>
           </MobileCard>
+          )
         ) : null}
 
         {/* Phone Operations: Stock alerts sit above Purchasing. */}
@@ -2100,6 +2344,13 @@ export default function MobileHome() {
 
         {/* ===== Purchasing — open POs + month spend + top suppliers ===== */}
         {show("operations") && purchasing ? (
+          isPhone ? (
+            <PhonePurchasing
+              openPOs={purchasing.openPOs}
+              spend={purchasing.spend}
+              suppliers={purchasing.suppliers}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Purchasing
@@ -2168,6 +2419,7 @@ export default function MobileHome() {
               </>
             ) : null}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Stock alerts ===== (phone: above Purchasing) */}
@@ -2201,6 +2453,16 @@ export default function MobileHome() {
         onClose={() => setPickerOpen(false)}
         title="Period"
       >
+        {isPhone ? (
+          <PhonePeriodList
+            options={periodOptions}
+            value={period}
+            onPick={(ym) => {
+              setPeriod(ym);
+              setPickerOpen(false);
+            }}
+          />
+        ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {periodOptions.map((opt) => {
             const active = opt.ym === period;
@@ -2240,6 +2502,7 @@ export default function MobileHome() {
             );
           })}
         </div>
+        )}
       </Sheet>
     </div>
   );

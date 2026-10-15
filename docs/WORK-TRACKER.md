@@ -251,6 +251,17 @@ Ask (HK-0092, Violet, 13 Oct, type Development): "Production Revenue only displa
 3. ❓ Owner: which screen did Violet mean? The Finance dashboard's PRODUCTION REVENUE row (Cost Structure + salary cards) is still upholstery-only by design (owner 2026-10-12) and was NOT changed here.
 3b. Review fixes: the new CTE filters org + category inside the job_cards GROUP BY and keeps only POs completed in the last 400 days (so UPHOLSTERY equals the chart only within that window); a malformed `completed_date` is skipped by a shape check instead of aborting the cast for the whole section.
 4. ⬜ Not checked against real data (staging or prod): needs a sign-in; check Fabric Cutting ... Packing rows after deploy, and that UPHOLSTERY equals the chart's total.
+## 2026-10-15 — 🔵 Phone Home: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-15 after a read-only audit). Source: Claude Design `Home.dc.html` + `design_handoff_home_mobile/README.md`. Branch fast-forwarded to `upstream/staging` (80ad740f) first, so the Mobile UI Foundation is present. PHONE only; tablet and desktop unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. Prototype shadows kept (owner). **Typography follows the repo** (decision 8).
+1. 🔵 Phone order: Operations | Performance switch → KPI hero → Quick Actions → the rest (decision 2). Hero keeps the past-month "as of" note, "…" loading, "—" no record; money never ellipsed.
+2. 🔵 Orders due: horizontal snap carousel with a visible "N of M" position and total, last card reachable, overdue shown by icon + text, not colour alone (decision 3).
+3. 🔵 Shared components untouched: MobileHeader, BottomTabBar, SegmentedSwitch, InstallAppCard, GlobalSearchSheet (decision 4). No frosted header / tab bar, no switch icons.
+4. 🔵 "Production" and "Purchasing" section headings (decision 5).
+5. 🔵 Neutral colour for zero / loading / non-warning: Daily Report total, Plant Load ring and Queue Load tile (decision 6).
+6. 🔵 Copy that matches the data (decision 7): Receive → New PO; Completed = yesterday (or the month's last day); "This Month" only on the current month; Orders due title; Sales by Customer denominators; "N low" = the real total; efficiency bands vs the Daily Report's 60%; no "LIVE" (the pipeline is cached and all-months).
+7. 🔵 Loading / empty / error states where the data has them; dark mode via `M.*` and the Foundation status text colours.
+8. 🔵 `tests/mobile-home-views.test.mjs` updated only where the phone presentation changed; tsc + tests run.
 
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
