@@ -211,7 +211,8 @@ From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on th
 
 1. Raw-material batch import UPDATE keeps stored values for blank cells — done, test `tests/rm-bulk-import-blank-keeps.test.mjs`.
 2. Exports write an unpriced SKU as a blank cell, not 0 — done (products + inventory FG).
-3. Open: the ticket's PRD attachment was not readable by this session (only the description text); preview / audit row / "any export imports back" for the other modules is UNVERIFIED against it. Owner to confirm what remains.
+3. Review fixes — done: org-scoped import, `[CLEAR]` token, whitespace notes / bad stockControl keep, cost export blank, behavioural two-org test.
+4. Open: the ticket's PRD attachment was not readable by this session (only the description text); preview / audit row / "any export imports back" for the other modules is UNVERIFIED against it. Owner to confirm what remains.
 
 ## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
 
