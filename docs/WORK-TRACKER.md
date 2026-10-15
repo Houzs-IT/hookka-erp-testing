@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-15**: branch `fix/hk0080-po-scan-date-iso` (to `main`, BUG-2026-10-15-288) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk0094-so-customer-edit` (to `main`, IT Hub HK-0094) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue-main` (to `main`, department revenue + Bedframe/Sofa split, from staging #860, plus the phone dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
@@ -154,6 +155,26 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
 3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
 
+## 2026-10-15 — 🔵 SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(branch `feat/hk0094-so-customer-edit` → `main`)
+
+1. ✅ The order behind the ticket: SO-2609-392 (Customer PO `2990-PO-2609-042`) was keyed under Houzs Century. Siti asked for it
+   moved and re-priced, so Samuel ran a one-off SQL repair on prod on 2026-10-15: 2990 HOME SDN BHD / 2990 KL, line price
+   RM 1,155.00 → RM 1,091.48 (2990's seat-24 price). The SQL also covered the production order and the PACKED fg_unit, and
+   wiped the seven `sales` snapshot tables. Read-back on prod confirmed it. Siti reprints the packing sticker.
+2. 🔵 `PATCH /api/sales-orders/:id/customer` `{customerId, hubId?, reason?}`. Moves the SO, its production orders
+   (`customerName` / `customerState`), its un-shipped fg_units (sticker customer + hub), and any DRAFT DO / DRAFT invoice
+   (customer + hub contact block). Item prices are not touched (Siti: prices stay the same).
+   Returns 409 when: a DO is LOADED or later; a non-DRAFT, non-CANCELLED invoice exists; a draft DO also carries another
+   SO; or an open service order exists. A POTENTIAL customer is refused (`assertCustomerBillable`). Writes a
+   `customer-change` audit row. Wipes the `sales` snapshots and bumps the PO-list KV version.
+3. 🔵 `src/components/orders/CustomerEditModal.tsx` + a pencil next to Customer on `src/pages/sales/detail.tsx`. Pick the
+   customer, then its hub (auto-picked when the customer has one). Disabled with the reason once a DO has shipped or an
+   invoice has been issued.
+4. ✅ Staging preview `claude-hk94` (staging DB), 2026-10-15: SO-2609-392 moved Houzs Century → 2990 HOME through the UI;
+   SO, production order and SO list show 2990 HOME / 2990 KL, price stayed RM 1,155.00, `customer-change` audit row
+   written. SO-2610-170 (DO-2610-029 INVOICED) shows the pencil disabled with the lock reason. PR #864.
+5. ⬜ Siti sees BEFORE/AFTER on the canary (modal only, no save — canary is prod data) before merge.
+6. ⬜ After deploy: read-only check on prod that the pencil shows and locks correctly.
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue-main` → `main`; staging #860)
 
 Owner asks (2026-10-15, decisions confirmed in chat; owner asked to put it on prod before the staging check):

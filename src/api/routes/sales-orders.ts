@@ -5228,6 +5228,421 @@ app.patch("/:id/hub", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// PATCH /api/sales-orders/:id/customer — move an SO keyed under the wrong
+// customer (HK-0094: 2990 HOME orders entered under Houzs Century) to the
+// right one, together with that customer's hub. Line prices are NOT touched
+// (Siti 2026-10-15) — a re-price is a separate Edit / admin correction.
+//
+// Same window as PATCH /:id/hub (until goods leave the warehouse), plus: no
+// issued invoice, because an issued invoice is already on the old customer's
+// ledger. DRAFT DOs and DRAFT invoices follow the order. A draft DO that also
+// carries another SO cannot belong to two customers, so it blocks the move.
+//
+// Body: { customerId: string, hubId?: string, reason?: string }
+// ---------------------------------------------------------------------------
+app.patch("/:id/customer", async (c) => {
+  const denied = await requirePermission(c, "sales-orders", "update");
+  if (denied) return denied;
+  if (isCustomerScoped(c)) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
+  const idParam = c.req.param("id");
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const newCustomerId =
+      typeof body.customerId === "string" ? body.customerId.trim() : "";
+    const newHubId = typeof body.hubId === "string" ? body.hubId.trim() : "";
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (!newCustomerId) {
+      return c.json({ success: false, error: "customerId is required" }, 400);
+    }
+
+    const so = await c.var.DB
+      .prepare(
+        `SELECT * FROM sales_orders
+          WHERE id = ?
+             OR companySOId ILIKE ?
+          LIMIT 1`,
+      )
+      .bind(idParam, idParam)
+      .first<SalesOrderRow>();
+    if (!so) {
+      return c.json({ success: false, error: "Sales order not found" }, 404);
+    }
+    if (so.customerId === newCustomerId) {
+      return c.json(
+        {
+          success: false,
+          error: "This order is already under that customer. Use the Delivery Hub pencil to change the hub.",
+        },
+        400,
+      );
+    }
+
+    const customer = await c.var.DB
+      .prepare("SELECT id, name FROM customers WHERE id = ?")
+      .bind(newCustomerId)
+      .first<{ id: string; name: string }>();
+    if (!customer) {
+      return c.json({ success: false, error: "Customer not found" }, 404);
+    }
+    const billable = await assertCustomerBillable(
+      c.var.DB,
+      customer.id,
+      "a sales order",
+    );
+    if (!billable.ok) {
+      return c.json({ success: false, error: billable.error }, 400);
+    }
+
+    const hubsRes = await c.var.DB
+      .prepare(
+        `SELECT id, shortName, address, state, contactName, phone
+           FROM delivery_hubs WHERE customerId = ?`,
+      )
+      .bind(customer.id)
+      .all<{
+        id: string;
+        shortName: string;
+        address: string | null;
+        state: string | null;
+        contactName: string | null;
+        phone: string | null;
+      }>();
+    const hubs = hubsRes.results ?? [];
+    const hub = newHubId ? hubs.find((h) => h.id === newHubId) : undefined;
+    if (newHubId && !hub) {
+      return c.json(
+        { success: false, error: "Hub does not belong to this customer" },
+        400,
+      );
+    }
+    if (!hub && hubs.length > 0) {
+      return c.json(
+        { success: false, error: "Pick a delivery hub for the new customer" },
+        400,
+      );
+    }
+
+    const companySOId = so.companySOId ?? "";
+    const shippedDo = await c.var.DB
+      .prepare(
+        `SELECT DISTINCT d.doNo, d.status
+           FROM delivery_orders d
+          WHERE d.status IN ('LOADED','IN_TRANSIT','DELIVERED','INVOICED')
+            AND (
+                  d.salesOrderId = ?
+               OR d.id IN (
+                    SELECT di.deliveryOrderId
+                      FROM delivery_order_items di
+                     WHERE di.salesOrderNo = ?
+                  )
+                )
+          ORDER BY d.doNo
+          LIMIT 1`,
+      )
+      .bind(so.id, companySOId)
+      .first<{ doNo: string | null; status: string | null }>();
+    if (shippedDo) {
+      return c.json(
+        {
+          success: false,
+          code: "CUSTOMER_LOCKED_SHIPPED",
+          error: `Customer cannot be changed once goods have left the warehouse. DO ${shippedDo.doNo ?? "(unknown)"} is already ${shippedDo.status ?? "(unknown)"}.`,
+        },
+        409,
+      );
+    }
+
+    const draftDosRes = await c.var.DB
+      .prepare(
+        `SELECT DISTINCT d.id, d.doNo, d.customerId, d.customerName, d.hubId,
+                         d.hubName, d.customerState
+           FROM delivery_orders d
+          WHERE d.status = 'DRAFT'
+            AND (
+                  d.salesOrderId = ?
+               OR d.id IN (
+                    SELECT di.deliveryOrderId
+                      FROM delivery_order_items di
+                     WHERE di.salesOrderNo = ?
+                  )
+                )`,
+      )
+      .bind(so.id, companySOId)
+      .all<{
+        id: string;
+        doNo: string | null;
+        customerId: string | null;
+        customerName: string | null;
+        hubId: string | null;
+        hubName: string | null;
+        customerState: string | null;
+      }>();
+    const draftDos = draftDosRes.results ?? [];
+    for (const d of draftDos) {
+      const other = await c.var.DB
+        .prepare(
+          `SELECT DISTINCT di.salesOrderNo
+             FROM delivery_order_items di
+            WHERE di.deliveryOrderId = ?
+              AND di.salesOrderNo IS NOT NULL
+              AND di.salesOrderNo <> ''
+              AND di.salesOrderNo <> ?
+            LIMIT 1`,
+        )
+        .bind(d.id, companySOId)
+        .first<{ salesOrderNo: string }>();
+      if (other) {
+        return c.json(
+          {
+            success: false,
+            code: "CUSTOMER_LOCKED_MULTI_SO_DO",
+            error: `Draft DO ${d.doNo ?? ""} also carries ${other.salesOrderNo}. Take this order off that DO first.`,
+          },
+          409,
+        );
+      }
+    }
+
+    const invWhere = ["i.salesOrderId = ?", "i.companySOId = ?"];
+    const invParams: unknown[] = [so.id, companySOId];
+    if (draftDos.length > 0) {
+      invWhere.push(
+        `i.deliveryOrderId IN (${draftDos.map(() => "?").join(",")})`,
+      );
+      invParams.push(...draftDos.map((d) => d.id));
+    }
+    const invsRes = await c.var.DB
+      .prepare(
+        `SELECT DISTINCT i.id, i.invoiceNo, i.status, i.customerId,
+                i.customerName, i.hubId, i.hubName, i.customerState
+           FROM invoices i
+          WHERE (${invWhere.join(" OR ")})
+            AND i.status <> 'CANCELLED'`,
+      )
+      .bind(...invParams)
+      .all<{
+        id: string;
+        invoiceNo: string | null;
+        status: string | null;
+        customerId: string | null;
+        customerName: string | null;
+        hubId: string | null;
+        hubName: string | null;
+        customerState: string | null;
+      }>();
+    const invRows = invsRes.results ?? [];
+    const issuedInv = invRows.find((i) => i.status !== "DRAFT");
+    if (issuedInv) {
+      return c.json(
+        {
+          success: false,
+          code: "CUSTOMER_LOCKED_INVOICED",
+          error: `Customer cannot be changed after invoice ${issuedInv.invoiceNo ?? ""} has been issued (${issuedInv.status}).`,
+        },
+        409,
+      );
+    }
+
+    const svc = await c.var.DB
+      .prepare(
+        `SELECT serviceOrderNo FROM service_orders
+          WHERE sourceType = 'SO' AND sourceId = ? AND status <> 'CANCELLED'
+          LIMIT 1`,
+      )
+      .bind(so.id)
+      .first<{ serviceOrderNo: string | null }>();
+    if (svc) {
+      return c.json(
+        {
+          success: false,
+          code: "CUSTOMER_LOCKED_SERVICE_ORDER",
+          error: `Service order ${svc.serviceOrderNo ?? ""} is open on this order. Customer cannot be changed.`,
+        },
+        409,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const hubId = hub?.id ?? null;
+    const hubName = hub?.shortName ?? "";
+    const state = hub?.state ?? so.customerState ?? null;
+    const parent = { parentSOId: so.id, parentSOCode: so.companySOId };
+    const stmts: import("@cloudflare/workers-types").D1PreparedStatement[] = [];
+
+    stmts.push(
+      c.var.DB
+        .prepare(
+          `UPDATE sales_orders
+              SET customerId = ?, customerName = ?, hubId = ?, hubName = ?,
+                  customerState = ?, updated_at = ?
+            WHERE id = ?`,
+        )
+        .bind(customer.id, customer.name, hubId, hubName, state, now, so.id),
+    );
+    const soAudit = await buildAuditStatement(c, {
+      resource: "sales-orders",
+      resourceId: so.id,
+      action: "customer-change",
+      before: {
+        customerId: so.customerId,
+        customerName: so.customerName,
+        hubId: so.hubId,
+        hubName: so.hubName,
+      },
+      after: {
+        customerId: customer.id,
+        customerName: customer.name,
+        hubId,
+        hubName,
+        ...(reason ? { reason } : {}),
+      },
+    });
+    if (soAudit) stmts.push(soAudit);
+
+    const posRes = await c.var.DB
+      .prepare("SELECT id FROM production_orders WHERE salesOrderId = ?")
+      .bind(so.id)
+      .all<{ id: string }>();
+    const poCount = (posRes.results ?? []).length;
+    stmts.push(
+      c.var.DB
+        .prepare(
+          `UPDATE production_orders
+              SET customerName = ?, customerState = ?, updated_at = ?
+            WHERE salesOrderId = ?`,
+        )
+        .bind(customer.name, state, now, so.id),
+    );
+
+    // Packing sticker reads fg_units AS STORED (see PATCH /:id/hub).
+    stmts.push(
+      c.var.DB
+        .prepare(
+          `UPDATE fg_units SET customerHub = ?, customerName = ?
+            WHERE soId = ? AND status NOT IN ('LOADED','DELIVERED','RETURNED')`,
+        )
+        .bind(hubName, customer.name, so.id),
+    );
+
+    for (const d of draftDos) {
+      stmts.push(
+        c.var.DB
+          .prepare(
+            `UPDATE delivery_orders
+                SET customerId = ?, customerName = ?, hubId = ?, hubName = ?,
+                    customerState = ?, deliveryAddress = ?, contactPerson = ?,
+                    contactPhone = ?, updated_at = ?
+              WHERE id = ?`,
+          )
+          .bind(
+            customer.id,
+            customer.name,
+            hubId,
+            hubName,
+            state,
+            hub?.address ?? "",
+            hub?.contactName ?? "",
+            hub?.phone ?? "",
+            now,
+            d.id,
+          ),
+      );
+      const a = await buildAuditStatement(c, {
+        resource: "delivery-orders",
+        resourceId: d.id,
+        action: "customer-cascade-from-so",
+        before: {
+          customerId: d.customerId,
+          customerName: d.customerName,
+          hubId: d.hubId,
+          hubName: d.hubName,
+          customerState: d.customerState,
+        },
+        after: { customerId: customer.id, customerName: customer.name, hubId, hubName, customerState: state, ...parent },
+      });
+      if (a) stmts.push(a);
+    }
+
+    for (const inv of invRows) {
+      stmts.push(
+        c.var.DB
+          .prepare(
+            `UPDATE invoices
+                SET customerId = ?, customerName = ?, hubId = ?, hubName = ?,
+                    customerState = ?, customerAddress = ?, attention = ?,
+                    customerPhone = ?, updated_at = ?
+              WHERE id = ?`,
+          )
+          .bind(
+            customer.id,
+            customer.name,
+            hubId,
+            hubName,
+            state,
+            hub?.address ?? "",
+            hub?.contactName ?? "",
+            hub?.phone ?? "",
+            now,
+            inv.id,
+          ),
+      );
+      const a = await buildAuditStatement(c, {
+        resource: "invoices",
+        resourceId: inv.id,
+        action: "customer-cascade-from-so",
+        before: {
+          customerId: inv.customerId,
+          customerName: inv.customerName,
+          hubId: inv.hubId,
+          hubName: inv.hubName,
+          customerState: inv.customerState,
+        },
+        after: { customerId: customer.id, customerName: customer.name, hubId, hubName, customerState: state, ...parent },
+      });
+      if (a) stmts.push(a);
+    }
+
+    await c.var.DB.batch(stmts);
+
+    // Lists show customerName from snapshots + the PO-list KV body; wipe both
+    // layers so the move is visible on the next read.
+    try {
+      const orgId = getOrgId(c);
+      await invalidateHubChangeSnapshots(c.var.DB, orgId, "sales");
+      await bumpPoListCacheVersion(c, orgId);
+    } catch (err) {
+      console.warn(
+        "[PATCH /api/sales-orders/:id/customer] cache invalidation failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    const updated = await c.var.DB
+      .prepare("SELECT * FROM sales_orders WHERE id = ?")
+      .bind(so.id)
+      .first<SalesOrderRow>();
+    return c.json({
+      success: true,
+      data: updated ? rowToSO(updated, []) : null,
+      cascade: {
+        productionOrdersUpdated: poCount,
+        deliveryOrdersUpdated: draftDos.length,
+        invoicesUpdated: invRows.length,
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[PATCH /api/sales-orders/:id/customer] failed:", msg, err);
+    return c.json(
+      { success: false, error: msg || "Internal error updating customer" },
+      500,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/sales-orders/:id — cascades to items via FK
 // ---------------------------------------------------------------------------
 app.delete("/:id", async (c) => {
