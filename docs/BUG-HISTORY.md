@@ -5,6 +5,7 @@
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: entry BUG-2026-10-15-287 (branch `fix/hk0002-import-blank-keeps`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
@@ -281,6 +282,20 @@ fixed print layout.
 **Fix.** Same two lines as staging: the phone default goes through a CSS variable (`[--card-pad-auto:1.5rem] max-md:[--card-pad-auto:1rem]`), so the base has no `max-md:` padding class left. Cards that set no padding look the same. Cards that set their own (`p-4`, `p-6 sm:p-8`, …) now get it on phones too, so some cards are roomier on phones than before.
 
 **Regression.** `tests/card-padding-phone.test.mjs` (card part of staging's test; staging's KPI_ROW case is staging-only and left out).
+
+## BUG-2026-10-15-287 — Inventory raw-material batch import wiped min / max stock, notes, item type and supplier on every row it touched; exports wrote an unpriced SKU as RM 0 `inventory` `import-export` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0002-import-blank-keeps` → `main`). IT Hub HK-0002 (reporter Lim Wei Siang, 2026-09-07). Prod occurrences UNMEASURED (no prod access this session).
+
+**Symptom.** HK-0002 says an empty cell in a batch import clears a saved value, and that an exported file cannot be imported back without damage. Re-checked against the code on `main` 2026-10-15: the products import and the "batch import never saves" half were already fixed (both inventory dialogs call `/api/products/bulk-import` and `/api/raw-materials/bulk-import`; `shapeProductBulkRow` drops blanks). What was still true: the raw-material import and the price export.
+
+**Root cause.** `POST /api/raw-materials/bulk-import` built every UPDATE from the sheet row alone: description fell back to the item code, group to "OTHERS", `minStock`/`maxStock` to 0, `notes`/`itemType`/`mainSupplierCode` to NULL, `uomCount` to 1, `stockControl` to 1. The template carries none of the last seven, so every re-import reset them on every row it touched; a blank group cell re-grouped the material to OTHERS and with it its GL accounts (BUG-2026-08-21-160). Separately, the products and inventory FG exports wrote `(basePriceSen ?? 0) / 100`, so a SKU with no price exported as 0 and re-imported as a real RM 0.
+
+**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell.
+
+**Not done (needs the ticket's PRD, not visible to this session).** Preview and audit row already exist (dialog diff preview; `products` bulk-import audit; RM audit only on re-group). Other modules' exports (customers, suppliers, ...) were not swept.
+
+**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix).
 
 ## BUG-2026-10-15-292 — Picking the MTR row of a material added the ROLL one to the PO `procurement` `inventory` 🟡
 

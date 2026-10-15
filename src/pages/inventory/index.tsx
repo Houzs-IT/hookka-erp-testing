@@ -2190,7 +2190,7 @@ export default function InventoryPage() {
                     baseModel: p.baseModel,
                     sizeCode: p.sizeCode,
                     sizeLabel: p.sizeLabel,
-                    basePriceSen: (p.basePriceSen ?? 0) / 100,
+                    basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
                     costPriceSen: (p.costPriceSen ?? 0) / 100,
                     fabricUsage: p.fabricUsage,
                   })),
@@ -3565,7 +3565,7 @@ export default function InventoryPage() {
           baseModel: p.baseModel,
           sizeCode: p.sizeCode,
           sizeLabel: p.sizeLabel,
-          basePriceSen: (p.basePriceSen ?? 0) / 100,
+          basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
           costPriceSen: (p.costPriceSen ?? 0) / 100,
           fabricUsage: p.fabricUsage,
         }))}
