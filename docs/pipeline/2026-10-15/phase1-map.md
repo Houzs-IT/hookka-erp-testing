@@ -1,5 +1,7 @@
 # HK-0037 Phase 1 map — RM UOM configurable
 
+> **Last verified: 2026-10-15** against `src/api/routes/inventory.ts`, `raw-materials.ts`, `purchase-orders.ts` and PR #720 (branch `fix/hk0037-rm-uom-propagation`).
+
 Skills run: understand-explain (graph absent; read source directly), tech-debt, grill (self-answered below).
 
 ## (a) Already met

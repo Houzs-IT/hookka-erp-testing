@@ -1,5 +1,7 @@
 # HK-0037 Phase 0 context (RM UOM)
 
+> **Last verified: 2026-10-15** against `src/api/routes/inventory.ts`, `raw-materials.ts`, `purchase-orders.ts` and PR #720 (branch `fix/hk0037-rm-uom-propagation`).
+
 Notion search ("Hookka", "raw material UOM", "Houzs Venture Developer Work", "UOM MTR ROLL fabric") found NO page about RM UOM, MTR/ROLL, or HK-0037. Nothing on prior decisions for this ticket.
 
 Tangential, from Meeting Notes 5th Oct:
