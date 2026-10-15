@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate`, to staging; no open PR holds 289); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
@@ -147,6 +148,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-15-289 — Bulk-generated BOMs were stuck on DRAFT, so WIP times never listed them `bom` `production` 🟡
+
+🟡 **Fixed on branch** (`feat/bom-draft-activate` → `staging`).
+
+**Symptom.** Reported 2026-10-15: the WIP production times page could not find models 8210 and 8211 in any department.
+
+**Root cause.** Measured on staging (a production clone; production itself unmeasured): all 7 BOMs for 8210 and 8211 were `versionStatus = DRAFT`, and so were all 213 BOMs created since 2026-07-23 (25 models), while every older one was ACTIVE. Inventory > Add FG > Bulk generate copies each size's default BOM with a `POST /api/bom/templates` that sends no `versionStatus`, and that handler defaults to DRAFT. No screen could change the status. The WIP times page (`loadActiveBomRows`) and other readers take ACTIVE BOMs only, so they skipped these models. Job cards were not affected: they fall back to the newest BOM of any status.
+
+**Fix.** The BOM page shows a DRAFT badge beside the product in the list and on the BOM header, and a DRAFT BOM gets an Activate button that saves `versionStatus: "ACTIVE"` through the existing `PUT /api/bom/templates/:id`. The bulk-generate default is unchanged (not part of this ask).
+
+**Regression.** `tests/bom-draft-activate.test.mjs` checks the badge, the Activate wiring and that the PUT accepts ACTIVE; fails without the change.
 
 ## BUG-2026-10-14-288 — Table column headers showed through the notifications panel `ui` `layout` 🟡
 
