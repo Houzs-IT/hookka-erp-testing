@@ -107,9 +107,9 @@ Entries themselves stay newest-first.
 
 **Fix.** New `src/api/lib/iso-date.ts` `toIsoDate` (ISO passes, DD/MM/YYYY, DD.MM.YYYY, DD-MM-YY convert day-first, impossible dates -> null). Used in `scan-po.ts` `validateAndEnrichPO` (converted or cleared, with a warning on the card) and in the SO create handler (covers the template-fallback scan path and manual API callers).
 
-**Not fixed / not checked.** (1) Rows already stored non-ISO: UNMEASURED; read-only check `SELECT count(*) FROM sales_orders WHERE hookkaExpectedDD <> '' AND hookkaExpectedDD !~ '^\d{4}-\d{2}-\d{2}'`. (2) `PUT /api/sales-orders/:id` still stores dates verbatim (UI date inputs send ISO). (3) The template-fallback scan path sends `hookkaExpectedDD = customer delivery date` with no buffer (`scan-po-modal.tsx` ~1254); left for the owner. (4) The ticket's "PO" could mean Purchase Order; the Purchase Order list was not changed.
+**Not fixed / not checked.** (1) Rows already stored non-ISO: UNMEASURED; read-only check `SELECT count(*) FROM sales_orders WHERE hookkaExpectedDD <> '' AND hookkaExpectedDD !~ '^\d{4}-\d{2}-\d{2}'`. (2) Review fix: `POST /` and `PUT /:id` now answer 400 when a supplied customer / expected delivery date cannot be read (never a silent blank); on PUT only a CHANGED value is validated, so echoing a legacy stored value is not blocked. Day-first is an ASSUMPTION: `03/06/2026` is read as 3 June (Malaysian paper); a US-style sheet would be misread, and the scan card keeps the "converted to ..." warning so the operator sees it. (3) The template-fallback scan path sends `hookkaExpectedDD = customer delivery date` with no buffer (`scan-po-modal.tsx` ~1254); left for the owner. (4) The ticket's "PO" could mean Purchase Order; the Purchase Order list was not changed.
 
-**Regression.** `tests/scan-delivery-date-iso.test.mjs`.
+**Regression.** `tests/scan-delivery-date-iso.test.mjs` (helper + the create route's 400).
 
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 

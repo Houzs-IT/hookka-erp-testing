@@ -81,7 +81,7 @@ import { resolveTotalHeightPriceSen } from "../../lib/total-height-surcharge";
 import { loadSpecialsConfig, loadHeightsConfig } from "../lib/specials-config";
 import { validateRepairScopeInput } from "../../lib/repair-scope";
 import { buildOrderFootprint } from "../lib/order-footprint";
-import { toIsoDate } from "../lib/iso-date";
+import { toIsoDate, normaliseBodyDates } from "../lib/iso-date";
 
 import {
   parseCustomSpecials,
@@ -1746,6 +1746,9 @@ app.post("/", async (c) => {
   return withIdempotency(c, "sales-orders", idemKey, async () => {
   try {
     const body = await c.req.json();
+    // HK-0080: a date we cannot read is a 400, never silently blanked.
+    const dateErr = normaliseBodyDates(body, ["customerDeliveryDate", "hookkaExpectedDD"]);
+    if (dateErr) return c.json({ success: false, error: dateErr }, 400);
 
     // Validate customer
     const customer = await c.var.DB.prepare(
@@ -3144,6 +3147,15 @@ app.put("/:id", async (c) => {
     // handled below this guard, BEFORE the items/header re-write block.
     const lockMsg = await checkSalesOrderLocked(c.var.DB, id);
     const body = await c.req.json();
+    // Only a CHANGED date is validated: an edit that echoes back a legacy
+    // stored value must not be blocked by it.
+    const dateErr = normaliseBodyDates(
+      body,
+      (["customerDeliveryDate", "hookkaExpectedDD"] as const).filter(
+        (f) => body[f] !== (existing as Record<string, unknown>)[f],
+      ),
+    );
+    if (dateErr) return c.json({ success: false, error: dateErr }, 400);
     const isStatusOnly =
       body.status &&
       !body.items &&

@@ -152,6 +152,7 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 ## 2026-10-15 — 🔵 HK-0080 PO overdue: scanned delivery dates not forced to ISO (Violet「can cross check why there are many PO overdue? is OCR using convert?」)(branch `fix/hk0080-po-scan-date-iso` -> `main`, BUG-2026-10-15-288)
 
 1. DONE on branch: `toIsoDate` in scan route + SO create; regression `tests/scan-delivery-date-iso.test.mjs`.
+1b. Review fixes DONE: SO create / PUT 400 on an unreadable date (was silent blank); day-first assumption documented.
 2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
 3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
 
