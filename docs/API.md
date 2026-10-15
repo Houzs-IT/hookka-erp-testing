@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 147 mounts, 145 route files in
-`src/api/routes/`, 1036 top-level handler registrations discovered.
+**Counts at generation time:** 144 mounts, 142 route files in
+`src/api/routes/`, 1027 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -184,7 +184,7 @@ offsets pointing past the end of their own file.
 | `/api/delivery-agent` | `src/api/routes/delivery-agent.ts` | `GET /brief.json` <sub>:144</sub><br>`POST /proposals/generate` <sub>:165</sub><br>`GET /proposals` <sub>:186</sub><br>`POST /proposals/approve` <sub>:260</sub><br>`POST /proposals/reject` <sub>:273</sub><br>`POST /run` <sub>:457</sub><br>`GET /truck-capacity-analysis` <sub>:556</sub> | gated |
 | `/api/internal/delivery-agent` | `src/api/routes/delivery-agent.ts` | `POST /run-trigger` <sub>:512</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/internal/agents` | `src/api/routes/agent-heartbeat.ts` | `POST /run-generate` <sub>:54</sub><br>`POST /heartbeat` <sub>:79</sub> | **public** (PUBLIC_PREFIXES) |
-| `/api/scan-po` | `src/api/routes/scan-po.ts` | `GET /catalog` <sub>:487</sub><br>`POST /extract` <sub>:526</sub><br>`POST /samples/:id/confirm` <sub>:713</sub><br>`GET /samples/by-po/:poIdentifier` <sub>:862</sub><br>`PATCH /samples/by-po/:poIdentifier` <sub>:919</sub><br>`GET /customer-rules/:customerId` <sub>:961</sub><br>`PUT /customer-rules/:customerId` <sub>:992</sub><br>`POST /customer-rules/:customerId/distill` <sub>:1048</sub> | gated |
+| `/api/scan-po` | `src/api/routes/scan-po.ts` | `GET /catalog` <sub>:504</sub><br>`POST /extract` <sub>:543</sub><br>`POST /samples/:id/confirm` <sub>:730</sub><br>`GET /samples/by-po/:poIdentifier` <sub>:879</sub><br>`PATCH /samples/by-po/:poIdentifier` <sub>:936</sub><br>`GET /customer-rules/:customerId` <sub>:978</sub><br>`PUT /customer-rules/:customerId` <sub>:1009</sub><br>`POST /customer-rules/:customerId/distill` <sub>:1065</sub> | gated |
 | `/api/scan-supplier` | `src/api/routes/scan-supplier.ts` | `POST /extract` <sub>:37</sub><br>`POST /samples/:id/confirm` <sub>:128</sub> | gated |
 | `/api/party-aliases` | `src/api/routes/party-aliases.ts` | `GET /` <sub>:50</sub><br>`GET /list` <sub>:69</sub><br>`POST /` <sub>:93</sub><br>`DELETE /` <sub>:134</sub> | gated |
 | `/api/scan-finance` | `src/api/routes/scan-finance.ts` | `POST /extract` <sub>:57</sub> | gated |
