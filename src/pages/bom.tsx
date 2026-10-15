@@ -1500,7 +1500,7 @@ function exportBOMToPDF(template: BOMTemplate, product: Product, w: Window) {
   w.document.close();
 }
 
-function BOMTreeView({ template, product, onEdit }: { template: BOMTemplate; product: Product; onEdit: () => void }) {
+function BOMTreeView({ template, product, onEdit, onActivate }: { template: BOMTemplate; product: Product; onEdit: () => void; onActivate: () => void }) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(true);
   const l1Min = template.l1Processes.reduce((s, p) => s + p.minutes, 0);
@@ -1529,10 +1529,27 @@ function BOMTreeView({ template, product, onEdit }: { template: BOMTemplate; pro
     <div className="space-y-4">
       {/* Header with Edit */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-[#111827]">
-          {product.code} — {product.name}
-        </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <h2 className="text-sm font-semibold text-[#111827]">
+            {product.code} — {product.name}
+          </h2>
+          {/* Pages that read ACTIVE BOMs only (WIP times, fabric usage, KPIs) skip a DRAFT. */}
+          {template.versionStatus && template.versionStatus !== "ACTIVE" && (
+            <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-[#FAEFCB] text-[#9C6F1E]">
+              {template.versionStatus}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {template.versionStatus === "DRAFT" && (
+            <button
+              onClick={onActivate}
+              title="Make this the live BOM so WIP times and other pages use it"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[#6B5C32] text-white hover:bg-[#5A4D2A]"
+            >
+              Activate
+            </button>
+          )}
           <button
             onClick={() => {
               const w = window.open("", "_blank", "width=900,height=1100");
@@ -2429,11 +2446,12 @@ function CreateBOMDialog({
 
 // ---------- Collapsible Group ----------
 function CollapsibleGroup({
-  baseModel, prods, existingCodes, selectedProductCode, onSelect,
+  baseModel, prods, existingCodes, activeCodes, selectedProductCode, onSelect,
 }: {
   baseModel: string;
   prods: Product[];
   existingCodes: Set<string>;
+  activeCodes: Set<string>;
   selectedProductCode: string;
   onSelect: (code: string) => void;
 }) {
@@ -2484,6 +2502,11 @@ function CollapsibleGroup({
               {!hasBOM && (
                 <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] flex-shrink-0">
                   PENDING
+                </span>
+              )}
+              {hasBOM && !activeCodes.has(p.code) && (
+                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] flex-shrink-0">
+                  DRAFT
                 </span>
               )}
             </div>
@@ -6018,6 +6041,11 @@ export default function BOMManagementPage() {
   }, []);
 
   const existingCodes = useMemo(() => new Set(templates.map((t) => t.productCode)), [templates]);
+  // Same ACTIVE test as selectedTemplate below.
+  const activeCodes = useMemo(
+    () => new Set(templates.filter((t) => (t.versionStatus ?? "ACTIVE") === "ACTIVE").map((t) => t.productCode)),
+    [templates],
+  );
   const pendingCount = useMemo(() => products.filter((p) => !existingCodes.has(p.code)).length, [products, existingCodes]);
 
   // D1 is the source of truth. Individual BOM edits go through
@@ -6286,6 +6314,7 @@ export default function BOMManagementPage() {
                 baseModel={baseModel}
                 prods={prods}
                 existingCodes={existingCodes}
+                activeCodes={activeCodes}
                 selectedProductCode={selectedProductCode}
                 onSelect={setSelectedProductCode}
               />
@@ -6302,7 +6331,12 @@ export default function BOMManagementPage() {
         <div className="flex-1 min-w-0">
           {selectedProduct && selectedTemplate ? (
             <>
-              <BOMTreeView template={selectedTemplate} product={selectedProduct} onEdit={() => setShowEdit(true)} />
+              <BOMTreeView
+                template={selectedTemplate}
+                product={selectedProduct}
+                onEdit={() => setShowEdit(true)}
+                onActivate={() => handleBOMEdited({ ...selectedTemplate, versionStatus: "ACTIVE" })}
+              />
               <EditBOMDialog
                 open={showEdit}
                 onClose={() => setShowEdit(false)}
