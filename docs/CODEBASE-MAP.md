@@ -2527,7 +2527,7 @@ constant-time `CRON_SECRET` compare that 503s when the secret is unset or under 
 (`src/api/worker.ts:791-798`). Its SQL is deliberately org-blind — it is a system sweep.
 
 Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:95`) ·
-`hydrateRow` (`src/api/routes/scan-queue.ts:248`) ·
+`hydrateRow` (`src/api/routes/scan-queue.ts:261`) ·
 `processOneRow` (`src/api/routes/scan-queue.ts:334`, one claim + extract per `/work` request; returns processed | skipped | drained | error) ·
 `sweepStuckBatch` (`src/api/routes/scan-queue.ts:1597`, the per-poll recovery path — Pages has
 no cron, so the poll endpoints self-heal; re-queues ONLY, the open modal drives the row).
