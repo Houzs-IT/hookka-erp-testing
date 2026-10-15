@@ -1,6 +1,8 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -185,6 +187,27 @@ Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:
 4. 🟡 Keep every original (consume no longer evicts), inline view (`GET /api/scan-queue/:id/original`) and an access trail (`scan_original_access`).
 5. 🔵 Acceptance "scan time down by a third": UNMEASURED, needs a before/after timing on staging.
 Owner questions: see the PR body and the ticket's internal note.
+## 2026-10-15 — 🔵 HK-0025: Send Notification (order priority) from the Production Overview (branch `feat/hk-0025-production-notify` → `staging`)
+
+Ticket HK-0025 (Violet, 2026-09-23, support.houzscentury.com), asks 1 to 7.
+
+1. **Send Notification button** — Overview, tick order(s), Send Notification (`SendOrderNotificationDialog`, max 10 orders per send, one announcement each).
+2. **Priority** — URGENT / OVERDUE / PRIORITY (`src/lib/order-notification.ts`); URGENT and OVERDUE are forced to the WARNING category, which the worker phone already shows as a red card plus must-ack popup.
+3. **Recipients** — departments (multi), individual workers, or all; this is the existing announcement targeting, unchanged.
+4. **Content** — order no., model, required date, status, priority, optional supervisor note, built by `buildOrderNotice`.
+5. **Mobile** — announcement feed + Web Push, unchanged. Not done: tapping the notice does not open a dedicated order screen (the order details are in the notice text).
+6. **History** — /announcements shows priority, order no., "by <sender>" (`createdByName`) and the existing read-receipt panel (acked vs pending). Not done: a history view filtered to order notices only.
+7. Columns `priority`, `order_no`, `order_id` on `announcements`, runtime self-apply (nullable, no backfill).
+
+Tests: `tests/order-notification.test.mjs`. Prod state: UNMEASURED (not deployed; staging check pending).
+## 2026-10-15 — ⬜ HK-0055: Department Efficiency access per employee: triage, no code (branch `docs/hk0055-dept-efficiency-triage` → `staging`)
+
+Ticket HK-0055 (High, type Development, reporter Violet, created 2026-10-05): assign department efficiency to an employee (specific / multiple / Overall), the employee's dashboard shows only those, admin can assign / change / remove, the system records who has what. [Violet, Houzs Hub HK-0055, 2026-10-05]
+
+1. 🔵 Already built under DEV-36 / DEV-37, so no code change is made here. Assign: Library > KPI > Production time efficiency or Department efficiency, per-person department chips, any number ticked, none = Overall [code: src/api/routes/kpi.ts:974-1015]. Sofa / Bedframe split per department gives "Fab Cut Sofa + Fab Sew Sofa" [code: src/api/routes/kpi.ts:1006]. Employee sees only their own card, view only (DEV-37). Remove = `isActive: false`. Record = `kpi_assignments.scope` + `assigned_by` + `updated_at` [code: src/api/routes/kpi.ts:1020-1034].
+2. 🔵 The ticket's floor-worker reading ("Employee A" on the worker app) was built on staging as #714 and taken back as #715 by owner decision 2026-10-06 ("KPIs go to login accounts only, no worker app card", see the DEV-36 entry below). Re-adding it would reverse that decision, so it is not done without the owner.
+3. ⬜ Owner questions (unanswered): (a) is HK-0055 satisfied by DEV-36 / DEV-37, so it can close? (b) if not, which "Employee Dashboard": the KPI Card, Dashboard Experimental > Employees, or the worker app? (c) must floor workers (no ERP login) see it, which reverses #715? (d) is last-writer `assigned_by` enough for "record which departments are assigned", or is a change history wanted (who / when / old scope)? (e) the card names departments by code (`FAB_CUT + FAB_SEW`); wanted as names?
+4. Prod state UNMEASURED: no prod access from this branch; whether assignments exist for these staff was not queried.
 
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
