@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/dept-revenue-main` (to `main`, department revenue + Bedframe/Sofa split, from staging #860, plus the phone dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
 > **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
@@ -145,6 +146,16 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue-main` → `main`; staging #860)
+
+Owner asks (2026-10-15, decisions confirmed in chat; owner asked to put it on prod before the staging check):
+1. 🔵 Department revenue, same rule as Production (UPHOLSTERY) revenue: department X books a production order's full value (SO line → CO line → product price × qty) on the day ALL of that order's department-X job cards are COMPLETED/TRANSFERRED. Every department books the full value (a RM 2,000 sofa through 9 departments = RM 18,000 across departments), so equal output = balanced supply. An order with no card in a department books nothing there. All 10 production departments, Packing included.
+2. 🔵 New /dashboard card "Department Revenue": one row per department, Bedframe / Sofa / Total for the selected period, plus a per-day (month) / per-week (all-time) line chart per department; All / Bedframe / Sofa toggle.
+3. 🔵 Existing Revenue chart (Sales Orders · Invoices · Production) gets an All / Bedframe / Sofa toggle; Accessory counts in All only.
+4. 🔵 The existing Labor Cost "category revenue" (minutes-weighted slices that sum to the order value) is a different measure and stays unchanged.
+5. 🔵 Phone dashboard (/m Home): the same Bedframe / Sofa toggle on its Revenue chart and a Department Revenue section, laid out for a phone.
+6. 🔵 Not yet checked against real data (staging or prod) — needs a sign-in; to do after deploy.
 
 ## 2026-10-14 — 🔵 Second void of a purchase invoice answers 500 (branch `fix/pi-revoid-legno-main` → `main`, BUG-2026-10-14-286)
 

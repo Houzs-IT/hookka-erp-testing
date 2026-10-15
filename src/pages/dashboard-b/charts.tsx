@@ -20,6 +20,8 @@ import {
   PieChart,
   Pie,
   Cell,
+  LineChart,
+  Line,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
 
@@ -235,6 +237,50 @@ export function CustomerPieChart({
           }}
         />
       </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Department Revenue (owner 2026-10-15): one line per production department,
+// RM per bucket. Every department books the full order value, so on a
+// balanced day the lines sit on top of each other; a line below the pack is
+// a department falling behind. Rows: { m, <dept label>: RM, … }.
+export function DeptRevenueChart({
+  data,
+  series,
+}: {
+  data: Record<string, number | string>[];
+  series: { key: string; color: string }[];
+}) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
+        <XAxis
+          dataKey="m"
+          tick={{ fill: "#9CA3AF", fontSize: 11 }}
+          axisLine={{ stroke: "#F0ECE6" }}
+          tickLine={false}
+        />
+        <YAxis
+          tickFormatter={(v) => `${Math.round(v / 1000)}k`}
+          tick={{ fill: "#9CA3AF", fontSize: 11 }}
+          axisLine={false}
+          tickLine={false}
+          width={38}
+        />
+        <Tooltip content={<RevTooltip />} cursor={{ stroke: "#E2DDD8" }} />
+        {series.map((s) => (
+          <Line
+            key={s.key}
+            type="monotone"
+            dataKey={s.key}
+            stroke={s.color}
+            strokeWidth={1.75}
+            isAnimationActive={false}
+            dot={false}
+          />
+        ))}
+      </LineChart>
     </ResponsiveContainer>
   );
 }
