@@ -85,15 +85,19 @@ export function sameUom(a: string | null | undefined, b: string | null | undefin
 
 /** HK-0037: the unit a PO line carries for a raw material. `rmUnits` maps
  * trim+UPPER itemCode -> baseUOM; a code held by rows with different units is
- * ambiguous and is absent. Falls back to the client unit, then "pcs". */
+ * ambiguous and is absent. A unit the client chose on purpose (anything but
+ * blank or the legacy "pcs" default that forms and old rows fall back to) is
+ * kept as sent; otherwise the RM base unit, then the client unit, then "pcs".
+ * No ROLL/MTR conversion (owner 2026-09-29): this only fills a default. */
 export function poLineUnit(
   rmUnits: Map<string, string>,
   materialCode: unknown,
   clientUnit: unknown,
 ): string {
   const code = String(materialCode ?? "").trim().toUpperCase();
-  const own = typeof clientUnit === "string" && clientUnit.trim() ? clientUnit : "pcs";
-  return (code && rmUnits.get(code)) || own;
+  const own = typeof clientUnit === "string" ? clientUnit.trim() : "";
+  if (own && own.toLowerCase() !== "pcs") return own;
+  return (code && rmUnits.get(code)) || own || "pcs";
 }
 
 /** itemCode -> baseUOM from raw_materials rows; conflicting duplicates dropped. */

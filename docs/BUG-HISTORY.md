@@ -104,11 +104,11 @@ Entries themselves stay newest-first.
 
 **Root cause.** Four readers/writers each had their own fallback instead of the RM's `baseUOM`: `adjustments.tsx`, `purchase-orders.ts` POST/PUT, `inventory.ts` RM create, and the GRN receive row.
 
-**Fix.** RM create rejects a unit not on the list (same check as `raw-materials.ts`). PO POST/PUT take the line unit from the RM base unit (`poLineUnit`); a line with receipts keeps its stored unit. Adjustments show `baseUOM`; the GRN row shows the PO line unit.
+**Fix.** RM create rejects a unit not on the list (same check as `raw-materials.ts`). PO POST/PUT take the line unit from the RM base unit (`poLineUnit`) only when the client sent none or the legacy "pcs" default; a unit chosen on purpose (the phone form's free-text Unit field) is kept as sent, no conversion. A line with receipts keeps its stored unit, matched by id, else by materialCode and line order. The RM base-unit lookup is chunked at 90 codes per query (D1 100-parameter cap). Adjustments show `baseUOM`; the GRN row shows the PO line unit.
 
 **Not changed.** Per-category lists and ROLL/MTR conversion (owner rulings 2026-09-29 / 2026-10-07); other PO writers (`import-completion/procurement-backfills.ts`, `convert-from-po-modal.tsx`) still pick their own unit.
 
-**Regression.** `tests/rm-uom-options.test.mjs`: `poLineUnit`, `rmUnitMap`, create rejects an unlisted unit, no `|| "ea"`, PUT keeps a received line's unit.
+**Regression.** `tests/rm-uom-options.test.mjs`: `poLineUnit`, `rmUnitMap`, create rejects an unlisted unit, no `|| "ea"`, PUT keeps a received line's unit (`tests/po-put-line-unit.test.mjs`: PUT through the route with ids dropped, chunked lookup, explicit unit kept).
 
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 
