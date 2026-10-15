@@ -566,6 +566,9 @@ app.post("/chat", async (c) => {
     "agent_overview",
     "agent_control",
     "teach_agent",
+    // HK-0033: the tools themselves enforce production-orders read / update.
+    "list_schedule_proposals",
+    "decide_schedule_proposals",
   ]);
 
   const apiKey = c.env.ANTHROPIC_API_KEY;

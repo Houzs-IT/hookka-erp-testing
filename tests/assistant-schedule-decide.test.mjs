@@ -67,7 +67,13 @@ test("tools: both proposal tools registered; decide enforces consent + role", ()
   // The consent check + role check live inside the decide executor.
   const decideIdx = tools.indexOf('name: "decide_schedule_proposals"');
   const decideSlice = tools.slice(decideIdx, decideIdx + 4000);
-  assert.match(decideSlice, /isSuperAdmin\(c\)/, "decide is SUPER_ADMIN-gated");
+  // HK-0033: SUPER_ADMIN, or whoever holds the permission the Planning
+  // route's approve/reject buttons require.
+  assert.match(
+    decideSlice,
+    /!isSuperAdmin\(c\) && !\(await hasPermission\(c, "production-orders", "update"\)\)/,
+    "decide must be gated like POST /api/planning/proposals/approve",
+  );
   assert.match(
     decideSlice,
     /decideProposals\(db, \{ action, ids, decidedBy: userId \}\)/,
@@ -84,5 +90,19 @@ test("shared core: lib exports decideProposals; route delegates to it", () => {
     route,
     /UPDATE job_cards SET dueDate/,
     "the route must not keep a divergent inline write path",
+  );
+});
+
+test("HK-0033: staff can reach list/decide, and each tool enforces its own permission", () => {
+  assert.match(
+    prompt,
+    /"list_schedule_proposals",\s*\n\s*"decide_schedule_proposals",/,
+    "both proposal tools must be in STAFF_TOOL_NAMES",
+  );
+  const listIdx = tools.indexOf('name: "list_schedule_proposals"');
+  assert.match(
+    tools.slice(listIdx, listIdx + 3000),
+    /hasPermission\(c, "production-orders", "read"\)/,
+    "list must enforce production-orders:read for non-super-admins",
   );
 });
