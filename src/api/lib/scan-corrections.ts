@@ -49,7 +49,11 @@ export function diffCorrections(kind: ScanKind, raw: unknown, corrected: unknown
   const rl = arr(rawDocFor(kind, raw, corrected)[lines]);
   const cl = arr(rec(corrected)[lines]);
   const out: FieldCorrection[] = [];
-  for (let i = 0; i < Math.min(rl.length, cl.length); i++) {
+  // Lines are paired by index, so an inserted/deleted/reordered line would
+  // mis-pair every row after it and teach a wrong correction. Different line
+  // counts => the operator restructured the doc; learn nothing from it.
+  if (rl.length !== cl.length) return out;
+  for (let i = 0; i < cl.length; i++) {
     for (const field of fields) {
       const rawValue = String(rl[i][field] ?? "").trim();
       const correctedValue = String(cl[i][field] ?? "").trim();
@@ -82,6 +86,7 @@ export function applyCorrections(kind: ScanKind, doc: unknown, map: Map<string, 
 type Db = {
   prepare: (sql: string) => {
     bind: (...a: unknown[]) => {
+      first: <T = unknown>() => Promise<T | null>;
       run: () => Promise<unknown>;
       all: <T = unknown>() => Promise<{ results?: T[] }>;
     };
@@ -153,7 +158,11 @@ export async function recordCorrections(
   return n;
 }
 
-/** Learned pairs for one customer / supplier as a replay map. Never throws. */
+/**
+ * Learned pairs for one customer / supplier as a replay map. Never throws.
+ * Only pairs seen at least twice replay (one confirm may be a one-off typo).
+ * Rows with org_id NULL are legacy/unscoped and are deliberately not read.
+ */
 export async function loadCorrections(
   db: Db,
   o: { orgId: string; kind: ScanKind; scopeId: string },
@@ -166,7 +175,7 @@ export async function loadCorrections(
       .prepare(
         `SELECT field, raw_norm AS "rawNorm", corrected_value AS "correctedValue"
            FROM scan_field_corrections
-          WHERE kind = ? AND scope_id = ? AND (org_id = ? OR org_id IS NULL)`,
+          WHERE kind = ? AND scope_id = ? AND org_id = ? AND hits >= 2`,
       )
       .bind(o.kind, o.scopeId, o.orgId)
       .all<{ field: string; rawNorm: string; correctedValue: string }>();
@@ -187,6 +196,13 @@ export async function learnFromConfirm(
 ): Promise<number> {
   if (typeof o.scopeId !== "string" || !o.scopeId) return 0;
   try {
+    // scopeId comes from the operator-submitted body; it must name a customer /
+    // supplier of THIS org or a caller could seed another tenant's scope.
+    const owner = await db
+      .prepare(`SELECT id FROM ${o.kind === "po" ? "customers" : "suppliers"} WHERE id = ? AND orgId = ?`)
+      .bind(o.scopeId, o.orgId)
+      .first<{ id: string }>();
+    if (!owner) return 0;
     const raw = typeof o.raw === "string" ? JSON.parse(o.raw) : o.raw;
     return await recordCorrections(db, {
       orgId: o.orgId, kind: o.kind, scopeId: o.scopeId,
