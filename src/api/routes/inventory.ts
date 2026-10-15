@@ -493,7 +493,7 @@ app.post("/raw-materials", async (c) => {
     const isActive = body.isActive === false ? 0 : 1;
     const itemGroup = body.itemGroup ?? "General";
     const balanceQty = Number(body.balanceQty) || 0;
-    const uom = baseUOM == null || baseUOM === "" ? "PCS" : String(baseUOM).trim() || "PCS";
+    const uom = String(baseUOM ?? "").trim() || "PCS";
     const { units } = await loadUomConfig(c.var.DB);
     if (!isUomAllowed(uom, units)) {
       return c.json({ success: false, error: uomNotAllowedMsg(uom, units) }, 400);
