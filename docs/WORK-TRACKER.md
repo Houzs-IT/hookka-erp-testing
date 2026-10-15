@@ -250,6 +250,17 @@ Ticket HK-0036 (Violet, Hookka, type Development): on PO creation send the PO to
 2. 🔵 Inbound: `POST /api/cnc-jobs/:jobCardId/result {status: CUTTING|DONE, cutQty}` recorded in `cnc_cut_results` (upsert). The job card is NOT completed from it.
 2b. Review fixes: own `cnc-jobs` permission resource (was the any-role `cnc-templates`; Office + admins only until the owner decides machine auth); a skipped late CUTTING returns `ignored:true` and is not audited (RETURNING row check); feed paged (200 default, 500 max); `cutQty` <= 100000.
 3. 🟡 Needs owner: CNC vendor/protocol/auth, whether a DONE report should complete the card (and run the WIP cascade), whether a sofa merged FAB_CUT card maps to one nesting job. Tests: `tests/cnc-jobs.test.mjs`.
+## 2026-10-15 — 🔵 Phone Home: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-15 after a read-only audit). Source: Claude Design `Home.dc.html` + `design_handoff_home_mobile/README.md`. Branch fast-forwarded to `upstream/staging` (80ad740f) first, so the Mobile UI Foundation is present. PHONE only; tablet and desktop unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. Prototype shadows kept (owner). **Typography follows the repo** (decision 8).
+1. 🔵 Phone order: Operations | Performance switch → KPI hero → Quick Actions → the rest (decision 2). Hero keeps the past-month "as of" note, "…" loading, "—" no record; money never ellipsed.
+2. 🔵 Orders due: horizontal snap carousel with a visible "N of M" position and total, last card reachable, overdue shown by icon + text, not colour alone (decision 3).
+3. 🔵 Shared components untouched: MobileHeader, BottomTabBar, SegmentedSwitch, InstallAppCard, GlobalSearchSheet (decision 4). No frosted header / tab bar, no switch icons.
+4. 🔵 "Production" and "Purchasing" section headings (decision 5).
+5. 🔵 Neutral colour for zero / loading / non-warning: Daily Report total, Plant Load ring and Queue Load tile (decision 6).
+6. 🔵 Copy that matches the data (decision 7): Receive → New PO; Completed = yesterday (or the month's last day); "This Month" only on the current month; Orders due title; Sales by Customer denominators; "N low" = the real total; efficiency bands vs the Daily Report's 60%; no "LIVE" (the pipeline is cached and all-months).
+7. 🔵 Loading / empty / error states where the data has them; dark mode via `M.*` and the Foundation status text colours.
+8. 🔵 `tests/mobile-home-views.test.mjs` updated only where the phone presentation changed; tsc + tests run.
 
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
