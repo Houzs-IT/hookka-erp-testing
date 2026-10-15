@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-14** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-10-15** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 147 mounts, 145 route files in
-`src/api/routes/`, 1034 top-level handler registrations discovered.
+`src/api/routes/`, 1035 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -133,7 +133,7 @@ offsets pointing past the end of their own file.
 | `/api/fe-rum` | `src/api/routes/fe-rum.ts` | `POST /event` <sub>:126</sub> | gated (some paths public) |
 | `/api/job-cards` | `src/api/routes/job-cards.ts` | `GET /` <sub>:100</sub><br>`GET /summary` <sub>:261</sub><br>`GET /:id/events` <sub>:430</sub><br>`GET /duedate-original-backup` <sub>:536</sub><br>`GET /completion-pic-original-backup` <sub>:688</sub> | gated |
 | `/api/audit-events` | `src/api/routes/audit-events.ts` | `GET /` <sub>:49</sub> | gated |
-| `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:66</sub><br>`GET /fabric-cost-compare` <sub>:2418</sub><br>`GET /purchasing-compare` <sub>:2571</sub> | gated |
+| `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:75</sub><br>`GET /fabric-cost-compare` <sub>:2427</sub><br>`GET /purchasing-compare` <sub>:2580</sub><br>`GET /revenue-split` <sub>:2674</sub> | gated |
 | `/api/dashboard/prototype` | `src/api/routes/dashboard-prototype.ts` | `GET /` <sub>:285</sub> | gated |
 | `/api/dashboard/finance` | `src/api/routes/dashboard-finance.ts` | `GET /` <sub>:42</sub><br>`PUT /valuation` <sub>:110</sub> | gated |
 | `/api/kpi` | `src/api/routes/kpi.ts` | `GET /me` <sub>:331</sub><br>`GET /users/:id` <sub>:340</sub><br>`GET /payout/:id` <sub>:355</sub><br>`PUT /payout/:id` <sub>:362</sub><br>`PUT /checklist/:kpiKey` <sub>:433</sub><br>`GET /checklist/:kpiKey` <sub>:494</sub><br>`POST /survey/:kpiKey` <sub>:516</sub><br>`POST /survey/:kpiKey/link` <sub>:573</sub><br>`PUT /rating/:kpiKey` <sub>:640</sub><br>`GET /survey/:kpiKey` <sub>:693</sub><br>`GET /library` <sub>:714</sub><br>`PUT /rules/:kpiKey` <sub>:772</sub><br>`GET /people` <sub>:815</sub><br>`GET /catalog` <sub>:864</sub><br>`GET /assignments/:id` <sub>:878</sub><br>`PUT /assignments/:id` <sub>:891</sub><br>`PUT /kpi/:kpiKey/assignees` <sub>:954</sub> | gated |
