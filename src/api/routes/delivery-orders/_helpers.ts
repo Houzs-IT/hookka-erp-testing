@@ -2316,9 +2316,9 @@ export async function createDeliveryOrderForPOs(
                 serviceOrderId, productCode, productName,
                 sizeLabel, fabricCode, quantity, rackingNumber,
                 customerName, customerState, itemCategory, specialOrder
-           FROM production_orders WHERE id IN (${placeholders})`,
+           FROM production_orders WHERE id IN (${placeholders}) AND orgId = ?`,
       )
-        .bind(...productionOrderIds)
+        .bind(...productionOrderIds, getOrgId(c))
         .all<PoRow & { consignmentOrderId?: string | null }>();
       poRowsForItems = poRes.results ?? [];
       if (poRowsForItems.length === 0) {
@@ -2326,6 +2326,28 @@ export async function createDeliveryOrderForPOs(
           ok: false,
           status: 400,
           body: { success: false, error: "No matching production orders" },
+        };
+      }
+      // Items are written as sent, so every line must name one of the
+      // (org-scoped) production orders loaded above. A line with no
+      // productionOrderId, or one outside this org / not found, is refused
+      // instead of being written unguarded.
+      const loadedPoIds = new Set(poRowsForItems.map((r) => r.id));
+      const strayItem = (Array.isArray(body.items) ? body.items : []).find(
+        (it: Record<string, unknown> | null) => {
+          const pid = it?.productionOrderId;
+          return typeof pid !== "string" || !loadedPoIds.has(pid);
+        },
+      );
+      if (strayItem !== undefined) {
+        return {
+          ok: false,
+          status: 400,
+          body: {
+            success: false,
+            error:
+              "Every delivery order line must reference one of the selected production orders (productionOrderId missing or not found)",
+          },
         };
       }
       // CO POs route via Consignment Notes, not Delivery Orders. Frontend

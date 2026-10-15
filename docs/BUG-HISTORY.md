@@ -330,6 +330,7 @@ and that the PO screen reads the same field as sen).
 - Server: create guards every production order named in `productionOrderIds` or in `items`. An SO-linked create with no production orders at all is refused 400.
 - Sales page: the dialog lists the SO's production orders that are ready to deliver (`/api/delivery-orders/ready-planning`, the Delivery page's own source) and sends their ids. The button is disabled when nothing is ready.
 - Consignment page: its "Transfer to Delivery Order" sent the same refused shape and could never succeed (a consignment PO is already refused on a DO). It is now "Create Consignment Note", which opens `/consignment/note`.
+- Review fixes (2026-10-15): the production_orders lookup in create now filters `orgId = ?` (the ids can come from `items[].productionOrderId`, so an unscoped lookup would read another org's rows); with `productionOrderIds` non-empty, a line with no `productionOrderId`, or one not among the loaded orders, is refused 400. Still open and documented, not fixed: no per-line selection on the Sales dialog, and the ready-planning fetch is large.
 
 **Verified.** Staging, 2026-09-30, all 10 BUG-06 cases passed on the same code. On main: tests only. Prod not checked yet (UNMEASURED).
 

@@ -1,5 +1,6 @@
 # Delivery & Consignment — Module Guide
 
+> **Last verified: 2026-10-15** (review fixes on `fix/bug06-do-duplicate-guard-main`): `createDeliveryOrderForPOs` production-order lookup is org-scoped and refuses lines whose `productionOrderId` is missing or not among the loaded orders. Nothing else re-checked.
 > **Last verified: 2026-10-07** (branch `fix/bug06-do-duplicate-guard-main`, BUG-2026-09-30-223): `validateDoComposition` `_helpers.ts:2094` and `createDeliveryOrderForPOs` `:2223` re-derived; create now guards every production order in `productionOrderIds` and `items`; the Consignment page's Transfer-to-DO is now "Create Consignment Note". Nothing else re-checked.
 > **Last verified: 2026-09-22** (branch `fix/delivery-loading-gate-po-paging`, BUG-2026-09-22-004) — the page's
 > `loading` gates on the CURRENT tab's rows only (`delivery/index.tsx:~1262`); Planning / Pending Delivery
