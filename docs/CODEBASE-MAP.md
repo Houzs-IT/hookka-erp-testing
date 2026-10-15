@@ -2367,16 +2367,16 @@ two roles. "Org-scoped" means the SQL carries an `org_id` / `orgId` bind.
 | POST `/api/scan-queue/:id/retry` | `src/api/routes/scan-queue.ts:1201` | `purchase-orders:create` | org-filtered SELECT, then an id-only UPDATE (transitively safe) |
 | POST `/api/scan-queue/:id/consume` | `src/api/routes/scan-queue.ts:1273` | `purchase-orders:create` | org-filtered |
 
-Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1495`)
+Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1531`)
 is exported and mounted by hand as `POST /api/internal/scan-queue-sweep`
 (`src/api/worker.ts:791`), registered **before** `authMiddleware` and gated by a
 constant-time `CRON_SECRET` compare that 503s when the secret is unset or under 16 chars
 (`src/api/worker.ts:791-798`). Its SQL is deliberately org-blind — it is a system sweep.
 
-Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:114`) ·
-`hydrateRow` (`src/api/routes/scan-queue.ts:248`) ·
+Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:95`) ·
+`hydrateRow` (`src/api/routes/scan-queue.ts:261`) ·
 `processOneRow` (`src/api/routes/scan-queue.ts:334`, one claim + extract per `/work` request; returns processed | skipped | drained | error) ·
-`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1557`, the per-poll recovery path — Pages has
+`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1607`, the per-poll recovery path — Pages has
 no cron, so the poll endpoints self-heal; re-queues ONLY, the open modal drives the row).
 
 ### `src/api/routes/scan-po.ts` — customer-PO OCR

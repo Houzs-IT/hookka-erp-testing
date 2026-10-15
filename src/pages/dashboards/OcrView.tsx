@@ -227,7 +227,7 @@ export function OcrView({ period }: { period: Period }) {
                     <td className={`${TD} whitespace-nowrap text-[#6B7280]`}>{p.createdAt.slice(0, 16).replace("T", " ")}</td>
                     <td className={TD}>
                       <a
-                        href={`/api/scan-queue/${encodeURIComponent(p.id)}/bytes`}
+                        href={`/api/scan-queue/${encodeURIComponent(p.id)}/original`}
                         target="_blank"
                         rel="noreferrer"
                         className="text-[#6B5C32] underline underline-offset-2 break-all"
