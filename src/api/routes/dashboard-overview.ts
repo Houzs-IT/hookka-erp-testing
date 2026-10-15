@@ -27,6 +27,16 @@ import {
   readStateSnapshotForMonth,
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
+import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
+import {
+  allocateDocsByCategory,
+  loadDeptRevenue,
+  loadInvoiceLines,
+  loadSoLines,
+  productionByCategory,
+  revenueBuckets,
+  summarizeDeptRevenue,
+} from "../lib/dept-revenue";
 
 // DO statuses that mean goods have shipped — same set the all-time
 // "Delivered" figure uses (loadDeliveredItemsValueSen) so This-Month
@@ -244,56 +254,10 @@ app.get("/", async (c) => {
       }
     }
 
-    // Rolling 7 most-recent COMPLETE working days (Mon-Sat, EXCLUDING
-    // Sundays AND public holidays), ending YESTERDAY — same window the
-    // Planning page uses. This ALWAYS drives the Backlog "days of queue"
-    // figure (`backlogDays`), which is a point-in-time state metric and is
-    // therefore NOT re-scoped by the selected month. `guard` caps the
-    // walk-back so a malformed holiday list can never spin.
-    const rolling7Days: string[] = [];
-    {
-      const cur = new Date(today);
-      cur.setDate(cur.getDate() - 1);
-      let guard = 0;
-      while (rolling7Days.length < 7 && guard < 130) {
-        guard++;
-        const iso = fmtISO(cur);
-        if (cur.getDay() !== 0 && !holidaySet.has(iso)) rolling7Days.push(iso);
-        cur.setDate(cur.getDate() - 1);
-      }
-    }
-    const rolling7Set = new Set(rolling7Days);
-
-    // Daily-Capacity widget window (Mon-Sat, EXCLUDING Sundays AND public
-    // holidays). The widget's average divisor is `windowDays.length`.
-    //   - All-time / current behaviour → identical to the rolling 7 above.
-    //   - A selected month → every working day in that month within
-    //     [monthScope.start .. monthScope.end] (end already clamped to
-    //     yesterday for the current month). Divisor becomes that month's
-    //     working-day COUNT, not a hardcoded 7.
-    let windowDays: string[];
-    if (monthScope) {
-      windowDays = [];
-      // Capacity averaging counts COMPLETE days only: the in-progress today is
-      // excluded (it deflated the month average all day long — owner audit
-      // 2026-07-11). monthScope.end itself stays "today" because the Completed
-      // widgets DO want today's completions; only this divisor window differs.
-      const capEnd =
-        monthScope.end === fmtISO(new Date(today)) && !isPastMonth
-          ? fmtISO(new Date(new Date(today).getTime() - 24 * 60 * 60 * 1000))
-          : monthScope.end;
-      const cur = new Date(`${monthScope.start}T00:00:00`);
-      let guard = 0;
-      while (fmtISO(cur) <= capEnd && guard < 40) {
-        guard++;
-        const iso = fmtISO(cur);
-        if (cur.getDay() !== 0 && !holidaySet.has(iso)) windowDays.push(iso);
-        cur.setDate(cur.getDate() + 1);
-      }
-    } else {
-      windowDays = rolling7Days;
-    }
-    const windowSet = new Set(windowDays);
+    // The two working-day windows (rolling 7 for Backlog, the Daily-Capacity
+    // window) are built further down, right after the job cards load: a
+    // Sunday / public holiday counts only when production happened on it
+    // (owner 2026-10-15), and that needs the job cards. See lib/working-days.
 
     const [
       jcRes,
@@ -929,6 +893,46 @@ app.get("/", async (c) => {
         )
         .all<{ dept: string; n: number }>(),
     ]);
+
+    // ---- Working-day windows (owner 2026-10-15) ----
+    // A day counts toward the per-day averages when it is Mon–Sat and not a
+    // public holiday, OR when production happened on it (a worked Sunday /
+    // holiday is pulled in; an idle one never deflates the average).
+    const workedDays = new Set<string>();
+    for (const jc of jcRes.results ?? []) {
+      if ((jc.status === "COMPLETED" || jc.status === "TRANSFERRED") && jc.completedDate) {
+        if (jcMinutesTotal(jc.actualMinutes ?? jc.estMinutes ?? 0, jc) > 0) {
+          workedDays.add(String(jc.completedDate).slice(0, 10));
+        }
+      }
+    }
+    const yesterdayISOForWindows = fmtISO(new Date(new Date(today).getTime() - 24 * 60 * 60 * 1000));
+    // Rolling 7 most-recent COMPLETE working days, ending YESTERDAY — same
+    // window the Planning page uses. This ALWAYS drives the Backlog "days of
+    // queue" figure (`backlogDays`), a point-in-time state metric, so it is
+    // NOT re-scoped by the selected month.
+    const rolling7Days = workingDaysBack(yesterdayISOForWindows, 7, holidaySet, workedDays);
+    const rolling7Set = new Set(rolling7Days);
+    // Daily-Capacity widget window. The widget's average divisor is
+    // `windowDays.length`.
+    //   - All-time → identical to the rolling 7 above.
+    //   - A selected month → every working day in [monthScope.start ..
+    //     monthScope.end]; the divisor is that month's working-day COUNT.
+    //     Capacity averaging counts COMPLETE days only: the in-progress today
+    //     is excluded (it deflated the month average all day long — owner
+    //     audit 2026-07-11). monthScope.end itself stays "today" because the
+    //     Completed widgets DO want today's completions.
+    let windowDays: string[];
+    if (monthScope) {
+      const capEnd =
+        monthScope.end === fmtISO(new Date(today)) && !isPastMonth
+          ? yesterdayISOForWindows
+          : monthScope.end;
+      windowDays = workingDaysInRange(monthScope.start, capEnd, holidaySet, workedDays);
+    } else {
+      windowDays = rolling7Days;
+    }
+    const windowSet = new Set(windowDays);
 
     // ---- Production ----
     let capacityMin = 0; // capacity over the Daily-Capacity widget window
@@ -2310,6 +2314,52 @@ app.get("/", async (c) => {
     captureTodayState(data as Record<string, unknown>);
   }
 
+  return c.json({ success: true, ...data });
+});
+
+// ---------------------------------------------------------------------------
+// GET /revenue-split?period=all|YYYY-MM — owner 2026-10-15.
+//   departments: revenue per production department, Production-Revenue rule
+//                per department (see lib/dept-revenue.ts), split by category.
+//   revenue:     the Revenue chart's three lines split Bedframe / Sofa /
+//                Accessory / Unclassified, on the chart's own buckets.
+// Its own endpoint, computed fresh: the main payload is snapshotted and a past
+// month's is frozen (freezeMonth), so a field added there would be missing
+// from every month already frozen. Same mount, so the same access rule as the
+// Revenue chart.
+// ---------------------------------------------------------------------------
+app.get("/revenue-split", async (c) => {
+  const orgId = getOrgId(c);
+  const { cached } = await import("../lib/kv-cache");
+  const periodRaw = c.req.query("period") ?? "all";
+  const period = /^\d{4}-\d{2}$/.test(periodRaw) ? periodRaw : "all";
+  const data = await cached(c, `dashboard:revenue-split:${orgId}:v1:${period}`, 60, async () => {
+    const db = c.var.DB;
+    // Same "today" as the main overview (server clock, UTC on Workers).
+    const todayISO = fmtISO(new Date());
+    const { from, to, buckets, bucketOf } = revenueBuckets(period, todayISO);
+    const [deptRows, soLines, invLines] = await Promise.all([
+      loadDeptRevenue(db, orgId, from, to),
+      loadSoLines(db, orgId, from, to),
+      loadInvoiceLines(db, orgId, from, to),
+    ]);
+    const so = allocateDocsByCategory(soLines, buckets, bucketOf);
+    const inv = allocateDocsByCategory(invLines, buckets, bucketOf);
+    const prod = productionByCategory(deptRows, buckets, bucketOf);
+    return {
+      period,
+      from,
+      to,
+      granularity: period === "all" ? "week" : "day",
+      revenue: buckets.map((bucket, i) => ({
+        bucket,
+        salesOrder: so[i],
+        invoice: inv[i],
+        production: prod[i],
+      })),
+      departments: summarizeDeptRevenue(deptRows, buckets, bucketOf),
+    };
+  });
   return c.json({ success: true, ...data });
 });
 

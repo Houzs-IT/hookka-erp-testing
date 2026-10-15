@@ -1,5 +1,9 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: SO customer pencil (#864, HK-0094) prod-verified.
+> **Last verified: 2026-10-15**: branch `feat/hk0094-so-customer-edit` (to `main`, IT Hub HK-0094) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/dept-revenue-main` (to `main`, department revenue + Bedframe/Sofa split, from staging #860, plus the phone dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
 > **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
@@ -147,6 +151,44 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 2026-10-15 — 🔵 Dashboard: idle Sundays out of every per-day chart and average (branch `feat/hide-idle-sundays` → `main`)
+
+Owner asks (2026-10-15): 「礼拜天 remove 掉，因为没开工，除非礼拜天开工才拉进来 … 全部的 chart 和数据都是，不要被这个影响了我们的数据」.
+1. 🔵 Charts (/dashboard Revenue + Department Revenue, /m Revenue, Completed per-day list): a Sunday whose every plotted value is 0 is left off the axis; a Sunday with any figure stays. Weekday zeros still show. `src/lib/idle-sundays.ts`.
+2. 🔵 Averages (Daily Capacity, Backlog days of queue): working days were Mon–Sat minus holidays, so a WORKED Sunday's output was dropped. Now a Sunday or public holiday counts only when production happened on it (completed job-card minutes > 0). `src/api/lib/working-days.ts`.
+3. 🔵 Not covered: /dashboard-experimental's Daily tab; frozen past months keep the figures they were frozen with.
+
+## 2026-10-15 — ✅ SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(#864 9688216, prod-verified)
+
+1. ✅ The order behind the ticket: SO-2609-392 (Customer PO `2990-PO-2609-042`) was keyed under Houzs Century. Siti asked for it
+   moved and re-priced, so Samuel ran a one-off SQL repair on prod on 2026-10-15: 2990 HOME SDN BHD / 2990 KL, line price
+   RM 1,155.00 → RM 1,091.48 (2990's seat-24 price). The SQL also covered the production order and the PACKED fg_unit, and
+   wiped the seven `sales` snapshot tables. Read-back on prod confirmed it. Siti reprints the packing sticker.
+2. ✅ `PATCH /api/sales-orders/:id/customer` `{customerId, hubId?, reason?}`. Moves the SO, its production orders
+   (`customerName` / `customerState`), its un-shipped fg_units (sticker customer + hub), and any DRAFT DO / DRAFT invoice
+   (customer + hub contact block). Item prices are not touched (Siti: prices stay the same).
+   Returns 409 when: a DO is LOADED or later; a non-DRAFT, non-CANCELLED invoice exists; a draft DO also carries another
+   SO; or an open service order exists. A POTENTIAL customer is refused (`assertCustomerBillable`). Writes a
+   `customer-change` audit row. Wipes the `sales` snapshots and bumps the PO-list KV version.
+3. ✅ `src/components/orders/CustomerEditModal.tsx` + a pencil next to Customer on `src/pages/sales/detail.tsx`. Pick the
+   customer, then its hub (auto-picked when the customer has one). Disabled with the reason once a DO has shipped or an
+   invoice has been issued.
+4. ✅ Staging preview `claude-hk94` (staging DB), 2026-10-15: SO-2609-392 moved Houzs Century → 2990 HOME through the UI;
+   SO, production order and SO list show 2990 HOME / 2990 KL, price stayed RM 1,155.00, `customer-change` audit row
+   written. SO-2610-170 (DO-2610-029 INVOICED) shows the pencil disabled with the lock reason. PR #864.
+5. ✅ Siti saw BEFORE/AFTER from canary-864 (modal only, no save)「okey nice . can put it live already」.
+6. ✅ Prod, read-only after deploy: SO-2609-392 pencil enabled; SO-2610-182 pencil disabled ("Customer locked: DO
+   DO-2610-048 already INVOICED."); the route answers an empty body with 400 "customerId is required".
+## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue-main` → `main`; staging #860)
+
+Owner asks (2026-10-15, decisions confirmed in chat; owner asked to put it on prod before the staging check):
+1. 🔵 Department revenue, same rule as Production (UPHOLSTERY) revenue: department X books a production order's full value (SO line → CO line → product price × qty) on the day ALL of that order's department-X job cards are COMPLETED/TRANSFERRED. Every department books the full value (a RM 2,000 sofa through 9 departments = RM 18,000 across departments), so equal output = balanced supply. An order with no card in a department books nothing there. All 10 production departments, Packing included.
+2. 🔵 New /dashboard card "Department Revenue": one row per department, Bedframe / Sofa / Total for the selected period, plus a per-day (month) / per-week (all-time) line chart per department; All / Bedframe / Sofa toggle.
+3. 🔵 Existing Revenue chart (Sales Orders · Invoices · Production) gets an All / Bedframe / Sofa toggle; Accessory counts in All only.
+4. 🔵 The existing Labor Cost "category revenue" (minutes-weighted slices that sum to the order value) is a different measure and stays unchanged.
+5. 🔵 Phone dashboard (/m Home): the same Bedframe / Sofa toggle on its Revenue chart and a Department Revenue section, laid out for a phone.
+6. 🔵 Not yet checked against real data (staging or prod) — needs a sign-in; to do after deploy.
 
 ## 2026-10-14 — 🔵 Second void of a purchase invoice answers 500 (branch `fix/pi-revoid-legno-main` → `main`, BUG-2026-10-14-286)
 

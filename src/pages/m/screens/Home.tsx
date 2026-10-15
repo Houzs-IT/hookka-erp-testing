@@ -71,6 +71,8 @@ import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard } from "../com
 import { GlobalSearchSheet } from "../components/GlobalSearchSheet";
 import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
+import { pickCat, type RevCat, type RevenueSplitResp } from "@/pages/dashboard-b/revenue-split";
+import { dropIdleSundays } from "@/lib/idle-sundays";
 import { type FormSpec } from "../config/form-types";
 import {
   newSalesOrderSpec,
@@ -350,6 +352,14 @@ export default function MobileHome() {
   const { data: overview } = useCachedJson<OverviewResp>(
     `/api/dashboard/overview?period=${period}`,
   );
+  // Bedframe / Sofa split + Department Revenue (owner 2026-10-15) — the
+  // desktop dashboard's revenue-split feed. Gated like the other heavy
+  // fetches so the first paint stays the KPI cards.
+  const { data: split } = useCachedJson<RevenueSplitResp>(
+    pdEnabled ? `/api/dashboard/overview/revenue-split?period=${period}` : null,
+  );
+  const [revCat, setRevCat] = useState<RevCat>("all");
+  const [deptCat, setDeptCat] = useState<RevCat>("all");
   // ---- Orders due — the SIX rows this card renders, and nothing else.
   //
   // perf 2026-08-13 (BUG-2026-08-13-013): this was `useCachedJson("/api/
@@ -549,7 +559,19 @@ export default function MobileHome() {
   // series gets an area fill. Legend toggles are local state (revHide). ----
   const REV_W = 320, REV_H = 132;
   const revenue = useMemo(() => {
-    const pts = overview?.weeklyRevenue ?? [];
+    // All = the overview's own lines; Bedframe / Sofa = the split feed on the
+    // same per-day buckets (empty until it lands).
+    const allPts: { week: string; salesOrderSen: number; invoiceSen: number; productionSen: number }[] =
+      revCat === "all"
+        ? overview?.weeklyRevenue ?? []
+        : (split?.revenue ?? []).map((r) => ({
+            week: r.bucket,
+            salesOrderSen: pickCat(r.salesOrder, revCat),
+            invoiceSen: pickCat(r.invoice, revCat),
+            productionSen: pickCat(r.production, revCat),
+          }));
+    // Idle Sundays (every line 0) are left off the axis (owner 2026-10-15).
+    const pts = dropIdleSundays(allPts, (p) => p.week, (p) => [p.salesOrderSen, p.invoiceSen, p.productionSen]);
     if (pts.length === 0) return null;
     const n = pts.length;
     const series = [
@@ -574,7 +596,25 @@ export default function MobileHome() {
       .filter((_, i) => i % step === 0);
     const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ y: (REV_H * f).toFixed(1) }));
     return { lines, series, x, y, days, grid, last: pts[n - 1] };
-  }, [overview]);
+  }, [overview, split, revCat]);
+
+  // ---- Department Revenue (owner 2026-10-15). Each department books an
+  // order's FULL value when its last card for that order completes (the
+  // Production rule per department), so balanced output = equal bars. Ten
+  // overlapping lines do not read on a phone; a bar per department does. ----
+  const deptRev = useMemo(() => {
+    const depts = split?.departments ?? [];
+    if (depts.length === 0) return null;
+    const rows = depts.map((d) => ({
+      code: d.code,
+      label: d.label,
+      value: pickCat(d.period, deptCat),
+      bedframe: d.period.bedframe,
+      sofa: d.period.sofa,
+    }));
+    const max = Math.max(1, ...rows.map((r) => r.value));
+    return { rows, max };
+  }, [split, deptCat]);
   // Local legend toggle — hide a revenue series by key.
   const [revHide, setRevHide] = useState<Record<string, boolean>>({});
 
@@ -1126,6 +1166,7 @@ export default function MobileHome() {
             <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
               Sales Orders · Invoices · Production · tap a legend to toggle
             </div>
+            <CatPills value={revCat} onChange={setRevCat} splitReady={!!split?.revenue} />
             <div style={{ display: "flex", gap: 14, margin: "12px 0 8px" }}>
               {revenue.lines.map((l) => {
                 const hidden = !!revHide[l.key];
@@ -1205,6 +1246,46 @@ export default function MobileHome() {
                 >
                   {d.d}
                 </span>
+              ))}
+            </div>
+          </MobileCard>
+        ) : null}
+
+        {/* ===== Department Revenue — one bar per production department ===== */}
+        {deptRev ? (
+          <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
+              Department Revenue · {periodLabel(period)}
+            </div>
+            <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
+              Full order value per department, same rule as Production · equal bars = balanced
+            </div>
+            <CatPills value={deptCat} onChange={setDeptCat} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+              {deptRev.rows.map((r) => (
+                <div key={r.code}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: M.raisin }}>{r.label}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums" }}>
+                      {formatCurrency(r.value)}
+                    </span>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 3, background: "#F2EEE6", marginTop: 4 }}>
+                    <div
+                      style={{
+                        height: 6,
+                        borderRadius: 3,
+                        width: `${(r.value / deptRev.max) * 100}%`,
+                        background: "#C9A961",
+                      }}
+                    />
+                  </div>
+                  {deptCat === "all" ? (
+                    <div style={{ fontSize: 10.5, color: M.muted, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                      Bedframe {formatCurrency(r.bedframe)} · Sofa {formatCurrency(r.sofa)}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </MobileCard>
@@ -2217,6 +2298,56 @@ function QuickAction({
         {label}
       </span>
     </button>
+  );
+}
+
+// All / Bedframe / Sofa pills for the revenue cards (owner 2026-10-15).
+// Bedframe / Sofa read the split feed; until it has landed (`splitReady`
+// false) only All can be picked, so the card never empties under the pills.
+function CatPills({
+  value,
+  onChange,
+  splitReady = true,
+}: {
+  value: RevCat;
+  onChange: (v: RevCat) => void;
+  splitReady?: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 6, margin: "10px 0 6px" }}>
+      {(
+        [
+          ["all", "All"],
+          ["bedframe", "Bedframe"],
+          ["sofa", "Sofa"],
+        ] as const
+      ).map(([v, label]) => {
+        const on = value === v;
+        const disabled = v !== "all" && !splitReady;
+        return (
+          <button
+            key={v}
+            type="button"
+            aria-pressed={on}
+            disabled={disabled}
+            onClick={() => onChange(v)}
+            style={{
+              border: "none",
+              borderRadius: 999,
+              padding: "5px 12px",
+              fontSize: 11.5,
+              fontWeight: 600,
+              background: on ? "#5E5129" : "#F5F2ED",
+              color: on ? "#FFFFFF" : M.body,
+              opacity: disabled ? 0.45 : 1,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

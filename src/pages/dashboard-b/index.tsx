@@ -15,6 +15,9 @@ import { formatCurrency } from "@/lib/utils";
 import { Skeleton, SkeletonDashboard } from "@/components/ui/skeleton";
 import { useCachedJson, isUnknownOutcome } from "@/lib/cached-fetch";
 import { OcrAccuracyCard } from "./OcrAccuracyCard";
+import { DeptRevenueCard, CatToggle } from "./DeptRevenueCard";
+import { pickCat, type RevCat, type RevenueSplitResp } from "./revenue-split";
+import { dropIdleSundays } from "@/lib/idle-sundays";
 // recharts (~357 KB) is loaded lazily so the KPI numbers paint first; the
 // chart code streams in behind a placeholder. See ./charts.tsx.
 const RevenueChart = lazy(() =>
@@ -717,6 +720,13 @@ export default function DashboardBPage() {
   const { data: ovRaw, loading: ovL } = useCachedJson<Overview>(
     `/api/dashboard/overview?period=${period}`,
   );
+  // Bedframe / Sofa split of the Revenue chart + Department Revenue (owner
+  // 2026-10-15). Separate, fresh endpoint: the overview payload above is
+  // snapshotted / frozen per month and has no split.
+  const { data: splitRaw, loading: splitL } = useCachedJson<RevenueSplitResp>(
+    `/api/dashboard/overview/revenue-split?period=${period}`,
+  );
+  const [revCat, setRevCat] = useState<RevCat>("all");
   // Pending Delivery money — ONE small server-computed number.
   //
   // This tile used to assemble the figure in the browser from four whole-org
@@ -845,14 +855,29 @@ export default function DashboardBPage() {
   const weekRev = useMemo(() => ov.weeklyRevenue ?? [], [ov.weeklyRevenue]);
   const revChart = useMemo(
     () =>
-      weekRev.map((r) => ({
-        // All-time → "MM-DD" of the week-start; month → "MM-DD" of the day.
-        m: r.week.slice(5),
-        "Sales Orders": Math.round(r.salesOrderSen / 100),
-        Invoices: Math.round(r.invoiceSen / 100),
-        Production: Math.round(r.productionSen / 100),
-      })),
-    [weekRev],
+      // All keeps the overview's own lines (frozen months stay as frozen);
+      // Bedframe / Sofa come from the split endpoint on the same buckets.
+      // Idle Sundays (every line 0) are left off the per-day axis; a Sunday
+      // with any figure stays (owner 2026-10-15).
+      revCat === "all"
+        ? dropIdleSundays(weekRev, (r) => r.week, (r) => [r.salesOrderSen, r.invoiceSen, r.productionSen]).map((r) => ({
+            // All-time → "MM-DD" of the week-start; month → "MM-DD" of the day.
+            m: r.week.slice(5),
+            "Sales Orders": Math.round(r.salesOrderSen / 100),
+            Invoices: Math.round(r.invoiceSen / 100),
+            Production: Math.round(r.productionSen / 100),
+          }))
+        : dropIdleSundays(
+            splitRaw?.revenue ?? [],
+            (r) => r.bucket,
+            (r) => [pickCat(r.salesOrder, revCat), pickCat(r.invoice, revCat), pickCat(r.production, revCat)],
+          ).map((r) => ({
+            m: r.bucket.slice(5),
+            "Sales Orders": Math.round(pickCat(r.salesOrder, revCat) / 100),
+            Invoices: Math.round(pickCat(r.invoice, revCat) / 100),
+            Production: Math.round(pickCat(r.production, revCat) / 100),
+          })),
+    [weekRev, revCat, splitRaw],
   );
   // Sparkline for the Sales card — the monthly confirmed-SO trend.
   const soSpark = useMemo(() => rev.map((r) => r.salesOrderSen), [rev]);
@@ -1299,9 +1324,10 @@ export default function DashboardBPage() {
           <CardContent className="p-5">
             <SectionTitle
               title={revTitle}
-              sub="Sales Orders · Invoices · Production · click a legend to toggle"
+              sub={`Sales Orders · Invoices · Production${revCat === "all" ? "" : ` · ${revCat === "sofa" ? "Sofa" : "Bedframe"} only`} · click a legend to toggle`}
               right={
-                <div className="flex flex-wrap gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <CatToggle value={revCat} onChange={setRevCat} />
                   {(
                     [
                       ["Sales Orders", C_SO],
@@ -1332,7 +1358,7 @@ export default function DashboardBPage() {
             <div className="min-w-0" style={{ width: "100%", height: 260 }}>
               {revChart.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-xs text-[#9CA3AF]">
-                  No revenue data.
+                  {revCat !== "all" && splitL ? "Loading…" : "No revenue data."}
                 </div>
               ) : (
                 <Suspense
@@ -1564,7 +1590,11 @@ export default function DashboardBPage() {
                     node: (
                       <MiniTable
                         cols={["Date", "Bedframe units", "Sofa sets"]}
-                        rows={prod.completedLast7.map((d) => [
+                        rows={dropIdleSundays(
+                          prod.completedLast7,
+                          (d) => d.date,
+                          (d) => [d.bedframeUnits, d.sofaSets],
+                        ).map((d) => [
                           d.date,
                           d.bedframeUnits.toLocaleString(),
                           d.sofaSets.toLocaleString(),
@@ -1591,6 +1621,13 @@ export default function DashboardBPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Department Revenue (owner 2026-10-15) */}
+      <DeptRevenueCard
+        data={splitRaw}
+        loading={splitL}
+        periodLabel={isAllTime ? "last 12 weeks" : period}
+      />
 
       {/* Pipeline + Worker efficiency */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
