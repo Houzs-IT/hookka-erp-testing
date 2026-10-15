@@ -15,6 +15,7 @@ import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { poLineUnit, rmUnitMap } from "../../lib/material-variants";
 import { supplierPoEmailTemplate } from "../lib/email";
 import { enqueueEmail } from "../lib/email-outbox";
 import { emitAudit } from "../lib/audit";
@@ -210,6 +211,29 @@ function fillBlankSupplierSku(
 function genPoId(): string {
   return `po-${crypto.randomUUID().slice(0, 8)}`;
 }
+/** HK-0037: baseUOM of every raw material named by these lines (org-scoped). */
+async function rmBaseUoms(
+  db: D1Database,
+  orgId: string,
+  items: Array<Record<string, unknown>>,
+): Promise<Map<string, string>> {
+  const codes = [...new Set(items.map((i) => String(i.materialCode ?? "").trim().toUpperCase()).filter(Boolean))];
+  if (codes.length === 0) return new Map();
+  // D1 caps bound parameters at 100 per statement: orgId + 90 codes per query.
+  const rows: Array<{ itemCode: string; baseUOM: string | null }> = [];
+  for (let i = 0; i < codes.length; i += 90) {
+    const chunk = codes.slice(i, i + 90);
+    const { results } = await db
+      .prepare(
+        `SELECT itemCode, baseUOM FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
+      )
+      .bind(orgId, ...chunk)
+      .all<{ itemCode: string; baseUOM: string | null }>();
+    rows.push(...(results ?? []));
+  }
+  return rmUnitMap(rows);
+}
+
 function genItemId(): string {
   return `poi-${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -503,6 +527,7 @@ app.post("/", async (c) => {
         return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
       }
     }
+    const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), poItems);
     const items = poItems.map((item) => {
       const quantity = Number(item.quantity) || 0;
       const unitPriceSen = Number(item.unitPriceSen) || 0;
@@ -516,7 +541,7 @@ app.post("/", async (c) => {
         unitPriceSen,
         totalSen: quantity * unitPriceSen,
         receivedQty: 0,
-        unit: (item.unit as string) ?? "pcs",
+        unit: poLineUnit(rmUom, item.materialCode, item.unit),
       };
     });
     const subtotalSen = items.reduce((sum, i) => sum + i.totalSen, 0);
@@ -883,7 +908,37 @@ app.put("/:id", async (c) => {
           return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
         }
       }
+      const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
+      // What is stored now decides whether a line was already received: the
+      // payload's receivedQty is client-supplied and can be 0 or missing.
+      const { results: storedLines } = await c.var.DB
+        .prepare(
+          "SELECT id, material_code, unit, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ? ORDER BY line_no, rowid",
+        )
+        .bind(id)
+        .all<{ id: string; material_code: string | null; unit: string | null; receivedQty: number | null }>();
+      const stored = new Map((storedLines ?? []).map((l) => [l.id, l]));
+      // A payload line with no id (or an id we do not hold) is matched to the
+      // stored line with the same materialCode, in line order, so a received
+      // line is not re-unitised just because the client dropped its id.
+      const claimed = new Set(
+        rawItems.map((it) => String(it.id ?? "")).filter((x) => stored.has(x)),
+      );
+      const byCode = new Map<string, Array<{ id: string; unit: string | null; receivedQty: number | null }>>();
+      for (const l of storedLines ?? []) {
+        if (claimed.has(l.id)) continue;
+        const k = String(l.material_code ?? "").trim().toUpperCase();
+        if (!k) continue;
+        const q = byCode.get(k) ?? [];
+        q.push(l);
+        byCode.set(k, q);
+      }
       const newItems = rawItems.map((item) => {
+        const fallback = stored.has(String(item.id ?? ""))
+          ? undefined
+          : byCode.get(String(item.materialCode ?? "").trim().toUpperCase())?.shift();
+        const prior = stored.get(String(item.id ?? "")) ?? fallback;
+        const wasReceived = Number(prior?.receivedQty) > 0 || Number(item.receivedQty) > 0;
         const quantity = Number(item.quantity) || 0;
         const unitPriceSen = Number(item.unitPriceSen) || 0;
         return {
@@ -896,7 +951,10 @@ app.put("/:id", async (c) => {
           unitPriceSen,
           totalSen: quantity * unitPriceSen,
           receivedQty: Number(item.receivedQty) || 0,
-          unit: (item.unit as string) ?? "pcs",
+          // A line already (part-)received keeps its recorded unit: no conversion.
+          unit: wasReceived
+            ? (prior?.unit || (item.unit as string) || "pcs")
+            : poLineUnit(rmUom, item.materialCode, item.unit),
         };
       });
 

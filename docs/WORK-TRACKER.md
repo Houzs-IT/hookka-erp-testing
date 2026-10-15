@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-15**: branch `fix/hk0080-po-scan-date-iso` (to `main`, BUG-2026-10-15-288) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `fix/hk0037-rm-uom-propagation` (to `main`, HK-0037) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `docs/hk0052-already-delivered-dev36` (to `main`, IT Hub HK-0052) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: SO customer pencil (#864, HK-0094) prod-verified.
@@ -159,6 +160,10 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 1b. Review fixes DONE: SO create / PUT 400 on an unreadable date (was silent blank); day-first assumption documented.
 2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
 3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
+## 2026-10-15 — 🔵 RM unit follows the material (HK-0037, branch `fix/hk0037-rm-uom-propagation` → `main`, PR #863)
+
+1. 🔵 RM create rejects an unlisted unit; PO line unit from the RM base unit; Adjustments and GRN show the real unit.
+2. ⬜ Owner questions: per-category unit lists, ROLL/MTR conversion, BOM unit display; other PO writers (`procurement-backfills.ts`, `convert-from-po-modal.tsx`).
 ## 2026-10-15 — ⬜ IT Hub HK-0052: department option on Production Time Efficiency is already shipped as DEV-36; one ask left for the owner (branch `docs/hk0052-already-delivered-dev36` → `main`, docs only)
 
 Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TESTING 2026-10-14) asks for a Department field on the Production Time Efficiency KPI, the existing Overall kept, and assignment to the workers of that department. Read from the code on `main`, no change made:

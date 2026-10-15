@@ -192,7 +192,7 @@ function pickUnit(body: RawMaterialBody, fallback = "PCS"): string {
  * Settings): the unit list, and the units whose balance cannot be typed as a
  * fraction. A missing / malformed blob means the built-in units and the default
  * whole list — it must never block a write on its own. */
-async function loadUomConfig(
+export async function loadUomConfig(
   db: D1Database,
 ): Promise<{ units: string[]; wholeUoms: string[] }> {
   let cfg: { extraUoms?: unknown; uomOptions?: unknown; wholeUoms?: unknown } | null = null;
@@ -211,7 +211,7 @@ async function loadUomConfig(
   };
 }
 
-function uomNotAllowedMsg(uom: string, units: string[]): string {
+export function uomNotAllowedMsg(uom: string, units: string[]): string {
   return `UOM "${uom}" is not in the unit list (${units.join(", ")}). Add it in Inventory → RM Settings → Units.`;
 }
 
