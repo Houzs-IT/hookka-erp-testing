@@ -72,6 +72,7 @@ import { GlobalSearchSheet } from "../components/GlobalSearchSheet";
 import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
 import { pickCat, type RevCat, type RevenueSplitResp } from "@/pages/dashboard-b/revenue-split";
+import { dropIdleSundays } from "@/lib/idle-sundays";
 import { type FormSpec } from "../config/form-types";
 import {
   newSalesOrderSpec,
@@ -560,7 +561,7 @@ export default function MobileHome() {
   const revenue = useMemo(() => {
     // All = the overview's own lines; Bedframe / Sofa = the split feed on the
     // same per-day buckets (empty until it lands).
-    const pts: { week: string; salesOrderSen: number; invoiceSen: number; productionSen: number }[] =
+    const allPts: { week: string; salesOrderSen: number; invoiceSen: number; productionSen: number }[] =
       revCat === "all"
         ? overview?.weeklyRevenue ?? []
         : (split?.revenue ?? []).map((r) => ({
@@ -569,6 +570,8 @@ export default function MobileHome() {
             invoiceSen: pickCat(r.invoice, revCat),
             productionSen: pickCat(r.production, revCat),
           }));
+    // Idle Sundays (every line 0) are left off the axis (owner 2026-10-15).
+    const pts = dropIdleSundays(allPts, (p) => p.week, (p) => [p.salesOrderSen, p.invoiceSen, p.productionSen]);
     if (pts.length === 0) return null;
     const n = pts.length;
     const series = [

@@ -11,6 +11,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 import { pickCat, type RevCat, type RevenueSplitResp } from "./revenue-split";
+import { dropIdleSundays } from "@/lib/idle-sundays";
 
 const DeptRevenueChart = lazy(() =>
   import("./charts").then((m) => ({ default: m.DeptRevenueChart })),
@@ -77,7 +78,13 @@ export function DeptRevenueCard({
 
   const chartRows = useMemo(
     () =>
-      buckets.map((b, i) => {
+      // A Sunday no department booked anything on is a closed day: left off
+      // the axis instead of drawn as a dive to 0 (owner 2026-10-15).
+      dropIdleSundays(
+        buckets.map((b, i) => ({ b, i })),
+        (x) => x.b,
+        (x) => depts.map((d) => pickCat(d.byBucket[x.i], cat)),
+      ).map(({ b, i }) => {
         const row: Record<string, number | string> = { m: b.slice(5) };
         for (const d of depts) row[d.label] = Math.round(pickCat(d.byBucket[i], cat) / 100);
         return row;
