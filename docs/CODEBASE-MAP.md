@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-15 on branch `feat/bom-draft-activate-main` (to `main`)**: the `src/pages/bom.tsx` row, its line-range index (re-measured from the file) and the new BOM status gotcha, read from `src/pages/bom.tsx`, `src/pages/inventory/index.tsx` and `src/api/routes/bom.ts`. Same change as staging #875. Nothing else re-checked.
 > **Last verified: 2026-10-15 on branch `feat/hk0094-so-customer-edit` (to `main`)**: the `sales/detail.tsx` Sales row (line count, Customer pencil + `CustomerEditModal`, `PATCH /api/sales-orders/:id/customer`), read from those two files and `src/api/routes/sales-orders.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-14 on branch `feat/finance-overview` (to `main`)**: the Finance Overview row in Accounting & Invoicing, read from `src/pages/accounting/overview-tab.tsx`, `src/lib/overview-trend.ts` and `src/api/routes/accounting.ts` (`/overview-trend`); the `accounting_dashboard_snapshot` line ref moved with the new route. Nothing else re-checked.
 
@@ -669,7 +670,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/api/lib/packing-piece-identity.ts` — `packingPieceIdentity` (shared piece warehouse identity; appends `· pc N of M` to notes when pieceNo set + multi-piece) | | |
 | | `src/api/lib/job-card-completed-at.ts` — `ensureJobCardCompletedAt` / `observedCompletionAt` / `reconcileCompletedAt` / `readCompletedAt` (the completion INSTANT, beside the date-only `completed_date`) | `job_cards.completed_at` | `tests/job-card-completed-at.test.mjs` |
 | `src/pages/production/dept.tsx` / `overview.tsx` — thin wrappers over `production/index.tsx`, whose Overview counts now gate on `ordersObserved` (cold landing / in flight / dead read all print "—", -146) | `src/api/routes/wip-times.ts` — minute counts + `coverage.productsWithoutActiveBom` (`number \| null`, from `countProductsWithoutActiveBom` in `src/api/lib/wip-times-core.ts`) | `kv_config` · `products` (read: ACTIVE products with no ACTIVE bom_template) | `tests/sofa-combo.test.mjs` · `tests/planning-production-tile-truthfulness.test.mjs` |
-| `src/pages/bom.tsx` — BOM Management (6787) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
+| `src/pages/bom.tsx` — BOM Management (6426) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
 | `src/pages/cnc-templates.tsx` — CNC drilldown | | | |
 | `src/pages/production/components/` — BatchActionToolbar / CreateStockPODialog / CellBox / ProductDetailLine / OverviewCards (Cards view: WorkOrderCard, WorkOrderHeader, StagePipeline) | | | |
 
@@ -696,16 +697,16 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 - `src/pages/bom.tsx`
   - parseMinutes / MinutesInput (typed process minutes, 0-1440; a text box, see BUG-2026-10-05-254) — L173-188
   - RoutingPill / WIPCodeBuilder / RawMaterialSelect / MaterialScalingEditor helpers — L603-1229
-  - WIPNode (recursive BOM tree node) — L1230-1494
-  - BOMTreeView (template tree render, L1 + WIP) — L1495-1855
-  - CreateBOMDialog — L1856-2435
-  - CollapsibleGroup — L2437-2502 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
-  - flattenWipTree / WipTreeCard / wipNodeAt — L2504-2732 (two-pane tree helpers, shared by Edit BOM and Master Templates)
-  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2733-2956
-  - EditBOMDialog (L1 tab + two-pane WIP tab) — L2957-3818
-  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3819-4868
-  - BatchEditMaterialsDialog — L4869-5956
-  - BOMManagementPage (default export — page shell, tabs, list) — L5957-6440
+  - WIPNode (recursive BOM tree node) — L1238-1502
+  - BOMTreeView (template tree render, L1 + WIP; DRAFT badge + Activate button) — L1503-1880
+  - CreateBOMDialog — L1881-2447
+  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM) — L2448-2520 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
+  - flattenWipTree / WipTreeCard / wipNodeAt — L2521-2749 (two-pane tree helpers, shared by Edit BOM and Master Templates)
+  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2750-2973
+  - EditBOMDialog (L1 tab + two-pane WIP tab) — L2974-3835
+  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3836-4863
+  - BatchEditMaterialsDialog — L4864-5951
+  - BOMManagementPage (default export — page shell, tabs, list) — L5952-6426
   - (ProductionTimesDialog and DeptPivotCategoryDialog were removed 2026-08-01.)
 
 **Gotchas**
@@ -723,6 +724,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 - camelCase DB columns: most at-risk WIP/production cols are dual-keyed (r.camelCase ?? r.snake_case); db-pg toCamel can't recover folded-lowercase camelCase. New columns snake_case; a camelCase write column needs a `column-rename-map.json` entry.
 - BOM WIP types: the type dropdown is the six built-ins (HEADBOARD, DIVAN, SOFA_BASE, SOFA_CUSHION, SOFA_ARMREST, SOFA_HEADREST) plus extra names typed in Products > Maintenance > BOM > WIP Types (`variants-config.wipTypes`), merged by `buildWipTypes` in `src/lib/wip-types.ts` (extras default to Sandback until Maintenance saves a list) and loaded into bom.tsx `WIP_TYPE_LABELS` on page load; `products/bom.tsx` labels use the same list. The built-ins carry factory rules by code (default department chains in `bom-wip-breakdown.ts`, the `SOFA_` prefix scan fan-out in `production-orders.ts`, sofa foam bonding in `planning-chain.ts`); an extra type has none, so its departments come from its BOM processes. A name starting with "Sofa " becomes a `SOFA_` code and joins the sofa-set scan fan-out. Each type (built-ins included) is ticked per product type (Bedframe / Sofa / Accessory) on that tab, saved by code in `variants-config.wipTypeProducts`; `wipTypeAllowed` hides an unticked type from both BOM type dropdowns (create dialog and WIP tree node) but always keeps the row's current type, and a code with no saved list is allowed everywhere. Pins: `tests/wip-types.test.mjs`. The WIP code builder variant fields per product type work the same way: ticked in Products > Maintenance > BOM > Variant Fields, one row per field with Bedframe / Sofa / Accessory ticks (`variants-config.bomVariantFields`), read through `variantFieldsFor` in `src/lib/bom-variant-fields.ts` (Accessory defaults include Model); only the ten known token fields can be ticked. Pins: `tests/bom-variant-fields.test.mjs`.
 - `bom_templates.category` can only hold BEDFRAME / SOFA, so an ACCESSORY product's BOM is stored as BEDFRAME. Read category from the product row: `withProductCategory` (`src/pages/bom-category.ts`) on the BOM page, `COALESCE(p.category, bt.category)` in `wip-times-core.ts` (BUG-2026-10-01-237).
+- **BOM status: many readers take ACTIVE BOMs only** (WIP times, fabric usage, KPIs, PO cost cascade, sales orders), while job cards fall back to the newest BOM of any status. Inventory > Add FG > Bulk generate POSTs copied BOMs without `versionStatus`, so the server saves them DRAFT (BUG-2026-10-15-289). The BOM page shows a DRAFT badge in the product list and an Activate button on the BOM header, which saves `versionStatus: "ACTIVE"` through `PUT /api/bom/templates/:id`.
 - BOM process minutes are TYPED IN on every BOM process row (`MinutesInput`, bom.tsx) or bulk-edited on WIP Times (wip-times.tsx/route); both write `bom_templates.wipComponents` / `l1Processes` and feed productionCostRatePerMinuteSen in the PO cost cascade. The CAT 1-14 dropdown and its Production Times matrix lookup were removed 2026-10-05 (owner); old rows keep their stored `category`, new rows save `""`, and `production-order-builder.ts` no longer stamps `"CAT 1"` on job cards (the dept+category job-card resync in `bom.ts` skips empty categories). Pins: `tests/bom-manual-minutes.test.mjs`.
 - EditBOMDialog's WIP tab is TWO-PANE (2026-08-03): `flattenWipTree` turns the recursive tree into indented rows on the left (selection + collapse, addressed by a `wi.path` key), and `WipNodeDetail` edits the SELECTED node on the right at full width. It replaced an inline recursive render inside a fixed 720px dialog, where each nesting level stole ~20px and the category select clipped to "CAT 3" by level 3, with four clashing background fills stacked inside one another. Since 2026-10-01 the left tree is layered colour cards (`WipTreeCard`, one tint per level) rather than flat rows. The dialog is `w-[min(1360px,96vw)]` and the WIP tab owns its own scrolling (the body switches to `overflow-hidden` so each pane scrolls independently). Because ONE detail pane serves every depth, EditBOMDialog carries depth-agnostic adapters (`nUpdate`, `nAddProcess`, `nMove`, …) that dispatch on `path.length === 0` between the `xxxWIP(wi,…)` and `xxxAtPath(wi,path,…)` handler families — BOTH families are still live and must stay in sync. MasterTemplatesDialog uses the same layout since 2026-10-07 (L1 / WIP tabs, `WipTreeCard` tree on the left, `WipNodeDetail` on the right). Its handlers are all path-based already, so it only adapts remove / move / wrap; remove and move call the same `removeWipLevel` / `moveWipNode` / `canMoveWipNode` (`src/lib/wip-tree-ops.ts`) as Edit BOM, and it alone can wrap a top-level WIP. Pins: `tests/bom-editor-reorder.test.mjs`.
 - Sofa combo pricing is BACKEND-unified (`applySofaCombos`) wired into sales-orders POST/PUT — production reads the priced SO; don't re-price in the production layer.
