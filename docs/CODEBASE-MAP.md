@@ -663,6 +663,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 - `src/pages/delivery/index.tsx` (anchors re-derived 2026-09-22)
   - EditableExpectedDD helper — L84-300
   - TABS list `ALL_TABS` / `TAB_DO_STATUSES` / `PO_TABS` — L520-552
+| `src/api/routes/cnc-jobs.ts` - HK-0036 CNC feed: GET open FAB_CUT cards, POST /:jobCardId/result records cut status/qty (recorded only, card not completed) | | `cnc_cut_results` | `tests/cnc-jobs.test.mjs` |
   - `doBrowseUrl(tab, page)` — WHICH DO rows each tab fetches (2026-09-22): stage tabs page their OWN statuses server-side (`?status=A,B`, `DO_PAGE_SIZE` 50); Packing List the newest 200 live DOs; PO tabs none (null URL) — L553-569
   - DeliveryPage start + pageTab (orders|3pl|agent) URL state + `goTab` (the ONLY tab setter: tab + page reset in ONE `useUrlBatch` write) — L901-927
   - 3PL Providers state + vehicles/drivers sub-table state — L1033-1150

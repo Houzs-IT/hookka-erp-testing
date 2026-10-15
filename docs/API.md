@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 147 mounts, 145 route files in
-`src/api/routes/`, 1035 top-level handler registrations discovered.
+**Counts at generation time:** 148 mounts, 146 route files in
+`src/api/routes/`, 1037 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -97,6 +97,7 @@ offsets pointing past the end of their own file.
 | `/api/public/rack-write` | `src/api/routes/public-rack-write.ts` | `GET /:token` <sub>:179</sub><br>`POST /:token/rack` <sub>:228</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/public/survey` | `src/api/routes/public-kpi-survey.ts` | `GET /:token` <sub>:134</sub><br>`POST /:token` <sub>:166</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/cnc-templates` | `src/api/routes/cnc-templates.ts` | `GET /` <sub>:692</sub><br>`GET /:id` <sub>:741</sub><br>`GET /:id/file/:kind` <sub>:762</sub><br>`POST /` <sub>:821</sub><br>`POST /import` <sub>:947</sub><br>`PATCH /:id` <sub>:1178</sub><br>`DELETE /:id` <sub>:1272</sub> | gated |
+| `/api/cnc-jobs` | `src/api/routes/cnc-jobs.ts` | `GET /` <sub>:63</sub><br>`POST /:jobCardId/result` <sub>:84</sub> | gated |
 | `/api/invoices` | `src/api/routes/invoices.ts` | `POST /backfill-po-links` <sub>:751</sub><br>`POST /backfill-so-item-links` <sub>:870</sub><br>`POST /backfill-cancel-reversals` <sub>:1006</sub><br>`POST /backfill-customer-fields` <sub>:1014</sub><br>`POST /backfill-date-from-delivery` <sub>:1157</sub><br>`GET /` <sub>:1236</sub><br>`GET /stats` <sub>:1369</sub><br>`GET /aging` <sub>:1521</sub><br>`POST /import-line-prices` <sub>:1704</sub><br>`POST /` <sub>:1881</sub><br>`GET /:id/print-extras` <sub>:2284</sub><br>`GET /:id` <sub>:2304</sub><br>`PUT /:id` <sub>:2381</sub><br>`DELETE /:id` <sub>:3325</sub> | gated |
 | `/api/payments` | `src/api/routes/payments.ts` | `GET /` <sub>:493</sub><br>`POST /` <sub>:547</sub><br>`GET /:id` <sub>:1007</sub><br>`PUT /:id` <sub>:1032</sub><br>`POST /:id/lifecycle` <sub>:1258</sub><br>`POST /:id/restate` <sub>:1323</sub> | gated |
 | `/api/supplier-payments` | `src/api/routes/supplier-payments.ts` | `GET /` <sub>:52</sub><br>`POST /` <sub>:146</sub><br>`POST /knock-off` <sub>:643</sub><br>`POST /un-knock` <sub>:804</sub><br>`POST /:paymentNo/void` <sub>:1376</sub><br>`POST /:paymentNo/lifecycle` <sub>:1450</sub><br>`POST /recompute-pi-paid` <sub>:1541</sub><br>`POST /:paymentNo/restate` <sub>:1589</sub><br>`GET /debug/last-restate-error` <sub>:1710</sub> | gated |
