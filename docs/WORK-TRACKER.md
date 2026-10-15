@@ -251,6 +251,17 @@ Ticket HK-0055 (High, type Development, reporter Violet, created 2026-10-05): as
 2. 🔵 The ticket's floor-worker reading ("Employee A" on the worker app) was built on staging as #714 and taken back as #715 by owner decision 2026-10-06 ("KPIs go to login accounts only, no worker app card", see the DEV-36 entry below). Re-adding it would reverse that decision, so it is not done without the owner.
 3. ⬜ Owner questions (unanswered): (a) is HK-0055 satisfied by DEV-36 / DEV-37, so it can close? (b) if not, which "Employee Dashboard": the KPI Card, Dashboard Experimental > Employees, or the worker app? (c) must floor workers (no ERP login) see it, which reverses #715? (d) is last-writer `assigned_by` enough for "record which departments are assigned", or is a change history wanted (who / when / old scope)? (e) the card names departments by code (`FAB_CUT + FAB_SEW`); wanted as names?
 4. Prod state UNMEASURED: no prod access from this branch; whether assignments exist for these staff was not queried.
+## 2026-10-15 — 🔵 Phone Home: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-15 after a read-only audit). Source: Claude Design `Home.dc.html` + `design_handoff_home_mobile/README.md`. Branch fast-forwarded to `upstream/staging` (80ad740f) first, so the Mobile UI Foundation is present. PHONE only; tablet and desktop unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. Prototype shadows kept (owner). **Typography follows the repo** (decision 8).
+1. 🔵 Phone order: Operations | Performance switch → KPI hero → Quick Actions → the rest (decision 2). Hero keeps the past-month "as of" note, "…" loading, "—" no record; money never ellipsed.
+2. 🔵 Orders due: horizontal snap carousel with a visible "N of M" position and total, last card reachable, overdue shown by icon + text, not colour alone (decision 3).
+3. 🔵 Shared components untouched: MobileHeader, BottomTabBar, SegmentedSwitch, InstallAppCard, GlobalSearchSheet (decision 4). No frosted header / tab bar, no switch icons.
+4. 🔵 "Production" and "Purchasing" section headings (decision 5).
+5. 🔵 Neutral colour for zero / loading / non-warning: Daily Report total, Plant Load ring and Queue Load tile (decision 6).
+6. 🔵 Copy that matches the data (decision 7): Receive → New PO; Completed = yesterday (or the month's last day); "This Month" only on the current month; Orders due title; Sales by Customer denominators; "N low" = the real total; efficiency bands vs the Daily Report's 60%; no "LIVE" (the pipeline is cached and all-months).
+7. 🔵 Loading / empty / error states where the data has them; dark mode via `M.*` and the Foundation status text colours.
+8. 🔵 `tests/mobile-home-views.test.mjs` updated only where the phone presentation changed; tsc + tests run.
 
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
