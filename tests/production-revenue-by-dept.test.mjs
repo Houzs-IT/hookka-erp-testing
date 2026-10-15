@@ -32,21 +32,36 @@ test("slice: byDept is null (not []) when the department load failed or was not 
   assert.deepEqual(buildDailySlice([], [], rows, undefined, []).revenue.byDept, []);
 });
 
-test("query: groups by department, every department, scoped to the org", async () => {
+test("query: per department, org filter and date window INSIDE the aggregation, no raw cast", async () => {
   let sql = "";
   let bound;
   const rows = [{ date: "2026-10-01", dept: "FRAMING", orders: 1, unpricedOrders: 0, revenueSen: 9 }];
   const db = {
     prepare: (q) => ((sql = q), { bind: (...v) => ((bound = v), { all: async () => ({ results: rows }) }) }),
   };
-  assert.deepEqual(await productionRevenueByDeptDay(db, "hookka"), rows);
-  assert.deepEqual(bound, ["hookka"]);
-  assert.match(sql, /GROUP BY production_order_id, department_code/);
+  assert.deepEqual(await productionRevenueByDeptDay(db, "hookka", "2026-01-01"), rows);
+  // org (CTE), window, org (outer)
+  assert.deepEqual(bound, ["hookka", "2026-01-01", "hookka"]);
+  const cte = sql.slice(sql.indexOf("per_po AS"), sql.indexOf("priced AS"));
+  assert.match(cte, /JOIN production_orders pof ON pof\.id = jc\.production_order_id/);
+  assert.match(cte, /pof\.org_id = \?/, "org filter must be inside the job_cards aggregation");
+  assert.match(cte, />= \?/, "date window inside the aggregation");
+  assert.match(cte, /GROUP BY jc\.production_order_id, jc\.department_code/);
   assert.match(sql, /GROUP BY day, dept/);
-  // The gate is the upholstery rule with the department swapped in: a PO books
-  // only when ALL of that department's cards are done.
-  assert.match(sql, /SUM\(CASE WHEN status IN \('COMPLETED','TRANSFERRED'\)[\s\S]*?\) = COUNT\(\*\)/);
+  assert.match(sql, /SUM\(CASE WHEN jc\.status IN \('COMPLETED','TRANSFERRED'\)[\s\S]*?\) = COUNT\(\*\)/);
   assert.doesNotMatch(sql, /department_code = 'UPHOLSTERY'/);
+  // completed_date is free text: no ::date cast that one bad value can abort.
+  assert.doesNotMatch(sql, /::date/);
+  assert.match(sql, /unit_completed_at ~ '\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}'/);
+});
+
+test("query: default window is ~400 days back, as an ISO day", async () => {
+  let bound;
+  const db = { prepare: () => ({ bind: (...v) => ((bound = v), { all: async () => ({ results: [] }) }) }) };
+  await productionRevenueByDeptDay(db, "hookka");
+  assert.match(bound[1], /^\d{4}-\d{2}-\d{2}$/);
+  const days = (Date.now() - Date.parse(bound[1])) / 86_400_000;
+  assert.ok(days >= 399 && days <= 402, String(days));
 });
 
 test("dashboard feed passes the per-department rows to the slice", () => {

@@ -249,6 +249,7 @@ Ask (HK-0092, Violet, 13 Oct, type Development): "Production Revenue only displa
 1. 🔵 Operations > Revenue & Cost (desktop `ProductionDailyPanels`, phone `OperationsTab`): a "Production revenue by department" table / ranked list under the upholstery chart. Same recognition rule per department (full order value, the day the last department-X card completes, all department-X cards COMPLETED/TRANSFERRED). Feed key `lim.revenue.byDept`; `byDay` (upholstery) unchanged; the e-mail's `productionRevenueByDay` unchanged.
 2. 🔵 /dashboard "Department Revenue" (staging #860 / main #862) already shows the same per-department figure on the main dashboard; this entry covers the Operations tab, which was still upholstery-only.
 3. ❓ Owner: which screen did Violet mean? The Finance dashboard's PRODUCTION REVENUE row (Cost Structure + salary cards) is still upholstery-only by design (owner 2026-10-12) and was NOT changed here.
+3b. Review fixes: the new CTE filters org + category inside the job_cards GROUP BY and keeps only POs completed in the last 400 days (so UPHOLSTERY equals the chart only within that window); a malformed `completed_date` is skipped by a shape check instead of aborting the cast for the whole section.
 4. ⬜ Not checked against real data (staging or prod): needs a sign-in; check Fabric Cutting ... Packing rows after deploy, and that UPHOLSTERY equals the chart's total.
 
 ## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)

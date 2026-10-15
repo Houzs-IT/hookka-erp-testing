@@ -1,7 +1,7 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
 
 design/mobile-home-dashboard
-> **Last verified: 2026-10-15 on branch `feat/hk0092-production-revenue-by-dept` (to `staging`, HK-0092)**: Operations > Revenue & Cost now also prints Production revenue per department (`productionRevenueByDeptDay` in `src/api/lib/production-revenue.ts`, `lim.revenue.byDept` from `buildDailySlice`, `deptRevenueRows` in `ops-floor-lib.ts`, rendered by `ProductionDailyPanels.tsx` and the phone `OperationsTab.tsx`; test `tests/production-revenue-by-dept.test.mjs`). Nothing else re-checked.
+> **Last verified: 2026-10-15 on branch `feat/hk0092-production-revenue-by-dept` (to `staging`, HK-0092)**: Operations > Revenue & Cost now also prints Production revenue per department (`productionRevenueByDeptDay` in `src/api/lib/production-revenue.ts` (org + category filter inside the job_cards aggregation, 400-day window, no `::date` cast on the free-text `completed_date`), `lim.revenue.byDept` from `buildDailySlice`, `deptRevenueRows` in `ops-floor-lib.ts`, rendered by `ProductionDailyPanels.tsx` and the phone `OperationsTab.tsx`; test `tests/production-revenue-by-dept.test.mjs`). Nothing else re-checked.
 > **Last verified: 2026-10-14 on branch `design/mobile-home-dashboard` (to `staging`, phone Sales Orders list)**: `/m/sales` row rewritten for the Claude Design phone list, read from `SalesScreen.tsx` and `lib/so-card.ts`. Nothing else re-checked.
 
 > **Last verified: 2026-10-14 on branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`)**: the Procurement gotcha on PO-direct purchase invoices gained the auto receipt permission skip and the void leg numbering (BUG-2026-10-14-286/287), read from `purchase-invoices.ts` and `grn.ts`. Nothing else re-checked.

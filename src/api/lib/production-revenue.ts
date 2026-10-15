@@ -284,28 +284,48 @@ export async function productionRevenueByDay(
 // value on the day its LAST department-X job card completes, and only once
 // every department-X card of that PO is COMPLETED/TRANSFERRED with a completed
 // date. A PO with no card in a department books nothing there. The UPHOLSTERY
-// rows equal productionRevenueByDay's. Every department books the FULL order
-// value, so the rows are not meant to sum to anything.
+// rows equal productionRevenueByDay's (within the window). Every department
+// books the FULL order value, so the rows are not meant to sum to anything.
+//
+// Bounded, unlike the all-time upholstery line: the org + category filter is
+// applied INSIDE the aggregation (other orgs' job_cards never reach the
+// GROUP BY) and only POs whose last card completed on/after `sinceDay` are
+// kept. Default window 400 days [my guess: covers a year view plus slack].
+// completed_date is free TEXT, so the day is its first 10 chars when that is
+// shaped YYYY-MM-DD and the row is skipped otherwise: a stray bad value can no
+// longer abort the cast (and with it the whole section) for every org.
+export const DEPT_REVENUE_WINDOW_DAYS = 400;
+
 export async function productionRevenueByDeptDay(
   db: Db,
   orgId: string,
+  sinceDay?: string,
 ): Promise<(ProductionRevenueDay & { dept: string })[]> {
+  const since =
+    sinceDay ??
+    new Date(Date.now() - DEPT_REVENUE_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
   const r = await db
     .prepare(
       `WITH per_po AS (
-         SELECT production_order_id, department_code,
-                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completed_date IS NOT NULL
-                         THEN completed_date END) AS unit_completed_at
-           FROM job_cards
-          WHERE department_code IS NOT NULL
-          GROUP BY production_order_id, department_code
+         SELECT jc.production_order_id, jc.department_code,
+                MAX(CASE WHEN jc.status IN ('COMPLETED','TRANSFERRED')
+                              AND jc.completed_date IS NOT NULL
+                         THEN jc.completed_date END) AS unit_completed_at
+           FROM job_cards jc
+           JOIN production_orders pof ON pof.id = jc.production_order_id
+          WHERE jc.department_code IS NOT NULL
+            AND pof.org_id = ?
+            AND pof.item_category IN ('SOFA','BEDFRAME','ACCESSORY')
+          GROUP BY jc.production_order_id, jc.department_code
          HAVING COUNT(*) > 0
-            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completed_date IS NOT NULL
+            AND SUM(CASE WHEN jc.status IN ('COMPLETED','TRANSFERRED')
+                              AND jc.completed_date IS NOT NULL
                          THEN 1 ELSE 0 END) = COUNT(*)
+            AND MAX(CASE WHEN jc.status IN ('COMPLETED','TRANSFERRED')
+                              AND jc.completed_date IS NOT NULL
+                         THEN jc.completed_date END) >= ?
        ), priced AS (
-         SELECT to_char(per_po.unit_completed_at::date, 'YYYY-MM-DD') AS day,
+         SELECT substr(per_po.unit_completed_at, 1, 10) AS day,
                 per_po.department_code AS dept,
                 COALESCE(
                   soi.unit_price_sen,
@@ -325,7 +345,7 @@ export async function productionRevenueByDeptDay(
                   ON coi.consignment_order_id = po.consignment_order_id AND coi.line_no = po.line_no
           WHERE po.org_id = ?
             AND po.item_category IN ('SOFA','BEDFRAME','ACCESSORY')
-            AND per_po.unit_completed_at IS NOT NULL
+            AND per_po.unit_completed_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
        )
        SELECT day AS "date",
               dept AS "dept",
@@ -335,7 +355,7 @@ export async function productionRevenueByDeptDay(
          FROM priced
         GROUP BY day, dept`,
     )
-    .bind(orgId)
+    .bind(orgId, since, orgId)
     .all<ProductionRevenueDay & { dept: string }>();
   return r.results ?? [];
 }
