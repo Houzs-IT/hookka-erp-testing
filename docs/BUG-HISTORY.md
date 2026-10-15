@@ -1,6 +1,7 @@
 # Bug History
 
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-288 (branch `fix/hk0080-po-scan-date-iso`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate-main`, to main, same fix as staging #875; 287 and 288 are staging's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-286 (branch `fix/pi-revoid-legno-main`, to main, same fix as staging #852); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-285 (branch `fix/hk0093-cn-print-co-fabric`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder-main`, to main, same fix as staging PR #822; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
@@ -19,6 +20,7 @@
 > **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-267 (branch `fix/kpi-delivery-rules-main` (to `main`); the same entry is on staging's #749); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-266 (branch `fix/empty-auto-invoice-guard`, to main; 263 and 264 are staging's, 265 is main's).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-265 (branch `perf/production-dept-tab-cache-main`, to main; 263 and 264 are staging's).
+> **Last verified: 2026-10-07**: newest entry BUG-2026-09-30-223 (branch `fix/bug06-do-duplicate-guard-main`, to main; the same fix reached staging on 2026-09-30 through #593).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-262 (branch `fix/rm-uom-bottle-main`, to main).
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-261 (branch `fix/bom-wip-delete-move`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-260 (branch `fix/production-overview-scrollbar`, to main; no open PR holds 260); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -110,6 +112,17 @@ Entries themselves stay newest-first.
 **Not fixed / not checked.** (1) Rows already stored non-ISO: UNMEASURED; read-only check `SELECT count(*) FROM sales_orders WHERE hookkaExpectedDD <> '' AND hookkaExpectedDD !~ '^\d{4}-\d{2}-\d{2}'`. (2) Review fix: `POST /` and `PUT /:id` now answer 400 when a supplied customer / expected delivery date cannot be read (never a silent blank); on PUT only a CHANGED value is validated, so echoing a legacy stored value is not blocked. Day-first is an ASSUMPTION: `03/06/2026` is read as 3 June (Malaysian paper); a US-style sheet would be misread, and the scan card keeps the "converted to ..." warning so the operator sees it. (3) The template-fallback scan path sends `hookkaExpectedDD = customer delivery date` with no buffer (`scan-po-modal.tsx` ~1254); left for the owner. (4) The ticket's "PO" could mean Purchase Order; the Purchase Order list was not changed.
 
 **Regression.** `tests/scan-delivery-date-iso.test.mjs` (helper + the create route's 400).
+## BUG-2026-10-15-289 — Bulk-generated BOMs were stuck on DRAFT, so WIP times never listed them `bom` `production` 🟡
+
+🟡 **Fixed on branch** (`feat/bom-draft-activate-main` → `main`; same change as staging #875).
+
+**Symptom.** Reported 2026-10-15: the WIP production times page could not find models 8210 and 8211 in any department.
+
+**Root cause.** Measured on staging (a production clone; production itself unmeasured): all 7 BOMs for 8210 and 8211 were `versionStatus = DRAFT`, and so were all 213 BOMs created since 2026-07-23 (25 models), while every older one was ACTIVE. Inventory > Add FG > Bulk generate copies each size's default BOM with a `POST /api/bom/templates` that sends no `versionStatus`, and that handler defaults to DRAFT. No screen could change the status. The WIP times page (`loadActiveBomRows`) and other readers take ACTIVE BOMs only, so they skipped these models. Job cards were not affected: they fall back to the newest BOM of any status.
+
+**Fix.** The BOM page shows a DRAFT badge beside the product in the list and on the BOM header, and a DRAFT BOM gets an Activate button that saves `versionStatus: "ACTIVE"` through the existing `PUT /api/bom/templates/:id`. The bulk-generate default is unchanged (not part of this ask).
+
+**Regression.** `tests/bom-draft-activate.test.mjs` checks the badge, the Activate wiring and that the PUT accepts ACTIVE; fails without the change.
 
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 
@@ -330,6 +343,23 @@ and that the PO screen reads the same field as sen).
 **Fix.** `fetchOrders` refetches the sheet and the overdue chips without invalidating; the stock-PO create path invalidates first. `cached-fetch.ts` keeps a body that localStorage refuses in memory (up to 9 entries, ~6 MB heap each, measured), cleared by every invalidation path. The dead seed is removed; dept pages keep loading every open order (owner's choice). Same test, new code: 0.55 s, no "(loading…)".
 
 **Guard.** `tests/production-dept-tab-cache.test.mjs`.
+## BUG-2026-09-30-223 — "Transfer to Delivery Order" skipped the once-only-delivery guard, so one production order could be delivered twice `delivery-orders` 🔵
+
+🔵 Fixed on `fix/bug06-do-duplicate-guard-main` (to `main`). Already on `staging` since 2026-09-30 (#593, T-006 R1 before it); this brings the same code to main.
+
+**Symptom (BUG-06).** The Sales page "Transfer to Delivery Order" posted `{ salesOrderId, items }` with items copied from the SO and no `productionOrderIds`. `validateDoComposition`, the once-only-delivery guard, only ran over `productionOrderIds`, so the same SO could be transferred again and again. A direct API call could do the same with `items` naming an already-delivered production order, with or without a sales order.
+
+**Cause.** `createDeliveryOrderForPOs` writes `body.items` as sent but guarded only `body.productionOrderIds`.
+
+**Fix.**
+- Server: create guards every production order named in `productionOrderIds` or in `items`. An SO-linked create with no production orders at all is refused 400.
+- Sales page: the dialog lists the SO's production orders that are ready to deliver (`/api/delivery-orders/ready-planning`, the Delivery page's own source) and sends their ids. The button is disabled when nothing is ready.
+- Consignment page: its "Transfer to Delivery Order" sent the same refused shape and could never succeed (a consignment PO is already refused on a DO). It is now "Create Consignment Note", which opens `/consignment/note`.
+- Review fixes (2026-10-15): the production_orders lookup in create now filters `orgId = ?` (the ids can come from `items[].productionOrderId`, so an unscoped lookup would read another org's rows); with `productionOrderIds` non-empty, a line with no `productionOrderId`, or one not among the loaded orders, is refused 400. Still open and documented, not fixed: no per-line selection on the Sales dialog, and the ready-planning fetch is large.
+
+**Verified.** Staging, 2026-09-30, all 10 BUG-06 cases passed on the same code. On main: tests only. Prod not checked yet (UNMEASURED).
+
+**Guard.** `tests/do-create-requires-production-orders.test.mjs` runs the real create function on a fake DB (no DO row written for the refused shapes). `tests/t006-r1-transfer-to-do.test.mjs` checks the Sales page request body.
 
 ---
 

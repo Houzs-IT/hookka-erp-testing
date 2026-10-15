@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-15**: branch `fix/hk0080-po-scan-date-iso` (to `main`, BUG-2026-10-15-288) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `docs/hk0052-already-delivered-dev36` (to `main`, IT Hub HK-0052) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: SO customer pencil (#864, HK-0094) prod-verified.
 > **Last verified: 2026-10-15**: branch `feat/hk0094-so-customer-edit` (to `main`, IT Hub HK-0094) added below (its entry is the newest).
@@ -52,6 +53,7 @@
 > **Last verified: 2026-10-07**: branch `perf/production-dept-tab-cache-main` (#734 to `main`, BUG-2026-10-07-265) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev39-kpi-view-calculation-to-main` (DEV-39 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev36-kpi-department-to-main` (DEV-36 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `fix/bug06-do-duplicate-guard-main` (BUG-06 to `main`, BUG-2026-09-30-223) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev37-kpi-self-view-to-main` (DEV-37 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/rm-uom-bottle-main` (DEV-20 follow-up to `main`, BUG-2026-10-07-262) added below (its entry is the newest).
 > **Last verified: 2026-10-06**: branch `feat/pay-card-main` (to `main`, BUG-2026-10-06-259) added below (its entry is the newest).
@@ -157,6 +159,14 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 1b. Review fixes DONE: SO create / PUT 400 on an unreadable date (was silent blank); day-first assumption documented.
 2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
 3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
+## 2026-10-15 — ⬜ IT Hub HK-0052: department option on Production Time Efficiency is already shipped as DEV-36; one ask left for the owner (branch `docs/hk0052-already-delivered-dev36` → `main`, docs only)
+
+Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TESTING 2026-10-14) asks for a Department field on the Production Time Efficiency KPI, the existing Overall kept, and assignment to the workers of that department. Read from the code on `main`, no change made:
+
+1. 🔵 Department option, Overall kept, scored on that department only: shipped as DEV-36 (see the 2026-10-07 entry below). `src/pages/kpi/index.tsx` offers every production department as All / Sofa / Bedframe; `PUT /api/kpi/assignments/:kpiKey` stores it in `kpi_assignments.scope`; `parseEfficiencyScope` is covered by `tests/efficiency-allowance.test.mjs`. Nothing ticked is Overall.
+2. 🔵 "Fab Cut Sofa", "Fab Sew Sofa", "Upholstery Bedframe", "Packing Sofa" etc. are the department + category pairs of item 1. Whether "foam bonding" and "Packing" exist as production departments on prod is UNMEASURED (no prod access from this session).
+3. ❓ "Assign to individual workers within that department": not built, on purpose. Owner decision 2026-10-06 (DEV-36): holders are office login accounts, not floor workers; `9af643c9` removed the floor-worker half. The people list is every login, with no department filter. OWNER QUESTION: keep it so (close HK-0052 as delivered), or should the people list narrow to accounts linked to the chosen department? If the latter, which field links a login account to a department is not decided.
+4. ⬜ Violet / Laphii: say what failed when Laphii reopened it; the ticket carries no comment.
 
 ## 2026-10-15 — 🔵 SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(branch `feat/hk0094-so-customer-edit` → `main`)
 ## 2026-10-15 — 🔵 Dashboard: idle Sundays out of every per-day chart and average (branch `feat/hide-idle-sundays` → `main`)
@@ -590,6 +600,14 @@ Reporter ask (Violet, DEV-36): pick a department when assigning the Production T
 4. 🔵 Staging check 2026-10-07, September 2026 data, 11 of 11 passed: several departments pooled (Fabric Cutting + Fabric Sewing 107.3% from 108,817 min on 1,690 h), Overall unchanged (91%), worker route gone (404), Department efficiency equal to the dashboard for Upholstery (66.1%), Framing (62.1%), Upholstery + Framing (64.0%) and the whole floor (93.3%, the Overall Efficiency tile), bad scopes refused, test assignments removed. Part 1 was checked 2026-10-06 (10 of 10).
 5. Notes, not blocking: the card names departments by code (`FAB_CUT + FAB_SEW`); the Efficiency tab's department ledger "Factory total" (90.7% in September) only sums workers with a department, so it reads lower than the Overall Efficiency tile (93.3%) that the whole-floor KPI follows; phones are sent to `/m`, which has no KPI page (as before).
 6. ⬜ After deploy: Super Admin check on prod (Library pickers, one scoped assignment, card figure against the dashboard), then remove the test assignment.
+## 2026-10-07 — 🔵 BUG-06: Transfer / Convert duplicate guard to main (branch `fix/bug06-do-duplicate-guard-main` → `main`, BUG-2026-09-30-223)
+
+Ask: BUG-06 was finished and tested on staging (2026-09-30, #593); bring it to production. PR #448 (all of T-006) was closed for conflicts, so only the BUG-06 pieces come over, as patches onto `main`.
+1. 🔵 Server: DO create guards every production order in `productionOrderIds` and `items`; an SO-linked create with none is refused.
+2. 🔵 Sales "Transfer to Delivery Order" sends the SO's ready production orders.
+3. 🔵 Consignment "Transfer to Delivery Order" (same refused shape, could never succeed) becomes "Create Consignment Note".
+4. 🔵 Tests: the two BUG-06 files pass on main. Not brought over: the T-006 R2 to R10 work and the client Idempotency-Key (staging only).
+5. ⬜ After deploy: check on prod that a second transfer of the same SO is refused.
 
 ## 2026-10-07 — ⬜ DEV-37: every staff login sees their own KPI card, view only (branch `feat/dev37-kpi-self-view-to-main` → `main`)
 
