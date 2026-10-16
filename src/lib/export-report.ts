@@ -80,6 +80,9 @@ export type PdfExportOpts = {
   /** Open the PDF in a new tab with the print dialog instead of saving it
    *  (a grid's header-menu "Print", finance v2). */
   print?: boolean;
+  /** The company line at the top of the page (default: the name the finance
+   *  reports have printed so far). */
+  company?: string;
 };
 
 export async function exportReportPdf(
@@ -97,7 +100,7 @@ export async function exportReportPdf(
   // Landscape for the wide month-column reports.
   const doc = new jsPDF({ orientation: aoa[0] && aoa[0].length > 6 ? "landscape" : "portrait", unit: "pt", format: "a4" });
   doc.setFontSize(13);
-  doc.text("HOOKKA MANUFACTURING SDN BHD", 40, 38);
+  doc.text(opts?.company ?? "HOOKKA MANUFACTURING SDN BHD", 40, 38);
   doc.setFontSize(10);
   doc.text(title, 40, 54);
   if (subtitle) { doc.setFontSize(8); doc.setTextColor(120); doc.text(subtitle, 40, 67); doc.setTextColor(0); }
@@ -147,8 +150,8 @@ export async function exportReportPdf(
   });
   if (opts?.print) {
     doc.autoPrint();
-    window.open(doc.output("bloburl"), "_blank");
-    return;
+    // A blocked pop-up still gets the file.
+    if (window.open(doc.output("bloburl"), "_blank")) return;
   }
   doc.save(filename);
 }

@@ -15,14 +15,14 @@ import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/dat
 import { MoneyInput } from "@/components/ui/money-input";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
-import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
 import { monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
 // and a null the caller must refuse. See src/lib/parse-money.ts.
 import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/money-field";
-import { exportReportCsv, exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts } from "@/lib/export-report";
+import { exportReportCsv, exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
 import { buildAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
@@ -97,7 +97,8 @@ import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
-import { glLink, monthEnd } from "@/lib/finance-reports";
+import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, checkLabel, type TbSectionKey } from "@/lib/finance-reports";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -8977,7 +8978,13 @@ function sourceHref(sourceType: string, sourceId: string): string | null {
 // Phase 2 follow-up (owner): Trial Balance is its OWN tab now — just the
 // statement, no inquiry attached.
 function TrialBalanceTab() {
-  const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
+  const navigate = useNavigate();
+  const today = todayYmdMY();
+  // Finance v2: a month stepper; a closed month reads as at its last day, the
+  // running month as at today ("Oct 2026 · so far").
+  const [ym, setYm] = useState(() => today.slice(0, 7));
+  const asOf = asAtDate(ym, today);
+  const ymOptions = useMemo(() => monthOptions(today.slice(0, 7), 24), [today]);
   // Multi-company (Phase 2): "" = All companies (group). trial-balance accepts
   // ?orgId= — absent = today's consolidated TB, unchanged.
   const [company, setCompany] = useState("");
@@ -8989,6 +8996,11 @@ function TrialBalanceTab() {
     balanced: boolean;
   } | null>(null);
   const loadingTb = tb === null;
+  // L1 = section totals only, L2 = every account; a click on a section heading
+  // folds or opens just that one (a level button resets the clicks).
+  const [level, setLevel] = useState(2);
+  const [shut, setShut] = useState<Partial<Record<TbSectionKey, boolean>>>({});
+  const isOpen = (k: TbSectionKey) => (shut[k] !== undefined ? !shut[k] : level >= 2);
 
   useEffect(() => {
     let stale = false;
@@ -8999,73 +9011,133 @@ function TrialBalanceTab() {
     return () => { stale = true; };
   }, [asOf, company]);
 
+  // Sections by the Chart of Accounts rules; the rows are the server's, as is.
+  const secs = useMemo(() => (tb ? tbSections(tb.rows) : []), [tb]);
+  const amt = (sen: number) => (sen ? fmtAmt(sen) : "");
+  // Same balance both sides: the ledger runs to the same as-at date, by
+  // document date, with everything before the month as Balance B/F.
+  const openLedger = (code: string) => navigate(glLink({ account: code, fromYm: ym, toDate: asOf }));
+
+  // The download carries what is on screen (folded sections as one line).
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Code", "Account", "Debit (RM)", "Credit (RM)"]];
+    const kinds: PdfRowKind[] = [];
+    const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
+    const n = (sen: number) => (sen ? sen / 100 : "");
+    for (const s of secs) {
+      const open = isOpen(s.key);
+      push(["", s.label, open ? "" : n(s.debitSen), open ? "" : n(s.creditSen)], "section");
+      if (!open) continue;
+      for (const r of s.rows) push([r.accountCode, `  ${r.accountName}`, n(r.debitSen), n(r.creditSen)], undefined);
+      push(["", `Total ${s.label}`, n(s.debitSen), n(s.creditSen)], "subtotal");
+    }
+    if (tb) push(["", "TOTAL", tb.totalDr / 100, tb.totalCr / 100], "grand");
+    return { aoa, kinds };
+  };
+  const fileBase = `trial-balance-${asOf}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Trial Balance", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf(`${fileBase}.pdf`, "Trial Balance", `As at ${fmtDocDate(asOf)}`, aoa, {
+          rowKind: (_r, i) => kinds[i + 1],
+          leftCols: [1],
+          company: COMPANY.HOOKKA.name,
+          print: true,
+        });
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <span aria-hidden="true" />
-        <div className="flex items-end gap-3">
-          <div className="pb-0.5">
-            <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-[#6B7280] mb-1 block">As of</label>
-            <input
-              type="date"
-              value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
-              className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-            />
-          </div>
-          {tb && (
-            <span
-              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium border ${tb.balanced ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}
-            >
-              {tb.balanced ? "Balanced ✓" : "OUT OF BALANCE"}
-            </span>
-          )}
-        </div>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
+          <PeriodStepper value={ym} options={ymOptions} onChange={setYm} today={today} />
+          <DetailLevels levels={[1, 2]} value={level} onChange={(L) => { setLevel(L); setShut({}); }} tips={{ 1: "Section totals only", 2: "Every account" }} />
+          {tb && <DownloadMenu items={downloads} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
 
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {loadingTb || !tb ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading trial balance…</div>
-          ) : (
-            <table data-col-resize="first" className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-4 py-2 text-left">Account</th>
-                  <th className="px-4 py-2 text-left">Type</th>
-                  <th className="px-4 py-2 text-right">Debit</th>
-                  <th className="px-4 py-2 text-right">Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tb.rows.map((r) => (
-                  <tr
-                    key={r.accountCode}
-                    className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30"
-                  >
-                    <td className="px-4 py-1.5">
-                      <span className="tabular-nums text-xs text-[#6B7280] mr-2">{r.accountCode}</span>
-                      <span className="text-[#1F1D1B]">{r.accountName}</span>
-                    </td>
-                    <td className="px-4 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                    <td className="px-4 py-1.5 text-right font-medium">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                    <td className="px-4 py-1.5 text-right font-medium">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                  </tr>
-                ))}
-                <tr className="border-t-2 border-[#1F1D1B] font-semibold">
-                  <td className="px-4 py-2" colSpan={2}>TOTAL</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(tb.totalDr)}</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(tb.totalCr)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
+      {tb && (
+        <CheckStrip ok={tb.balanced} label={tb.balanced ? "Balanced ✓" : checkLabel(tb.totalDr - tb.totalCr)}>
+          <span>Total Debit <b className="tabular-nums">{fmtAmt(tb.totalDr)}</b></span>
+          <span className="text-[#6B7280]">=</span>
+          <span>Total Credit <b className="tabular-nums">{fmtAmt(tb.totalCr)}</b></span>
+        </CheckStrip>
+      )}
 
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={`Trial Balance As At ${fmtDocDate(asOf)}`}
+        note="All figures RM · double-click an account to open its ledger"
+      >
+        {loadingTb || !tb ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">Loading trial balance…</div>
+        ) : (
+          <table data-col-resize="first" data-fin-report className="min-w-[640px]">
+            <thead>
+              <tr>
+                <th className="w-[110px]">Code</th>
+                <th>Account</th>
+                <th data-cell="num split" className="w-[180px]">Debit (RM)</th>
+                <th data-cell="num" className="w-[180px]">Credit (RM)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {secs.map((s) => {
+                const open = isOpen(s.key);
+                return (
+                  <Fragment key={s.key}>
+                    <tr
+                      data-row="sec"
+                      onClick={() => setShut({ ...shut, [s.key]: open })}
+                      title={open ? "Click to fold" : "Click to open"}
+                      className="cursor-pointer select-none"
+                    >
+                      <td />
+                      <td><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[#6B7280]">{open ? "▾" : "▸"}</span>{s.label}</td>
+                      <td data-cell="num split">{open ? "" : amt(s.debitSen)}</td>
+                      <td data-cell="num">{open ? "" : amt(s.creditSen)}</td>
+                    </tr>
+                    {open && s.rows.map((r) => (
+                      <tr
+                        key={r.accountCode}
+                        data-row="line"
+                        onDoubleClick={() => openLedger(r.accountCode)}
+                        title="Double-click to open the ledger"
+                        className="cursor-pointer"
+                      >
+                        <td data-cell="code">{r.accountCode}</td>
+                        <td style={{ paddingLeft: 28 }}>{r.accountName}</td>
+                        <td data-cell="num split">{amt(r.debitSen)}</td>
+                        <td data-cell="num">{amt(r.creditSen)}</td>
+                      </tr>
+                    ))}
+                    {open && (
+                      <tr data-row="sub">
+                        <td />
+                        <td>Total {s.label}</td>
+                        <td data-cell="num split">{amt(s.debitSen)}</td>
+                        <td data-cell="num">{amt(s.creditSen)}</td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              <tr data-row="fin">
+                <td />
+                <td>TOTAL</td>
+                <td data-cell="num split">{fmtAmt(tb.totalDr)}</td>
+                <td data-cell="num">{fmtAmt(tb.totalCr)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
     </div>
   );
 }
@@ -11936,8 +12008,6 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // selection emission compares row identity (BUG-CLASSES C24).
   const gridRows = useMemo(
     () => rows.filter((r) => matches(r, chip)).map((r) => receiptGridRow(r, accounts)),
-    // matches reads only the row and the chip.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, chip, accounts],
   );
   // Double-click → detail popup (resolved from `rows` by key so it refreshes).
