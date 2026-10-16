@@ -22,9 +22,9 @@ import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { useToast } from "@/components/ui/toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-export";
-import { exportReportCsv, exportReportXlsx, type Aoa } from "@/lib/export-report";
+import { exportReportCsv, exportReportPdf, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
-import { columnTotals, decodeRange, inRange, parseAmount, rangeTerm, RANGE_MODE } from "@/lib/grid-layout";
+import { columnTotals, decodeRange, headerMenuItems, inRange, parseAmount, rangeTerm, RANGE_MODE } from "@/lib/grid-layout";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -325,6 +325,11 @@ export type DataGridProps<T> = {
   // The total row's first cell (shown only when a column has `total`).
   // Default: "Total · <shown> shown of <all>".
   footerLabel?: (shown: number, all: number) => React.ReactNode;
+  // Header right-click menu (finance v2 "PV table" rule, AutoCount style):
+  // sort, filter, hide / choose columns, best fit, save / reset layout, and
+  // Export to Excel / PDF / Print of the current view. Off by default, so other
+  // grids keep the browser's own menu on their headers.
+  headerMenu?: boolean;
 };
 
 type SavedView = {
@@ -411,11 +416,14 @@ export function ContextMenu({
   y,
   items,
   onClose,
+  heading,
 }: {
   x: number;
   y: number;
   items: ContextMenuItem[];
   onClose: () => void;
+  // Optional non-clickable title strip (the header menu names its column).
+  heading?: { title: string; sub?: string };
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(-1);
@@ -476,6 +484,12 @@ export function ContextMenu({
       className="fixed z-[100] min-w-[220px] rounded border border-[#D0D0D0] bg-white py-1 shadow-md"
       style={{ left: pos.x, top: pos.y }}
     >
+      {heading && (
+        <div className="mb-0.5 border-b border-[#E5E5E5] px-3 pb-1 pt-1">
+          <div className="text-[12px] font-semibold text-[#1F1D1B]">{heading.title}</div>
+          {heading.sub && <div className="text-[10px] text-[#9CA3AF]">{heading.sub}</div>}
+        </div>
+      )}
       {items.map((item, i) => (
         <React.Fragment key={i}>
           {item.separator && i > 0 && <div className="my-0.5 border-t border-[#E5E5E5]" />}
@@ -1739,6 +1753,7 @@ export function DataGrid<T extends Record<string, any>>({
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
   footerLabel,
+  headerMenu,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -2835,6 +2850,82 @@ export function DataGrid<T extends Record<string, any>>({
     [showFooter, sortedData, visibleColumns],
   );
 
+  // ── Header right-click menu (finance v2; opt-in via `headerMenu`) ──
+  const { toast } = useToast();
+  const [hdrMenu, setHdrMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  const closeHdrMenu = useCallback(() => setHdrMenu(null), []);
+  const openHeaderMenu = (e: React.MouseEvent, key: string) => {
+    if (e.shiftKey) return; // Shift + right-click keeps the browser's own menu
+    e.preventDefault();
+    setHdrMenu({ x: Math.min(e.clientX, window.innerWidth - 248), y: e.clientY, key });
+  };
+  // The current view as a sheet: visible columns over every filtered row,
+  // plus the total row when the grid shows one (currency in RM).
+  const exportAoa = (): Aoa => {
+    const aoa = buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
+    if (showFooter) aoa.push(visibleColumns.map((c, i) => {
+      const t = totals[c.key];
+      if (t !== undefined) return c.type === "currency" ? Math.round(t) / 100 : t;
+      return i === 0 ? "Total" : "";
+    }));
+    return aoa;
+  };
+  const exportBase = exportName || gridId || "export";
+  const exportTitle = exportSheetLabel || exportName || gridId || "Listing";
+  const runExport = (kind: "xlsx" | "pdf" | "print") => {
+    const today = new Date().toISOString().slice(0, 10);
+    const aoa = exportAoa();
+    if (kind === "xlsx") {
+      void exportReportXlsx(exportFilename(exportBase, "listing", "xlsx", today), exportTitle, aoa);
+      return;
+    }
+    const lastBody = aoa.length - 2;
+    void exportReportPdf(exportFilename(exportBase, "listing", "pdf", today), exportTitle, `As at ${formatDateDMY(today)}`, aoa, {
+      leftCols: visibleColumns.flatMap((c, i) => (i > 0 && c.type !== "currency" && c.type !== "number" ? [i] : [])),
+      rowKind: showFooter ? (_row, idx) => (idx === lastBody ? "grand" : undefined) : undefined,
+      print: kind === "print",
+    });
+  };
+  // Personal layout changes already save in this browser as they happen.
+  const saveLayout = () => toast.success("Layout saved on this computer");
+  const hdrMenuActions = (key: string, at: { x: number; y: number }): Record<string, () => void> => ({
+    "Sort Ascending": () => { setSortKey(key); setSortDir("asc"); },
+    "Sort Descending": () => { setSortKey(key); setSortDir("desc"); },
+    "Clear Sorting": () => { setSortKey(null); setSortDir("asc"); },
+    "Filter This Column…": () => setFilterDropdown({ key, rect: { left: at.x, top: at.y } }),
+    "Clear All Filters": () => { setValueFilterTouched(true); setColumnFilters({}); setColumnValueFilters({}); },
+    "Hide This Column": () => {
+      if (visibleColumns.length <= 1) { toast.info("Keep at least one column"); return; }
+      toggleColumn(key);
+    },
+    "Column Chooser…": () => setShowCustomizer(true),
+    "Best Fit": () => resetColumnWidth(key),
+    "Best Fit (All Columns)": () => { setColWidths({}); persistColWidths({}); },
+    "Save Layout": () => saveLayout(),
+    "Reset Layout": () => { setSortKey(null); setSortDir("asc"); void resetToOrgDefault(); },
+    "Export to Excel": () => runExport("xlsx"),
+    "Export to PDF": () => runExport("pdf"),
+    "Print": () => runExport("print"),
+  });
+  const hdrMenuEntries: ContextMenuItem[] = (() => {
+    if (!hdrMenu) return [];
+    const col = visibleColumns.find((c) => c.key === hdrMenu.key);
+    const actions = hdrMenuActions(hdrMenu.key, hdrMenu);
+    const labels = headerMenuItems({
+      sorted: sortKey === hdrMenu.key ? sortDir : null,
+      filterable: !!col && !col.noFilter,
+      anyFilter: Object.values(columnFilters).some(Boolean) || Object.keys(columnValueFilters).length > 0,
+    });
+    const out: ContextMenuItem[] = [];
+    let sep = false;
+    for (const label of labels) {
+      if (label === "-") { sep = true; continue; }
+      out.push({ label, action: () => actions[label]?.(), separator: sep });
+      sep = false;
+    }
+    return out;
+  })();
+
   return (
     <div className={cn("flex flex-col", className)}>
       {/* Toolbar */}
@@ -3261,6 +3352,7 @@ export function DataGrid<T extends Record<string, any>>({
                       isSticky && "sticky bg-[#F0ECE9] z-20",
                     )}
                     style={isSticky ? { left: `${stickyLeft}px` } : undefined}
+                    onContextMenu={headerMenu ? (e) => openHeaderMenu(e, col.key) : undefined}
                   >
                     <span
                       className={cn(
@@ -3813,6 +3905,20 @@ export function DataGrid<T extends Record<string, any>>({
       {/* Context Menu */}
       {ctxMenu && resolvedCtxItems.length > 0 && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={resolvedCtxItems} onClose={() => setCtxMenu(null)} />
+      )}
+
+      {/* Header right-click menu (finance v2) */}
+      {hdrMenu && (
+        <ContextMenu
+          x={hdrMenu.x}
+          y={hdrMenu.y}
+          items={hdrMenuEntries}
+          onClose={closeHdrMenu}
+          heading={{
+            title: visibleColumns.find((c) => c.key === hdrMenu.key)?.label || "Column",
+            sub: sortKey === hdrMenu.key ? (sortDir === "desc" ? "sorted Z → A" : "sorted A → Z") : "column",
+          }}
+        />
       )}
     </div>
   );
