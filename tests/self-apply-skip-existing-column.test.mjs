@@ -66,6 +66,7 @@ test("TC-04 an existing column skips the ALTER, and the answer is remembered", a
   assert.equal(res.success, true);
   assert.equal(alters(sql.calls).length, 0, "no ALTER, so no table lock");
   assert.deepEqual(lookups(sql.calls)[0].params, ["tc04", "done_at"]);
+  assert.match(lookups(sql.calls)[0].sql, /table_schema = 'public'/, "same schema as the other lookups");
   await new PgBoundStatement(sql, alter, []).run();
   assert.equal(lookups(sql.calls).length, 1, "second time comes from memory");
 });
