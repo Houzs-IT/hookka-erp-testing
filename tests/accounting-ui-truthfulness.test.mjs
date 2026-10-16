@@ -268,8 +268,10 @@ test("Stock Summary renders no ✓ column off the tautological `balanced` flag",
   );
   // The Trial Balance's own `balanced` is a REAL check (server-computed ΣDR vs
   // ΣCR over independent columns) and must survive this cleanup.
+  // Finance v2 (2026-10-16): the badge became the check strip; its verdict is
+  // still the server's flag, and an imbalance now names the difference.
   has(src,
-    /tb\.balanced \? "Balanced ✓" : "OUT OF BALANCE"/,
+    /<CheckStrip ok=\{tb\.balanced\} label=\{tb\.balanced \? "Balanced ✓" : checkLabel\(tb\.totalDr - tb\.totalCr\)\}>/,
     "the Trial Balance balanced badge was removed — that one is a real cross-check",
   );
 });

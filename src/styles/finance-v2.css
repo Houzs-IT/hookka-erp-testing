@@ -177,3 +177,160 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   border-color: #E2DDD8;
   box-shadow: 0 14px 34px rgba(31,29,27,.18);
 }
+
+/* ── Reports: <table data-fin-report> (components/finance/report-shell.tsx) ──
+   A row says what it is with data-row (sec, grp, line, sub, res, fin, bf, det,
+   detsum); a cell with data-cell words (num, code, split, stick, acc, pct,
+   est) and data-neg for a negative amount. Layers, low to high: a sticky first
+   cell 1, a lifted line 2, the header 4, the header's sticky first cell 5 —
+   so a lifted line passes over the frozen column and under the header. */
+[data-fin-ui] table[data-fin-report] {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  color: #374151;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background-color: #E2E8F0;
+  border-bottom: 1.5px solid #7A6E5E;
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1F2937;
+  white-space: nowrap;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td {
+  background-color: #FFFFFF;
+  border-bottom: 1px solid #EEE9E1;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="num"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="num"] {
+  border-left: 1px solid #E7E1D8;
+  color: #1F1D1B;
+  font-weight: 500;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="num"] {
+  border-left: 1px solid #CBD5E1;
+}
+
+/* The first amount column opens with the strong line. */
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="split"],
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="split"] {
+  border-left: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="code"] {
+  color: #6B5C32;
+  font-size: 12px;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="stick"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="stick"] {
+  z-index: 5;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="acc"] {
+  background-color: #D9E1EA;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="acc"] {
+  background-color: #F7F5F1;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="pct"] {
+  font-size: 11px;
+  color: #6B7280;
+}
+
+/* Row kinds. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sec"] > td {
+  border-top: 1.5px solid #7A6E5E;
+  color: #1F1D1B;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="grp"] > td {
+  color: #1F1D1B;
+  font-weight: 600;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sub"] > td {
+  background-color: #F1EEE8;
+  border-top: 1px solid #7A6E5E;
+  color: #1F1D1B;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"] > td {
+  background-color: #E9E3D8;
+  color: #1F1D1B;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="fin"] > td {
+  border-top: 1.5px solid #7A6E5E;
+  border-bottom: 3px double #1F1D1B;
+  color: #1F1D1B;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="bf"] > td {
+  color: #4B5563;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="det"] > td {
+  background-color: #F4F6F8;
+  color: #4B5563;
+  font-size: 12px;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="detsum"] > td {
+  background-color: #E8EDF2;
+  color: #1F1D1B;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* After the row kinds, so they win: an estimate, a negative amount. */
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="est"] {
+  background-color: #FAEFCB;
+  color: #9C6F1E;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-neg] {
+  color: #9A3A2D;
+}
+
+/* A line lifts on hover, like the lists. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="line"] {
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="line"]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(31,29,27,.16), 0 0 0 1.5px #7A6E5E;
+  position: relative;
+  z-index: 2;
+}
