@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: branch `feat/finance-v2-einvoice` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 (found in the plan 5 part B prod check) added to the plan 5 entry, branch `fix/ap-invoices-cancelled-outstanding`.
 > **Last verified: 2026-10-17**: finance v2 plan 5 part A (#935) prod-verified; part B (Tasks 2–3) added to its entry, branch `feat/finance-v2-debtors-creditors-b`.
 > **Last verified: 2026-10-17**: the owner's three answers (#934) prod-verified; plan 4 closed; branch `feat/finance-v2-debtors-creditors` (to `main`) added below (its entry is the newest).
@@ -200,6 +201,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-einvoice-setup.md`. Not built here (deferred or against an owner rule): e-Invoice submission tracking, the Chart of Accounts form rework, Currency & FX monthly rates (owner chose per-document rates), Change Year End with closed-year locks, SST tax codes, adding pre-opening invoices one at a time.
+
+1. 🔵 Part A — e-Invoice: the tab strip as the v2 switch (Generate shows how many are ready), the four status figures as KPI cards, both lists in the v2 list look; the LHDN notice and every write unchanged.
+2. ⚪ Part B — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row, Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted); Settings cards keep their own buttons.
 
 ## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 5: Debtors / Creditors, look only (owner「继续做」; the five open questions for this group are not built)(branch `feat/finance-v2-debtors-creditors` → `main`)
 
