@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -118,6 +119,95 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+🟡 **Fixed on branch** (`fix/cached-fetch-inflight-298` → `staging`). Found 2026-10-16 while reproducing BUG-2026-10-16-297; not reported by a user. How often it happens on the live sites is UNMEASURED.
+
+**Symptom.** A page that refreshes its data while the previous request is still running (the /production 8 s poll before BUG-2026-10-16-297, the come-back-to-the-tab refresh, a cache invalidation) could leave a request running that nothing was waiting for. The server built the full response and the browser downloaded it, then threw it away.
+
+**Root cause.** `joinInflight` in `src/lib/cached-fetch.ts` keeps one entry per URL so callers share a request and the last one to leave can cancel it. When a request settled, its `.finally` ran `inflight.delete(url)`, deleting by URL. A cancelled request settles a moment after it is cancelled, and by then a newer request for the same URL may have registered. The old request's `.finally` then deleted the NEWER entry. The next refresh looked for an entry to cancel, found none, and started a third request, while the second ran on to the end for a consumer that had already left.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (refresh every 100 ms, response 300 ms): in 1 s, 10 requests started, 5 were aborted and 3 finished unwatched. With the fix: every superseded request is aborted and none finishes.
+
+**Fix.** The `.finally` deletes the entry only if it is still its own (`inflight.get(url)?.promise === promise`). Abort, ref counting and the 502/503/504 retry are unchanged; the existing `cached-fetch-*` tests pass.
+
+**Same shape, not fixed (open).** `releaseInflight(url)` also finds the entry by URL. Two components sharing one URL: request A settles and its entry is dropped, component 2 refreshes and starts B, then component 1 unmounts and its cleanup decrements B's count to 0 and aborts B while component 2 is still waiting on it. Found by reading the code; not reproduced. One component alone cannot hit it (React runs the old cleanup before the new request starts).
+
+**Regression.** `tests/cached-fetch-inflight-identity.test.mjs`.
+
+
+---
+
+## BUG-2026-10-16-297 — /production cancelled its own order list when the list took longer than 8 seconds `production` `performance` 🟡
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+🟡 **Fixed on branch** (`fix/production-poll-skip-inflight` → `staging`). Seen 2026-10-16 in the app's network panel while checking BUG-2026-10-16-299: `GET /api/production-orders`, status 0, AbortError, at 8,007 ms. Which site that was, and how often it happens, are UNMEASURED.
+
+**Symptom.** A list request still running 8 s after it started is cancelled and a new one starts. If every response takes over 8 s, the sheet never refreshes, while the server still builds every list it is asked for.
+
+**Root cause.** The 8 s poll on `/production` called `refresh()` from `useCachedJson` without checking whether the previous request had finished. `refresh()` bumps `tick`, the fetch effect's cleanup runs `releaseInflight`, the ref count drops to 0, and the running request is aborted. A cancelled consumer stays silent by design, so the page kept its older copy and showed no error.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms poll, 300 ms response). In one 1 s run: 10 requests started, 5 were aborted, 3 finished, and the page got data from none of them. `tests/production-poll-skip-inflight.test.mjs` keeps the no-guard case (data stays empty, at least 3 aborts).
+
+**Fix.** `useCachedJson` now returns `isFetching()`, true from the moment its request starts until it settles (a cancelled run leaves the flag to the run that replaced it). The `/production` poll tick returns early while it is true. `loading` could not be used: it is only true when there is no cached copy, so it stays false on every poll. The abort and ref-count rules in `cached-fetch.ts` are unchanged. The flag clears on every settle path: a 2xx, an HTTP error, and the 30 s global abort from `api-client.ts`. So a request that never answers now costs one 30 s gap in polling, not an endless 8 s cancel loop.
+
+**Found in passing, fixed separately as BUG-2026-10-16-298.** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still could. C15 row 8.
+
+**Other timed refreshes checked.** Every other `setInterval` / `useInterval` in `src/` (sidebar unread counts, IT support tickets, the scan-queue polls in the two scan modals, presence, version check, RUM flush) uses a plain fetch that does not cancel the previous call. `/production` was the only poll through `useCachedJson().refresh`. The same page's come-back-to-the-tab refresh (3 s gate only) can still cancel a running list request; not changed here. Same mechanism, not a timer: `revalidateOnFocus: true` (`sales/create.tsx`, `sales/edit.tsx`) refetches on focus when the saved copy is over 2 s old, which during a slow first load (no copy) cancels and restarts the request.
+
+**Regression.** `tests/production-poll-skip-inflight.test.mjs`. The return-line pin in `tests/record-load-failure-class.test.mjs` now allows fields after `refresh`.
+
+## BUG-2026-10-16-296 — A salesperson's narrowed order list could be served to the whole factory from the KV cache `production` `customer-scope` `cache` 🟡
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`). Found in passing on 2026-10-16 while adding the ETag (BUG-2026-10-16-299); not reported by a user.
+
+**Symptom (expected, not observed).** After a SALES user loads a page that lists production orders, other users on the same URL could see only the orders that salesperson may see, until the next write refreshes the entry or the cache expires (300 s for the full list, 60 s for a paged one).
+
+**Root cause.** `GET /api/production-orders` keeps two KV caches in front of the snapshot layer: `buildPoListBodyKey` (full list) and `buildPoListCacheKey` (paged list). Both keys are org + query string, with no user in them. For a customer-scoped user (`isCustomerScoped`, role SALES) the list is narrowed in SQL (`salesOrderScopeSql`), and `buildListPayload` already keeps that narrowed list out of the snapshot. The KV block did not: on a MISS, on the background stale refresh (`schedulePoListBodyRefresh`) and on a paged MISS, the narrowed body was written to the shared org entry. The other direction was not a leak: a scoped user served the shared body is still narrowed by `customerScopeMiddleware` on the way out. C22 (a cache key coarser than the handler it names), row 4.
+
+**Prod, measured read-only 2026-10-16.** 3 active SALES users (latest login 2026-10-07), none owning a customer. 7 customers are assigned to 2 salespeople in other roles, and all production orders come from those 7 customers, so a SALES user's narrowed list is 5 of 5,012 orders. **UNMEASURED:** whether any SALES user has actually loaded `/sales`, `/consignment` or `/warehouse` (`?fields=minimal&include=`) or the production pages since the KV body cache shipped. The database has no request log for it.
+
+**Fix.** The whole KV block is skipped for scoped users (`if (kvCache && !isCustomerScoped(c))`), so they neither read nor write either key and the stale refresh is never scheduled for them. They already computed live past the snapshot, and there are few of them.
+
+**Not changed.** The snapshot and middleware paths. The sticker-print `scope=` path already skipped both caches.
+
+**Regression.** `tests/po-list-kv-scoped-user.test.mjs` (source-level; fails on the old `if (kvCache) {`).
+
+## BUG-2026-10-16-299 — /production re-downloaded the whole order list every 8 seconds `production` `performance` 🟡
+
+Ported to `main` on branch `fix/po-list-cache-main`. Logged as BUG-2026-10-16-294 on `staging`; main's 294 is the packing sticker fix.
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Measured on prod 2026-10-15 at about 23:00 (read-only): each 8 s poll of `/api/production-orders?fields=minimal&excludeCompleted=true` was 906 KB on the wire (15.9 MB unpacked), almost always an identical body. That is about 0.9 Mbit/s per open tab, so a few factory tablets on this page can fill shared Wi-Fi and slow every page.
+
+**Root cause.** Every `/api/*` reply is sent `no-store` (`worker.ts`, added 2026-04-26 after stale rows were seen following a direct D1 reset). The list reply also had no validator, so the browser could neither keep a copy nor ask "has it changed?".
+
+**Fix.** The non-paginated list stores a SHA-1 of its body in the KV metadata (`h`, next to `v`) at both write sites, sends it as `ETag`, and answers a matching `If-None-Match` (a weak `W/` prefix accepted) with a bodyless 304. The global header middleware sends `private, no-cache` only when a reply has an ETag; every other route keeps `no-store`. `private` keeps Cloudflare's edge from storing it and `no-cache` makes the browser ask the server on every poll, so a change is still seen on the next poll. Customer-scoped users get no ETag, because the response middleware narrows the shared body per user. KV entries written before this have no `h` and get no ETag until they are rewritten (5 min TTL).
+
+**Not changed.** The poll interval and the client. Prod bytes per idle poll after deploy are UNMEASURED.
+
+**Regression.** `tests/po-list-etag-304.test.mjs`.
+
+## BUG-2026-10-16-295 — A scan landing during a list rebuild could stay hidden until the next write `production` `cache` 🟡
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Suspected, not reproduced: a scan made while the background list refresh was running could stay invisible on the dept sheets for up to the 5 min KV TTL.
+
+**Root cause.** `schedulePoListBodyRefresh` read the org cache version AFTER building the body. Writers bump the version after their commit (checked on the scan path: `invalidateProductionCachesAfterScan` runs after the writes), so a write landing mid-build stamped the pre-write body with the post-write version, and later reads served it as a fresh HIT. The comment there claimed the opposite.
+
+**Fix.** Read the version before the build. A write landing mid-build now leaves the stamp behind and the next poll refreshes again.
+
+**Regression.** `tests/po-list-etag-304.test.mjs` (the version-order case).
 
 ## BUG-2026-10-16-294 — Packing sticker cut the Notes line to one line `production` `printing` 🟡
 
