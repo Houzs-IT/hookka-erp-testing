@@ -342,6 +342,14 @@ export type DataGridProps<T> = {
   // Drag a header onto another to move the column there (finance v2). The new
   // order saves like a Columns-popover reorder. Off by default.
   reorderableHeaders?: boolean;
+  // Ticks change only through the checkbox column (finance lists, owner
+  // 2026-10-01 「我不要点一次打开」): a row click, a right-click and the ⋮
+  // leave the selection alone, Shift + right-click keeps the browser's menu,
+  // and a double-click on the tick or ⋮ cell does not open the record. Off by
+  // default (other grids select on click as before).
+  checkboxSelectOnly?: boolean;
+  // The search box's hint (default "Search...").
+  searchPlaceholder?: string;
 };
 
 type SavedView = {
@@ -1768,6 +1776,8 @@ export function DataGrid<T extends Record<string, any>>({
   footerLabel,
   headerMenu,
   reorderableHeaders,
+  checkboxSelectOnly,
+  searchPlaceholder,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -2755,6 +2765,11 @@ export function DataGrid<T extends Record<string, any>>({
   }, [sortKey, sortDir]);
 
   const handleRowClick = useCallback((e: React.MouseEvent, row: T, index: number) => {
+    if (checkboxSelectOnly) {
+      lastClickedIndex.current = index;
+      onRowClick?.(row);
+      return;
+    }
     const key = String(getNestedValue(row, keyField));
     setSelectedKeys(prev => {
       const next = new Set(prev);
@@ -2775,7 +2790,7 @@ export function DataGrid<T extends Record<string, any>>({
     });
     lastClickedIndex.current = index;
     onRowClick?.(row);
-  }, [keyField, sortedData, onRowClick]);
+  }, [keyField, sortedData, onRowClick, checkboxSelectOnly]);
 
   // The rows last handed to onSelectionChange — see the identity guard below.
   const lastEmittedSelection = useRef<T[] | null>(null);
@@ -2840,11 +2855,12 @@ export function DataGrid<T extends Record<string, any>>({
 
   const handleContextMenu = useCallback((e: React.MouseEvent, row: T) => {
     if (!contextMenuItems) return;
+    if (checkboxSelectOnly && e.shiftKey) return; // keep the browser's own menu
     e.preventDefault();
     const key = String(getNestedValue(row, keyField));
-    setSelectedKeys(new Set([key]));
+    if (!checkboxSelectOnly) setSelectedKeys(new Set([key]));
     setCtxMenu({ x: e.clientX, y: e.clientY, row });
-  }, [contextMenuItems, keyField]);
+  }, [contextMenuItems, keyField, checkboxSelectOnly]);
 
   // Tablet UX: open the same context menu via a tap on the row's kebab
   // button. Anchors the menu to the kebab's bottom-right so it appears
@@ -2855,9 +2871,9 @@ export function DataGrid<T extends Record<string, any>>({
     e.preventDefault();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const key = String(getNestedValue(row, keyField));
-    setSelectedKeys(new Set([key]));
+    if (!checkboxSelectOnly) setSelectedKeys(new Set([key]));
     setCtxMenu({ x: rect.right, y: rect.bottom, row });
-  }, [contextMenuItems, keyField]);
+  }, [contextMenuItems, keyField, checkboxSelectOnly]);
 
   const resolvedCtxItems = useMemo(() => {
     if (!ctxMenu || !contextMenuItems) return [];
@@ -3017,7 +3033,7 @@ export function DataGrid<T extends Record<string, any>>({
           </svg>
           <input
             type="text"
-            placeholder="Search..."
+            placeholder={searchPlaceholder ?? "Search..."}
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
             className="w-full rounded border border-[#DDD] bg-white h-9 pl-8 pr-7 text-sm text-[#333] placeholder-[#AAA] focus:border-[#6B5C32] focus:outline-none"
@@ -3565,6 +3581,9 @@ export function DataGrid<T extends Record<string, any>>({
                         rowClassName?.(row),
                         isSelected && "!bg-[#CCE0FF] border-l-2 border-l-[#3366CC]",
                         !isSelected && "hover:bg-[#F0ECE9]",
+                        // The row whose menu is open, when a right-click no
+                        // longer selects it (checkboxSelectOnly).
+                        checkboxSelectOnly && ctxMenu?.row === row && "bg-[#F0ECE9]",
                         (onDoubleClick || onRowClick) && "cursor-pointer"
                       )}
                       onClick={e => handleRowClick(e, row, index)}
@@ -3586,6 +3605,7 @@ export function DataGrid<T extends Record<string, any>>({
                             isSelected && "!bg-[#CCE0FF]",
                           )}
                           style={{ minHeight: "40px", width: "32px", minWidth: "32px", maxWidth: "32px" }}
+                          onDoubleClick={checkboxSelectOnly ? (e) => e.stopPropagation() : undefined}
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedKeys(prev => {
@@ -3684,6 +3704,7 @@ export function DataGrid<T extends Record<string, any>>({
                         <td
                           className="px-1 text-center"
                           onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={checkboxSelectOnly ? (e) => e.stopPropagation() : undefined}
                         >
                           <button
                             type="button"
