@@ -370,12 +370,16 @@ app.put("/", async (c) => {
     }
   }
 
+  // dryRun: nothing is written; the response lists the job cards the save
+  // would change, for the confirm pop-up.
+  const dryRun = (body as { dryRun?: unknown }).dryRun === true;
   let jobCards: CardSyncResult;
   try {
     jobCards = await saveBomAndSyncCards(
       c,
       bomWrites,
       new Set(bomWrites.map((w) => `${w.productCode}::${deptCode}`)),
+      { preview: dryRun },
     );
   } catch (e) {
     if (e instanceof CardsBusyError) return BUSY_RESPONSE(c, e);
@@ -383,6 +387,7 @@ app.put("/", async (c) => {
   }
   return c.json({
     success: true,
+    dryRun,
     updatedBomCount,
     updatedNodeCount,
     wipLabel,
@@ -612,9 +617,10 @@ app.post("/bulk-import", async (c) => {
 
   // Write the dirty BOMs and the matching job cards in one transaction: the
   // whole import lands or none of it does, so a failed import can be re-run.
+  // A dry run previews the job cards too (nothing is written either way).
   let appliedBomCount = 0;
   let cards: { jobCards?: CardSyncResult } = {};
-  if (!dryRun) {
+  {
     const bomWrites: BomWrite[] = [];
     const pairs = new Set<string>();
     for (const bom of bomCache) {
@@ -631,12 +637,12 @@ app.post("/bulk-import", async (c) => {
       for (const d of bom.depts) pairs.add(`${bom.productCode}::${d}`);
     }
     try {
-      cards = { jobCards: await saveBomAndSyncCards(c, bomWrites, pairs) };
+      cards = { jobCards: await saveBomAndSyncCards(c, bomWrites, pairs, { preview: dryRun }) };
     } catch (e) {
       if (e instanceof CardsBusyError) return BUSY_RESPONSE(c, e);
       throw e;
     }
-    appliedBomCount = bomWrites.length;
+    if (!dryRun) appliedBomCount = bomWrites.length;
   }
 
   const totalItems = rawItems.length;

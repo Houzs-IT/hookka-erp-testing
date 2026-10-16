@@ -1,5 +1,11 @@
 # Hookka ERP — Work Tracker
 
+ deisgn/mobile-so-detail-card
+
+> **Last verified: 2026-10-16**: branch `feat/wip-save-confirm-cards`, to `staging` (confirm pop-up listing affected job cards before a WIP time save) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `chore/sync-staging-from-main-1016` (staging<-main sync) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/wip-save-one-transaction`, to `staging`: the WIP time auto-sync entry below got its one-transaction hardening (its entry is the newest).
+ staging
 > **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
 > now allocatable (finished pieces always first). Entry below; the stage threshold is a
@@ -7531,3 +7537,17 @@ Asked (owner, 2026-10-16): fix the job card save stalls seen on staging after de
    checking `information_schema` first (branch `fix/self-apply-skip-existing-column`, to `main`).
 2. [ ] Verify on staging after deploy: the slow-SQL log should stop showing those ALTERs.
 
+## 2026-10-16 — WIP time save: confirm the affected job cards first
+
+Asked (owner, 2026-10-16): after pressing Save on a WIP time, show a pop-up with the job cards
+that will change, in detail, before anything is saved.
+
+1. [x] Single edit and multi-row Set BOM Time: Save asks the server what would change (saves
+   nothing), shows the cards (SO, PO, product, department, WIP, status, due date, worker, old and
+   new minutes) plus the ones that keep their time and why. Confirm saves; Cancel changes nothing.
+2. [x] No card would change: save straight away, no pop-up.
+3. [x] Excel import: the same card list inside its existing confirm step.
+
+Built on branch `feat/wip-save-confirm-cards` (to `staging`): `dryRun` preview in `saveBomAndSyncCards`,
+`src/pages/production/job-card-changes.tsx`. Checked locally on the real page with stubbed
+responses (confirm, cancel, no-change, 320px). **Not yet verified on staging.**

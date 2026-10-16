@@ -20,6 +20,7 @@ import { Clock, Download, Upload, AlertTriangle, Pencil, X, CheckCircle } from "
 import { Button } from "@/components/ui/button";
 import { csrfHeaders } from "@/lib/csrf";
 import { DEPARTMENTS } from "./utils";
+import { ConfirmJobCardChanges, JobCardChangesList, mergePreviews, type CardPreview } from "./job-card-changes";
 import { useUrlState, useUrlStateBool } from "@/lib/use-url-state";
 import type * as XlsxNs from "xlsx";
 type XLSXModule = typeof XlsxNs;
@@ -61,7 +62,7 @@ type WipTimeResponse = {
 // Saving a time also updates the unfinished job cards on the server; this is
 // what each save response says about them.
 type CardSync = {
-  jobCards?: { updated: number; leftAlone: number; skipped: number; outOfDate?: number };
+  jobCards?: { updated: number; leftAlone: number; skipped: number; outOfDate?: number; details?: CardPreview };
 };
 const OPEN_CARDS_NOTE =
   "Unfinished job cards (waiting, in progress, paused or blocked) still at the old time also get the new time. Finished cards, and cards that already had a different time, keep theirs.";
@@ -197,6 +198,10 @@ export default function WipTimesPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   // What saving did to the unfinished job cards (the server updates them).
   const [cardsNotice, setCardsNotice] = useState<string | null>(null);
+  // Confirm pop-up: the job cards a save would change, and the save to run.
+  const [confirm, setConfirm] = useState<{ preview: CardPreview; run: () => Promise<void> } | null>(null);
+  const [confirmSaving, setConfirmSaving] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // Multi-select batch edit. The grid's tick boxes feed `selectedRows`;
   // when one or more rows are ticked a toolbar appears that opens a batch
@@ -313,6 +318,20 @@ export default function WipTimesPage() {
     };
   }, [rows]);
 
+  // One WIP time save. dryRun = nothing is written; the reply lists the job
+  // cards the save would change (jobCards.details), for the confirm pop-up.
+  const putWipTime = async (wipLabel: string, deptCode: string, minutes: number, dryRun: boolean) => {
+    const res = await fetch("/api/wip-times", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ wipLabel, deptCode, minutes, dryRun }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { error?: string } & CardSync;
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  };
+
   // -- Inline edit save -----------------------------------------------------
   // PUTs the new minutes value to /api/wip-times, which finds every ACTIVE
   // BOM template containing this (wipLabel × deptCode) and overwrites the
@@ -326,34 +345,46 @@ export default function WipTimesPage() {
       setSaveError("Enter a number between 0 and 1440 (24h cap).");
       return;
     }
-    setSaving(true);
-    try {
-      const res = await fetch("/api/wip-times", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          wipLabel: editing.wipLabel,
-          deptCode: editing.departmentCode,
-          minutes: m,
-        }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { error?: string } & CardSync;
-      if (!res.ok) {
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
+    const { wipLabel, departmentCode } = editing;
+    const saveNow = async () => {
+      const body = await putWipTime(wipLabel, departmentCode, m, false);
       setCardsNotice(cardsNoticeFrom([body]));
       // Invalidate every /api/wip-times cache key — filter combos differ
       // so a prefix invalidation catches them all (with-dept, with-cat etc).
       invalidateCachePrefix("/api/wip-times");
       setEditing(null);
-      // Force the page-bound useCachedJson to refetch by mutating url state
-      // not strictly needed — invalidateCachePrefix already flips the cache
-      // entry; the next render's useCachedJson will see the fresh fetch.
+    };
+    setSaving(true);
+    try {
+      // Ask first which job cards would change; confirm only if any would.
+      const preview = (await putWipTime(wipLabel, departmentCode, m, true)).jobCards?.details;
+      if (preview && preview.willChange.length > 0) {
+        openConfirm(preview, saveNow);
+        return;
+      }
+      await saveNow();
     } catch (err) {
       setSaveError(humanizeError(err, "Couldn't save. Please try again."));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openConfirm = (preview: CardPreview, run: () => Promise<void>) => {
+    setConfirmError(null);
+    setConfirm({ preview, run });
+  };
+  const handleConfirm = async () => {
+    if (!confirm || confirmSaving) return;
+    setConfirmSaving(true);
+    setConfirmError(null);
+    try {
+      await confirm.run();
+      setConfirm(null);
+    } catch (err) {
+      setConfirmError(humanizeError(err, "Couldn't save. Please try again."));
+    } finally {
+      setConfirmSaving(false);
     }
   };
 
@@ -387,41 +418,49 @@ export default function WipTimesPage() {
       setBatchError("Enter a number between 0 and 1440 (24h cap).");
       return;
     }
+    const rowsToSave = selectedRows;
     setBatchSaving(true);
-    setBatchProgress({ done: 0, total: selectedRows.length });
+    try {
+      // Ask first which job cards the rows would change; confirm only if any would.
+      const previews: CardPreview[] = [];
+      for (const r of rowsToSave) {
+        const details = (await putWipTime(r.wipLabel, r.departmentCode, m, true)).jobCards?.details;
+        if (details) previews.push(details);
+      }
+      const preview = mergePreviews(previews);
+      if (preview.willChange.length > 0) {
+        openConfirm(preview, () => runBatchSave(rowsToSave, m));
+        return;
+      }
+      await runBatchSave(rowsToSave, m);
+    } catch (err) {
+      setBatchError(humanizeError(err, "Couldn't check the job cards. Please try again."));
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const runBatchSave = async (rowsToSave: WipTimeRow[], m: number) => {
+    setBatchSaving(true);
+    setBatchProgress({ done: 0, total: rowsToSave.length });
     const failed: string[] = [];
     const synced: CardSync[] = [];
     try {
       let done = 0;
-      for (const r of selectedRows) {
+      for (const r of rowsToSave) {
         try {
-          const res = await fetch("/api/wip-times", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              wipLabel: r.wipLabel,
-              deptCode: r.departmentCode,
-              minutes: m,
-            }),
-          });
-          const body = (await res.json().catch(() => ({}))) as { error?: string } & CardSync;
-          if (!res.ok) {
-            failed.push(`${r.wipLabel}: ${body.error || `HTTP ${res.status}`}`);
-          } else {
-            synced.push(body);
-          }
+          synced.push(await putWipTime(r.wipLabel, r.departmentCode, m, false));
         } catch (err) {
           failed.push(`${r.wipLabel}: ${err instanceof Error ? err.message : "failed"}`);
         }
         done += 1;
-        setBatchProgress({ done, total: selectedRows.length });
+        setBatchProgress({ done, total: rowsToSave.length });
       }
       invalidateCachePrefix("/api/wip-times");
       setCardsNotice(cardsNoticeFrom(synced));
       if (failed.length > 0) {
         setBatchError(
-          `${failed.length} of ${selectedRows.length} did not save:\n${failed.slice(0, 5).join("\n")}`,
+          `${failed.length} of ${rowsToSave.length} did not save:\n${failed.slice(0, 5).join("\n")}`,
         );
         return;
       }
@@ -913,6 +952,16 @@ export default function WipTimesPage() {
           </label>
         </div>
       </div>
+
+      {confirm && (
+        <ConfirmJobCardChanges
+          preview={confirm.preview}
+          saving={confirmSaving}
+          error={confirmError}
+          onConfirm={handleConfirm}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
 
       {cardsNotice && (
         <div className="flex items-start justify-between gap-2 rounded-md p-3 text-sm bg-[#EEF3E4] text-[#4F7C3A]">
@@ -1474,7 +1523,7 @@ export default function WipTimesPage() {
           onClick={cancelImport}
         >
           <div
-            className="w-full max-w-2xl bg-white rounded-lg shadow-xl"
+            className={`w-full ${importPreview?.jobCards?.details?.willChange.length ? "max-w-5xl" : "max-w-2xl"} max-h-[92vh] flex flex-col bg-white rounded-lg shadow-xl`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-4 border-b border-[#E2DDD8]">
@@ -1489,7 +1538,7 @@ export default function WipTimesPage() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <div className="p-4 space-y-3 text-sm">
+            <div className="p-4 space-y-3 text-sm overflow-y-auto min-h-0">
               {importError && (
                 <p className="text-[#9A3A2D] bg-[#F9E1DA] p-3 rounded">
                   {importError}
@@ -1501,6 +1550,9 @@ export default function WipTimesPage() {
                     Reviewing your changes — nothing has been written yet.
                   </p>
                   <p className="text-xs text-[#6B7280]">{OPEN_CARDS_NOTE}</p>
+                  {importPreview.jobCards?.details && (
+                    <JobCardChangesList preview={importPreview.jobCards.details} />
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-[#FAF8F5] p-3 rounded">
                       <div className="text-xs text-[#6B7280]">Rows in file</div>
