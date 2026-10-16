@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-297 (branch `fix/production-poll-skip-inflight`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/fg-sticker-notes-wrap`, to `staging`; 292 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
@@ -158,6 +159,25 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-297 — /production cancelled its own order list when the list took longer than 8 seconds `production` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/production-poll-skip-inflight` → `staging`). Seen 2026-10-16 in the app's network panel while checking BUG-2026-10-16-294: `GET /api/production-orders`, status 0, AbortError, at 8,007 ms. Which site that was, and how often it happens, are UNMEASURED.
+
+**Symptom.** A list request still running 8 s after it started is cancelled and a new one starts. If every response takes over 8 s, the sheet never refreshes, while the server still builds every list it is asked for.
+
+**Root cause.** The 8 s poll on `/production` called `refresh()` from `useCachedJson` without checking whether the previous request had finished. `refresh()` bumps `tick`, the fetch effect's cleanup runs `releaseInflight`, the ref count drops to 0, and the running request is aborted. A cancelled consumer stays silent by design, so the page kept its older copy and showed no error.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms poll, 300 ms response). In one 1 s run: 10 requests started, 5 were aborted, 3 finished, and the page got data from none of them. `tests/production-poll-skip-inflight.test.mjs` keeps the no-guard case (data stays empty, at least 3 aborts).
+
+**Fix.** `useCachedJson` now returns `isFetching()`, true from the moment its request starts until it settles (a cancelled run leaves the flag to the run that replaced it). The `/production` poll tick returns early while it is true. `loading` could not be used: it is only true when there is no cached copy, so it stays false on every poll. The abort and ref-count rules in `cached-fetch.ts` are unchanged. The flag clears on every settle path: a 2xx, an HTTP error, and the 30 s global abort from `api-client.ts`. So a request that never answers now costs one 30 s gap in polling, not an endless 8 s cancel loop.
+
+**Found in passing, not fixed (open).** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still can. C15 row 8.
+
+**Other timed refreshes checked.** Every other `setInterval` / `useInterval` in `src/` (sidebar unread counts, IT support tickets, the scan-queue polls in the two scan modals, presence, version check, RUM flush) uses a plain fetch that does not cancel the previous call. `/production` was the only poll through `useCachedJson().refresh`. The same page's come-back-to-the-tab refresh (3 s gate only) can still cancel a running list request; not changed here. Same mechanism, not a timer: `revalidateOnFocus: true` (`sales/create.tsx`, `sales/edit.tsx`) refetches on focus when the saved copy is over 2 s old, which during a slow first load (no copy) cancels and restarts the request.
+
+**Regression.** `tests/production-poll-skip-inflight.test.mjs`. The return-line pin in `tests/record-load-failure-class.test.mjs` now allows fields after `refresh`.
+
 
 ## BUG-2026-10-16-296 — A salesperson's narrowed order list could be served to the whole factory from the KV cache `production` `customer-scope` `cache` 🟡
 
