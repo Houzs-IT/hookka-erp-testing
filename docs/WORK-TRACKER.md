@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: finance v2 plan 2b (#923) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-daily-b` (to `main`) added below (its entry is the newest); plan 2a (#922) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-daily` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 1 (#918) prod-verified.
@@ -186,13 +187,13 @@ design/mobile-home-dashboard
 
 
 
-## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 2b: Daily part 2 — Receipts, Daily Cash Position, Fund Transfer, popups (branch `feat/finance-v2-daily-b` → `main`)
+## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2b: Daily part 2 — Receipts, Daily Cash Position, Fund Transfer, popups (#923 fe84208e, prod-verified)
 
 1. ✅ Receipts list on DataGrid (v2 pills incl. Bounced and Posted · unallocated, funnels, header menu, total over active receipts); click-to-expand dropped (owner 「继续做」), double-click shows the same detail.
 2. ✅ Daily Cash Position: title-row buttons, weekday, slate bank header, v2 list look; pending lines receipts first on screen, image and print; banks stay open (owner).
 3. ✅ Fund Transfer: v2 list look, dates, pill, total over active transfers.
 4. ✅ Document popups (DocDetailModal) in the v2 frame.
-5. ⚪ Prod check after deploy (read-only).
+5. ✅ Prod check (read-only, owner's session): Receipts — 54 from the three sources = 54 shown, footer total = active receipts added up from the APIs, pills Posted / Posted · unallocated / VOID / DELETED, no expand arrows; a double-clicked receipt opened in the v2 popup frame and Esc closed it. Daily Cash Position — title-row buttons, "Friday · today", slate bank header, banks open, receipts before payments, the ticked fold row. Fund Transfer — 5 transfers, footer = active total, dates "09 Oct 2026".
 
 ## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2a: Daily part 1 — Payment Vouchers list (owner「继续做」; Receipts expand dropped and Daily Cash Position banks kept open, as recommended)(branch `feat/finance-v2-daily` → `main`)
 
