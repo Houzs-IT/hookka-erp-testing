@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
@@ -116,6 +117,16 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-293 — Cards lost their top padding on phones on main (IT Support report form flush at the top) `ui-frontend` 🟡
+
+🟡 **Fixed on branch** (`fix/card-phone-padding` -> `main`). Seen on `/m` IT Support > Report an issue: the "What is the issue?" label sits on the card's top edge. Staging already had the fix (#684, BUG-2026-10-02-252) and never sent it to main.
+
+**Cause.** `CardContent` in `src/components/ui/card.tsx` carried `max-md:p-[var(--card-pad,1rem)] max-md:pt-0` in its base classes (and `CardHeader` the same `max-md:p-[…]`). tailwind-merge cannot know a caller's plain `p-6` should beat a `max-md:` variant, so below 768px every card that set its own padding got 0 top and 1rem sides anyway.
+
+**Fix.** Same two lines as staging: the phone default goes through a CSS variable (`[--card-pad-auto:1.5rem] max-md:[--card-pad-auto:1rem]`), so the base has no `max-md:` padding class left. Cards that set no padding look the same. Cards that set their own (`p-4`, `p-6 sm:p-8`, …) now get it on phones too, so some cards are roomier on phones than before.
+
+**Regression.** `tests/card-padding-phone.test.mjs` (card part of staging's test; staging's KPI_ROW case is staging-only and left out).
 
 ## BUG-2026-10-15-292 — Picking the MTR row of a material added the ROLL one to the PO `procurement` `inventory` 🟡
 
