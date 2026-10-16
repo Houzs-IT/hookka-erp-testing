@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: finance v2 plan 4 part A (#931) prod-verified; part B (Labour, Fixed Assets) added to its entry.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-monthly` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 3 part 6 (#929) prod-verified; part 7 (Overview) added to its entry.
 > **Last verified: 2026-10-16**: finance v2 plan 3 part 5 (#928) prod-verified; part 6 (Stock Summary, Balance Sheet look) added to its entry.
@@ -197,8 +198,9 @@ design/mobile-home-dashboard
 
 ## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 4: Monthly group (branch `feat/finance-v2-monthly` → `main`; shipped in parts)
 
-1. 🔵 Part A — KPI cards + status banner (shared); Self-check as one list with result pills, items under the row and fix links, under a "N of M OK" card; Corrections on DataGrid under a count card, last 90 days by default or by month. Same reads.
-2. ⚪ Part B — Labour, Fixed Assets. Part C — Stock Take, Cash Book. Every posting / matching / saving button keeps its behaviour; prod checks never press them.
+1. ✅ Part A (#931 8721544c) — KPI cards + status banner (shared); Self-check as one list with result pills, items under the row and fix links, under a "N of M OK" card; Corrections on DataGrid under a count card, last 90 days by default or by month. Same reads. Prod check (read-only): Self-check shows its 7 checks with the card's OK count matching the pills, the Trial balance line agrees with the API's balanced flag, items open under a row, Run again sits on the title row; Corrections lists exactly the API's rows for the last 90 days and for the running month, its total row equals an independent sum, and the card's per-kind counts add up to the row count.
+2. 🔵 Part B — Labour (title-row month / map / Check in Payroll / the same Post–Unpost; banner and cards from the preview) and Fixed Assets (title-row month / Add Asset / the same Post / download; the preview loads with the month; banner and cards; run and register grouped by asset account with subtotals).
+3. ⚪ Part C — Stock Take, Cash Book. Every posting / matching / saving button keeps its behaviour; prod checks never press them.
 
 ## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 3: Reports (branch `feat/finance-v2-reports` → `main`; shipped in parts)
 
