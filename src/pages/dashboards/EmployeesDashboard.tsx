@@ -13,8 +13,7 @@ import type { EmployeeSlice } from "./EmployeesInsights";
 import type { RevenueSplitResp } from "../dashboard-b/revenue-split";
 import {
   BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, MUTED, RED, TEAL,
-  fmtN, inPeriod, periodLabel, widgetPeriod, type Period,
-} from "./dashboard-shared-lib";
+  fmtN, inPeriod, periodLabel, widgetPeriod, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 
 // ---------------------------------------------------------------------------
 // Employees, merged dashboard (owner 2026-10-17). One page, no sub-tabs: "a
@@ -300,9 +299,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chart} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                  <YAxis yAxisId="h" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={40} />
-                  <YAxis yAxisId="p" orientation="right" domain={[0, (max: number) => Math.max(120, Math.ceil(max / 10) * 10)]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={40} />
+                  <XAxis dataKey="m" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis yAxisId="h" tick={CC_TICK} axisLine={false} tickLine={false} width={40} />
+                  <YAxis yAxisId="p" orientation="right" domain={[0, (max: number) => Math.max(120, Math.ceil(max / 10) * 10)]} tickFormatter={(v) => `${v}%`} tick={CC_TICK} axisLine={false} tickLine={false} width={40} />
                   <Tooltip
                     contentStyle={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 8, fontSize: 12 }}
                     formatter={(v, n) => (n === "Efficiency" ? [`${v}%`, n] : [`${v} h`, n])}
@@ -311,7 +310,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                       return canSalary && salaryReady ? `${l} · salary ${formatCurrency(c)}` : String(l);
                     }}
                   />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   <Bar yAxisId="h" dataKey="Working" fill="#D9D2CA" radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
                   <Bar yAxisId="h" dataKey="Production" fill={CHART_INK} radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
                   <Line yAxisId="p" type="monotone" dataKey="Efficiency" stroke={CHART_GOLD} strokeWidth={2.5} dot={{ r: 2.5 }} isAnimationActive={false} connectNulls />

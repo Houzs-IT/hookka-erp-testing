@@ -6,8 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import {
   TAUPE, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN, fmtRMAxis, inPeriod, inFocus,
-  dayLabel, periodLabel, type Period,
-} from "./dashboard-shared-lib";
+  dayLabel, periodLabel, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
@@ -242,8 +241,8 @@ export function ProductionDailyPanels({
       ) : (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 6, right: 6, bottom: 0, left: 0 }} style={{ cursor: "pointer" }} onClick={pick(rows)}>
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-            <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={yWidth} allowDecimals={false} tickFormatter={fmt} />
+            <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+            <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={yWidth} allowDecimals={false} tickFormatter={fmt} />
             <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={TOOLTIP} />
             {dayLine && <ReferenceLine x={dayLine} stroke={AMBER} strokeWidth={2} />}
             {body}
@@ -280,7 +279,7 @@ export function ProductionDailyPanels({
             <CardContent>
               {barChart(planChart, (
                 <>
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   <Bar dataKey="Plan" fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="Actual" fill={TAUPE} radius={[3, 3, 0, 0]} />
                 </>

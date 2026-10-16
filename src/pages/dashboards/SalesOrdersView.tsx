@@ -19,8 +19,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   TAUPE, GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
   CHART_INK, CHART_GOLD, CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
-  inPeriod, inFocus, periodLabel, type Period, widgetPeriod,
-} from "./dashboard-shared-lib";
+  inPeriod, inFocus, periodLabel, type Period, widgetPeriod, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { LiveBadge } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { dropIdleSundays } from "@/lib/idle-sundays";
@@ -53,12 +52,14 @@ type Feed = {
       status: string;
       totalSen: number;
       createdAt: string | null;
+      /** The official SO date — what the Sales KPI buckets on. */
+      soDate?: string | null;
       deliveryDate: string | null;
       isServiceOrder: boolean;
     }[];
     pipeline: { status: string; count: number; valueSen: number }[];
     // One row per (order day, state, category, sku) — the day is the order's
-    // createdAt, the same date every other Sales card filters on.
+    // SO date (created_at only when it has none), as the Sales KPI uses.
     byStateCategory: {
       date: string | null;
       state: string | null;
@@ -97,7 +98,9 @@ export function SalesOrdersView({
   // Everything with a date is scoped to the global period picker above the
   // tabs.
   const orders = useMemo(
-    () => allOrders.filter((o) => inPeriod(period, o.createdAt)),
+    // SO date, the Sales KPI's own basis (merged dashboard 2026-10-17), so the
+    // pipeline and order counts here reconcile with the KPI cards above.
+    () => allOrders.filter((o) => inPeriod(period, o.soDate ?? o.createdAt)),
     [allOrders, period],
   );
   const byDay = useMemo(
@@ -191,7 +194,7 @@ export function SalesOrdersView({
   const scopedOrders = useMemo(
     () =>
       selectedDetail
-        ? orders.filter((o) => o.createdAt === selectedDetail.label)
+        ? orders.filter((o) => (o.soDate ?? o.createdAt) === selectedDetail.label)
         : orders,
     [orders, selectedDetail],
   );
@@ -449,15 +452,15 @@ export function SalesOrdersView({
                     <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
                     <XAxis
                       dataKey="date"
-                      tick={{ fontSize: 10, fill: CHART_AXIS }}
-                      axisLine={{ stroke: CARD_BORDER }}
+                      tick={CC_TICK}
+                      axisLine={CC_AXIS_LINE}
                       tickLine={false}
                       interval="preserveStartEnd"
                     />
                     <YAxis
                       yAxisId="rev"
                       hide={!showRev}
-                      tick={{ fontSize: 10, fill: CHART_AXIS }}
+                      tick={CC_TICK}
                       axisLine={false}
                       tickLine={false}
                       width={56}
@@ -467,7 +470,7 @@ export function SalesOrdersView({
                       yAxisId="ord"
                       orientation="right"
                       hide={!showOrd}
-                      tick={{ fontSize: 10, fill: CHART_AXIS }}
+                      tick={CC_TICK}
                       axisLine={false}
                       tickLine={false}
                       width={30}
@@ -490,7 +493,7 @@ export function SalesOrdersView({
                           : [formatCurrency(safe * 100), name];
                       }}
                     />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Legend {...CC_LEGEND} />
                     {showRev && (
                       <Bar
                         yAxisId="rev"
@@ -600,12 +603,12 @@ export function SalesOrdersView({
                     <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
                     <XAxis
                       dataKey="month"
-                      tick={{ fontSize: 10, fill: CHART_AXIS }}
-                      axisLine={{ stroke: CARD_BORDER }}
+                      tick={CC_TICK}
+                      axisLine={CC_AXIS_LINE}
                       tickLine={false}
                     />
                     <YAxis
-                      tick={{ fontSize: 10, fill: CHART_AXIS }}
+                      tick={CC_TICK}
                       axisLine={false}
                       tickLine={false}
                       width={56}

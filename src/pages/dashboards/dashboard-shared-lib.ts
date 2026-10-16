@@ -28,12 +28,18 @@ export function fmtN(n: number): string {
 // Compact money for chart axes: "RM 15k", "RM 1.2m". A full "RM 15,000" is
 // wide enough that Recharts wraps the tick onto two lines and drops the space
 // between them ("RM" / "15,000"), which reads as broken.
+// Merged dashboard (owner 2026-10-17): every chart follows the Command Center
+// (/dashboard) standard — money axis in plain "25k" / "1.2m" (the card title
+// already says RM), 11px warm-grey ticks, a faint x baseline, legend top-right.
 export function fmtRMAxis(n: number): string {
   const v = Math.abs(n);
-  if (v >= 1_000_000) return `RM ${(n / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1)}m`;
-  if (v >= 1_000) return `RM ${Math.round(n / 1_000)}k`;
-  return `RM ${n}`;
+  if (v >= 1_000_000) return `${(n / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1)}m`;
+  if (v >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return `${n}`;
 }
+export const CC_TICK = { fontSize: 11, fill: "#9CA3AF" } as const;
+export const CC_AXIS_LINE = { stroke: "#F0ECE6" } as const;
+export const CC_LEGEND = { verticalAlign: "top", align: "right", iconType: "circle", iconSize: 7, wrapperStyle: { fontSize: 12, paddingBottom: 8 } } as const;
 
 // ---------------------------------------------------------------------------
 // DashboardWidgets.tsx formatters — owner rule 2026-09-23: no

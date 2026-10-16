@@ -2,9 +2,8 @@ import { useMemo } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
-  TAUPE, TEAL, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN,
-  inPeriod, inFocus, periodLabel, previousPeriod, type Period,
-} from "./dashboard-shared-lib";
+  TAUPE, TEAL, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN,
+  inPeriod, inFocus, periodLabel, previousPeriod, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import { ServiceIssuesPanel, TallyList } from "./ServiceIssuesPanel";
 import { ServiceCaseNo } from "./ServiceCaseLink";
@@ -124,10 +123,10 @@ export function ServicePerformancePanel({
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trend.map((t) => ({ date: ytd ? t.bucket : t.bucket.slice(5), "Avg days": t.avg, Closed: t.closed }))} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="date" tick={CC_TICK} axisLine={false} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={TOOLTIP} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   <Line type="monotone" dataKey="Avg days" stroke={TAUPE} strokeWidth={2} dot={{ r: 2 }} />
                   <Line type="monotone" dataKey="Closed" stroke={CHART_GOLD} strokeWidth={2} dot={{ r: 2 }} />
                 </LineChart>
@@ -152,10 +151,10 @@ export function ServicePerformancePanel({
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={flow} margin={{ top: 6, right: 6, bottom: 0, left: 0 }} style={{ cursor: "pointer" }} onClick={pick}>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
+                  <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
                   <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={TOOLTIP} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   {dayLine && <ReferenceLine x={dayLine} stroke={AMBER} strokeWidth={2} />}
                   <Bar dataKey="Opened" fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="Closed" fill={TAUPE} radius={[3, 3, 0, 0]} />

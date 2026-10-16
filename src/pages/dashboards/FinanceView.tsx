@@ -6,8 +6,7 @@ import { formatCurrency } from "@/lib/utils";
 import type { FinancePayload, Yoy, PeVariant } from "@/api/lib/dashboard-finance";
 import {
   AMBER, BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, RED, TEAL,
-  fmtRMAxis, monthLabel, periodLabel, type FinSub, type Period,
-} from "./dashboard-shared-lib";
+  fmtRMAxis, monthLabel, periodLabel, type FinSub, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import { AgingRatiosCard } from "./DashboardWidgets";
 
@@ -167,10 +166,10 @@ function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; k
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                <XAxis dataKey="name" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                 <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Legend {...CC_LEGEND} />
                 <Bar dataKey="This period" fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
                 <Bar dataKey="Same period last year" fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
               </BarChart>
@@ -221,10 +220,10 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
                   }}
                 >
                   <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                  <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   <Bar dataKey="Revenue / head" fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
                   <Bar dataKey="Labour cost / head" fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
                 </BarChart>
@@ -382,10 +381,10 @@ function Outlook({ d, onSaved }: { d: Resp; onSaved: () => void }) {
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                  <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   <Bar dataKey="Revenue" radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} fill={CHART_INK}>
                     {chartData.map((r) => <Cell key={r.label} fill={r.projected ? "#E3DED5" : CHART_INK} />)}
                   </Bar>

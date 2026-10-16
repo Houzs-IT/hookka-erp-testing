@@ -147,11 +147,13 @@ export default function DashboardPrototypePage() {
   }, []);
 
   return (
-    // Dashboard cards are flat with a tighter radius and only lift on hover.
-    // Scoped here so every other page keeps the default Card look. pb-20
+    // Every card takes the Command Center (/dashboard) look: rounded-xl, a
+    // soft shadow, 20px padding, small bold titles (owner 2026-10-17: the old
+    // Overview UI is the standard). Scoped here so every other page keeps the
+    // default Card look. pb-20
     // lets the last card scroll clear of the floating chat button (56px at
     // bottom-6).
-    <div ref={rootRef} className="space-y-4 max-md:space-y-3 pb-20 [--card-pad:0.75rem] [&_[data-slot=card]]:rounded-md [&_[data-slot=card]]:shadow-none [&_[data-slot=card]]:transition-shadow [&_[data-slot=card]:hover]:shadow-md">
+    <div ref={rootRef} className="space-y-5 max-md:space-y-3 pb-20 [--card-pad:1.25rem] max-md:[--card-pad:1rem] [&_[data-slot=card]]:rounded-xl [&_[data-slot=card]]:shadow-[0_1px_3px_rgba(0,0,0,0.08)] [&_[data-slot=card]_h3]:text-sm [&_[data-slot=card]_h3]:font-bold [&_[data-slot=card]_h3]:tracking-[-0.2px]">
       {/* Sticky: the title, the tab strip and the period control stay put while
           a long tab scrolls, so you can switch tab or month without scrolling
           back up. -mx/px cancels the page gutter so the backdrop reaches the

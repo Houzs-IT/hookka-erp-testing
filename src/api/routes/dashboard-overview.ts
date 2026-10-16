@@ -149,10 +149,11 @@ app.get("/", async (c) => {
     }
   }
 
+  // v24 (2026-10-17): customer Total / concentration = whole SO value (accessories included).
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const data = await cached(c, `dashboard:overview:${orgId}:v23:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:overview:${orgId}:v24:${period}`, 60, async () => {
     const db = c.var.DB;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1273,6 +1274,8 @@ app.get("/", async (c) => {
       bfQty: number;
       soVal: number;
       soSets: number;
+      /** Every confirmed SO's whole total (all lines, accessories included). */
+      all: number;
     };
     // Period gate: AOV table / Monthly bedframe-sofa / Top Sellers
     // honour the selected period. Monthly Revenue + This-Month KPIs
@@ -1308,8 +1311,9 @@ app.get("/", async (c) => {
           aovCustMonth.set(name, cm);
         }
         const me =
-          cm.get(r.ym) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0 };
+          cm.get(r.ym) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0, all: 0 };
         me.bfVal += bfVal;
+        me.all += Number(r.soTotalSen) || 0;
         me.bfQty += bfQty;
         if (isSofa) {
           me.soVal += Number(r.soTotalSen) || 0;
@@ -1319,8 +1323,9 @@ app.get("/", async (c) => {
       }
       if (!inPeriod(r.ym)) continue;
       const e =
-        aovMap.get(name) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0 };
+        aovMap.get(name) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0, all: 0 };
       e.bfVal += bfVal;
+      e.all += Number(r.soTotalSen) || 0;
       e.bfQty += bfQty;
       if (isSofa) {
         e.soVal += Number(r.soTotalSen) || 0;
@@ -1351,7 +1356,11 @@ app.get("/", async (c) => {
         bedframeUnits: e.bfQty,
         sofaAvgSen: e.soSets > 0 ? Math.round(e.soVal / e.soSets) : 0,
         sofaSets: e.soSets,
-        totalSen: e.bfVal + e.soVal,
+        // The customer's whole confirmed-SO value (every line, accessories
+        // included), so "All customers" equals the Sales KPI. The AOV columns
+        // stay bedframe-per-unit / sofa-per-set. (Was bfVal + soVal, which
+        // dropped accessory lines: RM 2,230 short of the KPI in Oct 2026.)
+        totalSen: e.all,
       }))
       .sort((a, b) => b.totalSen - a.totalSen)
       .slice(0, 12);
@@ -1360,8 +1369,10 @@ app.get("/", async (c) => {
       let bfVal = 0,
         bfQty = 0,
         soVal = 0,
-        soSets = 0;
+        soSets = 0,
+        all = 0;
       for (const e of aovMap.values()) {
+        all += e.all;
         bfVal += e.bfVal;
         bfQty += e.bfQty;
         soVal += e.soVal;
@@ -1372,7 +1383,7 @@ app.get("/", async (c) => {
         bedframeUnits: bfQty,
         sofaAvgSen: soSets > 0 ? Math.round(soVal / soSets) : 0,
         sofaSets: soSets,
-        totalSen: bfVal + soVal,
+        totalSen: all,
       };
     })();
 
@@ -1394,7 +1405,7 @@ app.get("/", async (c) => {
     // population the percentage was taken over; a share of total is only
     // meaningful next to how many parties that total was split between.
     const concentrationFor = (
-      revOf: (e: { bfVal: number; soVal: number }) => number,
+      revOf: (e: { bfVal: number; soVal: number; all: number }) => number,
     ) => {
       const revs: { name: string; sen: number }[] = [];
       let totalSen = 0;
@@ -1432,7 +1443,7 @@ app.get("/", async (c) => {
       };
     };
     const customerConcentration = {
-      all: concentrationFor((e) => e.bfVal + e.soVal),
+      all: concentrationFor((e) => e.all),
       bedframe: concentrationFor((e) => e.bfVal),
       sofa: concentrationFor((e) => e.soVal),
       /** How many of `all.customerCount` the table below actually lists. */

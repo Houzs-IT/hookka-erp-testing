@@ -6,8 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import {
   TAUPE, TEAL, RED, AMBER, GREEN, MUTED, BORDER, CHART_GOLD, fmtN,
-  inPeriod, inFocus, dayLabel, periodLabel, type Period, type ServiceSub,
-} from "./dashboard-shared-lib";
+  inPeriod, inFocus, dayLabel, periodLabel, type Period, type ServiceSub, CC_TICK } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge } from "./dashboard-shared";
 import { ServiceApprovalsPanel } from "./ServiceApprovalsPanel";
 import { ServiceIssuesPanel } from "./ServiceIssuesPanel";
@@ -186,8 +185,8 @@ export function ServiceView({
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chart} margin={{ top: 8, right: 12, bottom: 0, left: -8 }} onClick={pick} style={{ cursor: "pointer" }}>
-                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <XAxis dataKey="date" tick={CC_TICK} axisLine={false} tickLine={false} />
+                      <YAxis tick={CC_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                       <Tooltip contentStyle={{ background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }} />
                       {dayLine && <ReferenceLine x={dayLine} stroke={RED} strokeDasharray="3 3" />}
                       <Bar dataKey="New" fill={TAUPE} radius={[3, 3, 0, 0]} />

@@ -13,8 +13,7 @@ import {
 } from "./dashboard-widgets-lib";
 import {
   AMBER, BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, CHART_SERIES, GREEN, MUTED, RED, TEAL,
-  widgetPeriod, widgetPeriodLabel, fmtDec2, fmtHM, fmtN, fmtPct2, fmtRM2, type Period,
-} from "./dashboard-shared-lib";
+  widgetPeriod, widgetPeriodLabel, fmtDec2, fmtHM, fmtN, fmtPct2, fmtRM2, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { dropIdleSundays } from "@/lib/idle-sundays";
 import { pickCat, type RevCat, type RevenueSplitResp } from "../dashboard-b/revenue-split";
 import { DeptRevenueCard } from "../dashboard-b/DeptRevenueCard";
@@ -308,8 +307,8 @@ export function RevenueTrendCard({ period }: { period: Period }) {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={CARD_BORDER} vertical={false} />
-              <XAxis dataKey="m" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: BORDER }} tickLine={false} />
-              <YAxis tickFormatter={(v: number) => `RM ${fmtN(Math.trunc(v / 100_000))}k`} tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={64} />
+              <XAxis dataKey="m" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+              <YAxis tickFormatter={(v: number) => `RM ${fmtN(Math.trunc(v / 100_000))}k`} tick={CC_TICK} axisLine={false} tickLine={false} width={64} />
               <Tooltip
                 formatter={(v) => fmtRM2(Number(v))}
                 contentStyle={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 8, fontSize: 12 }}
@@ -608,7 +607,7 @@ export function PlantLoadCard({ period }: { period: Period }) {
               <div style={{ width: "100%", height: 96 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={capDays} margin={{ top: 6, right: 8, bottom: 0, left: 8 }}>
-                    <XAxis dataKey="date" tickFormatter={(d: string) => d.slice(5)} tick={{ fontSize: 9, fill: CHART_AXIS }} axisLine={{ stroke: BORDER }} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
+                    <XAxis dataKey="date" tickFormatter={(d: string) => d.slice(5)} tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} interval="preserveStartEnd" minTickGap={24} />
                     <YAxis hide domain={[0, "auto"]} />
                     <ReferenceLine y={prod.dailyCapacityMin} stroke={CHART_AXIS} strokeWidth={1} />
                     <Tooltip
