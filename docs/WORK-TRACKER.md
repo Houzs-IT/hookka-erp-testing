@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-294/295) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
 > re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
 > BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
@@ -247,6 +248,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-16 — 🔵 /production poll: 304 when the order list is unchanged (branch `fix/po-list-cache-staging` → `staging`, BUG-2026-10-16-294/295)
+
+From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on the wire. Asks:
+1. 🔵 ETag + 304 for the non-paginated PO list; `no-store` relaxed to `private, no-cache` only for ETag replies (BUG-2026-10-16-295).
+2. 🔵 Background list refresh reads the cache version before the build (BUG-2026-10-16-295).
+3. ⚪ Self-reload when leaving a page (`vite:preloadError` in `src/main.tsx`): not in this branch, cause not confirmed yet.
+4. ⚪ Bundle split (React out of the `charts` chunk, lazy `WorkerLayout`): not in this branch.
+5. 🔵 Check on staging: a second poll with unchanged data returns 304, and a scan still shows within about 8 s. After deploy, prod bytes per idle poll are UNMEASURED.
 ## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.

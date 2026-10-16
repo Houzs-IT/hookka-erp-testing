@@ -97,6 +97,8 @@ import {
   genSoId,
   invalidateProductionCachesAfterScan,
   nextSOHNumber,
+  poListBodyHash,
+  poListBodyResponse,
   recomputePoStatusAndProgress,
   scanOrgId,
   scheduleFireAndForget,
@@ -975,7 +977,7 @@ app.get("/", async (c) => {
       try {
         const got = (await kvCache.getWithMetadata(bodyKey)) as {
           value: string | null;
-          metadata: { v?: string } | null;
+          metadata: { v?: string; h?: string } | null;
         } | null;
         if (got && got.value !== null) {
           const isFresh = got.metadata?.v === version;
@@ -984,13 +986,14 @@ app.get("/", async (c) => {
               buildListPayload(false),
             );
           }
-          return new Response(got.value, {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json",
-              "X-Cache": isFresh ? "HIT" : "STALE",
-            },
-          });
+          // No ETag for scoped users: the response middleware narrows this
+          // shared body per user, so its hash does not name what they get.
+          return poListBodyResponse(
+            c.req.header("If-None-Match"),
+            got.value,
+            isCustomerScoped(c) ? undefined : got.metadata?.h,
+            isFresh ? "HIT" : "STALE",
+          );
         }
       } catch (err) {
         console.error("[poList cache] kv get failed", err);
@@ -1026,20 +1029,23 @@ app.get("/", async (c) => {
     // version in metadata so version mismatches serve stale instantly.
     const cached = await buildListPayload(true);
     const body = JSON.stringify(cached);
+    const h = await poListBodyHash(body);
     if (bodyKeyForWrite && kvCache) {
       const writePromise = kvCache
         .put(bodyKeyForWrite, body, {
           expirationTtl: PO_LIST_BODY_TTL_S,
-          metadata: { v: versionAtRead ?? "0" },
+          metadata: { v: versionAtRead ?? "0", h },
         })
         .catch((err) => console.error("[poList cache] kv put failed", err));
       if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(writePromise);
       else void writePromise;
     }
-    return new Response(body, {
-      status: 200,
-      headers: { "Content-Type": "application/json", "X-Cache": "MISS" },
-    });
+    return poListBodyResponse(
+      c.req.header("If-None-Match"),
+      body,
+      isCustomerScoped(c) ? undefined : h,
+      "MISS",
+    );
   }
 
   const page = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);

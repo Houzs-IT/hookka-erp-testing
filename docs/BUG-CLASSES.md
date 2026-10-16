@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging`, adds C2 row 9 (BUG-2026-10-16-295). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages`: C30 row 2 closed (a status column exports with spaces, as on screen). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` **adds C31 — a list that shows one server page, read as if it were the whole list** (BUG-2026-10-12-281). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/bug87-auto-grn-read` adds C23 row 2 (purchase-invoices auto receipt id read snake_case only).
@@ -301,6 +302,7 @@ lies"). Wipe explicitly.
 | 6 | `import-completion.ts` | 2026-07-23 | ditto |
 | 7 | `service-orders.ts` cascade | 2026-07-23 | ditto |
 | 8 | `sheets-sync.ts` webhook | 2026-07-23 | ditto |
+| 9 | not a writer: the background KV refresh (`schedulePoListBodyRefresh`) read the version AFTER building, so a write landing mid-build was stamped as already seen | 2026-10-16 on branch `fix/po-list-cache-staging` (BUG-2026-10-16-295) | suspected from the code, not reproduced; `tests/po-list-etag-304.test.mjs` |
 
 Rows 5–8 are the point of this file: the 07-22 fix repaired 3 and 4 and stopped, because
 nothing counted the rest.

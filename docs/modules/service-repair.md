@@ -9,6 +9,7 @@
 > `src/api/lib/{dashboard-service-slice,service-issue-stats}.ts`, `src/api/routes/service-cases.ts`
 > L34-60 / L241-288 and `tests/db-schema.json`; everything else keeps the stamp below.
 >
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-staging`, to `staging`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-09-23** (branch `feat/service-case-customer-po`) — the `app.post("/")` / `app.put("/:id")` anchors only, re-anchored to `service-cases.ts:650` / `:793` after the list GET gained `loadCustomerPoBySource`.
 >
 > **Last verified: 2026-08-19** against `src/api/routes/{service-cases,service-orders,sales-orders,stock-adjustments}.ts`,
@@ -71,7 +72,7 @@ legacy path) plus component-level picks on `affectedProducts[].components`, all 
   - Repair-scope engine (serialize/parse/validate/filter) → `src/lib/repair-scope.ts`
   - Shared WIP-key derivation → `src/api/lib/bom-wip-breakdown.ts:125` (`deriveTopLevelWipKey`)
   - Replacement-part top-ups → `src/api/routes/stock-adjustments.ts` (reason `SERVICE_REPLACEMENT` + `caseId`)
-  - Registration → `src/api/worker.ts:1419` (`/api/service-cases`) · `:1420` (`/api/service-orders`) · `/api/sales-orders` at `:1195`
+  - Registration → `src/api/worker.ts:1427` (`/api/service-cases`) · `:1420` (`/api/service-orders`) · `/api/sales-orders` at `:1195`
 
 ## Data model
 - `service_cases` — the case header (source SO/CO/EXTERNAL, status OPEN→IN_PROGRESS→CLOSED/CANCELLED, issue, RCA JSON, `affectedProducts` JSON, photos).

@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/fg-sticker-notes-wrap`, to `staging`; 292 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: entry BUG-2026-10-16-291 (branch
 > `fix/dev-05-allocation-loser-note`, DEV-05 A9 + A7 pins, to `staging`). Renumbered
@@ -156,6 +157,32 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-294 — /production re-downloaded the whole order list every 8 seconds `production` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Measured on prod 2026-10-15 at about 23:00 (read-only): each 8 s poll of `/api/production-orders?fields=minimal&excludeCompleted=true` was 906 KB on the wire (15.9 MB unpacked), almost always an identical body. That is about 0.9 Mbit/s per open tab, so a few factory tablets on this page can fill shared Wi-Fi and slow every page.
+
+**Root cause.** Every `/api/*` reply is sent `no-store` (`worker.ts`, added 2026-04-26 after stale rows were seen following a direct D1 reset). The list reply also had no validator, so the browser could neither keep a copy nor ask "has it changed?".
+
+**Fix.** The non-paginated list stores a SHA-1 of its body in the KV metadata (`h`, next to `v`) at both write sites, sends it as `ETag`, and answers a matching `If-None-Match` (a weak `W/` prefix accepted) with a bodyless 304. The global header middleware sends `private, no-cache` only when a reply has an ETag; every other route keeps `no-store`. `private` keeps Cloudflare's edge from storing it and `no-cache` makes the browser ask the server on every poll, so a change is still seen on the next poll. Customer-scoped users get no ETag, because the response middleware narrows the shared body per user. KV entries written before this have no `h` and get no ETag until they are rewritten (5 min TTL).
+
+**Not changed.** The poll interval and the client. Prod bytes per idle poll after deploy are UNMEASURED.
+
+**Regression.** `tests/po-list-etag-304.test.mjs`.
+
+## BUG-2026-10-16-295 — A scan landing during a list rebuild could stay hidden until the next write `production` `cache` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Suspected, not reproduced: a scan made while the background list refresh was running could stay invisible on the dept sheets for up to the 5 min KV TTL.
+
+**Root cause.** `schedulePoListBodyRefresh` read the org cache version AFTER building the body. Writers bump the version after their commit (checked on the scan path: `invalidateProductionCachesAfterScan` runs after the writes), so a write landing mid-build stamped the pre-write body with the post-write version, and later reads served it as a fresh HIT. The comment there claimed the opposite.
+
+**Fix.** Read the version before the build. A write landing mid-build now leaves the stamp behind and the next poll refreshes again.
+
+**Regression.** `tests/po-list-etag-304.test.mjs` (the version-order case).
 
 ## BUG-2026-10-16-293 — Packing sticker cut the Notes line to one line `production` `printing` 🟡
 
