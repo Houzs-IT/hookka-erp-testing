@@ -62,8 +62,8 @@ test('one row per line item, header repeated', () => {
   ]);
   assert.equal(aoa.length, 4, 'header + 3 lines');
   for (const row of aoa.slice(1)) {
-    assert.equal(row[col('Doc. No.')], 'INV-2608-051');
-    assert.equal(row[col('Debtor Name')], 'Houzs Century');
+    assert.equal(row[col('Doc No.')], 'INV-2608-051');
+    assert.equal(row[col('Party Name')], 'Houzs Century');
   }
 });
 
@@ -72,7 +72,7 @@ test('an invoice with no lines still produces a row', () => {
   // screen, and a short file that looks complete is the whole failure mode.
   const aoa = buildInvoiceDetailListingAoa([doc({ items: [] })]);
   assert.equal(aoa.length, 2);
-  assert.equal(aoa[1][col('Doc. No.')], 'INV-2608-051');
+  assert.equal(aoa[1][col('Doc No.')], 'INV-2608-051');
 });
 
 // --- 2. the components ---------------------------------------------------
@@ -198,7 +198,7 @@ test('an invoice that cannot be read is REPORTED, not dropped', async () => {
   );
   assert.equal(aoa.length, 3, 'header + the good line + the failure row');
   const failure = aoa[2];
-  assert.equal(failure[col('Doc. No.')], 'INV-BAD');
+  assert.equal(failure[col('Doc No.')], 'INV-BAD');
   assert.match(String(failure[col('Status')]), /EXPORT FAILED/);
 });
 
