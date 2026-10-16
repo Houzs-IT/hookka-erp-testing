@@ -183,7 +183,13 @@ TypeScript cannot catch this: `[args.to]` is a valid `(string | string[])[]` and
 
 **Why production is unaffected.** `sendMail` picks Brevo if `BREVO_API_KEY` is set, else Resend, and only falls through to MailSlurp when neither is. Production has Brevo; both the Brevo and Resend senders were updated with T-012 and carry these fields correctly.
 
-**Regression.** `tests/mail-send-path.test.mjs` — "the MailSlurp path carries the same recipients and headers (staging only)", which also pins that `to: [args.to]` does not come back.
+**Follow-up, same day: passing the headers broke staging sending.** Measured on staging right after deploying the fix — the free sandbox plan rejects the extras outright: *"Free sandbox sending supports one explicit To recipient and a plain-text or HTML body only. CC, BCC, contacts, groups, aliases, custom sender/reply headers, attachments, templates, tracking, validation, AMP, multipart bodies, and alternate send strategies require a paid plan."* Every Mail Center send stamps a `Message-ID`, so once the headers were actually passed, **every** Mail Center send on staging began failing 400 — where before the fix they went out (single recipient, headers silently dropped).
+
+So the sender now downgrades, narrowly: a mail with ONE To, no copies, no reply-to and no attachments retries once without `customHeaders` and returns `ok` with a `warning` on `SendEmailResult`, which the compose and reply handlers log. Dropping a threading header costs cross-client threading only, and staging has no inbound routing to exercise that anyway. Copies and attachments are never dropped — delivering a mail that lies about who received it is the failure this entry is about — so those still fail with the provider's own words.
+
+**What this means for verifying T-012 on staging: it cannot be done on the free plan.** Multiple recipients, Cc, Bcc and threading headers are exactly what the plan refuses, and they are exactly what T-012 added. Verifying the send path needs `BREVO_API_KEY` on the staging Pages Preview environment (the provider production uses), a paid MailSlurp plan, or verification on production.
+
+**Regression.** `tests/mail-send-path.test.mjs` — "the MailSlurp path carries the same recipients and headers (staging only)", which also pins that `to: [args.to]` does not come back, and "the MailSlurp free plan drops only threading headers, never recipients".
 
 ---
 

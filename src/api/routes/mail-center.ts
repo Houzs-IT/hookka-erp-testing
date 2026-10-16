@@ -2721,6 +2721,11 @@ app.post("/threads/:id/reply", async (c) => {
   if (!result.ok) {
     return c.json({ error: result.error || "failed to send reply" }, 502);
   }
+  // Sent, but the provider could not carry something (staging's free
+  // MailSlurp plan drops threading headers). Never silent.
+  if (result.warning) {
+    console.warn("[mail-center] reply sent with a downgrade:", result.warning);
+  }
 
   const userId = getUserId(
     c as unknown as { get: (k: string) => string | undefined },
@@ -2918,6 +2923,9 @@ app.post("/compose", async (c) => {
     // has no BREVO_API_KEY, or a Brevo "sender not authenticated" after the
     // domain moved to Hostinger). Same transparency as the reply path.
     return c.json({ error: result.error || "send failed" }, 502);
+  }
+  if (result.warning) {
+    console.warn("[mail-center] compose sent with a downgrade:", result.warning);
   }
 
   const userId = getUserId(
