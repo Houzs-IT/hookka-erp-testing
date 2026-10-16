@@ -83,7 +83,7 @@ const card = (jcId, over = {}) => ({
 // the sync must read around Hyperdrive's cache (batch = transaction = uncached).
 function makeDb(cards, { raceIds = [], failCardRead = false } = {}) {
   const bom = { id: "bt-1", productCode: "SQUARE PILLOW", baseModel: "SQUARE PILLOW", wipComponents: JSON.stringify(TREE) };
-  const log = { cardReads: [], bomReadsViaBatch: 0, updates: [], audits: [] };
+  const log = { cardReads: [], bomReadsViaBatch: 0, updates: [], audits: [], batches: [] };
   function rowsFor(s, bound) {
     if (/FROM bom_templates bt LEFT JOIN products/.test(s)) {
       return [{ ...bom, category: "ACCESSORY", defaultVariants: null, sizeCode: "", sizeLabel: "" }];
@@ -115,6 +115,7 @@ function makeDb(cards, { raceIds = [], failCardRead = false } = {}) {
     return stmt;
   }
   async function batch(stmts) {
+    log.batches.push(stmts.map((st) => st.sql));
     return stmts.map((st) => {
       if (/^UPDATE job_cards/.test(st.sql)) {
         const [m, , id, old] = st.bound;
@@ -125,6 +126,11 @@ function makeDb(cards, { raceIds = [], failCardRead = false } = {}) {
         return { results: [], success: true, meta: { changes: ok ? 1 : 0 } };
       }
       if (/INSERT INTO audit_events/.test(st.sql)) {
+        // Conditional insert: written only if the card now holds the new minutes.
+        if (st.sql.includes("WHERE EXISTS (SELECT 1 FROM job_cards WHERE id = ? AND productionTimeMinutes = ?)")) {
+          const [id, m] = st.bound.slice(-2);
+          if (cards.find((x) => x.jcId === id)?.oldMinutes !== m) return { results: [], success: true, meta: { changes: 0 } };
+        }
         log.audits.push(st.bound);
         return { results: [], success: true, meta: { changes: 1 } };
       }
@@ -237,4 +243,16 @@ test("TC-13 Excel import also leaves out-of-date cards alone", async () => {
   const { body } = await call(f.db, "POST", "/bulk-import", { items, dryRun: false });
   assert.deepEqual(body.jobCards, { updated: 1, leftAlone: 0, skipped: 0, outOfDate: 1 });
   assert.equal(cards[1].oldMinutes, 8);
+});
+
+test("TC-14 each card update and its audit row go out in the same transaction", async () => {
+  const cards = [card("a"), card("b"), card("raced")];
+  const f = makeDb(cards, { raceIds: ["raced"] });
+  await call(f.db, "PUT", "/", SAVE);
+  const writeBatches = f.log.batches.filter((b) => b.some((q) => /^UPDATE job_cards/.test(q)));
+  assert.equal(writeBatches.length, 1);
+  const kinds = writeBatches[0].map((q) => (/^UPDATE job_cards/.test(q) ? "U" : /INSERT INTO audit_events/.test(q) ? "A" : "?"));
+  assert.deepEqual(kinds, ["U", "A", "U", "A", "U", "A"], "every UPDATE is followed by its audit in one batch");
+  assert.ok(writeBatches[0].filter((q) => /INSERT INTO audit_events/.test(q)).every((q) => q.includes(") SELECT ") && q.includes("WHERE EXISTS")));
+  assert.equal(f.log.audits.length, 2, "the raced card's audit row is not written");
 });

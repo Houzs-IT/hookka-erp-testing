@@ -87,6 +87,9 @@ export interface AuditEvent {
 export async function buildAuditStatement(
   c: Context<Env>,
   event: AuditEvent,
+  // Optional SQL condition: the row is written only when it holds at insert
+  // time (e.g. a guarded UPDATE earlier in the same batch really applied).
+  onlyIf?: { sql: string; binds: unknown[] },
 ): Promise<D1PreparedStatement | null> {
   try {
     const get = (c as unknown as { get: (k: string) => string | undefined }).get;
@@ -114,11 +117,11 @@ export async function buildAuditStatement(
            id, actorUserId, actorUserName, actorRole,
            resource, resourceId, action,
            beforeJson, afterJson, source, ipAddress, userAgent
-         ) VALUES (
+         ) ${onlyIf ? "SELECT" : "VALUES ("}
            ?, ?,
            (SELECT displayName FROM users WHERE id = ? LIMIT 1),
            ?, ?, ?, ?, ?, ?, ?, ?, ?
-         )`,
+         ${onlyIf ? `WHERE ${onlyIf.sql}` : ")"}`,
       )
       .bind(
         id,
@@ -133,6 +136,7 @@ export async function buildAuditStatement(
         source,
         ip,
         ua,
+        ...(onlyIf?.binds ?? []),
       );
     return stmt as unknown as D1PreparedStatement;
   } catch (e) {
