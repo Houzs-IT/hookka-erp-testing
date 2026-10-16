@@ -266,6 +266,55 @@ async function withConnRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Self-apply ALTERs with nothing to do.
+//
+// Routes self-apply columns with `ALTER TABLE t ADD COLUMN IF NOT EXISTS c`
+// once per isolate. Postgres takes an ACCESS EXCLUSIVE lock on t BEFORE it
+// checks whether c exists, so even a no-op ALTER waits behind any running query
+// on t, and every later query on t (reads too) queues behind the ALTER. After a
+// deploy, many fresh isolates do this at once on busy tables like job_cards.
+//
+// So: look the column up in information_schema first (no lock on t) and skip
+// the ALTER when it is already there. A column only ever gets added, so a hit
+// is remembered for the isolate. Any doubt (no match, failed lookup) runs the
+// ALTER exactly as before.
+// ---------------------------------------------------------------------------
+const ADD_COLUMN_RE =
+  /^\s*ALTER\s+TABLE\s+(?:ONLY\s+)?(?:public\.)?("?)([A-Za-z_]\w*)\1\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+("?)([A-Za-z_]\w*)\3\s/i
+const knownColumns = new Set<string>()
+
+export function parseAddColumnIfNotExists(pgSql: string): { table: string; column: string } | null {
+  if (!/^\s*ALTER\s/i.test(pgSql) || /,\s*ADD\s/i.test(pgSql)) return null
+  const m = ADD_COLUMN_RE.exec(pgSql)
+  if (!m) return null
+  // Unquoted identifiers are folded to lower case by Postgres.
+  const fold = (quote: string, name: string) => (quote ? name : name.toLowerCase())
+  return { table: fold(m[1], m[2]), column: fold(m[3], m[4]) }
+}
+
+async function columnAlreadyExists(sql: Sql, pgSql: string): Promise<boolean> {
+  const target = parseAddColumnIfNotExists(pgSql)
+  if (!target) return false
+  const key = `${target.table}.${target.column}`
+  if (knownColumns.has(key)) return true
+  try {
+    const rows = (await sql.unsafe(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2
+        LIMIT 1`,
+      [target.table, target.column] as never,
+    )) as unknown as unknown[]
+    if (rows.length > 0) {
+      knownColumns.add(key)
+      return true
+    }
+  } catch (e) {
+    console.warn(`[self-apply] column lookup failed for ${key}; running the ALTER instead:`, e)
+  }
+  return false
+}
+
 export class PgBoundStatement {
   readonly pgSql: string
   readonly params: unknown[]
@@ -290,6 +339,9 @@ export class PgBoundStatement {
 
   async all<T = unknown>(): Promise<{ results: T[]; success: true; meta: D1Meta }> {
     const t0 = Date.now()
+    if (await columnAlreadyExists(this.sql, this.pgSql)) {
+      return { results: [], success: true, meta: { ...emptyMeta, duration: Date.now() - t0 } }
+    }
     const rows = (await withConnRetry(() =>
       this.sql.unsafe(this.pgSql, this.params as never),
     )) as unknown as T[]
@@ -301,6 +353,7 @@ export class PgBoundStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    if (await columnAlreadyExists(this.sql, this.pgSql)) return null
     const rows = (await withConnRetry(() =>
       this.sql.unsafe(this.pgSql, this.params as never),
     )) as unknown as T[]
@@ -309,6 +362,9 @@ export class PgBoundStatement {
 
   async run(): Promise<{ success: true; meta: D1Meta; results: [] }> {
     const t0 = Date.now()
+    if (await columnAlreadyExists(this.sql, this.pgSql)) {
+      return { success: true, meta: { ...emptyMeta, duration: Date.now() - t0 }, results: [] }
+    }
     const res = (await withConnRetry(() =>
       this.sql.unsafe(this.pgSql, this.params as never),
     )) as unknown as {
