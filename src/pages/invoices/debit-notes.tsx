@@ -266,7 +266,7 @@ export default function DebitNotesPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4">
+    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4" data-fin-ui>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

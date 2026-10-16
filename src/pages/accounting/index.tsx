@@ -611,7 +611,7 @@ export default function AccountingPage() {
   const tablesRef = useResizableTables(`accounting:${tab}`);
 
   return (
-    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4">
+    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

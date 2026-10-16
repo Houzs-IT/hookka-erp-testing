@@ -493,6 +493,7 @@ export function ContextMenu({
   return (
     <div
       ref={menuRef}
+      data-dg="menu"
       className="fixed z-[100] min-w-[220px] rounded border border-[#D0D0D0] bg-white py-1 shadow-md"
       style={{ left: pos.x, top: pos.y }}
     >
@@ -3336,6 +3337,7 @@ export function DataGrid<T extends Record<string, any>>({
         style={{ maxHeight: maxHeight || "calc(100vh - 240px)" }}
       >
         <table
+          data-dg="table"
           className="w-full border-collapse text-[12px]"
           // table-layout:auto lets the browser redistribute width when a
           // column is hidden via the Columns picker. The previous default
@@ -3414,6 +3416,7 @@ export function DataGrid<T extends Record<string, any>>({
                 return (
                   <th
                     key={col.key}
+                    data-dg="th"
                     className={cn(
                       "whitespace-nowrap px-2 py-1.5 text-[11px] font-semibold text-[#333] relative",
                       alignClass(col),
@@ -3549,6 +3552,7 @@ export function DataGrid<T extends Record<string, any>>({
                   return (
                     <tr
                       key={key}
+                      data-dg="row"
                       className={cn(
                         // Tablet: min-h-[40px] for finger-friendly row height
                         // when selectable=true; otherwise keep the dense default

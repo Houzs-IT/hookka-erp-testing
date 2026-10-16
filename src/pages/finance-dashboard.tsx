@@ -955,7 +955,7 @@ export default function FinanceDashboardPage() {
   );
 
   return (
-    <div className="space-y-4 p-1">
+    <div className="space-y-4 p-1" data-fin-ui>
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-lg font-semibold text-[#1F1D1B] flex items-center gap-2">
           <BarChart3 className="h-5 w-5 text-[#6B5C32]" /> Financial Dashboard

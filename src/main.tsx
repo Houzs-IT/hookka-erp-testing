@@ -4,6 +4,9 @@ import { RouterProvider } from 'react-router-dom'
 import { router } from './router'
 import { ConfirmProvider } from './components/ui/confirm-dialog'
 import './index.css'
+// Finance & Forecasting v2 look — every rule is scoped to [data-fin-ui], so it
+// only touches those pages (src/styles/finance-v2.css).
+import './styles/finance-v2.css'
 // Side-effect import: installs the global fetch interceptor that injects the
 // Authorization header and handles 401 redirects. Must run before any
 // component mounts, so it sits at the top of the entry point.
