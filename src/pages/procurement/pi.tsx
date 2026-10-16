@@ -13,6 +13,7 @@ import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { buildPiDetailRows } from "@/lib/invoice-detail-export";
 import { useUrlState } from "@/lib/use-url-state";
 import type { Supplier } from "@/types";
 import {
@@ -839,13 +840,17 @@ export default function PurchaseInvoicesPage() {
                 contextMenuItems={piGridContextMenu}
                 maxHeight="calc(100vh - 300px)"
                 emptyMessage={tab === "DRAFT" ? "No draft invoices." : "No purchase invoices found."}
-                // WYSIWYG export of the current columns over the current rows.
-                // Listing only: GET /api/purchase-invoices maps rows through
-                // rowToPI, which carries no `items[]` — the same reason the
-                // row menu's "Print PI" re-fetches the invoice before printing.
-                // A per-line listing here needs that re-fetch per row.
+                // WYSIWYG export of the current columns over the current rows
+                // (this page already loads every PI — no fetchAllRows needed).
+                // The Detail Listing re-fetches each PI (rowToPI carries no
+                // `items[]`), paced like the sales-invoice one.
                 exportName="purchase-invoices"
                 exportSheetLabel="Purchase Invoices"
+                detailExport={{
+                  label: "Detail Listing",
+                  build: (rows) =>
+                    buildPiDetailRows(rows, { partyCodes: new Map(suppliers.map((x) => [x.id, x.code])) }),
+                }}
                 clearSelectionToken={clearSelectionToken}
               />
             </CardContent>

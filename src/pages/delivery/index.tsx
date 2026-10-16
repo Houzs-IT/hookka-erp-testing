@@ -48,6 +48,7 @@ import PrintDO from "@/components/delivery/print-do";
 import type { PrintDOData, PrintMode } from "@/components/delivery/print-do";
 import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
 import { fetchJson, FetchJsonError } from "@/lib/fetch-json";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { mutationWithData, MutationResultSchema } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
@@ -1128,6 +1129,9 @@ export default function DeliveryPage() {
   // from a memoized closure (the row context menu is built via
   // useCallback([fetchData]) and would otherwise capture a stale/empty list).
   const customersDataRef = useRef<Customer[]>([]);
+  // Last SO ref map built by the load effect — reused by the export's
+  // fetchAllRows so its rows get the same Customer SO / Ref / PO as the grid.
+  const soRefMapRef = useRef<Map<string, { customerSO: string; reference: string; customerPO: string }>>(new Map());
   useEffect(() => {
     customersDataRef.current = customersData;
   }, [customersData]);
@@ -1440,6 +1444,7 @@ export default function DeliveryPage() {
             if (so.companySOId) soRefMap.set(so.companySOId, v);
           }
         }
+        soRefMapRef.current = soRefMap;
         if (dRes.success && dRes.data) {
           const realRows = (dRes.data as DeliveryOrder[])
             .filter((d) => !d.id.startsWith("virt-"))
@@ -5066,7 +5071,21 @@ export default function DeliveryPage() {
               contextMenuItems={getContextMenuItems}
               exportName="delivery-orders"
               exportSheetLabel="Delivery Orders"
-              detailExport={{ label: "Detail Listing", build: (rows) => buildDoDetailListingAoa(rows) }}
+              detailExport={{
+                label: "Detail Listing",
+                build: (rows) => buildDoDetailListingAoa(rows, new Map(customersData.map((cu) => [cu.id, cu.code]))),
+              }}
+              // The grid holds one 50-row page of this tab (or the search
+              // matches); export every DO of the tab / every search match.
+              fetchAllRows={async () => {
+                const q = search.trim();
+                const url = q
+                  ? `/api/delivery-orders?search=${encodeURIComponent(q)}`
+                  : `/api/delivery-orders?status=${(TAB_DO_STATUSES[activeTab] ?? []).join(",")}`;
+                return (await fetchAllPages<DeliveryOrder>(url))
+                  .filter((d) => !d.id.startsWith("virt-"))
+                  .map((d) => mapDOToRow(d, soRefMapRef.current));
+              }}
             />
 
             {/* Pagination footer — per-tab: total = this tab's statuses only */}
