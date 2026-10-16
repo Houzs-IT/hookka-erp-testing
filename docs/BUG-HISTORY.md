@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-16**: BUG-2026-10-16-303 flipped to 🟢 after the #910 prod check (branch `feat/finance-v2-foundation`).
 
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-303 (branch `fix/pv-print-bill-date`, to main; 302 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-301 (branch `fix/resigned-month-absence`, to main; no open PR holds 301); a log, so "verified" means the entry matches the code on its branch.
@@ -124,9 +125,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-16-303 — A payment voucher's printout never showed its bill date `accounting` `printing` 🟡
+## BUG-2026-10-16-303 — A payment voucher's printout never showed its bill date `accounting` `printing` 🟢
 
-🟡 **Fixed on branch** (`fix/pv-print-bill-date` → `main`). Prod check after deploy still to do.
+🟢 **Shipped and verified** (#910, f558ebba). Prod check 2026-10-16 (read-only): the deployed accounting chunk carries the fixed `\d{4}-\d{2}-\d{2}` check and no longer the broken one; none of the 125 vouchers on prod had a bill no. yet, so no printout so far was affected.
 
 **Symptom.** Found 2026-10-16 while comparing the finance v2 design with the code: a payment voucher with a bill no. and a bill date printed "Bill no. X" but never "dated dd/mm/yyyy" after it, since the voucher form gained the bill date (#663, 2026-10-01).
 

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-foundation` (to `main`) added below (its entry is the newest).
 
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main` (ports staging #888, #889, #890; BUG-2026-10-16-295 to -299) added below (its entries are the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
@@ -179,6 +180,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+
+## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 1: foundation (owner「照 README 把这些设计做进现有的 Hookka repo，接真正的 API」→ decisions in chat →「自己核对完直接上线」)(branch `feat/finance-v2-foundation` → `main`)
+
+1. ✅ Spec = the Claude Design handoff README + the owner's 2026-10-16 decisions (`docs/superpowers/specs/2026-10-16-finance-v2-design.md`): Trade Finance stays its own block with interest at drawdown; knock-off stays manual; delete hides and keeps the record; Monthly P&L keeps Accumulated first, newest month first; the per-company Balance Sheet and the other items needing new data / API / postings are deferred, each to be confirmed first.
+2. ✅ DataGrid table rules (opt-in): number range filter, sticky total row, header right-click menu, drag headers to reorder, Save Layout per user on the server (`datagrid-layouts` kind `user`).
+3. ✅ Scoped v2 look (`src/styles/finance-v2.css`, `[data-fin-ui]` only): IBM Plex Sans, slate table headers, strong lines, hover lift, 34px buttons; page titles with an (i) explanation.
+4. ✅ Pilot: Journal Entries on the new table rules.
+5. ⚪ Prod check after deploy (read-only): finance pages show the v2 look, a non-finance page (Sales Orders) unchanged; Journal Entries header menu / total / filter / reorder work.
+6. ⚪ Next plans: page groups (Daily, Reports, Monthly, Debtors / Creditors, e-Invoice, Setup), Forecasting, mobile `/m` Finance, print layouts.
+
 ## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
 
 Ported to `main` on branch `fix/po-list-cache-main`.

@@ -3213,8 +3213,10 @@ export function DataGrid<T extends Record<string, any>>({
         )}
 
         {/* Export — WYSIWYG: the CURRENT visible columns over the CURRENT
-            filtered+sorted rows. Opt-in per page via the `exportName` prop. */}
-        {exportName && (
+            filtered+sorted rows. Opt-in per page via the `exportName` prop.
+            A grid with the finance v2 header menu exports from there instead
+            (Export to Excel / PDF / Print), so its toolbar stays uncluttered. */}
+        {exportName && !headerMenu && (
           <div className="relative">
             <button
               className={cn(

@@ -3332,6 +3332,16 @@ function JournalsTab({
     // Newest date first, as the journals come; on the same date the manual ones stay first.
     return [...journals, ...sys].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
   }, [journals, sysResp]);
+  // The list's debit / credit columns as plain sen fields (finance v2), so
+  // they sort, take the number filter, total and export as money.
+  const gridRows = useMemo(
+    () => rows.map((r) => ({
+      ...r,
+      totalDebit: r.lines.reduce((s, l) => s + l.debitSen, 0),
+      totalCredit: r.lines.reduce((s, l) => s + l.creditSen, 0),
+    })),
+    [rows],
+  );
   const openSystemTab = (sys: SystemPosting) => navigate(`/accounting?tab=${sys.tab}`);
 
   // Owner 2026-07-28 (JE-2607-0001): this used to ignore the response entirely
@@ -3441,19 +3451,17 @@ function JournalsTab({
       key: "totalDebit",
       label: "Total Debit",
       align: "right",
-      render: (value, row) => {
-        const total = row.lines.reduce((s, l) => s + l.debitSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
-      },
+      type: "currency",
+      total: "sum",
+      render: (value) => <span className="amount font-medium">{formatRM(Number(value) || 0)}</span>,
     },
     {
       key: "totalCredit",
       label: "Total Credit",
       align: "right",
-      render: (value, row) => {
-        const total = row.lines.reduce((s, l) => s + l.creditSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
-      },
+      type: "currency",
+      total: "sum",
+      render: (value) => <span className="amount font-medium">{formatRM(Number(value) || 0)}</span>,
     },
     {
       key: "status",
@@ -3590,10 +3598,13 @@ function JournalsTab({
         <CardContent className="p-4">
           <DataGrid
             columns={columns}
-            data={rows}
+            data={gridRows}
             keyField="id"
             virtualize
             gridId="accounting-journals"
+            headerMenu
+            reorderableHeaders
+            exportName="Journal Entries"
             contextMenuItems={contextMenuItems}
             selectable
             onSelectionChange={setSelectedJvs}
