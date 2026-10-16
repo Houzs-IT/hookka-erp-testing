@@ -28,7 +28,8 @@ import { InvoiceSchema } from "@/lib/schemas/invoice";
 import { useToast } from "@/components/ui/toast";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 import { buildInvoiceDetailRows } from "@/lib/invoice-detail-export";
-import { InvoicePriceImportModal } from "@/components/invoice-price-import-modal";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 
 const InvoiceMutationSchema = mutationWithData(InvoiceSchema);
 
@@ -214,7 +215,7 @@ export default function InvoicesPage() {
   // used the NAME as the option value (broke the ?customerId= server filter).
   const { data: custResp } = useCachedJson<{
     success?: boolean;
-    data?: { id: string; name: string; email?: string | null }[];
+    data?: { id: string; code?: string; name: string; email?: string | null }[];
   }>("/api/customers");
   const customers = useMemo(() => {
     const list = custResp?.success ? custResp.data ?? [] : [];
@@ -662,7 +663,7 @@ export default function InvoicesPage() {
               import, and pairing them is how an operator reads that. */}
           <Button variant="outline" onClick={() => setShowPriceImport(true)}>
             <Upload className="h-4 w-4" />
-            Import Prices
+            Import
           </Button>
           <Button variant="primary" onClick={openCreate}>
             <Plus className="h-4 w-4" />
@@ -671,7 +672,10 @@ export default function InvoicesPage() {
         </div>
       </div>
 
-      <InvoicePriceImportModal
+      <DocImportDialog
+        docType="si"
+        title="Import invoices from a Detail Listing"
+        hint="Edit: Base / Divan / Leg / T.Height / Special / Discount on DRAFT or unpaid SENT invoices (keep Unit Price as exported). Create: Doc Type DI, Ref Doc No. = the delivered DO, one row per DO line with Item Code + Qty."
         open={showPriceImport}
         onClose={() => setShowPriceImport(false)}
         onApplied={() => {
@@ -911,8 +915,17 @@ export default function InvoicesPage() {
                 exportSheetLabel="Invoices"
                 detailExport={{
                   label: "Detail Listing",
-                  build: (rows) => buildInvoiceDetailRows(rows),
+                  build: (rows) =>
+                    buildInvoiceDetailRows(rows, { partyCodes: new Map(customers.map((cu) => [cu.id, cu.code ?? ""])) }),
                 }}
+                // The grid holds one page — and the filtered/search fetch asks
+                // limit=2000 but the server clamps to 500. Export every match.
+                fetchAllRows={() =>
+                  fetchAllPages<Invoice>(
+                    gridSearch.trim()
+                      ? `/api/invoices?search=${encodeURIComponent(gridSearch.trim())}`
+                      : `/api/invoices${filterQs ? `?${filterQs}` : ""}`,
+                  )}
               />
 
               {/* Pagination footer */}

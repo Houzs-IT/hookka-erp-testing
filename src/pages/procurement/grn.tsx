@@ -12,6 +12,7 @@ import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, getStatusColor } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState } from "@/lib/use-url-state";
 import { buildGrnDetailListingAoa } from "@/lib/doc-detail-listings";
 import type { GoodsReceiptNote, PurchaseOrder, ArrivalState } from "@/types";
@@ -401,7 +402,7 @@ export default function GRNPage() {
   const { loading: poLoading, refresh: refreshPOs } = useCachedJson<{ success?: boolean; data?: PurchaseOrder[] } | PurchaseOrder[]>("/api/purchase-orders");
   // Purchase Company letterhead — print each GRN under its supplier's buying
   // company (HOOKKA / OHANA / any sister co); accounting stays HOOKKA.
-  const { data: supResp } = useCachedJson<{ data?: Array<{ id: string; purchaseOrgCode?: string }> }>("/api/suppliers");
+  const { data: supResp } = useCachedJson<{ data?: Array<{ id: string; code?: string; purchaseOrgCode?: string }> }>("/api/suppliers");
   const { data: orgsResp } = useCachedJson<{ organisations?: Array<{ code?: string; name?: string; regNo?: string; tin?: string; address?: string; phone?: string; email?: string }> }>("/api/organisations");
 
   const grns: GoodsReceiptNote[] = useMemo(
@@ -1223,7 +1224,13 @@ export default function GRNPage() {
             onSearchChange={setGridSearch}
             exportName="goods-receipts"
             exportSheetLabel="Goods Receipts"
-            detailExport={{ label: "Detail Listing", build: (rows) => buildGrnDetailListingAoa(rows) }}
+            detailExport={{
+              label: "Detail Listing",
+              build: (rows) => buildGrnDetailListingAoa(rows, new Map((supResp?.data ?? []).map((x) => [x.id, x.code ?? ""]))),
+            }}
+            // Unfiltered = one server page; export every GRN on the current tab.
+            fetchAllRows={grnFiltersActive ? undefined : async () =>
+              (await fetchAllPages<GoodsReceiptNote>("/api/grn")).filter((g) => (tab === "DRAFT") === (g.status === "DRAFT"))}
           />
           {/* Server-side page controls — only in the default (unfiltered) view.
               A filter/search loads the whole dataset, so paging is hidden. */}
