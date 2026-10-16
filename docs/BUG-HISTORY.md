@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-305 (branch `fix/sync-1016-duplicate-import`, to `staging`; 304 is the newest on `staging`, 303 on `main`).
 > **Last verified: 2026-10-16**: staging<-main sync (branch `chore/sync-staging-from-main-1016`): both sides kept. Bugs that main logged again under a different number keep staging's number with a "Ported to main" line. Where main reused a number for another entry, main's copy is suffixed `b` (BUG-2026-10-16-293b, BUG-2026-10-14-288b, BUG-2026-09-30-223b).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-304 (branch `fix/self-apply-skip-existing-column`, to `main`; 302 is taken on `staging`, 303 on `main`); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-302 corrected after the #907 staging run (the cut-off was the app's 30 s timeout after a server stall; branch `docs/bug302-staging-verified`).
@@ -177,6 +178,18 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-16-305 — The staging<-main sync broke the staging build: `usePermissions` imported twice on /production `deploy` `merge` 🟡
+
+🟡 **Fixed on branch** (`fix/sync-1016-duplicate-import` → `staging`). Found from the failed staging deploy of #916 (run 38881557951): `vite build` stopped with "Identifier `usePermissions` has already been declared" in `src/pages/production/index.tsx`, so staging kept serving the build before the sync.
+
+**Root cause.** Both branches added `import { usePermissions } from "@/lib/use-permission";` to the page, at different lines (staging at line 2, main at line 7). Git merges those as two separate additions without a conflict. The sync ran the tests and the docs checkers but not a build, and no test parses that page, so nothing local caught it.
+
+**Fix.** The second import is removed. `npx vite build` on the fixed tree: exit 0.
+
+**Regression.** None added: the build is the check. A staging<-main sync runs `npx vite build` before it is pushed.
 
 ---
 
