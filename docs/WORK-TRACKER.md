@@ -270,13 +270,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 ## 2026-10-16 — 🔵 Sync `staging` from `main` (branch `chore/sync-staging-from-main-1016` → `staging`)
 
-110 `main` commits merged into `staging` (571 staging-only kept). Conflicts: 15 code/test files, 21 docs.
+110 `main` commits merged into `staging`, then the newest `staging` (#913). Conflicts: 14 code/test files, 21 docs.
 1. 🔵 Dashboard working days (`dashboard-overview.ts`): main's rule (a Sunday or holiday counts only when production happened, `lib/working-days.ts`) now builds staging's windows: rolling 14 days, the compare view's 7/14 override ending on a past month's last day and clipped to that month. Main's rolling 7 and month-so-far window are not taken (staging moved to 14 on 2026-10-08). Two source tests updated to the new shape.
 2. 🔵 Sales Transfer to DO (`sales/index.tsx`): main's latest-click-wins guard added around staging's `?fresh=1` read and empty-list warning; staging's credit-block override kept (BUG-34 is not on main).
 3. 🔵 Accounting Overview: main's new `overview-tab.tsx` replaces the old inline Overview (the staging today override there goes with it; the new tab takes its months from the server). Production page keeps both permission flags (stock PO, send notice). IT Support takes main's words and keeps staging's paging. Mail outbox and phone mail screen keep staging's MailSlurp and phone header.
 4. 🔵 Docs: logs and stamps unioned. Bugs main logged again under another number keep staging's number with a "Ported to main" line; main's reused numbers get a `b` (293b, 288b, 223b). Main's BUG-CLASSES C30 is C32 here. `API.md` regenerated (147 / 1041); module and map anchors re-measured.
 
-`npm test` 6099 tests: 6095 pass, 1 fail, 3 skipped. The failure (`mobile-sales-list` "phone: summary sits above search") is already failing on `staging`: neither the test nor `SalesScreen.tsx` changed in this merge. Map, API.md and docs-freshness checks pass. tsc not run locally.
+`npm test` 6106 tests: 6102 pass, 1 fail, 3 skipped. The failure (`mobile-sales-list` "phone: summary sits above search") fails the same way on a clean `staging` checkout; this merge does not touch it. Map, API.md and docs-freshness checks pass. tsc not run locally.
 
 ## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
 
