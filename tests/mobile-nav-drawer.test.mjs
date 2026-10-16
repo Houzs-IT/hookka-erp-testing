@@ -1,5 +1,5 @@
 // Phone navigation shell (owner 2026-10-12; Products tab 2026-10-13): 5 flat bottom tabs, a flat
-// hamburger, and a 324px left drawer that reuses the More menu content.
+// hamburger, and a left drawer (318px since the 2026-10-16 reskin) with the More menu content.
 // Tablet (rail) behaviour must stay untouched.
 // 2026-10-13: one phone header geometry for every /m screen (see the last test).
 import test from "node:test";
@@ -82,14 +82,25 @@ test("module search filters by label or group title and drops empty groups", () 
   assert.deepEqual(visibleModuleGroups(() => false, gated.label).flatMap((g) => g.items).filter((i) => i.label === gated.label), []);
 });
 
-test("drawer: 324px, slides from left, pinned profile + search, accessible", () => {
-  assert.match(drawer, /NAV_DRAWER_WIDTH = 324/);
+// 2026-10-16: reskinned to the Claude Design Home.dc.html drawer (318px, rounded
+// right edge, pinned Sign out footer). Install card dropped (Home shows it); the
+// desktop-app link stays (only phone route back to desktop, BUG-2026-10-02-250).
+test("drawer: 318px, slides from left, pinned profile + search + footer, accessible", () => {
+  assert.match(drawer, /NAV_DRAWER_WIDTH = 318/);
   assert.match(drawer, /translateX\(-100%\)/);
-  assert.match(drawer, /<ProfileCard/);
-  assert.match(drawer, /placeholder="Search modules\.\.\."/);
-  assert.match(drawer, /<ThemeToggleCard/);
-  assert.match(drawer, /<InstallAppCard/);
-  assert.match(drawer, /<DesktopAppLink/);
+  assert.match(drawer, /borderTopRightRadius: 28/);
+  assert.match(drawer, /<DrawerProfile \/>/);
+  assert.match(drawer, /placeholder="Search modules"/);
+  assert.match(drawer, /<DrawerThemeToggle \/>/);
+  assert.match(drawer, /<DrawerModuleList groups=\{groups\}/);
+  assert.doesNotMatch(drawer, /InstallAppCard/, "install card lives on Home, not in the drawer");
+  assert.match(drawer, /onClick=\{handleSignOut\}/, "footer sign-out reuses the shared flow");
+  assert.match(drawer, /href="\/dashboard"\s*onClick=\{\(\) => setPreferDesktop\(true\)\}/);
+  assert.match(drawer, /aria-current=\{current \? "page" : undefined\}/);
+  // /m/more keeps its own (unchanged) building blocks.
+  for (const c of ["<ProfileCard", "<ThemeToggleCard", "<InstallAppCard", "<DesktopAppLink"]) {
+    assert.ok(more.includes(c), `/m/more still renders ${c}`);
+  }
   assert.match(drawer, /role="dialog"/);
   assert.match(drawer, /aria-modal="true"/);
   assert.match(drawer, /e\.key === "Escape"/);

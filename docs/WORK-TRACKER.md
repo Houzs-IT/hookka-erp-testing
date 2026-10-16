@@ -1,6 +1,11 @@
 # Hookka ERP — Work Tracker
 
+HEAD
+ HEAD
+> **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone nav drawer reskin, local only) added below (its entry is the newest).
+
 > **Last verified: 2026-10-16**: branch `feat/wip-times-sync-open-jobcards`, to `staging` (WIP Production Times sync button) added below (its entry is the newest).
+ upstream/staging
 > **Last verified: 2026-10-16**: branch `docs/dev05-a9-live-verified` — DEV-05's full
 > acceptance run added below (all six criteria measured on staging, ending in invoice
 > INV-2610-005 at the customer's price), with the four traps it found. Its entry is the newest.
@@ -10,7 +15,7 @@
 > **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
 > re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
 > BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
-> staging measurement are in the entry below, dated 2026-09-29.
+> staging measurement are in the entry below, dated 2026-09-29. upstream/staging
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -229,7 +234,7 @@
 > **Last verified: 2026-09-22** — branch `fix/delivery-loading-gate-po-paging` added below (open, its entry is the newest). Previously: branch `fix/delivery-tab-switch-pagination` (MERGED as #467). Previously: branch `feat/po-search-line-items` added below (open, pushed, its entry is the newest). Previously: branch `feat/po-supplier-searchable-select` (MERGED as #459). The committed merge-conflict markers that sat inside the Houzs entry on `main` were resolved here (kept the full text, which is a superset).
 > **Last verified: 2026-09-22** — branch `fix/delivery-tab-switch-pagination` added below (open, its entry is the newest). Previously: branch `feat/po-search-line-items` added below (open, pushed, its entry is the newest). Previously: branch `feat/po-supplier-searchable-select` (MERGED as #459). The committed merge-conflict markers that sat inside the Houzs entry on `main` were resolved here (kept the full text, which is a superset).
 > **Last verified: 2026-09-22** — branch `claude/nice-sanderson-27be32` (dashboard Service > Top issues redesign) added below (open, its entry is the newest). Previously: branch `feat/po-search-line-items` added below (open, pushed, its entry is the newest). Previously: branch `feat/po-supplier-searchable-select` (MERGED as #459). The committed merge-conflict markers that sat inside the Houzs entry on `main` were resolved here (kept the full text, which is a superset).
-> **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (`<<<<<<< HEAD` … `>>>>>>> 85e58b40`) on `main`; left for its owner to resolve.
+> **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (` HEAD` … `85e58b40`) on `main`; left for its owner to resolve.
 > **Last verified: 2026-09-25**: branch `feat/dashboard-kpi-no-icons` (PR #524 to `main`, open) is the newest entry below, items 1 to 17 checked against the branch. The Attendance log, time audit dates and Department Status branches are folded into it (#525, #526, #527 closed).
 > **Last verified: 2026-09-25** — branch `feat/ocr-dashboard-tab` entry below updated: PR #522 open, BUG-2026-09-25-192 fixed, historical model fallback added.
 > **Last verified: 2026-09-24** — branch `feat/dashboard-exp-ops-layout` added below (not committed, its entry is the newest).
@@ -2537,7 +2542,7 @@ owner 两问「side bar 很多功能重复是吗？」「能像 2990 那样 expo
   AP Invoices 每行 `pay` 深链 `?pay=<PI|AP>:<id>:<partyId>` 直开表单并勾满该单。
 - 守卫 `tests/pv-ap-payment.test.mjs` 9 断言（两个 builder 各恰好 2 个调用点、AP 不走 pvPostingStatements、reservation 只算未过账、
   lifecycle 顺序、restate 拒、schema fixture）；money-input 守卫登记 `if (apMoneyError)` 闸 + `apSen` 预算；全套 4706 绿。
-- 顺手：docs/WORK-TRACKER.md 顶部残留的 `<<<<<<< HEAD` 冲突标记（上一轮 rebase 遗留，已在 main）清掉。
+- 顺手：docs/WORK-TRACKER.md 顶部残留的 ` HEAD` 冲突标记（上一轮 rebase 遗留，已在 main）清掉。
 
 **prod 已验（#465 merge cba0fcdb，deploy ✓，1 sen 两条路各走完整梯子后立即作废）**：①other creditor 路（Houzs Century OCB-2606-002）：draft 带勾单、open-bills 立刻显示 reserved 1 sen（available 119,999）、0 分录 0 结算行；prepare→check 铸 HPV-2609-046 仍 0 分录、bill 未动；approve → Other Creditor Payments 出现 HPV-2609-046（ACTIVE，1 sen，310-0010）、bill paid 1/outstanding 119,999、GL DR 405-0000 1 / CR 310-0010 1（sourceType other_party_payment）；从 PV 页 void → 结算单 lifecycle VOID、bill paid 归 0、PV 读 VOID。②supplier 路（OCEAN SKY PI-2608-091）：check 铸 HPV-2609-047 → approve → Supplier Payment 页出现同号（ACTIVE，1 行）、PI paid 1 / PARTIAL_PAID、GL DR 400-0000 1 / CR 310-0010 1；void → PI paid 0 / CONFIRMED、supplier payment VOID、PV VOID。UI：深链 ?pay=AP:opb-ced66add-2:op-1bcbd71b 直开 New AP Payment、债主已选、OCB-2606-002 勾满 1,200.00；芯片 ALL/DRAFT/PREPARED/CHECKED/APPROVED 91/ADVANCE OPEN/CANCELLED 7；两张测试凭证带 AP 标签灰显。
 
@@ -7233,6 +7238,23 @@ customer's order and the customer's price, not the placeholder at zero) is not
 verified. And A9's design gap stands: the owner's rule is *earliest sales order
 date wins*; the implementation is *first to confirm wins*. Not yet raised.
 
+ HEAD
+---
+
+## 2026-10-16 — Phone nav drawer reskin to the Claude Design Home (branch `design/mobile-sidebar`, local only)
+
+Source: claude.ai/design project d53d5dfb, `Home.dc.html` (drawer, lines 358–406).
+
+1. [ ] Restyle the phone `NavDrawer` to the design: rounded 28px right edge, shadowed white cards (no borders), round close chip, round 32px icon tiles, gold bar + tinted row for the current page, pinned footer with Sign out.
+2. [ ] Typography stays the repo standard (owner): sizes / weights / text colours from the existing `/m` screens, not the design's.
+3. [ ] Remove the Install card from the drawer (owner: Home already shows it).
+4. [ ] Keep "Open the desktop app" (owner choice 1), moved into the footer in the design's footer-label style: it is the only phone route back to desktop and carries the `setPreferDesktop` fix (BUG-2026-10-02-250).
+5. [ ] `/m/more` unchanged: the shared `ModuleMenu` pieces are not restyled.
+
+**Built**: `src/pages/m/components/NavDrawer.tsx` (drawer-local `DrawerProfile` / `DrawerThemeToggle` / `DrawerModuleList`, footer); `ModuleMenu.tsx` only exports `initialsOf` / `prettyRole` now. `/m/more` untouched.
+**Verified**: `tsc -p tsconfig.app.json` exit 0; `tests/mobile-*.test.mjs` 110/111 — the one failure ("phone view switch is local", Updates) fails identically with this change stashed, so it is pre-existing. `tests/mobile-nav-drawer.test.mjs` drawer test rewritten for the new layout + owner decisions.
+**Not yet done**: visual check in a browser at 390px, light + dark (no browser tool in this session).
+
 ## 2026-10-16 — DEV-05 acceptance run: all six criteria measured on staging
 
 Branch `docs/dev05-a9-live-verified`. No source change — this is the record of a
@@ -7283,6 +7305,9 @@ promoting it is a decision nobody has been asked for. A9's design gap also
 stands: the owner's rule is *earliest order wins*, the implementation is *first
 to confirm wins*, and closing that means answering how long an unconfirmed order
 may hold finished stock.
+HEAD
+ upstream/staging
+
 
 ## 2026-10-16 — WIP Production Times: push a changed time onto open job cards
 
@@ -7309,3 +7334,4 @@ checked locally with stubbed data at desktop and 320px. **Not yet verified on st
 
 Known gap: a sofa Fab Cut card is shared by several lines of the order, so it is listed as
 skipped rather than recalculated.
+upstream/staging
