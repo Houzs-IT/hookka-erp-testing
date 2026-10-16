@@ -1,5 +1,7 @@
 # Finance & Forecasting v2 — design handoff (spec)
 
+> **Last verified: 2026-10-17**: the owner's three answers added under "Owner decisions" (legal name on reports, the Balance Sheet arrangement, no CSV).
+
 > **Last verified: 2026-10-16** against the Claude Design handoff package "Finance 和 Forecasting 功能优化" (`design_handoff_finance_v2/README.md`, downloaded by the owner 2026-10-16) and the owner's decisions in chat the same day (section "Owner decisions" at the end). The design files themselves (HTML prototypes with mock data, screenshots) are not in the repo; ask the owner for the package.
 
 This is the designer's README, unchanged except for this title, followed by what the owner decided when it was compared with the code. Where the two disagree, **the owner decisions win**.
@@ -186,6 +188,9 @@ Compared with the code on `main` the same day. The design was drawn from a recre
 | "Duplicate as manual" for system journals | Explained to the owner; default **keep today's rule** (system journals are not duplicated, so nothing is posted twice). |
 | Monthly FX rate table, FX gain/loss account picker, "Confirm bank amount" | Not raised yet; default **keep** per-document rates and the FX difference at payment (owner decision 2026-06). |
 | Release | **Each batch ships straight to production after Claude's own verification** (no canary wait). |
+| Report heads: three company names in use (HOOKKA INDUSTRIES SDN BHD / HOOKKA MANUFACTURING SDN BHD / HOOKKA INDUSTRIES SDN. BHD.) | **2026-10-17: HOOKKA INDUSTRIES SDN BHD** (`COMPANY.HOOKKA.name`) on every report, screen and PDF. |
+| Balance Sheet: Fixed Assets; Current Assets less Current Liabilities = Net Current Assets; Financed By (no Total Assets / Total Liabilities) | **2026-10-17: yes** — the sheet takes the design's arrangement, same sections and figures; the check compares the two sides. |
+| Downloads: CSV, Excel, PDF | **2026-10-17: Excel and PDF only** — CSV removed from the finance downloads. |
 
 **Deferred, each to be confirmed with the owner before it is built** (they need new data, new API or change the books): per-company Balance Sheet; Month / Quarter / Financial Year pickers with transition years, Change Year End and closed-year locks; aging as at a chosen month-end; TIN / SST Reg. No. / Currency / Bank on customers, suppliers and other parties; e-Invoice submission tracking (Uploaded To MyInvois, Record Result); the new Credit / Debit Note steps (from Delivery Return, Back to Draft, notes as their own aging lines — fix the statement double count first); a full Audit Log of every change; SST tax codes, per-document numbering, the new landed-cost method; "Add New Asset" when a fixed-asset account is used on a voucher; WIP by production order feeding the Balance Sheet; Trade Finance due dates in TO REPAY; separate Reference fields on vouchers and journals; editing an official receipt.
 

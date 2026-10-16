@@ -4,9 +4,10 @@
 // figures. Stock Summary gains TOTAL STOCK (raw materials + WIP + finished
 // goods, each the server's figure) and still has no ✓ off the tautological
 // `balanced` flag (BUG-2026-08-13-093) — the design's "Every group balances ✓"
-// is not drawn. The Balance Sheet keeps its sections and order (the new layout
-// waits for the owner, 2026-10-16) and gets the toolbar, the check strip and
-// the frame.
+// is not drawn. The Balance Sheet takes the design's arrangement (owner
+// 2026-10-17 「可以」: Fixed Assets; Current Assets less Current Liabilities;
+// Financed By) from the same sections, with the toolbar, the check strip on
+// the two sides and the frame.
 // ---------------------------------------------------------------------------
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -36,23 +37,38 @@ test("Stock Summary: month stepper and download on the title row, the frame", ()
   assert.match(stock, /<WipDetailCard month=\{month\} reloadKey=\{0\} \/>/, "the WIP card is unchanged");
 });
 
-test("Balance Sheet: same call, same sections in the same order, drag-to-reclassify kept", () => {
+test("Balance Sheet: the design's arrangement (owner 2026-10-17) from the same call and sections", () => {
   assert.match(bs, /`\/api\/accounting\/pl\?period=\$\{period\}\$\{orgIdParam\(company\)\}`/);
-  const order = ["\"Current Assets\"", "\"Fixed Assets (Net)\"", "TOTAL ASSETS", "\"Current Liabilities\"", "\"Long-Term Liabilities\"", "Total Liabilities", "\"Equity\"", "TOTAL LIABILITIES + EQUITY"];
+  // Fixed Assets; Current Assets less Current Liabilities = Net Current Assets;
+  // the left total; Financed By: Equity and Non-Current Liabilities; the right total.
+  const order = [
+    'renderBSSection("FA", "Fixed Assets (Net)"', "CURRENT ASSETS LESS CURRENT LIABILITIES",
+    'renderBSSection("CA", "Current Assets"', 'renderBSSection("CL", "Less: Current Liabilities"',
+    "Net Current Assets", "FIXED ASSETS + CURRENT ASSETS − CURRENT LIABILITIES", "FINANCED BY",
+    'renderBSSection("EQ", "Equity"', 'renderBSSection("LL", "Non-Current Liabilities"', "TOTAL EQUITY + NON-CURRENT LIABILITIES",
+  ];
+  const body = bs.slice(bs.indexOf("<tbody>"));
   let at = -1;
   for (const o of order) {
-    const i = bs.indexOf(o, at + 1);
+    const i = body.indexOf(o, at + 1);
     assert.ok(i > at, `${o} in order`);
     at = i;
   }
-  assert.match(bs, /if \(src\) void moveTo\(src, section\);/);
+  assert.doesNotMatch(body, /TOTAL ASSETS<|Total Liabilities</, "Total Assets / Total Liabilities are gone");
+  assert.match(bs, /const netCurrent = totalCurrentAssets - totalCurrentLiab;\n\s*const leftTotal = totalFixedAssets \+ netCurrent;\n\s*const rightTotal = totalEquity \+ totalLongTermLiab;\n\s*const sheetDiff = leftTotal - rightTotal;/);
+  assert.match(bs, /if \(src\) void moveTo\(src, section\);/, "drag to reclassify kept");
 });
 
-test("Balance Sheet: toolbar, the check strip on the sheet's own totals, the frame", () => {
+test("Balance Sheet: toolbar with L1–L4, the check strip on the two sides, the frame", () => {
   const bar = bs.slice(bs.indexOf("<FinanceTitleActions>"), bs.indexOf("</FinanceTitleActions>"));
-  for (const c of ["<PeriodStepper", "<EditLayoutToggle", "<DownloadMenu"]) assert.ok(bar.includes(c), c);
-  assert.match(bs, /const sheetDiff = totalAssets - totalLiabEquity;/);
+  for (const c of ["<PeriodStepper", "<EditLayoutToggle", "<DownloadMenu", "levels={[1, 2, 3, 4]}"]) assert.ok(bar.includes(c), c);
   assert.match(bs, /<CheckStrip ok=\{sheetDiff === 0\} label=\{sheetDiff === 0 \? "Balanced ✓" : checkLabel\(sheetDiff\)\}>/);
+  assert.match(bs, /Fixed Assets \+ Current Assets − Current Liabilities <b className="tabular-nums">\{fmtAmt\(leftTotal\)\}<\/b>/);
+  assert.match(bs, /Total Equity \+ Non-Current Liabilities <b className="tabular-nums">\{fmtAmt\(rightTotal\)\}<\/b>/);
   assert.match(bs, /title=\{`Balance Sheet \$\{asAtLabel\}`\}/);
+  assert.match(bs, /company=\{COMPANY\.HOOKKA\.name\}/);
   assert.match(bs, /<YearCloseCard \/>/, "the Year-End Close card stays");
+  // L1 totals only; L4 opens every account's ledger lines (a click folds one).
+  assert.match(bs, /if \(level < 2 && !edit\) \{/);
+  assert.match(bs, /const drilled = canDrill && \(level >= 4 \? !bsDrillOpen\.has\(drillKey\) : bsDrillOpen\.has\(drillKey\)\);/);
 });

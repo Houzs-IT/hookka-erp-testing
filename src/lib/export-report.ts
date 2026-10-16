@@ -8,6 +8,8 @@
 // actually clicks an export button (same pattern as generate-order-pdf).
 // ---------------------------------------------------------------------------
 
+import { COMPANY } from "./constants";
+
 export type Aoa = (string | number)[][];
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -80,8 +82,8 @@ export type PdfExportOpts = {
   /** Open the PDF in a new tab with the print dialog instead of saving it
    *  (a grid's header-menu "Print", finance v2). */
   print?: boolean;
-  /** The company line at the top of the page (default: the name the finance
-   *  reports have printed so far). */
+  /** The company line at the top of the page (default: the legal name,
+   *  COMPANY.HOOKKA.name — owner 2026-10-17). */
   company?: string;
 };
 
@@ -100,7 +102,7 @@ export async function exportReportPdf(
   // Landscape for the wide month-column reports.
   const doc = new jsPDF({ orientation: aoa[0] && aoa[0].length > 6 ? "landscape" : "portrait", unit: "pt", format: "a4" });
   doc.setFontSize(13);
-  doc.text(opts?.company ?? "HOOKKA MANUFACTURING SDN BHD", 40, 38);
+  doc.text(opts?.company ?? COMPANY.HOOKKA.name, 40, 38);
   doc.setFontSize(10);
   doc.text(title, 40, 54);
   if (subtitle) { doc.setFontSize(8); doc.setTextColor(120); doc.text(subtitle, 40, 67); doc.setTextColor(0); }

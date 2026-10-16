@@ -1,5 +1,5 @@
 import { Printer, FileSpreadsheet, X } from "lucide-react";
-import { exportReportCsv, exportReportXlsx } from "@/lib/export-report";
+import { exportReportXlsx } from "@/lib/export-report";
 
 export function BatchActionsBar(props: {
   count: number;
@@ -21,12 +21,6 @@ export function BatchActionsBar(props: {
           <Printer className="h-3.5 w-3.5" /> Print / PDF
         </button>
       )}
-      <button
-        onClick={() => exportReportCsv(`${props.exportName}.csv`, props.exportAoa())}
-        className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1 text-[#3E6570] hover:text-[#1F1D1B]"
-      >
-        CSV
-      </button>
       <button
         onClick={() => void exportReportXlsx(`${props.exportName}.xlsx`, props.exportName.slice(0, 31), props.exportAoa())}
         className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1 text-[#27500A] hover:text-[#1F1D1B]"
