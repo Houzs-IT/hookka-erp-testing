@@ -47,6 +47,7 @@ import { ArrowLeft, Check, Plus, Save, Trash2, X } from "lucide-react";
 // handler already accepts. If this drifts the supplier-binding auto-fill
 // also drifts, hence the duplication is intentional.
 type POLineItem = {
+  rmId: string;
   rmCode: string;
   rmDescription: string;
   supplierId: string;
@@ -232,20 +233,21 @@ function CreatePurchaseOrderPage() {
       : undefined) ?? getMainBinding(rmItemCode);
 
   const addedKeys = useMemo(
-    () => new Set(items.map((it) => `${it.rmCode}|${it.supplierId}`)),
+    () => new Set(items.map((it) => `${it.rmId}|${it.supplierId}`)),
     [items],
   );
 
   // ── Line-item mutators ─────────────────────────────────────────
-  const addItemFromRM = (rmItemCode: string, supplierId?: string) => {
-    const rm = rawMaterials.find((r) => r.itemCode === rmItemCode);
-    if (!rm) return;
+  // Takes the clicked row, not its code: one code can be several RMs (ROLL and MTR).
+  const addItemFromRM = (rm: RawMaterial, supplierId?: string) => {
+    const rmItemCode = rm.itemCode;
     const mainBinding =
       (supplierId
         ? getSortedBindingsForRM(rmItemCode).find((b) => b.supplierId === supplierId)
         : undefined) ?? bindingForPick(rmItemCode);
     const seedQty = mainBinding?.moq ?? 1;
     const newItem: POLineItem = {
+      rmId: rm.id,
       rmCode: rm.itemCode,
       rmDescription: rm.description,
       supplierId: mainBinding?.supplierId ?? "",
@@ -353,6 +355,7 @@ function CreatePurchaseOrderPage() {
       const mainBinding = bindingForPick(trimmed);
       const next = [...prev];
       next[idx] = {
+        rmId: rm.id,
         rmCode: rm.itemCode,
         rmDescription: rm.description,
         supplierId: mainBinding?.supplierId ?? "",
@@ -1013,9 +1016,9 @@ function MaterialPickerModal({
   supplierLabel: string;
   /** One entry per supplier that sells this material (main first); each becomes its own row. */
   optionsFor: (rmCode: string) => PickOption[];
-  /** `${rmCode}|${supplierId}` of lines already in the table. */
+  /** `${rmId}|${supplierId}` of lines already in the table. */
   addedKeys: Set<string>;
-  onAdd: (rmCode: string, supplierId?: string) => void;
+  onAdd: (rm: RawMaterial, supplierId?: string) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -1138,7 +1141,7 @@ function MaterialPickerModal({
                 const options = optionsFor(rm.itemCode);
                 const rows: (PickOption | null)[] = options.length > 0 ? options : [null];
                 return rows.map((opt) => {
-                  const added = addedKeys.has(`${rm.itemCode}|${opt?.supplierId ?? ""}`);
+                  const added = addedKeys.has(`${rm.id}|${opt?.supplierId ?? ""}`);
                   const priceSen = opt?.priceSen ?? 0;
                   return (
                     <div
@@ -1183,7 +1186,7 @@ function MaterialPickerModal({
                           size="sm"
                           variant="outline"
                           className="w-24 flex-shrink-0"
-                          onClick={() => onAdd(rm.itemCode, opt?.supplierId)}
+                          onClick={() => onAdd(rm, opt?.supplierId)}
                         >
                           <Plus className="h-3.5 w-3.5" /> Add
                         </Button>

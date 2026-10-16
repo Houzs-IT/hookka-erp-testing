@@ -1,4 +1,4 @@
-// card-padding-phone.test.mjs — BUG-2026-10-15-291 (main port of staging's BUG-2026-10-02-252).
+// card-padding-phone.test.mjs — BUG-2026-10-16-293 (main port of staging's BUG-2026-10-02-252).
 //
 // A card that sets its own padding (`<CardContent className="p-6">`) lost its
 // top padding on phones: the base classes carried `max-md:p-[…] max-md:pt-0`,

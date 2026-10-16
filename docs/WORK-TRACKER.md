@@ -1,24 +1,48 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-15**: branch `fix/hk0080-po-scan-date-iso` (to `main`, BUG-2026-10-15-288) added below (its entry is the newest).
-> **Last verified: 2026-10-15**: branch `fix/hk0037-rm-uom-propagation` (to `main`, HK-0037) added below (its entry is the newest).
-> **Last verified: 2026-10-15**: branch `docs/hk0052-already-delivered-dev36` (to `main`, IT Hub HK-0052) added below (its entry is the newest).
-> **Last verified: 2026-10-15**: branch `feat/hide-idle-sundays` (to `main`, idle Sundays out of dashboard charts and per-day averages) added below (its entry is the newest).
-> **Last verified: 2026-10-15**: SO customer pencil (#864, HK-0094) prod-verified.
-> **Last verified: 2026-10-15**: branch `feat/hk0094-so-customer-edit` (to `main`, IT Hub HK-0094) added below (its entry is the newest).
-> **Last verified: 2026-10-15**: branch `feat/dept-revenue-main` (to `main`, department revenue + Bedframe/Sofa split, from staging #860, plus the phone dashboard) added below (its entry is the newest).
-> **Last verified: 2026-10-14**: branch `fix/pi-revoid-legno-main` (to `main`, BUG-2026-10-14-286) added below (its entry is the newest).
-> **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` (to `main`, BUG-2026-10-14-285) added below (its entry is the newest); items 3-4 updated with the reporter's answers.
-> **Last verified: 2026-10-14**: Finance Overview (#851) prod-verified.
-> **Last verified: 2026-10-14**: branch `feat/finance-overview` (to `main`) added below.
-> **Last verified: 2026-10-13**: running-month expense estimates (#846) prod-verified.
-> **Last verified: 2026-10-13**: branch `feat/pnl-running-month-expense-estimates` (to `main`) added below (its entry is the newest).
-> **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `main`) added item 6 to the urgent orders KPI entry below.
-> **Last verified: 2026-10-13**: Balance Sheet lines in account-code order (#843) prod-verified.
-> **Last verified: 2026-10-13**: branch `feat/bs-sort-by-account-code` (to `main`) added below (its entry is the newest).
-> **Last verified: 2026-10-13**: Balance Sheet stock = the P&L's closing stock (#840) prod-verified.
-> **Last verified: 2026-10-13**: branch `feat/bs-stock-from-pnl-closing` (to `main`) added below (its entry is the newest).
-> **Last verified: 2026-10-13**: branch `feat/kpi-urgent-orders-scored-apart-main` (to `main`): the urgent orders KPI entry below (scored apart, order list, item 5 score breakdown) brought from staging.
+> **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
+> **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
+> **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
+> **Last verified: 2026-10-14**: branch `design/mobile-ui-foundation` (Phase 0 mobile UI foundation, local only) added below.
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, mobile Updates Phase 1) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below.
+> **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `staging`) added item 6 to the urgent orders KPI entry below.
+> **Last verified: 2026-10-13**: branch `feat/kpi-delivery-score-breakdown` (to `staging`) added item 5 to the urgent orders KPI entry below.
+> **Last verified: 2026-10-13**: branch `chore/sync-staging-from-main-1013` (to `staging`, staging<-main sync) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/it-support-sort-cycle` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/it-support-header-filters` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`, bell events) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder` (to `staging`, BUG-2026-10-13-284) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
+> **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
+> **Last verified: 2026-10-12**: branch `fix/bug87-po-overdue-stock-check` (to `staging`, BUG-87, BUG-2026-10-12-279) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` (to `staging`, BUG-2026-10-12-278) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/po-picker-show-supplier` (BUG-98 follow-up to `staging`) added item 5 to the BUG-98 entry below.
+> **Last verified: 2026-10-09**: branch `fix/po-line-material-supplier-only` (BUG-98 follow-up to `staging`) added item 4 to the BUG-98 entry below.
+> **Last verified: 2026-10-09**: branch `feat/po-supplier-combobox-material-modal` (BUG-98 to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/dashboard-compare-plant-card-drills` (to `staging`) added item 11 to the Plant Load entry below.
+> **Last verified: 2026-10-09**: branch `feat/batch-exports-from-houzs` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/dev64-price-list-default-column` (DEV-64 to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `fix/worker-i18n-popups-and-date` (to `staging`, then `main`) added below (in progress, its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/dashboard-month-static-kpis` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `feat/plant-load-14d` (to `staging`, BUG-2026-10-08-285, logged as 269) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `fix/bom-module-guide-anchors` (to `staging`) added item 5b to the editable WIP types entry below.
+> **Last verified: 2026-10-08**: branch `feat/bom-variant-fields-list` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `fix/kpi-delivered-last-leg-myt` (to `staging`, BUG-2026-10-08-267) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `feat/kpi-dept-efficiency-daily-chart` (DEV-36 follow-up to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `chore/sync-staging-from-main-1007` (staging<-main merge): both trackers merged, main-only entries added, entry below.
 > **Last verified: 2026-10-13**: Stock Summary blank-month FG / WIP (#830) prod-verified.
 > **Last verified: 2026-10-13**: branch `feat/stock-summary-blank-month-fg-wip` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-13**: blank-month FG / WIP from the production orders (#829) prod-verified.
@@ -153,6 +177,39 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+design/mobile-home-dashboard
+## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
+
+Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:
+1. 🟡 Move file bytes out of the database row into object storage (`scan_queue.file_key`, `scan-file-store.ts`).
+2. 🟡 Inject only the matching customer's rules (exact code/name hint) and drop empty stubs. 🔵 Identify-the-customer-first by a model pre-pass is NOT built (owner question below).
+3. 🟡 Log every correction into an alias table (`scan_field_corrections`) and replay it on the next scan of the same customer / supplier.
+4. 🟡 Keep every original (consume no longer evicts), inline view (`GET /api/scan-queue/:id/original`) and an access trail (`scan_original_access`).
+5. 🔵 Acceptance "scan time down by a third": UNMEASURED, needs a before/after timing on staging.
+Owner questions: see the PR body and the ticket's internal note.
+## 2026-10-15 — 🔵 HK-0025: Send Notification (order priority) from the Production Overview (branch `feat/hk-0025-production-notify` → `staging`)
+
+Ticket HK-0025 (Violet, 2026-09-23, support.houzscentury.com), asks 1 to 7.
+
+1. **Send Notification button** — Overview, tick order(s), Send Notification (`SendOrderNotificationDialog`, max 10 orders per send, one announcement each).
+2. **Priority** — URGENT / OVERDUE / PRIORITY (`src/lib/order-notification.ts`); URGENT and OVERDUE are forced to the WARNING category, which the worker phone already shows as a red card plus must-ack popup.
+3. **Recipients** — departments (multi), individual workers, or all; this is the existing announcement targeting, unchanged.
+4. **Content** — order no., model, required date, status, priority, optional supervisor note, built by `buildOrderNotice`.
+5. **Mobile** — announcement feed + Web Push, unchanged. Not done: tapping the notice does not open a dedicated order screen (the order details are in the notice text).
+6. **History** — /announcements shows priority, order no., "by <sender>" (`createdByName`) and the existing read-receipt panel (acked vs pending). Not done: a history view filtered to order notices only.
+7. Columns `priority`, `order_no`, `order_id` on `announcements`, runtime self-apply (nullable, no backfill).
+
+Tests: `tests/order-notification.test.mjs`. Prod state: UNMEASURED (not deployed; staging check pending).
+## 2026-10-15 — ⬜ HK-0055: Department Efficiency access per employee: triage, no code (branch `docs/hk0055-dept-efficiency-triage` → `staging`)
+
+Ticket HK-0055 (High, type Development, reporter Violet, created 2026-10-05): assign department efficiency to an employee (specific / multiple / Overall), the employee's dashboard shows only those, admin can assign / change / remove, the system records who has what. [Violet, Houzs Hub HK-0055, 2026-10-05]
+
+1. 🔵 Already built under DEV-36 / DEV-37, so no code change is made here. Assign: Library > KPI > Production time efficiency or Department efficiency, per-person department chips, any number ticked, none = Overall [code: src/api/routes/kpi.ts:974-1015]. Sofa / Bedframe split per department gives "Fab Cut Sofa + Fab Sew Sofa" [code: src/api/routes/kpi.ts:1006]. Employee sees only their own card, view only (DEV-37). Remove = `isActive: false`. Record = `kpi_assignments.scope` + `assigned_by` + `updated_at` [code: src/api/routes/kpi.ts:1020-1034].
+2. 🔵 The ticket's floor-worker reading ("Employee A" on the worker app) was built on staging as #714 and taken back as #715 by owner decision 2026-10-06 ("KPIs go to login accounts only, no worker app card", see the DEV-36 entry below). Re-adding it would reverse that decision, so it is not done without the owner.
+3. ⬜ Owner questions (unanswered): (a) is HK-0055 satisfied by DEV-36 / DEV-37, so it can close? (b) if not, which "Employee Dashboard": the KPI Card, Dashboard Experimental > Employees, or the worker app? (c) must floor workers (no ERP login) see it, which reverses #715? (d) is last-writer `assigned_by` enough for "record which departments are assigned", or is a change history wanted (who / when / old scope)? (e) the card names departments by code (`FAB_CUT + FAB_SEW`); wanted as names?
+4. Prod state UNMEASURED: no prod access from this branch; whether assignments exist for these staff was not queried.
+
+## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
 
 ## 2026-10-15 — 🔵 HK-0080 PO overdue: scanned delivery dates not forced to ISO (Violet「can cross check why there are many PO overdue? is OCR using convert?」)(branch `fix/hk0080-po-scan-date-iso` -> `main`, BUG-2026-10-15-288)
 

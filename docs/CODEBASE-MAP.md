@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-15 on branch `fix/po-pick-exact-rm-row` (to `main`, BUG-2026-10-15-292)**: the `src/pages/procurement/create.tsx` row and the `detail.tsx` / `index.tsx` rows (Add takes the clicked RM row, line counts), read from those files. Nothing else re-checked.
 > **Last verified: 2026-10-15 on branch `fix/hk0080-po-scan-date-iso` (to `main`)**: only the scan-po module row (HK-0080 `iso-date.ts` test pointer), read from `src/api/routes/scan-po.ts` and `src/api/routes/sales-orders.ts`.
 
 > **Last verified: 2026-10-15 on branch `feat/bom-draft-activate-main` (to `main`)**: the `src/pages/bom.tsx` row, its line-range index (re-measured from the file) and the new BOM status gotcha, read from `src/pages/bom.tsx`, `src/pages/inventory/index.tsx` and `src/api/routes/bom.ts`. Same change as staging #875. Nothing else re-checked.
@@ -377,9 +378,9 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/procurement/index.tsx` — PO list + POFormDialog (2190). Grid search also matches LINE ITEMS (internal code / supplier SKU / description) via `itemsSearchText` + `alwaysSearchKeys` — helper `src/lib/po-items-search.ts` (2026-09-22) | `src/api/routes/purchase-orders.ts` — PO CRUD + status lifecycle | `purchase_orders` / `purchase_order_items` | `tests/grn-arrival-state.test.mjs`, `tests/po-items-search.test.mjs` |
-| `src/pages/procurement/detail.tsx` — PO detail + ThreeWayMatchPanel (1497). Line Price (RM) is `MoneyInput` since 2026-09-22 (BUG-2026-09-22-179: the raw input reformatted on every keystroke) | `src/api/routes/grn.ts` — GRN CRUD + arrival + Post-to-Stock cascade | `grns` / `grn_items` | `tests/ocr-distill-supplier.test.mjs` |
-| `src/pages/procurement/create.tsx` — full-page PO create (1215); the Supplier header field is a `SearchableSelect` in `combobox` mode (type into the box, inline ✕ clears, clearing resets purchase company to HOOKKA; changing or clearing it while lines from another supplier exist asks, then empties the table). Materials are added from the Select Materials popup (`MaterialPickerModal` at the bottom of the file) opened by "Add Materials from Supplier"; there is no inline picker any more (BUG-98). With a supplier picked, the per-line RM code box only suggests and accepts that supplier's materials. With no supplier picked, the popup lists one row per supplier that sells the material (main ★ first, each with its own price; a supplier listed twice for the same material shows once), and Add fills the line with that row's supplier. Line Price (RM) is `MoneyInput` since 2026-09-22 (BUG-2026-09-22-179) | `src/api/routes/goods-in-transit.ts` — GIT CRUD | `goods_in_transit` | `tests/supplier-payment-alloc.test.mjs` |
+| `src/pages/procurement/index.tsx` — PO list + POFormDialog (2188). Grid search also matches LINE ITEMS (internal code / supplier SKU / description) via `itemsSearchText` + `alwaysSearchKeys` — helper `src/lib/po-items-search.ts` (2026-09-22) | `src/api/routes/purchase-orders.ts` — PO CRUD + status lifecycle | `purchase_orders` / `purchase_order_items` | `tests/grn-arrival-state.test.mjs`, `tests/po-items-search.test.mjs` |
+| `src/pages/procurement/detail.tsx` — PO detail + ThreeWayMatchPanel (1558). Line Price (RM) is `MoneyInput` since 2026-09-22 (BUG-2026-09-22-179: the raw input reformatted on every keystroke) | `src/api/routes/grn.ts` — GRN CRUD + arrival + Post-to-Stock cascade | `grns` / `grn_items` | `tests/ocr-distill-supplier.test.mjs` |
+| `src/pages/procurement/create.tsx` — full-page PO create (1218); the Supplier header field is a `SearchableSelect` in `combobox` mode (type into the box, inline ✕ clears, clearing resets purchase company to HOOKKA; changing or clearing it while lines from another supplier exist asks, then empties the table). Materials are added from the Select Materials popup (`MaterialPickerModal` at the bottom of the file) opened by "Add Materials from Supplier"; there is no inline picker any more (BUG-98). With a supplier picked, the per-line RM code box only suggests and accepts that supplier's materials. With no supplier picked, the popup lists one row per supplier that sells the material (main ★ first, each with its own price; a supplier listed twice for the same material shows once), and Add fills the line with that row's supplier. Add takes the clicked RM row, not its code (one code can be several RMs, e.g. ROLL and MTR); lines carry `rmId` and "Added" is per RM id + supplier (BUG-2026-10-15-292, same in `detail.tsx` / `index.tsx` add helpers). Line Price (RM) is `MoneyInput` since 2026-09-22 (BUG-2026-09-22-179) | `src/api/routes/goods-in-transit.ts` — GIT CRUD | `goods_in_transit` | `tests/supplier-payment-alloc.test.mjs` |
 | `src/pages/procurement/grn.tsx` — GRN list (1252) | `src/api/routes/purchase-invoices.ts` — PI CRUD + lifecycle | `purchase_invoices` / `purchase_invoice_items` | `tests/three-pl-state-rates.test.mjs` |
 | `src/pages/procurement/grn/create.tsx` — GRN create (1490) | `src/api/routes/three-way-match.ts` — PO↔GRN↔PI variance | `suppliers` | |
 | `src/pages/procurement/grn-detail.tsx` — GRN detail + Post-to-Stock (1332) | `src/api/routes/suppliers.ts` — supplier CRUD | `supplier_materials` / `supplier_material_bindings` | |
@@ -2367,16 +2368,16 @@ two roles. "Org-scoped" means the SQL carries an `org_id` / `orgId` bind.
 | POST `/api/scan-queue/:id/retry` | `src/api/routes/scan-queue.ts:1201` | `purchase-orders:create` | org-filtered SELECT, then an id-only UPDATE (transitively safe) |
 | POST `/api/scan-queue/:id/consume` | `src/api/routes/scan-queue.ts:1273` | `purchase-orders:create` | org-filtered |
 
-Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1495`)
+Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1531`)
 is exported and mounted by hand as `POST /api/internal/scan-queue-sweep`
 (`src/api/worker.ts:791`), registered **before** `authMiddleware` and gated by a
 constant-time `CRON_SECRET` compare that 503s when the secret is unset or under 16 chars
 (`src/api/worker.ts:791-798`). Its SQL is deliberately org-blind — it is a system sweep.
 
-Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:114`) ·
-`hydrateRow` (`src/api/routes/scan-queue.ts:248`) ·
+Internals: `ensureScanQueueTable` (`src/api/routes/scan-queue.ts:95`) ·
+`hydrateRow` (`src/api/routes/scan-queue.ts:261`) ·
 `processOneRow` (`src/api/routes/scan-queue.ts:334`, one claim + extract per `/work` request; returns processed | skipped | drained | error) ·
-`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1557`, the per-poll recovery path — Pages has
+`sweepStuckBatch` (`src/api/routes/scan-queue.ts:1607`, the per-poll recovery path — Pages has
 no cron, so the poll endpoints self-heal; re-queues ONLY, the open modal drives the row).
 
 ### `src/api/routes/scan-po.ts` — customer-PO OCR

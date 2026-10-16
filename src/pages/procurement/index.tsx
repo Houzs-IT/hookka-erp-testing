@@ -193,11 +193,9 @@ function POFormDialog({
       .sort((a, b) => a.itemCode.localeCompare(b.itemCode));
   }, [activeRMs, rmSearch, selectedCategory]);
 
-  const addItemFromRM = (rmItemCode: string, qtyOverride?: number) => {
-    const rm = rawMaterials.find((r) => r.itemCode === rmItemCode);
-    if (!rm) return;
-
-    const mainBinding = getMainBinding(rmItemCode);
+  // Takes the clicked row, not its code: one code can be several RMs (ROLL and MTR).
+  const addItemFromRM = (rm: RawMaterial, qtyOverride?: number) => {
+    const mainBinding = getMainBinding(rm.itemCode);
 
     // qtyOverride lets external triggers (e.g. shortage chip on Fabric
     // Module) seed the line with a specific quantity instead of the
@@ -536,7 +534,7 @@ function POFormDialog({
                         key={rm.id}
                         type="button"
                         className="w-full text-left px-3 py-2 text-sm hover:bg-[#FAF9F7] border-b border-[#E2DDD8] last:border-b-0 flex items-center gap-2"
-                        onClick={() => addItemFromRM(rm.itemCode)}
+                        onClick={() => addItemFromRM(rm)}
                       >
                         <Plus className="h-3 w-3 text-[#6B5C32] flex-shrink-0" />
                         <span className="font-medium text-[#1F1D1B] flex-shrink-0">{rm.itemCode}</span>

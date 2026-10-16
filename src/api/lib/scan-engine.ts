@@ -48,6 +48,7 @@
 import type { Env } from "../worker";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import { matchByCompanyName } from "../../lib/company-name-match";
+import { loadCorrections, applyCorrections } from "./scan-corrections";
 import { claudeFetch } from "./claude-fetch";
 
 // ---------- Anthropic config ------------------------------------------------
@@ -566,7 +567,15 @@ export function formatCatalog(c: Catalog): string {
   return lines.join("\n");
 }
 
-export function formatCustomerRules(c: Catalog): string {
+export function formatCustomerRules(c: Catalog, hint?: string | null): string {
+  // HK-0005: inject only what the model can use. A hint that IS a customer
+  // (exact code or name) narrows to that block; otherwise every customer that
+  // actually has rules. Empty "no special rules" stubs were dead weight.
+  const h = (hint ?? "").trim().toUpperCase();
+  const hit = h
+    ? c.customers.find((cu) => cu.code.toUpperCase() === h || cu.name.toUpperCase() === h)
+    : undefined;
+  const list = hit ? [hit] : c.customers.filter((cu) => (cu.ocrPromptRules ?? "").trim());
   const lines: string[] = [];
   lines.push("=== CUSTOMER-SPECIFIC OCR RULES ===");
   lines.push(
@@ -576,17 +585,11 @@ export function formatCustomerRules(c: Catalog): string {
       "If no block matches (or the customer's block says 'no special rules'), follow the universal rules above only.",
   );
   lines.push("");
-  for (const cu of c.customers) {
+  for (const cu of list) {
     const body = (cu.ocrPromptRules ?? "").trim();
     lines.push(`<customer code="${cu.code}" name="${cu.name}">`);
-    if (body.length === 0) {
-      lines.push(
-        "(no customer-specific rules — apply universal rules only)",
-      );
-    } else {
-      lines.push(body);
-    }
-    lines.push(`</customer>`);
+    lines.push(body || "(no customer-specific rules - apply universal rules only)");
+    lines.push("</customer>");
     lines.push("");
   }
   return lines.join("\n");
@@ -1051,12 +1054,38 @@ async function runSupplierExtract(
       sampleId,
     };
   }
+  if (supplierId) {
+    const learned = await loadCorrections(db as never, { orgId, kind: "supplier", scopeId: supplierId });
+    const docs = Array.isArray((parsed as { docs?: unknown }).docs) ? (parsed as { docs: unknown[] }).docs : [parsed];
+    for (const d of docs) applyCorrections("supplier", d, learned);
+  }
   return { ok: true, data: parsed, sampleId };
 }
 
 // ---------------------------------------------------------------------------
 // PO side
 // ---------------------------------------------------------------------------
+// HK-0005: replay what operators corrected on this customer's earlier scans.
+// Runs AFTER the sample row is written, so the sample keeps the true OCR read
+// and a re-correction is logged against it, not against our replayed value.
+async function replayPoCorrections(
+  db: DBLike,
+  orgId: string,
+  catalog: Catalog | null,
+  pos: unknown[],
+): Promise<void> {
+  const byCustomer = new Map<string, Map<string, string>>();
+  for (const po of pos) {
+    const name = (po as { customerName?: unknown } | null)?.customerName;
+    const id = catalog && typeof name === "string" ? matchByCompanyName(catalog.customers, name)?.id : undefined;
+    if (!id) continue;
+    if (!byCustomer.has(id)) {
+      byCustomer.set(id, await loadCorrections(db as never, { orgId, kind: "po", scopeId: id }));
+    }
+    applyCorrections("po", po, byCustomer.get(id)!);
+  }
+}
+
 async function runPoExtract(
   db: DBLike,
   _env: Env["Bindings"],
@@ -1069,6 +1098,9 @@ async function runPoExtract(
   // Load catalog + render the cached prefix (system prompt + catalog +
   // per-customer rule blocks). Same shape across requests so prompt-caching
   // discounts repeat scans.
+  const customerHintGuess = cleanCustomerHint(
+    opts.fileName.split(/[-_ .]/)[0]?.slice(0, 40),
+  );
   let catalogText = "";
   let customerRulesText = "";
   // Kept in scope past the prompt build so the sample row below can resolve the
@@ -1077,7 +1109,7 @@ async function runPoExtract(
   try {
     catalog = await loadCatalog(db as unknown as ScanDBLike, orgId);
     catalogText = formatCatalog(catalog);
-    customerRulesText = formatCustomerRules(catalog);
+    customerRulesText = formatCustomerRules(catalog, customerHintGuess);
   } catch (e) {
     return {
       ok: false,
@@ -1090,9 +1122,6 @@ async function runPoExtract(
   // the file after the PO, so this token was filing PO numbers as customers
   // ('PO', 'PO2608', '9752' on the accuracy dashboard). NULL beats a fake name;
   // the dashboard folds NULL into 'Unidentified'.
-  const customerHintGuess = cleanCustomerHint(
-    opts.fileName.split(/[-_ .]/)[0]?.slice(0, 40),
-  );
   const cachedPrefix = `${PO_SYSTEM_PROMPT}\n\nCATALOG\n=======\n${catalogText}\n\n${customerRulesText}`;
 
   // Few-shot: operator-confirmed PO extractions — gold first, same-customer
@@ -1268,6 +1297,7 @@ async function runPoExtract(
       sampleId,
     };
   }
+  await replayPoCorrections(db, orgId, catalog, parsed.pos);
   return {
     ok: true,
     data: parsed,

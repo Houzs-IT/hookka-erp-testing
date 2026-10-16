@@ -1,10 +1,28 @@
 # Bug History
 
-> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-291 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 is staging's); a log, so "verified" means the entry matches the code on its branch.
-> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-288 (branch `fix/hk0080-po-scan-date-iso`, to main); a log, so "verified" means the entry matches the code on its branch.
-> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate-main`, to main, same fix as staging #875; 287 and 288 are staging's); a log, so "verified" means the entry matches the code on its branch.
-> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-286 (branch `fix/pi-revoid-legno-main`, to main, same fix as staging #852); a log, so "verified" means the entry matches the code on its branch.
-> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-285 (branch `fix/hk0093-cn-print-co-fabric`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
+> **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-13**: staging<-main sync (branch `chore/sync-staging-from-main-1013`): both sides kept, one copy of each entry. Staging's Plant Load entry, logged as BUG-2026-10-08-269, is now BUG-2026-10-08-285 because main used 269 first. Newest entry is still 284; 285 is the next number used.
+> **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder`, to staging; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-283 (branch `fix/fabric-meter-calc`, to staging; 282 is staging's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-281 (branch `fix/export-all-pages`, to staging; 279 and 280 are staging's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: BUG-2026-10-12-279 follow-up (branch `fix/bug87-auto-grn-read`, to staging): the receipt id was read snake_case only; a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-280 (branch `fix/credit-override-explicit-tick`, to staging; 279 is staging's PO-direct invoice fix); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-279 (branch `fix/bug87-po-overdue-stock-check`, to staging; client tracker BUG-87); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: BUG-2026-10-12-277 flipped to 🟢 with its measured staging check, plus a follow-up (staff who cannot override see the overdue list; branch `feat/credit-block-invoice-list`, to staging).
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-278 (branch `fix/grid-export-computed-columns`, to staging; 277 is staging's, 276 is main's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-277 (branch `fix/credit-overdue-skip-pre-opening`, to staging; 273 to 276 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-09**: BUG-2026-10-09-272 follow-up (branch `fix/worker-i18n-single-words`, to staging then main): single-word worker labels translated; a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
+> **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-272 (branch `fix/worker-i18n-popups-and-date`, to staging then main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
+> **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-285, logged as 269 (branch `feat/plant-load-14d`, to `staging`; 268 is taken on another branch).
+> **Last verified: 2026-10-08**: entry BUG-2026-10-08-267 (branch `fix/kpi-delivered-last-leg-myt`, to `staging`; 264 to 266 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-07** (branch `chore/sync-staging-from-main-1007`, staging<-main merge): both logs merged, one copy of each entry. No id collisions: 260 to 262 are main's, 263 is staging's.
+> **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-263 (branch `fix/sales-transfer-credit-block`, to staging; 260 to 262 are taken on `main`).
+> **Last verified: 2026-10-06** (branch `chore/sync-staging-from-main-1006`, staging<-main merge): both logs merged, one copy of each entry. No id collisions: 253, 257, 258 and 259 are the same bugs on both sides (257 and 259 take main's copy, which adds its main PR note). Main's 251, 254, 255 and 256 are added.
 > **Last verified: 2026-10-13**: newest entry BUG-2026-10-13-284 (branch `fix/claude-calls-via-sg-forwarder-main`, to main, same fix as staging PR #822; no open PR holds 284); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-12**: newest entry BUG-2026-10-12-276 (branch `fix/po-picker-duplicate-supplier-rows`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-09**: newest entry BUG-2026-10-09-275 (branch `fix/undone-labour-post-hides-payroll`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -100,7 +118,7 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-15-291 — Cards lost their top padding on phones on main (IT Support report form flush at the top) `ui-frontend` 🟡
+## BUG-2026-10-16-293 — Cards lost their top padding on phones on main (IT Support report form flush at the top) `ui-frontend` 🟡
 
 🟡 **Fixed on branch** (`fix/card-phone-padding` -> `main`). Seen on `/m` IT Support > Report an issue: the "What is the issue?" label sits on the card's top edge. Staging already had the fix (#684, BUG-2026-10-02-252) and never sent it to main.
 
@@ -109,7 +127,36 @@ Entries themselves stay newest-first.
 **Fix.** Same two lines as staging: the phone default goes through a CSS variable (`[--card-pad-auto:1.5rem] max-md:[--card-pad-auto:1rem]`), so the base has no `max-md:` padding class left. Cards that set no padding look the same. Cards that set their own (`p-4`, `p-6 sm:p-8`, …) now get it on phones too, so some cards are roomier on phones than before.
 
 **Regression.** `tests/card-padding-phone.test.mjs` (card part of staging's test; staging's KPI_ROW case is staging-only and left out).
-## BUG-2026-10-15-288 — A scanned PO's delivery date was never forced to ISO, so a day-first date read as overdue `production` `ocr-scan` 🟡
+
+## BUG-2026-10-15-292 — Picking the MTR row of a material added the ROLL one to the PO `procurement` `inventory` 🟡
+
+🟡 **Fixed on branch** (`fix/po-pick-exact-rm-row` → `main`).
+
+**Symptom.** Reported 2026-10-15 on PO-2610-036: the user picked PC151-17 in MTR ("Comfy HK 1 - Frost Linen"), but the line was saved and printed as "FABRIC" in ROLL.
+
+**Root cause.** Measured on prod (read-only, 2026-10-15): PC151-17 is three active raw materials: "FABRIC" in ROLL, and two MTR rows "HK COMFY 1 -FROST LINEN" and "COMFY 1 -FROST LINEN". Duplicate item codes are allowed on purpose (`raw-materials.ts` `ensureDupCodesUnlocked`). New PO's Select Materials lists each row, but Add passed only `rm.itemCode`, and `addItemFromRM` took `rawMaterials.find(r => r.itemCode === code)`, the first row: ROLL / FABRIC. The server keeps the unit the page sends (`poLineUnit`), so the line saved as ROLL. Edit PO (`detail.tsx` `addLineFromRM`) and the older PO popup (`index.tsx` `addItemFromRM`) had the same code-only lookup. New PO also marked rows "Added" by code, so adding one PC151-17 greyed out the other two.
+
+**Fix.** All three add helpers take the clicked `RawMaterial` row instead of its code. New PO lines carry `rmId`, and "Added" is keyed by RM id + supplier.
+
+**Not changed.** Typing a code into a PO line's code box, and the `?prefillRm=` link from the fabric shortage chip, still resolve by code (a typed code cannot say which row). PO-2610-036 itself still holds the ROLL / FABRIC line and needs editing by hand. The two near-identical MTR rows look like a duplicate to merge; left to the owner.
+
+**Regression.** `tests/po-add-picked-rm-row.test.mjs`.
+
+## FEATURE-2026-10-15-HK0005 — Document scanning: originals kept and viewable, corrections learned, leaner prompts `ocr` `scan-queue` 🟡
+
+🟡 **Built on branch** (`feat/hk0005-scan-originals-learning` → `staging`). Ticket HK-0005 (support.houzscentury.com, size L, Development).
+
+**Symptom.** Scans were slow; the learning loop only saw the corrected answer, never the mistake; originals were kept for two document types and were downloaded, not shown.
+
+**Root cause.** File bytes sat as base64 text in a `scan_queue` row, re-read and decoded per worker, and NULLed on consume. Every customer's rules (including empty stubs) were packed into every PO prompt. `po_scan_samples` held raw and corrected JSON but nothing diffed them into reusable pairs.
+
+**Fix.** (1) `src/api/lib/scan-file-store.ts`: bytes go to object storage keyed by org + content hash, the row keeps `file_key`; base64 stays only as the fallback where storage is not configured; consume no longer evicts. (2) `formatCustomerRules` drops customers with no rules, and narrows to one block when the file-name hint is exactly a customer code or name. (3) `src/api/lib/scan-corrections.ts`: the confirm routes diff raw vs corrected into `scan_field_corrections` (scope = picked customer / supplier, field, raw, corrected); the next extraction replays them after the sample row is written. (4) `GET /api/scan-queue/:id/original` serves PDFs and images inline and writes `scan_original_access`; OCR dashboard links use it.
+
+**Regression.** `tests/scan-corrections.test.mjs`, `tests/scan-customer-rules-focus.test.mjs`, `tests/scan-originals.test.mjs`.
+
+**Not measured.** The "scan time drops by a third" acceptance is UNMEASURED: no staging or prod timing was taken. The row-size effect and the prompt-size effect are real by construction; the wall-clock effect is not proven.
+
+## BUG-2026-10-14-288 — Table column headers showed through the notifications panel `ui` `layout` 🟡
 
 🟡 **Fixed on branch** (`fix/hk0080-po-scan-date-iso` -> `main`). Ticket HK-0080 (Violet, 2026-10-07: "why are there many PO overdue? is OCR using convert?"). Whether this is THE cause of the volume she saw is UNMEASURED (no prod access from this branch); it is a real hole on the path she named.
 
