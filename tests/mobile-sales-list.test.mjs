@@ -26,7 +26,9 @@ try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
 const { soTotalQty, soRefLine, activeFilterChips } = await import(
   pathToFileURL(resolve(process.cwd(), "src/pages/m/lib/so-card.ts")).href
 );
-const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
+// EOL-agnostic: a Windows checkout (core.autocrlf) has CRLF on disk, and the
+// source-shape assertions below match "\n".
+const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const screen = read("screens/SalesScreen.tsx");
 const phoneCard = screen.slice(screen.indexOf("function PhoneSoCard"), screen.indexOf("function TilePill"));
 const metric = screen.slice(screen.indexOf("function Metric"), screen.indexOf("function SoCard"));

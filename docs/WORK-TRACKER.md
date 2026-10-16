@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone Sales Order detail, read-only, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/wip-times-sync-open-jobcards`, to `staging` (WIP Production Times sync button) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `docs/dev05-a9-live-verified` — DEV-05's full
 > acceptance run added below (all six criteria measured on staging, ending in invoice
@@ -254,7 +255,24 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
-## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+## 2026-10-16 (latest) — 🔵 Phone Sales Order Detail: read-only redesign from `Sales Order Detail.dc.html` (branch `design/mobile-sidebar`, local only, not committed)
+
+Owner asks, logged before work; read-only feasibility review done, implementation approved 2026-10-16 with the review defaults. PHONE only (390px); tablet keeps its current layout and actions; desktop, backend, DB, permissions untouched. Claude Design is the visual reference only; real `GET /api/sales-orders/:id` + audit-events data, no sample values. No commit / push / deploy.
+1. 🔵 Header: back, real SO no, status pill; customer · state; hold / cancel banner from `holdReason` / `heldBy` / `heldAt` / `preCancelStatus`.
+2. 🔵 Overview: Order Total, qty + line count, Customer DD, Hookka Expected DD, Delivery Hub (`hubName`); missing values shown as "—".
+3. 🔵 Notes: two-line preview near the top, expand for full text, hidden when empty.
+4. 🔵 Order Progress: one card, Production (completed / total POs, bar from real PO statuses, expandable PO rows with desktop display-ID rule, not tappable) + Delivery (DO count, desktop DO labels, expandable rows → `/m/delivery/:id`). No lifecycle stepper.
+5. 🔵 Items: first 2 lines, "View all N items"; per-line expand (SO line, category, size, fabric, specs, unit price, surcharges as facts, override note via `priceOverrides[].lineIndex === lineNo - 1`); "PO line" → "SO line"; no arithmetic breakdown.
+6. 🔵 Documents (collapsed): Customer PO attachment (same files API as desktop, `customerPOImageB64` fallback) + invoices → `/m/invoices/:id`. No PO / DO duplicate lists, no relationship map. 🟡 Invoice DATE not shown: `linkedInvoices` carries no invoice date (only `paymentDate`, which is payment data); showing one needs a backend field. Number only for now.
+7. 🔵 More details (collapsed): Customer SO, Reference, Order Date.
+8. 🔵 History (collapsed): Status history (`statusHistory`) + Audit history (actor from `actorUserName`; changed field names only, balance / deposit keys hidden).
+9. 🔵 Phone only: no action bar / mutations; no Paid, Balance or Payments.
+10. 🔵 Done locally: `src/pages/m/screens/SalesDetailPhone.tsx` (new) + `src/pages/m/lib/so-detail.ts` (new) + `SalesDetailScreen.tsx` (phone → phone screen; tablet body unchanged as `SalesDetailTablet`). Tests: new `tests/m-so-detail.test.mjs` (11); `record-load-failure-class` lists the new screen. tsc strict 0; eslint 0 errors (1 pre-existing warning in the tablet code); full `npm test` 5988 pass / 2 fail, both pre-existing in untouched files (`mobile-updates` SegmentedSwitch, `mobile-sales-list` summary order). 390 / 320 px fixture harness (local Vite + Edge, no DB): no overflow, no Paid/Balance/actions, hold / cancel / empty / error / dark / audit states; tablet 820 still shows its KPI strip + actions.
+12. 🔵 (owner, later 2026-10-16) Visual refinement, phone only: qty / line counters removed beside Order Total and Order items (per-line "Qty N" kept); missing Customer DD / Hookka Expected DD read "Not set", missing hub "Not assigned"; status chips borderless (local `StatusChip` in `SalesDetailPhone.tsx`: tinted background + Foundation status text colour; shared `StatusPill` untouched). Test added; tsc 0; 390px light / dark / empty checked.
+13. 🔵 (owner, later 2026-10-16) The 2 remaining `npm test` failures (`mobile-updates` PhoneViewSwitch, `mobile-sales-list` summary-above-search) were NOT UI regressions: the repo stores LF, this Windows checkout (`core.autocrlf=true`) has CRLF on disk, and both tests match source text with literal `\n`. Fix = the repo's existing idiom, `.replace(/\r\n/g, "\n")` in each test's `read` helper (also applied to `tests/m-so-detail.test.mjs`, same latent case). No source, assertion or UI change. Full `npm test`: 5991 pass / 0 fail; tsc 0; eslint clean.
+11. 🟡 UNMEASURED on real data: real `holdReason` / `customSpecials` / audit `before`/`after` shapes and Customer PO file coverage. Needs a staging look.
+
+## 2026-10-15 — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
 1. 🔵 Audit (read-only): desktop SKU Master / Catalog, `/api/products` (server strips selling prices without `product-pricing:read`), seat × tier pricing, modular family photos, BOM on the existing detail, /m dispatch.

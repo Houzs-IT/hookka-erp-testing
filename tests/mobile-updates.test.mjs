@@ -29,7 +29,9 @@ try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
 const links = await import(
   pathToFileURL(resolve(process.cwd(), "src/pages/m/lib/notification-links.ts")).href
 );
-const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
+// EOL-agnostic: a Windows checkout (core.autocrlf) has CRLF on disk, and the
+// source-shape assertions below match "\n".
+const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const updates = read("screens/UpdatesScreen.tsx");
 const home = read("screens/Home.tsx");
 const sw = read("components/SegmentedSwitch.tsx");

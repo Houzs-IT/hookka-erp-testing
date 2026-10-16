@@ -129,6 +129,7 @@ const CONSUMERS = [
   // --- already gated on the hook's error; correct the moment the primitive
   //     stopped swallowing the abort. Tracked, not exempt.
   ["src/pages/m/screens/SalesDetailScreen.tsx", "hook-error-gate", '"Order not found."'],
+  ["src/pages/m/screens/SalesDetailPhone.tsx", "hook-error-gate", "Order not found."],
   ["src/pages/m/screens/ProductionDetailScreen.tsx", "hook-error-gate", '"Production order not found."'],
   ["src/pages/m/screens/MailCenterScreen.tsx", "hook-error-gate", '"Thread not found."'],
   ["src/pages/m/screens/DocumentDetailScreen.tsx", "hook-error-gate", '"Document not found."'],
