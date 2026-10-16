@@ -27,7 +27,7 @@
 //     `INSERT INTO ... ON CONFLICT (cols) DO UPDATE SET ...` in the route.
 //   * exec() / dump() / D1 admin APIs — these routes don't use them.
 // ---------------------------------------------------------------------------
-import type { Sql } from 'postgres'
+import type { Sql, TransactionSql } from 'postgres'
 import renameMapJson from './column-rename-map.json' with { type: 'json' }
 
 const renameMap = renameMapJson as Record<string, string>
@@ -362,9 +362,50 @@ export class PgPreparedStatement {
  */
 export class SupabaseAdapter {
   private sql: Sql
-  constructor(sql: Sql) {
+  /** Set only on the adapter `transaction()` hands out. */
+  private tx: TransactionSql | null
+  constructor(sql: Sql, tx: TransactionSql | null = null) {
     this.sql = sql
+    this.tx = tx
   }
+
+  /**
+   * HK-0002 — run `fn` against ONE database transaction: commit when it
+   * resolves, roll back when it throws. The adapter handed to `fn` is a normal
+   * D1-shaped adapter, so existing route code runs on it unchanged (the
+   * document importer runs the real route handlers on it — see
+   * src/api/lib/doc-import.ts).
+   *
+   * Every statement (and every batch) inside runs in its own SAVEPOINT. Route
+   * code routinely swallows a failed best-effort query (ensure*Column, audit);
+   * in a bare transaction that one error would poison every later statement.
+   * With the savepoint only that statement is undone, exactly as it was before.
+   *
+   * Savepoints are SERIALISED: a route doing Promise.all over two queries
+   * would otherwise interleave SAVEPOINT/RELEASE pairs on the one connection.
+   *
+   * Not wrapped in withConnRetry: replaying half a transaction is not a retry.
+   */
+  async transaction<T>(fn: (db: SupabaseAdapter) => Promise<T>): Promise<T> {
+    if (this.tx) return fn(this)
+    return (await this.sql.begin(async (tx) => {
+      let chain: Promise<unknown> = Promise.resolve()
+      const serial = <R>(f: () => Promise<R>): Promise<R> => {
+        const p = chain.then(f, f)
+        chain = p.catch(() => undefined)
+        return p
+      }
+      const inSavepoint = <R>(f: (s: TransactionSql) => Promise<R>) =>
+        serial(() => tx.savepoint((s) => f(s)) as Promise<R>)
+      const scoped = {
+        unsafe: (q: string, p?: never) => inSavepoint((s) => s.unsafe(q, p) as unknown as Promise<unknown>),
+      } as unknown as Sql
+      const db = new SupabaseAdapter(scoped, tx)
+      db.inSavepoint = inSavepoint
+      return fn(db)
+    })) as T
+  }
+  private inSavepoint: (<R>(f: (s: TransactionSql) => Promise<R>) => Promise<R>) | null = null
 
   prepare(rawSql: string): PgPreparedStatement {
     return new PgPreparedStatement(this.sql, translateSql(rawSql))
@@ -373,34 +414,39 @@ export class SupabaseAdapter {
   async batch<T = unknown>(
     stmts: (PgBoundStatement | PgPreparedStatement | D1PreparedStatement)[],
   ): Promise<{ results: T[]; success: true; meta: D1Meta }[]> {
-    return await withConnRetry(() =>
-      this.sql.begin(async (tx) => {
-      const out: { results: T[]; success: true; meta: D1Meta }[] = []
-      for (const s of stmts) {
-        // D1PreparedStatement from routes that still type-annotate locally —
-        // tolerated at runtime because our own prepare() emits PgPrepared* too.
-        if (!(s instanceof PgBoundStatement || s instanceof PgPreparedStatement)) {
-          throw new Error(
-            "SupabaseAdapter.batch: got a D1PreparedStatement from the real D1 API — mixing D1 and Supabase in one batch is not supported.",
-          )
-        }
-        const t0 = Date.now()
-        const params = s instanceof PgBoundStatement ? s.params : []
-        const rows = (await tx.unsafe(s.pgSql, params as never)) as unknown as T[]
-        const rowsCount = (rows as unknown as { count?: number }).count
-        out.push({
-          results: rows,
-          success: true,
-          meta: {
-            ...emptyMeta,
-            duration: Date.now() - t0,
-            changes: typeof rowsCount === 'number' ? rowsCount : rows.length,
-            rows_read: rows.length,
-          },
-        })
-      }
-      return out
-      }),
-    )
+    // Inside transaction(): the batch is one savepoint, still all-or-nothing.
+    if (this.inSavepoint) return await this.inSavepoint((s) => runBatch<T>(s, stmts))
+    return await withConnRetry(() => this.sql.begin((tx) => runBatch<T>(tx, stmts)))
   }
+}
+
+async function runBatch<T>(
+  tx: { unsafe: Sql['unsafe'] },
+  stmts: (PgBoundStatement | PgPreparedStatement | D1PreparedStatement)[],
+): Promise<{ results: T[]; success: true; meta: D1Meta }[]> {
+  const out: { results: T[]; success: true; meta: D1Meta }[] = []
+  for (const s of stmts) {
+    // D1PreparedStatement from routes that still type-annotate locally —
+    // tolerated at runtime because our own prepare() emits PgPrepared* too.
+    if (!(s instanceof PgBoundStatement || s instanceof PgPreparedStatement)) {
+      throw new Error(
+        "SupabaseAdapter.batch: got a D1PreparedStatement from the real D1 API — mixing D1 and Supabase in one batch is not supported.",
+      )
+    }
+    const t0 = Date.now()
+    const params = s instanceof PgBoundStatement ? s.params : []
+    const rows = (await tx.unsafe(s.pgSql, params as never)) as unknown as T[]
+    const rowsCount = (rows as unknown as { count?: number }).count
+    out.push({
+      results: rows,
+      success: true,
+      meta: {
+        ...emptyMeta,
+        duration: Date.now() - t0,
+        changes: typeof rowsCount === 'number' ? rowsCount : rows.length,
+        rows_read: rows.length,
+      },
+    })
+  }
+  return out
 }

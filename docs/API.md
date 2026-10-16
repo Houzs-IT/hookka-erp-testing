@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-18** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-10-19** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -30,7 +30,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 144 mounts, 142 route files in
+**Counts at generation time:** 145 mounts, 143 route files in
 `src/api/routes/`, 1042 top-level handler registrations discovered.
 
 ## Scope and limits of this file
@@ -96,7 +96,8 @@ offsets pointing past the end of their own file.
 | `/api/public/rack-write` | `src/api/routes/public-rack-write.ts` | `GET /:token` <sub>:179</sub><br>`POST /:token/rack` <sub>:228</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/public/survey` | `src/api/routes/public-kpi-survey.ts` | `GET /:token` <sub>:134</sub><br>`POST /:token` <sub>:166</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/cnc-templates` | `src/api/routes/cnc-templates.ts` | `GET /` <sub>:692</sub><br>`GET /:id` <sub>:741</sub><br>`GET /:id/file/:kind` <sub>:762</sub><br>`POST /` <sub>:821</sub><br>`POST /import` <sub>:947</sub><br>`PATCH /:id` <sub>:1178</sub><br>`DELETE /:id` <sub>:1272</sub> | gated |
-| `/api/invoices` | `src/api/routes/invoices.ts` | `POST /backfill-po-links` <sub>:750</sub><br>`POST /backfill-so-item-links` <sub>:869</sub><br>`POST /backfill-cancel-reversals` <sub>:1005</sub><br>`POST /backfill-customer-fields` <sub>:1013</sub><br>`POST /backfill-date-from-delivery` <sub>:1156</sub><br>`GET /` <sub>:1235</sub><br>`GET /stats` <sub>:1368</sub><br>`GET /aging` <sub>:1520</sub><br>`POST /import-line-prices` <sub>:1703</sub><br>`POST /` <sub>:1903</sub><br>`GET /:id/print-extras` <sub>:2303</sub><br>`GET /:id` <sub>:2323</sub><br>`PUT /:id` <sub>:2400</sub><br>`DELETE /:id` <sub>:3335</sub> | gated |
+| `/api/invoices` | `src/api/routes/invoices.ts` | `POST /backfill-po-links` <sub>:745</sub><br>`POST /backfill-so-item-links` <sub>:864</sub><br>`POST /backfill-cancel-reversals` <sub>:1000</sub><br>`POST /backfill-customer-fields` <sub>:1008</sub><br>`POST /backfill-date-from-delivery` <sub>:1151</sub><br>`GET /` <sub>:1230</sub><br>`GET /stats` <sub>:1363</sub><br>`GET /aging` <sub>:1515</sub><br>`POST /` <sub>:1690</sub><br>`GET /:id/print-extras` <sub>:2090</sub><br>`GET /:id` <sub>:2110</sub><br>`PUT /:id` <sub>:2187</sub><br>`DELETE /:id` <sub>:3113</sub> | gated |
+| `/api/doc-import` | `src/api/routes/doc-import.ts` | `POST /:docType` <sub>:36</sub> | gated |
 | `/api/payments` | `src/api/routes/payments.ts` | `GET /` <sub>:508</sub><br>`POST /` <sub>:562</sub><br>`GET /:id` <sub>:1024</sub><br>`PUT /:id` <sub>:1049</sub><br>`POST /:id/lifecycle` <sub>:1277</sub><br>`POST /:id/restate` <sub>:1342</sub> | gated |
 | `/api/supplier-payments` | `src/api/routes/supplier-payments.ts` | `GET /` <sub>:55</sub><br>`POST /` <sub>:149</sub><br>`POST /knock-off` <sub>:685</sub><br>`POST /un-knock` <sub>:846</sub><br>`POST /:paymentNo/void` <sub>:1425</sub><br>`POST /:paymentNo/lifecycle` <sub>:1499</sub><br>`POST /recompute-pi-paid` <sub>:1590</sub><br>`POST /:paymentNo/restate` <sub>:1638</sub><br>`GET /debug/last-restate-error` <sub>:1760</sub> | gated |
 | `/api/production-orders` | `src/api/routes/production-orders.ts` | `GET /overdue-counts` <sub>:407</sub><br>`GET /tracker-summary` <sub>:454</sub><br>`GET /report-summary` <sub>:560</sub><br>`GET /` <sub>:740</sub><br>`GET /historical-wips` <sub>:1072</sub><br>`GET /historical-fgs` <sub>:1144</sub><br>`POST /stock` <sub>:1205</sub><br>`POST /resync-po-numbers` <sub>:1538</sub><br>`POST /packing-rack-tokens` <sub>:1660</sub><br>`POST /:id/scan-complete` <sub>:1880</sub><br>`POST /:id/scan-complete-dept` <sub>:2509</sub><br>`POST /:id/scan-complete-shared` <sub>:2843</sub><br>`GET /board` <sub>:3364</sub><br>`GET /scan-lookup` <sub>:3458</sub><br>`GET /:id` <sub>:3495</sub><br>`POST /bulk-patch` <sub>:3589</sub><br>`PUT /:id` <sub>:3825</sub><br>`PATCH /:id` <sub>:3835</sub><br>`POST /:id/hold` <sub>:3865</sub><br>`POST /:id/resume` <sub>:3872</sub><br>`POST /:id/cancel` <sub>:3879</sub><br>`POST /:id/uncancel` <sub>:3893</sub> | gated (some paths public) |

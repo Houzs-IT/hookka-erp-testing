@@ -69,7 +69,10 @@ test("exportValue wins over everything", () => {
 });
 
 // ── AutoCount SO detail listing ──────────────────────────────────────────
-test("detail listing: 36 columns, one row per line item, header repeated", () => {
+// HK-0002: the shared column contract (doc-columns.ts) leads every row; the
+// AutoCount block follows it, offset by O.
+const O = dl.SO_DETAIL_HEADERS.length - dl.SO_AUTOCOUNT_HEADERS.length;
+test("detail listing: common block + 36 AutoCount columns, one row per line item, header repeated", () => {
   const orders = [
     {
       companySOId: "SO-011120", companySODate: "2026-04-01T00:00:00Z",
@@ -82,20 +85,20 @@ test("detail listing: 36 columns, one row per line item, header repeated", () =>
     },
   ];
   const aoa = dl.buildSoDetailListingAoa(orders);
-  assert.equal(aoa[0].length, 36, "36 columns");
+  assert.equal(aoa[0].length, O + 36, "common block + 36 AutoCount columns");
   assert.deepEqual(aoa[0], [...dl.SO_DETAIL_HEADERS]);
   assert.equal(aoa.length, 3, "header + 2 item rows");
   // Header fields repeat on every line:
-  assert.equal(aoa[1][1], "SO-011120");
-  assert.equal(aoa[2][1], "SO-011120");
-  assert.equal(aoa[1][2], "2026-04-01"); // date → day
-  assert.equal(aoa[1][10], 6000); // Total (header) sen→RM
-  assert.equal(aoa[2][10], 6000);
+  assert.equal(aoa[1][O + 1], "SO-011120");
+  assert.equal(aoa[2][O + 1], "SO-011120");
+  assert.equal(aoa[1][O + 2], "2026-04-01"); // date → day
+  assert.equal(aoa[1][O + 10], 6000); // Total (header) sen→RM
+  assert.equal(aoa[2][O + 10], 6000);
   // Per-line fields differ:
-  assert.equal(aoa[1][16], "MATTRESS"); // Item Group
-  assert.equal(aoa[2][16], "BEDFRAME");
-  assert.equal(aoa[1][23], 6000); // Unit Price (line 1)
-  assert.equal(aoa[2][23], 0); // Unit Price (line 2)
+  assert.equal(aoa[1][O + 16], "MATTRESS"); // Item Group
+  assert.equal(aoa[2][O + 16], "BEDFRAME");
+  assert.equal(aoa[1][O + 23], 6000); // Unit Price (line 1)
+  assert.equal(aoa[2][O + 23], 0); // Unit Price (line 2)
 });
 
 test("detail listing: spec line built from divan/leg/gap/special", () => {
@@ -109,7 +112,7 @@ test("detail listing: spec line built from divan/leg/gap/special", () => {
 test("detail listing: cancelled flag, and an item-less order still yields one row", () => {
   const aoa = dl.buildSoDetailListingAoa([{ companySOId: "SO-X", status: "CANCELLED", items: [] }]);
   assert.equal(aoa.length, 2, "header + one placeholder row");
-  assert.equal(aoa[1][12], "T"); // Cancelled
+  assert.equal(aoa[1][O + 12], "T"); // Cancelled
 });
 
 test("detail listing: Inclusive=T, UOM by category, BALANCE=0", () => {
@@ -118,11 +121,11 @@ test("detail listing: Inclusive=T, UOM by category, BALANCE=0", () => {
       { itemCategory: "BEDFRAME" }, { itemCategory: "SOFA" }, { itemCategory: "ACCESSORY" },
     ] },
   ]);
-  assert.equal(aoa[1][7], "T"); // Inclusive?
-  assert.equal(aoa[1][19], "SET");  // bedframe → SET
-  assert.equal(aoa[2][19], "SET");  // sofa → SET
-  assert.equal(aoa[3][19], "UNIT"); // accessory → UNIT
-  assert.equal(aoa[1][32], 0); // BALANCE numeric 0
+  assert.equal(aoa[1][O + 7], "T"); // Inclusive?
+  assert.equal(aoa[1][O + 19], "SET");  // bedframe → SET
+  assert.equal(aoa[2][O + 19], "SET");  // sofa → SET
+  assert.equal(aoa[3][O + 19], "UNIT"); // accessory → UNIT
+  assert.equal(aoa[1][O + 32], 0); // BALANCE numeric 0
 });
 
 test("detail listing: Debtor Code + Agent come from caller lookups by customerId", () => {
@@ -135,8 +138,8 @@ test("detail listing: Debtor Code + Agent come from caller lookups by customerId
     agentByCustomerId: new Map([["cust-a", "STANLEY"]]),
   };
   const aoa = dl.buildSoDetailListingAoa(orders, opts);
-  assert.equal(aoa[1][3], "300-C002"); // Debtor Code
-  assert.equal(aoa[1][5], "STANLEY");  // Agent
-  assert.equal(aoa[2][3], ""); // unknown customer → blank, never invented
-  assert.equal(aoa[2][5], "");
+  assert.equal(aoa[1][O + 3], "300-C002"); // Debtor Code
+  assert.equal(aoa[1][O + 5], "STANLEY");  // Agent
+  assert.equal(aoa[2][O + 3], ""); // unknown customer → blank, never invented
+  assert.equal(aoa[2][O + 5], "");
 });
