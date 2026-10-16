@@ -16,8 +16,10 @@ import { useCachedJson, invalidateCachePrefix, isUnknownOutcome } from "@/lib/ca
 import { humanizeError } from "@/lib/humanize-error";
 import { DataGrid, type Column } from "@/components/ui/data-grid";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, Download, Upload, AlertTriangle, Pencil, X, CheckCircle } from "lucide-react";
+import { Clock, Download, Upload, AlertTriangle, Pencil, X, CheckCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { usePermissions } from "@/lib/use-permission";
+import { SyncOpenJobCardsDialog } from "./sync-open-jobcards-dialog";
 import { csrfHeaders } from "@/lib/csrf";
 import { DEPARTMENTS } from "./utils";
 import { useUrlState, useUrlStateBool } from "@/lib/use-url-state";
@@ -169,6 +171,12 @@ export default function WipTimesPage() {
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const { hasPermission } = usePermissions();
+  const canSyncJobCards = hasPermission("production-orders", "update");
+  const [syncScope, setSyncScope] = useState<{
+    rows: { deptCode: string; productCodes: string[] }[];
+    label: string;
+  } | null>(null);
 
   // Multi-select batch edit. The grid's tick boxes feed `selectedRows`;
   // when one or more rows are ticked a toolbar appears that opens a batch
@@ -844,7 +852,7 @@ export default function WipTimesPage() {
             WIPs where BOM hasn't set a time yet.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 mt-1">
+        <div className="flex flex-wrap items-center gap-2 mt-1">
           <Button
             variant="outline"
             size="sm"
@@ -877,8 +885,37 @@ export default function WipTimesPage() {
               }}
             />
           </label>
+          {canSyncJobCards && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={rows.length === 0 || loading}
+              title="Copy the BOM times onto job cards that are not finished yet. You see every card that will change before anything is written."
+              onClick={() => {
+                const src = selectedRows.length > 0 ? selectedRows : rows;
+                setSyncScope({
+                  rows: src.map((r) => ({ deptCode: r.departmentCode, productCodes: r.productCodes })),
+                  label:
+                    selectedRows.length > 0
+                      ? `${selectedRows.length} ticked WIP${selectedRows.length === 1 ? "" : "s"}`
+                      : `All ${rows.length.toLocaleString()} WIPs in the current filter`,
+                });
+              }}
+            >
+              <RefreshCw className="h-4 w-4 mr-1.5" />
+              {selectedRows.length > 0 ? `Sync open job cards (${selectedRows.length})` : "Sync open job cards"}
+            </Button>
+          )}
         </div>
       </div>
+
+      {syncScope && (
+        <SyncOpenJobCardsDialog
+          scope={syncScope.rows}
+          scopeLabel={syncScope.label}
+          onClose={() => setSyncScope(null)}
+        />
+      )}
 
       {/* Filter bar */}
       <Card>

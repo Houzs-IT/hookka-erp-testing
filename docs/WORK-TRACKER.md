@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `feat/wip-times-sync-open-jobcards`, to `staging` (WIP Production Times sync button) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `docs/dev05-a9-live-verified` — DEV-05's full
 > acceptance run added below (all six criteria measured on staging, ending in invoice
 > INV-2610-005 at the customer's price), with the four traps it found. Its entry is the newest.
@@ -7282,3 +7283,29 @@ promoting it is a decision nobody has been asked for. A9's design gap also
 stands: the owner's rule is *earliest order wins*, the implementation is *first
 to confirm wins*, and closing that means answering how long an unconfirmed order
 may hold finished stock.
+
+## 2026-10-16 — WIP Production Times: push a changed time onto open job cards
+
+Asked (owner, 2026-10-16): when a time is changed on the WIP Production Times
+page, the job cards that are not finished yet should follow it, through a
+button with a detailed preview.
+
+1. [x] A "Sync open job cards" button on the WIP Production Times page. It works
+   on the ticked rows, or on every row in the current filter when nothing is ticked.
+2. [x] A preview listing every card that will change: SO, PO, product,
+   department, WIP, status, due date, worker, old and new minutes. Tick boxes,
+   filters, Excel export. Skipped cards are listed with the reason.
+3. [x] Only unfinished cards (WAITING / IN_PROGRESS / PAUSED / BLOCKED). Finished
+   cards keep their minutes, so past pay and costs do not move.
+4. [x] Every change written to the audit trail (old and new minutes).
+
+Today a card copies its minutes from the BOM once, when the order is confirmed,
+and nothing refreshes them. Do NOT reuse `POST /api/bom/resync-job-card-times`
+for this: it writes the old department x category constants, not the BOM.
+
+Built on branch `feat/wip-times-sync-open-jobcards` (to `staging`): `POST /api/production/sync-jobcards-from-bom/refresh-open-minutes`
+and `src/pages/production/sync-open-jobcards-dialog.tsx`. Tests: `tests/refresh-open-minutes.test.mjs`. The dialog was
+checked locally with stubbed data at desktop and 320px. **Not yet verified on staging.**
+
+Known gap: a sofa Fab Cut card is shared by several lines of the order, so it is listed as
+skipped rather than recalculated.
