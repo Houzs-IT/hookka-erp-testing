@@ -1,6 +1,5 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone Sales Order detail, read-only, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
 > now allocatable (finished pieces always first). Entry below; the stage threshold is a
@@ -21,6 +20,10 @@
 > BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
 > staging measurement are in the entry below, dated 2026-09-29. upstream/staging
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main` (ports staging #888, #889, #890; BUG-2026-10-16-295 to -299) added below (its entries are the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -95,6 +98,7 @@
 > **Last verified: 2026-10-07**: branch `perf/production-dept-tab-cache-main` (#734 to `main`, BUG-2026-10-07-265) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev39-kpi-view-calculation-to-main` (DEV-39 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev36-kpi-department-to-main` (DEV-36 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `fix/bug06-do-duplicate-guard-main` (BUG-06 to `main`, BUG-2026-09-30-223) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev37-kpi-self-view-to-main` (DEV-37 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/rm-uom-bottle-main` (DEV-20 follow-up to `main`, BUG-2026-10-07-262) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/sales-transfer-credit-block` (to `staging`, BUG-2026-10-07-263) added below (its entry is the newest).
@@ -263,24 +267,7 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
-## 2026-10-16 (latest) — 🔵 Phone Sales Order Detail: read-only redesign from `Sales Order Detail.dc.html` (branch `design/mobile-sidebar`, local only, not committed)
-
-Owner asks, logged before work; read-only feasibility review done, implementation approved 2026-10-16 with the review defaults. PHONE only (390px); tablet keeps its current layout and actions; desktop, backend, DB, permissions untouched. Claude Design is the visual reference only; real `GET /api/sales-orders/:id` + audit-events data, no sample values. No commit / push / deploy.
-1. 🔵 Header: back, real SO no, status pill; customer · state; hold / cancel banner from `holdReason` / `heldBy` / `heldAt` / `preCancelStatus`.
-2. 🔵 Overview: Order Total, qty + line count, Customer DD, Hookka Expected DD, Delivery Hub (`hubName`); missing values shown as "—".
-3. 🔵 Notes: two-line preview near the top, expand for full text, hidden when empty.
-4. 🔵 Order Progress: one card, Production (completed / total POs, bar from real PO statuses, expandable PO rows with desktop display-ID rule, not tappable) + Delivery (DO count, desktop DO labels, expandable rows → `/m/delivery/:id`). No lifecycle stepper.
-5. 🔵 Items: first 2 lines, "View all N items"; per-line expand (SO line, category, size, fabric, specs, unit price, surcharges as facts, override note via `priceOverrides[].lineIndex === lineNo - 1`); "PO line" → "SO line"; no arithmetic breakdown.
-6. 🔵 Documents (collapsed): Customer PO attachment (same files API as desktop, `customerPOImageB64` fallback) + invoices → `/m/invoices/:id`. No PO / DO duplicate lists, no relationship map. 🟡 Invoice DATE not shown: `linkedInvoices` carries no invoice date (only `paymentDate`, which is payment data); showing one needs a backend field. Number only for now.
-7. 🔵 More details (collapsed): Customer SO, Reference, Order Date.
-8. 🔵 History (collapsed): Status history (`statusHistory`) + Audit history (actor from `actorUserName`; changed field names only, balance / deposit keys hidden).
-9. 🔵 Phone only: no action bar / mutations; no Paid, Balance or Payments.
-10. 🔵 Done locally: `src/pages/m/screens/SalesDetailPhone.tsx` (new) + `src/pages/m/lib/so-detail.ts` (new) + `SalesDetailScreen.tsx` (phone → phone screen; tablet body unchanged as `SalesDetailTablet`). Tests: new `tests/m-so-detail.test.mjs` (11); `record-load-failure-class` lists the new screen. tsc strict 0; eslint 0 errors (1 pre-existing warning in the tablet code); full `npm test` 5988 pass / 2 fail, both pre-existing in untouched files (`mobile-updates` SegmentedSwitch, `mobile-sales-list` summary order). 390 / 320 px fixture harness (local Vite + Edge, no DB): no overflow, no Paid/Balance/actions, hold / cancel / empty / error / dark / audit states; tablet 820 still shows its KPI strip + actions.
-12. 🔵 (owner, later 2026-10-16) Visual refinement, phone only: qty / line counters removed beside Order Total and Order items (per-line "Qty N" kept); missing Customer DD / Hookka Expected DD read "Not set", missing hub "Not assigned"; status chips borderless (local `StatusChip` in `SalesDetailPhone.tsx`: tinted background + Foundation status text colour; shared `StatusPill` untouched). Test added; tsc 0; 390px light / dark / empty checked.
-13. 🔵 (owner, later 2026-10-16) The 2 remaining `npm test` failures (`mobile-updates` PhoneViewSwitch, `mobile-sales-list` summary-above-search) were NOT UI regressions: the repo stores LF, this Windows checkout (`core.autocrlf=true`) has CRLF on disk, and both tests match source text with literal `\n`. Fix = the repo's existing idiom, `.replace(/\r\n/g, "\n")` in each test's `read` helper (also applied to `tests/m-so-detail.test.mjs`, same latent case). No source, assertion or UI change. Full `npm test`: 5991 pass / 0 fail; tsc 0; eslint clean.
-11. 🟡 UNMEASURED on real data: real `holdReason` / `customSpecials` / audit `before`/`after` shapes and Customer PO file coverage. Needs a staging look.
-
-## 2026-10-15 — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
 1. 🔵 Audit (read-only): desktop SKU Master / Catalog, `/api/products` (server strips selling prices without `product-pricing:read`), seat × tier pricing, modular family photos, BOM on the existing detail, /m dispatch.
@@ -962,6 +949,14 @@ Reporter ask (Violet, DEV-36): pick a department when assigning the Production T
 4. 🔵 Staging check 2026-10-07, September 2026 data, 11 of 11 passed: several departments pooled (Fabric Cutting + Fabric Sewing 107.3% from 108,817 min on 1,690 h), Overall unchanged (91%), worker route gone (404), Department efficiency equal to the dashboard for Upholstery (66.1%), Framing (62.1%), Upholstery + Framing (64.0%) and the whole floor (93.3%, the Overall Efficiency tile), bad scopes refused, test assignments removed. Part 1 was checked 2026-10-06 (10 of 10).
 5. Notes, not blocking: the card names departments by code (`FAB_CUT + FAB_SEW`); the Efficiency tab's department ledger "Factory total" (90.7% in September) only sums workers with a department, so it reads lower than the Overall Efficiency tile (93.3%) that the whole-floor KPI follows; phones are sent to `/m`, which has no KPI page (as before).
 6. ⬜ After deploy: Super Admin check on prod (Library pickers, one scoped assignment, card figure against the dashboard), then remove the test assignment.
+## 2026-10-07 — 🔵 BUG-06: Transfer / Convert duplicate guard to main (branch `fix/bug06-do-duplicate-guard-main` → `main`, BUG-2026-09-30-223)
+
+Ask: BUG-06 was finished and tested on staging (2026-09-30, #593); bring it to production. PR #448 (all of T-006) was closed for conflicts, so only the BUG-06 pieces come over, as patches onto `main`.
+1. 🔵 Server: DO create guards every production order in `productionOrderIds` and `items`; an SO-linked create with none is refused.
+2. 🔵 Sales "Transfer to Delivery Order" sends the SO's ready production orders.
+3. 🔵 Consignment "Transfer to Delivery Order" (same refused shape, could never succeed) becomes "Create Consignment Note".
+4. 🔵 Tests: the two BUG-06 files pass on main. Not brought over: the T-006 R2 to R10 work and the client Idempotency-Key (staging only).
+5. ⬜ After deploy: check on prod that a second transfer of the same SO is refused.
 
 ## 2026-10-06 — ⬜ DEV-37: every staff login can open their own KPI card (branch `feat/dev37-kpi-office-self-view` → `staging`)
 
@@ -2200,6 +2195,91 @@ Ask (DEV-20, requester VIOLET): the RM UOM should be selectable from options tha
 5. 🔵 Items 1-4 MERGED to `staging` as PR #536 (labelled `staging`; the conflict was CODEBASE-MAP restamp lines only). Items 6-7 follow on branch `feat/rm-whole-uoms` → `staging`.
 6. 🔵 Edit RM dialog Stock Qty used `parseInt`, so 12.5 MTR saved as 12. Now `Number`.
 7. 🔵 Whole-number units: RM Settings gets a global list of units that cannot be fractional (default BOX / CTN / SET / PAIR; PCS left out because foam sheets in PCS consume fractionally). Enforced on the Inventory page ONLY (owner correction: not PO, GRN or Stock Adjustments): the RM balance typed on Add RM / Edit RM, checked by `raw-materials.ts` POST and PUT (PUT only when the number changes). NOT on production consumption. Owner answered 2026-09-29: no per-category rule, users pick the unit per material.
+
+---
+
+## 2026-09-21 — ✅ PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (shipped to prod 2026-10-16, verified live)
+
+Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
+`T-012-Hookka-mail-center - wei siang.pdf` (not in repo). Sheet row DEV-04 (Samuel). All 16
+requirements built, merged to `staging` (#655, #895, #896) and ported to `main` (#898).
+
+**Done (all 16), eight commits on `feat/t012-mail-center`:** R1-R4 `8a6e5f9d`, R5/R6/R11
+`210caab7`, R7/R8/R15 `7b17e7aa`, R9/R10 `b0357db5`, R12/R13 `eb40d744`, R14 `457b48b5`,
+R16 `4095bef8`. New files: `src/api/lib/mail-threading.ts` (pure recipients + RFC headers),
+`mail-provision.ts`, `mail-acks.ts`, `src/pages/mail-center/recipients-input.tsx`,
+`recipient-picker.tsx`, `ack-request-row.tsx`, `visibility-panel.tsx`,
+`migrations-postgres/0233_mail_reads_acks.sql` (mirrors the runtime DDL). 62 new tests across
+`tests/mail-threading`, `mail-send-path`, `mail-provision`, `mail-reads-acks`,
+`email-outbox-attachments`, `mobile-mail-center`, plus additions to `mail-center-rbac` and
+`org-people`. `npm test` 4672 → all pass except `tests/pcb-not-fabricated.test.mjs` (13), which
+fails on ANY checkout whose path has a space (`Internal%20Project` — it builds paths from
+`import.meta.url` without `fileURLToPath`; passes on a space-free worktree of `origin/main`) —
+pre-existing, not touched. `build:strict` clean. `docs/API.md` regenerated (140 mounts, 962
+handlers). CODEBASE-MAP restamped.
+
+**Decisions taken from the PRD text (owner to confirm at review):**
+- R12 → super admins follow `mail_user_scope` like everyone. **On deploy the seven prod super
+  admins drop to `personal` until set to `company` in the Mailbox tab** (UNMEASURED which of
+  them rely on company-wide reading). No migration seeds them — the PRD said the other system's
+  owner set the opposite deliberately.
+- R13 → `mail-sync/` + `.github/workflows/mail-sync.yml` deleted (the Hostinger IMAP poller;
+  MX is on Cloudflare since 2026-08-19). The scheduled run keeps firing from `main` until this
+  merges.
+- Acknowledgement is asked of STAFF recipients only (an `email_addresses` row); the send is
+  refused when none is on the mail. Chase = a reminder through the outbox, once per 24 h.
+- Brevo rewrites `Message-ID`; the inbound resolver matches ours OR the provider's id.
+
+**Not verified live:** no local Supabase / Brevo, so the send path, the ack chase and the
+Storage upload were not exercised end-to-end — verify on staging: compose with Cc + Bcc to a
+colleague, reply-all from the colleague's box, "Read by", request + confirm an acknowledgement,
+Auto-sent attachment download for a post-deploy notice.
+
+**VERIFIED LIVE ON PRODUCTION 2026-10-16** (#898 deployed 04:56 UTC). Measured on
+`erp.hookka.com`, not inferred:
+
+- **Schema self-apply on the prod database: 539 ms, no error.** `mail_thread_reads`,
+  `mail_acknowledgements` and the three `email_messages` columns were created through
+  canary-898 (which talks to prod — `docs/CANARY-DEPLOY.md`) before merge, then used after.
+- **A real send carried several recipients, a copy and a blind copy correctly.** From
+  `kiansin@hookka.com` through Brevo to a Gmail and three `+` tags of it. On a **To**
+  recipient's delivered copy: `To: kiansin1998@gmail.com, kiansin1998+to2@gmail.com`, the Cc
+  present, and **no `Bcc` line anywhere** — confirmed in Gmail's "Show original" raw text and
+  corroborated by the DKIM and ARC `h=` lists, which enumerate `to` and `cc` and omit `bcc`.
+  The **Bcc** recipient's own copy showed its own `bcc:` line, which is correct behaviour.
+  SPF, DKIM (`hookka.com`) and DMARC all PASS.
+- **Brevo REWRITES our `Message-ID`.** Sent `<...@hookka.com>`, delivered as
+  `<35b74908-...@smtp-relay.sendinblue.com>`. This is exactly why an outbound row stores both
+  `message_id` (ours) and `provider_message_id` (theirs), and why `ingestInboundEmail` resolves
+  a thread by EITHER: a customer's reply quotes the provider's id. Without the dual match, PRD
+  finding 5 ("customer replies start new threads") would have reproduced. Now measured.
+- Per-person read ("Read by 1 of 4"), the org-chart picker, the Cc/Bcc compose UI, the
+  visibility panel, server-side paging and the four pre-send validation refusals were exercised
+  on staging and seen again on prod.
+
+**Production configuration applied 2026-10-16**, per the owner's ruling (*"Only management can
+see support and whole company"*): `mail_user_scope` = `company` for Lim Wei Siang, Nico Choong
+and Violet — **written BEFORE the merge**, so `support@hookka.com` and `hr@hookka.com` were
+never unreadable for a moment. Everyone else stays `personal`. IT accounts (Kiansin, Laphii,
+Zaim, yh, zulaikha) were deliberately NOT given `company`: R12's whole point is that visibility
+follows the job, not the role.
+
+**Open — operational, not code:**
+
+1. **`support@hookka.com` and `hr@hookka.com` have no assigned owner** (`assigned_user_id`
+   NULL) and the `email_address_access` matrix is empty (measured on prod). Management can read
+   them via `company`, but nobody is named responsible for either. Owner to decide.
+2. **`kiansin@hookka.com` has an `email_addresses` row but no mail ROUTE.** Mail sent to it
+   never reached the ERP after an hour. The row records who owns a mailbox; a Cloudflare Email
+   Routing rule is what makes it receive. The same will apply to every address R5 provisions for
+   a new starter — worth checking whether the catch-all actually covers them.
+3. Staging carries a `kiansin@hookka.com` row and the same three `company` rows, added while
+   testing. Harmless; drop them if staging is re-cloned from prod.
+
+**Docs note:** this entry's heading had briefly overwritten the 2026-09-25
+`/dashboard-experimental` entry below, from a cherry-pick conflict resolved the wrong way on
+`feat/t012-mail-center-main`. Restored here; that entry's items 1-6 and its `npm test 4881`
+line belong to it, not to T-012.
 
 ---
 
@@ -7436,6 +7516,12 @@ row 08:32:34), saving 8 through the page moved it back (audit row 08:34:05, bann
 2 left as they were"); the two cards at 10 were never touched. Staging ends as it started. A
 stall of the job-card write past the app's 30 s timeout was seen twice in an earlier window and
 is UNMEASURED (BUG-2026-10-16-302).
+
+**Hardened the same day (owner: "yes both"):** saving a WIP time now writes the BOM and the
+job cards in one transaction with a 5 s lock limit (branch `fix/wip-save-one-transaction`, to
+`staging`). Busy job cards give "nothing was saved, try again" instead of a 30 s hang, and the
+retry works because nothing half-saved. The lock queue itself is fixed for every table by
+BUG-2026-10-16-304 (#911 to `main`, #913 to `staging`). **Not yet verified on staging.**
 
 ## 2026-10-16 — Self-apply ALTERs no longer lock a table when the column exists (BUG-2026-10-16-304)
 

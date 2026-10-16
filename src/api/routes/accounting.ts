@@ -46,8 +46,10 @@ import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../li
 import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
 import { projectedLabourByDept } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
-import { loadPreparedProduction } from "../lib/production-stock";
+import { loadPreparedProduction, mytDay } from "../lib/production-stock";
 import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
+import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
+import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
@@ -75,6 +77,7 @@ import {
 } from "../../lib/other-party-payment";
 import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
 import { buildPnlMatrix, type PnlMatrixCol } from "../../lib/pnl-matrix";
+import { lastMonths, sumByMonth, topModelsByMonth, overviewPnl, type OverviewMonth } from "../../lib/overview-trend";
 import { selectHistoricalWindow, sumPnlWindows, buildHistoricalMap } from "../../lib/pnl-historical";
 import { buildHistIdentityRemap } from "../../lib/pnl-hist-remap";
 import { rmLineOf, rmScale } from "../../lib/product-line-rm";
@@ -6819,6 +6822,9 @@ interface DocDateCtx {
   // the loaded production data once, each month's figures once (key = ym).
   prodStock?: Promise<PreparedProduction>;
   liveStockMemo?: Map<string, Promise<{ fgSen: number; wipSen: number; ratio: number }>>;
+  // Per-request memo for the running month's recurring-cost estimates
+  // (2026-10-13, runningMonthEstimates; key = the running month).
+  estimateMemo?: Map<string, Promise<Map<string, { sen: number; fromYm: string }>>>;
 }
 
 // Report-layer labour for one month (owner 2026-08-31 「任何时候我看P&L 时你都
@@ -6961,7 +6967,7 @@ type PnlTrace = {
   account: string; // resolved code
   legs: PnlTraceLeg[];
   entryLegs: Map<string, { accountCode: string; debitSen: number; creditSen: number }[]>; // sourceType::sourceId → legs
-  extra: { kind: "payroll" | "opening_slice"; ym: string; sen: number }[];
+  extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
 };
 
 async function glWindowSigned(
@@ -8084,6 +8090,91 @@ async function blankMonthStock(
   }
 }
 
+// The closing stock the P&L carries at month-end `ym` — the material window's
+// close, with a blank month's FG / WIP from the production orders — in the
+// shape the Balance Sheet reads (src/lib/bs-stock.ts). For callers that already
+// hold the material data; the sheet itself reads the Stock Summary.
+async function closingStockAt(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string,
+  matData: MaterialCostData,
+  dc: DocDateCtx,
+  override: Record<string, string>,
+): Promise<ClosingStock> {
+  const w = materialWindow(matData, ym, ym);
+  const blank = await blankMonthStock(db, orgId, ym, matData, dc, override);
+  return {
+    rows: w.rmGroups.map((g) => ({ group: g.itemGroup, closingSen: g.closingSen })),
+    wipSen: blank?.wip ?? w.wipCloseSen,
+    fgSen: blank?.fg ?? w.fgCloseSen,
+  };
+}
+
+// The Balance Sheet's stock as at `endYm` (owner 2026-10-13 「balance sheet 就让
+// 他的 closing stock 和 P&L closing stock 一样」; src/lib/bs-stock.ts): the stock
+// map's accounts read the Stock Summary's closing for the sheet's month — the
+// figure the P&L closes on — in place of the ledger's own balance on them
+// (`ledgerNet`, DR − CR). `earningsSen` is what Current Year Earnings moves by.
+// Only accounts the sheet can place (`placeable`: in the chart, on the sheet)
+// take part, so the sheet always balances. null = no stock on this sheet
+// (before the opening month).
+async function sheetStockAt(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  endYm: string | null,
+  resolve: (code: string) => string,
+  ledgerNet: (code: string) => number,
+  placeable: (code: string) => boolean,
+): Promise<{ month: string; totalSen: number; balances: Map<string, number>; earningsSen: number } | null> {
+  const openingDate = await getOpeningDate(db);
+  const month = sheetStockMonth(endYm, openingDate ? openingDate.slice(0, 7) : null, runningMonthYm());
+  if (!month) return null;
+  const [map, s] = await Promise.all([getStockMap(db), stockSummaryRange(db, orgId, month, month)]);
+  const closing: ClosingStock = {
+    rows: s.rows.map((r) => ({ group: r.group, closingSen: r.closingSen })),
+    wipSen: s.wip.closingSen,
+    fgSen: s.fg.closingSen,
+  };
+  const accounts = new Set([...stockAccounts(map, resolve)].filter(placeable));
+  const { balances, earningsSen } = stockOverride(accounts, stockByAccount(map, closing, resolve), ledgerNet);
+  let totalSen = 0;
+  for (const v of balances.values()) totalSen += v;
+  return { month, totalSen, balances, earningsSen };
+}
+
+// The running month's recurring costs that nothing has been recorded for yet,
+// at last month's amount (owner 2026-10-13 「这个月的 amount 还没有但每个月都
+// 有的…根据上个月的 amount 出现」; src/lib/expense-estimates.ts): operating
+// expenses, salaries & contribution and factory overhead with an amount in each
+// of the last three months and nothing so far this month. Read from the same
+// one-month ledger windows the statement shows for those months (before any
+// estimate). Display only — nothing is posted. Memoised per request.
+async function runningMonthEstimates(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  dc: DocDateCtx,
+): Promise<Map<string, { sen: number; fromYm: string }>> {
+  const runYm = runningMonthYm();
+  dc.estimateMemo ??= new Map();
+  let hit = dc.estimateMemo.get(runYm);
+  if (!hit) {
+    hit = (async () => {
+      const prevYms = previousMonths(runYm, ESTIMATE_LOOKBACK);
+      const [cur, ...prev] = await Promise.all([runYm, ...prevYms].map((ym) => glWindowSigned(db, orgId, ym, ym, dc)));
+      const override = await getPnlSectionMap(db);
+      const bucketOf = (code: string): string | null => {
+        const meta = cur.coa.get(code);
+        return meta ? pnlBucketFor(code, meta.type, override) : null;
+      };
+      const est = recurringEstimates({ current: cur.net, previous: prev.map((w) => w.net), bucketOf });
+      return new Map([...est].map(([code, sen]) => [code, { sen, fromYm: prevYms[0] }] as const));
+    })();
+    dc.estimateMemo.set(runYm, hit);
+  }
+  return hit;
+}
+
 async function computePnlWindow(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -8099,10 +8190,22 @@ async function computePnlWindow(
   // that stockSummaryRange returns (that ledger stopped being fed after 2026-03).
   // All OTHER P&L lines (labour / overhead / carriage / SST / revenue / other
   // income / expenses) still come from the GL window untouched.
-  const [gl, ratio] = await Promise.all([
+  const [glLedger, ratio] = await Promise.all([
     glWindowSigned(db, orgId, startYm, endYm, dc),
     costByLineWindow(db, startYm, endYm),
   ]);
+  // A window that reaches the running month carries its recurring-cost
+  // estimates (runningMonthEstimates). Added to a COPY — the ledger window is a
+  // shared memo and stays read-only.
+  const est = windowCoversYm(startYm, endYm, runningMonthYm())
+    ? await runningMonthEstimates(db, orgId, dc)
+    : new Map<string, { sen: number; fromYm: string }>();
+  const gl = est.size ? { ...glLedger, net: new Map(glLedger.net) } : glLedger;
+  for (const [code, e] of est) gl.net.set(code, (gl.net.get(code) ?? 0) + e.sen);
+  const estPart = (code: string): { estSen: number; estFrom: string } | Record<string, never> => {
+    const e = est.get(code);
+    return e ? { estSen: Math.round(e.sen * (line === "all" ? 1 : R)), estFrom: e.fromYm } : {};
+  };
   // Material window derived synchronously from the single-replay checkpoints.
   const mat = materialWindow(matData, startYm, endYm);
   // A month-end the Stock Take leaves blank: FG / WIP from the production
@@ -8246,12 +8349,12 @@ async function computePnlWindow(
   const labourSen = labourLines.reduce((s, l) => s + l.amountSen, 0);
 
   // --- Factory overhead (780-x) ---
-  const overheadLines: { code: string; name: string; amountSen: number }[] = [];
+  const overheadLines: { code: string; name: string; amountSen: number; estSen?: number; estFrom?: string }[] = [];
   for (const [code, v] of gl.net) {
     const meta = gl.coa.get(code);
     if (!meta) continue;
     if (pnlBucketFor(code, meta.type, override) !== "FACTORY_OVERHEAD") continue;
-    overheadLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)) });
+    overheadLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)), ...estPart(code) });
   }
   const overheadSen = overheadLines.reduce((s, l) => s + l.amountSen, 0);
 
@@ -8267,13 +8370,13 @@ async function computePnlWindow(
 
   // --- Operating expenses (EXPENSE type, 900-x). Salaries & Contribution
   //     (900-S00x) grouped; product-line-tagged PV lines stay on their line. ---
-  const expenseLines: { code: string; name: string; amountSen: number; salary: boolean }[] = [];
+  const expenseLines: { code: string; name: string; amountSen: number; salary: boolean; estSen?: number; estFrom?: string }[] = [];
   for (const [code, v] of gl.net) {
     const meta = gl.coa.get(code);
     if (!meta) continue;
     const bucket = pnlBucketFor(code, meta.type, override);
     if (bucket !== "OPERATING_EXPENSE" && bucket !== "OPEX_SALARIES") continue;
-    expenseLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)), salary: bucket === "OPEX_SALARIES" });
+    expenseLines.push({ code, name: meta.name, amountSen: Math.round(v * (isAll ? 1 : R)), salary: bucket === "OPEX_SALARIES", ...estPart(code) });
   }
   const expenseSen = expenseLines.reduce((s, l) => s + l.amountSen, 0);
   const netProfitSen = grossProfitSen + otherIncomeSen * (isAll ? 1 : R) - expenseSen;
@@ -8347,12 +8450,20 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
   // drillCode: the account a line can be opened on (the P&L inline drill) when
   // the line is one account's ledger figure but carries no accountCode (that
   // field also drives the edit-mode drag, which these rows must not get).
-  type Row = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; periodSen?: number; ytdSen?: number; groupId?: string; totalLabel?: string; badge?: string; accountCode?: string; bucket?: string; drillCode?: string };
+  type Row = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; periodSen?: number; ytdSen?: number; groupId?: string; totalLabel?: string; badge?: string; accountCode?: string; bucket?: string; drillCode?: string; estSen?: number; estFrom?: string };
   const rows: Row[] = [];
   let gid = 0;
   const g = (label: string, depth: number, periodSen: number, ytdSen: number, totalLabel: string, bucket?: string) => { const id = `g${gid++}`; rows.push({ kind: "group", depth, label, periodSen, ytdSen, groupId: id, totalLabel, bucket }); return id; };
   const line = (label: string, depth: number, ps: number, ys: number, accountCode?: string, bucket?: string, drillCode?: string) => rows.push({ kind: "line", depth, label, periodSen: ps, ytdSen: ys, accountCode, bucket, drillCode });
   const tot = (label: string, depth: number, ps: number, ys: number) => rows.push({ kind: "total", depth, label, periodSen: ps, ytdSen: ys });
+  // A line whose period figure is (partly) a running-month estimate says so —
+  // the page colours it (owner 2026-10-13).
+  const markEst = (l: { estSen?: number; estFrom?: string }) => {
+    if (!l.estSen) return;
+    const r = rows[rows.length - 1];
+    r.estSen = l.estSen;
+    r.estFrom = l.estFrom;
+  };
 
   // SALES
   g("SALES", 0, p.netSalesSen, y.netSalesSen, "NET SALES", "REVENUE");
@@ -8379,7 +8490,7 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
   for (let i = 0; i < p.labourLines.length; i++) line(p.labourLines[i].name, 2, p.labourLines[i].amountSen, y.labourLines.find((x) => x.code === p.labourLines[i].code)?.amountSen ?? 0, p.labourLines[i].code, "DIRECT_LABOUR");
   // Factory overhead
   g("FACTORY OVERHEAD", 1, p.overheadSen, y.overheadSen, "TOTAL FACTORY OVERHEAD", "FACTORY_OVERHEAD");
-  for (let i = 0; i < p.overheadLines.length; i++) line(p.overheadLines[i].name, 2, p.overheadLines[i].amountSen, y.overheadLines.find((x) => x.code === p.overheadLines[i].code)?.amountSen ?? 0, p.overheadLines[i].code, "FACTORY_OVERHEAD");
+  for (let i = 0; i < p.overheadLines.length; i++) { line(p.overheadLines[i].name, 2, p.overheadLines[i].amountSen, y.overheadLines.find((x) => x.code === p.overheadLines[i].code)?.amountSen ?? 0, p.overheadLines[i].code, "FACTORY_OVERHEAD"); markEst(p.overheadLines[i]); }
   // WIP movement
   g("WORK IN PROGRESS", 1, p.wipOpen - p.wipClose, y.wipOpen - y.wipClose, "WIP MOVEMENT (net)");
   line("WIP - OPENING", 2, p.wipOpen, y.wipOpen);
@@ -8401,9 +8512,9 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
   const ySalSum = y.expenseLines.filter((l) => l.salary).reduce((s, l) => s + l.amountSen, 0);
   if (editable || pSal.length > 0) {
     g("SALARIES & CONTRIBUTION", 1, pSal.reduce((s, l) => s + l.amountSen, 0), ySalSum, "TOTAL SALARIES & CONTRIBUTION", "OPEX_SALARIES");
-    for (const l of pSal) line(l.name, 2, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPEX_SALARIES");
+    for (const l of pSal) { line(l.name, 2, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPEX_SALARIES"); markEst(l); }
   }
-  for (const l of p.expenseLines.filter((x) => !x.salary)) line(l.name, 1, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPERATING_EXPENSE");
+  for (const l of p.expenseLines.filter((x) => !x.salary)) { line(l.name, 1, l.amountSen, y.expenseLines.find((x) => x.code === l.code)?.amountSen ?? 0, l.code, "OPERATING_EXPENSE"); markEst(l); }
   rows.push({ kind: "grandtotal", depth: 0, label: "NET PROFIT / (LOSS)", periodSen: p.netProfitSen, ytdSen: y.netProfitSen });
   return rows;
 }
@@ -9032,13 +9143,23 @@ app.get("/pl-drill", async (c) => {
   const dc = await loadDocDateResolver(db);
   const trace: PnlTrace = { account, legs: [], entryLegs: new Map(), extra: [] };
   const { net, coa } = await glWindowSigned(db, orgId, startYm, endYm, dc, trace);
+  // A running-month estimate on this account (runningMonthEstimates) is part
+  // of the statement's line, so the drill lists it as its own row.
+  let netSen = net.get(account) ?? 0;
+  const runYm = runningMonthYm();
+  if (windowCoversYm(startYm, endYm, runYm)) {
+    const e = (await runningMonthEstimates(db, orgId, dc)).get(account);
+    if (e) {
+      trace.extra.push({ kind: "estimate", ym: runYm, sen: e.sen, fromYm: e.fromYm });
+      netSen += e.sen;
+    }
+  }
 
   const lines = await buildDrillLines(db, orgId, trace.legs, trace.entryLegs, resolve, coa);
   const extraDebit = trace.extra.reduce((s, e) => s + (e.sen > 0 ? e.sen : 0), 0);
   const extraCredit = trace.extra.reduce((s, e) => s + (e.sen < 0 ? -e.sen : 0), 0);
   const debitSen = lines.reduce((s, l) => s + l.debitSen, 0) + extraDebit;
   const creditSen = lines.reduce((s, l) => s + l.creditSen, 0) + extraCredit;
-  const netSen = net.get(account) ?? 0;
   return c.json({
     success: true,
     data: {
@@ -9083,6 +9204,41 @@ app.get("/bs-drill", async (c) => {
   if (!section) return c.json({ success: false, error: `${account} is not a balance-sheet account` }, 400);
   const assetSide = bsSectionClass(section) === "asset";
   const coFilter = companyFilter(c, "orgId");
+  // A stock account shows the P&L's closing stock, not the ledger (owner
+  // 2026-10-13; see sheetStockAt): the drill is the Stock Summary's movement per
+  // material group — b/f last month-end's closing, c/f this month-end's.
+  if (!coFilter.active || coFilter.orgId === orgId) {
+    const stockMap = await getStockMap(db);
+    if (stockAccounts(stockMap, resolve).has(account)) {
+      const openingRaw = await getOpeningDate(db);
+      const openingYm = openingRaw ? openingRaw.slice(0, 7) : null;
+      const month = sheetStockMonth(period, openingYm, runningMonthYm());
+      if (month) {
+        const s = await stockSummaryRange(db, orgId, month, month);
+        const prev = prevMonthYm(month);
+        const opening: ClosingStock | null = sheetStockMonth(prev, openingYm, runningMonthYm()) === prev
+          ? { rows: s.rows.map((r) => ({ group: r.group, closingSen: r.openingSen })), wipSen: s.wip.openingSen, fgSen: s.fg.openingSen }
+          : null;
+        const closing: ClosingStock = { rows: s.rows.map((r) => ({ group: r.group, closingSen: r.closingSen })), wipSen: s.wip.closingSen, fgSen: s.fg.closingSen };
+        const d = stockDrill(account, stockMap, opening, closing, resolve);
+        const money = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const stockSide = (v: number) => (assetSide ? v : -v);
+        return c.json({
+          success: true,
+          data: {
+            period,
+            account: { code: account, name: acct.name, type: acct.type, section },
+            assetSide,
+            bfSen: stockSide(d.bfSen),
+            cfSen: stockSide(d.cfSen),
+            lines: stockDrillRows(month, lastDayIso(month), d.lines, money),
+            tied: true,
+            fromStockTake: true,
+          },
+        });
+      }
+    }
+  }
   const legWhere = coFilter.active ? ` AND ${coFilter.sql}` : "";
   const legRes = await db.prepare(
     `SELECT id, accountCode, sourceId, sourceType, debitSen, creditSen, postedAt, description FROM ledger_journal_entries WHERE hidden = 0${legWhere}`,
@@ -9203,6 +9359,94 @@ app.get("/pl-monthly", async (c) => {
   return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, columns: matrix.columns, rows: matrix.rows } });
 });
 
+// Finance Overview, month by month (owner 2026-10-14 「overview 主要显示…」→「做」;
+// src/lib/overview-trend.ts). The last 3 / 6 / 12 months up to the running
+// one (Malaysia time):
+//   • sales orders vs sales invoices — raised / issued in the month, before
+//     SST (an order carries none; an invoice's subtotal), drafts and cancelled
+//     left out; the order date falls back to when it was keyed;
+//   • the P&L's own month windows — the same per-month logic as /pl-monthly
+//     (history before the books opened, the running month with its estimates);
+//   • the most-produced models — production orders completed in the month,
+//     quantities per model series, Sofa and Bedframe apart, top 5 each.
+// Read-only.
+app.get("/overview-trend", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const asked = Number(c.req.query("months"));
+  const n = asked === 6 || asked === 12 ? asked : 3;
+  const runYm = runningMonthYm();
+  const months = lastMonths(runYm, n);
+
+  const pick = (r: Record<string, unknown>, ...keys: string[]) => {
+    for (const k of keys) if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k];
+    return null;
+  };
+  const ymOf = (v: unknown) => mytDay(v).slice(0, 7);
+  const [soRes, invRes, poRes, prodRes] = await Promise.all([
+    db.prepare(`SELECT companySODate, createdAt, subtotalSen FROM sales_orders WHERE status NOT IN ('DRAFT','CANCELLED')`)
+      .all<Record<string, unknown>>(),
+    db.prepare(`SELECT invoiceDate, createdAt, subtotalSen FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`)
+      .all<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT completedDate, quantity, itemCategory, productCode, productName
+         FROM production_orders
+        WHERE completedDate IS NOT NULL AND status <> 'CANCELLED'`,
+    ).all<Record<string, unknown>>(),
+    db.prepare(`SELECT code, baseModel, category FROM products`).all<Record<string, unknown>>(),
+  ]);
+  const soBy = sumByMonth((soRes.results ?? []).map((r) => ({
+    ym: ymOf(pick(r, "companySODate", "companySoDate", "company_so_date", "createdAt", "created_at")),
+    sen: Number(pick(r, "subtotalSen", "subtotal_sen")) || 0,
+  })), months);
+  const invBy = sumByMonth((invRes.results ?? []).map((r) => ({
+    ym: ymOf(pick(r, "invoiceDate", "invoice_date", "createdAt", "created_at")),
+    sen: Number(pick(r, "subtotalSen", "subtotal_sen")) || 0,
+  })), months);
+  const products = new Map<string, { model: string | null; category: string | null }>();
+  for (const p of prodRes.results ?? []) {
+    products.set(String(p.code ?? ""), {
+      model: (pick(p, "baseModel", "base_model") as string | null) ?? null,
+      category: (pick(p, "category") as string | null) ?? null,
+    });
+  }
+  const topBy = topModelsByMonth((poRes.results ?? []).map((r) => {
+    const code = String(pick(r, "productCode", "product_code") ?? "");
+    const prod = products.get(code);
+    return {
+      ym: ymOf(pick(r, "completedDate", "completed_date")),
+      category: (pick(r, "itemCategory", "item_category") as string | null) ?? prod?.category ?? null,
+      model: prod?.model ?? ((pick(r, "productName", "product_name") as string | null) ?? code),
+      qty: Number(pick(r, "quantity")) || 1,
+    };
+  }), months);
+
+  // The P&L, month by month — /pl-monthly's own loop.
+  await ensurePnlHistorical(db);
+  const orgId = getOrgId(c);
+  const override = await getPnlSectionMap(db);
+  const matData = await loadMaterialCostData(db, orgId, runYm);
+  const dc = await loadDocDateResolver(db);
+  const [historical, openingDateRaw] = await Promise.all([loadHistoricalPnl(db, orgId), getOpeningDate(db)]);
+  const openingMonth = openingDateRaw ? openingDateRaw.slice(0, 7) : null;
+  const out: OverviewMonth[] = [];
+  for (const ym of months) {
+    const hist = selectHistoricalWindow(historical, openingMonth, ym, "all");
+    const w = hist
+      ?? (openingMonth && ym < openingMonth ? null : await computePnlWindow(db, orgId, ym, ym, "all", matData, dc, override));
+    out.push({
+      ym,
+      running: ym === runYm,
+      so: soBy.get(ym) ?? { count: 0, sen: 0 },
+      inv: invBy.get(ym) ?? { count: 0, sen: 0 },
+      pnl: w ? overviewPnl(w) : null,
+      top: topBy.get(ym) ?? { SOFA: [], BEDFRAME: [] },
+    });
+  }
+  return c.json({ success: true, data: { months: out, runningYm: runYm } });
+});
+
 // Finance dashboard tab feed (routes/dashboard-finance.ts → lib/dashboard-finance.ts).
 // Per month: the P&L's own figures (same per-month window logic as `/pl-monthly`:
 // pre-opening months come from pnl_historical, the rest from computePnlWindow)
@@ -9266,6 +9510,15 @@ export async function loadFinanceSeries(
     loadAccountResolver(db),
   ]);
   const coaType = new Map((coaRes.results ?? []).map((a) => [a.code, a.type] as const));
+  // Stock = the P&L's closing stock at each month-end (owner 2026-10-13; see
+  // sheetStockAt): the ledger's own stock balances give way to it and the
+  // difference is earnings, as on the Balance Sheet.
+  const stockMap = await getStockMap(db);
+  const stockAccts = new Set([...stockAccounts(stockMap, resolveAcct)].filter((code) => {
+    const t = coaType.get(code);
+    const sec = t ? bsSectionFor(code, t, bsOverride) : null;
+    return !!sec && bsSectionClass(sec) === "asset";
+  }));
   const perYm = new Map<string, Map<string, { dr: number; cr: number }>>();
   for (const l of legRes.results ?? []) {
     const dd = dc.docDate(l.sourceType, l.sourceId, l.postedAt);
@@ -9308,6 +9561,14 @@ export async function loadFinanceSeries(
       }
       if (type === "REVENUE") unclosed += v.cr - v.dr;
       else if (type === "COST" || type === "EXPENSE") unclosed -= v.dr - v.cr;
+    }
+    const stockYm = sheetStockMonth(ym, openingMonth, runningMonthYm());
+    if (stockYm) {
+      const closing = await closingStockAt(db, orgId, stockYm, matData, dc, override);
+      const net = (code: string) => { const e = run.get(code); return e ? e.dr - e.cr : 0; };
+      const { earningsSen } = stockOverride(stockAccts, stockByAccount(stockMap, closing, resolveAcct), net);
+      assets += earningsSen;
+      unclosed += earningsSen;
     }
     out.push({
       ym, ...(pnl.get(ym) ?? { revenueSen: 0, labourSen: 0, netProfitSen: 0 }),
@@ -10288,7 +10549,24 @@ app.get("/pl", async (c) => {
   }[] = [];
   const asOf = endYm ? `${endYm}-28` : new Date().toISOString().slice(0, 10);
   const bsOverride = await getBsSectionMap(c.var.DB);
-  const bsCodes = new Set([...bsDr.keys(), ...bsCr.keys()]);
+  // Stock = the P&L's closing stock for the sheet's month, not what the ledger
+  // holds (owner 2026-10-13; sheetStockAt). The difference lands in Current
+  // Year Earnings below. One company's sheet carries it only when that is the
+  // company the stock take belongs to.
+  let sheetStock: Awaited<ReturnType<typeof sheetStockAt>> = null;
+  let sheetStockError: string | null = null;
+  if (!coFilter.active || coFilter.orgId === getOrgId(c)) {
+    try {
+      sheetStock = await sheetStockAt(
+        c.var.DB, getOrgId(c), endYm, resolveAcct,
+        (code) => (bsDr.get(code) ?? 0) - (bsCr.get(code) ?? 0),
+        (code) => { const a = coa.get(code); return !!a && bsSectionFor(code, a.type, bsOverride) !== null; },
+      );
+    } catch (e) {
+      sheetStockError = (e as Error)?.message || "The stock could not be read";
+    }
+  }
+  const bsCodes = new Set([...bsDr.keys(), ...bsCr.keys(), ...(sheetStock ? sheetStock.balances.keys() : [])]);
   for (const code of bsCodes) {
     const acct = coa.get(code);
     if (!acct) continue;
@@ -10297,16 +10575,21 @@ app.get("/pl", async (c) => {
     const dr = bsDr.get(code) ?? 0;
     const cr = bsCr.get(code) ?? 0;
     const bal = bsSectionClass(section) === "asset" ? dr - cr : cr - dr;
-    if (bal === 0) continue;
+    const stockSen = sheetStock?.balances.get(code);
+    const shown = stockSen === undefined ? bal : bsSectionClass(section) === "asset" ? stockSen : -stockSen;
+    if (shown === 0) continue;
     balanceSheet.push({
       id: code,
       accountCode: code,
       accountName: acct.name,
       category: section,
-      balance: bal,
+      balance: shown,
       asOfDate: asOf,
     });
   }
+  // Account-code order within every section (owner 2026-10-13 「排序按科目编号」);
+  // Current Year Earnings is pushed after this, so it stays last in Equity.
+  balanceSheet.sort((a, b) => a.accountCode.localeCompare(b.accountCode));
   // Un-closed P&L result as of the BS cutoff — CUMULATIVE revenue/cost/
   // expense nets including year_close legs (a closed FY nets to zero
   // here, leaving only the open year). Phase 1 fix: the old code injected
@@ -10322,6 +10605,8 @@ app.get("/pl", async (c) => {
     else if (acct.type === "COST" || acct.type === "EXPENSE")
       unclosedEarnings -= dr - cr;
   }
+  // The stock the ledger has already expensed comes back as earnings.
+  unclosedEarnings += sheetStock?.earningsSen ?? 0;
   if (unclosedEarnings !== 0)
     balanceSheet.push({
       id: "NP-CURRENT",
@@ -10350,6 +10635,9 @@ app.get("/pl", async (c) => {
       cogsByAccount,
       opexByAccount,
       balanceSheet,
+      // Which month's closing stock the sheet's stock lines carry (null = none).
+      sheetStock: sheetStock ? { month: sheetStock.month, totalSen: sheetStock.totalSen } : null,
+      sheetStockError,
       manufacturing: {
         ...mfg,
         // Opening/closing stock are LIVE from the cost ledger (read at
@@ -13646,7 +13934,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v17"; // v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v19"; // v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -13804,10 +14092,13 @@ app.get("/dashboard", async (c) => {
     sales: number; cogs: number; gross: number; otherIncome: number; expenses: number; net: number;
     materials: number; labour: number; overhead: number; stockMovement: number;
     staffCost: number; otherOpex: number;
+    // Running-month estimates for recurring costs not yet recorded (2026-10-13).
+    estimated: number;
   };
   const zero = (): PnlSlice => ({
     sales: 0, cogs: 0, gross: 0, otherIncome: 0, expenses: 0, net: 0,
     materials: 0, labour: 0, overhead: 0, stockMovement: 0, staffCost: 0, otherOpex: 0,
+    estimated: 0,
   });
   const pnlByMonth = new Map<string, PnlSlice>();
   // Cost-structure feed (owner 2026-07-29): per month,每个料别 spend /
@@ -14029,6 +14320,8 @@ app.get("/dashboard", async (c) => {
       stockMovement: w.cogsSen - materials - w.labourSen - w.overheadSen,
       staffCost,
       otherOpex: w.expenseSen - staffCost,
+      // How much of the month is running-month estimate (each line says).
+      estimated: [...w.overheadLines, ...w.expenseLines].reduce((sum, l) => sum + ((l as { estSen?: number }).estSen ?? 0), 0),
     });
   }
 
@@ -14061,6 +14354,14 @@ app.get("/dashboard", async (c) => {
     return meta ? bsSectionFor(code, meta.type, bsMap as Record<string, string>) : null;
   };
   const bucketEnd = (b: Bucket) => `${b.months[b.months.length - 1]}-31`;
+  // Stock = the P&L's closing stock at each bucket's month-end (owner
+  // 2026-10-13; see sheetStockAt): the ledger's own stock balances give way.
+  const stockMapDash = await getStockMap(db);
+  const stockAcctsDash = new Set([...stockAccounts(stockMapDash, resolveDash)].filter((code) => {
+    const sec = sectionOf(code);
+    return sec === "FIXED_ASSET" || sec === "CURRENT_ASSET";
+  }));
+  const openingYmDash = dcDash.openingDate ? dcDash.openingDate.slice(0, 7) : null;
   const running = new Map<string, number>(); // account → dr−cr
   const bsByBucket = new Map<string, { assets: number; liabilities: number; equity: number; currentAssets: number; currentLiabilities: number; inventory: number } | null>();
   {
@@ -14076,7 +14377,14 @@ app.get("/dashboard", async (c) => {
       // card doesn't draw phantom zero bars past today.
       if (b.months[0] > nowYm) { bsByBucket.set(b.key, null); continue; }
       let assets = 0, liabilities = 0, equity = 0, curA = 0, curL = 0, inv = 0;
-      for (const [code, net] of running) {
+      const nets = new Map(running);
+      const stockYm = sheetStockMonth(b.months[b.months.length - 1], openingYmDash, runningMonthYm());
+      if (stockYm) {
+        const closing = await closingStockAt(db, orgIdDash, stockYm, matDataDash, dcDash, overrideDash);
+        const { balances } = stockOverride(stockAcctsDash, stockByAccount(stockMapDash, closing, resolveDash), (code) => running.get(code) ?? 0);
+        for (const [code, v] of balances) nets.set(code, v);
+      }
+      for (const [code, net] of nets) {
         const sec = sectionOf(code);
         if (!sec) continue;
         if (sec === "FIXED_ASSET" || sec === "CURRENT_ASSET") {
@@ -14253,6 +14561,7 @@ app.get("/dashboard", async (c) => {
       acc.otherIncome += s.otherIncome; acc.expenses += s.expenses; acc.net += s.net;
       acc.materials += s.materials; acc.labour += s.labour; acc.overhead += s.overhead;
       acc.stockMovement += s.stockMovement; acc.staffCost += s.staffCost; acc.otherOpex += s.otherOpex;
+      acc.estimated += s.estimated;
     }
     return any ? acc : null;
   };

@@ -70,6 +70,8 @@ export type CNPdfItem = {
   itemM3?: number;
   // Parent CO number for the line (joined from the linked PO).
   consignmentOrderNo?: string;
+  // The customer's own CO number (e.g. 2990-PCO-2610-019), from print-extras.
+  customerPOId?: string | null;
   // ----- Rich detail (from /print-extras) — mirrors the DO PDF -----
   itemCategory?: string | null; // SOFA / BEDFRAME / ACCESSORY
   specialOrder?: string | null; // e.g. "Headboard Only" / "DIVAN CURVE"
@@ -249,7 +251,8 @@ export function renderCnInto(doc: jsPDF, data: CNPdfData) {
     const fp = fmtPieces(it.pieces);
     return [
       String(i + 1),
-      it.consignmentOrderNo || "-",
+      // Our CO + the customer's CO number, stacked like the DO's Order column.
+      `Our CO: ${it.consignmentOrderNo || "-"}\nPO: ${(it.customerPOId || "").trim() || "-"}`,
       desc,
       it.coSizeLabel || "-",
       String(it.quantity ?? 0),
@@ -293,7 +296,7 @@ export function renderCnInto(doc: jsPDF, data: CNPdfData) {
     head: [
       [
         { content: "#", styles: { halign: "center" } },
-        { content: "CO No." },
+        { content: "Order" },
         { content: "Description" },
         { content: "Size", styles: { halign: "center" } },
         { content: "Set", styles: { halign: "center" } },
@@ -343,7 +346,7 @@ export function renderCnInto(doc: jsPDF, data: CNPdfData) {
     },
     columnStyles: {
       0: { cellWidth: 8, halign: "center" }, // #
-      1: { cellWidth: 22 }, // CO No.
+      1: { cellWidth: 32 }, // Order — stacked CO / PO (DO's Order column width)
       2: { cellWidth: "auto" }, // Description (code / name / build spec)
       3: { cellWidth: 14, halign: "center" }, // Size (CO line, e.g. 28)
       4: { cellWidth: 12, halign: "center" }, // Set (no. of sets)

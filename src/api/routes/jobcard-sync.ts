@@ -546,19 +546,19 @@ app.post("/fill-zero-minutes", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// syncOpenCardsToBom: after a WIP time is saved (WIP Production Times single
-// edit, multi-row edit, Excel import), give the unfinished job cards of the
-// changed products in that department the BOM's current minutes.
+// saveBomAndSyncCards: when a WIP time is saved (WIP Production Times single
+// edit, multi-row edit, Excel import), write the BOM and give the unfinished job
+// cards of the changed products in that department the new minutes, in one
+// transaction.
 //
 // Only a card still at the time the BOM had BEFORE the save moves (owner,
 // 2026-10-16): a card that was already out of date stays as it is, and is
-// counted in `outOfDate`. `before` maps productCode to its wipComponents as
-// they were before the save; a product missing from it moves nothing.
+// counted in `outOfDate`. Each BomWrite carries its product's wipComponents
+// before and after the save.
 //
 // `pairs` holds `${productCode}::${deptCode}`. Unfinished = WAITING /
 // IN_PROGRESS / PAUSED / BLOCKED; a finished card keeps the minutes it was paid
-// and costed on. Due dates are not touched. Reads skip Hyperdrive's cache, since
-// the BOM was written a moment ago.
+// and costed on. Due dates are not touched. Reads skip Hyperdrive's cache.
 // ---------------------------------------------------------------------------
 const OPEN_STATUSES = "('WAITING','IN_PROGRESS','PAUSED','BLOCKED')";
 
@@ -599,16 +599,44 @@ export function refreshDecision(
 
 export type CardSyncResult = { updated: number; leftAlone: number; skipped: number; outOfDate: number };
 
-export async function syncOpenCardsToBom(
+// One BOM row the save will write: its UPDATE, plus the product's wipComponents
+// before and after.
+export type BomWrite = { stmt: D1PreparedStatement; productCode: string; before: string | null; after: string };
+
+// How long the save may wait for a lock before giving up (BUG-2026-10-16-304
+// showed a job_cards lock queue holding a save past the app's 30 s timeout).
+const SAVE_LOCK_TIMEOUT = "5s";
+
+export class CardsBusyError extends Error {
+  constructor() {
+    super("Job cards are busy right now, so nothing was saved. Please try again in a minute.");
+  }
+}
+
+function isLockTimeout(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | null;
+  return err?.code === "55P03" || /lock timeout/i.test(err?.message ?? "");
+}
+
+// Writes the BOM rows and the matching job card changes in ONE transaction, so
+// they land together or not at all and a failed save can simply be retried.
+// Throws CardsBusyError when a lock is not granted within SAVE_LOCK_TIMEOUT.
+export async function saveBomAndSyncCards(
   c: Context<Env>,
+  bomWrites: readonly BomWrite[],
   pairs: ReadonlySet<string>,
-  before: ReadonlyMap<string, string | null>,
 ): Promise<CardSyncResult> {
   const result: CardSyncResult = { updated: 0, leftAlone: 0, skipped: 0, outOfDate: 0 };
-  if (pairs.size === 0) return result;
+  if (bomWrites.length === 0) return result;
   const raw = c.var.DB;
   // freshReads wraps reads only; its statements cannot go into raw.batch.
   const db = freshReads(raw);
+  const before = new Map<string, string | null>();
+  const after = new Map<string, string>();
+  for (const w of bomWrites) {
+    if (!before.has(w.productCode)) before.set(w.productCode, w.before);
+    after.set(w.productCode, w.after);
+  }
   const codes = [...new Set([...pairs].map((p) => p.slice(0, p.lastIndexOf("::"))))];
 
   const cards: OpenCard[] = [];
@@ -637,15 +665,20 @@ export async function syncOpenCardsToBom(
   const beforeByPo = new Map<string, ExpectedJc[]>();
   const deptKeysByPo = new Map<string, Map<string, string[]>>();
   const changes: Array<{ jcId: string; deptCode: string; oldMinutes: number; newMinutes: number }> = [];
+  // The BOM row as it will be after this save (it is not written yet).
+  const withTree = (productCode: string, tree: string | null) => {
+    const cur = bomCache.get(productCode) ?? null;
+    return cur ? { ...cur, wipComponents: tree } : null;
+  };
 
   for (const r of cards) {
     const productCode = r.productCode ?? "";
     const deptCode = r.deptCode ?? "";
-    if (!pairs.has(`${productCode}::${deptCode}`)) continue;
+    if (!pairs.has(`${productCode}::${deptCode}`) || !after.has(productCode)) continue;
+    if (!bomCache.has(productCode)) bomCache.set(productCode, await loadBomTemplate(db, productCode));
     let expected = expectedByPo.get(r.id);
     if (!expected) {
-      if (!bomCache.has(productCode)) bomCache.set(productCode, await loadBomTemplate(db, productCode));
-      expected = computeExpectedJcs(r, bomCache.get(productCode) ?? null);
+      expected = computeExpectedJcs(r, withTree(productCode, after.get(productCode) ?? null));
       expectedByPo.set(r.id, expected);
     }
     const wipKey = r.wipKey ?? "";
@@ -687,10 +720,7 @@ export async function syncOpenCardsToBom(
     }
     let was = beforeByPo.get(r.id);
     if (!was) {
-      const cur = bomCache.get(productCode) ?? null;
-      was = before.has(productCode)
-        ? computeExpectedJcs(r, cur ? { ...cur, wipComponents: before.get(productCode) ?? null } : null)
-        : expected;
+      was = computeExpectedJcs(r, withTree(productCode, before.get(productCode) ?? null));
       beforeByPo.set(r.id, was);
     }
     const prev = bomMinutesForCard({ wipKey, deptCode, poId: r.id }, was, otherCardInDept);
@@ -701,45 +731,51 @@ export async function syncOpenCardsToBom(
     changes.push({ jcId: r.jcId, deptCode, oldMinutes, newMinutes: res.minutes });
   }
 
-  for (const part of chunk(changes, 50)) {
-    // One transaction per chunk: each guarded UPDATE is followed by its audit
-    // row, written only if that UPDATE applied. So a card never changes without
-    // its audit row, even if the request is cut off part-way.
-    const stmts: D1PreparedStatement[] = [];
-    const updateAt: number[] = [];
-    for (const f of part) {
-      updateAt.push(stmts.length);
-      stmts.push(
-        raw
-          .prepare(
-            `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?
-              WHERE id = ? AND status IN ${OPEN_STATUSES}
-                AND COALESCE(productionTimeMinutes, 0) = ?`,
-          )
-          .bind(f.newMinutes, f.newMinutes, f.jcId, f.oldMinutes),
-      );
-      const audit = await buildAuditStatement(
-        c,
-        {
-          resource: "job-cards",
-          resourceId: f.jcId,
-          action: "refresh-open-minutes-from-bom",
-          before: { productionTimeMinutes: f.oldMinutes, deptCode: f.deptCode },
-          after: { productionTimeMinutes: f.newMinutes, estMinutes: f.newMinutes, deptCode: f.deptCode },
-          source: "admin",
-        },
-        {
-          sql: "EXISTS (SELECT 1 FROM job_cards WHERE id = ? AND productionTimeMinutes = ?)",
-          binds: [f.jcId, f.newMinutes],
-        },
-      );
-      if (audit) stmts.push(audit);
-    }
-    const results = await raw.batch(stmts);
-    for (const i of updateAt) {
-      if ((results[i]?.meta?.changes ?? 0) > 0) result.updated++;
-      else result.leftAlone++;
-    }
+  // One transaction: the lock limit, the BOM rows, then each guarded card
+  // UPDATE followed by its audit row (written only if that UPDATE applied).
+  const stmts: D1PreparedStatement[] = [
+    raw.prepare(`SET LOCAL lock_timeout = '${SAVE_LOCK_TIMEOUT}'`),
+    ...bomWrites.map((w) => w.stmt),
+  ];
+  const updateAt: number[] = [];
+  for (const f of changes) {
+    updateAt.push(stmts.length);
+    stmts.push(
+      raw
+        .prepare(
+          `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?
+            WHERE id = ? AND status IN ${OPEN_STATUSES}
+              AND COALESCE(productionTimeMinutes, 0) = ?`,
+        )
+        .bind(f.newMinutes, f.newMinutes, f.jcId, f.oldMinutes),
+    );
+    const audit = await buildAuditStatement(
+      c,
+      {
+        resource: "job-cards",
+        resourceId: f.jcId,
+        action: "refresh-open-minutes-from-bom",
+        before: { productionTimeMinutes: f.oldMinutes, deptCode: f.deptCode },
+        after: { productionTimeMinutes: f.newMinutes, estMinutes: f.newMinutes, deptCode: f.deptCode },
+        source: "admin",
+      },
+      {
+        sql: "EXISTS (SELECT 1 FROM job_cards WHERE id = ? AND productionTimeMinutes = ?)",
+        binds: [f.jcId, f.newMinutes],
+      },
+    );
+    if (audit) stmts.push(audit);
+  }
+  let results: Awaited<ReturnType<typeof raw.batch>>;
+  try {
+    results = await raw.batch(stmts);
+  } catch (e) {
+    if (isLockTimeout(e)) throw new CardsBusyError();
+    throw e;
+  }
+  for (const i of updateAt) {
+    if ((results[i]?.meta?.changes ?? 0) > 0) result.updated++;
+    else result.leftAlone++;
   }
   return result;
 }

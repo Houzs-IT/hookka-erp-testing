@@ -592,12 +592,16 @@ app.get("/:id/print-extras", async (c) => {
             po.divanHeightInches AS divanHeightInches,
             po.legHeightInches AS legHeightInches,
             po.fabricCode AS fabricCode,
-            po.sizeLabel AS sizeLabel
+            po.sizeLabel AS sizeLabel,
+            po.companyCOId AS companyCOId,
+            co.customerCOId AS customerCOId
        FROM consignment_items ci
        LEFT JOIN production_orders po ON po.id = ci.productionOrderId
+       LEFT JOIN consignment_orders co
+              ON co.id = COALESCE(po.consignmentOrderId, ?)
       WHERE ci.consignmentNoteId = ?`,
   )
-    .bind(id)
+    .bind(cnRow.consignmentOrderId, id)
     .all<{
       id: string;
       productCode: string | null;
@@ -610,6 +614,8 @@ app.get("/:id/print-extras", async (c) => {
       legHeightInches: number | null;
       fabricCode: string | null;
       sizeLabel: string | null;
+      companyCOId: string | null;
+      customerCOId: string | null;
     }>();
 
   // Config fallback from the parent CO line, keyed by productCode (the CN's
@@ -730,6 +736,14 @@ app.get("/:id/print-extras", async (c) => {
       // The CO line's size (a sofa's seat size, e.g. "28"), for the PDF's
       // Size column. Not products.sizeLabel, which is the module code.
       sizeLabel: string | null;
+      // Read here, not from the page's /ready-planning maps: that snapshot is
+      // served stale-while-revalidate, so a CN printed right after it was
+      // created had no CO No. or fabric (HK-0093).
+      fabricCode: string | null;
+      companyCOId: string | null;
+      // The customer's own CO number (e.g. 2990-PCO-2610-019), printed as the
+      // line's PO, same as the DO's customer PO (HK-0093).
+      customerPOId: string | null;
       packedDate: string | null;
       componentRacks: { label: string; racks: string[] }[];
     }
@@ -778,6 +792,9 @@ app.get("/:id/print-extras", async (c) => {
       totalHeightInches: total,
       // PO copies it from the CO line but stores "" when blank, hence ||.
       sizeLabel: r.sizeLabel || fb?.sizeLabel || null,
+      fabricCode: r.fabricCode || null,
+      companyCOId: r.companyCOId || null,
+      customerPOId: r.customerCOId || null,
       packedDate,
       componentRacks,
     };

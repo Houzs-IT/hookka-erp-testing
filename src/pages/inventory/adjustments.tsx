@@ -62,7 +62,7 @@ type RawMaterialOpt = {
   itemCode: string;
   itemName: string;
   balanceQty: number;
-  balanceQtyUom: string;
+  baseUOM?: string;
   unitCostSen?: number;
   // Bug fix 2026-04-28: surface itemGroup so the Adjustments page can
   // offer a category filter ("show only Wood items"), avoiding a
@@ -303,7 +303,7 @@ export default function StockAdjustmentsPage() {
     if (row.type === "RM") {
       const r = rmList.find((x) => x.id === row.itemId);
       return r
-        ? { code: r.itemCode, name: r.itemName, qty: r.balanceQty, uom: r.balanceQtyUom || "ea" }
+        ? { code: r.itemCode, name: r.itemName, qty: r.balanceQty, uom: r.baseUOM || "PCS" }
         : null;
     }
     if (row.type === "WIP") {

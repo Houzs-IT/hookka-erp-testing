@@ -1154,9 +1154,9 @@ export default function KpiPage() {
                         )}
                       </div>
                       <div className="text-right whitespace-nowrap">
-                        <p className="text-lg font-bold tabular-nums">{fmt(l.actual, l.unit)}</p>
+                        <p className="text-lg font-bold tabular-nums">{fmt(l.attainment, "%")}</p>
                         <p className="text-[10.5px] text-[#9CA3AF]">
-                          target {fmt(l.target, l.unit)}
+                          result {fmt(l.actual, l.unit)} · target {fmt(l.target, l.unit)}
                           {l.shape !== "GATE" && <> · wt {l.weight}</>}
                         </p>
                         {l.points !== null && (

@@ -320,9 +320,9 @@ export default function PurchaseOrderDetailPage() {
     );
   }, [rawMaterials, rmSearch]);
 
-  const addLineFromRM = (rmCode: string) => {
-    const rm = rawMaterials.find((r) => r.itemCode === rmCode);
-    if (!rm) return;
+  // Takes the clicked row, not its code: one code can be several RMs (ROLL and MTR).
+  const addLineFromRM = (rm: RawMaterial) => {
+    const rmCode = rm.itemCode;
     // Filter bindings to ACTIVE suppliers — if the only binding is on a
     // deactivated vendor we leave supplierId blank so the operator picks
     // a live one rather than silently auto-filling a dead vendor.
@@ -863,7 +863,7 @@ export default function PurchaseOrderDetailPage() {
                       key={rm.id}
                       type="button"
                       className="w-full text-left px-3 py-2 text-sm hover:bg-[#FAF9F7] border-b border-[#E2DDD8] last:border-b-0"
-                      onClick={() => addLineFromRM(rm.itemCode)}
+                      onClick={() => addLineFromRM(rm)}
                     >
                       <span className="font-medium text-[#1F1D1B]">{rm.itemCode}</span>
                       <span className="text-[#6B7280] ml-2">{rm.description}</span>

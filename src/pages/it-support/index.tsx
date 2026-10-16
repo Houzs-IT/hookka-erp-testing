@@ -69,17 +69,18 @@ type TicketDetail = {
   events: TicketEvent[];
 };
 
-// The words the reporter reads. "resolved" is IT saying it is fixed and asking
-// the reporter to check; "waiting_reporter" is IT waiting on an answer.
+// The words the reporter reads, the same in every system's IT Support. "resolved"
+// is IT saying it is fixed and asking the reporter to check; "waiting_reporter"
+// is IT waiting on an answer.
 const STATUS_LABEL: Record<Status, string> = {
-  open: "Open",
+  open: "Sent",
   in_progress: "In progress",
   on_hold: "On hold",
-  testing: "Testing",
+  testing: "Being tested",
   waiting_reporter: "Waiting for you",
   resolved: "Done, please confirm",
   closed: "Closed",
-  rejected: "Rejected",
+  rejected: "Not going ahead",
 };
 
 // Chip colours, then the dot inside the chip.
@@ -104,7 +105,7 @@ const PRIORITY_TONE: Record<string, string> = {
 const PRIORITY_LABEL: Record<string, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
 // The form offers no "urgent"; it stays here so an older ticket still reads.
 const FORM_PRIORITIES = ["high", "medium", "low"];
-const TYPE_LABEL: Record<string, string> = { bug: "Bug", development: "Development" };
+const TYPE_LABEL: Record<string, string> = { bug: "Something is not working", development: "Ask for a change" };
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -344,21 +345,21 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
     const res = await api<{ code: string }>("/tickets", { method: "POST", body: form });
     setSaving(false);
     if (!res.ok) return setError(res.error);
-    toast.success(`Reported as ${res.data.code}. IT will reply here.`);
+    toast.success(`Sent to IT as ${res.data.code}. Their reply will appear here.`);
     onDone(res.data.code);
   };
 
   return (
     <Card>
       <CardContent className="space-y-4 p-6 sm:p-8">
-        <FormField label="What is the issue?" required>
+        <FormField label="What is the problem?" required>
           <Input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Sales order page shows blank after saving" />
         </FormField>
         <FormField label="Details" hint="What you did, what you expected, and what happened instead.">
           <textarea className={cn(FIELD, "min-h-32")} value={description} maxLength={10000} onChange={(e) => setDescription(e.target.value)} />
         </FormField>
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Type">
+          <FormField label="Kind of request">
             <select className={cn(FIELD, "h-10")} value={type} onChange={(e) => setType(e.target.value)}>
               {Object.entries(TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
@@ -384,11 +385,10 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
 
 // ---- One ticket -------------------------------------------------------------
 function eventLine(e: TicketEvent): string {
-  const from = e.from_value ? (STATUS_LABEL[e.from_value as Status] ?? e.from_value) : "";
   const to = e.to_value ? (STATUS_LABEL[e.to_value as Status] ?? e.to_value) : "";
-  if (e.kind === "created") return "reported this issue";
-  if (e.kind === "status") return `changed the status${from ? ` from ${from}` : ""} to ${to}`;
-  if (e.kind === "assign") return e.to_value ? `assigned this to ${e.to_value}` : "unassigned this";
+  if (e.kind === "created") return "sent this request";
+  if (e.kind === "status") return `changed it to ${to}`;
+  if (e.kind === "assign") return e.to_value ? `gave it to ${e.to_value}` : "took it off the person handling it";
   return "replied";
 }
 
@@ -424,7 +424,7 @@ function Ticket({ code, onChanged }: { code: string; onChanged: () => void }) {
     return (
       <Card>
         <CardContent className="space-y-3 p-6 text-sm">
-          <p className="text-red-600" role="alert">Could not load this ticket: {loadError}</p>
+          <p className="text-red-600" role="alert">Could not open this IT request: {loadError}</p>
           <Button variant="outline" size="sm" onClick={load}>Try again</Button>
         </CardContent>
       </Card>
@@ -478,7 +478,7 @@ function Ticket({ code, onChanged }: { code: string; onChanged: () => void }) {
           {ticket.description && <p className="whitespace-pre-wrap text-sm text-[#4B4540]">{ticket.description}</p>}
           {ticket.status === "resolved" && (
             <div className="flex flex-wrap items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-              <span className="flex-1">IT has marked this as done. If it is fixed, confirm to close it. If not, reply below and it reopens.</span>
+              <span className="flex-1">IT has marked this as done. If it is fixed, confirm to close it. If not, reply below and it goes back to IT.</span>
               <LoadingButton variant="primary" size="sm" loading={busy === "confirm"} loadingText="Closing" onClick={confirmFixed}>
                 Yes, it is fixed
               </LoadingButton>
@@ -528,7 +528,7 @@ function Ticket({ code, onChanged }: { code: string; onChanged: () => void }) {
       <Card>
         <CardContent className="space-y-3 p-6">
           {closed ? (
-            <p className="text-sm text-[#6B7280]">This ticket is closed. If the problem is back, report a new issue.</p>
+            <p className="text-sm text-[#6B7280]">This request is closed. If the problem is back, report it again.</p>
           ) : (
             <>
               <textarea
@@ -587,13 +587,13 @@ function EmptyState({ onReport }: { onReport: () => void }) {
     <section aria-labelledby="it-support-empty" className="rounded-xl border border-[#E2DDD8] bg-white px-6 py-12 text-center sm:py-16">
       <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
         <NoTicketsArt />
-        <h2 id="it-support-empty" className="text-xl font-bold text-[#1F1D1B]">No tickets yet</h2>
+        <h2 id="it-support-empty" className="text-xl font-bold text-[#1F1D1B]">Nothing sent to IT yet</h2>
         <p className="text-sm text-[#6B7280]">
-          Need help with hardware, software, or access permissions? Submit a request and our IT team will pick it up.
+          When something in the system is not working, or you need a change, report it here. IT replies on this page.
         </p>
         <Button variant="primary" onClick={onReport}>
           <Plus className="h-4 w-4" />
-          Report an issue
+          Report a problem
         </Button>
       </div>
     </section>
@@ -616,20 +616,21 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
   const columns = useMemo<Column<TicketRow>[]>(
     () => [
       {
-        key: "code", label: "Ticket", width: "110px", type: "docno", sortable: true, noFilter: true,
+        key: "code", label: "Request", width: "110px", type: "docno", sortable: true, noFilter: true,
         render: (_v, r) => <span className="whitespace-nowrap font-semibold text-slate-900">{r.code}</span>,
       },
       {
-        key: "title", label: "Issue", sortable: false, noFilter: true,
+        key: "title", label: "Problem", sortable: false, noFilter: true,
         render: (_v, r, _i, highlight) => (
-          <span className={cn("text-slate-800", r.unread && "font-semibold text-slate-900")}>
-            {highlight(r.title)}
-            {r.unread && <span className="ml-2 rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white">New reply</span>}
+          // The title gives way before the "New reply" mark does.
+          <span className="flex min-w-0 items-center gap-2">
+            <span className={cn("truncate text-slate-800", r.unread && "font-semibold text-slate-900")}>{highlight(r.title)}</span>
+            {r.unread && <span className="shrink-0 whitespace-nowrap rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white">New reply</span>}
           </span>
         ),
       },
       {
-        key: "status", label: "Status", width: "180px", sortable: true,
+        key: "status", label: "Status", width: "165px", sortable: true,
         filterAccessor: (r) => STATUS_LABEL[r.status] ?? r.status,
         exportValue: (r) => STATUS_LABEL[r.status] ?? r.status,
         render: (_v, r) => <StatusChip status={r.status} />,
@@ -642,7 +643,7 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
         render: (_v, r) => <PriorityChip priority={r.priority} />,
       },
       {
-        key: "assignee_name", label: "Handled by", width: "190px", sortable: true,
+        key: "assignee_name", label: "Handled by", width: "160px", sortable: true,
         exportValue: (r) => r.assignee_name || "Not picked up yet",
         render: (_v, r) =>
           r.assignee_name ? (
@@ -657,6 +658,11 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
           ),
       },
       {
+        // Staff asked for it (15 Oct): Last update moves every time IT replies.
+        key: "created_at", label: "Submitted", width: "170px", sortable: true, noFilter: true,
+        render: (v) => <span className="whitespace-nowrap text-slate-500">{formatDateTime(String(v))}</span>,
+      },
+      {
         key: "updated_at", label: "Last update", width: "170px", sortable: true, noFilter: true,
         render: (v) => <span className="whitespace-nowrap text-slate-500">{formatDateTime(String(v))}</span>,
       },
@@ -669,7 +675,7 @@ function TicketTable({ rows, onOpen }: { rows: TicketRow[] | null; onOpen: (code
     { key: "active" as const, label: "Active", count: byTab.active.length },
     { key: "resolved" as const, label: "Resolved", count: byTab.resolved.length },
   ];
-  const emptyMessage = { all: "No tickets match.", active: "No active tickets.", resolved: "No resolved tickets." }[tab];
+  const emptyMessage = { all: "No requests match.", active: "Nothing is with IT right now.", resolved: "No resolved requests yet." }[tab];
 
   return (
     <>
@@ -706,7 +712,7 @@ function TicketCards({ rows, page, onPage, tabBar, emptyMessage, onOpen }: {
   return (
     <div className="space-y-3 md:hidden">
       <div className="overflow-x-auto border-b border-[#E6E0D9] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{tabBar}</div>
-      <Input type="search" value={search} onChange={(e) => { setSearch(e.target.value); onPage(1); }} placeholder="Search tickets" aria-label="Search tickets" />
+      <Input type="search" value={search} onChange={(e) => { setSearch(e.target.value); onPage(1); }} placeholder="Search my requests" aria-label="Search my requests" />
       {rows === null ? (
         [0, 1, 2].map((i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)
       ) : shown.length === 0 ? (
@@ -727,6 +733,7 @@ function TicketCards({ rows, page, onPage, tabBar, emptyMessage, onOpen }: {
               {r.unread && <span className="mr-2 rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white">New reply</span>}
               {r.title}
             </span>
+            <span className="block text-xs text-slate-500">Submitted {formatDateTime(r.created_at)}</span>
             <span className="flex flex-wrap items-center gap-2">
               <StatusChip status={r.status} />
               <PriorityChip priority={r.priority} />
@@ -773,7 +780,7 @@ export default function ItSupport() {
   if (isNew) {
     return (
       <div className="mx-auto w-full max-w-3xl space-y-4">
-        <PageHeader title="Report an issue" subtitle="Goes straight to the IT team. You will see their reply here." breadcrumbs={["IT Support", "New"]} />
+        <PageHeader title="Report a problem" subtitle="Goes straight to IT. Their reply appears on this page." breadcrumbs={["IT Support", "New"]} />
         <NewTicket
           fromUrl={fromUrl}
           onCancel={() => open({})}
@@ -795,7 +802,7 @@ export default function ItSupport() {
           actions={
             <Button variant="outline" onClick={() => open({})}>
               <ArrowLeft className="h-4 w-4" />
-              All my tickets
+              All my requests
             </Button>
           }
         />
@@ -812,14 +819,14 @@ export default function ItSupport() {
         actions={
           <Button variant="primary" onClick={() => open({ new: "1" })}>
             <Plus className="h-4 w-4" />
-            Report an issue
+            Report a problem
           </Button>
         }
       />
       {listError && (
         <Card>
           <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
-            <span className="flex-1 text-red-600" role="alert">Could not load your tickets: {listError}</span>
+            <span className="flex-1 text-red-600" role="alert">Could not load your IT requests: {listError}</span>
             <Button variant="outline" size="sm" onClick={loadList}>Try again</Button>
           </CardContent>
         </Card>

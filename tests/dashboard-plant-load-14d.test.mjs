@@ -21,9 +21,9 @@ const OVERVIEW = read("src/api/routes/dashboard-overview.ts");
 const PLANNING = read("src/pages/planning/index.tsx");
 
 test("capacity window is 14 working days on the dashboard and Planning", () => {
-  assert.match(OVERVIEW, /const ROLLING_DAYS = windowOverride \?\? 14;/);
+  assert.match(OVERVIEW, /workingDaysBack\(rollingEnd, windowOverride \?\? 14, holidaySet, workedDays\)/);
   // Only a past month averages its own days; the current month is rolling.
-  assert.match(OVERVIEW, /if \(monthScope && isPastMonth && !windowOverride\) \{\n\s+windowDays = \[\];/);
+  assert.match(OVERVIEW, /monthScope && isPastMonth && !windowOverride\n\s+\? workingDaysInRange\(monthScope\.start, monthScope\.end, holidaySet, workedDays\)\n\s+: rollingDays;/);
   assert.match(PLANNING, /const ROLLING_WINDOW_DAYS = 14;/);
 });
 
@@ -101,16 +101,14 @@ test("the 7-day compare view reads and writes no stored copy", () => {
 // Compare view with a finished month: both windows end on the month's last
 // day, and the saved month-end backlog is divided again by each window.
 test("compare view on a past month uses windows ending at month end", () => {
-  assert.match(OVERVIEW, /windowOverride && isPastMonth && monthScope\n\s+\? new Date\(`\$\{monthScope\.lastDay\}T00:00:00`\)/);
-  assert.match(OVERVIEW, /if \(monthScope && isPastMonth && !windowOverride\) \{/);
+  assert.match(OVERVIEW, /windowOverride && isPastMonth && monthScope \? monthScope\.lastDay : yesterdayISOForWindows/);
   assert.match(OVERVIEW, /if \(windowOverride\) \{\n\s+const capByDept = new Map\(backlogByDept\.map/);
 });
 
 // Owner 2026-10-09: on a picked month the compare windows never reach into
 // the month before, and every divisor is the number of days actually counted.
 test("compare windows stay inside the picked month", () => {
-  assert.match(OVERVIEW, /const clipStart = windowOverride && monthScope \? monthScope\.start : null;/);
-  assert.match(OVERVIEW, /if \(clipStart && iso < clipStart\) break;/);
+  assert.match(OVERVIEW, /if \(windowOverride && monthScope\) rollingDays = rollingDays\.filter\(\(d\) => d >= monthScope\.start\);/);
   assert.match(OVERVIEW, /Math\.round\(windowTotal \/ \(rollingDays\.length \|\| 1\)\)/);
   assert.doesNotMatch(OVERVIEW, /\/ ROLLING_DAYS\)/);
 });

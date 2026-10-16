@@ -1,5 +1,6 @@
 # Dashboard & Command Center — Module Guide
 
+> **Last verified: 2026-10-16** (branch `chore/sync-staging-from-main-1016`, staging<-main merge): the Phone Department Revenue row came over from main, its `Home.tsx` anchor and the `/revenue-split` anchor (:2664) re-read on the merged tree. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/po-list-cache-staging`, to `staging`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/compare-fabric-purchasing-tab`): the dashboard-overview.ts line anchors re-derived after new imports moved the handler. Nothing else re-checked.
 
@@ -61,7 +62,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1628` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:248` | One line per production department |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2674` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2664` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| Phone Department Revenue | `src/pages/m/screens/Home.tsx:1848` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
 | `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:75` | Single ~2000-line aggregate handler |
 | `captureTodayState` | `src/api/routes/dashboard-overview.ts:111` | Extract + upsert today's state snapshot |
