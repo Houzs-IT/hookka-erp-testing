@@ -64,13 +64,30 @@ test("the MailSlurp path carries the same recipients and headers (staging only)"
   // which nests [[...]] now that `to` is string | string[] -- and dropped
   // cc / bcc / headers, so a staging test of copies tested nothing.
   const ms = fn(email, "sendEmailViaMailSlurp");
-  assert.match(ms, /to: toRecipientList\(args\.to\)/);
+  assert.match(ms, /const to = toRecipientList\(args\.to\)/);
   assert.doesNotMatch(ms, /to: \[args\.to\]/);
-  assert.match(ms, /\{ cc: args\.cc \}/);
-  assert.match(ms, /\{ bcc: args\.bcc \}/);
+  assert.match(ms, /cc\.length > 0 \? \{ cc \}/);
+  assert.match(ms, /bcc\.length > 0 \? \{ bcc \}/);
   assert.match(ms, /replyTo: args\.replyTo/);
   // Custom RFC headers ride customHeaders on this provider.
   assert.match(ms, /customHeaders: args\.headers/);
+});
+
+test("the MailSlurp free plan drops only threading headers, never recipients", () => {
+  // "one explicit To recipient and a plain-text or HTML body only. CC, BCC,
+  // ... custom sender/reply headers, attachments ... require a paid plan."
+  // Dropping a header costs cross-client threading; dropping a Cc, a Bcc or
+  // an attachment would deliver a mail that lies about who got it.
+  const ms = fn(email, "sendEmailViaMailSlurp");
+  assert.match(ms, /onlyHeadersToDrop/);
+  assert.match(ms, /to\.length === 1/);
+  assert.match(ms, /cc\.length === 0/);
+  assert.match(ms, /bcc\.length === 0/);
+  assert.match(ms, /attachmentIds\.length === 0/);
+  // The downgrade is reported, not swallowed.
+  assert.match(ms, /warning:/);
+  // Anything else still fails with the provider's own words.
+  assert.match(ms, /return \{ ok: false, error: `MailSlurp \$\{res\.status\}: \$\{body\}` \}/);
 });
 
 test("compose stamps a Message-ID and stores it on the message row", () => {
