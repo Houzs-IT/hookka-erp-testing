@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-296) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-294/295) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
 > re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
@@ -248,6 +249,11 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-16 — 🟡 Production order list: keep a salesperson's narrowed list out of the shared KV cache (branch `fix/po-list-cache-staging` → `staging`)
+
+1. 🟡 Confirm with evidence: code read, prod measured read-only (3 active SALES users; page use UNMEASURED). See BUG-2026-10-16-296.
+2. 🟡 Skip the KV read and write for scoped users, MISS write and stale refresh both (`production-orders.ts` GET /).
+3. 🟡 Regression test `tests/po-list-kv-scoped-user.test.mjs`; C22 row 4 flipped.
 ## 2026-10-16 — 🔵 /production poll: 304 when the order list is unchanged (branch `fix/po-list-cache-staging` → `staging`, BUG-2026-10-16-294/295)
 
 From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on the wire. Asks:

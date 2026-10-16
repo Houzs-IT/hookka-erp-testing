@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/fg-sticker-notes-wrap`, to `staging`; 292 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: entry BUG-2026-10-16-291 (branch
@@ -157,6 +158,23 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-296 — A salesperson's narrowed order list could be served to the whole factory from the KV cache `production` `customer-scope` `cache` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`). Found in passing on 2026-10-16 while adding the ETag (BUG-2026-10-16-294); not reported by a user.
+
+**Symptom (expected, not observed).** After a SALES user loads a page that lists production orders, other users on the same URL could see only the orders that salesperson may see, until the next write refreshes the entry or the cache expires (300 s for the full list, 60 s for a paged one).
+
+**Root cause.** `GET /api/production-orders` keeps two KV caches in front of the snapshot layer: `buildPoListBodyKey` (full list) and `buildPoListCacheKey` (paged list). Both keys are org + query string, with no user in them. For a customer-scoped user (`isCustomerScoped`, role SALES) the list is narrowed in SQL (`salesOrderScopeSql`), and `buildListPayload` already keeps that narrowed list out of the snapshot. The KV block did not: on a MISS, on the background stale refresh (`schedulePoListBodyRefresh`) and on a paged MISS, the narrowed body was written to the shared org entry. The other direction was not a leak: a scoped user served the shared body is still narrowed by `customerScopeMiddleware` on the way out. C22 (a cache key coarser than the handler it names), row 4.
+
+**Prod, measured read-only 2026-10-16.** 3 active SALES users (latest login 2026-10-07), none owning a customer. 7 customers are assigned to 2 salespeople in other roles, and all production orders come from those 7 customers, so a SALES user's narrowed list is 5 of 5,012 orders. **UNMEASURED:** whether any SALES user has actually loaded `/sales`, `/consignment` or `/warehouse` (`?fields=minimal&include=`) or the production pages since the KV body cache shipped. The database has no request log for it.
+
+**Fix.** The whole KV block is skipped for scoped users (`if (kvCache && !isCustomerScoped(c))`), so they neither read nor write either key and the stale refresh is never scheduled for them. They already computed live past the snapshot, and there are few of them.
+
+**Not changed.** The snapshot and middleware paths. The sticker-print `scope=` path already skipped both caches.
+
+**Regression.** `tests/po-list-kv-scoped-user.test.mjs` (source-level; fails on the old `if (kvCache) {`).
+
 
 ## BUG-2026-10-16-294 — /production re-downloaded the whole order list every 8 seconds `production` `performance` 🟡
 

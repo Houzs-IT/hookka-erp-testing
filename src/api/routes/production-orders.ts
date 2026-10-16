@@ -963,12 +963,12 @@ app.get("/", async (c) => {
   // Cache check. Non-paginated list: stable body key + version-in-metadata so
   // a version mismatch serves the previous body instantly (X-Cache: STALE)
   // and refreshes in the background — see the buildPoListBodyKey comment.
-  // Paginated path keeps the original versioned-key behaviour.
+  // Paginated path keeps the original versioned-key behaviour. Scoped users skip KV (keys carry no user, BUG-2026-10-16-296).
   const kvCache = c.env.SESSION_CACHE;
   let cacheKeyForWrite: string | null = null;
   let bodyKeyForWrite: string | null = null;
   let versionAtRead: string | null = null;
-  if (kvCache) {
+  if (kvCache && !isCustomerScoped(c)) {
     const version = await poListCacheVersion(c, orgId);
     versionAtRead = version;
     if (!paginate) {
