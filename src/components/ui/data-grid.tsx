@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-export";
 import { exportReportCsv, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
+import { decodeRange, inRange, parseAmount, rangeTerm, RANGE_MODE } from "@/lib/grid-layout";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -364,6 +365,10 @@ function compareValues(a: any, b: any): number {
 
 function matchesFilter(value: any, filter: string): boolean {
   if (!filter) return true;
+  // An amount column's "Number Filters" range (finance v2): "range:<lo>..<hi>"
+  // in the column's raw units, compared as numbers.
+  const range = decodeRange(filter);
+  if (range) return inRange(value, range);
   const s = String(value ?? "").toLowerCase();
 
   // Check for mode prefix (e.g. "equals:hello")
@@ -530,6 +535,32 @@ function ColumnFilterDropdown<T>({
     const m = textFilter.match(/^([a-z_]+):/);
     return m ? m[1] : "contains";
   });
+  // Amount columns: the second tab is a From / To range (finance v2 "PV
+  // table" rule). Typed in RM; a currency column is stored in sen, so the
+  // range is kept in sen too (×100) and shown back in RM.
+  const isNumCol = columnType === "currency" || columnType === "number";
+  const numScale = columnType === "currency" ? 100 : 1;
+  const [numLo, setNumLo] = useState(() => {
+    const r = decodeRange(textFilter);
+    return r && r.lo != null ? String(r.lo / numScale) : "";
+  });
+  const [numHi, setNumHi] = useState(() => {
+    const r = decodeRange(textFilter);
+    return r && r.hi != null ? String(r.hi / numScale) : "";
+  });
+  const [numErr, setNumErr] = useState(false);
+  const applyNumRange = () => {
+    const lo = parseAmount(numLo);
+    const hi = parseAmount(numHi);
+    if ((numLo.trim() !== "" && lo == null) || (numHi.trim() !== "" && hi == null)) {
+      setNumErr(true);
+      return;
+    }
+    if (lo == null && hi == null) { onApplyText("", "contains"); onClose(); return; }
+    const toRaw = (x: number | null) => (x == null ? null : Math.round(x * numScale));
+    onApplyText(rangeTerm(toRaw(lo), toRaw(hi)), RANGE_MODE);
+    onClose();
+  };
 
   // Compute unique values for this column. When the column defines a
   // filterAccessor, route through it so the dropdown shows human labels
@@ -938,7 +969,7 @@ function ColumnFilterDropdown<T>({
           )}
           onClick={() => setTab("text")}
         >
-          {isDateCol ? "Date Filters" : "Text Filters"}
+          {isDateCol ? "Date Filters" : isNumCol ? "Number Filters" : "Text Filters"}
         </button>
       </div>
 
@@ -1200,6 +1231,40 @@ function ColumnFilterDropdown<T>({
                 Apply
               </button>
             </div>
+          </div>
+        </div>
+      ) : isNumCol ? (
+        <div className="p-2 space-y-2">
+          {/* From / To range, either side optional; brackets or a minus for
+              negatives, commas allowed (parseAmount). */}
+          {([["From", numLo, setNumLo], ["To", numHi, setNumHi]] as const).map(([label, val, set]) => (
+            <label key={label} className="flex items-center gap-2 text-[11px] text-[#555]">
+              <span className="w-9 shrink-0">{label}</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="Any"
+                value={val}
+                onChange={e => { set(e.target.value); setNumErr(false); }}
+                onKeyDown={e => { if (e.key === "Enter") applyNumRange(); }}
+                className="w-full rounded border border-[#D0D0D0] bg-white py-1.5 px-2 text-right text-[11px] tabular-nums text-[#333] placeholder-[#AAA] focus:border-[#6B5C32] focus:outline-none"
+              />
+            </label>
+          ))}
+          {numErr && <p className="text-[10px] text-[#9A3A2D]">Enter a number, e.g. 1,234.50</p>}
+          <div className="flex items-center justify-between pt-1">
+            <button
+              className="rounded border border-[#D0D0D0] px-3 py-1 text-[11px] text-[#555] hover:bg-[#F0ECE9]"
+              onClick={() => { onApplyText("", "contains"); onClose(); }}
+            >
+              Clear
+            </button>
+            <button
+              className="rounded border border-[#6B5C32] bg-[#6B5C32] px-3 py-1 text-[11px] text-white hover:bg-[#4D4224]"
+              onClick={applyNumRange}
+            >
+              Apply
+            </button>
           </div>
         </div>
       ) : (
