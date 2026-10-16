@@ -1,5 +1,10 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) now carries BOTH halves
+> measured on staging — the note on a real confirm, and the positive take-from-stock
+> path (order ten, take four, build six) that this entry previously listed as
+> unmeasured. Also notes the availability read lagging a minute after a confirm,
+> which is the query cache and not a stale write (branch `docs/dev05-a9-live-verified`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-297 (branch `fix/production-poll-skip-inflight`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
@@ -335,6 +340,54 @@ a stale aggregate can only produce a wrong sentence, never a wrong allocation.
 `notes.length === 0` — they pinned the silence as correct. The suite now has a
 contention case (stock on hand, none available → the loser is told) and keeps a
 no-stock case asserting silence, so the two are no longer the same test.
+
+**MEASURED ON STAGING 2026-10-16**, after the merge, because until then this was
+proven only in tests — and a note nobody has watched appear is a claim, not a
+fix. A throwaway order for `1013-(Q)` (availability at the time: 4 on hand, 0
+available, all four allocated to SO-2609-395) was confirmed, and its
+`autoActions` read:
+
+```
+Created PO SO-2610-186-01
+No stock allocated for 1013-(Q) — all 4 on hand are already committed to other orders.
+```
+
+The `4` is counted live, so this also re-confirms the dual-keyed availability
+read of BUG-2026-09-29-219 on current code: a regression there would have put a
+0 in that sentence, or produced no sentence at all.
+
+The same confirm still raised one production order, which is the behaviour to
+keep: losing the stock does not quietly shrink what the customer gets. The test
+order and its production order were cancelled afterwards (14 job cards with
+them, 0 cost_ledger rows to reverse) and availability was re-read as unchanged —
+4 on hand, 0 available, the same four pieces still held by SO-2609-395 at
+RM 305.00 each. The check consumed no stock.
+
+**The positive path, MEASURED on staging the same day.** It had last been seen
+live BEFORE BUG-2026-09-29-219 (dual-key reads) and BUG-2026-09-29-220 (netting
+key) landed, so it was carried here as unmeasured until it was re-run. Four
+stock pieces were released to make them available, a throwaway order for TEN was
+confirmed, and its `autoActions` read:
+
+```
+Created PO SO-2610-187-01 ... -06
+Allocated 4 x 1013-(Q) from stock (6 to be produced)
+```
+
+Six fresh production orders, not ten; four stock orders changed hands; 4 + 6 =
+10 with nothing built twice. Released, cancelled and restored afterwards, so the
+stock figures ended where they started.
+
+**One thing that run exposed, and it is a UX trap rather than a bug.** Read
+immediately after the confirm, availability still said 4 available / 0 allocated
+while the four pieces had already moved. It settles on its own in a minute or
+two -- the Hyperdrive query cache, not a stale write -- but on a demo screen it
+reads as the feature having failed. Worth saying out loud before anyone clicks.
+
+With that and A7 (invoice `INV-2610-005`, SO-2609-395, RM 1,220.00 at the
+customer's price) measured the same day, every DEV-05 acceptance criterion has
+now been run on staging end to end. The fuller account is in WORK-TRACKER; this
+entry keeps only what bears on the bug it describes.
 
 ---
 
