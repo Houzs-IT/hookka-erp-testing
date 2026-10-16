@@ -657,12 +657,7 @@ export default function AccountingPage() {
           {tab === "tb" && <TrialBalanceTab />}
           {tab === "gl" && <GeneralLedgerTab accounts={accounts} />}
           {tab === "ar" && <ARTab arData={arData} onRefresh={fetchAll} />}
-          {tab === "ap" && (
-            <div className="space-y-4">
-              <ContraCard />
-              <APTab apData={apData} onRefresh={fetchAll} />
-            </div>
-          )}
+          {tab === "ap" && <APTab apData={apData} onRefresh={fetchAll} />}
           {tab === "supplier-discount" && <SupplierDiscountTab />}
           {tab === "odebtor" && <OtherPartiesTab side="DEBTOR" />}
           {tab === "odebtorbills" && <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />}
@@ -914,7 +909,7 @@ function ContraCard() {
             <p className="text-xs text-[#9CA3AF]">No APPROVED (unpaid) purchase invoices for this supplier.</p>
           ) : (
             <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-2 py-1.5 w-8" />
@@ -4001,34 +3996,26 @@ function JournalEntryForm({
 // Three numbers that must agree: the SDC control accounts in the ledger,
 // the invoice-derived outstanding (gross of SST), and the running
 // customers.outstandingSen counter. Drift badges make divergence loud.
-function ARControlPanel({ company = "" }: { company?: string }) {
-  const [data, setData] = useState<{
-    asOf: string;
-    controls: { code: string; name: string; balanceSen: number }[];
-    tradeControlSen: number;
-    invoiceOutstandingSen: number;
-    customerCounterSen: number;
-    driftControlVsInvoicesSen: number;
-    driftCounterVsInvoicesSen: number;
-  } | null>(null);
-  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
-  const [stmtCustomer, setStmtCustomer] = useState("");
-  const [stmtFrom, setStmtFrom] = useState("");
-  const [stmtTo, setStmtTo] = useState("");
-  const [stmt, setStmt] = useState<{
-    customer: { id: string; name: string; code: string };
-    openingSen: number;
-    closingSen: number;
-    rows: { date: string; ref: string; type: string; debitSen: number; creditSen: number; runningSen: number }[];
-  } | null>(null);
-
+// Finance v2 (2026-10-17): the three figures are Debtor Aging's KPI cards and
+// Recalculate counter sits on its title row (ARTab); the statement is its own card.
+type ArControlData = {
+  asOf: string;
+  controls: { code: string; name: string; balanceSen: number }[];
+  tradeControlSen: number;
+  invoiceOutstandingSen: number;
+  customerCounterSen: number;
+  driftControlVsInvoicesSen: number;
+  driftCounterVsInvoicesSen: number;
+};
+function useArControl(company: string) {
+  const [data, setData] = useState<ArControlData | null>(null);
   // Multi-company (Phase 2): scope the control reconciliation to the selected
   // company. Absent (group) → URL unchanged = today's consolidated numbers.
   const [ctlRev, setCtlRev] = useState(0);
   useEffect(() => {
     let stale = false;
     fetch(`/api/accounting/ar-control${company ? `?orgId=${encodeURIComponent(company)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: typeof data }>)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ArControlData }>)
       .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
       .catch(() => {});
     return () => { stale = true; };
@@ -4042,7 +4029,7 @@ function ARControlPanel({ company = "" }: { company?: string }) {
   const rebuildCounter = async () => {
     if (!(await ctlConfirm({
       title: "Recalculate customer counters?",
-      message: "Reset every customer's running counter to its invoice-derived outstanding (the same figure as the middle card). The old counter values are overwritten; the action is logged in the Audit Log.",
+      message: "Reset every customer's running counter to its invoice-derived outstanding (the same figure as the Outstanding from invoices card). The old counter values are overwritten; the action is logged in the Audit Log.",
       danger: false,
     }))) return;
     setRebuilding(true);
@@ -4059,6 +4046,30 @@ function ARControlPanel({ company = "" }: { company?: string }) {
       setRebuilding(false);
     }
   };
+  return { data, rebuilding, rebuildCounter };
+}
+
+// A control figure against the documents: green when they agree, red with
+// the gap when they do not.
+function controlDriftNote(n: number) {
+  return (
+    <span className={n === 0 ? "text-[#27500A]" : "font-semibold text-[#9A3A2D]"}>
+      {n === 0 ? "matches ✓" : `drift ${formatCurrency(n)}`}
+    </span>
+  );
+}
+
+function CustomerStatementCard() {
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
+  const [stmtCustomer, setStmtCustomer] = useState("");
+  const [stmtFrom, setStmtFrom] = useState("");
+  const [stmtTo, setStmtTo] = useState("");
+  const [stmt, setStmt] = useState<{
+    customer: { id: string; name: string; code: string };
+    openingSen: number;
+    closingSen: number;
+    rows: { date: string; ref: string; type: string; debitSen: number; creditSen: number; runningSen: number }[];
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/customers")
@@ -4102,116 +4113,84 @@ ${rows}
     w.print();
   };
 
-  const drift = (n: number) => (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${n === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
-      {n === 0 ? "matches ✓" : `drift ${formatCurrency(n)}`}
-    </span>
-  );
-
   return (
-    <div className="space-y-4 mb-2">
-      {data && (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Debtor control (ledger{data.controls.filter((x) => x.code !== "305-0000").map((x) => ` ${x.code}`).join(",")})</p>
-              <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(data.tradeControlSen)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Outstanding from invoices (gross)</p>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.invoiceOutstandingSen)}</p>
-              <div className="mt-1">{drift(data.driftControlVsInvoicesSen)}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-xs text-[#6B7280]">Customer running counter (outstandingSen)</p>
-                <Button variant="outline" size="sm" onClick={() => void rebuildCounter()} disabled={rebuilding} title="Reset every customer's counter to its invoice-derived outstanding (audited)">
-                  {rebuilding ? "Recalculating…" : "Recalculate"}
-                </Button>
-              </div>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.customerCounterSen)}</p>
-              <div className="mt-1">{drift(data.driftCounterVsInvoicesSen)}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs font-medium text-[#6B7280] mb-1 block">Customer statement</label>
-              <select
-                value={stmtCustomer}
-                onChange={(e) => { setStmtCustomer(e.target.value); setStmt(null); }}
-                className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-              >
-                <option value="">— select customer —</option>
-                {customers.map((c2) => (
-                  <option key={c2.id} value={c2.id}>{c2.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">From</label>
-              <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">To</label>
-              <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
-            {stmt && (
-              <Button variant="outline" size="sm" onClick={printStmt}>Print</Button>
-            )}
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Customer statement</label>
+            <select
+              value={stmtCustomer}
+              onChange={(e) => { setStmtCustomer(e.target.value); setStmt(null); }}
+              className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+            >
+              <option value="">— select customer —</option>
+              {customers.map((c2) => (
+                <option key={c2.id} value={c2.id}>{c2.name}</option>
+              ))}
+            </select>
           </div>
-          {stmtCustomer && !stmt && (
-            <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
-          )}
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">From</label>
+            <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">To</label>
+            <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
           {stmt && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 text-left">Ref</th>
-                    <th className="px-3 py-2 text-left">Type</th>
-                    <th className="px-3 py-2 text-right">Debit</th>
-                    <th className="px-3 py-2 text-right">Credit</th>
-                    <th className="px-3 py-2 text-right">Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                    <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
-                  </tr>
-                  {stmt.rows.map((r, i) => (
-                    <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="border-t border-[#1F1D1B] font-semibold">
-                    <td className="px-3 py-2" colSpan={5}>Closing balance</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <Button variant="outline" size="sm" onClick={printStmt}>Print</Button>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+        {stmtCustomer && !stmt && (
+          <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
+        )}
+        {stmt && (
+          <div className="overflow-x-auto">
+            <table data-fin-list className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Ref</th>
+                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-right">Debit</th>
+                  <th className="px-3 py-2 text-right">Credit</th>
+                  <th className="px-3 py-2 text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] text-[#6B7280]">
+                  <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
+                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
+                </tr>
+                {stmt.rows.map((r, i) => (
+                  <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
+                    <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
+                    <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-[#1F1D1B] font-semibold">
+                  <td className="px-3 py-2" colSpan={5}>Closing balance</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
+
+// The aging PDF's layout (Debtor and Creditor Aging): banded rows, the name and
+// document columns left-aligned, fixed widths.
+const AGING_PDF: PdfExportOpts = { rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } };
 
 function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   // Expandable detail (owner 2026-07-08): click a row to show every open
@@ -4255,33 +4234,59 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
     (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
     0
   );
+  const ctl = useArControl(company);
+
+  // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
+  // only (owner), from the same aging builder.
+  const asAt = todayYmdMY();
+  const fileBase = `debtor-aging-${asAt}${company ? `-${company}` : ""}`;
+  const buildAging = () => buildAgingExportAoa("Customer", rows.map((a) => ({
+    name: a.customerName, currentSen: a.currentSen, days30Sen: a.days30Sen,
+    days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
+  })));
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Debtor Aging (AR)", buildAging(), { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        void exportReportPdf(`${fileBase}.pdf`, "Debtor Aging (AR)", `As at ${asAt}${company ? ` · ${company}` : " · All companies"}`, buildAging(), { ...AGING_PDF, print: true });
+      },
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
-      </div>
-      <ARControlPanel company={company} />
-      <div className="flex justify-between items-center">
-        <div>
-          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#9C6F1E]">{formatCurrency(totalOutstanding)}</span></p>
-          <p className="text-xs text-[#9CA3AF]">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>.</p>
-        </div>
-        <ExportButtons
-          build={() => buildAgingExportAoa("Customer", rows.map((a) => ({
-            name: a.customerName, currentSen: a.currentSen, days30Sen: a.days30Sen,
-            days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
-          })))}
-          filenameBase={`debtor-aging-${new Date().toISOString().slice(0, 10)}${company ? `-${company}` : ""}`}
-          title="Debtor Aging (AR)" pdfOpts={{ rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } }} moneyFormat
-          subtitle={`As at ${new Date().toISOString().slice(0, 10)}${company ? ` · ${company}` : " · All companies"}`}
-        />
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
+          {ctl.data && (
+            <Button variant="outline" size="sm" onClick={() => void ctl.rebuildCounter()} disabled={ctl.rebuilding} title="Reset every customer's counter to its invoice-derived outstanding (audited)">
+              {ctl.rebuilding ? "Recalculating…" : "Recalculate counter"}
+            </Button>
+          )}
+          <DownloadMenu items={downloads} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <KpiCards
+        items={[
+          ...(ctl.data ? [
+            { label: `Debtor control · ${ctl.data.controls.filter((x) => x.code !== "305-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.data.tradeControlSen), tone: "info" as const, note: "per ledger" },
+            { label: "Outstanding from invoices", value: formatCurrency(ctl.data.invoiceOutstandingSen), note: <>gross · {controlDriftNote(ctl.data.driftControlVsInvoicesSen)}</> },
+            { label: "Customer running counter", value: formatCurrency(ctl.data.customerCounterSen), note: controlDriftNote(ctl.data.driftCounterVsInvoicesSen) },
+          ] : []),
+          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "warn" as const, note: "the aging below" },
+        ]}
+      />
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h3 className="text-[14px] font-semibold text-[#1F1D1B]">By debtor</h3>
+        <span className="text-[12px] text-[#6B7280]">{rows.length} customer{rows.length === 1 ? "" : "s"}</span>
+        <span className="ml-auto text-[12px] text-[#9CA3AF]">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>.</span>
       </div>
 
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
                   <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Customer</th>
@@ -4299,7 +4304,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                   const open = openAging.has(ar.customerId);
                   return (
                     <Fragment key={ar.customerId}>
-                    <tr className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
+                    <tr data-fin-nolift={open ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
                       <td className="py-3 px-4 font-medium text-[#1F1D1B]">
                         <button className="inline-flex items-center gap-1.5 text-left" onClick={() => toggleAging(ar.customerId)} title="Show the documents behind this balance">
                           {open ? <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
@@ -4314,7 +4319,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                       <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
                     </tr>
                     {open && (ar.docs ?? []).map((d, i) => (
-                      <tr key={`d-${i}`} className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+                      <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
                         <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
                         {[0, 1, 2, 3, 4].map((b) => (
                           <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
@@ -4325,7 +4330,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
                       </tr>
                     ))}
                     {open && !(ar.docs ?? []).length && (
-                      <tr className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+                      <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
                         <td colSpan={7} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
                       </tr>
                     )}
@@ -4348,6 +4353,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
           </div>
         </CardContent>
       </Card>
+      <CustomerStatementCard />
     </div>
   );
 }
@@ -4355,19 +4361,36 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
 // =============== TAB 5: ACCOUNTS PAYABLE ===============
 
 // Phase 2 (2026-06) — AP control reconciliation + supplier statement.
-// Mirror of ARControlPanel for the payable side. NOTE: the third "supplier
+// Mirror of the debtor side (useArControl) for the payable side. NOTE: the third "supplier
 // running counter (outstandingSen)" card was removed (2026-06-25) — suppliers
 // .outstandingSen is never maintained on PI approve/pay, so it only ever showed
 // a false drift. The real reconciliation is Creditor-control-ledger vs PI.
-function APControlPanel({ company = "" }: { company?: string }) {
-  const [data, setData] = useState<{
-    controls: { code: string; name: string; balanceSen: number }[];
-    tradeControlSen: number;
-    piOutstandingSen: number;
-    unappliedAdvanceSen?: number;
-    netOutstandingSen?: number;
-    driftControlVsPiSen: number;
-  } | null>(null);
+// Finance v2 (2026-10-17): the figures are Creditor Aging's KPI cards (APTab);
+// the statement is its own card.
+type ApControlData = {
+  controls: { code: string; name: string; balanceSen: number }[];
+  tradeControlSen: number;
+  piOutstandingSen: number;
+  unappliedAdvanceSen?: number;
+  netOutstandingSen?: number;
+  driftControlVsPiSen: number;
+};
+function useApControl(company: string) {
+  const [data, setData] = useState<ApControlData | null>(null);
+  // Multi-company (Phase 2): scope the creditor-control reconciliation to the
+  // selected company. Absent (group) → URL unchanged = consolidated numbers.
+  useEffect(() => {
+    let stale = false;
+    fetch(`/api/accounting/ap-control${company ? `?orgId=${encodeURIComponent(company)}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ApControlData }>)
+      .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [company]);
+  return data;
+}
+
+function SupplierStatementCard() {
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [stmtSupplier, setStmtSupplier] = useState("");
   const [stmtFrom, setStmtFrom] = useState("");
@@ -4378,16 +4401,7 @@ function APControlPanel({ company = "" }: { company?: string }) {
     closingSen: number;
     rows: { date: string; ref: string; type: string; debitSen: number; creditSen: number; runningSen: number }[];
   } | null>(null);
-  // Multi-company (Phase 2): scope the creditor-control reconciliation to the
-  // selected company. Absent (group) → URL unchanged = consolidated numbers.
-  useEffect(() => {
-    let stale = false;
-    fetch(`/api/accounting/ap-control${company ? `?orgId=${encodeURIComponent(company)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: typeof data }>)
-      .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
-      .catch(() => {});
-    return () => { stale = true; };
-  }, [company]);
+
   useEffect(() => {
     fetch("/api/suppliers")
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { id: string; name: string }[] }>)
@@ -4408,106 +4422,75 @@ function APControlPanel({ company = "" }: { company?: string }) {
     return () => { stale = true; };
   }, [stmtSupplier, stmtFrom, stmtTo]);
 
-  const drift = (n: number) => (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${n === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
-      {n === 0 ? "matches ✓" : `drift ${formatCurrency(n)}`}
-    </span>
-  );
-
   return (
-    <div className="space-y-4 mb-2">
-      {data && (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Creditor control (ledger{data.controls.filter((x) => x.code !== "405-0000").map((x) => ` ${x.code}`).join(",")})</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{formatCurrency(data.tradeControlSen)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Net owed to suppliers (bills − advances)</p>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.netOutstandingSen ?? data.piOutstandingSen)}</p>
-              <div className="mt-1 flex items-center gap-2 flex-wrap">
-                {drift(data.driftControlVsPiSen)}
-                {(data.unappliedAdvanceSen ?? 0) > 0 && (
-                  <span className="text-xs text-[#6B7280]">
-                    bills {formatCurrency(data.piOutstandingSen)} − un-knocked advances {formatCurrency(data.unappliedAdvanceSen ?? 0)}
-                  </span>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs font-medium text-[#6B7280] mb-1 block">Supplier statement</label>
-              <select
-                value={stmtSupplier}
-                onChange={(e) => { setStmtSupplier(e.target.value); setStmt(null); }}
-                className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-              >
-                <option value="">— select supplier —</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">From</label>
-              <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">To</label>
-              <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Supplier statement</label>
+            <select
+              value={stmtSupplier}
+              onChange={(e) => { setStmtSupplier(e.target.value); setStmt(null); }}
+              className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+            >
+              <option value="">— select supplier —</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </div>
-          {stmtSupplier && !stmt && (
-            <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
-          )}
-          {stmt && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 text-left">Ref</th>
-                    <th className="px-3 py-2 text-left">Type</th>
-                    <th className="px-3 py-2 text-right">Debit</th>
-                    <th className="px-3 py-2 text-right">Credit</th>
-                    <th className="px-3 py-2 text-right">Owing</th>
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">From</label>
+            <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">To</label>
+            <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
+        </div>
+        {stmtSupplier && !stmt && (
+          <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
+        )}
+        {stmt && (
+          <div className="overflow-x-auto">
+            <table data-fin-list className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Ref</th>
+                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-right">Debit</th>
+                  <th className="px-3 py-2 text-right">Credit</th>
+                  <th className="px-3 py-2 text-right">Owing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] text-[#6B7280]">
+                  <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
+                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
+                </tr>
+                {stmt.rows.map((r, i) => (
+                  <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
+                    <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
+                    <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                    <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
-                  </tr>
-                  {stmt.rows.map((r, i) => (
-                    <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="border-t border-[#1F1D1B] font-semibold">
-                    <td className="px-3 py-2" colSpan={5}>Closing balance</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-[#1F1D1B] font-semibold">
+                  <td className="px-3 py-2" colSpan={5}>Closing balance</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -5106,35 +5089,62 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
     0
   );
 
+  const ctl = useApControl(company);
+
+  // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
+  // only (owner), from the same aging builder.
+  const asAt = todayYmdMY();
+  const fileBase = `creditor-aging-${asAt}${company ? `-${company}` : ""}`;
+  const buildAging = () => buildAgingExportAoa("Supplier", rows.map((a) => ({
+    name: a.supplierName, currentSen: a.currentSen, days30Sen: a.days30Sen,
+    days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
+  })));
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Creditor Aging (AP)", buildAging(), { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        void exportReportPdf(`${fileBase}.pdf`, "Creditor Aging (AP)", `As at ${asAt}${company ? ` · ${company}` : " · All companies"}`, buildAging(), { ...AGING_PDF, print: true });
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
-      </div>
-      <APControlPanel company={company} />
-      {/* Trade finance (owner 2026-08-11): its own section — owed to a LENDER
-          for bills it paid on our behalf, never mixed into trade creditors. */}
-      <TradeFinanceBlock />
-      <div className="flex justify-between items-center">
-        <div>
-          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#3E6570]">{formatCurrency(totalOutstanding)}</span></p>
-          <p className="text-xs text-[#9CA3AF]">Read-only. Pay a supplier bill on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>.</p>
-        </div>
-        <ExportButtons
-          build={() => buildAgingExportAoa("Supplier", rows.map((a) => ({
-            name: a.supplierName, currentSen: a.currentSen, days30Sen: a.days30Sen,
-            days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
-          })))}
-          filenameBase={`creditor-aging-${new Date().toISOString().slice(0, 10)}${company ? `-${company}` : ""}`}
-          title="Creditor Aging (AP)" pdfOpts={{ rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } }} moneyFormat
-          subtitle={`As at ${new Date().toISOString().slice(0, 10)}${company ? ` · ${company}` : " · All companies"}`}
-        />
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
+          <DownloadMenu items={downloads} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <KpiCards
+        items={[
+          ...(ctl ? [
+            { label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.tradeControlSen), tone: "err" as const, note: "per ledger" },
+            {
+              label: "Net owed to suppliers",
+              value: formatCurrency(ctl.netOutstandingSen ?? ctl.piOutstandingSen),
+              note: (
+                <>
+                  {(ctl.unappliedAdvanceSen ?? 0) > 0 && <>bills {formatCurrency(ctl.piOutstandingSen)} − un-knocked advances {formatCurrency(ctl.unappliedAdvanceSen ?? 0)} · </>}
+                  {controlDriftNote(ctl.driftControlVsPiSen)}
+                </>
+              ),
+            },
+          ] : []),
+          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "info" as const, note: "the aging below" },
+        ]}
+      />
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h3 className="text-[14px] font-semibold text-[#1F1D1B]">By creditor</h3>
+        <span className="text-[12px] text-[#6B7280]">{rows.length} supplier{rows.length === 1 ? "" : "s"}</span>
+        <span className="ml-auto text-[12px] text-[#9CA3AF]">Read-only. Pay a supplier bill on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>.</span>
       </div>
 
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
                   <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Supplier</th>
@@ -5152,7 +5162,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                   const open = openAging.has(ap.supplierId);
                   return (
                     <Fragment key={ap.supplierId}>
-                    <tr className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
+                    <tr data-fin-nolift={open ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
                       <td className="py-3 px-4 font-medium text-[#1F1D1B]">
                         <button className="inline-flex items-center gap-1.5 text-left" onClick={() => toggleAging(ap.supplierId)} title="Show the documents behind this balance">
                           {open ? <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
@@ -5167,7 +5177,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                       <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
                     </tr>
                     {open && (ap.docs ?? []).map((d, i) => (
-                      <tr key={`d-${i}`} className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+                      <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
                         <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
                         {[0, 1, 2, 3, 4].map((b) => (
                           <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
@@ -5178,7 +5188,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
                       </tr>
                     ))}
                     {open && !(ap.docs ?? []).length && (
-                      <tr className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+                      <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
                         <td colSpan={7} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
                       </tr>
                     )}
@@ -5201,6 +5211,11 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           </div>
         </CardContent>
       </Card>
+      {/* Trade finance (owner 2026-08-11): its own section — owed to a LENDER
+          for bills it paid on our behalf, never mixed into trade creditors. */}
+      <TradeFinanceBlock />
+      <ContraCard />
+      <SupplierStatementCard />
     </div>
   );
 }
