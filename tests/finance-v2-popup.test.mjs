@@ -35,3 +35,14 @@ test("the design's frame: overlay, 14px corners, deep shadow, white header and a
 test("field labels: small uppercase", () => {
   assert.match(field, /text-\[11px\] font-semibold uppercase tracking-wide text-\[#6B7280\]/);
 });
+
+test("dates in the popups and on the cash position read the v2 way (15 Oct 2026)", () => {
+  const dateFields = [...ui.matchAll(/<DetailField label="([^"]*[Dd]ate[^"]*)">([^\n]*?)<\/DetailField>/g)];
+  assert.ok(dateFields.length >= 7, "the popups' date fields were found");
+  for (const [, label, body] of dateFields) {
+    assert.match(body, /fmtDocDate\(/, `${label}: ${body}`);
+  }
+  const cash = ui.slice(ui.indexOf("function DailyCashTab("), ui.indexOf("\nfunction ", ui.indexOf("function DailyCashTab(") + 10));
+  assert.match(cash, /whitespace-nowrap">\{fmtDocDate\(p\.day\)\}<\/td>/, "screen");
+  assert.match(cash, /<tr><td>\$\{fmtDocDate\(p\.day\)\}<\/td>/, "print");
+});

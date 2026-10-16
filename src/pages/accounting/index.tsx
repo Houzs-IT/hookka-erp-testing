@@ -7661,7 +7661,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <DetailField label="Creditor" span={2}>{b.partyName || "—"}</DetailField>
-              <DetailField label="Bill date">{b.billDate}</DetailField>
+              <DetailField label="Bill date">{fmtDocDate(b.billDate) || "—"}</DetailField>
               <DetailField label="Reference">{b.referenceNo || "—"}</DetailField>
               <DetailField label="Description" span={4}>{b.description || "—"}</DetailField>
               <DetailField label="Total"><span className="tabular-nums">{formatCurrency(b.totalSen)}</span></DetailField>
@@ -11560,7 +11560,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   ? <DetailField label="Transfer to" span={2}>{r.lines[0] ? accountLabel(accounts, r.lines[0].accountCode) : "—"}</DetailField>
                   : <DetailField label={r.pvKind === "AP" ? (r.partyKind === "OTHER" ? "Other creditor" : "Supplier") : "Payee"} span={2}>{r.payee || "—"}</DetailField>}
                 <DetailField label="PV #">{r.pvNo.startsWith("DRAFT-") ? "(assigned at Check)" : r.pvNo}</DetailField>
-                <DetailField label="Voucher date">{r.date}</DetailField>
+                <DetailField label="Voucher date">{fmtDocDate(r.date)}</DetailField>
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
                 <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
                 <DetailField label="Kind">{r.pvKind === "AP" ? "AP payment" : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
@@ -11568,7 +11568,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
                   <>
                     <DetailField label="Bill no.">{(r.billNo ?? r.bill_no) || "—"}</DetailField>
-                    <DetailField label="Bill date">{String((r.billDate ?? r.bill_date) ?? "").slice(0, 10) || "—"}</DetailField>
+                    <DetailField label="Bill date">{fmtDocDate(r.billDate ?? r.bill_date) || "—"}</DetailField>
                   </>
                 )}
                 <DetailField label="Notes (internal)" span={r.pvKind !== "AP" && r.pvKind !== "TRANSFER" ? 2 : 4}>{r.notes || "—"}</DetailField>
@@ -11644,7 +11644,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </>}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <DetailField label="Date">{g.date}</DetailField>
+              <DetailField label="Date">{fmtDocDate(g.date)}</DetailField>
               <DetailField label={g.sp ? "Supplier" : g.ft ? "Transfer" : "Other creditor"} span={2}>{g.payee || "—"}</DetailField>
               <DetailField label="Paid from">{g.via ? accountLabel(accounts, g.via) : <span title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</DetailField>
               <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.ocp?.reference) || "—"}</DetailField>
@@ -12154,7 +12154,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </>}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <DetailField label="Date">{r.date}</DetailField>
+              <DetailField label="Date">{fmtDocDate(r.date)}</DetailField>
               <DetailField label="From" span={2}>{r.from || "—"}</DetailField>
               <DetailField label={r.cust ? "Method" : "Deposit to"}>{r.via ? (r.cust ? r.via : accountLabel(accounts, r.via)) : "—"}</DetailField>
               <DetailField label="Note" span={3}>{r.note || "—"}</DetailField>
@@ -12235,7 +12235,7 @@ function FtDescriptionEditor({ ft, onClose, onSaved }: { ft: FtRow; onClose: () 
         </div>
         <div className="p-5 space-y-4 text-sm">
           <div className="grid grid-cols-2 gap-3">
-            <DetailField label="Date">{ft.date}</DetailField>
+            <DetailField label="Date">{fmtDocDate(ft.date)}</DetailField>
             <DetailField label="Amount"><span className="tabular-nums">{formatCurrency(ft.amountSen)}</span></DetailField>
             <DetailField label="From" span={2}>{ft.fromAccount} · {ft.fromName}</DetailField>
             <DetailField label="To" span={2}>{ft.toAccount} · {ft.toName}</DetailField>
@@ -12531,7 +12531,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </>}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <DetailField label="Date">{r.date}</DetailField>
+              <DetailField label="Date">{fmtDocDate(r.date)}</DetailField>
               <DetailField label="Amount"><span className="tabular-nums">{formatCurrency(r.amountSen)}</span></DetailField>
               <DetailField label="From" span={2}>{r.fromAccount} · {r.fromName}</DetailField>
               <DetailField label="To" span={2}>{r.toAccount} · {r.toName}</DetailField>
@@ -13666,7 +13666,7 @@ function DailyCashTab() {
           y += line;
           for (const p of rows) {
             ctx.fillStyle = "#6B7280";
-            ctx.fillText(p.day, 28, y + 12);
+            ctx.fillText(fmtDocDate(p.day), 28, y + 12);
             ctx.fillStyle = "#1F1D1B";
             ctx.fillText(trunc(p.sourceId, 110), 110, y + 12);
             ctx.fillText(trunc(p.description, W - 230 - 260), 230, y + 12);
@@ -13739,7 +13739,7 @@ function DailyCashTab() {
     const acctBlock = (a: CashPosAccount) => `
       <h2>${a.code} ${esc(a.name)} — Bank balance (est.) <b>${formatCurrency(a.bankEstSen)}</b>${a.reconciled ? "" : " (book only)"}</h2>
       ${a.pending.filter((p) => !p.ticked).length ? `<table><thead><tr><th>Date</th><th>PV No.</th><th>Description</th><th class="r">Received</th><th class="r">Pending payment</th></tr></thead><tbody>${pendingReceiptsFirst(a.pending.filter((p) => !p.ticked))
-        .map((p) => `<tr><td>${p.day}</td><td>${esc(p.sourceId)}</td><td>${esc(p.description)}</td><td class="r">${p.amountSen > 0 ? formatCurrency(p.amountSen) : ""}</td><td class="r">${p.amountSen < 0 ? formatCurrency(-p.amountSen) : ""}</td></tr>`)
+        .map((p) => `<tr><td>${fmtDocDate(p.day)}</td><td>${esc(p.sourceId)}</td><td>${esc(p.description)}</td><td class="r">${p.amountSen > 0 ? formatCurrency(p.amountSen) : ""}</td><td class="r">${p.amountSen < 0 ? formatCurrency(-p.amountSen) : ""}</td></tr>`)
         .join("")}</tbody></table>` : ""}
       ${a.oldPendingCount > 0 ? `<p>Older reconciliation items: ${a.oldPendingCount} · ${formatCurrency(a.oldPendingSen)}</p>` : ""}
       <p class="avail">Available (after pending): <b>${formatCurrency(a.availableSen)}</b></p>`;
@@ -13853,7 +13853,7 @@ function DailyCashTab() {
                           title={p.ticked ? "Untick — it has NOT gone through after all" : "Tick — my banking app shows this went through"}
                         />
                       </td>
-                      <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{p.day}</td>
+                      <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{fmtDocDate(p.day)}</td>
                       <td className="px-3 py-1 text-xs whitespace-nowrap">{p.sourceId}</td>
                       <td className="px-3 py-1 text-xs w-full max-w-0"><div className="truncate" title={p.description}>{p.description}</div></td>
                       <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap text-[#27500A]">{tdInC(p.amountSen)}</td>
