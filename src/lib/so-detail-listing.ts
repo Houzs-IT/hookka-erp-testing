@@ -34,6 +34,8 @@ export type DetailItem = {
   legHeightInches?: number | null;
   specialOrder?: string | null;
   unitPriceSen?: number | null;
+  /** Per-line discount (migration 0179); Line Total is net of it. */
+  discountSen?: number | null;
   lineTotalSen?: number | null;
 };
 export type DetailOrder = {
@@ -110,7 +112,7 @@ export function buildSoDetailListingAoa(orders: DetailOrder[], opts: DetailListi
             qty: Number(it.quantity) || 0,
             uom: uomFor(it.itemCategory),
             unitPriceSen: it.unitPriceSen ?? 0,
-            discountSen: null, // SO lines carry no discount
+            discountSen: it.discountSen ?? 0,
             lineTotalSen: it.lineTotalSen ?? 0,
           },
           false,
@@ -139,7 +141,7 @@ export function buildSoDetailListingAoa(orders: DetailOrder[], opts: DetailListi
         detailDescription2(it), // Detail Description 2
         Number(it.quantity) || 0, // Qty
         rm(it.unitPriceSen), // Unit Price
-        "", // Discount
+        rm(it.discountSen), // Discount
         "", // Detail Tax Code
         rm(it.lineTotalSen), // Total
         0, // Tax

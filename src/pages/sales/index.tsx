@@ -16,7 +16,7 @@ import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { getPrimarySoCategory } from "@/lib/so-category";
 import { matchesCompanyFilter } from "@/lib/company-dimension";
 import { narrowToIds, validPeriod } from "@/lib/kpi-drill";
-import { Plus, ShoppingCart, Download, Filter, X, Eye, Pencil, Printer, Truck, FileText, ClipboardList, RefreshCw, Package, CheckCircle, ScanLine, DollarSign, Building2, Trash2 } from "lucide-react";
+import { Plus, ShoppingCart, Download, Filter, X, Eye, Pencil, Printer, Truck, FileText, ClipboardList, RefreshCw, Package, CheckCircle, ScanLine, DollarSign, Building2, Trash2, Upload } from "lucide-react";
 // Note: generateSOPdf is dynamic-imported at the click handler so the
 // 1MB jspdf vendor chunk only ships when the user actually prints a SO.
 import { ScanPOModal } from "@/components/scan-po-modal";
@@ -32,6 +32,7 @@ import type { SalesOrder } from "@/types";
 import type { Customer, DeliveryOrder } from "@/types";
 import { fetchJson } from "@/lib/fetch-json";
 import { fetchAllPages } from "@/lib/fetch-all-pages";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import { mutationWithData } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
@@ -442,6 +443,7 @@ export default function SalesPage() {
   // Tab + filter state lives in the URL so refresh, back/forward, and
   // shared links all land the user on exactly the view they had open.
   const [scanPOOpen, setScanPOOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Transfer to DO / Invoice states
   const [transferDORow, setTransferDORow] = useState<SalesOrder | null>(null);
@@ -1248,6 +1250,12 @@ export default function SalesPage() {
           {!isServiceOrderMode && (
             <Button variant="outline" onClick={() => setScanPOOpen(true)}>
               <ScanLine className="h-4 w-4" /> Scan PO
+            </Button>
+          )}
+          {/* Import creates sales orders only — never a service order. */}
+          {!isServiceOrderMode && (
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4" /> Import
             </Button>
           )}
           <Button variant="primary" onClick={() => navigate(`${basePath}/create`)}>
@@ -2082,6 +2090,14 @@ export default function SalesPage() {
           </div>
         </div>
       )}
+      <DocImportDialog
+        docType="so"
+        title="Import sales orders from a Detail Listing"
+        hint="Edit: Qty / Discount on existing lines, or add a line with a blank Line ID (Item Code + Qty). Create: blank Doc No. (or NEW-1, NEW-2 …), Party Code = customer code, one row per line with Item Code + Qty."
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onApplied={() => fetchAll()}
+      />
       {/* Scan PO Modal */}
       <ScanPOModal
         open={scanPOOpen}
