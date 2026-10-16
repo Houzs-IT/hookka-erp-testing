@@ -157,6 +157,33 @@ export function countElapsedWorkingDays(
 }
 
 /**
+ * Working days after a resigned worker's last day (`employmentEndDay`) with no
+ * logged hours. These dock immediately, without waiting for the absence cutoff
+ * to reach them: the person has left, so nothing is still to be keyed. Days the
+ * cutoff already covers are skipped (the normal walk counts them).
+ */
+function postEmploymentAbsentDates(
+  year: number,
+  month: number,
+  employmentEndDay: number | undefined,
+  throughDay: number,
+  hoursByDate: Map<string, number>,
+  holidaySet: Set<string>,
+): string[] {
+  if (employmentEndDay === undefined) return [];
+  const lastDay = new Date(year, month, 0).getDate();
+  const mm = String(month).padStart(2, "0");
+  const out: string[] = [];
+  for (let d = Math.max(throughDay, employmentEndDay) + 1; d <= lastDay; d++) {
+    if (!WORKING_DOW.has(new Date(year, month - 1, d).getDay())) continue;
+    const iso = `${year}-${mm}-${String(d).padStart(2, "0")}`;
+    if (holidaySet.has(iso)) continue;
+    if ((hoursByDate.get(iso) ?? 0) <= 0) out.push(iso);
+  }
+  return out;
+}
+
+/**
  * The day-of-month through which absences should be COUNTED for the given
  * period, after applying a data-entry grace.
  *
@@ -288,7 +315,7 @@ export type AttendanceDayDetailInput = {
   absenceThroughDay: number;
   /** Back-compat only (UNIFIED ÷26) — accepted, no longer narrows the walk. */
   employmentStartDay?: number;
-  /** Back-compat only (UNIFIED ÷26) — accepted, no longer narrows the walk. */
+  /** Last day employed (resignation day): later working days list as absent at once. */
   employmentEndDay?: number;
 };
 
@@ -345,7 +372,7 @@ export function computeAttendanceDayDetail(
   // there is no employment window any more — days before a mid-month join or
   // after a resignation simply count (and dock) as absences, exactly like the
   // pay maths in computeMonthlyLabor. (employmentStartDay/EndDay are accepted
-  // for back-compat but no longer narrow the walk.)
+  // for back-compat; EndDay adds the post-resignation days right away.)
   const monthLastDay = new Date(year, month, 0).getDate();
   const startDay = 1;
   const throughDay = Math.min(absenceThroughDay, monthLastDay);
@@ -358,6 +385,9 @@ export function computeAttendanceDayDetail(
     if (holidaySet.has(iso)) continue; // public holiday — not a workday
     if ((hoursByDate.get(iso) ?? 0) <= 0) absentDates.push(iso);
   }
+  absentDates.push(
+    ...postEmploymentAbsentDates(year, month, input.employmentEndDay, throughDay, hoursByDate, holidaySet),
+  );
 
   return { absentDates, otDays };
 }
@@ -456,8 +486,8 @@ export type MonthlyLaborInput = {
   absenceThroughDay: number;
   /**
    * Last day-of-month the worker was employed (their resignation date's day),
-   * INCLUSIVE. Days after this are neither worked nor absent — the person has
-   * left. Omit (undefined) for everyone still employed: they are treated as
+   * INCLUSIVE. Working days after this dock as absences straight away, without
+   * waiting for the absence cutoff. Omit (undefined) for everyone still employed: they are treated as
    * employed for the whole month.
    */
   employmentEndDay?: number;
@@ -764,7 +794,8 @@ export function computeMonthlyLabor(
   // it. Owner 2026-08-02: 「我们的算法就是根据你的日薪去计算。」
   const absentDays = isDailyPaid
     ? 0
-    : Math.max(0, elapsedWorkingDays - workedWithinWindow);
+    : Math.max(0, elapsedWorkingDays - workedWithinWindow) +
+      postEmploymentAbsentDates(year, month, input.employmentEndDay, throughDay, hoursByDate, holidaySet).length;
   // Absence docks the ÷26 contractual day rate (RM78.85 on RM2,050) — the
   // same divisor as OT. The ÷26-vs-÷working-days difference per absent day is
   // bridged on the Labor Cost screen (the absence-leniency line).
