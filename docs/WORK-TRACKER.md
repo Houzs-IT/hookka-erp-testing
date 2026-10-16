@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/staging-duplicate-import`, to `staging` (staging build fix) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/wip-save-confirm-cards`, to `staging` (confirm pop-up listing affected job cards before a WIP time save) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `chore/sync-staging-from-main-1016` (staging<-main sync) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/wip-save-one-transaction`, to `staging`: the WIP time auto-sync entry below got its one-transaction hardening (its entry is the newest).
@@ -7770,3 +7771,10 @@ that will change, in detail, before anything is saved.
 Built on branch `feat/wip-save-confirm-cards` (to `staging`): `dryRun` preview in `saveBomAndSyncCards`,
 `src/pages/production/job-card-changes.tsx`. Checked locally on the real page with stubbed
 responses (confirm, cancel, no-change, 320px). **Not yet verified on staging.**
+
+## 2026-10-16 — Staging build broken by a duplicate import
+
+Every staging deploy failed from #916 (the staging-from-main sync, 09:35) on: `usePermissions`
+imported twice in `src/pages/production/index.tsx` (lines 2 and 7, one from each side of the
+merge). `main` has it once and deploys fine. Fix: drop the second import (branch
+`fix/staging-duplicate-import`); `npx vite build` passes locally.
