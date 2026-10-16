@@ -104,8 +104,10 @@ function makeCallRoute(c: Context<Env>, db: Db): ImportCtx["callRoute"] {
       await next();
     });
     wrap.route("/x", app);
+    // A sub-app's "/" mounts at "/x", not "/x/" (Hono is strict about the
+    // trailing slash), so POST "/" must not become "/x/" — that 404s.
     const res = await wrap.request(
-      `/x${path}`,
+      `/x${path.replace(/^\/(?=\?|$)/, "")}`,
       {
         method,
         headers: { "content-type": "application/json" },
