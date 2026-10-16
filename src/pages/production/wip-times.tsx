@@ -61,11 +61,11 @@ type WipTimeResponse = {
 // Saving a time also updates the unfinished job cards on the server; this is
 // what each save response says about them.
 type CardSync = {
-  jobCards?: { updated: number; leftAlone: number; skipped: number };
+  jobCards?: { updated: number; leftAlone: number; skipped: number; outOfDate?: number };
   jobCardsError?: string;
 };
 const OPEN_CARDS_NOTE =
-  "Unfinished job cards (waiting, in progress, paused or blocked) for these products also get the new time. Finished cards keep theirs.";
+  "Unfinished job cards (waiting, in progress, paused or blocked) still at the old time also get the new time. Finished cards, and cards that already had a different time, keep theirs.";
 
 function cardsNoticeFrom(results: CardSync[]): { text: string; error?: boolean } | null {
   const err = results.find((r) => r.jobCardsError)?.jobCardsError;
@@ -75,10 +75,14 @@ function cardsNoticeFrom(results: CardSync[]): { text: string; error?: boolean }
   if (!results.some((r) => r.jobCards)) return null;
   const updated = results.reduce((s, r) => s + (r.jobCards?.updated ?? 0), 0);
   const skipped = results.reduce((s, r) => s + (r.jobCards?.skipped ?? 0), 0);
+  const outOfDate = results.reduce((s, r) => s + (r.jobCards?.outOfDate ?? 0), 0);
   let text =
     updated === 0
       ? "Saved. No unfinished job cards needed a change."
       : `Saved. ${updated} unfinished job card${updated === 1 ? " now uses" : "s now use"} the new time.`;
+  if (outOfDate > 0) {
+    text += ` ${outOfDate} card${outOfDate === 1 ? " already had" : "s already had"} a different time from the old BOM and ${outOfDate === 1 ? "was" : "were"} left as ${outOfDate === 1 ? "it was" : "they were"}.`;
+  }
   if (skipped > 0) {
     text += ` ${skipped} card${skipped === 1 ? " keeps its" : "s keep their"} old time because ${skipped === 1 ? "it" : "they"} can't be recalculated automatically (a blank BOM step, sofa fabric cutting shared by several lines, or a step no longer in the BOM).`;
   }

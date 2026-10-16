@@ -1,5 +1,6 @@
 // Saving a WIP time on WIP Production Times also updates the unfinished job
-// cards of the changed products in that department (syncOpenCardsToBom).
+// cards of the changed products in that department (syncOpenCardsToBom), but
+// only cards still at the time the BOM had before the save.
 // Finished cards are never selected, a blank BOM step never zeroes a card,
 // every write is guarded on still-open + still-at-the-old-minutes, and only
 // real changes are audited. A sync failure is reported, not hidden, and never
@@ -166,7 +167,7 @@ test("TC-07 saving a time updates the unfinished cards and audits each one", asy
   const { status, body } = await call(f.db, "PUT", "/", SAVE);
   assert.equal(status, 200);
   assert.equal(body.updatedBomCount, 1);
-  assert.deepEqual(body.jobCards, { updated: 2, leftAlone: 0, skipped: 0 });
+  assert.deepEqual(body.jobCards, { updated: 2, leftAlone: 0, skipped: 0, outOfDate: 0 });
   assert.equal(cards.find((c) => c.jcId === "waiting").oldMinutes, 12);
   assert.equal(cards.find((c) => c.jcId === "started").oldMinutes, 12);
   assert.equal(cards.find((c) => c.jcId === "done").oldMinutes, 10, "a finished card keeps its minutes");
@@ -186,7 +187,7 @@ test("TC-08 the sync reads the just-saved BOM and the cards around the cache", a
 test("TC-09 a card finished between the read and the write is left alone and not audited", async () => {
   const f = makeDb([card("waiting"), card("raced")], { raceIds: ["raced"] });
   const { body } = await call(f.db, "PUT", "/", SAVE);
-  assert.deepEqual(body.jobCards, { updated: 1, leftAlone: 1, skipped: 0 });
+  assert.deepEqual(body.jobCards, { updated: 1, leftAlone: 1, skipped: 0, outOfDate: 0 });
   assert.equal(f.log.audits.length, 1);
   for (const u of f.log.updates) {
     assert.match(u.sql, /status IN \('WAITING','IN_PROGRESS','PAUSED','BLOCKED'\)/);
@@ -212,6 +213,28 @@ test("TC-11 Excel import: a dry run leaves cards alone, a real import updates th
   assert.equal(dry.body.jobCards, undefined);
   assert.equal(cards[0].oldMinutes, 10);
   const live = await call(f.db, "POST", "/bulk-import", { items, dryRun: false });
-  assert.deepEqual(live.body.jobCards, { updated: 1, leftAlone: 0, skipped: 0 });
+  assert.deepEqual(live.body.jobCards, { updated: 1, leftAlone: 0, skipped: 0, outOfDate: 0 });
   assert.equal(cards[0].oldMinutes, 12);
+});
+
+test("TC-12 a card that was already out of date keeps its time", async () => {
+  // BOM was 10 before the save; this card was at 8, so it is not following the BOM.
+  const cards = [card("follows"), card("drifted", { oldMinutes: 8 }), card("drifted-started", { status: "IN_PROGRESS", oldMinutes: 15 })];
+  const f = makeDb(cards);
+  const { body } = await call(f.db, "PUT", "/", SAVE);
+  assert.deepEqual(body.jobCards, { updated: 1, leftAlone: 0, skipped: 0, outOfDate: 2 });
+  assert.equal(cards[0].oldMinutes, 12);
+  assert.equal(cards[1].oldMinutes, 8, "an out-of-date card is not moved");
+  assert.equal(cards[2].oldMinutes, 15);
+  assert.equal(f.log.updates.length, 1, "no UPDATE is even attempted for out-of-date cards");
+  assert.equal(f.log.audits.length, 1);
+});
+
+test("TC-13 Excel import also leaves out-of-date cards alone", async () => {
+  const cards = [card("follows"), card("drifted", { oldMinutes: 8 })];
+  const f = makeDb(cards);
+  const items = [{ wipLabel: "SQUARE PILLOW", deptCode: "FAB_SEW", minutes: 12 }];
+  const { body } = await call(f.db, "POST", "/bulk-import", { items, dryRun: false });
+  assert.deepEqual(body.jobCards, { updated: 1, leftAlone: 0, skipped: 0, outOfDate: 1 });
+  assert.equal(cards[1].oldMinutes, 8);
 });

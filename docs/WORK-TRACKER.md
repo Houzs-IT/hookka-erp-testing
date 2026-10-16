@@ -7356,3 +7356,7 @@ Built on branch `feat/wip-times-auto-sync-jobcards` (to `staging`): `syncOpenCar
 `jobcard-sync.ts`, called from `PUT /api/wip-times` and `POST /api/wip-times/bulk-import`. The
 button, `sync-open-jobcards-dialog.tsx` and `/refresh-open-minutes` are gone. Tests:
 `tests/refresh-open-minutes.test.mjs`. **Not yet verified on staging.**
+
+**Changed the same day (owner):** only cards still at the time the BOM had before the save
+move. Cards that were already out of date (1,095 on staging) stay as they are; the banner
+counts them.

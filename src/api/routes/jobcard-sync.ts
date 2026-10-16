@@ -550,6 +550,11 @@ app.post("/fill-zero-minutes", async (c) => {
 // edit, multi-row edit, Excel import), give the unfinished job cards of the
 // changed products in that department the BOM's current minutes.
 //
+// Only a card still at the time the BOM had BEFORE the save moves (owner,
+// 2026-10-16): a card that was already out of date stays as it is, and is
+// counted in `outOfDate`. `before` maps productCode to its wipComponents as
+// they were before the save; a product missing from it moves nothing.
+//
 // `pairs` holds `${productCode}::${deptCode}`. Unfinished = WAITING /
 // IN_PROGRESS / PAUSED / BLOCKED; a finished card keeps the minutes it was paid
 // and costed on. Due dates are not touched. Reads skip Hyperdrive's cache, since
@@ -592,13 +597,14 @@ export function refreshDecision(
   return res;
 }
 
-export type CardSyncResult = { updated: number; leftAlone: number; skipped: number };
+export type CardSyncResult = { updated: number; leftAlone: number; skipped: number; outOfDate: number };
 
 export async function syncOpenCardsToBom(
   c: Context<Env>,
   pairs: ReadonlySet<string>,
+  before: ReadonlyMap<string, string | null>,
 ): Promise<CardSyncResult> {
-  const result: CardSyncResult = { updated: 0, leftAlone: 0, skipped: 0 };
+  const result: CardSyncResult = { updated: 0, leftAlone: 0, skipped: 0, outOfDate: 0 };
   if (pairs.size === 0) return result;
   const raw = c.var.DB;
   // freshReads wraps reads only; its statements cannot go into raw.batch.
@@ -628,6 +634,7 @@ export async function syncOpenCardsToBom(
 
   const bomCache = new Map<string, Awaited<ReturnType<typeof loadBomTemplate>>>();
   const expectedByPo = new Map<string, ExpectedJc[]>();
+  const beforeByPo = new Map<string, ExpectedJc[]>();
   const deptKeysByPo = new Map<string, Map<string, string[]>>();
   const changes: Array<{ jcId: string; deptCode: string; oldMinutes: number; newMinutes: number }> = [];
 
@@ -676,6 +683,19 @@ export async function syncOpenCardsToBom(
     if ("unchanged" in res) continue;
     if ("skip" in res) {
       result.skipped++;
+      continue;
+    }
+    let was = beforeByPo.get(r.id);
+    if (!was) {
+      const cur = bomCache.get(productCode) ?? null;
+      was = before.has(productCode)
+        ? computeExpectedJcs(r, cur ? { ...cur, wipComponents: before.get(productCode) ?? null } : null)
+        : expected;
+      beforeByPo.set(r.id, was);
+    }
+    const prev = bomMinutesForCard({ wipKey, deptCode, poId: r.id }, was, otherCardInDept);
+    if ("skip" in prev || prev.minutes !== oldMinutes) {
+      result.outOfDate++;
       continue;
     }
     changes.push({ jcId: r.jcId, deptCode, oldMinutes, newMinutes: res.minutes });

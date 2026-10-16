@@ -255,9 +255,10 @@ function mutateMatchingNodes(
 async function syncCardsAfterSave(
   c: Parameters<typeof syncOpenCardsToBom>[0],
   pairs: string[],
+  before: ReadonlyMap<string, string | null>,
 ): Promise<{ jobCards: CardSyncResult } | { jobCardsError: string }> {
   try {
-    return { jobCards: await syncOpenCardsToBom(c, new Set(pairs)) };
+    return { jobCards: await syncOpenCardsToBom(c, new Set(pairs), before) };
   } catch (e) {
     console.error("[wip-times] job card sync failed:", e);
     return { jobCardsError: e instanceof Error ? e.message : String(e) };
@@ -325,6 +326,8 @@ app.put("/", async (c) => {
   let updatedBomCount = 0;
   let updatedNodeCount = 0;
   const changedProducts = new Set<string>();
+  // Each product's BOM as it was before this save: only cards still at that time move.
+  const beforeWip = new Map<string, string | null>();
 
   for (const row of result.results ?? []) {
     if (!row.wipComponents) continue;
@@ -369,10 +372,11 @@ app.put("/", async (c) => {
       updatedBomCount++;
       updatedNodeCount += nodesUpdated;
       changedProducts.add(row.productCode);
+      if (!beforeWip.has(row.productCode)) beforeWip.set(row.productCode, row.wipComponents);
     }
   }
 
-  const cards = await syncCardsAfterSave(c, [...changedProducts].map((p) => `${p}::${deptCode}`));
+  const cards = await syncCardsAfterSave(c, [...changedProducts].map((p) => `${p}::${deptCode}`), beforeWip);
   return c.json({
     success: true,
     updatedBomCount,
@@ -535,6 +539,7 @@ app.post("/bulk-import", async (c) => {
     ctx: BomVariantContext;
     dirty: boolean;
     depts: Set<string>;
+    before: string;
   };
   const bomCache: BomCache[] = [];
   for (const row of bomRows) {
@@ -561,7 +566,7 @@ app.post("/bulk-import", async (c) => {
       row.sizeLabel,
       defaults,
     );
-    bomCache.push({ id: row.id, productCode: row.productCode, tree: tree as BomWipNode[], ctx, dirty: false, depts: new Set() });
+    bomCache.push({ id: row.id, productCode: row.productCode, tree: tree as BomWipNode[], ctx, dirty: false, depts: new Set(), before: row.wipComponents });
   }
 
   // Per-item update pass over the cache. We DON'T write until after the
@@ -605,6 +610,7 @@ app.post("/bulk-import", async (c) => {
   // error reporting per-row simple and to avoid pile-up under load.
   let appliedBomCount = 0;
   const savedPairs: string[] = [];
+  const beforeWip = new Map<string, string | null>();
   if (!dryRun) {
     for (const bom of bomCache) {
       if (!bom.dirty) continue;
@@ -617,6 +623,7 @@ app.post("/bulk-import", async (c) => {
           .run();
         appliedBomCount++;
         for (const d of bom.depts) savedPairs.push(`${bom.productCode}::${d}`);
+        if (!beforeWip.has(bom.productCode)) beforeWip.set(bom.productCode, bom.before);
       } catch (e) {
         // Don't abort the rest — record the write failure but keep going
         // so an isolated row corruption doesn't lose every other update.
@@ -628,7 +635,7 @@ app.post("/bulk-import", async (c) => {
     }
   }
 
-  const cards = dryRun ? {} : await syncCardsAfterSave(c, savedPairs);
+  const cards = dryRun ? {} : await syncCardsAfterSave(c, savedPairs, beforeWip);
   const totalItems = rawItems.length;
   const applied = perItem.filter((p) => p.updatedNodeCount > 0).length;
   const skipped = perItem.length - applied;
