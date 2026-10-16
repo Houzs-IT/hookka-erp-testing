@@ -1055,6 +1055,7 @@ import publicRackWrite from "./routes/public-rack-write";
 import publicKpiSurvey from "./routes/public-kpi-survey";
 import cncTemplates from "./routes/cnc-templates";
 import invoices from "./routes/invoices";
+import docImport from "./routes/doc-import";
 import payments from "./routes/payments";
 import supplierPayments from "./routes/supplier-payments";
 // Phase 4 — production / inventory / supplier
@@ -1270,6 +1271,8 @@ app.route("/api/public/rack-write", publicRackWrite);
 app.route("/api/public/survey", publicKpiSurvey);
 app.route("/api/cnc-templates", cncTemplates);
 app.route("/api/invoices", invoices);
+// HK-0002 — the shared document importer (dry run + all-or-nothing apply).
+app.route("/api/doc-import", docImport);
 app.route("/api/payments", payments);
 app.route("/api/supplier-payments", supplierPayments);
 // Phase 4
