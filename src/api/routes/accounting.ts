@@ -8819,6 +8819,9 @@ app.get("/pl-statement", async (c) => {
       periodLabel: period,
       fyLabel: fyWin.label,
       netSalesSen: p.netSalesSen,
+      // The FY-to-date column's own net sales — its % divides by this, not by
+      // the period's (BUG-2026-10-16-305).
+      ytdNetSalesSen: y.netSalesSen,
       rows: buildPnlRows(p, y, editable),
       materialWarnings,
     },

@@ -383,3 +383,9 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   font-weight: 600;
   color: #374151;
 }
+
+/* A report that keeps to its content's width (owner 2026-10-01: the month
+   reports stop stretching). */
+[data-fin-ui] table[data-fin-report][data-fin-fit] {
+  width: auto;
+}
