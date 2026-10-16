@@ -389,3 +389,8 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 [data-fin-ui] table[data-fin-report][data-fin-fit] {
   width: auto;
 }
+
+/* A zero ("-") reads pale, so the figures stand out. */
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-zero] {
+  color: #C4BDB3;
+}

@@ -219,10 +219,13 @@ test("the Cash Flow tab offers only YYYY-MM periods", () => {
     !/<optgroup label="Full year">/.test(tab),
     "the Full-year options are back on Cash Flow — same NaN-column failure",
   );
+  // Finance v2 (2026-10-16): the period is a stepper; it may only be fed months.
   assert.ok(
-    /<optgroup label="Monthly">/.test(tab),
-    "Cash Flow lost its Monthly period options",
+    /const periodOpts = useMemo\(\(\) => monthOptions\(today\.slice\(0, 7\), 18\), \[today\]\);/.test(tab) &&
+      /<PeriodStepper value=\{period\} options=\{periodOpts\} onChange=\{setPeriod\} today=\{today\} \/>/.test(tab),
+    "Cash Flow lost its month-only period options",
   );
+  assert.ok(!/-Q\$\{|String\(yr\)/.test(tab), "a quarter or year period is fed to the Cash Flow stepper again");
   // The sibling P&L selector must still offer quarters and years — this fix is
   // Cash-Flow-only. Finance v2 (2026-10-16): the P&L's period is a stepper fed
   // the same keys (YYYY-MM, YYYY-Qn, YYYY).

@@ -113,5 +113,7 @@ test("the tab: a line's name opens the payments under the row (not in Edit), in 
   assert.match(rows, /fetch\(`\/api\/accounting\/cashflow-drill\?period=\$\{encodeURIComponent\(period\)\}&key=\$\{encodeURIComponent\(lineKey\)\}`\)/);
   assert.match(rows, /const on = c\.accum \|\| c\.key === it\.ym;/, "the amount sits in its month's column and in Accumulated");
   assert.match(rows, /entr\{data\.items\.length === 1 \? "y" : "ies"\}/, "the last row counts them");
-  assert.match(rows, /open in GL<\/Link>/);
+  // Finance v2: the detail-total row's link reads "Open In GL →".
+  assert.match(rows, /Open In GL →<\/Link>/);
+  assert.match(rows, /<tr data-row="detsum">/);
 });
