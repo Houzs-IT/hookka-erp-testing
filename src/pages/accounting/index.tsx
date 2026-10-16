@@ -95,10 +95,10 @@ import { FinanceTitleActions } from "@/components/finance/title-actions";
 import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
 import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
-import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus } from "@/lib/finance-daily";
+import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus, type FinTone } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
 import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
-import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner } from "@/components/finance/report-shell";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -7374,56 +7374,93 @@ function SelfCheckTab() {
     return () => { dead = true; };
   }, [compute, runKey]);
   const run = () => { setRunning(true); setRunKey((k) => k + 1); };
-  const tone = (ok: boolean | null) => ok === true ? "border-[#B7D9A8] bg-[#EAF3DE]/50" : ok === false ? "border-[#D9A79C] bg-[#F7E5E1]/50" : "border-[#E0C989] bg-[#FBF3E4]/50";
-  const dot = (ok: boolean | null) => ok === true ? "bg-[#27500A]" : ok === false ? "bg-[#9A3A2D]" : "bg-[#C9A227]";
+  // Finance v2: one list — the result as a pill, the area, the check, what it
+  // found (the items behind it open under the row) and where to fix it.
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+  const areaOf = (key: string) =>
+    key === "ap" ? "Creditors" : key === "ar" ? "Debtors" : key === "tb" ? "Ledger" : key === "pv" || key === "accrued" ? "Payments" : "Bank";
+  const resultPill = (ok: boolean | null) =>
+    ok === true ? <FinPill tone="ok">OK</FinPill> : ok === false ? <FinPill tone="err">FIX</FinPill> : <FinPill tone="warn">CHECK</FinPill>;
+  const okCount = (cards ?? []).filter((k) => k.ok === true).length;
   const red = (cards ?? []).filter((k) => k.ok === false).length;
   const amber = (cards ?? []).filter((k) => k.ok === null).length;
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <div>
-          <p className="text-[11px] text-[#9CA3AF]">Every consistency probe on one page. Green = ties to the sen · Red = something to fix · Amber = needs a look. Read-only; each card links to where the fix lives.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {cards && <span className="text-xs text-[#6B7280]">{red === 0 && amber === 0 ? <span className="text-[#27500A] font-semibold">All clear ✓</span> : <>{red > 0 && <span className="text-[#9A3A2D] font-semibold">{red} red</span>}{red > 0 && amber > 0 && " · "}{amber > 0 && <span className="text-[#7A5B12] font-semibold">{amber} amber</span>}</>}{ranAt && <span className="ml-2 text-[#9CA3AF]">checked {ranAt}</span>}</span>}
-          <Button variant="outline" size="sm" disabled={running} onClick={run}>{running ? "Checking…" : "Run again"}</Button>
-        </div>
-      </div>
+      <FinanceTitleActions>
+        {ranAt && <span className="text-[12px] text-[#9CA3AF]">checked {ranAt}</span>}
+        <Button variant="outline" size="sm" disabled={running} onClick={run}>{running ? "Checking…" : "Run again"}</Button>
+      </FinanceTitleActions>
+      {cards !== null && (
+        <KpiCards
+          items={[{
+            label: "Checks",
+            value: `${okCount} of ${cards.length} OK`,
+            tone: red > 0 ? "err" : amber > 0 ? "warn" : "ok",
+            note: red === 0 && amber === 0 ? "All clear ✓" : [red > 0 ? `${red} to fix` : "", amber > 0 ? `${amber} to look at` : ""].filter(Boolean).join(" · "),
+          }]}
+        />
+      )}
       {cards === null ? (
         <Card><CardContent className="py-12 text-center text-[#6B7280] text-sm">Running checks…</CardContent></Card>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {cards.map((k) => (
-            <Card key={k.key} className={`border ${tone(k.ok)}`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-2 min-w-0">
-                    <span className={`mt-1.5 h-2.5 w-2.5 rounded-full shrink-0 ${dot(k.ok)}`} />
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[#1F1D1B]">{k.title}</div>
-                      <div className={`text-sm mt-0.5 ${k.ok === false ? "text-[#9A3A2D] font-medium" : "text-[#4B5563]"}`}>{k.headline}</div>
-                      {k.detail && <div className="text-[11px] text-[#6B7280] mt-0.5">{k.detail}</div>}
-                    </div>
-                  </div>
-                  {k.fixHref && k.ok !== true && <Link to={k.fixHref} className="shrink-0"><Button variant="outline" size="sm">{k.fixLabel ?? "Open"}</Button></Link>}
-                </div>
-                {k.items && k.items.length > 0 && (
-                  <table className="w-full text-xs mt-2">
-                    <tbody>
-                      {k.items.map((it, i) => (
-                        <tr key={i} className="border-t border-[#F0ECE9]">
-                          <td className="py-1 pr-3 w-full max-w-0"><div className="truncate" title={it.note ?? it.label}>{it.label}</div>{it.note && <div className="text-[10px] text-[#9CA3AF] truncate" title={it.note}>{it.note}</div>}</td>
-                          {it.amount !== undefined && <td className={`py-1 text-right tabular-nums whitespace-nowrap ${it.amount < 0 ? "text-[#9A3A2D]" : ""}`}>{formatCurrency(it.amount)}</td>}
+        <Card>
+          <CardContent className="p-0 overflow-x-auto">
+            <table data-fin-list className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="px-3 py-2 text-left w-[90px]">Result</th>
+                  <th className="px-3 py-2 text-left w-[110px]">Area</th>
+                  <th className="px-3 py-2 text-left">Check</th>
+                  <th className="px-3 py-2 text-left">Detail</th>
+                  <th className="px-3 py-2 text-right w-[1%]" />
+                </tr>
+              </thead>
+              <tbody>
+                {cards.map((k) => {
+                  const open = openKeys.has(k.key);
+                  const n = k.items?.length ?? 0;
+                  return (
+                    <Fragment key={k.key}>
+                      <tr data-fin-nolift={open ? "" : undefined}>
+                        <td className="px-3 py-2 align-top">{resultPill(k.ok)}</td>
+                        <td className="px-3 py-2 align-top text-[#4B5563]">{areaOf(k.key)}</td>
+                        <td className="px-3 py-2 align-top font-semibold text-[#1F1D1B]">{k.title}</td>
+                        <td className="px-3 py-2 align-top">
+                          <div className={k.ok === false ? "text-[#9A3A2D] font-medium" : "text-[#4B5563]"}>{k.headline}</div>
+                          {k.detail && <div className="text-[11px] text-[#6B7280] mt-0.5">{k.detail}</div>}
+                          {n > 0 && (
+                            <button
+                              type="button"
+                              aria-expanded={open}
+                              onClick={() => setOpenKeys((prev) => { const s = new Set(prev); if (s.has(k.key)) s.delete(k.key); else s.add(k.key); return s; })}
+                              className="mt-0.5 text-[11.5px] font-semibold text-[#6B5C32] hover:text-[#574A28]"
+                            >
+                              {open ? "▾" : "▸"} {n} item{n === 1 ? "" : "s"}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top text-right whitespace-nowrap">
+                          {k.fixHref && k.ok !== true && (
+                            <Link to={k.fixHref} className="text-[12.5px] font-semibold text-[#6B5C32] hover:text-[#574A28]">{k.fixLabel ?? "Open"} →</Link>
+                          )}
+                        </td>
+                      </tr>
+                      {open && k.items?.map((it, i) => (
+                        <tr key={`${k.key}:${i}`} data-fin-nolift="" className="bg-[#F4F6F8] text-[12px] text-[#4B5563]">
+                          <td colSpan={3} />
+                          <td className="px-3 py-1 max-w-0"><div className="truncate" title={it.note ?? it.label}>{it.label}</div>{it.note && <div className="text-[10px] text-[#9CA3AF] truncate" title={it.note}>{it.note}</div>}</td>
+                          <td className={`px-3 py-1 text-right tabular-nums whitespace-nowrap ${it.amount !== undefined && it.amount < 0 ? "text-[#9A3A2D]" : ""}`}>{it.amount !== undefined ? formatCurrency(it.amount) : ""}</td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
       )}
+      <p className="text-[11px] text-[#9CA3AF]">Every consistency probe on one page. OK = ties to the sen · FIX = something to fix · CHECK = needs a look. Read-only; each line links to where the fix lives.</p>
     </div>
   );
 }
@@ -7434,7 +7471,17 @@ function SelfCheckTab() {
 // void (cancel) and bank-reconciliation re-open, dug out of the ledger's
 // own leg families — the trail a reviewer asks for.
 type CorrRow = { kind: "edit" | "cancel" | "opening" | "reopen"; docType: string; docId: string; docNo: string; at: string; actor: string; reason: string; reversedSen: number; repostedSen: number };
+type CorrGridRow = CorrRow & { id: string; kindLabel: string; docLabel: string };
+const CORR_KIND: Record<CorrRow["kind"], { label: string; tone: FinTone }> = {
+  edit: { label: "Edited", tone: "info" },
+  cancel: { label: "Cancelled", tone: "err" },
+  reopen: { label: "Reco re-opened", tone: "warn" },
+  opening: { label: "Opening re-posted", tone: "neutral" },
+};
+const corrDocLabel = (t: string) => t.replace(/_/g, " ");
 function CorrectionsTab() {
+  const today = todayYmdMY();
+  // "" = the last 90 days (the default); a month = that month only.
   const [month, setMonth] = useState("");
   const [data, setData] = useState<{ since: string; rows: CorrRow[] } | null>(null);
   useEffect(() => {
@@ -7445,60 +7492,91 @@ function CorrectionsTab() {
       .catch(() => {});
     return () => { dead = true; };
   }, [month]);
-  const kindChip = (k: CorrRow["kind"]) =>
-    k === "edit" ? ["Edited", "bg-[#EEF2FB] text-[#2C4170]"] : k === "cancel" ? ["Cancelled", "bg-[#F7E5E1] text-[#9A3A2D]"] : k === "reopen" ? ["Reco re-opened", "bg-[#FBF3E4] text-[#7A5B12]"] : ["Opening re-posted", "bg-[#F0ECE9] text-[#6B7280]"];
-  const docLabel = (t: string) => t.replace(/_/g, " ");
+  // Memoised — the grid compares row identity (BUG-CLASSES C24).
+  const gridRows = useMemo<CorrGridRow[]>(
+    () => (data?.rows ?? []).map((r, i) => ({
+      ...r,
+      id: `${r.docType}:${r.docId}:${r.at}:${i}`,
+      kindLabel: CORR_KIND[r.kind].label,
+      docLabel: corrDocLabel(r.docType),
+    })),
+    [data],
+  );
+  const columns = useMemo<Column<CorrGridRow>[]>(() => [
+    {
+      key: "at",
+      label: "When",
+      type: "date",
+      render: (_v, r) => (
+        <span className="leading-tight">
+          <span className="block text-[#1F1D1B]">{fmtDocDate(r.at)}</span>
+          <span className="block text-[11px] text-[#9CA3AF]">{r.at.slice(11, 16)}</span>
+        </span>
+      ),
+    },
+    { key: "kindLabel", label: "Kind", render: (_v, r) => <FinPill tone={CORR_KIND[r.kind].tone}>{CORR_KIND[r.kind].label}</FinPill> },
+    {
+      key: "docNo",
+      label: "Document",
+      type: "docno",
+      render: (_v, r) => (
+        <span className="leading-tight">
+          <span className="block font-medium text-[#1F1D1B] tabular-nums">{r.docNo}</span>
+          <span className="block text-[11px] text-[#9CA3AF]">{r.docLabel}</span>
+        </span>
+      ),
+    },
+    { key: "actor", label: "By", render: (_v, r) => r.actor || <span className="text-[#9CA3AF]">system</span> },
+    { key: "reason", label: "Reason", render: (_v, r) => (r.reason ? <span title={r.reason}>{r.reason}</span> : <span className="text-[#C7C1BA]">—</span>) },
+    { key: "reversedSen", label: "Reversed", align: "right", type: "currency", total: "sum", render: (_v, r) => (r.reversedSen ? <span className="tabular-nums text-[#9A3A2D]">{formatCurrency(r.reversedSen)}</span> : "—") },
+    { key: "repostedSen", label: "Re-posted", align: "right", type: "currency", total: "sum", render: (_v, r) => (r.repostedSen ? <span className="tabular-nums">{formatCurrency(r.repostedSen)}</span> : "—") },
+  ], []);
+  const counts = (Object.keys(CORR_KIND) as CorrRow["kind"][])
+    .map((k) => [k, (data?.rows ?? []).filter((r) => r.kind === k).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${CORR_KIND[k].label.toLowerCase()}`);
+  const monthOpts = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <div>
-          <p className="text-[11px] text-[#9CA3AF]">Every posted document that was later edited or cancelled, and every reconciliation month re-opened — who, when, how much reversed and re-posted. Read from the ledger itself.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" />
-          {month && <Button variant="outline" size="sm" onClick={() => setMonth("")}>Last 90 days</Button>}
-          <ExportButtons build={() => [["When", "Kind", "Document", "No.", "By", "Reason", "Reversed (RM)", "Re-posted (RM)"], ...(data?.rows ?? []).map((r) => [r.at.slice(0, 16).replace("T", " "), r.kind, docLabel(r.docType), r.docNo, r.actor, r.reason, (r.reversedSen / 100).toFixed(2), (r.repostedSen / 100).toFixed(2)])]} filenameBase={`Corrections-${month || "recent"}`} title="Corrections" subtitle={month ? `Month: ${month}` : "Last 90 days"} />
-        </div>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <SegmentedSwitch
+            label="Window"
+            options={[{ key: "recent", label: "Last 90 days" }, { key: "month", label: "By month" }]}
+            value={month ? "month" : "recent"}
+            onChange={(k) => setMonth(k === "month" ? today.slice(0, 7) : "")}
+          />
+          {month && <PeriodStepper value={month} options={monthOpts} onChange={setMonth} today={today} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {data && (
+        <KpiCards
+          items={[{
+            label: `Corrections · ${month ? periodLabel(month, "") : "last 90 days"}`,
+            value: String(data.rows.length),
+            note: counts.join(" · ") || "none",
+          }]}
+        />
+      )}
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0">
           {data === null ? (
             <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">When</th>
-                  <th className="px-3 py-2 text-left">Kind</th>
-                  <th className="px-3 py-2 text-left">Document</th>
-                  <th className="px-3 py-2 text-left">By</th>
-                  <th className="px-3 py-2 text-left">Reason</th>
-                  <th className="px-3 py-2 text-right">Reversed</th>
-                  <th className="px-3 py-2 text-right">Re-posted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((r, i) => {
-                  const [label, cls] = kindChip(r.kind);
-                  return (
-                    <tr key={i} className="border-b border-[#F0ECE9] hover:bg-[#FAF8F5]">
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.at.slice(0, 16).replace("T", " ")}</td>
-                      <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span></td>
-                      <td className="px-3 py-1.5 text-xs"><span className="text-[#6B7280]">{docLabel(r.docType)}</span> · <span className="tabular-nums">{r.docNo}</span></td>
-                      <td className="px-3 py-1.5 text-xs">{r.actor || <span className="text-[#9CA3AF]">system</span>}</td>
-                      <td className="px-3 py-1.5 text-xs w-full max-w-0"><div className="truncate" title={r.reason}>{r.reason || <span className="text-[#C7C1BA]">—</span>}</div></td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-[#9A3A2D]">{r.reversedSen ? formatCurrency(r.reversedSen) : "—"}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{r.repostedSen ? formatCurrency(r.repostedSen) : "—"}</td>
-                    </tr>
-                  );
-                })}
-                {data.rows.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No corrections in this window</td></tr>}
-              </tbody>
-            </table>
+            <DataGrid
+              columns={columns}
+              data={gridRows}
+              keyField="id"
+              gridId="accounting-corrections"
+              headerMenu
+              reorderableHeaders
+              exportName={`Corrections-${month || "recent"}`}
+              emptyMessage="No corrections in this window"
+            />
           )}
         </CardContent>
       </Card>
-      <p className="text-[11px] text-[#9CA3AF]">Reasons are recorded where the action asks for one (voucher reject, reconciliation re-open). Edits and cancels of other documents show the trail without a reason for now.</p>
+      <p className="text-[11px] text-[#9CA3AF]">Every posted document that was later edited or cancelled, and every reconciliation month re-opened — who, when, how much reversed and re-posted, read from the ledger itself. Reasons are recorded where the action asks for one (voucher reject, reconciliation re-open).</p>
     </div>
   );
 }

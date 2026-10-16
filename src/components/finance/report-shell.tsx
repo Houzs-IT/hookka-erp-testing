@@ -416,3 +416,44 @@ export function SegmentedSwitch<K extends string>({
     </span>
   );
 }
+
+const KPI_TONE = {
+  ink: "text-[#1F1D1B]",
+  ok: "text-[#27500A]",
+  warn: "text-[#7A5B12]",
+  err: "text-[#9A3A2D]",
+} as const;
+
+/** The Monthly pages' figure cards: a small uppercase label, the value, an
+ *  optional note. Only figures the page already has go here. */
+export function KpiCards({
+  items,
+}: {
+  items: { label: string; value: ReactNode; tone?: keyof typeof KPI_TONE; note?: ReactNode }[];
+}) {
+  return (
+    <div data-fin-kpis className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
+      {items.map((k) => (
+        <div key={k.label} className="rounded-[10px] border border-[#E2DDD8] bg-white px-3.5 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[.5px] text-[#6B7280]">{k.label}</div>
+          <div className={`mt-1 text-[20px] font-bold tabular-nums ${KPI_TONE[k.tone ?? "ink"]}`}>{k.value}</div>
+          {k.note && <div className="text-[11px] text-[#9CA3AF]">{k.note}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A month-end page's state in one line: done (green) or still to do (amber),
+ *  with what to do next. */
+export function StatusBanner({ done, title, sub }: { done: boolean; title: ReactNode; sub?: ReactNode }) {
+  return (
+    <div
+      data-fin-banner={done ? "done" : "todo"}
+      className={`flex min-h-10 flex-wrap items-center gap-2.5 rounded-[10px] border px-3.5 py-2.5 ${done ? "border-[#C9DBBE] bg-[#F1F6EE]" : "border-[#E9D9B4] bg-[#FBF6EC]"}`}
+    >
+      <span className={`text-[13px] font-bold ${done ? "text-[#27500A]" : "text-[#7A5B12]"}`}>{title}</span>
+      {sub && <span className="text-[12px] text-[#4B5563]">{sub}</span>}
+    </div>
+  );
+}
