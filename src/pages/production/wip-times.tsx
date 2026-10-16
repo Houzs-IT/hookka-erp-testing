@@ -16,10 +16,8 @@ import { useCachedJson, invalidateCachePrefix, isUnknownOutcome } from "@/lib/ca
 import { humanizeError } from "@/lib/humanize-error";
 import { DataGrid, type Column } from "@/components/ui/data-grid";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, Download, Upload, AlertTriangle, Pencil, X, CheckCircle, RefreshCw } from "lucide-react";
+import { Clock, Download, Upload, AlertTriangle, Pencil, X, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { usePermissions } from "@/lib/use-permission";
-import { SyncOpenJobCardsDialog } from "./sync-open-jobcards-dialog";
 import { csrfHeaders } from "@/lib/csrf";
 import { DEPARTMENTS } from "./utils";
 import { useUrlState, useUrlStateBool } from "@/lib/use-url-state";
@@ -59,6 +57,33 @@ type WipTimeResponse = {
     deptFilterApplied?: boolean;
   };
 };
+
+// Saving a time also updates the unfinished job cards on the server; this is
+// what each save response says about them.
+type CardSync = {
+  jobCards?: { updated: number; leftAlone: number; skipped: number };
+  jobCardsError?: string;
+};
+const OPEN_CARDS_NOTE =
+  "Unfinished job cards (waiting, in progress, paused or blocked) for these products also get the new time. Finished cards keep theirs.";
+
+function cardsNoticeFrom(results: CardSync[]): { text: string; error?: boolean } | null {
+  const err = results.find((r) => r.jobCardsError)?.jobCardsError;
+  if (err) {
+    return { error: true, text: `The BOM time was saved, but the unfinished job cards could not be updated: ${err}` };
+  }
+  if (!results.some((r) => r.jobCards)) return null;
+  const updated = results.reduce((s, r) => s + (r.jobCards?.updated ?? 0), 0);
+  const skipped = results.reduce((s, r) => s + (r.jobCards?.skipped ?? 0), 0);
+  let text =
+    updated === 0
+      ? "Saved. No unfinished job cards needed a change."
+      : `Saved. ${updated} unfinished job card${updated === 1 ? " now uses" : "s now use"} the new time.`;
+  if (skipped > 0) {
+    text += ` ${skipped} card${skipped === 1 ? " keeps its" : "s keep their"} old time because ${skipped === 1 ? "it" : "they"} can't be recalculated automatically (a blank BOM step, sofa fabric cutting shared by several lines, or a step no longer in the BOM).`;
+  }
+  return { text };
+}
 
 function rowKey(r: WipTimeRow): string {
   return `${r.wipLabel}::${r.departmentCode}`;
@@ -171,12 +196,8 @@ export default function WipTimesPage() {
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const { hasPermission } = usePermissions();
-  const canSyncJobCards = hasPermission("production-orders", "update");
-  const [syncScope, setSyncScope] = useState<{
-    rows: { deptCode: string; productCodes: string[] }[];
-    label: string;
-  } | null>(null);
+  // What saving did to the unfinished job cards (the server updates them).
+  const [cardsNotice, setCardsNotice] = useState<{ text: string; error?: boolean } | null>(null);
 
   // Multi-select batch edit. The grid's tick boxes feed `selectedRows`;
   // when one or more rows are ticked a toolbar appears that opens a batch
@@ -195,7 +216,7 @@ export default function WipTimesPage() {
   //   2. Operator clicks "Apply N changes" → we POST dryRun:false → toast result
   // `importItems` holds the parsed rows so step 2 doesn't re-parse the file.
   type ImportItem = { wipLabel: string; deptCode: string; minutes: number };
-  type ImportPreview = {
+  type ImportPreview = CardSync & {
     totalItems: number;
     validItems: number;
     applied: number;
@@ -318,10 +339,11 @@ export default function WipTimesPage() {
           minutes: m,
         }),
       });
+      const body = (await res.json().catch(() => ({}))) as { error?: string } & CardSync;
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || `HTTP ${res.status}`);
       }
+      setCardsNotice(cardsNoticeFrom([body]));
       // Invalidate every /api/wip-times cache key — filter combos differ
       // so a prefix invalidation catches them all (with-dept, with-cat etc).
       invalidateCachePrefix("/api/wip-times");
@@ -369,6 +391,7 @@ export default function WipTimesPage() {
     setBatchSaving(true);
     setBatchProgress({ done: 0, total: selectedRows.length });
     const failed: string[] = [];
+    const synced: CardSync[] = [];
     try {
       let done = 0;
       for (const r of selectedRows) {
@@ -383,9 +406,11 @@ export default function WipTimesPage() {
               minutes: m,
             }),
           });
+          const body = (await res.json().catch(() => ({}))) as { error?: string } & CardSync;
           if (!res.ok) {
-            const body = (await res.json().catch(() => ({}))) as { error?: string };
             failed.push(`${r.wipLabel}: ${body.error || `HTTP ${res.status}`}`);
+          } else {
+            synced.push(body);
           }
         } catch (err) {
           failed.push(`${r.wipLabel}: ${err instanceof Error ? err.message : "failed"}`);
@@ -394,6 +419,7 @@ export default function WipTimesPage() {
         setBatchProgress({ done, total: selectedRows.length });
       }
       invalidateCachePrefix("/api/wip-times");
+      setCardsNotice(cardsNoticeFrom(synced));
       if (failed.length > 0) {
         setBatchError(
           `${failed.length} of ${selectedRows.length} did not save:\n${failed.slice(0, 5).join("\n")}`,
@@ -673,6 +699,7 @@ export default function WipTimesPage() {
         return;
       }
       setImportResult(json);
+      setCardsNotice(cardsNoticeFrom([json]));
       setImportPreview(null);
       setImportItems(null);
       // Invalidate the wip-times cache so the page reflects the new
@@ -885,36 +912,27 @@ export default function WipTimesPage() {
               }}
             />
           </label>
-          {canSyncJobCards && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={rows.length === 0 || loading}
-              title="Copy the BOM times onto job cards that are not finished yet. You see every card that will change before anything is written."
-              onClick={() => {
-                const src = selectedRows.length > 0 ? selectedRows : rows;
-                setSyncScope({
-                  rows: src.map((r) => ({ deptCode: r.departmentCode, productCodes: r.productCodes })),
-                  label:
-                    selectedRows.length > 0
-                      ? `${selectedRows.length} ticked WIP${selectedRows.length === 1 ? "" : "s"}`
-                      : `All ${rows.length.toLocaleString()} WIPs in the current filter`,
-                });
-              }}
-            >
-              <RefreshCw className="h-4 w-4 mr-1.5" />
-              {selectedRows.length > 0 ? `Sync open job cards (${selectedRows.length})` : "Sync open job cards"}
-            </Button>
-          )}
         </div>
       </div>
 
-      {syncScope && (
-        <SyncOpenJobCardsDialog
-          scope={syncScope.rows}
-          scopeLabel={syncScope.label}
-          onClose={() => setSyncScope(null)}
-        />
+      {cardsNotice && (
+        <div
+          className={`flex items-start justify-between gap-2 rounded-md p-3 text-sm ${
+            cardsNotice.error ? "bg-[#F9E1DA] text-[#9A3A2D]" : "bg-[#EEF3E4] text-[#4F7C3A]"
+          }`}
+        >
+          <span className="flex items-start gap-2 min-w-0">
+            {cardsNotice.error ? (
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            ) : (
+              <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            )}
+            {cardsNotice.text}
+          </span>
+          <button type="button" onClick={() => setCardsNotice(null)} aria-label="Dismiss" className="shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
       {/* Filter bar */}
@@ -1220,6 +1238,7 @@ export default function WipTimesPage() {
                   {editing.productCount} matching BOM
                   {editing.productCount === 1 ? "" : "s"}.
                 </p>
+                <p className="text-xs text-[#6B7280] mt-1">{OPEN_CARDS_NOTE}</p>
               </div>
 
               {saveError && (
@@ -1385,6 +1404,7 @@ export default function WipTimesPage() {
                 <p className="text-xs text-[#6B7280] mt-1">
                   0 – 1440 minutes (24h cap). Applied to every selected WIP.
                 </p>
+                <p className="text-xs text-[#6B7280] mt-1">{OPEN_CARDS_NOTE}</p>
               </div>
 
               {batchProgress && (
@@ -1489,6 +1509,7 @@ export default function WipTimesPage() {
                   <p className="text-[#374151]">
                     Reviewing your changes — nothing has been written yet.
                   </p>
+                  <p className="text-xs text-[#6B7280]">{OPEN_CARDS_NOTE}</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-[#FAF8F5] p-3 rounded">
                       <div className="text-xs text-[#6B7280]">Rows in file</div>
@@ -1533,6 +1554,17 @@ export default function WipTimesPage() {
                     Imported {importResult.applied} WIP change(s) into{" "}
                     {importResult.appliedBomCount} BOM template(s).
                   </p>
+                  {cardsNoticeFrom([importResult]) && (
+                    <p
+                      className={`p-3 rounded ${
+                        cardsNoticeFrom([importResult])?.error
+                          ? "text-[#9A3A2D] bg-[#F9E1DA]"
+                          : "text-[#374151] bg-[#FAF8F5]"
+                      }`}
+                    >
+                      {cardsNoticeFrom([importResult])?.text}
+                    </p>
+                  )}
                   {importResult.itemErrors.length > 0 && (
                     <div className="bg-[#FAEFCB] p-3 rounded text-xs text-[#9C6F1E]">
                       {importResult.itemErrors.length} row(s) reported errors — see browser console.

@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 147 mounts, 145 route files in
-`src/api/routes/`, 1039 top-level handler registrations discovered.
+`src/api/routes/`, 1038 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -171,7 +171,7 @@ offsets pointing past the end of their own file.
 | `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:603</sub><br>`GET /projected` <sub>:738</sub><br>`POST /` <sub>:1036</sub><br>`PUT /` <sub>:1503</sub><br>`GET /:id` <sub>:1576</sub> | gated |
 | `/api/production-leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
-| `/api/production/sync-jobcards-from-bom` | `src/api/routes/jobcard-sync.ts` | `POST /` <sub>:216</sub><br>`POST /fill-zero-minutes` <sub>:406</sub><br>`POST /refresh-open-minutes` <sub>:614</sub> | gated |
+| `/api/production/sync-jobcards-from-bom` | `src/api/routes/jobcard-sync.ts` | `POST /` <sub>:217</sub><br>`POST /fill-zero-minutes` <sub>:407</sub> | gated |
 | `/api/promise-date` | `src/api/routes/promise-date.ts` | `GET /` <sub>:206</sub> | gated |
 | `/api/cs-agent` | `src/api/routes/cs-agent.ts` | `GET /promise` <sub>:31</sub><br>`GET /procurement/readiness` <sub>:76</sub> | gated |
 | `/api/qc-templates` | `src/api/routes/qc-templates.ts` | `GET /` <sub>:105</sub><br>`GET /:id` <sub>:149</sub><br>`POST /` <sub>:164</sub><br>`PUT /:id` <sub>:266</sub><br>`DELETE /:id` <sub>:365</sub> | gated |
@@ -194,7 +194,7 @@ offsets pointing past the end of their own file.
 | `/api/service-cases` | `src/api/routes/service-cases.ts` | `GET /` <sub>:525</sub><br>`GET /:id` <sub>:603</sub><br>`POST /` <sub>:650</sub><br>`PUT /:id` <sub>:793</sub><br>`PUT /:id/status` <sub>:967</sub><br>`DELETE /:id` <sub>:1043</sub> | gated |
 | `/api/service-orders` | `src/api/routes/service-orders.ts` | `GET /` <sub>:427</sub><br>`GET /:id` <sub>:471</sub><br>`POST /` <sub>:557</sub><br>`PUT /:id` <sub>:950</sub><br>`PUT /:id/status` <sub>:1030</sub><br>`PUT /:id/mode` <sub>:1221</sub><br>`POST /:id/returns` <sub>:1481</sub><br>`PUT /:id/returns/:rid` <sub>:1571</sub><br>`POST /:id/returns/:rid/scrap` <sub>:1682</sub><br>`DELETE /:id` <sub>:1845</sub> | gated |
 | `/api/department-performance` | `src/api/routes/department-performance.ts` | `GET /` <sub>:202</sub> | gated |
-| `/api/wip-times` | `src/api/routes/wip-times.ts` | `GET /` <sub>:117</sub><br>`PUT /` <sub>:252</sub><br>`POST /bulk-import` <sub>:412</sub> | gated |
+| `/api/wip-times` | `src/api/routes/wip-times.ts` | `GET /` <sub>:118</sub><br>`PUT /` <sub>:267</sub><br>`POST /bulk-import` <sub>:431</sub> | gated |
 | `/api/reports` | `src/api/routes/reports.ts` | `GET /efficiency` <sub>:310</sub><br>`GET /efficiency.json` <sub>:344</sub><br>`GET /operations.json` <sub>:370</sub><br>`POST /efficiency/send` <sub>:399</sub><br>`GET /schedule` <sub>:409</sub><br>`GET /schedule.json` <sub>:428</sub><br>`GET /overdue` <sub>:445</sub><br>`GET /overdue.json` <sub>:464</sub><br>`GET /brief` <sub>:523</sub><br>`POST /brief/send` <sub>:557</sub><br>`GET /cogs-integrity.json` <sub>:579</sub><br>`GET /ocr-code-misses.json` <sub>:607</sub><br>`GET /compliance.json` <sub>:621</sub><br>`GET /settings` <sub>:946</sub><br>`PUT /settings` <sub>:956</sub><br>`POST /schedule/send` <sub>:974</sub><br>`POST /overdue/send` <sub>:979</sub> | gated |
 | `/api/internal/reports` | `src/api/routes/reports.ts` | `POST /efficiency-trigger` <sub>:862</sub><br>`POST /schedule-trigger` <sub>:868</sub><br>`POST /overdue-trigger` <sub>:874</sub><br>`POST /brief-trigger` <sub>:880</sub><br>`POST /due-trigger` <sub>:908</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/assistant/conversations` | `src/api/routes/assistant-history.ts` | `GET /` <sub>:87</sub><br>`GET /:id` <sub>:112</sub><br>`PUT /:id` <sub>:140</sub><br>`PATCH /:id` <sub>:204</sub><br>`DELETE /:id` <sub>:234</sub> | gated |
