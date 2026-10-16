@@ -49,7 +49,7 @@ test("useCachedJson does NOT swallow an abort — the bug's exact line is gone",
     "the hook's catch must classify, not discard",
   );
   assert.ok(
-    /return \{ data, loading, error, failure, refresh \}/.test(src),
+    /return \{ data, loading, error, failure, refresh\b/.test(src),
     "the hook must expose `failure` so consumers can tell absence from silence",
   );
 });

@@ -1094,7 +1094,7 @@ export default function ProductionPage({
   // by Phase 6 — server-side KV snapshot cache — which gives every
   // repeat fetch a <200ms response instead of trying to optimise the
   // first-fetch parse cost.
-  const { data: ordersResp, loading, failure: ordersFailure, refresh: refreshOrders } = useCachedJson<{ success?: boolean; data?: ProductionOrder[] }>(
+  const { data: ordersResp, loading, failure: ordersFailure, refresh: refreshOrders, isFetching: ordersFetching } = useCachedJson<{ success?: boolean; data?: ProductionOrder[] }>(
     ordersUrl,
     300,
     // The 8 s poll below usually returns a byte-identical body — reuse the
@@ -1958,12 +1958,14 @@ export default function ProductionPage({
       if (document.visibilityState !== "visible") return;
       if (pendingJcPatchesRef.current.size > 0) return;
       if (draftsRef.current.size > 0) return;
+      // A refresh cancels the running request, so a list slower than 8 s never landed.
+      if (ordersFetching()) return;
       lastFetchAtRef.current = Date.now();
       fetchOrders();
     };
     const id = setInterval(tick, POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [fetchOrders]);
+  }, [fetchOrders, ordersFetching]);
 
   // Warn the operator if they try to leave the page with unsaved drafts in
   // the buffer (closing tab, navigating away, hitting back). Modern browsers
