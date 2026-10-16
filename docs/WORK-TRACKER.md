@@ -1,6 +1,14 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone Sales Order detail, read-only, local only) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
+> now allocatable (finished pieces always first). Entry below; the stage threshold is a
+> null constant because the owner has not been asked which stage counts.
+> **Last verified: 2026-10-16**: branch `docs/bug302-staging-verified`, to `staging`: the WIP time auto-sync entry below got its staging result (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `feat/wip-times-auto-sync-jobcards`, to `staging` (WIP time save updates open job cards, button removed) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone nav drawer reskin, local only) added below (its entry is the newest).
+
 > **Last verified: 2026-10-16**: branch `feat/wip-times-sync-open-jobcards`, to `staging` (WIP Production Times sync button) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `docs/dev05-a9-live-verified` — DEV-05's full
 > acceptance run added below (all six criteria measured on staging, ending in invoice
@@ -11,7 +19,7 @@
 > **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
 > re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
 > BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
-> staging measurement are in the entry below, dated 2026-09-29.
+> staging measurement are in the entry below, dated 2026-09-29. upstream/staging
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -230,7 +238,7 @@
 > **Last verified: 2026-09-22** — branch `fix/delivery-loading-gate-po-paging` added below (open, its entry is the newest). Previously: branch `fix/delivery-tab-switch-pagination` (MERGED as #467). Previously: branch `feat/po-search-line-items` added below (open, pushed, its entry is the newest). Previously: branch `feat/po-supplier-searchable-select` (MERGED as #459). The committed merge-conflict markers that sat inside the Houzs entry on `main` were resolved here (kept the full text, which is a superset).
 > **Last verified: 2026-09-22** — branch `fix/delivery-tab-switch-pagination` added below (open, its entry is the newest). Previously: branch `feat/po-search-line-items` added below (open, pushed, its entry is the newest). Previously: branch `feat/po-supplier-searchable-select` (MERGED as #459). The committed merge-conflict markers that sat inside the Houzs entry on `main` were resolved here (kept the full text, which is a superset).
 > **Last verified: 2026-09-22** — branch `claude/nice-sanderson-27be32` (dashboard Service > Top issues redesign) added below (open, its entry is the newest). Previously: branch `feat/po-search-line-items` added below (open, pushed, its entry is the newest). Previously: branch `feat/po-supplier-searchable-select` (MERGED as #459). The committed merge-conflict markers that sat inside the Houzs entry on `main` were resolved here (kept the full text, which is a superset).
-> **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (`<<<<<<< HEAD` … `>>>>>>> 85e58b40`) on `main`; left for its owner to resolve.
+> **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (` HEAD` … `85e58b40`) on `main`; left for its owner to resolve.
 > **Last verified: 2026-09-25**: branch `feat/dashboard-kpi-no-icons` (PR #524 to `main`, open) is the newest entry below, items 1 to 17 checked against the branch. The Attendance log, time audit dates and Department Status branches are folded into it (#525, #526, #527 closed).
 > **Last verified: 2026-09-25** — branch `feat/ocr-dashboard-tab` entry below updated: PR #522 open, BUG-2026-09-25-192 fixed, historical model fallback added.
 > **Last verified: 2026-09-24** — branch `feat/dashboard-exp-ops-layout` added below (not committed, its entry is the newest).
@@ -2555,7 +2563,7 @@ owner 两问「side bar 很多功能重复是吗？」「能像 2990 那样 expo
   AP Invoices 每行 `pay` 深链 `?pay=<PI|AP>:<id>:<partyId>` 直开表单并勾满该单。
 - 守卫 `tests/pv-ap-payment.test.mjs` 9 断言（两个 builder 各恰好 2 个调用点、AP 不走 pvPostingStatements、reservation 只算未过账、
   lifecycle 顺序、restate 拒、schema fixture）；money-input 守卫登记 `if (apMoneyError)` 闸 + `apSen` 预算；全套 4706 绿。
-- 顺手：docs/WORK-TRACKER.md 顶部残留的 `<<<<<<< HEAD` 冲突标记（上一轮 rebase 遗留，已在 main）清掉。
+- 顺手：docs/WORK-TRACKER.md 顶部残留的 ` HEAD` 冲突标记（上一轮 rebase 遗留，已在 main）清掉。
 
 **prod 已验（#465 merge cba0fcdb，deploy ✓，1 sen 两条路各走完整梯子后立即作废）**：①other creditor 路（Houzs Century OCB-2606-002）：draft 带勾单、open-bills 立刻显示 reserved 1 sen（available 119,999）、0 分录 0 结算行；prepare→check 铸 HPV-2609-046 仍 0 分录、bill 未动；approve → Other Creditor Payments 出现 HPV-2609-046（ACTIVE，1 sen，310-0010）、bill paid 1/outstanding 119,999、GL DR 405-0000 1 / CR 310-0010 1（sourceType other_party_payment）；从 PV 页 void → 结算单 lifecycle VOID、bill paid 归 0、PV 读 VOID。②supplier 路（OCEAN SKY PI-2608-091）：check 铸 HPV-2609-047 → approve → Supplier Payment 页出现同号（ACTIVE，1 行）、PI paid 1 / PARTIAL_PAID、GL DR 400-0000 1 / CR 310-0010 1；void → PI paid 0 / CONFIRMED、supplier payment VOID、PV VOID。UI：深链 ?pay=AP:opb-ced66add-2:op-1bcbd71b 直开 New AP Payment、债主已选、OCB-2606-002 勾满 1,200.00；芯片 ALL/DRAFT/PREPARED/CHECKED/APPROVED 91/ADVANCE OPEN/CANCELLED 7；两张测试凭证带 AP 标签灰显。
 
@@ -7251,6 +7259,22 @@ customer's order and the customer's price, not the placeholder at zero) is not
 verified. And A9's design gap stands: the owner's rule is *earliest sales order
 date wins*; the implementation is *first to confirm wins*. Not yet raised.
 
+---
+
+## 2026-10-16 — Phone nav drawer reskin to the Claude Design Home (branch `design/mobile-sidebar`, local only)
+
+Source: claude.ai/design project d53d5dfb, `Home.dc.html` (drawer, lines 358–406).
+
+1. [ ] Restyle the phone `NavDrawer` to the design: rounded 28px right edge, shadowed white cards (no borders), round close chip, round 32px icon tiles, gold bar + tinted row for the current page, pinned footer with Sign out.
+2. [ ] Typography stays the repo standard (owner): sizes / weights / text colours from the existing `/m` screens, not the design's.
+3. [ ] Remove the Install card from the drawer (owner: Home already shows it).
+4. [ ] Keep "Open the desktop app" (owner choice 1), moved into the footer in the design's footer-label style: it is the only phone route back to desktop and carries the `setPreferDesktop` fix (BUG-2026-10-02-250).
+5. [ ] `/m/more` unchanged: the shared `ModuleMenu` pieces are not restyled.
+
+**Built**: `src/pages/m/components/NavDrawer.tsx` (drawer-local `DrawerProfile` / `DrawerThemeToggle` / `DrawerModuleList`, footer); `ModuleMenu.tsx` only exports `initialsOf` / `prettyRole` now. `/m/more` untouched.
+**Verified**: `tsc -p tsconfig.app.json` exit 0; `tests/mobile-*.test.mjs` 110/111 — the one failure ("phone view switch is local", Updates) fails identically with this change stashed, so it is pre-existing. `tests/mobile-nav-drawer.test.mjs` drawer test rewritten for the new layout + owner decisions.
+**Not yet done**: visual check in a browser at 390px, light + dark (no browser tool in this session).
+
 ## 2026-10-16 — DEV-05 acceptance run: all six criteria measured on staging
 
 Branch `docs/dev05-a9-live-verified`. No source change — this is the record of a
@@ -7302,6 +7326,7 @@ stands: the owner's rule is *earliest order wins*, the implementation is *first
 to confirm wins*, and closing that means answering how long an unconfirmed order
 may hold finished stock.
 
+
 ## 2026-10-16 — WIP Production Times: push a changed time onto open job cards
 
 Asked (owner, 2026-10-16): when a time is changed on the WIP Production Times
@@ -7327,3 +7352,96 @@ checked locally with stubbed data at desktop and 320px. **Not yet verified on st
 
 Known gap: a sofa Fab Cut card is shared by several lines of the order, so it is listed as
 skipped rather than recalculated.
+upstream/staging
+
+## 2026-10-16 — DEV-05 follow-on: work in progress counts as stock
+
+Branch `feat/dev05-allocate-wip`, to `staging`. Owner, during the showcase:
+*"WIP 也可以当成是库存"* — asked twice, confirmed twice.
+
+**What changed.** `loadAllocatablePOs` offered only COMPLETED stock pieces. It
+now offers in-progress ones too, BEHIND every finished one. Both halves of the
+feature read that one function, so auto-allocation on confirm and the manual
+"Allocate N" button moved together and cannot disagree.
+
+**Finished-first is enforced TWICE, and the second time is not redundant.** The
+SQL sorts, and the mapped rows are sorted again in code. "A piece that exists
+beats a piece that is promised" is a safety rule, and a safety rule living only
+in an ORDER BY is one edit from silently not holding. The in-code sort makes it
+provable without a database; `sort` is stable, so the query's oldest-first
+tie-break survives inside each half.
+
+**What was deliberately NOT invented.** No stage threshold. The owner said work
+in progress counts; he was not asked whether a piece cut this morning counts
+the same as one waiting to be packed. `ALLOCATABLE_FROM_DEPT` is a named
+constant, null today, with the comparison already written against
+`REPAIR_DEPT_CODES` — one line moves when he answers. An unknown department
+withholds the piece rather than promising it.
+
+**The sentences.** A line filled entirely off the shelf reads EXACTLY as before
+— pinned by its own test, because the wording people already know should not
+move for a case that did not change. When the floor is involved it says so:
+`Allocated 3 x A100 (2 from stock, 1 from pieces still in production)`. The A9
+loser note now names whichever supply exists; previously it said "0 on hand"
+and stopped, which told a salesperson the wrong thing when three were being
+built and all three were spoken for.
+
+**Why this needed no WIP-ledger fix.** The `wip_items` balance is a running
+tally that drifts (BUG-CLASSES C11; measured on staging the same day: 530 codes
+disagree, 183 rows negative, 1,152 units wrong gross). None of it is read here.
+`inProductionQty` is derived from `production_orders` status, the same source
+the finished figure uses — computed fresh every read, so it cannot drift. The
+two were conflated earlier in the session and they are not the same thing.
+
+**Safety that was already there.** The delivery path requires COMPLETED or
+TRANSFERRED (`delivery-orders.ts:3518`), so an allocated-but-unfinished piece
+is reserved and still cannot ship. Nothing needed adding for that.
+
+**Tests.** 39 in `tests/stock-allocations.test.mjs` (32 before, none of whose
+assertions changed). The stub now carries `status`/`current_department`,
+because real rows always do and a row without a status reads as unfinished.
+
+**Still open, and the owner has not been asked:** what happens when a piece
+promised to a customer is scrapped or re-specced. Finished stock cannot vanish;
+work in progress can. Today nothing tells the order. That is the one gap this
+branch knowingly leaves.
+
+## 2026-10-16 — WIP Production Times: saving a time updates open job cards (no button)
+
+Asked (owner, 2026-10-16, after #903 was tested on staging): drop the "Sync open job cards"
+button and its preview. Saving a WIP time should update the unfinished job cards by itself,
+and the screen should say so.
+
+1. [x] Single edit, multi-row "Set BOM Time" and Excel import all update the job cards of
+   the products whose BOM they changed, in that department. Unfinished means WAITING /
+   IN_PROGRESS / PAUSED / BLOCKED (owner's choice: all unfinished, not only waiting).
+2. [x] Remove the button, the preview dialog and the preview endpoint.
+3. [x] The edit windows say unfinished cards will follow; after saving, the page says how
+   many cards were updated.
+4. [x] Same rules as #903: finished cards and due dates untouched, a blank BOM step never
+   zeroes a card, every change audited.
+
+Built on branch `feat/wip-times-auto-sync-jobcards` (to `staging`): `syncOpenCardsToBom` in
+`jobcard-sync.ts`, called from `PUT /api/wip-times` and `POST /api/wip-times/bulk-import`. The
+button, `sync-open-jobcards-dialog.tsx` and `/refresh-open-minutes` are gone. Tests:
+`tests/refresh-open-minutes.test.mjs`. **Not yet verified on staging.**
+
+**Changed the same day (owner):** only cards still at the time the BOM had before the save
+move. Cards that were already out of date (1,095 on staging) stay as they are; the banner
+counts them.
+
+**Verified on staging 2026-10-16 (#905 + #907).** 5543-LONG PILLOW / Fab Sew, BOM 8, three
+unfinished cards: one at 8, two already at 10. Saving 9 moved only the card at 8 (1.4 s, audit
+row 08:32:34), saving 8 through the page moved it back (audit row 08:34:05, banner "1 updated,
+2 left as they were"); the two cards at 10 were never touched. Staging ends as it started. A
+stall of the job-card write past the app's 30 s timeout was seen twice in an earlier window and
+is UNMEASURED (BUG-2026-10-16-302).
+
+## 2026-10-16 — Self-apply ALTERs no longer lock a table when the column exists (BUG-2026-10-16-304)
+
+Asked (owner, 2026-10-16): fix the job card save stalls seen on staging after deploys.
+
+1. [x] Skip a no-op `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in the database adapter by
+   checking `information_schema` first (branch `fix/self-apply-skip-existing-column`, to `main`).
+2. [ ] Verify on staging after deploy: the slow-SQL log should stop showing those ALTERs.
+

@@ -307,10 +307,18 @@ function StockAllocationCard({
               {order.items.map((item) => {
                 const a = avail[item.productCode];
                 const mine = heldFor(item.id, item.productCode);
-                const canTake = Math.min(
-                  Math.max(0, item.quantity - mine),
-                  a?.availableQty ?? 0,
-                );
+                // Work in progress is stock too (owner 2026-10-16), and the
+                // pool behind both the button and auto-allocation offers it.
+                // Reading availableQty alone here would show "Allocate 0" on a
+                // product with three pieces an hour from done — the button
+                // would be lying about what the system can actually do.
+                const onShelf = a?.availableQty ?? 0;
+                const onFloor = a?.inProductionQty ?? 0;
+                const want = Math.max(0, item.quantity - mine);
+                const canTake = Math.min(want, onShelf + onFloor);
+                // How much of this particular take would be unfinished. The
+                // shelf is always spent first, so it is only the overflow.
+                const takeUnfinished = Math.max(0, canTake - onShelf);
                 const key = `${item.id}`;
                 return (
                   <tr key={item.id} className="border-b border-[#E2DDD8] last:border-0">
@@ -343,8 +351,20 @@ function StockAllocationCard({
                               key,
                             )
                           }
+                          title={
+                            takeUnfinished > 0
+                              ? `${canTake - takeUnfinished} finished, ` +
+                                `${takeUnfinished} still being made — ` +
+                                `allocating reserves them, the floor still has to finish them`
+                              : "Finished pieces, ready to deliver"
+                          }
                         >
                           Allocate {canTake}
+                          {takeUnfinished > 0 && (
+                            <span className="ml-1 text-[#A86A1A]">
+                              ({takeUnfinished} WIP)
+                            </span>
+                          )}
                         </Button>
                       )}
                       {mine > 0 && (
@@ -379,7 +399,9 @@ function StockAllocationCard({
         <p className="mt-2 text-xs text-[#6B7280]">
           Allocated pieces are held for this order and drop out of everyone
           else&apos;s available figure. Releasing writes a reversal — the record of
-          what was promised stays.
+          what was promised stays. Finished pieces are always taken first; a
+          piece still in production can be reserved, but the floor still has to
+          finish it before it can be delivered.
         </p>
       </CardContent>
     </Card>

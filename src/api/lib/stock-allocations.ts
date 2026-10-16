@@ -59,6 +59,9 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { runSelfApply, memoizeSelfApply } from "./self-apply";
 import { STOCK_CUSTOMER_NAME } from "./stock-orders";
+// The department ORDER, shared with the repair-scope and stage-skip code so a
+// stage gate here can never disagree with the floor's own sequence.
+import { REPAIR_DEPT_CODES } from "../../lib/repair-scope";
 
 let _mig: Promise<void> | null = null;
 
@@ -265,24 +268,79 @@ export async function loadAvailability(
   return out;
 }
 
+/**
+ * The stage a stock piece must have reached before it may be promised, or NULL
+ * for "any stage qualifies", which is today's behaviour.
+ *
+ * It is a named constant with one caller rather than a literal in the query
+ * because it encodes a DECISION NOBODY HAS MADE. The owner said work in
+ * progress counts as stock (2026-10-16); he was not asked whether a piece that
+ * was cut this morning counts the same as one waiting to be packed, and the
+ * honest answer today is that the system does not distinguish them.
+ *
+ * To set one, put a department code from REPAIR_DEPT_CODES here — a piece is
+ * then offered only once it has REACHED that department. Nothing else needs to
+ * change, and `tests/stock-allocations.test.mjs` pins both branches.
+ */
+export const ALLOCATABLE_FROM_DEPT: string | null = null;
+
+/** Whether an in-progress piece at `dept` is far enough along to be offered. */
+export function allocatableFromDept(dept: string | null): boolean {
+  if (!ALLOCATABLE_FROM_DEPT) return true;
+  if (!dept) return false;
+  const order = REPAIR_DEPT_CODES as readonly string[];
+  const at = order.indexOf(dept.toUpperCase());
+  const need = order.indexOf(ALLOCATABLE_FROM_DEPT);
+  // An unknown department is NOT silently treated as far enough along: a code
+  // the list does not know about is a reason to withhold, not to promise.
+  if (at < 0 || need < 0) return false;
+  return at >= need;
+}
+
 export type AllocatablePO = {
   id: string;
   poNo: string | null;
   productCode: string;
   quantity: number;
   stockOriginSoId: string;
+  /**
+   * FALSE for a piece still on the floor. The pool offers both now, finished
+   * first, so a caller that must not promise unfinished goods can still tell
+   * them apart without re-reading the row.
+   */
+  isFinished: boolean;
+  /** Where an unfinished piece currently sits. NULL once it is finished. */
+  currentDepartment: string | null;
 };
 
 /**
- * The stock production orders that can be handed over, oldest first.
+ * The stock production orders that can be handed over, FINISHED FIRST and
+ * oldest first within each half.
  *
  * Oldest first is the owner's tie-break ("earliest sales order date wins")
  * applied to supply: the piece that has been waiting longest goes first, so
  * stock cannot quietly age while newer output ships.
  *
- * Only FINISHED orders are offered. Promising a customer a piece that is still
- * on the floor is a different decision from handing them one that exists, and
- * this feature only claims to do the second.
+ * Unfinished pieces are offered too (owner 2026-10-16: "WIP 也可以当成是库存"
+ * — work in progress counts as stock), but ONLY BEHIND every finished one.
+ * A piece that exists beats a piece that is promised, so the sort is the
+ * safety rule, not a preference: a line can only reach the floor stock after
+ * the shelf is empty.
+ *
+ * What stays excluded, and why it is not a cutoff:
+ *   - CANCELLED / ON_HOLD — not supply at all; `loadAvailability` excludes the
+ *     same two, so the pool and the figures cannot disagree.
+ *   - anything already handed to another order (`sales_order_id` moved).
+ *
+ * There is deliberately NO stage threshold here. One was considered — only
+ * offer a piece past UPHOLSTERY, say — and left out because the owner has not
+ * been asked which stage counts, and a number invented here would read as a
+ * decision. `ALLOCATABLE_FROM_DEPT` below is where it goes when he answers;
+ * today it is null and every in-progress piece qualifies.
+ *
+ * The caller must not treat an unfinished piece as shippable: the delivery
+ * path already refuses one (it requires COMPLETED/TRANSFERRED), so allocation
+ * reserves it and the floor still has to finish it.
  */
 export async function loadAllocatablePOs(
   db: D1Database,
@@ -290,14 +348,16 @@ export async function loadAllocatablePOs(
 ): Promise<AllocatablePO[]> {
   const res = await db
     .prepare(
-      `SELECT id, poNo, product_code, quantity, stock_origin_so_id
+      `SELECT id, poNo, product_code, quantity, stock_origin_so_id,
+              status, current_department
          FROM production_orders
         WHERE is_stock = TRUE
           AND stock_origin_so_id IS NOT NULL
           AND sales_order_id = stock_origin_so_id
-          AND status = 'COMPLETED'
+          AND status NOT IN ('CANCELLED', 'ON_HOLD')
           AND product_code = ?
-        ORDER BY created_at ASC, poNo ASC`,
+        ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END ASC,
+                 created_at ASC, poNo ASC`,
     )
     .bind(productCode)
     .all<{
@@ -309,14 +369,36 @@ export async function loadAllocatablePOs(
       product_code?: string; productCode?: string;
       quantity: number | null;
       stock_origin_so_id?: string; stockOriginSoId?: string;
+      status?: string | null;
+      current_department?: string | null; currentDepartment?: string | null;
     }>();
-  return (res.results ?? []).map((r) => ({
-    id: r.id,
-    poNo: r.poNo,
-    productCode: (r.productCode ?? r.product_code) ?? "",
-    quantity: Number(r.quantity ?? 0),
-    stockOriginSoId: (r.stockOriginSoId ?? r.stock_origin_so_id) ?? "",
-  }));
+  return (res.results ?? [])
+    .map((r) => {
+      const status = String(r.status ?? "").toUpperCase();
+      const isFinished = status === "COMPLETED";
+      return {
+        id: r.id,
+        poNo: r.poNo,
+        productCode: (r.productCode ?? r.product_code) ?? "",
+        quantity: Number(r.quantity ?? 0),
+        stockOriginSoId: (r.stockOriginSoId ?? r.stock_origin_so_id) ?? "",
+        isFinished,
+        currentDepartment: isFinished
+          ? null
+          : ((r.currentDepartment ?? r.current_department) ?? null),
+      };
+    })
+    // The stage gate, when the owner sets one. Null today: every in-progress
+    // piece qualifies. Finished pieces never pass through it.
+    .filter((p) => p.isFinished || allocatableFromDept(p.currentDepartment))
+    // Finished first, AGAIN — the ORDER BY above already does this, and this
+    // line is not redundant. "A piece that exists beats a piece that is
+    // promised" is a safety rule, and a safety rule that lives only in a SQL
+    // clause is one edit away from silently not holding. Sorting here makes
+    // the guarantee a property of this function, provable without a database,
+    // whatever order the rows arrive in. `sort` is stable, so the oldest-first
+    // tie-break the query applied inside each half survives untouched.
+    .sort((a, b) => Number(b.isFinished) - Number(a.isFinished));
 }
 
 export type OwnerTarget = {
@@ -402,7 +484,8 @@ export async function loadAllocatedPOsForOrder(
 ): Promise<AllocatablePO[]> {
   const res = await db
     .prepare(
-      `SELECT id, poNo, product_code, quantity, stock_origin_so_id
+      `SELECT id, poNo, product_code, quantity, stock_origin_so_id,
+              status, current_department
          FROM production_orders
         WHERE is_stock = TRUE
           AND stock_origin_so_id IS NOT NULL
@@ -420,14 +503,23 @@ export async function loadAllocatedPOsForOrder(
       product_code?: string; productCode?: string;
       quantity: number | null;
       stock_origin_so_id?: string; stockOriginSoId?: string;
+      status?: string | null;
+      current_department?: string | null; currentDepartment?: string | null;
     }>();
-  return (res.results ?? []).map((r) => ({
-    id: r.id,
-    poNo: r.poNo,
-    productCode: (r.productCode ?? r.product_code) ?? "",
-    quantity: Number(r.quantity ?? 0),
-    stockOriginSoId: (r.stockOriginSoId ?? r.stock_origin_so_id) ?? "",
-  }));
+  return (res.results ?? []).map((r) => {
+    const isFinished = String(r.status ?? "").toUpperCase() === "COMPLETED";
+    return {
+      id: r.id,
+      poNo: r.poNo,
+      productCode: (r.productCode ?? r.product_code) ?? "",
+      quantity: Number(r.quantity ?? 0),
+      stockOriginSoId: (r.stockOriginSoId ?? r.stock_origin_so_id) ?? "",
+      isFinished,
+      currentDepartment: isFinished
+        ? null
+        : ((r.currentDepartment ?? r.current_department) ?? null),
+    };
+  });
 }
 
 export type AutoAllocationLine = {
@@ -540,10 +632,22 @@ export async function planAutoAllocation(
       //
       // Silence is right for the genuinely-no-stock case (an "0 available" line
       // on every product nobody stocks is noise), so only these two speak.
+      //
+      // The pool now holds unfinished pieces too, so "on hand" alone can be a
+      // LIE here: a line can lose a race it never knew about to a piece that
+      // is still on the floor. The sentence names whichever supply actually
+      // exists, because a salesperson who is told "none on hand" while three
+      // are being built has been given the wrong answer, not a shorter one.
       const a = avail.get(line.productCode);
-      if (a && a.onHandQty > 0 && a.availableQty === 0) {
+      const freeNow = (a?.availableQty ?? 0) + (a?.inProductionQty ?? 0);
+      if (a && a.allocatedQty > 0 && freeNow === 0) {
+        const have: string[] = [];
+        if (a.onHandQty > 0) have.push(`${a.onHandQty} on hand`);
+        const building = a.allocatedQty - a.onHandQty;
+        if (building > 0) have.push(`${building} still in production`);
         notes.push(
-          `No stock allocated for ${line.productCode} — all ${a.onHandQty} on hand are already committed to other orders.`,
+          `No stock allocated for ${line.productCode} — all ${have.join(" and ")} ` +
+            `are already committed to other orders.`,
         );
       } else if (oversized > line.quantity) {
         notes.push(
@@ -589,9 +693,26 @@ export async function planAutoAllocation(
         (allocatedByItemId.get(line.soItemId) ?? 0) + got,
       );
     }
+    // What the line got is now two different promises, and a salesperson
+    // reading one sentence has to be able to tell them apart: a finished piece
+    // is on the shelf TODAY, an unfinished one is a claim on the floor's
+    // future output and can still be scrapped or re-specced. Saying "from
+    // stock" for both is the shape of lie this feature exists to remove.
+    const fromShelf = taken.filter((p) => p.isFinished)
+      .reduce((n, p) => n + p.quantity, 0);
+    const fromFloor = got - fromShelf;
+    const remainder = line.quantity > got
+      ? ` (${line.quantity - got} to be produced)`
+      : "";
     notes.push(
-      `Allocated ${got} x ${line.productCode} from stock` +
-        (line.quantity > got ? ` (${line.quantity - got} to be produced)` : ""),
+      fromFloor === 0
+        // Unchanged, deliberately: a line filled entirely off the shelf reads
+        // exactly as it did before WIP was allocatable. The sentence people
+        // already know should not move for a case that did not change.
+        ? `Allocated ${got} x ${line.productCode} from stock${remainder}`
+        : `Allocated ${got} x ${line.productCode}` +
+          ` (${fromShelf > 0 ? `${fromShelf} from stock, ` : ""}` +
+          `${fromFloor} from pieces still in production)${remainder}`,
     );
   }
   return { statements, notes, allocatedByItemId };

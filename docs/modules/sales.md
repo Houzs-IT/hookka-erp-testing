@@ -80,7 +80,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 - Pages
   - `/sales` → `src/pages/sales/index.tsx:172` (`SalesPage` — SO list, dual-mode SO vs service-order)
   - `/sales/create` → `src/pages/sales/create.tsx:213` (`CreateSalesOrderPage`; OCR/scan-PO lands here)
-  - `/sales/:id` → `src/pages/sales/detail.tsx:561` (`SalesOrderDetailPage`; linked POs/JCs/DOs/invoices; on the staging host only, `StagingStageSkipCard` from `src/components/staging-stage-skip.tsx`)
+  - `/sales/:id` → `src/pages/sales/detail.tsx:583` (`SalesOrderDetailPage`; linked POs/JCs/DOs/invoices; on the staging host only, `StagingStageSkipCard` from `src/components/staging-stage-skip.tsx`)
   - `/sales/:id/edit` → `src/pages/sales/edit.tsx` (Edit SO; re-runs sofa-combo on save)
   - `/consignment` list/create/edit/detail/return → `src/pages/consignment/{index,create,edit,detail,return}.tsx`
   - `/consignment/note` → `src/pages/consignment/note.tsx:454` (`ConsignmentNotePage`; 3 inline tabs)
@@ -122,7 +122,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `CreateSalesOrderPage` | `src/pages/sales/create.tsx:213` | Main create form (parties, items, totals) |
 | `CopyFromSourceModal` | `src/pages/sales/create.tsx:2429` | 2-step copy-draft picker |
 | `LineItemCard` | `src/pages/sales/create.tsx:3068` | Per-line item editor |
-| `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:561` | SO detail; linked POs/JCs/DOs/invoices |
+| `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:583` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1765` | SO create + combo pass + snapshot invalidation |
 | `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3218` | SO edit + re-run combo pass |
 | `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2550` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
@@ -151,7 +151,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 - **camelCase columns need a rename-map entry** (`column-rename-map.json`) or they 400 "Invalid request body"; read folded-lowercase cols dual-keyed (`r.camelCase ?? r.snake_case`). Prefer snake_case for new columns.
 
 ## Common tasks (mini-playbook)
-- **Add a field to the SO** → column self-apply in `ensurePendingMigrations` (`sales-orders/_helpers.ts:1298`); persist in `app.post("/")` (`sales-orders.ts:1765`) and `app.put("/:id")` (`:3880`); surface in `rowToSO` (`_helpers.ts:243`) / `rowToSOList` (`:307`); render in `create.tsx:214` and `detail.tsx:561`. New column = snake_case (+ rename-map if camelCase).
+- **Add a field to the SO** → column self-apply in `ensurePendingMigrations` (`sales-orders/_helpers.ts:1298`); persist in `app.post("/")` (`sales-orders.ts:1765`) and `app.put("/:id")` (`:3880`); surface in `rowToSO` (`_helpers.ts:243`) / `rowToSOList` (`:307`); render in `create.tsx:214` and `detail.tsx:583`. New column = snake_case (+ rename-map if camelCase).
 - **Change the status cascade** → edit `cascadeSOStatusToPOs` (`sales-orders/_helpers.ts:788`) and the confirm handler (`sales-orders.ts:2550`); keep the `so_status_changes` autoActions JSON write in sync.
 - **Adjust sofa-combo pricing** → change the engine in `applySofaCombos` (`sofa-combo.ts:209`) / `findComboSubset` (`:98`); never touch the frontend. Rule data via `sofa-combos.ts` + grid `maintenance/sofa-combos.tsx:370`. Verify with `tests/sofa-combo.test.mjs`.
 - **Touch consignment flow** → CO in `consignment-orders.ts` (create `:653`, confirm `:1700`, edit `:1817`, cancel `:2487`, hub `:2630`); CN dispatch/delivered in `consignment-notes.ts`.

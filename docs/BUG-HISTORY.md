@@ -1,5 +1,8 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-304 (branch `fix/self-apply-skip-existing-column`, to `main`; 302 is taken on `staging`, 303 on `main`); a log, so "verified" means the entry matches the code on that branch.
+> **Last verified: 2026-10-16**: BUG-2026-10-16-302 corrected after the #907 staging run (the cut-off was the app's 30 s timeout after a server stall; branch `docs/bug302-staging-verified`).
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-302 (branch `fix/wip-sync-audit-atomic`, to `staging`; 299 to 301 are taken on other branches); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) now carries BOTH halves
 > measured on staging — the note on a real confirm, and the positive take-from-stock
 > path (order ten, take four, build six) that this entry previously listed as
@@ -166,6 +169,20 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-16-304 — A no-op self-apply ALTER locked the whole table and stalled every query behind it `database` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/self-apply-skip-existing-column` → `main`). Found 2026-10-16 on staging while testing the WIP time auto-sync (BUG-2026-10-16-302); not reported by a user. How often it bites production is UNMEASURED.
+
+**Symptom.** Right after a deploy, a save that writes job cards hung past the app's 30 s timeout, twice in about 20 minutes, then ran in 1.4 s a few minutes later. The staging slow-SQL log for the same window shows `ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS distributedAt TEXT` (from `/api/production-orders`) at p95 24 s, next to job-card SELECTs of 5 to 15 s.
+
+**Root cause.** Routes self-apply columns with `ALTER TABLE t ADD COLUMN IF NOT EXISTS c` once per isolate (233 distinct statements in `src/api`). Postgres takes an ACCESS EXCLUSIVE lock on `t` before it checks whether `c` exists, so a no-op ALTER waits behind any running query on `t`, and every later query on `t` queues behind the ALTER. A deploy starts many fresh isolates, so the busy tables get a burst of these. The lock queue itself was not observed (no `pg_locks` access from this session); the cause is inferred from the code, Postgres's documented lock order and the timing.
+
+**Fix.** `PgBoundStatement.run/all/first` in `src/api/lib/supabase-compat.ts` recognise the single-column self-apply shape (`parseAddColumnIfNotExists`, on the SQL after the adapter's own rename, with Postgres's case folding), look the column up in `information_schema.columns` (no lock on the table) and skip the ALTER when it exists. A hit is remembered for the isolate, since a column is only ever added. A missing column, an unrecognised shape or a failed lookup runs the ALTER exactly as before. All 233 distinct statements in `src/api` match the shape. Statements inside `batch()` are not touched.
+
+**Regression.** `tests/self-apply-skip-existing-column.test.mjs`.
+
+---
+
 ## BUG-2026-10-16-299 — The staging mail sender nested its recipient list and dropped every copy and threading header `mail-center` `staging` 🟡
 
 🟡 **Fixed on branch** (`feat/t012-mail-center` → `staging`). Found 2026-10-16 while setting up the staging verification for PRD T-012; nobody reported it, because the only sends staging had made since were single-recipient. **STAGING ONLY** — production is unaffected.
@@ -195,6 +212,24 @@ So the sender now downgrades, narrowly: a mail with ONE To, no copies, no reply-
 **What this means for verifying T-012 on staging: it cannot be done on the free plan.** Multiple recipients, Cc, Bcc and threading headers are exactly what the plan refuses, and they are exactly what T-012 added. Verifying the send path needs `BREVO_API_KEY` on the staging Pages Preview environment (the provider production uses), a paid MailSlurp plan, or verification on production.
 
 **Regression.** `tests/mail-send-path.test.mjs` — "the MailSlurp path carries the same recipients and headers (staging only)", which also pins that `to: [args.to]` does not come back, and "the MailSlurp free plan drops only threading headers, never recipients".
+
+---
+
+## BUG-2026-10-16-302 — Saving a WIP time could change a job card without writing its audit row `production` `audit` 🟡
+
+🟡 **Fixed on branch** (`fix/wip-sync-audit-atomic` → `staging`). Found 2026-10-16 while testing #905 on staging, not reported by a user. The feature is on `staging` only; `main` never had it.
+
+**Symptom.** Saving 5543-LONG PILLOW / Fab Sew from 9 back to 8 on WIP Production Times moved the one card that was following the BOM (SO-2610-043-09, 9 to 8), but its audit trail kept only the earlier 8 to 9 row. Read fresh (a new `limit` value, so not Hyperdrive's cache) more than two minutes later: still one row. The browser's network log shows that PUT as `net::ERR_ABORTED`; the BOM and the card were written anyway.
+
+**Root cause.** `syncOpenCardsToBom` (`jobcard-sync.ts`) wrote in two steps: a batch of guarded job-card UPDATEs, then a second batch with the audit rows for the UPDATEs that applied. When the request was cut off between the two, the Worker stopped after the first batch, so the card changed with no audit row.
+
+**Fix.** Each chunk is now one batch (one transaction): every UPDATE is followed by its audit INSERT, which is written only if the card now holds the new minutes (`buildAuditStatement` gained an optional `onlyIf` condition: `INSERT ... SELECT ... WHERE EXISTS (...)`). A card and its audit row now land together or not at all, and a card the guard left alone still gets no audit row. Callers that pass no condition get the same INSERT as before.
+
+**Why the request was cut off (corrected 2026-10-16 after #907 was on staging).** It was the app's own 30 s client timeout (`src/lib/api-client.ts`), not the test: the server stalled on the job-card write for over 30 s. Under #907 the same stall happened once more (8 to 9): the BOM saved, the card stayed at 8, no audit row, so the one-transaction write held. The next tries completed in 1.0 s (no card write), 1.4 s (8 to 9) and through the page (9 to 8), each with its audit row (08:32:34 and 08:34:05). Why the write stalled for about 20 minutes is UNMEASURED; the slow-SQL log in the same window shows `ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS` taking up to 24 s, which fits a lock queue on `job_cards`. Checking needs `pg_stat_activity` / `pg_locks` on the staging project.
+
+**Risk that stays.** A save that stalls past 30 s can still finish on the server after the page has shown an error (the #905 case above). The banner is not proof of the outcome in that window; re-open the page to see the real state.
+
+**Regression.** `tests/refresh-open-minutes.test.mjs` TC-14 (each UPDATE followed by its conditional audit in one batch; a raced card gets no audit row).
 
 ---
 

@@ -23,7 +23,7 @@ export {
   ThemeToggleCard,
   ModuleGroupList,
   DesktopAppLink,
-  handleSignOut,
 } from "./ModuleMenu";
+export { handleSignOut } from "./module-menu-data";
 export { MenuButton } from "./MenuButton";
 export { NavDrawer } from "./NavDrawer";
