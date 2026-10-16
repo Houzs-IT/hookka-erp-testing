@@ -67,6 +67,8 @@ import { Button } from "@/components/ui/button";
 import { useIncrementalList } from "@/components/ui/incremental-list";
 import { cn } from "@/lib/utils";
 import { ComposeDialog } from "./compose";
+import { pickDefaultFromAddress } from "./mail-from-default";
+import { VisibilityPanel } from "./visibility-panel";
 import MailCenterDetailPage from "./detail";
 import {
   subscribe as subscribeLocal,
@@ -190,6 +192,10 @@ type MailboxEntry =
 // Email-client folders. Inbox/Archive map to a server status; the rest are
 // resolved client-side (Starred/Sent/Trash/All) or local-only (Drafts).
 type Folder =
+  // T-012 R6: the person's OWN mailbox comes first — their inbox and the
+  // mail THEY sent (whichever shared box it went from). Drafts sit with them.
+  | "my-inbox"
+  | "my-sent"
   | "inbox"
   | "starred"
   | "sent"
@@ -201,6 +207,9 @@ type Folder =
   // invite emails the system fires from noreply@. Distinct from "sent" (which is
   // human mailbox replies). Rendered by its own OutboxPanel, not the thread list.
   | "autosent";
+
+// Threads per page (server-side paging, R11). The API caps a page at 500.
+const THREADS_PAGE = 100;
 
 // Department ordering for the sidebar: priority depts first, then A–Z, with
 // the catch-all bucket pinned last.
@@ -833,6 +842,10 @@ function RotateIcon() {
 
 function emptyLabel(folder: Folder): string {
   switch (folder) {
+    case "my-inbox":
+      return "Your inbox is empty";
+    case "my-sent":
+      return "You have not sent any mail yet";
     case "starred":
       return "No starred mail";
     case "sent":
@@ -935,7 +948,7 @@ export default function MailCenterPage() {
     (getCurrentUser()?.role ?? "").toUpperCase() === "SUPER_ADMIN";
 
   const [q, setQ] = useState("");
-  const [folder, setFolder] = useState<Folder>("inbox");
+  const [folder, setFolder] = useState<Folder>("my-inbox");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [filter, setFilter] = useState<MailboxFilter>({ kind: "all" });
   const [composeOpen, setComposeOpen] = useState(false);
@@ -945,12 +958,35 @@ export default function MailCenterPage() {
   // Label manager dialog (create / rename / recolour / delete catalogue labels).
   const [labelManagerOpen, setLabelManagerOpen] = useState(false);
 
-  // Map folder → the server status param. Inbox/Archive/Trash filter
-  // server-side; Starred/Sent/All fetch the full (non-trashed) set and narrow
-  // client-side; Drafts doesn't hit the threads endpoint at all. Trashed rows
-  // are excluded from every non-Trash view by the backend.
+  const { data: addresses } = useCachedJson<MailAddress[]>(
+    "/api/mail-center/addresses",
+    300,
+  );
+  // Every address row, SUPER_ADMIN only — so the canonical "Set up" offer
+  // below means "no row exists anywhere", not "not in your scope" (R12: a
+  // super admin's own sidebar is scoped like everyone else's now).
+  const { data: allAddresses } = useCachedJson<MailAddress[]>(
+    isSuperAdmin ? "/api/mail-center/addresses?all=1" : null,
+    300,
+  );
+  // The logged-in person's own mailbox (assigned-to / login email match).
+  // "" when they own none — then "My inbox" quietly behaves as the shared
+  // Inbox and the My-mailbox section is not drawn.
+  const myAddress = useMemo(
+    () =>
+      pickDefaultFromAddress(
+        (addresses ?? []).filter((a) => a.active),
+        getCurrentUser(),
+      ),
+    [addresses],
+  );
+
+  // Map folder → the server query. Inbox/Archive/Trash/Sent filter
+  // server-side (R11); Starred/All fetch the full (non-trashed) set; Drafts
+  // doesn't hit the threads endpoint at all. Trashed rows are excluded from
+  // every non-Trash view by the backend.
   const apiStatus: "open" | "closed" | "trashed" | "all" =
-    folder === "inbox"
+    folder === "inbox" || folder === "my-inbox"
       ? "open"
       : folder === "archive"
         ? "closed"
@@ -960,19 +996,61 @@ export default function MailCenterPage() {
 
   const params = new URLSearchParams();
   if (apiStatus !== "all") params.set("status", apiStatus);
-  if (filter.kind === "mailbox") params.set("mailbox", filter.value);
-  const listUrl = `/api/mail-center/threads${params.toString() ? `?${params.toString()}` : ""}`;
+  if (folder === "my-inbox" && myAddress) params.set("mailbox", myAddress);
+  else if (filter.kind === "mailbox") params.set("mailbox", filter.value);
+  if (folder === "sent") params.set("sent", "1");
+  if (folder === "my-sent") params.set("sentBy", "me");
+  if (labelFilter) params.set("label", labelFilter);
+  params.set("limit", String(THREADS_PAGE));
+  const listUrl = `/api/mail-center/threads?${params.toString()}`;
 
   const {
-    data: threads,
+    data: firstPage,
     loading,
     error,
     refresh,
   } = useCachedJson<MailThread[]>(listUrl, 60);
-  const { data: addresses } = useCachedJson<MailAddress[]>(
-    "/api/mail-center/addresses",
-    300,
-  );
+
+  // Server-side paging (R11): the first page comes through the cache hook;
+  // "Load more" appends further pages keyed on the same URL, so a folder /
+  // filter change (new URL) drops them. A short page means the end.
+  const [extra, setExtra] = useState<{
+    key: string;
+    rows: MailThread[];
+    done: boolean;
+    loading: boolean;
+  }>({ key: "", rows: [], done: false, loading: false });
+  const threads = useMemo(() => {
+    if (!firstPage) return firstPage;
+    return extra.key === listUrl ? [...firstPage, ...extra.rows] : firstPage;
+  }, [firstPage, extra.key, extra.rows, listUrl]);
+  const hasMore =
+    !!firstPage &&
+    firstPage.length >= THREADS_PAGE &&
+    !(extra.key === listUrl && extra.done);
+  async function loadMore() {
+    if (!threads || extra.loading || !hasMore) return;
+    setExtra((prev) => ({
+      key: listUrl,
+      rows: prev.key === listUrl ? prev.rows : [],
+      done: false,
+      loading: true,
+    }));
+    try {
+      const res = await fetch(`${listUrl}&offset=${threads.length}`, {
+        credentials: "include",
+      });
+      const page = res.ok ? ((await res.json()) as MailThread[]) : [];
+      setExtra((prev) => ({
+        key: listUrl,
+        rows: [...(prev.key === listUrl ? prev.rows : []), ...page],
+        done: page.length < THREADS_PAGE,
+        loading: false,
+      }));
+    } catch {
+      setExtra((prev) => ({ ...prev, key: listUrl, loading: false }));
+    }
+  }
   // Label catalogue (name → colour). Drives the coloured dots in the sidebar +
   // thread-list chips and the label menus. Short TTL so a create/recolour shows
   // promptly; the mutation helpers also invalidate this prefix.
@@ -1065,10 +1143,18 @@ export default function MailCenterPage() {
       for (const c of CANONICAL_DEPT_MAILBOXES) deptNames.add(c.dept);
     }
 
+    // "Missing" means no row ANYWHERE (the all=1 list), not merely outside
+    // the caller's scope. Until that list loads, nothing is offered.
+    const anywhere = new Set(
+      (allAddresses ?? []).map((a) => a.address.toLowerCase()),
+    );
     const groups: { dept: string; entries: MailboxEntry[] }[] = [];
     for (const dept of Array.from(deptNames).sort(sortDepts)) {
       const existing = real.get(dept) ?? [];
-      const haveAddrs = new Set(existing.map((a) => a.address.toLowerCase()));
+      const haveAddrs = new Set([
+        ...existing.map((a) => a.address.toLowerCase()),
+        ...anywhere,
+      ]);
       const entries: MailboxEntry[] = existing.map((address) => ({
         kind: "real",
         address,
@@ -1076,17 +1162,18 @@ export default function MailCenterPage() {
       // Add any canonical shared mailbox for this dept that has no row yet.
       // Admin-only for the same reason as above: to a non-admin, "missing"
       // is indistinguishable from "not yours to see".
-      if (isSuperAdmin) {
+      if (isSuperAdmin && allAddresses) {
         for (const c of CANONICAL_DEPT_MAILBOXES) {
           if (c.dept === dept && !haveAddrs.has(c.address.toLowerCase())) {
             entries.push({ kind: "missing", address: c.address, dept });
           }
         }
       }
-      groups.push({ dept, entries });
+      // A department with nothing to show and nothing to set up is noise.
+      if (entries.length > 0) groups.push({ dept, entries });
     }
     return groups;
-  }, [deptGroups, isSuperAdmin]);
+  }, [deptGroups, isSuperAdmin, allAddresses]);
 
   // The personal "Other" bucket (aliases with no department).
   const personalMailboxes = useMemo(() => {
@@ -1107,13 +1194,9 @@ export default function MailCenterPage() {
   const categoryBase = useMemo(() => {
     let list = threads ?? [];
 
-    // Folder-specific client narrowing.
+    // Folder-specific client narrowing (Sent / Sent-by-me are server-side).
     if (folder === "starred") {
       list = list.filter((t) => t.starred);
-    } else if (folder === "sent") {
-      // Accurate Sent: thread has at least one outbound message (server-computed
-      // hasOutbound), not the last_direction proxy.
-      list = list.filter((t) => t.hasOutbound);
     }
 
     // Department narrowing.
@@ -1525,8 +1608,53 @@ export default function MailCenterPage() {
             </p>
           )}
 
+          {/* MY MAILBOX — the person's own inbox, the mail they sent, and
+              their drafts (T-012 R6). Drawn only when they own a mailbox. */}
+          {myAddress && (
+            <nav className="space-y-0.5">
+              <p className="truncate px-3 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70" title={myAddress}>
+                My mailbox
+              </p>
+              <FolderItem
+                icon={Inbox}
+                label="Inbox"
+                active={folder === "my-inbox"}
+                badge={unreadByMailbox.get(myAddress) ?? 0}
+                onClick={() => {
+                  setFolder("my-inbox");
+                  setLabelFilter(null);
+                }}
+              />
+              <FolderItem
+                icon={Send}
+                label="Sent by me"
+                active={folder === "my-sent"}
+                onClick={() => {
+                  setFolder("my-sent");
+                  setLabelFilter(null);
+                }}
+              />
+              <FolderItem
+                icon={FileText}
+                label="Drafts"
+                active={folder === "drafts"}
+                badge={drafts.length}
+                badgeTone="muted"
+                onClick={() => {
+                  setFolder("drafts");
+                  setLabelFilter(null);
+                }}
+              />
+            </nav>
+          )}
+
           {/* FOLDERS */}
-          <nav className="space-y-0.5">
+          <nav className={cn("space-y-0.5", myAddress && "border-t border-border/60 pt-2")}>
+            {myAddress && (
+              <p className="px-3 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                All mail
+              </p>
+            )}
             <FolderItem
               icon={Inbox}
               label="Inbox"
@@ -1575,17 +1703,19 @@ export default function MailCenterPage() {
                 setLabelFilter(null);
               }}
             />
-            <FolderItem
-              icon={FileText}
-              label="Drafts"
-              active={folder === "drafts"}
-              badge={drafts.length}
-              badgeTone="muted"
-              onClick={() => {
-                setFolder("drafts");
-                setLabelFilter(null);
-              }}
-            />
+            {!myAddress && (
+              <FolderItem
+                icon={FileText}
+                label="Drafts"
+                active={folder === "drafts"}
+                badge={drafts.length}
+                badgeTone="muted"
+                onClick={() => {
+                  setFolder("drafts");
+                  setLabelFilter(null);
+                }}
+              />
+            )}
             <FolderItem
               icon={Trash2}
               label="Trash"
@@ -1724,6 +1854,9 @@ export default function MailCenterPage() {
               </>
             )}
           </div>
+
+          {/* R10: what may I see — the caller's scope level + mailboxes. */}
+          <VisibilityPanel />
         </aside>
 
         {/* MIDDLE+RIGHT — "Auto-sent" renders the outbox panel across the
@@ -1815,6 +1948,18 @@ export default function MailCenterPage() {
                 isSuperAdmin={isSuperAdmin}
                 listKey={`${folder}|${filter.kind}|${filter.kind === "mailbox" ? filter.value : ""}|${q}`}
               />
+            )}
+            {folder !== "drafts" && hasMore && (
+              <div className="border-t border-border/60 px-3 py-2 text-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadMore}
+                  disabled={extra.loading}
+                >
+                  {extra.loading ? "Loading…" : "Load more"}
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>

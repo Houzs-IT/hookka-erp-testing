@@ -1529,6 +1529,8 @@ Ask (DEV-20, requester VIOLET): the RM UOM should be selectable from options tha
 
 ## 2026-09-25 — 🔵 /dashboard-experimental: Employees > Efficiency drills into one employee day by day (branch `feat/dashboard-efficiency-employee-drill`, stacked on #533)
 
+## 2026-09-21 — 🟡 PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (on `staging` since 2026-10-16; this is the port to `main`, owner testing on canary)
+
 1. 🔵 The Efficiency sub-tab had no chart (only tables and the ranking). It now opens with the Daily efficiency chart (the Time & attendance one, extracted to `DailyEfficiencyCard` in `EmployeesInsights.tsx`; Time & attendance renders it unchanged).
 2. 🔵 With an employee picked, that chart shows the person for every day of the selected month: working vs production hours as bars and their own efficiency as the line, days off as empty slots. Driven by the existing `emp` filter in `EmployeesView.tsx`, so the Employee select, Reset and a new "← All employees" button on the chart header all return to the pool view. Data is the already-fetched `performance.byDay[].workers`; no API change. New pure helper `workerDays` in `dashboard-shared-lib.ts` (test in `tests/dashboard-period.test.mjs`).
 3. 🔵 Warning audit rows and Top/Bottom 5 rows are keyboard operable (Tab + Enter/Space) and scroll the chart into view when picked.
@@ -1537,6 +1539,37 @@ Ask (DEV-20, requester VIOLET): the RM UOM should be selectable from options tha
 6. 🔵 Daily warning audit: over-reporting is stepped, with status pills Over 150% / Over 300% / Over 500% / Over 1000% (pure `auditTier` + `OVER_TIERS` in `dashboard-shared-lib.ts`, test in `tests/dashboard-period.test.mjs`). A filter menu in the card header picks All / each Over step (cumulative, so Over 300% includes 500% and 1000% days) / Needs Attention, with a count per option. 10 rows a page with prev / next.
 
 Verified: `tsc -p tsconfig.app.json` exit 0, `npm test` 4881 pass / 0 fail. Visual check NOT done (local preview needs a login + worker).
+
+**Done (all 16), eight commits on `feat/t012-mail-center`:** R1-R4 `8a6e5f9d`, R5/R6/R11
+`210caab7`, R7/R8/R15 `7b17e7aa`, R9/R10 `b0357db5`, R12/R13 `eb40d744`, R14 `457b48b5`,
+R16 `4095bef8`. New files: `src/api/lib/mail-threading.ts` (pure recipients + RFC headers),
+`mail-provision.ts`, `mail-acks.ts`, `src/pages/mail-center/recipients-input.tsx`,
+`recipient-picker.tsx`, `ack-request-row.tsx`, `visibility-panel.tsx`,
+`migrations-postgres/0233_mail_reads_acks.sql` (mirrors the runtime DDL). 62 new tests across
+`tests/mail-threading`, `mail-send-path`, `mail-provision`, `mail-reads-acks`,
+`email-outbox-attachments`, `mobile-mail-center`, plus additions to `mail-center-rbac` and
+`org-people`. `npm test` 4672 → all pass except `tests/pcb-not-fabricated.test.mjs` (13), which
+fails on ANY checkout whose path has a space (`Internal%20Project` — it builds paths from
+`import.meta.url` without `fileURLToPath`; passes on a space-free worktree of `origin/main`) —
+pre-existing, not touched. `build:strict` clean. `docs/API.md` regenerated (140 mounts, 962
+handlers). CODEBASE-MAP restamped.
+
+**Decisions taken from the PRD text (owner to confirm at review):**
+- R12 → super admins follow `mail_user_scope` like everyone. **On deploy the seven prod super
+  admins drop to `personal` until set to `company` in the Mailbox tab** (UNMEASURED which of
+  them rely on company-wide reading). No migration seeds them — the PRD said the other system's
+  owner set the opposite deliberately.
+- R13 → `mail-sync/` + `.github/workflows/mail-sync.yml` deleted (the Hostinger IMAP poller;
+  MX is on Cloudflare since 2026-08-19). The scheduled run keeps firing from `main` until this
+  merges.
+- Acknowledgement is asked of STAFF recipients only (an `email_addresses` row); the send is
+  refused when none is on the mail. Chase = a reminder through the outbox, once per 24 h.
+- Brevo rewrites `Message-ID`; the inbound resolver matches ours OR the provider's id.
+
+**Not verified live:** no local Supabase / Brevo, so the send path, the ack chase and the
+Storage upload were not exercised end-to-end — verify on staging: compose with Cc + Bcc to a
+colleague, reply-all from the colleague's box, "Read by", request + confirm an acknowledgement,
+Auto-sent attachment download for a post-deploy notice.
 
 ---
 
