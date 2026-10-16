@@ -8913,10 +8913,17 @@ export default function ProductionPage({
                             </>
                           )}
                           <div><span className="inline-block w-[58px] font-semibold text-[#6B7280]">Leg</span>: {s.legHeightInches != null && s.legHeightInches > 0 ? `${s.legHeightInches}"` : "—"}</div>
-                          {s.specialOrder && (
-                            <div className="truncate text-[#9A3A2D] font-bold">★ {s.specialOrder}</div>
-                          )}
                         </div>
+                        {/* Notes mirrors the print row (TAG + ★ note, wraps, same size rule) at this tile's 9px-per-14pt scale. */}
+                        {(s.specialOrder || !legsPair) && (
+                          <div className="flex items-baseline gap-1 flex-1 overflow-hidden mt-[1.5px] leading-tight text-[#1F1D1B]" style={{ fontSize: "9px", minHeight: "1.25em" }}>
+                            <span className="inline-block w-[58px] font-semibold text-[#9A3A2D] shrink-0">Notes</span>
+                            <span
+                              className="flex-1 min-w-0 whitespace-normal break-words"
+                              style={{ fontSize: `${(notesFontSize(s) * 9) / 14}px`, lineHeight: 1.15 }}
+                            >: {oemMarkFor(s) ? <span className="font-bold text-[#6B5C32]">{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold text-[#9A3A2D]">★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}</span>
+                          </div>
+                        )}
                         <div className="mt-auto pt-1 border-t border-dashed border-black flex items-end gap-1">
                           <QRImg
                             eager

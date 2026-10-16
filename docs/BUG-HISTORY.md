@@ -1,6 +1,6 @@
 # Bug History
 
-> **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-up (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887; a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-ups (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887, and the Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -156,6 +156,14 @@ type on the mock, the room above the QR is: sofa 10.6mm, sofa + legs 13.7mm, sof
 sofa-only formula. Checked on all seven types at 14, 39, 75 and 179 characters: everything up
 to 75 fits; 179 still clips on most types. The bedframe bottom margin is 2.9mm, the same as
 before #887.
+
+**Follow-up 2026-10-16, Foam Bonding preview** (same branch): the
+Foam Bonding tab has its own half-size copy of the packing sticker ("Show Packing Stickers"). It
+showed only "★ note", truncated, with no Notes label and no TAG, so it did not match the real
+print it claims to mirror. It now has the same Notes row as the print: label, TAG / LABEL, the
+note wrapping above the QR, a one-line minimum, and `notesFontSize` scaled by 9/14 (the tile's
+9px labels stand for the print's 14pt). Preview only; the print from that tab already used the
+fixed print layout.
 
 ---
 
