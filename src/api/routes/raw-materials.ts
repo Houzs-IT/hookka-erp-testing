@@ -245,9 +245,9 @@ app.get("/", async (c) => {
 app.get("/:id", async (c) => {
   const id = c.req.param("id");
   const row = await c.var.DB.prepare(
-    "SELECT * FROM raw_materials WHERE id = ?",
+    "SELECT * FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, getOrgId(c))
     .first<RawMaterialRow>();
   if (!row) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -264,9 +264,9 @@ app.get("/:id/used-in", async (c) => {
   const id = c.req.param("id");
   const orgId = getOrgId(c);
   const rm = await c.var.DB.prepare(
-    "SELECT itemCode FROM raw_materials WHERE id = ?",
+    "SELECT itemCode FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, orgId)
     .first<{ itemCode?: string | null }>();
   if (!rm) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -415,9 +415,9 @@ app.put("/:id", async (c) => {
   await ensureDupCodesUnlocked(c.var.DB);
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare(
-    "SELECT * FROM raw_materials WHERE id = ?",
+    "SELECT * FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, getOrgId(c))
     .first<RawMaterialRow>();
   if (!existing) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -647,9 +647,9 @@ app.delete("/:id", async (c) => {
   if (denied) return denied;
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare(
-    "SELECT * FROM raw_materials WHERE id = ?",
+    "SELECT * FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, getOrgId(c))
     .first<RawMaterialRow>();
   if (!existing) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
