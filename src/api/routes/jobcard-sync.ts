@@ -702,9 +702,14 @@ export async function syncOpenCardsToBom(
   }
 
   for (const part of chunk(changes, 50)) {
-    // Still open and still at the minutes just read, or left alone.
-    const results = await raw.batch(
-      part.map((f) =>
+    // One transaction per chunk: each guarded UPDATE is followed by its audit
+    // row, written only if that UPDATE applied. So a card never changes without
+    // its audit row, even if the request is cut off part-way.
+    const stmts: D1PreparedStatement[] = [];
+    const updateAt: number[] = [];
+    for (const f of part) {
+      updateAt.push(stmts.length);
+      stmts.push(
         raw
           .prepare(
             `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?
@@ -712,27 +717,29 @@ export async function syncOpenCardsToBom(
                 AND COALESCE(productionTimeMinutes, 0) = ?`,
           )
           .bind(f.newMinutes, f.newMinutes, f.jcId, f.oldMinutes),
-      ),
-    );
-    const stmts: D1PreparedStatement[] = [];
-    for (let i = 0; i < part.length; i++) {
-      if ((results[i]?.meta?.changes ?? 0) === 0) {
-        result.leftAlone++;
-        continue;
-      }
-      const f = part[i];
-      result.updated++;
-      const audit = await buildAuditStatement(c, {
-        resource: "job-cards",
-        resourceId: f.jcId,
-        action: "refresh-open-minutes-from-bom",
-        before: { productionTimeMinutes: f.oldMinutes, deptCode: f.deptCode },
-        after: { productionTimeMinutes: f.newMinutes, estMinutes: f.newMinutes, deptCode: f.deptCode },
-        source: "admin",
-      });
+      );
+      const audit = await buildAuditStatement(
+        c,
+        {
+          resource: "job-cards",
+          resourceId: f.jcId,
+          action: "refresh-open-minutes-from-bom",
+          before: { productionTimeMinutes: f.oldMinutes, deptCode: f.deptCode },
+          after: { productionTimeMinutes: f.newMinutes, estMinutes: f.newMinutes, deptCode: f.deptCode },
+          source: "admin",
+        },
+        {
+          sql: "EXISTS (SELECT 1 FROM job_cards WHERE id = ? AND productionTimeMinutes = ?)",
+          binds: [f.jcId, f.newMinutes],
+        },
+      );
       if (audit) stmts.push(audit);
     }
-    if (stmts.length > 0) await raw.batch(stmts);
+    const results = await raw.batch(stmts);
+    for (const i of updateAt) {
+      if ((results[i]?.meta?.changes ?? 0) > 0) result.updated++;
+      else result.leftAlone++;
+    }
   }
   return result;
 }
