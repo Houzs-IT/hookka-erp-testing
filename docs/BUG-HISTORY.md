@@ -161,6 +161,32 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-16-299 — The staging mail sender nested its recipient list and dropped every copy and threading header `mail-center` `staging` 🟡
+
+🟡 **Fixed on branch** (`feat/t012-mail-center` → `staging`). Found 2026-10-16 while setting up the staging verification for PRD T-012; nobody reported it, because the only sends staging had made since were single-recipient. **STAGING ONLY** — production is unaffected.
+
+**Symptom.** None visible yet. It would have shown up as T-012's headline features looking broken on staging: a mail addressed to several people, or carrying Cc or Bcc, would have gone out wrong (or not at all), and no outgoing mail would have carried `Message-ID` / `In-Reply-To` / `References`. A tester would have concluded the feature was broken when only this provider path was.
+
+**Root cause.** `sendEmailViaMailSlurp` (`src/api/lib/email.ts`, added by `bf8daf5a` on 2026-09-29) was written while `SendEmailArgs.to` was a single string, so it spelled the payload as:
+
+```js
+to: [args.to],
+```
+
+T-012 widened `to` to `string | string[]` so Mail Center could address several people. The two changes touched different lines of different files and Git merged them without a conflict, but they collide in meaning: with an array, `[args.to]` nests it into `[[...]]`. The same call never passed `cc`, `bcc`, `replyTo` or `headers` at all, because none of them existed when it was written.
+
+TypeScript cannot catch this: `[args.to]` is a valid `(string | string[])[]` and goes straight into `JSON.stringify`.
+
+**Class.** Two changes that merge cleanly and are each correct on their own, but whose meanings collide — a widened type on one side, a consumer written against the narrow one on the other. A conflict-free merge is not evidence that the result works; only the type checker and the tests are, and here neither could see it.
+
+**Fix.** `to: toRecipientList(args.to)`, plus `cc` / `bcc` / `replyTo` and `customHeaders` for the RFC threading headers. Field names verified against the `SendEmailOptions` model in the `mailslurp-client` SDK (`dist/generated/models/SendEmailOptions.d.ts`): `to`, `cc` and `bcc` are `Array<string>`, `replyTo` is a `string`, and custom headers ride `customHeaders` as a flat string map. Each field is omitted when empty, so a plain single-recipient send keeps the exact payload it had before.
+
+**Why production is unaffected.** `sendMail` picks Brevo if `BREVO_API_KEY` is set, else Resend, and only falls through to MailSlurp when neither is. Production has Brevo; both the Brevo and Resend senders were updated with T-012 and carry these fields correctly.
+
+**Regression.** `tests/mail-send-path.test.mjs` — "the MailSlurp path carries the same recipients and headers (staging only)", which also pins that `to: [args.to]` does not come back.
+
+---
+
 ## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
 
 🟡 **Fixed on branch** (`fix/cached-fetch-inflight-298` → `staging`). Found 2026-10-16 while reproducing BUG-2026-10-16-297; not reported by a user. How often it happens on the live sites is UNMEASURED.
