@@ -95,7 +95,7 @@ import { FinanceTitleActions } from "@/components/finance/title-actions";
 import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
 import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
-import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, type FinStatus } from "@/lib/finance-daily";
+import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
@@ -13593,7 +13593,7 @@ function DailyCashTab() {
     try {
       const W = 1000;
       const line = 26;
-      const acctRows = cur.accounts.map((a) => ({ a, rows: a.pending.filter((p) => !p.ticked) }));
+      const acctRows = cur.accounts.map((a) => ({ a, rows: pendingReceiptsFirst(a.pending.filter((p) => !p.ticked)) }));
       let H = 96; // title block
       for (const { a, rows } of acctRows) {
         H += 44; // dark band
@@ -13724,7 +13724,7 @@ function DailyCashTab() {
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const acctBlock = (a: CashPosAccount) => `
       <h2>${a.code} ${esc(a.name)} — Bank balance (est.) <b>${formatCurrency(a.bankEstSen)}</b>${a.reconciled ? "" : " (book only)"}</h2>
-      ${a.pending.filter((p) => !p.ticked).length ? `<table><thead><tr><th>Date</th><th>PV No.</th><th>Description</th><th class="r">Received</th><th class="r">Pending payment</th></tr></thead><tbody>${a.pending.filter((p) => !p.ticked)
+      ${a.pending.filter((p) => !p.ticked).length ? `<table><thead><tr><th>Date</th><th>PV No.</th><th>Description</th><th class="r">Received</th><th class="r">Pending payment</th></tr></thead><tbody>${pendingReceiptsFirst(a.pending.filter((p) => !p.ticked))
         .map((p) => `<tr><td>${p.day}</td><td>${esc(p.sourceId)}</td><td>${esc(p.description)}</td><td class="r">${p.amountSen > 0 ? formatCurrency(p.amountSen) : ""}</td><td class="r">${p.amountSen < 0 ? formatCurrency(-p.amountSen) : ""}</td></tr>`)
         .join("")}</tbody></table>` : ""}
       ${a.oldPendingCount > 0 ? `<p>Older reconciliation items: ${a.oldPendingCount} · ${formatCurrency(a.oldPendingSen)}</p>` : ""}
@@ -13778,25 +13778,21 @@ function DailyCashTab() {
           </div>
         </div>
       )}
-      <div className="flex justify-between items-center flex-wrap gap-2">
-        <span aria-hidden="true" />
-        <div className="flex gap-2">
+      {/* On the page's title row (finance v2) */}
+      <FinanceTitleActions>
           <Button variant="outline" size="sm" onClick={() => { const v = !showPlanned; setShowPlanned(v); try { localStorage.setItem("cashpos-planned", v ? "1" : "0"); } catch { /* ignore */ } }}>
             {showPlanned ? "Hide planned" : "Show planned"}
           </Button>
           <Button variant="outline" size="sm" disabled={!cur} onClick={getImage}>Get image</Button>
           <Button variant="outline" size="sm" disabled={!cur} onClick={printBoard}>Print</Button>
-        </div>
-      </div>
+      </FinanceTitleActions>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-center gap-3 bg-[#F7F4EF] rounded-lg">
           <Button variant="outline" size="sm" onClick={() => shiftDay(-1)}>‹</Button>
           <input type="date" value={date} onChange={(e) => { if (e.target.value) setDate(e.target.value); }} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" />
           <Button variant="outline" size="sm" onClick={() => shiftDay(1)}>›</Button>
           <Button variant="outline" size="sm" onClick={() => setDate(today)}>Today</Button>
-          <span className="text-[11px] text-[#9CA3AF]">
-            Tick a row when your banking app shows it went through — the estimate turns daily-accurate. Statements still referee at month end.
-          </span>
+          <span className="text-[12px] text-[#6B7280]">{weekdayOf(date)}{date === today ? " · today" : ""}</span>
         </CardContent>
       </Card>
       {isFuture && (
@@ -13817,9 +13813,9 @@ function DailyCashTab() {
           {cur.accounts.map((a) => (
             <Card key={a.code}>
               <CardContent className="p-0">
-                <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-[#1F2937] rounded-t-lg">
-                  <div className="text-sm font-semibold text-white">{a.code} {a.name}{!a.reconciled && <span className="ml-2 text-[10px] font-normal text-[#D1D5DB]">book only — no statements imported</span>}</div>
-                  <div className="text-sm text-white">Bank balance (est.) <span className="font-bold tabular-nums">{formatCurrency(a.bankEstSen)}</span></div>
+                <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-[#E2E8F0] rounded-t-[10px] border-b-[1.5px] border-[#7A6E5E]">
+                  <div className="text-[14px] font-bold text-[#1F1D1B]">{a.code} {a.name}{!a.reconciled && <span className="ml-2 text-[11px] font-normal text-[#6B7280]">book only — no statements imported</span>}</div>
+                  <div className="text-[13px] text-[#374151]">Bank balance (est.) <span className="ml-1 text-[16px] font-bold tabular-nums text-[#1F1D1B]">{formatCurrency(a.bankEstSen)}</span></div>
                 </div>
                 {a.unbookedCount > 0 && (
                   <div className="px-4 py-1.5 text-[11px] text-[#7A5B12] bg-[#FBF3E4]">
@@ -13827,8 +13823,8 @@ function DailyCashTab() {
                   </div>
                 )}
                 {a.pending.length > 0 && (() => {
-                  const open = a.pending.filter((p) => !p.ticked);
-                  const ticked = a.pending.filter((p) => p.ticked);
+                  const open = pendingReceiptsFirst(a.pending.filter((p) => !p.ticked));
+                  const ticked = pendingReceiptsFirst(a.pending.filter((p) => p.ticked));
                   const tickedIn = ticked.reduce((s, p) => s + (p.amountSen > 0 ? p.amountSen : 0), 0);
                   const tickedOut = ticked.reduce((s, p) => s + (p.amountSen < 0 ? -p.amountSen : 0), 0);
                   const showing = !!showTicked[a.code];
@@ -13852,7 +13848,7 @@ function DailyCashTab() {
                   );
                   return (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table data-fin-list className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                             <th className="px-3 py-2 text-left">✓</th>
@@ -13866,10 +13862,10 @@ function DailyCashTab() {
                         <tbody>
                           {open.map(row)}
                           {open.length === 0 && (
-                            <tr><td colSpan={6} className="px-3 py-2 text-xs text-[#9CA3AF]">Nothing pending — everything booked has gone through the bank.</td></tr>
+                            <tr data-fin-nolift><td colSpan={6} className="px-3 py-2 text-xs text-[#9CA3AF]">Nothing pending — everything booked has gone through the bank.</td></tr>
                           )}
                           {ticked.length > 0 && (
-                            <tr className="bg-[#FAF8F5]">
+                            <tr data-fin-nolift className="bg-[#FAF8F5]">
                               <td colSpan={6} className="px-3 py-1.5 text-xs">
                                 <button type="button" onClick={() => setShowTicked((m) => ({ ...m, [a.code]: !m[a.code] }))} className="text-[#27500A] hover:text-[#1F1D1B] cursor-pointer" title="Ticked = seen in the banking app; they leave the pending list. Open to review or untick.">
                                   {showing ? "▾" : "▸"} ✓ Ticked as gone through: {ticked.length}

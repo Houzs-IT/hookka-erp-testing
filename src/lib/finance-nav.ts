@@ -33,7 +33,7 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   },
   receipts: { title: "Receipts", explain: "Every payment in, in one list. Customer Receipt settles sales invoices; Other Debtor Receipt settles other debtor bills; Official Receipt books sundry income. Each posts on save." },
   transfer: { title: "Fund Transfer", explain: "Money moved between your own bank and cash accounts." },
-  dailycash: { title: "Daily Cash Position", explain: "Each bank today, and what is still to come in or go out. Tick a row when your banking app shows it went through." },
+  dailycash: { title: "Daily Cash Position", explain: "Each bank today, and what is still to come in or go out (receipts first, then payments). Tick a row when your banking app shows it went through — the estimate turns daily-accurate. Statements still referee at month end." },
   journals: { title: "Journal Entries", explain: "Journals keyed by hand, and the postings the system makes (read-only)." },
   cashbook: { title: "Cash Book", explain: "Bank reconciliation: each month's bank statement matched against the books, then finalised." },
   selfcheck: { title: "Self-check", explain: "Consistency checks across the books, each with where to fix it." },

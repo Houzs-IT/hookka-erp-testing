@@ -23,6 +23,17 @@ export function fmtDocDate(iso: string | null | undefined): string {
   return mon ? `${m[3]} ${mon} ${m[1]}` : "";
 }
 
+const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "2026-10-15" → "Thursday" (the calendar day, whatever the browser's time
+ *  zone); unreadable → "". */
+export function weekdayOf(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ""));
+  if (!m) return "";
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return Number.isNaN(d.getTime()) ? "" : WEEKDAY[d.getUTCDay()];
+}
+
 /** The footer total of a money list: active rows only (void / deleted rows are
  *  shown but not counted), in whole sen. */
 export function activeTotalSen(rows: { state: string; totalSen: number }[]): number {

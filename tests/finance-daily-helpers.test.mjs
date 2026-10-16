@@ -84,3 +84,11 @@ test("cash position pending lines: receipts first, then payments, each by day, t
   assert.notEqual(pendingReceiptsFirst(lines), lines, "a new array");
   assert.deepEqual(lines.map((l) => l.id), ["p1", "r2", "p0", "r1", "p2", "z"], "the input is left alone");
 });
+
+test("the date bar's weekday is the calendar day's", async () => {
+  const { weekdayOf } = await import("../src/lib/finance-daily.ts");
+  assert.equal(weekdayOf("2026-10-15"), "Thursday");
+  assert.equal(weekdayOf("2026-10-18"), "Sunday");
+  assert.equal(weekdayOf("2026-10-15T23:30:00+08:00"), "Thursday", "only the day part counts");
+  assert.equal(weekdayOf(""), "");
+});
