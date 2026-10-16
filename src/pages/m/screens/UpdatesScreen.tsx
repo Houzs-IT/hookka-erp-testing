@@ -23,6 +23,16 @@
 //   unchanged. NO badge: office announcements have no per-user read state yet
 //   (Phase 2, not approved), and a count we cannot back is a fake count.
 //
+// 2026-10-16 (phone only, owner-approved `Updates.dc.html` pass): borderless
+// cards with the Sales / Products phone shadows, round 42px header actions
+// (shared MobileHeader unchanged), the design's view switch (local
+// PhoneViewSwitch on the Products ViewSwitch pattern; tablet keeps the shared
+// SegmentedSwitch), the Sales search box + a 44px round ArrowDownUp button
+// that opens the filter sheet (no sort exists), shadowed filter chips, ruled date headings, a
+// severity-tinted icon tile, unread 700 / read 600 titles, a chevron-down on
+// cards that expand, a desktop-note strip and a no-results icon. Tablet keeps
+// every earlier value (CARD_TABLET and the `phone ? … : …` branches).
+//
 // Read-state caveat (backend, unchanged): a notification addressed to nobody
 // (user_id NULL, a broadcast) has ONE isRead for the whole org, so reading it
 // here reads it for everyone. Today's only producer (IT Support) addresses a
@@ -31,13 +41,18 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  ArrowDownUp,
   Bell,
   CheckCheck,
+  ChevronDown,
   ChevronRight,
   DollarSign,
   Factory,
+  Megaphone,
+  Monitor,
   Package,
   Search,
+  SearchX,
   ShieldCheck,
   ShoppingCart,
   SlidersHorizontal,
@@ -48,7 +63,7 @@ import {
 import type { Notification } from "@/types";
 import { isUnread } from "@/lib/notifications-feed";
 import { MobileHeader, SegmentedSwitch } from "../components";
-import { M, M_ACCENT, titleCaseStatus } from "../theme";
+import { M, M_ACCENT, SEMANTIC, titleCaseStatus } from "../theme";
 import { useNotificationFeed, type NotificationFeed } from "../lib/use-notification-feed";
 import { useResponsiveLayout } from "../lib/responsive-layout";
 import { groupNotifications, relativeTime, toMobilePath } from "../lib/notification-links";
@@ -71,12 +86,22 @@ import { useNewAnnouncementSheet } from "../lib/use-new-announcement-sheet";
 
 type UpdatesView = "notifications" | "announcements";
 
+// Phone shadows — the same values as the phone Sales Orders / Products screens.
+const SHADOW_CONTROL = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
+const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 30px -14px rgba(31,29,27,.24)";
+const SHADOW_CHIP_ON = "0 4px 12px -6px rgba(107,92,50,.45)";
+const SHADOW_FILTER_ON = "0 8px 18px -8px rgba(107,92,50,.6)";
+// Products ViewSwitch active segment; the design's round header action.
+const SHADOW_SEG = "0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)";
+const SHADOW_HEADER_ACTION = "0 1px 2px rgba(31,29,27,.06),0 6px 16px -8px rgba(31,29,27,.22)";
+
 export function UpdatesScreen() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const view: UpdatesView = params.get("view") === "announcements" ? "announcements" : "notifications";
   const feed = useNotificationFeed();
   const create = useNewAnnouncementSheet();
+  const phone = useResponsiveLayout().mode === "phone";
   const [markAllBusy, setMarkAllBusy] = useState(false);
   const [markError, setMarkError] = useState(false);
 
@@ -123,7 +148,7 @@ export function UpdatesScreen() {
               disabled={feed.unread === 0 || markAllBusy}
               aria-label="Mark all notifications read"
               title="Mark all read"
-              style={{
+              style={phone ? markAllPhoneStyle(feed.unread === 0) : {
                 // Same 34x34 / radius-10 header action as the + buttons
                 // (Sales, Mail, Announcements); outlined, not filled, because
                 // it is not a create action.
@@ -150,22 +175,28 @@ export function UpdatesScreen() {
         }
       />
 
-      <div style={{ padding: "12px 18px 0" }}>
-        <SegmentedSwitch
-          ariaLabel="Updates view"
-          value={view}
-          onChange={setView}
-          options={[
-            {
-              key: "notifications",
-              label: "Notifications",
-              badge: feed.unread,
-              badgeLabel: `Notifications, ${feed.unread} unread`,
-            },
-            { key: "announcements", label: "Announcements" },
-          ]}
-        />
-      </div>
+      {phone ? (
+        <div style={{ padding: "6px 18px 0" }}>
+          <PhoneViewSwitch view={view} onChange={setView} unread={feed.unread} />
+        </div>
+      ) : (
+        <div style={{ padding: "12px 18px 0" }}>
+          <SegmentedSwitch
+            ariaLabel="Updates view"
+            value={view}
+            onChange={setView}
+            options={[
+              {
+                key: "notifications",
+                label: "Notifications",
+                badge: feed.unread,
+                badgeLabel: `Notifications, ${feed.unread} unread`,
+              },
+              { key: "announcements", label: "Announcements" },
+            ]}
+          />
+        </div>
+      )}
 
       {view === "notifications" ? (
         <NotificationsView feed={feed} markError={markError} onMarkResult={(ok) => setMarkError(!ok)} />
@@ -176,6 +207,128 @@ export function UpdatesScreen() {
       {create.sheet}
     </>
   );
+}
+
+/** Phone view switch — the Updates.dc.html segmented control, built on the
+ *  Products `ViewSwitch` pattern (local, so the shared SegmentedSwitch and
+ *  Home stay unchanged): 46px M.divider track, radius 14, 4px inset; the active
+ *  segment is M.card with the segment shadow; icons; ink text when inactive.
+ *  The Notifications segment carries the REAL unread count (red, like the
+ *  design) and says it in its accessible name. */
+function PhoneViewSwitch({
+  view,
+  onChange,
+  unread,
+}: {
+  view: UpdatesView;
+  onChange: (v: UpdatesView) => void;
+  unread: number;
+}) {
+  const segments: { key: UpdatesView; label: string; Icon: LucideIcon }[] = [
+    { key: "notifications", label: "Notifications", Icon: Bell },
+    { key: "announcements", label: "Announcements", Icon: Megaphone },
+  ];
+  const count = unread > 0 ? Math.floor(unread) : 0;
+  return (
+    <div
+      role="group"
+      aria-label="Updates view"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: 4,
+        height: 46,
+        boxSizing: "border-box",
+        padding: 4,
+        borderRadius: 14,
+        backgroundColor: M.divider,
+      }}
+    >
+      {segments.map(({ key, label, Icon }) => {
+        const on = view === key;
+        const shown = key === "notifications" ? count : 0;
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={on}
+            aria-label={key === "notifications" ? `Notifications, ${count} unread` : undefined}
+            onClick={() => onChange(key)}
+            style={{
+              minWidth: 0,
+              height: "100%",
+              padding: "0 8px",
+              borderRadius: 10,
+              border: "none",
+              backgroundColor: on ? M.card : "transparent",
+              boxShadow: on ? SHADOW_SEG : "none",
+              color: on ? M.raisin : M.ink,
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: on ? 700 : 600,
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 7,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            <Icon size={15} strokeWidth={1.9} aria-hidden style={{ flex: "none" }} />
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+            {shown > 0 ? (
+              <span
+                aria-hidden
+                data-unread-count
+                style={{
+                  flex: "none",
+                  minWidth: 18,
+                  height: 18,
+                  boxSizing: "border-box",
+                  padding: "0 5px",
+                  borderRadius: 999,
+                  backgroundColor: SEMANTIC.DANGER.hex,
+                  color: "#fff",
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {shown > 99 ? "99+" : shown}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Phone "Mark all read": the 42px round header action of the design (white,
+ *  its own soft shadow), greyed when nothing is unread. The 44px tap target
+ *  comes from the header row (52px). */
+function markAllPhoneStyle(none: boolean): CSSProperties {
+  return {
+    width: 42,
+    height: 42,
+    flex: "none",
+    padding: 0,
+    borderRadius: 999,
+    border: "none",
+    backgroundColor: M.card,
+    color: none ? M.faint : M.taupe,
+    opacity: none ? 0.55 : 1,
+    boxShadow: SHADOW_HEADER_ACTION,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: none ? "default" : "pointer",
+    WebkitTapHighlightColor: "transparent",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -200,11 +353,16 @@ const SEVERITY: Record<string, { color: string; label: string }> = {
 };
 
 // Card rhythm. Phone (<720px, owner 2026-10-13) is aligned with the
-// Announcements card: 15px title, 13/15 padding (+3px for the severity bar),
-// 11px between cards, and the readable M.body for description + date
-// (M.muted / M.faint measure 3.1 / 2.5:1). Tablet keeps its original values.
+// Announcements card: 15px title, 11px between cards, and the readable M.body
+// for description + date (M.muted / M.faint measure 3.1 / 2.5:1).
+// 2026-10-16 (Updates.dc.html): 14/14/13/17 padding (+3px for the severity
+// bar), 12px gap, a 36px / radius-11 icon tile. Tablet keeps its original values.
 const CARD_PHONE = {
-  padding: "13px 15px 13px 18px",
+  padding: "14px 14px 13px 17px",
+  gap: 12,
+  tile: 36,
+  tileRadius: 11,
+  iconSize: 17,
   gapBelow: 11,
   titleSize: 15,
   titleTracking: "-0.2px",
@@ -216,6 +374,10 @@ const CARD_PHONE = {
 } as const;
 const CARD_TABLET = {
   padding: "12px 13px 12px 16px",
+  gap: 11,
+  tile: 32,
+  tileRadius: 9,
+  iconSize: 16,
   gapBelow: 10,
   titleSize: 14,
   titleTracking: undefined,
@@ -252,6 +414,7 @@ function NotificationsView({
   const dq = useDebounced(query, 250);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const phone = useResponsiveLayout().mode === "phone";
 
   // Clearing the box takes effect at once; typing waits for the debounce.
   const effectiveQ = query.trim() === "" ? "" : dq;
@@ -313,8 +476,10 @@ function NotificationsView({
     body = <Msg text="No notifications yet." />;
   } else if (groups.length === 0) {
     body = (
-      <Msg text="No notifications match your search or filters.">
-        <TextButton onClick={clearAll}>Clear search and filters</TextButton>
+      <Msg text="No notifications match your search or filters." icon={phone ? SearchX : undefined}>
+        <TextButton onClick={clearAll} elevated={phone}>
+          Clear search and filters
+        </TextButton>
       </Msg>
     );
   } else {
@@ -322,17 +487,23 @@ function NotificationsView({
       <div style={{ padding: "0 18px 120px" }}>
         {groups.map((g) => (
           <section key={g.label} aria-label={g.label}>
+            {/* Phone: the heading runs into a hairline rule (the Sales
+                "N ORDERS" row); tablet keeps the bare heading. */}
             <div
               style={{
+                display: phone ? "flex" : undefined,
+                alignItems: "center",
+                gap: 8,
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: 1,
                 textTransform: "uppercase",
-                color: M.muted,
-                padding: "14px 2px 9px",
+                color: phone ? M.body : M.muted,
+                padding: phone ? "16px 2px 10px" : "14px 2px 9px",
               }}
             >
-              {g.label}
+              <span style={{ whiteSpace: "nowrap" }}>{g.label}</span>
+              {phone ? <span aria-hidden style={{ flex: 1, height: 1, backgroundColor: M.hairline }} /> : null}
             </div>
             {g.items.map((n) => (
               <NotificationCard key={n.id} n={n} expanded={expanded.has(n.id)} onOpen={() => open(n)} />
@@ -348,8 +519,9 @@ function NotificationsView({
   return (
     <>
       {/* Search + filter — the Sales row: 18px gutters, 7px gap, 44px
-          controls, radius 12, hairline border, 18px search icon. */}
-      <div style={{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 }}>
+          controls, radius 12, hairline border, 18px search icon. Phone: the
+          phone Sales search (borderless, radius 14, control shadow). */}
+      <div style={phone ? { display: "flex", alignItems: "center", gap: 8, padding: "14px 18px 4px", minWidth: 0 } : { display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 }}>
         <div
           style={{
             flex: 1,
@@ -363,6 +535,7 @@ function NotificationsView({
             backgroundColor: M.card,
             border: `1px solid ${M.hairline}`,
             borderRadius: 12,
+            ...(phone ? { border: "none", borderRadius: 14, boxShadow: SHADOW_CONTROL } : null),
             opacity: disabled ? 0.6 : 1,
           }}
         >
@@ -416,53 +589,145 @@ function NotificationsView({
                 WebkitTapHighlightColor: "transparent",
               }}
             >
-              <X size={18} strokeWidth={1.75} />
+              {phone ? (
+                <span
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 999,
+                    backgroundColor: M.divider,
+                    color: M.body,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <X size={13} strokeWidth={2.4} />
+                </span>
+              ) : (
+                <X size={18} strokeWidth={1.75} />
+              )}
             </button>
           ) : (
             <span style={{ width: 13, flex: "none" }} />
           )}
         </div>
-        {/* Filter button — the Sales convention: outlined 44×44 at rest,
-            taupe with the count beside the icon while filters are on. */}
-        <button
-          type="button"
-          aria-label={activeCount > 0 ? `Filters, ${activeCount} active` : "Filters"}
-          aria-haspopup="dialog"
-          aria-expanded={sheetOpen}
-          disabled={disabled}
-          onClick={() => setSheetOpen(true)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            height: 44,
-            boxSizing: "border-box",
-            width: activeCount > 0 ? undefined : 44,
-            padding: activeCount > 0 ? "0 14px" : 0,
-            backgroundColor: activeCount > 0 ? M.taupe : M.card,
-            border: `1px solid ${activeCount > 0 ? M.taupe : M.hairline}`,
-            borderRadius: 12,
-            color: activeCount > 0 ? M.card : M.ink,
-            fontFamily: "inherit",
-            fontSize: 13,
-            fontWeight: 700,
-            fontVariantNumeric: "tabular-nums",
-            cursor: disabled ? "default" : "pointer",
-            opacity: disabled ? 0.6 : 1,
-            flexShrink: 0,
-            WebkitTapHighlightColor: "transparent",
-          }}
-        >
-          <SlidersHorizontal size={19} strokeWidth={1.75} aria-hidden />
-          {activeCount > 0 ? <span aria-hidden>{activeCount}</span> : null}
-        </button>
+        {/* Filter button. Phone (owner 2026-10-16): the design's 44px circle
+            with the ArrowDownUp glyph the phone Sales filter button already
+            uses; white with the control shadow, taupe with a red corner count
+            while filters are on. It opens the FILTER sheet only — there is no
+            sort (the API returns newest first) — and its accessible name says
+            "Filters". Tablet: the outlined 44×44 with the count beside the
+            icon, as before. */}
+        {phone ? (
+          <button
+            type="button"
+            aria-label={activeCount > 0 ? `Filters, ${activeCount} active` : "Filters"}
+            aria-haspopup="dialog"
+            aria-expanded={sheetOpen}
+            title="Filter"
+            disabled={disabled}
+            onClick={() => setSheetOpen(true)}
+            style={{
+              width: 44,
+              height: 44,
+              flex: "none",
+              padding: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "none",
+              border: "none",
+              cursor: disabled ? "default" : "pointer",
+              opacity: disabled ? 0.6 : 1,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            <span
+              style={{
+                position: "relative",
+                width: 44,
+                height: 44,
+                borderRadius: 999,
+                backgroundColor: activeCount > 0 ? M.taupe : M.card,
+                color: activeCount > 0 ? M.paper : M.taupe,
+                boxShadow: activeCount > 0 ? SHADOW_FILTER_ON : SHADOW_CONTROL,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <ArrowDownUp size={16} strokeWidth={1.9} aria-hidden />
+              {activeCount > 0 ? (
+                <span
+                  aria-hidden
+                  data-filter-count
+                  style={{
+                    position: "absolute",
+                    top: -3,
+                    right: -3,
+                    minWidth: 17,
+                    height: 17,
+                    padding: "0 4px",
+                    boxSizing: "border-box",
+                    borderRadius: 999,
+                    backgroundColor: SEMANTIC.DANGER.hex,
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: `0 0 0 2px ${M.paper}`,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {activeCount}
+                </span>
+              ) : null}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-label={activeCount > 0 ? `Filters, ${activeCount} active` : "Filters"}
+            aria-haspopup="dialog"
+            aria-expanded={sheetOpen}
+            disabled={disabled}
+            onClick={() => setSheetOpen(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              height: 44,
+              boxSizing: "border-box",
+              width: activeCount > 0 ? undefined : 44,
+              padding: activeCount > 0 ? "0 14px" : 0,
+              backgroundColor: activeCount > 0 ? M.taupe : M.card,
+              border: `1px solid ${activeCount > 0 ? M.taupe : M.hairline}`,
+              borderRadius: 12,
+              color: activeCount > 0 ? M.card : M.ink,
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: 700,
+              fontVariantNumeric: "tabular-nums",
+              cursor: disabled ? "default" : "pointer",
+              opacity: disabled ? 0.6 : 1,
+              flexShrink: 0,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            <SlidersHorizontal size={19} strokeWidth={1.75} aria-hidden />
+            {activeCount > 0 ? <span aria-hidden>{activeCount}</span> : null}
+          </button>
+        )}
       </div>
 
       {/* Active filters — the selected-chip look of Sales / Announcements
           (30px, 12/600, taupe on gold); each sits in a 44px tap target. */}
       {activeChips.length > 0 ? (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", padding: "2px 14.5px 0" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", padding: phone ? "0 15px" : "2px 14.5px 0" }}>
           {activeChips.map((c) => (
             <button
               key={c.key}
@@ -495,6 +760,8 @@ function NotificationsView({
                   fontSize: 12,
                   fontWeight: 600,
                   whiteSpace: "nowrap",
+                  // Phone: the borderless Sales active chip (gold + soft shadow).
+                  ...(phone ? { border: "none", boxShadow: SHADOW_CHIP_ON } : null),
                 }}
               >
                 {c.label}
@@ -583,14 +850,15 @@ function NotificationCard({ n, expanded, onOpen }: { n: Notification; expanded: 
         position: "relative",
         overflow: "hidden",
         display: "flex",
-        gap: 11,
+        gap: card.gap,
         background: M.card,
-        border: `1px solid ${M.border}`,
+        // Phone: borderless with the Sales card shadow; tablet: as before.
+        border: phone ? "none" : `1px solid ${M.border}`,
         borderRadius: 16,
         padding: card.padding,
         marginBottom: card.gapBelow,
         cursor: "pointer",
-        boxShadow: "0 1px 0 rgba(31,29,27,.03),0 6px 20px -12px rgba(31,29,27,.14)",
+        boxShadow: phone ? SHADOW_CARD : "0 1px 0 rgba(31,29,27,.03),0 6px 20px -12px rgba(31,29,27,.14)",
         WebkitTapHighlightColor: "transparent",
       }}
     >
@@ -609,21 +877,29 @@ function NotificationCard({ n, expanded, onOpen }: { n: Notification; expanded: 
         }}
       />
 
+      {/* Category icon tile. Phone: tinted with the severity colour (a 12%
+          layer of the same token, so dark mode follows); the icon itself is
+          decorative — the severity word below carries the meaning. */}
       <div
         aria-hidden
         style={{
-          width: 32,
-          height: 32,
+          position: "relative",
+          overflow: "hidden",
+          width: card.tile,
+          height: card.tile,
           flex: "none",
-          borderRadius: 9,
-          backgroundColor: M.divider,
-          color: M.taupe,
+          borderRadius: card.tileRadius,
+          backgroundColor: phone && severity ? "transparent" : M.divider,
+          color: phone && severity ? severity.color : M.taupe,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <Icon size={16} strokeWidth={1.75} />
+        {phone && severity ? (
+          <span style={{ position: "absolute", inset: 0, backgroundColor: severity.color, opacity: 0.12 }} />
+        ) : null}
+        <Icon size={card.iconSize} strokeWidth={phone ? 1.9 : 1.75} style={{ position: "relative" }} />
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -650,8 +926,9 @@ function NotificationCard({ n, expanded, onOpen }: { n: Notification; expanded: 
               minWidth: 0,
               fontSize: card.titleSize,
               letterSpacing: card.titleTracking,
-              fontWeight: unread ? 600 : 500,
-              color: unread ? M.raisin : M.body,
+              // Phone (design): 700 unread / 600 read, always raisin.
+              fontWeight: phone ? (unread ? 700 : 600) : unread ? 600 : 500,
+              color: phone ? M.raisin : unread ? M.raisin : M.body,
               overflow: "hidden",
               ...(phone
                 ? expanded
@@ -688,7 +965,26 @@ function NotificationCard({ n, expanded, onOpen }: { n: Notification; expanded: 
         ) : null}
 
         {expanded && n.link && !navigable ? (
-          <div style={{ fontSize: 11.5, color: M.faint, marginTop: 6 }}>Open the desktop app for more detail.</div>
+          phone ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 11.5,
+                color: M.body,
+                marginTop: 8,
+                padding: "7px 10px",
+                backgroundColor: M.paper,
+                borderRadius: 9,
+              }}
+            >
+              <Monitor size={13} strokeWidth={1.9} color={M.taupe} aria-hidden style={{ flex: "none" }} />
+              Open the desktop app for more detail.
+            </div>
+          ) : (
+            <div style={{ fontSize: 11.5, color: M.faint, marginTop: 6 }}>Open the desktop app for more detail.</div>
+          )
         ) : null}
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: card.metaTop, fontSize: 11, color: card.metaColor, minWidth: 0 }}>
@@ -712,7 +1008,7 @@ function NotificationCard({ n, expanded, onOpen }: { n: Notification; expanded: 
               borderRadius: 999,
               backgroundColor: M.divider,
               color: M.taupe,
-              border: `1px solid ${M.hairline}`,
+              border: phone ? "none" : `1px solid ${M.hairline}`,
               fontSize: 11,
               fontWeight: 500,
               whiteSpace: "nowrap",
@@ -726,6 +1022,16 @@ function NotificationCard({ n, expanded, onOpen }: { n: Notification; expanded: 
           </span>
           {navigable ? (
             <ChevronRight size={16} strokeWidth={1.75} color={card.chevronColor} aria-hidden style={{ marginLeft: "auto", flex: "none" }} />
+          ) : phone ? (
+            // Phone: a card that expands in place says so (aria-expanded is
+            // already on the card); turns over while expanded.
+            <ChevronDown
+              size={16}
+              strokeWidth={1.75}
+              color={card.chevronColor}
+              aria-hidden
+              style={{ marginLeft: "auto", flex: "none", transform: expanded ? "rotate(180deg)" : "none", transition: "transform .18s ease" }}
+            />
           ) : null}
         </div>
       </div>
@@ -760,18 +1066,30 @@ function Notice({ text, onRetry }: { text: string; onRetry?: () => void }) {
   );
 }
 
-function TextButton({ onClick, children, compact = false }: { onClick: () => void; children: ReactNode; compact?: boolean }) {
+function TextButton({
+  onClick,
+  children,
+  compact = false,
+  elevated = false,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  compact?: boolean;
+  /** Phone: the white control-shadow button of the design, no outline. */
+  elevated?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       style={{
         height: compact ? 32 : 44,
-        padding: "0 16px",
+        padding: elevated ? "0 18px" : "0 16px",
         marginTop: compact ? 0 : 14,
         borderRadius: 999,
-        border: `1px solid ${M.taupe}`,
-        background: "transparent",
+        border: elevated ? "none" : `1px solid ${M.taupe}`,
+        background: elevated ? M.card : "transparent",
+        boxShadow: elevated ? SHADOW_CONTROL : undefined,
         color: M.taupe,
         fontFamily: "inherit",
         fontSize: 13,
@@ -786,7 +1104,42 @@ function TextButton({ onClick, children, compact = false }: { onClick: () => voi
   );
 }
 
-function Msg({ text, children }: { text: string; children?: ReactNode }) {
+function Msg({ text, children, icon: Icon }: { text: string; children?: ReactNode; icon?: LucideIcon }) {
+  if (Icon) {
+    // Phone no-results (design): a 52px icon tile above the message.
+    return (
+      <div
+        style={{
+          padding: "48px 18px",
+          textAlign: "center",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          color: M.body,
+          fontSize: 14,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 52,
+            height: 52,
+            borderRadius: 16,
+            backgroundColor: M.divider,
+            color: M.taupe,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 14,
+          }}
+        >
+          <Icon size={22} strokeWidth={1.75} />
+        </span>
+        <div>{text}</div>
+        {children}
+      </div>
+    );
+  }
   return (
     <div style={{ padding: "40px 18px", textAlign: "center", color: M.muted, fontSize: 14 }}>
       <div>{text}</div>
