@@ -27,6 +27,36 @@ import { getOrgId, DEFAULT_ORG_ID } from "../lib/tenant";
 import { sendMail } from "../lib/email";
 import { validateMailAttachments } from "../lib/mail-attachments";
 import {
+  EMAIL_RE,
+  buildThreadingHeaders,
+  invalidAddresses,
+  newMessageId,
+  normalizeMessageId,
+  parseAddressList,
+  referencesChain,
+  replyRecipients,
+  type ThreadMessageLite,
+} from "../lib/mail-threading";
+import { emitAudit } from "../lib/audit";
+import { loadStoredAttachmentBytes } from "../lib/email-outbox";
+import {
+  ackDueAt,
+  acknowledgeMessage,
+  createAckRequests,
+  loadAcksForThread,
+  loadReadReceipts,
+  mailboxAudience,
+  markThreadRead,
+  markThreadUnread,
+  myReadJoinSql,
+  myUnreadSql,
+  staffRecipients,
+  type AckRow,
+  type ReadReceipt,
+} from "../lib/mail-acks";
+import { ensureOrgReporting, loadPeople } from "./org-chart";
+import { personKey, subtreeKeys, uplineKeys } from "../../lib/org-people";
+import {
   DEFAULT_BUCKET,
   putFile,
   signedDownloadUrl,
@@ -150,6 +180,15 @@ export async function ensureMailSchema(db: D1Database): Promise<void> {
        ON email_messages (thread_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS ix_email_messages_msgid
        ON email_messages (message_id)`,
+    // T-012 R1/R2: blind copies on an outbound message. Lazy idempotent add
+    // (same pattern as the email_threads columns above). Stored as a JSON
+    // array like to_addresses / cc_addresses; only ever set on direction =
+    // 'outbound' — an inbound mail never reveals its Bcc.
+    `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS bcc_addresses TEXT`,
+    // A reply threads off the PROVIDER's Message-ID when the provider rewrites
+    // ours, so the inbound resolver must be able to look that up too.
+    `CREATE INDEX IF NOT EXISTS ix_email_messages_provider_msgid
+       ON email_messages (provider_message_id)`,
     // Inbound attachments (owner 2026-06-18 — "e-invoices/photos must show").
     // One row per file on an inbound email. The bytes live in Supabase Storage
     // (bucket hookka-files, same as file_assets) under storage_path; this row
@@ -191,6 +230,51 @@ export async function ensureMailSchema(db: D1Database): Promise<void> {
      )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS ux_email_labels_org_name
        ON email_labels (org_id, name)`,
+    // T-012 R7: per-PERSON read state. One row per (thread, user). read_at
+    // NULL = the person explicitly marked it unread; a row whose read_at is
+    // older than the thread's last_message_at means new mail arrived since
+    // they read it. No row ⇒ fall back to the legacy shared email_threads.
+    // unread flag, so existing threads keep their state on deploy instead of
+    // every mailbox lighting up unread for everyone. TEXT timestamps, like
+    // every other *_at column in this module (adapter rule).
+    `CREATE TABLE IF NOT EXISTS mail_thread_reads (
+       org_id TEXT NOT NULL DEFAULT 'hookka',
+       thread_id TEXT NOT NULL,
+       user_id TEXT NOT NULL,
+       user_name TEXT,
+       read_at TEXT,
+       PRIMARY KEY (org_id, thread_id, user_id)
+     )`,
+    `CREATE INDEX IF NOT EXISTS ix_mail_thread_reads_user
+       ON mail_thread_reads (org_id, user_id)`,
+    // T-012 R8: acknowledgement. The sender flags an outbound message as
+    // needing one (ack_required + a due time); one mail_acknowledgements row
+    // per STAFF recipient (an address in email_addresses) records who has
+    // confirmed and who has not. Overdue rows are chased by the outbox cron
+    // (chaseOverdueAcknowledgements) — chased_at / chase_count throttle it.
+    `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS ack_required INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS ack_due_at TEXT`,
+    `CREATE TABLE IF NOT EXISTS mail_acknowledgements (
+       id TEXT PRIMARY KEY,
+       org_id TEXT NOT NULL DEFAULT 'hookka',
+       message_id TEXT NOT NULL,
+       thread_id TEXT NOT NULL,
+       address TEXT NOT NULL,
+       user_id TEXT,
+       user_name TEXT,
+       requested_at TEXT,
+       due_at TEXT,
+       acked_at TEXT,
+       acked_by_user_id TEXT,
+       chased_at TEXT,
+       chase_count INTEGER NOT NULL DEFAULT 0
+     )`,
+    `CREATE INDEX IF NOT EXISTS ix_mail_acks_message
+       ON mail_acknowledgements (message_id)`,
+    `CREATE INDEX IF NOT EXISTS ix_mail_acks_thread
+       ON mail_acknowledgements (thread_id)`,
+    `CREATE INDEX IF NOT EXISTS ix_mail_acks_pending
+       ON mail_acknowledgements (org_id, acked_at, due_at)`,
   ];
   for (const stmt of stmts) {
     try {
@@ -205,11 +289,12 @@ export async function ensureMailSchema(db: D1Database): Promise<void> {
 // ---------------------------------------------------------------------------
 // Inbound ingestion — called by the worker.ts pre-auth handler.
 // ---------------------------------------------------------------------------
-// One inbound attachment as it arrives on the /inbound payload. The sync layer
-// (mail-sync/sync.mjs + mail-inbound-worker) base64-encodes the raw bytes so the
+// One inbound attachment as it arrives on the /inbound payload. The routing
+// worker (mail-inbound-worker — the ONE inbound channel since T-012 R13
+// retired the Hostinger IMAP poller) base64-encodes the raw bytes so the
 // JSON POST stays credential-free; the ERP owns storage (uploads to Supabase
-// Storage here). Oversized files are dropped at the sync layer (see the size
-// caps there) so contentBase64 is always sane to decode in the Worker.
+// Storage here). Oversized files are dropped at the worker (see the size caps
+// there) so contentBase64 is always sane to decode here.
 export interface InboundAttachmentPayload {
   filename?: string;
   contentType?: string;
@@ -463,11 +548,19 @@ export async function ingestInboundEmail(
   ) as string[];
   if (refs.length) {
     const placeholders = refs.map(() => "?").join(", ");
+    // Our outbound rows carry BOTH the Message-ID we stamped (message_id) and
+    // the id the provider reported (provider_message_id). Brevo rewrites the
+    // header with its own id, so a customer's In-Reply-To may name either —
+    // match both, or every reply to a mail WE sent would start a new thread.
     const ref = await db
       .prepare(
-        `SELECT thread_id FROM email_messages WHERE org_id = ? AND message_id IN (${placeholders}) LIMIT 1`,
+        `SELECT thread_id FROM email_messages
+          WHERE org_id = ?
+            AND (message_id IN (${placeholders})
+                 OR provider_message_id IN (${placeholders}))
+          LIMIT 1`,
       )
-      .bind(orgId, ...refs)
+      .bind(orgId, ...refs, ...refs)
       // Result columns come back camelCase (db-pg.ts transform.column.from), so
       // thread_id → threadId. Reading the snake key returned undefined → every
       // reply started a NEW thread instead of joining the referenced one.
@@ -499,17 +592,22 @@ export async function ingestInboundEmail(
       )
       .run();
   } else {
-    // Re-open a closed thread when a new inbound message lands.
+    // Re-open a closed thread when a new inbound message lands. The
+    // counterparty follows whoever wrote LAST (T-012 R3): when a colleague of
+    // the original sender takes over the conversation, the list shows them
+    // and the reply box addresses them — not the address the thread began with.
     await db
       .prepare(
         `UPDATE email_threads
             SET last_message_at = ?, last_direction = 'inbound',
                 last_snippet = ?, message_count = message_count + 1,
                 unread = 1,
+                counterparty_email = ?,
+                counterparty_name = ?,
                 status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
           WHERE id = ?`,
       )
-      .bind(sentAt, snippet, threadId)
+      .bind(sentAt, snippet, from, payload.fromName ?? null, threadId)
       .run();
   }
 
@@ -596,6 +694,11 @@ type ThreadRow = {
   // turns it into `hasOutbound` — dual-read both.
   has_outbound?: number | boolean | null;
   hasOutbound?: number | boolean | null;
+  // Computed per CALLER by myUnreadSql() (T-012 R7). Absent on reads that
+  // did not join mail_thread_reads (e.g. the ownership pre-checks), in which
+  // case the legacy shared flag is what rowToThread falls back to.
+  my_unread?: number | boolean | null;
+  myUnread?: number | boolean | null;
 };
 
 function rowToThread(r: ThreadRow) {
@@ -612,7 +715,7 @@ function rowToThread(r: ThreadRow) {
     lastDirection: r.lastDirection ?? r.last_direction ?? "inbound",
     lastSnippet: r.lastSnippet ?? r.last_snippet ?? "",
     messageCount: Number(r.messageCount ?? r.message_count ?? 0),
-    unread: Number(r.unread ?? 0) === 1,
+    unread: Number(r.myUnread ?? r.my_unread ?? r.unread ?? 0) === 1,
     starred: Number(r.starred ?? 0) === 1,
     labels: parseJsonArray(r.labels),
     trashedAt: r.trashedAt ?? r.trashed_at ?? null,
@@ -627,10 +730,12 @@ type MessageRow = {
   direction: string;
   message_id: string | null;
   in_reply_to: string | null;
+  reference_ids: string | null;
   from_address: string | null;
   from_name: string | null;
   to_addresses: string | null;
   cc_addresses: string | null;
+  bcc_addresses?: string | null;
   subject: string | null;
   text_body: string | null;
   html_body: string | null;
@@ -639,17 +744,23 @@ type MessageRow = {
   sent_by_user_id: string | null;
   sent_by_name: string | null;
   created_at: string | null;
+  ack_required?: number | boolean | null;
+  ack_due_at?: string | null;
   // The pg driver camelCases EVERY result column (db-pg.ts transform.column.from),
   // so the snake reads above arrive camelCased and the snake key is undefined.
   // Without dual-reads the detail view shows EMPTY messages. Dual-read like
   // rowToAddress: camelCase first, snake kept as a fallback.
+  ackRequired?: number | boolean | null;
+  ackDueAt?: string | null;
   threadId?: string;
   messageId?: string | null;
   inReplyTo?: string | null;
+  referenceIds?: string | null;
   fromAddress?: string | null;
   fromName?: string | null;
   toAddresses?: string | null;
   ccAddresses?: string | null;
+  bccAddresses?: string | null;
   textBody?: string | null;
   htmlBody?: string | null;
   sentAt?: string | null;
@@ -676,10 +787,12 @@ function rowToMessage(r: MessageRow) {
     direction: r.direction,
     messageId: r.messageId ?? r.message_id ?? undefined,
     inReplyTo: r.inReplyTo ?? r.in_reply_to ?? undefined,
+    referenceIds: r.referenceIds ?? r.reference_ids ?? undefined,
     fromAddress: r.fromAddress ?? r.from_address ?? "",
     fromName: r.fromName ?? r.from_name ?? "",
     toAddresses: parseJsonArray(r.toAddresses ?? r.to_addresses),
     ccAddresses: parseJsonArray(r.ccAddresses ?? r.cc_addresses),
+    bccAddresses: parseJsonArray(r.bccAddresses ?? r.bcc_addresses ?? null),
     subject: r.subject ?? "",
     textBody: r.textBody ?? r.text_body ?? "",
     htmlBody: r.htmlBody ?? r.html_body ?? "",
@@ -687,6 +800,8 @@ function rowToMessage(r: MessageRow) {
     receivedAt: r.receivedAt ?? r.received_at ?? "",
     sentByUserId: r.sentByUserId ?? r.sent_by_user_id ?? undefined,
     sentByName: r.sentByName ?? r.sent_by_name ?? undefined,
+    ackRequired: Number(r.ackRequired ?? r.ack_required ?? 0) === 1,
+    ackDueAt: r.ackDueAt ?? r.ack_due_at ?? null,
     createdAt: r.createdAt ?? r.created_at ?? "",
   };
 }
@@ -785,18 +900,23 @@ function rowToLabel(r: LabelRow) {
 }
 
 // ---------------------------------------------------------------------------
-// Hierarchical mailbox visibility (owner 2026-06-17). SUPER_ADMIN always sees
-// every thread/address in the org. Every other authenticated user has a
-// VISIBILITY LEVEL stored in mail_user_scope (default 'personal'):
+// Hierarchical mailbox visibility (owner 2026-06-17). ONE rule for everyone
+// (PRD T-012 R12, matching the other system's ruling): what a person sees is
+// decided by their VISIBILITY LEVEL in mail_user_scope (default 'personal')
+// — the SUPER_ADMIN role no longer bypasses it. Configuring mailboxes,
+// grants and levels stays SUPER_ADMIN-only (requireSuperAdmin below); seeing
+// a mailbox is granted per person, not per role.
 //   • 'personal'   — own assigned alias(es) + any shared mailbox granted via
 //                    email_address_access. (The original behaviour.)
 //   • 'department' — the personal set PLUS every active mailbox whose
 //                    assigned_dept matches the caller's own dept. If the caller
 //                    has no dept on file, this falls back to 'personal'.
-//   • 'company'    — every active mailbox in the org.
+//   • 'company'    — every thread and mailbox in the org (isAdmin: true, so
+//                    threads on an address with no email_addresses row —
+//                    catch-all mail to an unknown alias — are seen too).
 // Inherently scoped to the caller, so it needs no mail-center:* RBAC grant
 // (which was never seeded). The returned `level` lets callers/the UI reflect
-// the effective scope; isAdmin/userId/addresses are unchanged for callers.
+// the effective scope.
 // ---------------------------------------------------------------------------
 const MAIL_SCOPE_LEVELS = ["personal", "department", "company"] as const;
 type MailScopeLevel = (typeof MAIL_SCOPE_LEVELS)[number];
@@ -811,10 +931,7 @@ async function getMailScope(
   level: string;
 }> {
   const get = (c as unknown as { get: (k: string) => string | undefined }).get;
-  const role = get("userRole")?.toUpperCase();
   const userId = get("userId") ?? "";
-  if (role === "SUPER_ADMIN")
-    return { isAdmin: true, userId, addresses: [], level: "company" };
   if (!userId)
     return { isAdmin: false, userId: "", addresses: [], level: "personal" };
 
@@ -830,7 +947,7 @@ async function getMailScope(
     ? (levelRow!.level as MailScopeLevel)
     : "personal";
 
-  // 'company' — every active mailbox in the org.
+  // 'company' — every thread and mailbox in the org.
   if (level === "company") {
     const all = await c.var.DB.prepare(
       `SELECT address FROM email_addresses WHERE org_id = ? AND active = 1`,
@@ -838,7 +955,7 @@ async function getMailScope(
       .bind(orgId)
       .all<{ address: string }>();
     return {
-      isAdmin: false,
+      isAdmin: true,
       userId,
       addresses: dedupeLower((all.results ?? []).map((r) => r.address)),
       level,
@@ -916,7 +1033,18 @@ function dedupeLower(addrs: string[]): string[] {
 // mailbox; SUPER_ADMIN reads all. (No requireSuperAdmin gate on reads/reply.)
 // ---------------------------------------------------------------------------
 
-// GET /api/mail-center/threads?mailbox=&status=&q=
+// The list is capped per page; the client asks for the next page with
+// `offset`. 300 was the old hard cap, kept as the default page so existing
+// callers see no change.
+const THREADS_DEFAULT_LIMIT = 300;
+const THREADS_MAX_LIMIT = 500;
+
+// GET /api/mail-center/threads?mailbox=&status=&q=&starred=1
+//   &sent=1        → only threads with an outbound message (the Sent folder)
+//   &sentBy=me     → only threads the CALLER sent a message on (R6 "sent by me")
+//   &label=<name>  → only threads carrying that label
+//   &limit=&offset= → server-side paging (R11); the response carries
+//                     X-Has-More: 1 when another page exists.
 app.get("/threads", async (c) => {
   const denied = await requirePermission(c, "mail-center", "read");
   if (denied) return denied;
@@ -930,36 +1058,68 @@ app.get("/threads", async (c) => {
   const status = c.req.query("status");
   const q = c.req.query("q");
   const starredOnly = c.req.query("starred") === "1";
+  const sentOnly = c.req.query("sent") === "1";
+  const sentByMe = c.req.query("sentBy") === "me";
+  const label = (c.req.query("label") ?? "").trim();
+  const limitRaw = Number.parseInt(c.req.query("limit") ?? "", 10);
+  const offsetRaw = Number.parseInt(c.req.query("offset") ?? "", 10);
+  const limit =
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(limitRaw, THREADS_MAX_LIMIT)
+      : THREADS_DEFAULT_LIMIT;
+  const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0;
 
-  const where: string[] = ["org_id = ?"];
+  const where: string[] = ["t.org_id = ?"];
   const binds: (string | number)[] = [orgId];
   // Per-user scope: non-admins only see threads on their own address(es).
   if (!scope.isAdmin) {
     const ph = scope.addresses.map(() => "?").join(", ");
-    where.push(`LOWER(mailbox_address) IN (${ph})`);
+    where.push(`LOWER(t.mailbox_address) IN (${ph})`);
     binds.push(...scope.addresses);
   }
   if (mailbox) {
-    where.push("mailbox_address = ?");
-    binds.push(mailbox);
+    where.push("LOWER(t.mailbox_address) = ?");
+    binds.push(mailbox.toLowerCase());
+  }
+  if (sentOnly) {
+    where.push(
+      `EXISTS (SELECT 1 FROM email_messages m
+                WHERE m.thread_id = t.id AND m.direction = 'outbound')`,
+    );
+  }
+  if (sentByMe) {
+    // "Sent by me" is per PERSON, not per mailbox: the outbound row records
+    // who pressed Send (sent_by_user_id), whichever shared box it went from.
+    where.push(
+      `EXISTS (SELECT 1 FROM email_messages m
+                WHERE m.thread_id = t.id AND m.direction = 'outbound'
+                  AND m.sent_by_user_id = ?)`,
+    );
+    binds.push(scope.userId);
+  }
+  if (label) {
+    // labels is a JSON array string ('["Urgent","VIP"]'); match the quoted
+    // name so "VIP" never matches "VIP2". Case-insensitive like the sidebar.
+    where.push(`LOWER(COALESCE(t.labels, '')) LIKE ?`);
+    binds.push(`%"${label.toLowerCase().replace(/[%_]/g, "")}"%`);
   }
   // Trash is its own folder: status=trashed returns ONLY soft-deleted rows;
   // every other view (open/closed/all/inbox) EXCLUDES them.
   if (status === "trashed") {
-    where.push("trashed_at IS NOT NULL");
+    where.push("t.trashed_at IS NOT NULL");
   } else {
-    where.push("trashed_at IS NULL");
-    if (status) {
-      where.push("status = ?");
+    where.push("t.trashed_at IS NULL");
+    if (status && status !== "all") {
+      where.push("t.status = ?");
       binds.push(status);
     }
   }
   if (starredOnly) {
-    where.push("starred = 1");
+    where.push("t.starred = 1");
   }
   if (q) {
     where.push(
-      "(LOWER(subject) LIKE ? OR LOWER(counterparty_email) LIKE ? OR LOWER(last_snippet) LIKE ?)",
+      "(LOWER(t.subject) LIKE ? OR LOWER(t.counterparty_email) LIKE ? OR LOWER(t.last_snippet) LIKE ?)",
     );
     const like = `%${q.toLowerCase()}%`;
     binds.push(like, like, like);
@@ -968,18 +1128,28 @@ app.get("/threads", async (c) => {
   // has_outbound: accurate Sent flag — does this thread have ANY outbound
   // message? Computed per row so the frontend's Sent folder is correct
   // instead of relying on the last_direction proxy.
+  // unread is per PERSON (R7): the caller's mail_thread_reads row decides;
+  // with no row the legacy shared flag applies. The join binds first.
   const sql =
     `SELECT t.*,
        EXISTS (
          SELECT 1 FROM email_messages m
           WHERE m.thread_id = t.id AND m.direction = 'outbound'
-       ) AS has_outbound
-       FROM email_threads t WHERE ${where.join(" AND ")}` +
-    " ORDER BY t.last_message_at DESC NULLS LAST LIMIT 300";
+       ) AS has_outbound,
+       ${myUnreadSql()} AS my_unread
+       FROM email_threads t
+       ${myReadJoinSql()}
+       WHERE ${where.join(" AND ")}` +
+    // One row past the page tells us whether a next page exists without a
+    // second COUNT(*) round-trip.
+    ` ORDER BY t.last_message_at DESC NULLS LAST LIMIT ${limit + 1} OFFSET ${offset}`;
   const res = await c.var.DB.prepare(sql)
-    .bind(...binds)
+    .bind(scope.userId, ...binds)
     .all<ThreadRow>();
-  return c.json((res.results ?? []).map(rowToThread));
+  const rows = res.results ?? [];
+  const page = rows.length > limit ? rows.slice(0, limit) : rows;
+  c.header("X-Has-More", rows.length > limit ? "1" : "0");
+  return c.json(page.map(rowToThread));
 });
 
 // GET /api/mail-center/threads/:id — thread + its messages (marks read).
@@ -1058,22 +1228,98 @@ app.get("/threads/:id", async (c) => {
     console.error("[mail-center] loading attachments failed:", e);
   }
 
-  // Clear the unread flag on open.
+  // Opening the thread reads it — for THIS person only (R7). The legacy
+  // shared flag is left alone so colleagues without a read row keep theirs.
+  const lastMessageAt = thread.lastMessageAt ?? thread.last_message_at ?? null;
+  const readerName = await senderName(c.var.DB, scope.userId || null);
   try {
-    await c.var.DB.prepare(`UPDATE email_threads SET unread = 0 WHERE id = ?`)
-      .bind(id)
-      .run();
+    await markThreadRead(c.var.DB, {
+      orgId,
+      threadId: id,
+      userId: scope.userId,
+      userName: readerName || null,
+      lastMessageAt,
+    });
   } catch {
     /* read view must not fail if the mark-read write blips */
   }
 
+  // "Read by 3 of 5" + who has / has not acknowledged each message (R7/R8).
+  // Both are enhancements: a blip leaves them empty, never 500s the read.
+  let readBy: ReadReceipt[] = [];
+  let audience = 1;
+  let acks = new Map<string, AckRow[]>();
+  try {
+    readBy = await loadReadReceipts(c.var.DB, orgId, id, lastMessageAt);
+    audience = await mailboxAudience(
+      c.var.DB,
+      orgId,
+      thread.mailboxAddress ?? thread.mailbox_address ?? "",
+    );
+    acks = await loadAcksForThread(c.var.DB, orgId, id);
+  } catch (e) {
+    console.error("[mail-center] read receipts / acks failed:", e);
+  }
+
   return c.json({
-    thread: rowToThread(thread),
+    thread: { ...rowToThread(thread), unread: false, readBy, audience },
     messages: mappedMsgs.map((m) => ({
       ...m,
       attachments: attByMsg.get(m.id) ?? [],
+      acks: acks.get(m.id) ?? [],
     })),
   });
+});
+
+// POST /api/mail-center/threads/:id/messages/:mid/acknowledge — the caller
+// confirms a message that asked for acknowledgement (R8). Their own rows —
+// by account, or by a shared mailbox in their scope — are stamped; anyone
+// else's are untouched. Read-side action: gated like opening the thread.
+app.post("/threads/:id/messages/:mid/acknowledge", async (c) => {
+  const denied = await requirePermission(c, "mail-center", "read");
+  if (denied) return denied;
+  await ensureMailSchema(c.var.DB);
+  const orgId = getOrgId(c);
+  const id = c.req.param("id");
+  const mid = c.req.param("mid");
+  const scope = await getMailScope(c, orgId);
+  if (!scope.userId) return c.json({ error: "not signed in" }, 401);
+
+  const thread = await c.var.DB.prepare(
+    `SELECT mailbox_address FROM email_threads WHERE org_id = ? AND id = ? LIMIT 1`,
+  )
+    .bind(orgId, id)
+    .first<{ mailboxAddress?: string | null; mailbox_address?: string | null }>();
+  if (!thread) return c.json({ error: "Thread not found" }, 404);
+  if (
+    !scope.isAdmin &&
+    !scope.addresses.includes(
+      (thread.mailboxAddress ?? thread.mailbox_address ?? "").toLowerCase(),
+    )
+  ) {
+    return c.json({ error: "Thread not found" }, 404);
+  }
+
+  const changed = await acknowledgeMessage(c.var.DB, {
+    orgId,
+    messageRowId: mid,
+    userId: scope.userId,
+    addresses: scope.addresses,
+  });
+  if (changed === 0) {
+    return c.json(
+      { error: "nothing to acknowledge — this message did not ask you for one, or you already did" },
+      409,
+    );
+  }
+  await emitAudit(c, {
+    resource: "mail-center",
+    resourceId: id,
+    action: "acknowledge",
+    after: { messageId: mid, rows: changed },
+  });
+  const acks = await loadAcksForThread(c.var.DB, orgId, id);
+  return c.json({ ok: true, acks: acks.get(mid) ?? [] });
 });
 
 // ---------------------------------------------------------------------------
@@ -1309,27 +1555,37 @@ app.get("/outbox/:id/attachments/:idx/download", async (c) => {
     const att = parsed[idx] as {
       filename?: string;
       contentBase64?: string;
+      storagePath?: string;
     };
     const filename = String(att?.filename || "attachment").replace(
       /[^A-Za-z0-9._-]/g,
       "_",
     );
-    const b64 = String(att?.contentBase64 || "");
-    if (!b64) return c.json({ error: "not found" }, 404);
-    // Decode base64 to bytes. atob is built-in in Workers; chunk to stay
-    // within the arg limit of String.fromCharCode for big PDFs.
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const ext = filename.toLowerCase().split(".").pop();
-    const mime =
-      ext === "pdf"
-        ? "application/pdf"
-        : ext === "png"
-        ? "image/png"
-        : ext === "jpg" || ext === "jpeg"
-        ? "image/jpeg"
-        : "application/octet-stream";
+    const mime = mimeFromFilename(filename);
+    // R14: a Storage reference is read back from the bucket; a legacy row
+    // still carries the bytes inline as base64.
+    let bytes: Uint8Array<ArrayBuffer>;
+    if (att?.storagePath) {
+      const loaded = await loadStoredAttachmentBytes(
+        c.env as unknown as StorageEnv,
+        {
+          filename,
+          storagePath: att.storagePath,
+          contentType: mime,
+          sizeBytes: 0,
+        },
+      );
+      if (!loaded) return c.json({ error: "not found" }, 404);
+      bytes = loaded;
+    } else {
+      const b64 = String(att?.contentBase64 || "");
+      if (!b64) return c.json({ error: "not found" }, 404);
+      // Decode base64 to bytes. atob is built-in in Workers; chunk to stay
+      // within the arg limit of String.fromCharCode for big PDFs.
+      const bin = atob(b64);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    }
     return new Response(bytes, {
       status: 200,
       headers: {
@@ -1357,7 +1613,11 @@ app.get("/addresses", async (c) => {
   // or linking an alias; a cached copy would hide the just-made change.
   c.header("Cache-Control", "no-store");
   const scope = await getMailScope(c, orgId);
-  if (scope.isAdmin) {
+  // ?all=1 — the User Management mailbox matrix needs EVERY row to manage
+  // them, which is a configuration read (SUPER_ADMIN, like POST /addresses),
+  // not a visibility one. Anyone else asking for all gets their scoped list.
+  const wantAll = c.req.query("all") === "1" && requireSuperAdmin(c) === null;
+  if (scope.isAdmin || wantAll) {
     const res = await c.var.DB.prepare(
       `SELECT * FROM email_addresses WHERE org_id = ? ORDER BY address ASC`,
     )
@@ -1671,11 +1931,6 @@ app.post("/test-inject", async (c) => {
 // is touched here.
 // ---------------------------------------------------------------------------
 
-// Conservative single-@ email shape check. Intentionally not RFC-5322-complete
-// — we only need to reject obvious garbage; the domain suffix is enforced
-// separately below.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 // POST /api/mail-center/addresses — create an @hookka.com alias for a user.
 app.post("/addresses", async (c) => {
   const denied = requireSuperAdmin(c);
@@ -1926,6 +2181,201 @@ app.delete("/access", async (c) => {
 
 // GET /api/mail-center/scope-levels — every per-user level row in the org, for
 // rendering the visibility-level selector. Users absent here = 'personal'.
+// ---------------------------------------------------------------------------
+// Org chart in the Mail Center (PRD T-012 R9 / R10).
+//
+// GET /directory   — the recipient picker's three tabs (Department / My team /
+//                    My managers) plus Everyone, served off the same people
+//                    loader the org chart uses, so the picker and the chart
+//                    can never disagree about who reports to whom. Only
+//                    office accounts have an email; a person's address is
+//                    their personal mailbox when provisioned, else the login.
+// GET /visibility  — "what may I see": the caller's effective scope level and
+//                    the mailboxes they can read from and send from.
+// Both are inherently scoped to the caller and need only mail-center:read.
+// ---------------------------------------------------------------------------
+type DirectoryPerson = {
+  key: string;
+  userId: string | null;
+  name: string;
+  email: string;
+  position: string;
+  department: string;
+};
+
+app.get("/directory", async (c) => {
+  const denied = await requirePermission(c, "mail-center", "read");
+  if (denied) return denied;
+  await ensureMailSchema(c.var.DB);
+  await ensureOrgReporting(c.var.DB);
+  const orgId = getOrgId(c);
+  const scope = await getMailScope(c, orgId);
+
+  const people = (await loadPeople(c.var.DB)).filter((p) => p.active);
+
+  // Personal mailboxes by user id — the address a colleague is reached on.
+  const boxes = await c.var.DB.prepare(
+    `SELECT address, assigned_user_id, assigned_dept, label FROM email_addresses
+      WHERE org_id = ? AND active = 1`,
+  )
+    .bind(orgId)
+    .all<{
+      address: string;
+      assignedUserId?: string | null;
+      assigned_user_id?: string | null;
+      assignedDept?: string | null;
+      assigned_dept?: string | null;
+      label?: string | null;
+    }>();
+  const mailboxOf = new Map<string, string>();
+  const sharedByDept = new Map<string, Array<{ address: string; label: string }>>();
+  for (const b of boxes.results ?? []) {
+    const uid = b.assignedUserId ?? b.assigned_user_id ?? null;
+    if (uid) {
+      if (!mailboxOf.has(uid)) mailboxOf.set(uid, b.address.toLowerCase());
+      continue;
+    }
+    const dept = (b.assignedDept ?? b.assigned_dept ?? "").trim();
+    if (!dept) continue;
+    const list = sharedByDept.get(dept) ?? [];
+    list.push({ address: b.address.toLowerCase(), label: (b.label ?? "").trim() });
+    sharedByDept.set(dept, list);
+  }
+
+  const toEntry = (p: (typeof people)[number]): DirectoryPerson | null => {
+    if (p.source !== "user") return null;
+    const email = mailboxOf.get(p.id) ?? p.ref.toLowerCase();
+    if (!email) return null;
+    return {
+      key: p.key,
+      userId: p.id,
+      name: p.name,
+      email,
+      position: p.position,
+      department: p.departmentCode,
+    };
+  };
+
+  const meKey = scope.userId ? personKey("user", scope.userId) : "";
+  const me = people.find((p) => p.key === meKey) ?? null;
+  const byKey = new Map(people.map((p) => [p.key, p]));
+
+  // Department: everyone whose department matches mine, plus the department's
+  // shared mailboxes (support@ / finance@ / hr@ …) as pickable entries.
+  const department: DirectoryPerson[] = [];
+  if (me?.departmentCode) {
+    for (const p of people) {
+      if (p.departmentCode !== me.departmentCode || p.key === meKey) continue;
+      const e = toEntry(p);
+      if (e) department.push(e);
+    }
+    for (const box of sharedByDept.get(me.departmentCode) ?? []) {
+      department.push({
+        key: `mailbox:${box.address}`,
+        userId: null,
+        name: box.label || box.address,
+        email: box.address,
+        position: "Shared mailbox",
+        department: me.departmentCode,
+      });
+    }
+  }
+
+  // My team: my whole subtree, plus my peers (the people who share my
+  // manager). Me excluded.
+  const team: DirectoryPerson[] = [];
+  if (me) {
+    const keys = subtreeKeys(people, meKey);
+    if (me.managerKey) {
+      for (const p of people) {
+        if (p.managerKey === me.managerKey) keys.add(p.key);
+      }
+    }
+    keys.delete(meKey);
+    for (const k of keys) {
+      const p = byKey.get(k);
+      const e = p ? toEntry(p) : null;
+      if (e) team.push(e);
+    }
+  }
+
+  // My managers: the chain above me, nearest first.
+  const managers: DirectoryPerson[] = [];
+  if (me) {
+    for (const k of uplineKeys(people, meKey)) {
+      const p = byKey.get(k);
+      const e = p ? toEntry(p) : null;
+      if (e) managers.push(e);
+    }
+  }
+
+  const everyone: DirectoryPerson[] = [];
+  for (const p of people) {
+    if (p.key === meKey) continue;
+    const e = toEntry(p);
+    if (e) everyone.push(e);
+  }
+  const byName = (a: DirectoryPerson, b: DirectoryPerson) => a.name.localeCompare(b.name);
+  department.sort(byName);
+  team.sort(byName);
+  everyone.sort(byName);
+
+  c.header("Cache-Control", "no-store");
+  return c.json({
+    me: me ? toEntry(me) : null,
+    department,
+    team,
+    managers,
+    everyone,
+  });
+});
+
+app.get("/visibility", async (c) => {
+  const denied = await requirePermission(c, "mail-center", "read");
+  if (denied) return denied;
+  await ensureMailSchema(c.var.DB);
+  const orgId = getOrgId(c);
+  const scope = await getMailScope(c, orgId);
+
+  let rows: AddressRow[];
+  if (scope.isAdmin) {
+    const res = await c.var.DB.prepare(
+      `SELECT * FROM email_addresses WHERE org_id = ? AND active = 1 ORDER BY address ASC`,
+    )
+      .bind(orgId)
+      .all<AddressRow>();
+    rows = res.results ?? [];
+  } else if (scope.addresses.length === 0) {
+    rows = [];
+  } else {
+    const ph = scope.addresses.map(() => "?").join(", ");
+    const res = await c.var.DB.prepare(
+      `SELECT * FROM email_addresses
+        WHERE org_id = ? AND active = 1 AND LOWER(address) IN (${ph})
+        ORDER BY address ASC`,
+    )
+      .bind(orgId, ...scope.addresses)
+      .all<AddressRow>();
+    rows = res.results ?? [];
+  }
+  const mailboxes = rows.map(rowToAddress).map((a) => ({
+    address: a.address,
+    label: a.label,
+    dept: a.assignedDept ?? "",
+    // Own = assigned to me; the rest come via a grant or the scope level.
+    own: (a.assignedUserId ?? "") === scope.userId,
+  }));
+  c.header("Cache-Control", "no-store");
+  return c.json({
+    level: scope.isAdmin ? "company" : scope.level,
+    isAdmin: scope.isAdmin,
+    // Reading and sending are the same set here: the compose gate is the
+    // mailbox scope (see /compose), so what you can read you can send from.
+    readable: mailboxes,
+    sendable: mailboxes,
+  });
+});
+
 app.get("/scope-levels", async (c) => {
   const denied = requireSuperAdmin(c);
   if (denied) return denied;
@@ -2029,14 +2479,101 @@ function escapeHtml(s: string): string {
 // thread, or one where the original recipient wasn't an @hookka.com address).
 const DEFAULT_REPLY_FROM = "Hookka <support@hookka.com>";
 
+// One outbound attachment as the compose / reply body carries it (base64, no
+// data: prefix). Same shape the browser builds and validateMailAttachments
+// checks; contentType is derived from the filename because the browser only
+// sends images + PDF.
+type OutboundAttachmentBody = { filename: string; contentBase64: string };
+
+function mimeFromFilename(filename: string): string {
+  const ext = filename.toLowerCase().split(".").pop();
+  switch (ext) {
+    case "pdf":
+      return "application/pdf";
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+// The "<label> <addr>" From header for one of our mailboxes, or the bare
+// address when the row carries no label. A label lookup failure must never
+// block a send.
+async function fromHeaderFor(
+  db: D1Database,
+  orgId: string,
+  address: string,
+): Promise<string> {
+  try {
+    const addrRow = await db
+      .prepare(
+        `SELECT label FROM email_addresses
+           WHERE org_id = ? AND address = ? LIMIT 1`,
+      )
+      .bind(orgId, address)
+      .first<{ label: string | null }>();
+    const label = addrRow?.label?.trim();
+    return label ? `${label} <${address}>` : address;
+  } catch {
+    return address;
+  }
+}
+
+// Validate a recipient set for compose / reply: at least one To, every address
+// well-formed, nothing addressed twice across the three fields. Returns the
+// 400 message, or null when the set is fine.
+function recipientsError(to: string[], cc: string[], bcc: string[]): string | null {
+  if (to.length === 0) return "at least one recipient (to) is required";
+  const bad = invalidAddresses([...to, ...cc, ...bcc]);
+  if (bad.length > 0) return `invalid email address: ${bad[0]}`;
+  const seen = new Set<string>();
+  for (const a of [...to, ...cc, ...bcc]) {
+    if (seen.has(a)) return `${a} is listed more than once`;
+    seen.add(a);
+  }
+  return null;
+}
+
+// Persist the outbound copies (Storage + email_attachments) so the Sent view
+// shows what went out, exactly like an inbound mail's chips. storeAttachments
+// is best-effort per file and never fails the send that already happened.
+async function storeOutboundAttachments(
+  c: Context<Env>,
+  orgId: string,
+  msgRowId: string,
+  attachments: OutboundAttachmentBody[],
+): Promise<void> {
+  if (attachments.length === 0) return;
+  await storeAttachments(
+    c.var.DB,
+    c.env as unknown as StorageEnv,
+    orgId,
+    msgRowId,
+    attachments.map((a) => ({
+      filename: a.filename,
+      contentType: mimeFromFilename(a.filename),
+      contentBase64: a.contentBase64,
+    })),
+  );
+}
+
 // POST /api/mail-center/threads/:id/reply — send an outbound reply via the
 // shared sender (Brevo when BREVO_API_KEY is set — hookka.com is verified
 // there, so replies SEND today without any MX change), then record it.
 //
-// NOTE: sendMail does not yet support custom In-Reply-To / References headers,
-// so this reply is NOT RFC-threaded on the recipient's side for v1. The local
-// thread is still updated correctly; cross-client threading headers are a
-// follow-up once the sender helper grows a headers option.
+// T-012 R2/R3/R4: the reply is addressed to the MOST RECENT correspondent
+// (the newest inbound message's From), not the address the thread started
+// with; `mode: "reply_all"` also copies everyone that message was sent or
+// copied to; the caller may override To / Cc / Bcc outright. The mail carries
+// Message-ID / In-Reply-To / References so the other side's client threads it.
 app.post("/threads/:id/reply", async (c) => {
   const denied = await requirePermission(c, "mail-center", "create");
   if (denied) return denied;
@@ -2051,9 +2588,18 @@ app.post("/threads/:id/reply", async (c) => {
     // Optional From override — the address the operator picked in the reply
     // box. Absent ⇒ reply from the thread's mailbox (the original behaviour).
     fromAddress?: string;
+    // "reply" (default) → newest correspondent only; "reply_all" → plus
+    // everyone on that message. Ignored for To/Cc when the caller sends them.
+    mode?: "reply" | "reply_all";
+    to?: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
+    // R8: ask every STAFF recipient (To + Cc) to acknowledge, due in N hours
+    // (default 48).
+    ackRequired?: boolean;
+    ackDueHours?: number;
     // Inline outbound attachments (images + PDF), base64 (no data: prefix).
-    // Transient — not persisted to /api/files; just forwarded to sendMail.
-    attachments?: Array<{ filename: string; contentBase64: string }>;
+    attachments?: OutboundAttachmentBody[];
   };
   const body: ReplyBody = await c.req
     .json<ReplyBody>()
@@ -2083,58 +2629,63 @@ app.post("/threads/:id/reply", async (c) => {
   if (!thread) return c.json({ error: "Thread not found" }, 404);
   // Per-user scope: only the mailbox owner (or an admin) can reply. Dual-read —
   // the pg driver camelCases result columns, so the snake keys are undefined.
-  // Without this the owner was 404'd and the reply recipient (counterparty_email)
-  // read empty → "thread has no counterparty email to reply to".
-  if (
-    !scope.isAdmin &&
-    !scope.addresses.includes(
-      (thread.mailboxAddress ?? thread.mailbox_address ?? "").toLowerCase(),
-    )
-  ) {
+  const mailbox = (thread.mailboxAddress ?? thread.mailbox_address ?? "").trim();
+  if (!scope.isAdmin && !scope.addresses.includes(mailbox.toLowerCase())) {
     return c.json({ error: "Thread not found" }, 404);
   }
 
-  const to = (thread.counterpartyEmail ?? thread.counterparty_email ?? "").trim();
-  if (!to) {
-    return c.json({ error: "thread has no counterparty email to reply to" }, 400);
-  }
-
-  const mailbox = (thread.mailboxAddress ?? thread.mailbox_address ?? "").trim();
-
   // Resolve the From: the operator may pick a mailbox in the reply box (default
   // is their own — see the FE). An explicit fromAddress is honoured only when
-  // the caller is allowed to send from it: SUPER_ADMIN may send from any, a
+  // the caller is allowed to send from it: an admin may send from any, a
   // non-admin only from a mailbox in their scope (same gate as /compose). An
   // absent / unauthorised override falls back to the thread's mailbox, which the
   // caller already passed the ownership check on above — so the reply never
   // silently goes out from an address the user can't use.
-  const requestedFrom = (body.fromAddress ?? "").trim();
+  const requestedFrom = (body.fromAddress ?? "").trim().toLowerCase();
   let fromAddress = mailbox;
   if (
     requestedFrom &&
-    (scope.isAdmin || scope.addresses.includes(requestedFrom.toLowerCase()))
+    (scope.isAdmin || scope.addresses.includes(requestedFrom))
   ) {
     fromAddress = requestedFrom;
   }
+  const from = fromAddress
+    ? await fromHeaderFor(c.var.DB, orgId, fromAddress)
+    : DEFAULT_REPLY_FROM;
 
-  // The send-from header: "<label> <addr>" when the address record carries a
-  // label (mirrors /compose), else the bare address; DEFAULT_REPLY_FROM only
-  // when the thread truly has no mailbox on file. A label lookup failure must
-  // never block the send.
-  let from = fromAddress || DEFAULT_REPLY_FROM;
-  if (fromAddress) {
-    try {
-      const addrRow = await c.var.DB.prepare(
-        `SELECT label FROM email_addresses
-           WHERE org_id = ? AND address = ? LIMIT 1`,
-      )
-        .bind(orgId, fromAddress)
-        .first<{ label: string | null }>();
-      const label = addrRow?.label?.trim();
-      if (label) from = `${label} <${fromAddress}>`;
-    } catch {
-      // Keep the bare address — a display-name lookup isn't worth failing over.
-    }
+  // The conversation so far — the newest message decides who the reply goes
+  // to and which ids the threading headers reference.
+  const msgs = await c.var.DB.prepare(
+    `SELECT * FROM email_messages WHERE org_id = ? AND thread_id = ? ORDER BY created_at ASC`,
+  )
+    .bind(orgId, id)
+    .all<MessageRow>();
+  const history: ThreadMessageLite[] = (msgs.results ?? []).map(rowToMessage);
+
+  const mode = body.mode === "reply_all" ? "reply_all" : "reply";
+  const ours = [fromAddress, mailbox].filter(Boolean);
+  const computed = replyRecipients(history, mode, ours);
+  const to =
+    body.to !== undefined ? parseAddressList(body.to) : computed.to;
+  const cc =
+    body.cc !== undefined ? parseAddressList(body.cc) : computed.cc;
+  const bcc = parseAddressList(body.bcc);
+  if (to.length === 0 && body.to === undefined) {
+    return c.json({ error: "thread has no correspondent to reply to" }, 400);
+  }
+  const recipientsErr = recipientsError(to, cc, bcc);
+  if (recipientsErr) return c.json({ error: recipientsErr }, 400);
+
+  // Acknowledgement can only be asked of colleagues (a staff mailbox); check
+  // BEFORE sending so a mail never goes out with a request nobody can meet.
+  const ackRecipients = body.ackRequired
+    ? await staffRecipients(c.var.DB, orgId, [...to, ...cc])
+    : [];
+  if (body.ackRequired && ackRecipients.length === 0) {
+    return c.json(
+      { error: "acknowledgement needs at least one staff recipient (an @hookka.com mailbox)" },
+      400,
+    );
   }
 
   const baseSubject = thread.subject ?? "(no subject)";
@@ -2146,18 +2697,34 @@ app.post("/threads/:id/reply", async (c) => {
   const htmlBody =
     html || `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`;
 
+  // RFC threading (R4): our own Message-ID, In-Reply-To = the message we are
+  // answering, References = its chain + itself.
+  const base = computed.base;
+  const messageId = newMessageId();
+  const inReplyTo = normalizeMessageId(base?.messageId) || null;
+  const references = referencesChain(base?.referenceIds, base?.messageId);
+  const headers = buildThreadingHeaders({ messageId, inReplyTo, references });
+
   const result = await sendMail(c.env, from, {
     to,
+    cc,
+    bcc,
     subject,
     text: text || undefined,
     html: htmlBody,
+    headers,
     // Forward the validated attachments (already capped at 5 MB / 10 files /
     // images+PDF above). Omitted when empty so the payload is byte-identical to
-    // the pre-attachment behaviour. Not persisted — transient outbound only.
+    // the pre-attachment behaviour.
     ...(attachments.length > 0 ? { attachments } : {}),
   });
   if (!result.ok) {
     return c.json({ error: result.error || "failed to send reply" }, 502);
+  }
+  // Sent, but the provider could not carry something (staging's free
+  // MailSlurp plan drops threading headers). Never silent.
+  if (result.warning) {
+    console.warn("[mail-center] reply sent with a downgrade:", result.warning);
   }
 
   const userId = getUserId(
@@ -2167,24 +2734,30 @@ app.post("/threads/:id/reply", async (c) => {
 
   const now = new Date().toISOString();
   const snippet = (text || stripHtml(htmlBody)).slice(0, 240);
-  const messageId = crypto.randomUUID();
+  const rowId = crypto.randomUUID();
   await c.var.DB.prepare(
     `INSERT INTO email_messages
-       (id, org_id, thread_id, direction, from_address, from_name,
-        to_addresses, subject, text_body, html_body, sent_at, received_at,
+       (id, org_id, thread_id, direction, message_id, in_reply_to, reference_ids,
+        from_address, from_name, to_addresses, cc_addresses, bcc_addresses,
+        subject, text_body, html_body, sent_at, received_at,
         sent_by_user_id, sent_by_name, provider_message_id, created_at)
-     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
-      messageId,
+      rowId,
       orgId,
       id,
+      messageId,
+      inReplyTo,
+      references.join(" ") || null,
       // Store the BARE chosen address (not the "label <addr>" header form) so
       // the message row's from_address stays a plain address — matches /compose
       // and how the thread's mailbox is recorded.
       fromAddress || DEFAULT_REPLY_FROM,
       fromName || null,
-      JSON.stringify([to]),
+      JSON.stringify(to),
+      JSON.stringify(cc),
+      JSON.stringify(bcc),
       subject,
       text || null,
       htmlBody,
@@ -2197,16 +2770,44 @@ app.post("/threads/:id/reply", async (c) => {
     )
     .run();
 
+  await storeOutboundAttachments(c, orgId, rowId, attachments);
+
+  // The shared unread flag is NOT cleared here any more (R7): the sender's
+  // own read row is written below; colleagues keep their own state.
   await c.var.DB.prepare(
     `UPDATE email_threads
         SET last_message_at = ?, last_direction = 'outbound',
-            last_snippet = ?, message_count = message_count + 1, unread = 0
+            last_snippet = ?, message_count = message_count + 1
       WHERE org_id = ? AND id = ?`,
   )
     .bind(now, snippet, orgId, id)
     .run();
+  await markThreadRead(c.var.DB, {
+    orgId,
+    threadId: id,
+    userId: userId ?? "",
+    userName: fromName || null,
+    lastMessageAt: now,
+  });
+  if (ackRecipients.length > 0) {
+    await createAckRequests(c.var.DB, {
+      orgId,
+      messageRowId: rowId,
+      threadId: id,
+      recipients: ackRecipients,
+      now,
+      dueAt: ackDueAt(now, body.ackDueHours),
+    });
+  }
 
-  return c.json({ ok: true, messageId });
+  await emitAudit(c, {
+    resource: "mail-center",
+    resourceId: id,
+    action: "reply",
+    after: { messageId: rowId, from: fromAddress, to, cc, bcc: bcc.length, mode },
+  });
+
+  return c.json({ ok: true, messageId: rowId, to, cc });
 });
 
 // POST /api/mail-center/compose — start a NEW outbound conversation (the reply
@@ -2216,8 +2817,12 @@ app.post("/threads/:id/reply", async (c) => {
 // then records a fresh thread + outbound message. Mirrors the reply handler's
 // send → record structure.
 //
+// T-012 R1/R2: `to` / `cc` / `bcc` each accept a list (or a comma-separated
+// string). `forwardOf` names the thread a Forward was built from so the audit
+// row says "forward" and the new thread references the original.
+//
 // Per-user scope: a non-admin may only send FROM an @hookka.com address that
-// is assigned/granted to them (getMailScope). SUPER_ADMIN may send from any.
+// is assigned/granted to them (getMailScope). An admin may send from any.
 app.post("/compose", async (c) => {
   const denied = await requirePermission(c, "mail-center", "create");
   if (denied) return denied;
@@ -2227,29 +2832,36 @@ app.post("/compose", async (c) => {
 
   type ComposeBody = {
     fromAddress?: string;
-    to?: string;
+    to?: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
     subject?: string;
     text?: string;
+    forwardOf?: string;
+    // R8: ask every STAFF recipient (To + Cc) to acknowledge, due in N hours.
+    ackRequired?: boolean;
+    ackDueHours?: number;
     // Inline outbound attachments (images + PDF), base64 (no data: prefix).
-    // Transient — not persisted to /api/files; just forwarded to sendMail.
-    attachments?: Array<{ filename: string; contentBase64: string }>;
+    attachments?: OutboundAttachmentBody[];
   };
   const body: ComposeBody = await c.req
     .json<ComposeBody>()
     .catch(() => ({} as ComposeBody));
 
-  const fromAddress = (body.fromAddress ?? "").trim();
-  const to = (body.to ?? "").trim();
+  const fromAddress = (body.fromAddress ?? "").trim().toLowerCase();
+  const to = parseAddressList(body.to);
+  const cc = parseAddressList(body.cc);
+  const bcc = parseAddressList(body.bcc);
   const subject = (body.subject ?? "").trim();
   const text = (body.text ?? "").trim();
   const attachments = body.attachments ?? [];
+  const forwardOf = (body.forwardOf ?? "").trim();
 
   if (!fromAddress) {
     return c.json({ error: "fromAddress is required" }, 400);
   }
-  if (!EMAIL_RE.test(to)) {
-    return c.json({ error: "a valid recipient (to) is required" }, 400);
-  }
+  const recipientsErr = recipientsError(to, cc, bcc);
+  if (recipientsErr) return c.json({ error: recipientsErr }, 400);
   if (!subject) {
     return c.json({ error: "subject is required" }, 400);
   }
@@ -2268,39 +2880,41 @@ app.post("/compose", async (c) => {
 
   // Authorize the From: non-admins may only send from a mailbox they own or
   // have been granted. addresses are already lowercased in getMailScope.
-  if (!scope.isAdmin && !scope.addresses.includes(fromAddress.toLowerCase())) {
+  if (!scope.isAdmin && !scope.addresses.includes(fromAddress)) {
     return c.json({ error: "not allowed to send from " + fromAddress }, 403);
   }
+  const from = await fromHeaderFor(c.var.DB, orgId, fromAddress);
 
-  // Resolve the display name for the From — "<label> <addr>" when the address
-  // record carries a label, else the bare address. Lookup failure must not
-  // block the send, so fall back to the bare address.
-  let from = fromAddress;
-  try {
-    const addrRow = await c.var.DB.prepare(
-      `SELECT label FROM email_addresses
-         WHERE org_id = ? AND address = ? LIMIT 1`,
-    )
-      .bind(orgId, fromAddress)
-      .first<{ label: string | null }>();
-    const label = addrRow?.label?.trim();
-    if (label) from = `${label} <${fromAddress}>`;
-  } catch {
-    // Keep the bare address — a display-name lookup is not worth failing over.
+  const ackRecipients = body.ackRequired
+    ? await staffRecipients(c.var.DB, orgId, [...to, ...cc])
+    : [];
+  if (body.ackRequired && ackRecipients.length === 0) {
+    return c.json(
+      { error: "acknowledgement needs at least one staff recipient (an @hookka.com mailbox)" },
+      400,
+    );
   }
 
   // Wrap the plain-text body in a minimal HTML part so the email carries both
   // (same approach as the reply handler).
   const htmlBody = `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`;
 
+  // A fresh conversation carries only its own Message-ID (R4); the customer's
+  // reply will quote it in In-Reply-To and land back on this thread.
+  const messageId = newMessageId();
+  const headers = buildThreadingHeaders({ messageId });
+
   const result = await sendMail(c.env, from, {
     to,
+    cc,
+    bcc,
     subject,
     text,
     html: htmlBody,
+    headers,
     // Forward the validated attachments (already capped at 5 MB / 10 files /
     // images+PDF above). Omitted when empty so the payload is byte-identical to
-    // the pre-attachment behaviour. Not persisted — transient outbound only.
+    // the pre-attachment behaviour.
     ...(attachments.length > 0 ? { attachments } : {}),
   });
   if (!result.ok) {
@@ -2309,6 +2923,9 @@ app.post("/compose", async (c) => {
     // has no BREVO_API_KEY, or a Brevo "sender not authenticated" after the
     // domain moved to Hostinger). Same transparency as the reply path.
     return c.json({ error: result.error || "send failed" }, 502);
+  }
+  if (result.warning) {
+    console.warn("[mail-center] compose sent with a downgrade:", result.warning);
   }
 
   const userId = getUserId(
@@ -2319,10 +2936,11 @@ app.post("/compose", async (c) => {
   const now = new Date().toISOString();
   const snippet = text.slice(0, 200);
   const threadId = crypto.randomUUID();
-  const messageId = crypto.randomUUID();
+  const rowId = crypto.randomUUID();
 
   // NEW thread row — outbound-initiated, so last_direction='outbound',
-  // message_count=1, unread=0 (we sent it; nothing for us to read).
+  // message_count=1, unread=0 (we sent it; nothing for us to read). The
+  // counterparty is the first To; a reply from anyone on the mail moves it.
   await c.var.DB.prepare(
     `INSERT INTO email_threads
        (id, org_id, mailbox_address, subject, counterparty_email,
@@ -2330,24 +2948,27 @@ app.post("/compose", async (c) => {
         last_snippet, message_count, unread, created_at)
      VALUES (?, ?, ?, ?, ?, '', 'open', ?, 'outbound', ?, 1, 0, ?)`,
   )
-    .bind(threadId, orgId, fromAddress, subject, to, now, snippet, now)
+    .bind(threadId, orgId, fromAddress, subject, to[0], now, snippet, now)
     .run();
 
   // First message row — the outbound email we just sent.
   await c.var.DB.prepare(
     `INSERT INTO email_messages
-       (id, org_id, thread_id, direction, from_address, from_name,
-        to_addresses, cc_addresses, subject, text_body, html_body, sent_at,
-        sent_by_user_id, sent_by_name, provider_message_id, created_at)
-     VALUES (?, ?, ?, 'outbound', ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, org_id, thread_id, direction, message_id, from_address, from_name,
+        to_addresses, cc_addresses, bcc_addresses, subject, text_body, html_body,
+        sent_at, sent_by_user_id, sent_by_name, provider_message_id, created_at)
+     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
-      messageId,
+      rowId,
       orgId,
       threadId,
+      messageId,
       fromAddress,
       fromName || null,
-      JSON.stringify([to]),
+      JSON.stringify(to),
+      JSON.stringify(cc),
+      JSON.stringify(bcc),
       subject,
       text,
       htmlBody,
@@ -2359,7 +2980,40 @@ app.post("/compose", async (c) => {
     )
     .run();
 
-  return c.json({ ok: true, threadId, messageId }, 201);
+  await storeOutboundAttachments(c, orgId, rowId, attachments);
+  await markThreadRead(c.var.DB, {
+    orgId,
+    threadId,
+    userId: userId ?? "",
+    userName: fromName || null,
+    lastMessageAt: now,
+  });
+  if (ackRecipients.length > 0) {
+    await createAckRequests(c.var.DB, {
+      orgId,
+      messageRowId: rowId,
+      threadId,
+      recipients: ackRecipients,
+      now,
+      dueAt: ackDueAt(now, body.ackDueHours),
+    });
+  }
+
+  await emitAudit(c, {
+    resource: "mail-center",
+    resourceId: threadId,
+    action: forwardOf ? "forward" : "send",
+    after: {
+      messageId: rowId,
+      from: fromAddress,
+      to,
+      cc,
+      bcc: bcc.length,
+      ...(forwardOf ? { forwardOf } : {}),
+    },
+  });
+
+  return c.json({ ok: true, threadId, messageId: rowId }, 201);
 });
 
 // PATCH /api/mail-center/threads/:id — mutate a thread: assign / resolve /
@@ -2440,37 +3094,89 @@ app.patch("/threads/:id", async (c) => {
     sets.push("labels = ?");
     binds.push(JSON.stringify(clean));
   }
-  if (body.unread !== undefined) {
-    // Fixes "mark unread": GET /threads/:id clears unread on open, and this is
-    // the only path that can SET it back to 1.
-    sets.push("unread = ?");
-    binds.push(body.unread ? 1 : 0);
-  }
+  // unread is per PERSON now (R7): written to the caller's read row, never
+  // to the shared column. Handled after the UPDATE below (it may be the only
+  // field, in which case the thread row itself is untouched).
   if (body.trashed !== undefined) {
     // Soft delete: set trashed_at=now to move to Trash, clear to null to
     // restore. TEXT column (ISO string), never timestamptz.
     sets.push("trashed_at = ?");
     binds.push(body.trashed ? new Date().toISOString() : null);
   }
-  if (sets.length === 0) {
+  if (sets.length === 0 && body.unread === undefined) {
     return c.json({ error: "no fields to update" }, 400);
   }
 
   // Existence + ownership were already verified above, so we don't gate on
   // meta.changes here — an idempotent write (e.g. clearing an already-clear
   // trashed_at) reports 0 changes on some engines and must NOT 404.
-  await c.var.DB.prepare(
-    `UPDATE email_threads SET ${sets.join(", ")} WHERE org_id = ? AND id = ?`,
-  )
-    .bind(...binds, orgId, id)
-    .run();
+  if (sets.length > 0) {
+    await c.var.DB.prepare(
+      `UPDATE email_threads SET ${sets.join(", ")} WHERE org_id = ? AND id = ?`,
+    )
+      .bind(...binds, orgId, id)
+      .run();
+  }
 
   const row = await c.var.DB.prepare(
     `SELECT * FROM email_threads WHERE org_id = ? AND id = ? LIMIT 1`,
   )
     .bind(orgId, id)
     .first<ThreadRow>();
-  return c.json(row ? rowToThread(row) : { id });
+
+  if (body.unread !== undefined && scope.userId) {
+    const name = await senderName(c.var.DB, scope.userId);
+    if (body.unread) {
+      await markThreadUnread(c.var.DB, {
+        orgId,
+        threadId: id,
+        userId: scope.userId,
+        userName: name || null,
+      });
+    } else {
+      await markThreadRead(c.var.DB, {
+        orgId,
+        threadId: id,
+        userId: scope.userId,
+        userName: name || null,
+        lastMessageAt: row?.lastMessageAt ?? row?.last_message_at ?? null,
+      });
+    }
+  }
+
+  // R15: assign / archive / delete leave an audit row. One row per PATCH,
+  // named after the most consequential change it carried.
+  const auditAction =
+    body.trashed === true
+      ? "delete"
+      : body.trashed === false
+        ? "restore"
+        : body.status === "closed"
+          ? "archive"
+          : body.status === "open"
+            ? "reopen"
+            : body.assignedToUserId !== undefined
+              ? "assign"
+              : null;
+  if (auditAction) {
+    await emitAudit(c, {
+      resource: "mail-center",
+      resourceId: id,
+      action: auditAction,
+      after: {
+        ...(body.status !== undefined ? { status: body.status } : {}),
+        ...(body.assignedToUserId !== undefined
+          ? { assignedToUserId: body.assignedToUserId, assignedToName: body.assignedToName ?? null }
+          : {}),
+        ...(body.trashed !== undefined ? { trashed: body.trashed } : {}),
+      },
+    });
+  }
+
+  const out = row ? rowToThread(row) : { id };
+  return c.json(
+    body.unread !== undefined ? { ...out, unread: !!body.unread } : out,
+  );
 });
 
 export default app;

@@ -20,18 +20,41 @@ export interface EmailAttachment {
   contentBase64: string;
 }
 
+// PRD T-012 R1: several recipients plus copy / blind copy / reply-to / custom
+// headers. `to` still accepts a bare string so the dozens of transactional
+// callers (invites, PO notices, the outbox drain) are untouched. Both
+// providers take the same neutral shape; each maps it to its own field names
+// (Resend `cc`/`bcc`/`reply_to`/`headers`, Brevo `cc`/`bcc`/`replyTo`/`headers`).
 export interface SendEmailArgs {
-  to: string;
+  to: string | string[];
+  cc?: string[];
+  bcc?: string[];
+  replyTo?: string;
+  // Extra RFC headers (Message-ID / In-Reply-To / References for threading).
+  headers?: Record<string, string>;
   subject: string;
   html: string;
   text?: string;
   attachments?: EmailAttachment[];
 }
 
+// Normalise `to` to a non-empty array (the one shape both providers accept).
+export function toRecipientList(to: string | string[]): string[] {
+  const list = Array.isArray(to) ? to : [to];
+  return list.map((a) => String(a ?? "").trim()).filter(Boolean);
+}
+
 export interface SendEmailResult {
   ok: boolean;
   id?: string;
   error?: string;
+  /**
+   * Set when the mail went out but the provider could not carry something it
+   * was given — today only the MailSlurp free sandbox, which rejects custom
+   * headers. The send is still `ok`; the caller logs this rather than failing,
+   * and it exists so a dropped field is never silent (BUG-2026-10-16-299).
+   */
+  warning?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +127,11 @@ export async function sendEmail(
     };
   }
 
+  const to = toRecipientList(args.to);
+  if (to.length === 0) {
+    return { ok: false, error: "no recipient" };
+  }
+
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -113,10 +141,18 @@ export async function sendEmail(
       },
       body: JSON.stringify({
         from,
-        to: args.to,
+        to,
         subject: args.subject,
         html: args.html,
         text: args.text,
+        // Copy / blind copy / reply-to / threading headers — each omitted when
+        // empty so a plain transactional send stays byte-identical to before.
+        ...(args.cc && args.cc.length > 0 ? { cc: args.cc } : {}),
+        ...(args.bcc && args.bcc.length > 0 ? { bcc: args.bcc } : {}),
+        ...(args.replyTo ? { reply_to: args.replyTo } : {}),
+        ...(args.headers && Object.keys(args.headers).length > 0
+          ? { headers: args.headers }
+          : {}),
         // Resend attachment shape: [{ filename, content }] with base64
         // content. Omitted entirely when the message carries none so the
         // payload stays byte-identical to the pre-attachment behaviour.
@@ -191,6 +227,11 @@ export async function sendEmailViaBrevo(
       error: "BREVO_API_KEY not configured — email not sent",
     };
   }
+  const to = toRecipientList(args.to);
+  if (to.length === 0) {
+    return { ok: false, error: "no recipient" };
+  }
+
   try {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -201,10 +242,22 @@ export async function sendEmailViaBrevo(
       },
       body: JSON.stringify({
         sender: parseFrom(from),
-        to: [{ email: args.to }],
+        to: to.map((email) => ({ email })),
         subject: args.subject,
         htmlContent: args.html,
         textContent: args.text ?? args.html.replace(/<[^>]+>/g, ""),
+        // Copy / blind copy / reply-to / threading headers — Brevo wants
+        // `[{ email }]` lists and a `replyTo` object; omitted when empty.
+        ...(args.cc && args.cc.length > 0
+          ? { cc: args.cc.map((email) => ({ email })) }
+          : {}),
+        ...(args.bcc && args.bcc.length > 0
+          ? { bcc: args.bcc.map((email) => ({ email })) }
+          : {}),
+        ...(args.replyTo ? { replyTo: { email: args.replyTo } } : {}),
+        ...(args.headers && Object.keys(args.headers).length > 0
+          ? { headers: args.headers }
+          : {}),
         // Brevo attachment shape: `attachment: [{ name, content }]` with
         // base64 content. Brevo is the preferred provider (2026-05-27
         // cutover), so the customer-notice PDFs must ride this path too.
@@ -245,9 +298,22 @@ export async function sendEmailViaBrevo(
 //
 // API doc: https://docs.mailslurp.com/api/
 // Send:    POST https://api.mailslurp.com/inboxes/{inboxId}  (x-api-key header)
-//          { to: [..], subject, body, isHTML, attachments?: [attachmentId] }
+//          { to: [..], cc: [..], bcc: [..], replyTo, customHeaders,
+//            subject, body, isHTML, attachments?: [attachmentId] }
 // Attach:  POST https://api.mailslurp.com/attachments
 //          { base64Contents, contentType, filename } -> [attachmentId]
+//
+// Field names verified 2026-10-16 against the SendEmailOptions model in the
+// mailslurp-client SDK (dist/generated/models/SendEmailOptions.d.ts): `to`,
+// `cc` and `bcc` are string arrays, `replyTo` a string, and custom RFC
+// headers ride `customHeaders` as a flat string map.
+//
+// T-012 note: this sender was written (2026-09-29) while SendEmailArgs.to was
+// a single string, so it spelled `to: [args.to]`. `to` is now
+// `string | string[]`, which that spelling would nest into [[...]] — hence
+// toRecipientList. Copies and threading headers were dropped here entirely,
+// which made a staging send look like cc/bcc were broken when only this path
+// was. Nothing about this reaches production: Brevo and Resend take priority.
 // ---------------------------------------------------------------------------
 export async function sendEmailViaMailSlurp(
   apiKey: string,
@@ -281,21 +347,80 @@ export async function sendEmailViaMailSlurp(
       }
       attachmentIds.push(...(JSON.parse(upText) as string[]));
     }
-    const res = await fetch(`${api}/inboxes/${encodeURIComponent(inboxId)}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        to: [args.to],
-        subject: args.subject,
-        body: args.html,
-        isHTML: true,
-        ...(attachmentIds.length > 0 ? { attachments: attachmentIds } : {}),
-      }),
+    const to = toRecipientList(args.to);
+    const cc = args.cc ?? [];
+    const bcc = args.bcc ?? [];
+    const hasHeaders =
+      !!args.headers && Object.keys(args.headers).length > 0;
+
+    const post = (payload: Record<string, unknown>) =>
+      fetch(`${api}/inboxes/${encodeURIComponent(inboxId)}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+    const base: Record<string, unknown> = {
+      to,
+      subject: args.subject,
+      body: args.html,
+      isHTML: true,
+    };
+    const res = await post({
+      ...base,
+      // Each omitted when empty so a plain transactional send keeps the
+      // exact payload it had before copies existed.
+      ...(cc.length > 0 ? { cc } : {}),
+      ...(bcc.length > 0 ? { bcc } : {}),
+      ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+      ...(hasHeaders ? { customHeaders: args.headers } : {}),
+      ...(attachmentIds.length > 0 ? { attachments: attachmentIds } : {}),
     });
-    if (!res.ok) {
-      return { ok: false, error: `MailSlurp ${res.status}: ${await res.text()}` };
+    if (res.ok) return { ok: true };
+
+    const body = await res.text();
+    // The FREE sandbox plan refuses every extra: "one explicit To recipient
+    // and a plain-text or HTML body only. CC, BCC, ... custom sender/reply
+    // headers, attachments ... require a paid plan."
+    //
+    // Threading headers alone can be dropped without lying to anyone: on a
+    // single-recipient mail nothing about WHO receives it changes, and the
+    // only loss is cross-client threading, which staging cannot exercise
+    // anyway (no inbound routing reaches it). So that one case retries bare
+    // and reports a warning, which keeps staging able to send at all.
+    //
+    // Copies and attachments are NOT dropped: silently delivering a mail
+    // without its Cc, its Bcc or its attachment is the failure this whole
+    // path was fixed for (BUG-2026-10-16-299). Those fail loudly, and the
+    // caller sees the provider's own words.
+    const planBlocked = /require a paid plan|W_400_SEND_EVALUATION_OPTIONS_UNSUPPORTED/.test(
+      body,
+    );
+    const onlyHeadersToDrop =
+      planBlocked &&
+      hasHeaders &&
+      to.length === 1 &&
+      cc.length === 0 &&
+      bcc.length === 0 &&
+      !args.replyTo &&
+      attachmentIds.length === 0;
+    if (onlyHeadersToDrop) {
+      const retry = await post(base);
+      if (retry.ok) {
+        return {
+          ok: true,
+          warning:
+            "MailSlurp free sandbox rejects custom headers, so this mail " +
+            "went out without Message-ID / In-Reply-To / References. " +
+            "Recipients were unchanged. A paid plan, or Brevo, carries them.",
+        };
+      }
+      return {
+        ok: false,
+        error: `MailSlurp ${retry.status}: ${await retry.text()}`,
+      };
     }
-    return { ok: true };
+    return { ok: false, error: `MailSlurp ${res.status}: ${body}` };
   } catch (err) {
     return {
       ok: false,
@@ -511,7 +636,7 @@ export function supplierPoEmailTemplate(args: {
 // Tiny inline helpers — we don't pull in a full sanitiser for a single
 // trusted template string. Good enough to stop the inviter's displayName
 // from injecting tags.
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return String(s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

@@ -5477,14 +5477,15 @@ export function schedulePoListBodyRefresh(
   inFlightPoListBodyRefreshes.add(bodyKey);
   const task = (async () => {
     try {
-      const fresh = await build();
-      // Re-read the version AFTER the compute: if another write landed while
-      // we were rebuilding, the stamp won't match it and the next poll simply
-      // refreshes again — self-healing, never serves a wrong "fresh" flag.
+      // Read the version BEFORE the compute. Writers bump it after their
+      // commit, so a write landing mid-build leaves this stamp behind and the
+      // next poll refreshes again. Reading it after stamped the pre-write body
+      // with the new version and served it as fresh (BUG-2026-10-16-295).
       const v = await poListCacheVersion(c, orgId);
-      await kv.put(bodyKey, JSON.stringify(fresh), {
+      const body = JSON.stringify(await build());
+      await kv.put(bodyKey, body, {
         expirationTtl: PO_LIST_BODY_TTL_S,
-        metadata: { v },
+        metadata: { v, h: await poListBodyHash(body) },
       });
     } catch (err) {
       console.error("[poList cache] stale refresh failed", err);
@@ -5493,6 +5494,30 @@ export function schedulePoListBodyRefresh(
     }
   })();
   waitUntil(task);
+}
+
+// ETag for the list body. /production polls every 8s and the body is usually
+// unchanged (906 KB on the wire, measured 2026-10-15), so a matching
+// If-None-Match gets a bodyless 304 and the browser reuses its copy.
+export async function poListBodyHash(body: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(body));
+  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function poListBodyResponse(
+  ifNoneMatch: string | undefined,
+  body: string,
+  h: string | undefined,
+  xCache: string,
+): Response {
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-Cache": xCache };
+  if (h) {
+    headers.ETag = `"${h}"`;
+    // Cloudflare weakens the tag when it compresses, so the browser echoes W/"…".
+    const match = ifNoneMatch?.split(",").some((t) => t.trim().replace(/^W\//, "") === headers.ETag);
+    if (match) return new Response(null, { status: 304, headers });
+  }
+  return new Response(body, { status: 200, headers });
 }
 
 // ── jobCards-lite: the Planning board's slim job-card projection ─────────────

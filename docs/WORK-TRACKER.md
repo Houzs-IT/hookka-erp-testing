@@ -1,6 +1,5 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-16**: branch `design/mobile-home-dashboard` (phone Updates visual pass, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -244,15 +243,6 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
-## 2026-10-16 — 🔵 Phone Updates (`/m/updates`): follow `Updates.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
-
-Owner asks, logged before work; read-only audit first, implementation approved 2026-10-16 with: A borderless cards + soft shadows (Sales / Products phone styling for search, chips, buttons); B "Pinned" → "Live" (the filter is `isActive`); C hide the announcement author (`createdBy` is a user id; no new lookup); D filter icon, not sort (no sort exists). Update the existing `UpdatesScreen.tsx`; PHONE only, tablet and desktop unchanged; no API / DB / logic changes; no prototype data. No commit / push / deploy.
-1. 🔵 Audit: `/api/notifications` GET/PUT, `/api/announcements`, read state, visibility, links, desktop + /m screens, filter sheet (draft / Reset / Show N, unchanged).
-2. 🔵 `UpdatesScreen.tsx` phone: round header actions, switch icons, Sales search + round filter button, shadow chips, ruled group headings, borderless card with severity-tinted tile, expand chevron, desktop-note strip, no-results icon.
-3. 🔵 Owner follow-up 2026-10-16: shared `MobileHeader` unchanged; filter = 44px round `ArrowDownUp` (Sales), filter only, aria "Filters"; view switch = the design's, as a local `PhoneViewSwitch` (Products pattern) — the shared `SegmentedSwitch` is NOT changed (an earlier icon prop was reverted).
-4. 🔵 `AnnouncementsScreen.tsx` (`AnnouncementsList`, shared with `/m/announcements`): Pinned → Live, author hidden, phone card + search + chips + round +. Phone "Live" = desktop rule (`isActive` AND not expired; `lib/announcement-live.ts`, epoch compare, timezone-safe); tablet chip keeps isActive only.
-5. 🔵 Tests updated / extended; tsc strict, eslint, tests, build.
-
 ## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
@@ -2700,6 +2690,72 @@ module (sidebar entry), desktop + `/m`. Done in code: `ServiceCaseLink.tsx` / `u
 button; gated by the sidebar permission; no API change. build:strict exit 0, 33/33 dashboard tests.
 NOT browser-verified, NOT deployed.
 
+## 2026-09-21 — 🟡 PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (all 16 built; PR #655 open to `staging`, awaiting review + deploy)
+
+Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
+`T-012-Hookka-mail-center - wei siang.pdf` (not in repo — user's local Downloads). Sheet row
+DEV-04 (Samuel). Branch `feat/t012-mail-center` (worktree `hookka-erp-testing-t012`, off
+`origin/main` @ 6ef4f385).
+
+Asks (all 16 requirements, in dependency order):
+- R1 `sendMail` takes several recipients + cc / bcc / reply-to / custom headers (Brevo AND Resend)
+- R2 compose + reply gain cc / bcc + reply-all rebuilt from the latest inbound message
+- R3 a reply goes to the most recent correspondent, not the thread's first
+- R4 outgoing mail carries Message-ID; replies carry In-Reply-To + References
+- R5 registration / invite / accept-invite provision `first.last@hookka.com` in `email_addresses`
+- R6 Mail Center shows "My mailbox" first (inbox / sent by me / drafts)
+- R7 per-person read state (`mail_thread_reads`) replaces the shared `unread` flag; "read by 3 of 5"
+- R8 acknowledgement: sender flags a message, recipients confirm, thread shows who has / has not, overdue chased
+- R9 recipient picker (Department / My team / My managers) on a directory endpoint over the org chart
+- R10 "what may I see" panel
+- R11 thread list: server-side paging + sent / label / mailbox filters
+- R12 one rule for SUPER_ADMIN mailbox visibility (PRD: match the other system → scope table decides)
+- R13 retire the duplicate inbound channel (`mail-sync/` IMAP poller; routing worker stays)
+- R14 outbound attachments stored as files, not base64 text in `outbox_emails`
+- R15 audit rows for send / reply / forward / assign / archive / delete
+- R16 mobile Mail Center gains compose / reply / forward
+
+**Done (all 16), eight commits on `feat/t012-mail-center`:** R1-R4 `8a6e5f9d`, R5/R6/R11
+`210caab7`, R7/R8/R15 `7b17e7aa`, R9/R10 `b0357db5`, R12/R13 `eb40d744`, R14 `457b48b5`,
+R16 `4095bef8`. New files: `src/api/lib/mail-threading.ts` (pure recipients + RFC headers),
+`mail-provision.ts`, `mail-acks.ts`, `src/pages/mail-center/recipients-input.tsx`,
+`recipient-picker.tsx`, `ack-request-row.tsx`, `visibility-panel.tsx`,
+`migrations-postgres/0233_mail_reads_acks.sql` (mirrors the runtime DDL). 62 new tests across
+`tests/mail-threading`, `mail-send-path`, `mail-provision`, `mail-reads-acks`,
+`email-outbox-attachments`, `mobile-mail-center`, plus additions to `mail-center-rbac` and
+`org-people`. `npm test` 4672 → all pass except `tests/pcb-not-fabricated.test.mjs` (13), which
+fails on ANY checkout whose path has a space (`Internal%20Project` — it builds paths from
+`import.meta.url` without `fileURLToPath`; passes on a space-free worktree of `origin/main`) —
+pre-existing, not touched. `build:strict` clean. `docs/API.md` regenerated (140 mounts, 962
+handlers). CODEBASE-MAP restamped.
+
+**Decisions taken from the PRD text (owner to confirm at review):**
+- R12 → super admins follow `mail_user_scope` like everyone. **On deploy the seven prod super
+  admins drop to `personal` until set to `company` in the Mailbox tab** (UNMEASURED which of
+  them rely on company-wide reading). No migration seeds them — the PRD said the other system's
+  owner set the opposite deliberately.
+- R13 → `mail-sync/` + `.github/workflows/mail-sync.yml` deleted (the Hostinger IMAP poller;
+  MX is on Cloudflare since 2026-08-19). The scheduled run keeps firing from `main` until this
+  merges.
+- Acknowledgement is asked of STAFF recipients only (an `email_addresses` row); the send is
+  refused when none is on the mail. Chase = a reminder through the outbox, once per 24 h.
+- Brevo rewrites `Message-ID`; the inbound resolver matches ours OR the provider's id.
+
+**Not verified live:** no local Supabase / Brevo, so the send path, the ack chase and the
+Storage upload were not exercised end-to-end — verify on staging: compose with Cc + Bcc to a
+colleague, reply-all from the colleague's box, "Read by", request + confirm an acknowledgement,
+Auto-sent attachment download for a post-deploy notice.
+
+**State 2026-10-16:** pushed; **PR [#655](https://github.com/hookkadev/hookka-erp-testing/pull/655)
+to `staging`** (opened 2026-10-01, no review yet). `staging` had moved 1,259 commits since this
+branch left `origin/main` @ 6ef4f385, so `staging` was merged IN on 2026-10-16 and six conflicts
+resolved: `src/api/lib/email-outbox.ts` (keep both - `bf8daf5a`'s `MailEnv` AND this branch's
+`OutboxStorageEnv` on `processOutbox`), `src/pages/m/screens/MailCenterScreen.tsx` (keep both -
+the phone `withHeader` guard states AND this branch's `forwardBody` / action bar), `docs/API.md`
+(regenerated), and three doc stamp stacks. **Still never run live anywhere** - the end-to-end
+checklist above is unchanged and must happen on staging before the owner demo.
+
+---
 ## 2026-09-10 — 🔵 PRD T-004 · Import / Export across the whole system (P0/R3-R5 done, rest open)
 
 Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
@@ -7128,3 +7184,40 @@ for prod and staging carry the SAME Supabase project ref.
 Sales row + gotcha; `modules/sales.md` + `modules/inventory.md` restamped with
 re-derived anchors; BUG-181/182/183 logged.
 
+## 2026-09-29 — DEV-05 A9: the order that lost the race is now told
+
+Branch `fix/dev-05-allocation-loser-note` (→ `staging`). Closing the second half
+of acceptance criterion A9, found while verifying A7/A9 on staging.
+
+**The ask** (one, from the acceptance run): A9 says *"two orders want the same
+piece; one gets it, **the other is told**."* Contention itself was already
+right and measured on staging — X took the four finished pieces and queued none,
+Y queued four fresh ones, nothing oversold. But Y's confirm said **nothing**,
+and from the customer's side "somebody beat you to it" and "we have never
+stocked this" looked identical.
+
+**Built** (`src/api/lib/stock-allocations.ts:510`, `:534`): `loadAvailability`
+is read once beside the pool and consulted **only** when a line takes nothing.
+Stock on hand with zero available → *"all N on hand are already committed to
+other orders"*. Only-stock-is-an-oversized-set → its own sentence. No stock at
+all → still silent, because a note on every unstocked product is noise. The
+availability read is for the notes and nothing else; the pool stays the single
+authority on what moves, so a stale aggregate can only produce a wrong sentence,
+never a wrong allocation. Logged BUG-2026-10-16-291.
+
+**Why it hid**: an emptied pool is byte-for-byte identical to a product nobody
+stocks — `loadAllocatablePOs` stops returning pieces the moment another order
+owns them. The old tests asserted `notes.length === 0` on the zero-allocation
+paths, i.e. they pinned the silence as correct. The suite now separates the two:
+a contention case that must speak, a no-stock case that must not.
+
+**Verified**: `tests/stock-allocations.test.mjs` 29/29; full suite 5,161 pass /
+0 fail / 3 skipped; `tsc -p tsconfig.app.json` exit 0; docs-freshness,
+gen-api-docs `--check`, check-codebase-map and check-secrets all OK.
+**UNMEASURED**: not yet re-run against staging with two live orders — the
+behaviour change is in note text only, no allocation decision moved.
+
+**Still open on DEV-05**: A7 (invoice for an allocated piece must show the
+customer's order and the customer's price, not the placeholder at zero) is not
+verified. And A9's design gap stands: the owner's rule is *earliest sales order
+date wins*; the implementation is *first to confirm wins*. Not yet raised.

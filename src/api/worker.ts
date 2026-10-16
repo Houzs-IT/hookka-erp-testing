@@ -217,7 +217,15 @@ app.use("/api/*", timingMiddleware);
 // catch regressions.
 app.use("/api/*", async (c, next) => {
   await next();
-  c.res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  // An ETag reply (the production-orders list) may be kept by this browser
+  // only, and must be revalidated every time: the server answers 304 when it
+  // is unchanged. Everything else stays no-store.
+  c.res.headers.set(
+    "Cache-Control",
+    c.res.headers.has("ETag")
+      ? "private, no-cache"
+      : "no-store, no-cache, must-revalidate, max-age=0",
+  );
   c.res.headers.set("Pragma", "no-cache");
   c.res.headers.set("Expires", "0");
 
@@ -580,7 +588,17 @@ app.post("/api/internal/process-email-outbox", async (c) => {
         RESEND_FROM_EMAIL?: string;
       },
     );
-    return c.json({ ok: true, ...result });
+    // T-012 R8: overdue acknowledgement reminders ride the same tick. They
+    // enqueue into the outbox just drained, so they go out on the next tick
+    // (or the eager push). Best-effort — never fails the drain.
+    let ackChased = 0;
+    try {
+      const { chaseOverdueAcknowledgements } = await import("./lib/mail-acks");
+      ackChased = (await chaseOverdueAcknowledgements(c)).chased;
+    } catch (e) {
+      console.warn("[process-email-outbox] ack chase failed:", e);
+    }
+    return c.json({ ok: true, ...result, ackChased });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[process-email-outbox] error:", e);
