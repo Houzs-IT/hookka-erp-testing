@@ -13,6 +13,7 @@ import { tabValueSen, type StatusTabSpec } from "@/lib/status-tab-strip";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { buildDoDetailListingAoa } from "@/lib/doc-detail-listings";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import { useNavigate } from "react-router-dom";
 import {
   Truck,
@@ -38,6 +39,7 @@ import {
   Bot,
   Undo2,
   XCircle,
+  Upload,
 } from "lucide-react";
 import DeliveryAgentTab from "./agent-tab";
 import type { DeliveryOrder, ProofOfDelivery, ThreePLProvider, Customer } from "@/types";
@@ -906,6 +908,7 @@ export default function DeliveryPage() {
   // Top-level "Orders" / "3PL" / "Agent" tab — URL-synced so refresh and
   // back/forward both keep the user where they were.
   const [pageTab, setPageTab] = useUrlState<"orders" | "3pl" | "agent">("section", "orders");
+  const [showImport, setShowImport] = useState(false);
   const [deliveryOrders, setDeliveryOrders] = useState<DeliveryOrderRow[]>([]);
   // Whole-table search matches (across every status), populated only while a
   // search is active. Separate from deliveryOrders so the browse-derived
@@ -4774,7 +4777,20 @@ export default function DeliveryPage() {
         {/* Selection actions (Create as Packing List / Mark Dispatched /
             Mark Delivered) all live in the grid card header now, right next
             to the row selection, so they're easy to find. */}
+        {/* The grid's Detail Listing export IS the import template. */}
+        <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
+          <Upload className="h-3.5 w-3.5" /> Import
+        </Button>
       </div>
+
+      <DocImportDialog
+        docType="do"
+        title="Import delivery orders from a Detail Listing"
+        hint="Edit: Delivery Date / Remarks (keep Line IDs as exported). Create: one row per production order — Item Code plus PO No. (or Ref Doc No. = its SO); leave Doc No. blank or NEW-1."
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onApplied={fetchData}
+      />
 
       {/* Summary Cards */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-4">
