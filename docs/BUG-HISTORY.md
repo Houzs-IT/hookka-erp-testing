@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
@@ -115,6 +116,34 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-16-294 — Packing sticker cut the Notes line to one line `production` `printing` 🟡
+
+🟡 Fixed on branch (`fix/fg-sticker-notes-wrap-main` -> `main`); on staging since #886 (logged there as 293). Not yet checked on a printed sticker. The FG (packing)
+sticker printed Notes as one truncated line, e.g. "TAG ★ Nylon Fabric, Extend …",
+so the packer could not read the rest of the Special Order. Fab Cut / Fab Sew
+stickers already wrapped their Notes (owner 2026-07-11); only the FG sticker,
+print and on-screen tile, still used `truncate`.
+
+**Fix** (`src/pages/production/index.tsx`, FG print and FG tile): Notes moved out
+of the spec block into its own row that fills the space above the QR
+(`flex-1 min-h-0 overflow-hidden`, same as Fab Cut) and wraps. The FG card has
+only about 11mm free there, so wrapping alone still clips: `notesFontSize`
+shrinks the text from 11pt to 7pt as the note gets longer.
+
+**Ceiling**: measured on a mock of the 100x150mm sofa card, about 110 characters
+fit in full. A longer note, or a bedframe card (Gap / Divan take two more rows),
+still clips at the bottom of the Notes area instead of pushing the QR off.
+
+No unit test: the size rule is inline JSX. Checked with a static mock of the
+print layout at note lengths 30 to 220.
+
+Real note lengths, measured on staging 2026-10-16 (4,844 production orders, 1,042 with a
+Special Order): median 14 characters, 90% at 39 or less, longest 179. Six are over the
+~106 that fit. The reported sticker (SV-2609-025) is Nylon Fabric, Extend 5" plus TAG,
+about 30 characters, so it now prints in full at 11pt; only the 5" was being cut.
 
 ---
 

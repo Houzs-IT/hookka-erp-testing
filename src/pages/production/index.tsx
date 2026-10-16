@@ -719,6 +719,11 @@ export default function ProductionPage({
     const v = mk?.[key as "bedframe" | "sofa" | "accessory"];
     return v === "TAG" || v === "LABEL" ? v : "";
   };
+  // FG sticker Notes wraps instead of truncating; long notes shrink 11 → 7 so ~110 chars fit above the QR.
+  const notesFontSize = (row: Parameters<typeof oemMarkFor>[0] & { specialOrder?: string }): number => {
+    const len = oemMarkFor(row).length + (row.specialOrder?.length ?? 0) + 4;
+    return Math.max(7, Math.min(11, Math.round(Math.sqrt(6000 / len))));
+  };
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
 
   // Phase 2 — baseRows Web Worker state. Declared here (with the other
@@ -9154,16 +9159,17 @@ export default function ProductionPage({
                           </>
                         )}
                         <div><span className="inline-block w-[72px] font-semibold text-[#6B7280]">Leg</span>: {s.legHeightInches != null && s.legHeightInches > 0 ? `${s.legHeightInches}"` : "—"}</div>
-                        <div className="flex items-baseline gap-1">
-                          <span className="inline-block w-[72px] font-semibold text-[#9A3A2D] shrink-0">Notes</span>
-                          <span
-                            className="flex-1 min-w-0 truncate"
-                            style={{
-                              fontSize: "11px",
-                              lineHeight: 1.2,
-                            }}
-                          >: {oemMarkFor(s) ? <span className="font-bold text-[#6B5C32]">{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold text-[#9A3A2D]">★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}</span>
-                        </div>
+                      </div>
+                      {/* Notes wraps into the space above the QR and clips itself, mirroring the print. */}
+                      <div className="flex items-baseline gap-1 flex-1 min-h-0 overflow-hidden mt-[2px] text-[13px] leading-tight text-[#1F1D1B]">
+                        <span className="inline-block w-[72px] font-semibold text-[#9A3A2D] shrink-0">Notes</span>
+                        <span
+                          className="flex-1 min-w-0 whitespace-normal break-words"
+                          style={{
+                            fontSize: `${notesFontSize(s)}px`,
+                            lineHeight: 1.15,
+                          }}
+                        >: {oemMarkFor(s) ? <span className="font-bold text-[#6B5C32]">{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold text-[#9A3A2D]">★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}</span>
                       </div>
                       {/* Wei Siang 2026-05-15 (revised again): leg moves
                           INTO the right column ABOVE the SOFA piece-name
@@ -9679,24 +9685,26 @@ export default function ProductionPage({
                       {!legsPair && (
                         <div><span className="inline-block w-[30mm] font-semibold">Leg</span>: {s.legHeightInches != null && s.legHeightInches > 0 ? `${s.legHeightInches}"` : "—"}</div>
                       )}
-                      {/* Notes — also skip when empty so a "—" placeholder
-                          doesn't burn the one row needed by the legsPair
-                          bottom block. */}
-                      {(s.specialOrder || !legsPair) && (
-                        <div className="flex items-baseline gap-[1mm]">
-                          <span className="font-semibold shrink-0" style={{ width: "30mm", color: "#9A3A2D" }}>Notes</span>
-                          <span
-                            className="flex-1 min-w-0 truncate"
-                            style={{
-                              fontSize: "11pt",
-                              lineHeight: 1.2,
-                            }}
-                          >
-                            : {oemMarkFor(s) ? <span className="font-bold" style={{ color: "#6B5C32" }}>{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold" style={{ color: "#9A3A2D" }}>★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}
-                          </span>
-                        </div>
-                      )}
                     </div>
+                    {/* Notes — also skip when empty so a "—" placeholder
+                        doesn't burn the one row needed by the legsPair
+                        bottom block. Wraps into the space above the QR
+                        (flex-1) and clips itself so it never pushes the QR
+                        off the card. */}
+                    {(s.specialOrder || !legsPair) && (
+                      <div className="flex items-baseline gap-[1mm] flex-1 min-h-0 overflow-hidden mt-[1.5mm]" style={{ fontSize: "14pt", lineHeight: 1.25 }}>
+                        <span className="font-semibold shrink-0" style={{ width: "30mm", color: "#9A3A2D" }}>Notes</span>
+                        <span
+                          className="flex-1 min-w-0 whitespace-normal break-words"
+                          style={{
+                            fontSize: `${notesFontSize(s)}pt`,
+                            lineHeight: 1.15,
+                          }}
+                        >
+                          : {oemMarkFor(s) ? <span className="font-bold" style={{ color: "#6B5C32" }}>{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold" style={{ color: "#9A3A2D" }}>★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}
+                        </span>
+                      </div>
+                    )}
                     {/* Wei Siang 2026-05-15 (revised again): leg moves
                         INTO the right column ABOVE the main piece
                         name / pieceNo. Single dashed separator at the
