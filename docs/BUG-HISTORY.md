@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-up (branch `fix/foam-packing-preview-notes-main`, to main): Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -144,6 +145,14 @@ Real note lengths, measured on staging 2026-10-16 (4,844 production orders, 1,04
 Special Order): median 14 characters, 90% at 39 or less, longest 179. Six are over the
 ~106 that fit. The reported sticker (SV-2609-025) is Nylon Fabric, Extend 5" plus TAG,
 about 30 characters, so it now prints in full at 11pt; only the 5" was being cut.
+
+**Follow-up 2026-10-16, Foam Bonding preview** (branch `fix/foam-packing-preview-notes-main`): the
+Foam Bonding tab has its own half-size copy of the packing sticker ("Show Packing Stickers"). It
+showed only "★ note", truncated, with no Notes label and no TAG, so it did not match the real
+print it claims to mirror. It now has the same Notes row as the print: label, TAG / LABEL, the
+note wrapping above the QR, a one-line minimum, and `notesFontSize` scaled by 9/14 (the tile's
+9px labels stand for the print's 14pt). Preview only; the print from that tab already used the
+fixed print layout.
 
 ---
 
