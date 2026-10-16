@@ -5,13 +5,7 @@
 > path (order ten, take four, build six) that this entry previously listed as
 > unmeasured. Also notes the availability read lagging a minute after a confirm,
 > which is the query cache and not a stale write (branch `docs/dev05-a9-live-verified`).
-
-> **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) carries its staging
-> measurement now — the note was confirmed live on a real confirm, not only in tests
-> (branch `docs/dev05-a9-live-verified`). The entry also states what is still
-> unmeasured: the positive take-from-stock path has not been run live since the
-> dual-key and netting fixes landed.
-
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-297 (branch `fix/production-poll-skip-inflight`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -172,6 +166,57 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-16-299 — The staging mail sender nested its recipient list and dropped every copy and threading header `mail-center` `staging` 🟡
+
+🟡 **Fixed on branch** (`feat/t012-mail-center` → `staging`). Found 2026-10-16 while setting up the staging verification for PRD T-012; nobody reported it, because the only sends staging had made since were single-recipient. **STAGING ONLY** — production is unaffected.
+
+**Symptom.** None visible yet. It would have shown up as T-012's headline features looking broken on staging: a mail addressed to several people, or carrying Cc or Bcc, would have gone out wrong (or not at all), and no outgoing mail would have carried `Message-ID` / `In-Reply-To` / `References`. A tester would have concluded the feature was broken when only this provider path was.
+
+**Root cause.** `sendEmailViaMailSlurp` (`src/api/lib/email.ts`, added by `bf8daf5a` on 2026-09-29) was written while `SendEmailArgs.to` was a single string, so it spelled the payload as:
+
+```js
+to: [args.to],
+```
+
+T-012 widened `to` to `string | string[]` so Mail Center could address several people. The two changes touched different lines of different files and Git merged them without a conflict, but they collide in meaning: with an array, `[args.to]` nests it into `[[...]]`. The same call never passed `cc`, `bcc`, `replyTo` or `headers` at all, because none of them existed when it was written.
+
+TypeScript cannot catch this: `[args.to]` is a valid `(string | string[])[]` and goes straight into `JSON.stringify`.
+
+**Class.** Two changes that merge cleanly and are each correct on their own, but whose meanings collide — a widened type on one side, a consumer written against the narrow one on the other. A conflict-free merge is not evidence that the result works; only the type checker and the tests are, and here neither could see it.
+
+**Fix.** `to: toRecipientList(args.to)`, plus `cc` / `bcc` / `replyTo` and `customHeaders` for the RFC threading headers. Field names verified against the `SendEmailOptions` model in the `mailslurp-client` SDK (`dist/generated/models/SendEmailOptions.d.ts`): `to`, `cc` and `bcc` are `Array<string>`, `replyTo` is a `string`, and custom headers ride `customHeaders` as a flat string map. Each field is omitted when empty, so a plain single-recipient send keeps the exact payload it had before.
+
+**Why production is unaffected.** `sendMail` picks Brevo if `BREVO_API_KEY` is set, else Resend, and only falls through to MailSlurp when neither is. Production has Brevo; both the Brevo and Resend senders were updated with T-012 and carry these fields correctly.
+
+**Follow-up, same day: passing the headers broke staging sending.** Measured on staging right after deploying the fix — the free sandbox plan rejects the extras outright: *"Free sandbox sending supports one explicit To recipient and a plain-text or HTML body only. CC, BCC, contacts, groups, aliases, custom sender/reply headers, attachments, templates, tracking, validation, AMP, multipart bodies, and alternate send strategies require a paid plan."* Every Mail Center send stamps a `Message-ID`, so once the headers were actually passed, **every** Mail Center send on staging began failing 400 — where before the fix they went out (single recipient, headers silently dropped).
+
+So the sender now downgrades, narrowly: a mail with ONE To, no copies, no reply-to and no attachments retries once without `customHeaders` and returns `ok` with a `warning` on `SendEmailResult`, which the compose and reply handlers log. Dropping a threading header costs cross-client threading only, and staging has no inbound routing to exercise that anyway. Copies and attachments are never dropped — delivering a mail that lies about who received it is the failure this entry is about — so those still fail with the provider's own words.
+
+**What this means for verifying T-012 on staging: it cannot be done on the free plan.** Multiple recipients, Cc, Bcc and threading headers are exactly what the plan refuses, and they are exactly what T-012 added. Verifying the send path needs `BREVO_API_KEY` on the staging Pages Preview environment (the provider production uses), a paid MailSlurp plan, or verification on production.
+
+**Regression.** `tests/mail-send-path.test.mjs` — "the MailSlurp path carries the same recipients and headers (staging only)", which also pins that `to: [args.to]` does not come back, and "the MailSlurp free plan drops only threading headers, never recipients".
+
+---
+
+## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/cached-fetch-inflight-298` → `staging`). Found 2026-10-16 while reproducing BUG-2026-10-16-297; not reported by a user. How often it happens on the live sites is UNMEASURED.
+
+**Symptom.** A page that refreshes its data while the previous request is still running (the /production 8 s poll before BUG-2026-10-16-297, the come-back-to-the-tab refresh, a cache invalidation) could leave a request running that nothing was waiting for. The server built the full response and the browser downloaded it, then threw it away.
+
+**Root cause.** `joinInflight` in `src/lib/cached-fetch.ts` keeps one entry per URL so callers share a request and the last one to leave can cancel it. When a request settled, its `.finally` ran `inflight.delete(url)`, deleting by URL. A cancelled request settles a moment after it is cancelled, and by then a newer request for the same URL may have registered. The old request's `.finally` then deleted the NEWER entry. The next refresh looked for an entry to cancel, found none, and started a third request, while the second ran on to the end for a consumer that had already left.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (refresh every 100 ms, response 300 ms): in 1 s, 10 requests started, 5 were aborted and 3 finished unwatched. With the fix: every superseded request is aborted and none finishes.
+
+**Fix.** The `.finally` deletes the entry only if it is still its own (`inflight.get(url)?.promise === promise`). Abort, ref counting and the 502/503/504 retry are unchanged; the existing `cached-fetch-*` tests pass.
+
+**Same shape, not fixed (open).** `releaseInflight(url)` also finds the entry by URL. Two components sharing one URL: request A settles and its entry is dropped, component 2 refreshes and starts B, then component 1 unmounts and its cleanup decrements B's count to 0 and aborts B while component 2 is still waiting on it. Found by reading the code; not reproduced. One component alone cannot hit it (React runs the old cleanup before the new request starts).
+
+**Regression.** `tests/cached-fetch-inflight-identity.test.mjs`.
+
+
+---
+
 ## BUG-2026-10-16-297 — /production cancelled its own order list when the list took longer than 8 seconds `production` `performance` 🟡
 
 🟡 **Fixed on branch** (`fix/production-poll-skip-inflight` → `staging`). Seen 2026-10-16 in the app's network panel while checking BUG-2026-10-16-294: `GET /api/production-orders`, status 0, AbortError, at 8,007 ms. Which site that was, and how often it happens, are UNMEASURED.
@@ -184,7 +229,7 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms p
 
 **Fix.** `useCachedJson` now returns `isFetching()`, true from the moment its request starts until it settles (a cancelled run leaves the flag to the run that replaced it). The `/production` poll tick returns early while it is true. `loading` could not be used: it is only true when there is no cached copy, so it stays false on every poll. The abort and ref-count rules in `cached-fetch.ts` are unchanged. The flag clears on every settle path: a 2xx, an HTTP error, and the 30 s global abort from `api-client.ts`. So a request that never answers now costs one 30 s gap in polling, not an endless 8 s cancel loop.
 
-**Found in passing, not fixed (open).** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still can. C15 row 8.
+**Found in passing, fixed separately as BUG-2026-10-16-298.** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still could. C15 row 8.
 
 **Other timed refreshes checked.** Every other `setInterval` / `useInterval` in `src/` (sidebar unread counts, IT support tickets, the scan-queue polls in the two scan modals, presence, version check, RUM flush) uses a plain fetch that does not cancel the previous call. `/production` was the only poll through `useCachedJson().refresh`. The same page's come-back-to-the-tab refresh (3 s gate only) can still cancel a running list request; not changed here. Same mechanism, not a timer: `revalidateOnFocus: true` (`sales/create.tsx`, `sales/edit.tsx`) refetches on focus when the saved copy is over 2 s old, which during a slow first load (no copy) cancels and restarts the request.
 
