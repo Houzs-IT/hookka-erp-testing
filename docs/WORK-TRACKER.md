@@ -1,5 +1,15 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `docs/dev05-a9-live-verified` — DEV-05's full
+> acceptance run added below (all six criteria measured on staging, ending in invoice
+> INV-2610-005 at the customer's price), with the four traps it found. Its entry is the newest.
+> **Last verified: 2026-10-16**: branch `fix/production-poll-skip-inflight`, to `staging` (BUG-2026-10-16-297) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-296) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-294/295) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
+> re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
+> BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
+> staging measurement are in the entry below, dated 2026-09-29.
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -7221,3 +7231,54 @@ behaviour change is in note text only, no allocation decision moved.
 customer's order and the customer's price, not the placeholder at zero) is not
 verified. And A9's design gap stands: the owner's rule is *earliest sales order
 date wins*; the implementation is *first to confirm wins*. Not yet raised.
+
+## 2026-10-16 — DEV-05 acceptance run: all six criteria measured on staging
+
+Branch `docs/dev05-a9-live-verified`. No source change — this is the record of a
+verification pass, not new work.
+
+**Why it was needed:** the feature had been built, merged to `staging` and
+declared done, but several criteria rested on the test suite alone. A note
+nobody has watched appear is a claim about code, not about the system.
+
+**What was run, in one sitting, against staging (NOT production — DEV-05 does
+not exist on `main`):**
+
+| Criterion | Measured |
+|---|---|
+| A9, the loser is told | `No stock allocated for 1013-(Q) — all 4 on hand are already committed to other orders.` The `4` is counted live |
+| Positive path | Order ten → `Allocated 4 x 1013-(Q) from stock (6 to be produced)`, six fresh POs, not ten |
+| A6, release | Run twice; ownership home, availability back to 4 |
+| A7, the invoice | `INV-2610-005` — **SO-2609-395**, Houzs Century, 4 × RM 305.00, **RM 1,220.00**. The `SOH-` placeholder and its RM 0 appear nowhere |
+
+A7 is the one that needed a decision: the delivery order is refused by customer
+credit control (Houzs Century, 17 overdue, RM 52,201), so it took a credit
+override, authorised by the owner on the day and recorded in the audit trail.
+The gate is not a DEV-05 problem — it treats an allocated stock piece exactly
+like any other goods, which is the right behaviour and worth saying out loud.
+
+**Four things the run found that are not bugs but will bite the next person:**
+
+1. **The credit check fires when the DO is CREATED, not when it is dispatched.**
+   Override at creation and nothing asks again. Expect a prompt at Mark
+   Dispatched and you will wrongly think the gate was skipped.
+2. **`notify-customer` 500s and the screen does nothing.** The transition
+   succeeded; only the e-mail failed, because staging's addresses are scrubbed
+   to `@staging.invalid` (RFC 2606, cannot resolve). Refresh rather than
+   re-click — a second click risks a second transition.
+3. **Availability lags a minute or two after a confirm.** It read 4 available /
+   0 allocated while the pieces had already moved. Hyperdrive's query cache, not
+   a stale write; it settles alone. On a demo screen it reads as failure.
+4. **An order holding finished stock cannot be cancelled** ("completed work
+   blocks cancellation"). Release first, then cancel.
+
+**State afterwards:** the two test orders (SO-2610-186, SO-2610-187) were
+cancelled and the stock they touched restored. The four original pieces,
+however, are now delivered and invoiced, and a piece on a delivery note cannot
+be released — so a showcase needs fresh stock built first.
+
+**Still open:** nothing on `main` — the whole feature is staging-only, and
+promoting it is a decision nobody has been asked for. A9's design gap also
+stands: the owner's rule is *earliest order wins*, the implementation is *first
+to confirm wins*, and closing that means answering how long an unconfirmed order
+may hold finished stock.
