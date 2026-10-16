@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FinancePageTitle } from "@/components/finance/page-title";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
@@ -266,19 +267,17 @@ export default function DebitNotesPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Debit Notes</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage debit notes for undercharges and additional charges
-          </p>
-        </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-2" /> New Debit Note
-        </Button>
-      </div>
+    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4" data-fin-ui>
+      {/* Header (finance v2: the explanation sits behind the (i)) */}
+      <FinancePageTitle
+        title="Debit Notes"
+        explain="Debit notes for undercharges and additional charges."
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" /> New Debit Note
+          </Button>
+        }
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

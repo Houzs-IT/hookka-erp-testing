@@ -1,0 +1,59 @@
+// ---------------------------------------------------------------------------
+// finance-nav.ts — the name and the (i) explanation of every finance page
+// (finance v2, owner 2026-10-16: page title 22px/700, explanations behind an
+// (i) icon instead of a grey sub-line). One record per `?tab=` of the
+// accounting page; FinancePageTitle reads it.
+// ---------------------------------------------------------------------------
+
+export type FinancePageInfo = {
+  title: string;
+  /** What the page is for — shown when the (i) next to the title is opened. */
+  explain: string;
+};
+
+export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
+  overview: { title: "Overview", explain: "Sales, profit and production, month by month. Point at a bar, a point or a figure to see how it is made." },
+  pl: { title: "Profit & Loss", explain: "Sales, cost of goods sold and expenses. A cell marked est. is a recurring cost not recorded yet this month, taken from last month." },
+  plmonthly: { title: "Profit & Loss", explain: "The P&L month by month for the financial year, with the year so far first." },
+  coststruct: { title: "Profit & Loss", explain: "Where the money went: spend, purchases and closing stock by material group." },
+  cashflow: { title: "Cash Flow", explain: "Money in and out of the bank, month by month. Money in is positive; money out is in brackets." },
+  bs: { title: "Balance Sheet", explain: "What the company owns and owes at a month-end." },
+  tb: { title: "Trial Balance", explain: "Every account's balance at a date; total debits equal total credits." },
+  gl: { title: "General Ledger", explain: "Every entry posted to an account, with the balance brought forward and carried forward." },
+  stock: { title: "Stock Summary", explain: "Opening, purchases, consumption and closing stock by material group, plus work in progress and finished goods." },
+  payments: { title: "Payment Vouchers", explain: "Every payment out, in one list. A voucher goes Draft → Prepared → Checked → Approved, and only Approved posts to the books." },
+  receipts: { title: "Receipts", explain: "Every payment in, in one list: customer receipts, other debtor receipts and official receipts." },
+  transfer: { title: "Fund Transfer", explain: "Money moved between your own bank and cash accounts." },
+  dailycash: { title: "Daily Cash Position", explain: "Each bank today, and what is still to come in or go out. Tick a row when your banking app shows it went through." },
+  journals: { title: "Journal Entries", explain: "Journals keyed by hand, and the postings the system makes (read-only)." },
+  cashbook: { title: "Cash Book", explain: "Bank reconciliation: each month's bank statement matched against the books, then finalised." },
+  selfcheck: { title: "Self-check", explain: "Consistency checks across the books, each with where to fix it." },
+  corrections: { title: "Corrections", explain: "Posted documents that were edited or cancelled afterwards." },
+  assets: { title: "Fixed Assets", explain: "The asset register and its monthly depreciation." },
+  ar: { title: "Debtor Aging", explain: "What customers owe, by how long it has been outstanding." },
+  ap: { title: "Creditor Aging", explain: "What we owe suppliers, by how long it has been outstanding. Trade Finance is its own block." },
+  apinvoices: { title: "AP Invoices", explain: "Everything owed on paper in one list: purchase invoices and other creditor bills." },
+  "supplier-discount": { title: "Supplier Discount", explain: "Discounts and credits received from suppliers." },
+  odebtor: { title: "Other Debtors", explain: "Parties other than customers who owe us." },
+  odebtorbills: { title: "Other Debtor Bills", explain: "Bills raised to parties other than customers." },
+  odebtorpay: { title: "Other Debtor Receipts", explain: "Money in from parties other than customers." },
+  ocreditor: { title: "Other Creditors", explain: "Parties other than suppliers that we owe." },
+  ocreditorbills: { title: "Other Creditor Bills", explain: "Bills from parties other than suppliers." },
+  ocreditorpay: { title: "Other Creditor Payments", explain: "Money out to parties other than suppliers." },
+  coa: { title: "Chart of Accounts", explain: "Accounts, their types and the report sections they go to." },
+  labor: { title: "Labour", explain: "Month-end posting of production wages and the employer's contributions." },
+  stockmap: { title: "Stock Mapping", explain: "Which accounts each material group posts to." },
+  openstock: { title: "Opening Stock", explain: "Quantity and cost on hand at the switch date." },
+  stocktake: { title: "Stock Take", explain: "Month-end stock counts by material group; the P&L closing stock reads them." },
+  opening: { title: "Opening Balance", explain: "Balances brought into the books on the opening date." },
+  audit: { title: "Audit Log", explain: "Voided and deleted documents: who did it and when, with Unvoid where allowed." },
+  maint: { title: "Settings", explain: "Tax rate, financial year, document numbering, landed cost and clean-up checks." },
+};
+
+/** The page a `?tab=` value names; an unknown or missing tab is the Overview,
+ *  as the accounting page itself falls back. Only {title, explain}, so it can
+ *  be spread onto FinancePageTitle. */
+export function financePage(tab: string | null | undefined): FinancePageInfo {
+  const p = (tab && FINANCE_PAGES[tab]) || FINANCE_PAGES.overview;
+  return { title: p.title, explain: p.explain };
+}

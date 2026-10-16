@@ -77,6 +77,9 @@ export type PdfExportOpts = {
   /** Fixed column widths in pt (landscape A4 ≈ 762pt usable). Unlisted
    *  columns keep autotable's auto width. */
   colWidths?: Record<number, number>;
+  /** Open the PDF in a new tab with the print dialog instead of saving it
+   *  (a grid's header-menu "Print", finance v2). */
+  print?: boolean;
 };
 
 export async function exportReportPdf(
@@ -142,5 +145,10 @@ export async function exportReportPdf(
       }
     },
   });
+  if (opts?.print) {
+    doc.autoPrint();
+    window.open(doc.output("bloburl"), "_blank");
+    return;
+  }
   doc.save(filename);
 }

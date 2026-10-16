@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { FinancePageTitle } from "@/components/finance/page-title";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { TrendingUp, Plus, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
@@ -480,15 +481,13 @@ export default function ForecastPage() {
   );
 
   return (
-    <div className="space-y-4 p-1">
+    <div className="space-y-4 p-1" data-fin-ui>
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold text-[#1F1D1B] flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-[#6B5C32]" /> Forecast P&L
-        </h2>
-        <span className="text-xs text-[#9CA3AF]">
-          Planning only — nothing here touches the books. Key SALES per month; every line = % of sales; a new month
-          inherits the previous month's percentages.
-        </span>
+        <FinancePageTitle
+          title="Forecast P&L"
+          icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />}
+          explain="Planning only — nothing here touches the books. Key the sales per month; every line is a % of sales; a new month starts with the previous month's percentages."
+        />
         <div className="ml-auto flex items-center gap-2">
           <input
             type="month"

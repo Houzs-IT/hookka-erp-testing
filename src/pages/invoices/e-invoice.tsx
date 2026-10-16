@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FinancePageTitle } from "@/components/finance/page-title";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -254,21 +255,18 @@ export default function EInvoicePage() {
   }
 
   return (
-    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-[#1F1D1B]">e-Invoice</h1>
-          <p className="text-xs text-[#6B7280]">
-            LHDN MyInvois - Malaysian e-Invoice XML generation. Transmission to
-            LHDN is not connected.
-          </p>
-        </div>
-        <Button variant="outline" onClick={fetchData} className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
+    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
+      {/* Header (finance v2: the explanation sits behind the (i)) */}
+      <FinancePageTitle
+        title="e-Invoice"
+        explain="LHDN MyInvois: Malaysian e-Invoice XML generation. Sending to LHDN is not connected."
+        actions={
+          <Button variant="outline" onClick={fetchData} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Standing notice. Until BUG-2026-08-13-014 the Submit button minted a
           random `LHDN-SUB-…` id and a random 15-char UUID, marked the row
