@@ -299,11 +299,15 @@ async function columnAlreadyExists(sql: Sql, pgSql: string): Promise<boolean> {
   const key = `${target.table}.${target.column}`
   if (knownColumns.has(key)) return true
   try {
-    const rows = (await sql.unsafe(
-      `SELECT 1 FROM information_schema.columns
-        WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2
-        LIMIT 1`,
-      [target.table, target.column] as never,
+    // 'public', like the other information_schema lookups here: current_schema()
+    // follows search_path and could name another schema.
+    const rows = (await withConnRetry(() =>
+      sql.unsafe(
+        `SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+          LIMIT 1`,
+        [target.table, target.column] as never,
+      ),
     )) as unknown as unknown[]
     if (rows.length > 0) {
       knownColumns.add(key)
