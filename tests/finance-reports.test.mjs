@@ -142,3 +142,17 @@ test("report amounts read without RM, negatives in brackets; the check strip's v
   assert.equal(checkLabel(-100), "Out of balance · difference 1.00");
   assert.equal(checkLabel(123456), "Out of balance · difference 1,234.56");
 });
+
+test("period months and the statements' % of sales", async () => {
+  const { periodMonths, fmtPctOfSales } = await import("../src/lib/finance-reports.ts");
+  assert.deepEqual(periodMonths("2026-10"), ["2026-10", "2026-10"]);
+  assert.deepEqual(periodMonths("2026-Q4"), ["2026-10", "2026-12"]);
+  assert.deepEqual(periodMonths("2026-Q1"), ["2026-01", "2026-03"]);
+  assert.deepEqual(periodMonths("2026"), ["2026-01", "2026-12"]);
+  assert.equal(periodMonths("x"), null);
+  assert.equal(fmtPctOfSales(12300, 100000), "12.3%");
+  assert.equal(fmtPctOfSales(-4000, 100000), "(4.0%)");
+  assert.equal(fmtPctOfSales(0, 100000), "-");
+  assert.equal(fmtPctOfSales(undefined, 100000), "");
+  assert.equal(fmtPctOfSales(500, 0), "", "no net sales, no share");
+});

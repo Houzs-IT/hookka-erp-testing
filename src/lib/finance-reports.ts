@@ -175,3 +175,47 @@ export function fmtAmt(sen: number): string {
 export function checkLabel(diffSen: number): string {
   return diffSen === 0 ? "Balanced ✓" : `Out of balance · difference ${fmtAmt(Math.abs(diffSen))}`;
 }
+
+/** First and last month a period key covers (`2026-Q4` → 2026-10..2026-12,
+ *  `2026` → 2026-01..2026-12); null for an unreadable key. */
+export function periodMonths(key: string): [string, string] | null {
+  return monthsOf(key);
+}
+
+/** A share of net sales as the statements print it: "12.3%", a negative in
+ *  brackets "(4.0%)", "-" for nothing; "" when there is no net sales to
+ *  divide by or no figure. */
+export function fmtPctOfSales(sen: number | undefined, netSalesSen: number): string {
+  if (sen === undefined || !(netSalesSen > 0)) return "";
+  if (sen === 0) return "-";
+  const p = `${(Math.abs(sen) / netSalesSen * 100).toFixed(1)}%`;
+  return sen < 0 ? `(${p})` : p;
+}
+
+/** The statement's rows as shown (finance v2): a folded group is one row (it
+ *  carries its own figure) and its rows are skipped; an open group is its
+ *  heading, its rows, then a `close` entry for the same group — drawn as its
+ *  total line with the group's own figure. Nothing is added up: every figure
+ *  shown is one the server sent. */
+export function foldStatementRows<R extends { kind: string; depth: number; groupId?: string }>(
+  rows: R[],
+  folded: Set<string>,
+): { row: R; close?: boolean }[] {
+  const shown: { row: R; close?: boolean }[] = [];
+  const open: R[] = [];
+  let skipDepth: number | null = null;
+  for (const r of rows) {
+    if (skipDepth !== null) {
+      if (r.depth > skipDepth) continue;
+      skipDepth = null;
+    }
+    while (open.length && r.depth <= open[open.length - 1].depth) shown.push({ row: open.pop()!, close: true });
+    shown.push({ row: r });
+    if (r.kind === "group" && r.groupId) {
+      if (folded.has(r.groupId)) skipDepth = r.depth;
+      else open.push(r);
+    }
+  }
+  while (open.length) shown.push({ row: open.pop()!, close: true });
+  return shown;
+}

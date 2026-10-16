@@ -97,8 +97,8 @@ import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
-import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, checkLabel, type TbSectionKey } from "@/lib/finance-reports";
-import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker } from "@/components/finance/report-shell";
+import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -710,24 +710,30 @@ export default function AccountingPage() {
 // untouched; this just switches between them.
 function PlHubTab({ initialView }: { initialView: "statement" | "monthly" | "cost" }) {
   const [view, setView] = useState(initialView);
+  // Finance v2: Overall / Sofa / Bedframe is one switch on the title row for
+  // all three views (each view used to carry its own).
+  const [line, setLine] = useState<PlLine>("all");
   const views: { key: typeof view; label: string; hint: string }[] = [
     { key: "statement", label: "P&L Statement", hint: "One period, the full statement" },
     { key: "monthly", label: "Monthly P&L", hint: "Month by month, side by side" },
     { key: "cost", label: "Cost Structure", hint: "Fixed / variable / other cost classes" },
   ];
+  const lines: { key: PlLine; label: string }[] = [
+    { key: "all", label: "Overall" },
+    { key: "sofa", label: "Sofa" },
+    { key: "bedframe", label: "Bedframe" },
+  ];
   return (
     <div className="space-y-3">
-      <div className="inline-flex rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
-        {views.map((v, i) => (
-          <button key={v.key} type="button" onClick={() => setView(v.key)} title={v.hint}
-            className={`px-3 py-1.5 font-semibold cursor-pointer ${view === v.key ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${i > 0 ? "border-l border-[#F0ECE9]" : ""}`}>
-            {v.label}
-          </button>
-        ))}
-      </div>
-      {view === "statement" && <PLStatementTab />}
-      {view === "monthly" && <MonthlyPlTab />}
-      {view === "cost" && <CostStructureTab />}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <SegmentedSwitch label="P&L view" options={views} value={view} onChange={setView} />
+          <SegmentedSwitch label="Product line" options={lines} value={line} onChange={setLine} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {view === "statement" && <PLStatementTab line={line} />}
+      {view === "monthly" && <MonthlyPlTab line={line} />}
+      {view === "cost" && <CostStructureTab line={line} />}
     </div>
   );
 }
@@ -5216,6 +5222,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 // 不一样」): warning amber text on a pale amber row, italic, with an "est." tag.
 const EST_ROW = "bg-[#FAEFCB] text-[#9C6F1E] italic";
 const estTitle = (fromYm?: string) => `Estimated from ${fromYm ? drillMonthLabel(fromYm) : "last month"} — nothing recorded yet this month`;
+type PlLine = "all" | "sofa" | "bedframe";
 type PnlStmtRow = {
   kind: "group" | "line" | "total" | "grandtotal" | "gap";
   depth: number;
@@ -5250,13 +5257,12 @@ type PnlMaterialWarnings = {
 // S.* Sofa); shared groups (no prefix) appear under Overall only.
 type CsGroup = { group: string; description: string; months: { opening: number; purchase: number; closing: number; spend: number }[] };
 
-function CostStructureTab() {
+function CostStructureTab({ line }: { line: PlLine }) {
   const yrNow = new Date().getUTCFullYear();
   // fy=null → the SERVER picks the financial year containing today (owner
   // 2026-07-28: the old `yrNow` default pointed Jan–Aug users at the NEXT,
   // still-empty FY because the FYE is August). A number = user's pick.
   const [fy, setFy] = useState<number | null>(null);
-  const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
   const [data, setData] = useState<{ fyLabel: string; cols: string[]; groups: CsGroup[]; salesSofa: number[]; salesBed: number[]; salesAll: number[] } | null>(null);
   const loading = data === null;
   useEffect(() => {
@@ -5386,9 +5392,6 @@ function CostStructureTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        {([["all", "Overall"], ["sofa", "Sofa"], ["bedframe", "Bedframe"]] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setLine(k)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${line === k ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{lbl}</button>
-        ))}
         <div className="ml-auto flex items-center gap-2">
           {data && (
             <ExportButtons
@@ -5653,9 +5656,8 @@ function MonthlyTrendTab() {
 type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
 type PlMonthlyData = { fyLabel: string; line: string; anchor: string; columns: { key: string; label: string; accum: boolean }[]; rows: PlMatrixRow[] };
 
-function MonthlyPlTab() {
+function MonthlyPlTab({ line }: { line: PlLine }) {
   const thisMonth = new Date().toISOString().slice(0, 7);
-  const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
   const [anchor, setAnchor] = useState(thisMonth);
   const [data, setData] = useState<PlMonthlyData | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -5719,9 +5721,6 @@ function MonthlyPlTab() {
         </div>
         <div className="flex items-center gap-2">
           <input type="month" value={anchor} onChange={(e) => setAnchor(e.target.value || thisMonth)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-          <select value={line} onChange={(e) => setLine(e.target.value as "all" | "sofa" | "bedframe")} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm">
-            <option value="all">All</option><option value="sofa">Sofa</option><option value="bedframe">Bedframe</option>
-          </select>
           {data && maxLevel > 1 && (
             <div className="flex items-center gap-1">
               <span className="text-xs text-[#9CA3AF] mr-0.5">DETAIL</span>
@@ -5983,6 +5982,9 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
   const extraSum = (data?.extra ?? []).reduce((s, e) => s + (creditNormal ? -e.sen : e.sen), 0);
   const total = lineSum(lines) + extraSum;
   const th = "py-1 pr-3 font-medium text-left";
+  // Finance v2: the drill's total opens the account in the General Ledger for
+  // the same months (a material group's PURCHASE line is not one account).
+  const glRange = /^\d{3}-/.test(account) ? periodMonths(period) : null;
   const row = (l: PlDrillLine) => {
     const sen = signed(l.debitSen, l.creditSen);
     return (
@@ -6001,7 +6003,7 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
     );
   };
   return (
-    <div className="bg-[#FAF8F5] border-y border-dashed border-[#E2DDD8] px-4 py-2">
+    <div data-fin-drill className="bg-[#F4F6F8] border-y border-[#E2E8F0] px-4 py-2">
       {!data && !err && <div className="text-xs text-[#9CA3AF] py-1">Loading the ledger lines…</div>}
       {err && <div className="text-xs text-[#9A3412] py-1">{err}</div>}
       {data?.historical && <div className="text-xs text-[#6B7280] py-1">This month was keyed from the old books (historical P&amp;L), so there are no ledger lines behind it.</div>}
@@ -6047,8 +6049,11 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
               {lines.length === 0 && data.extra.length === 0 && (
                 <tr><td colSpan={6} className="py-1 text-[#9CA3AF]">No ledger lines in this period.</td></tr>
               )}
-              <tr className="border-t border-[#9CA3AF] font-semibold text-[#1F1D1B]">
-                <td className="py-1" colSpan={5}>Total</td>
+              <tr className="border-t border-[#94A3B8] bg-[#E8EDF2] font-semibold text-[#1F1D1B]">
+                <td className="py-1 pl-1" colSpan={5}>
+                  Total · {lines.length} entr{lines.length === 1 ? "y" : "ies"}
+                  {glRange && <Link to={glHref(account, glRange[0], glRange[1])} className="ml-3 text-[#6B5C32] hover:text-[#574A28]">Open In GL →</Link>}
+                </td>
                 <td className={amtCls(total)}>{amt(total)}</td>
               </tr>
             </tbody>
@@ -6062,9 +6067,9 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
   );
 }
 
-function PLStatementTab() {
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
-  const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
+function PLStatementTab({ line }: { line: PlLine }) {
+  const today = todayYmdMY();
+  const [period, setPeriod] = useState(() => today.slice(0, 7));
   const [level, setLevel] = useState(4);
   // Lines opened in the inline drill, keyed by period + account so a new
   // period starts with everything closed.
@@ -6117,24 +6122,15 @@ function PLStatementTab() {
 
   const rows = data?.rows ?? [];
   const net = data?.netSalesSen || 0;
-  const pct = (v: number | undefined) => (net > 0 && v !== undefined ? `${((v / net) * 100).toFixed(1)}%` : "");
+  const pct = (v: number | undefined) => fmtPctOfSales(v, net);
+  const amt = (v: number | undefined) => (v === undefined ? "" : v === 0 ? "-" : fmtAmt(v));
 
-  // Walk rows honouring collapsed groups: when a group is collapsed, skip
-  // its descendants and render the group row WITH its total; when open,
-  // render the group header (no amount) + children + a TOTAL line.
-  const visible: { row: PnlStmtRow; showGroupTotal?: boolean }[] = [];
-  let skipDepth: number | null = null;
-  for (const r of rows) {
-    if (skipDepth !== null) {
-      if (r.depth > skipDepth) continue;
-      skipDepth = null;
-    }
-    visible.push({ row: r });
-    if (r.kind === "group" && r.groupId && collapsed.has(r.groupId)) skipDepth = r.depth;
-  }
-
-  const numCell = (v: number | undefined) =>
-    v === undefined ? "" : v < 0 ? `(${formatCurrency(Math.abs(v))})` : formatCurrency(v);
+  // Walk rows honouring folded groups (finance v2, the design's statement): a
+  // folded group is one row carrying its figure; an open group is a heading,
+  // its rows, then its total line — the server's own group figure under the
+  // group's totalLabel. Nothing is added up here.
+  const shown = foldStatementRows(rows, collapsed);
+  const lastGrand = rows.filter((r) => r.kind === "grandtotal").pop();
 
   // Export: every row (indented by depth), with both money columns.
   const buildExport = (): Aoa => {
@@ -6145,55 +6141,67 @@ function PLStatementTab() {
       aoa.push([
         indent + r.label,
         r.ytdSen === undefined ? "" : (r.ytdSen / 100).toFixed(2),
-        pct(r.ytdSen),
+        r.ytdSen === undefined || !(net > 0) ? "" : `${((r.ytdSen / net) * 100).toFixed(1)}%`,
         r.periodSen === undefined ? "" : (r.periodSen / 100).toFixed(2),
-        pct(r.periodSen),
+        r.periodSen === undefined || !(net > 0) ? "" : `${((r.periodSen / net) * 100).toFixed(1)}%`,
       ]);
     }
     return aoa;
   };
-
-  const lineTabs: { k: "all" | "sofa" | "bedframe"; label: string }[] = [
-    { k: "all", label: "Overall" },
-    { k: "sofa", label: "Sofa P&L" },
-    { k: "bedframe", label: "Bedframe P&L" },
+  const lineName = line === "all" ? "Overall" : line === "sofa" ? "Sofa" : "Bedframe";
+  const exportTitle = `P&L ${lineName}`;
+  const exportSub = `Period: ${data?.periodLabel ?? period} · ${data?.fyLabel ?? ""}`;
+  const fileBase = `PL-${line}-${period}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, exportSub, buildExport(), { print: true }); } },
+    // CSV stays in the menu until the owner decides (2026-10-16).
+    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
   ];
 
-  // Phase 5.5 — grouped period selector: Monthly + Accumulated (quarters,
-  // half-years, full year). Values are the period strings the /pl-statement
-  // endpoint already understands (YYYY-MM, YYYY-Qn, YYYY).
-  const months: string[] = [];
-  {
-    const now = new Date();
-    for (let i = 0; i < 18; i++) {
-      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-      months.push(d.toISOString().slice(0, 7));
-    }
-  }
-  const yrNow = new Date().getUTCFullYear();
-  const years = [yrNow, yrNow - 1];
+  // The periods /pl-statement reads: 18 months, the calendar quarters and
+  // years of this year and last (as the old grouped selector offered).
+  const periodOptions = useMemo(() => {
+    const yr = Number(today.slice(0, 4));
+    return [
+      ...monthOptions(today.slice(0, 7), 18),
+      ...[yr, yr - 1].flatMap((y) => [1, 2, 3, 4].map((q) => `${y}-Q${q}`)),
+      String(yr), String(yr - 1),
+    ];
+  }, [today]);
 
   const matWarn = data?.materialWarnings;
   const negCount = matWarn?.negatives.length ?? 0;
   const unresCount = matWarn?.unresolved.length ?? 0;
   const hasMatWarnings = negCount > 0 || unresCount > 0;
+  const cols = 5;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      <ReportToolbar>
+        <PeriodStepper value={period} options={periodOptions} onChange={setPeriod} today={today} />
+        <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(4); setCollapsed(new Set()); } }} />
+        {!edit && <DetailLevels levels={[1, 2, 3, 4]} value={level} onChange={(L) => applyLevel(rows, L)} />}
+        {!loading && rows.length > 0 && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
+
       {hasMatWarnings && (
-        <div className="rounded-md border border-[#F7C1C1] bg-[#FCEBEB] px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setShowMatWarnings((v) => !v)}
-            className="flex w-full items-center gap-1.5 text-left text-sm font-semibold text-[#9A3A2D] cursor-pointer"
-          >
-            {showMatWarnings ? <ChevronDownIcon className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-            <span>
-              ⚠ {negCount} material{negCount === 1 ? "" : "s"} with negative stock and {unresCount} unresolved — material cost may be understated. Click to {showMatWarnings ? "hide" : "view"}.
+        <div data-fin-warn className="rounded-[10px] border border-[#E8D597] bg-[#FAEFCB] px-3.5 py-2.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex-1 text-[13px] font-semibold text-[#7A5712]">
+              ⚠ {negCount} material{negCount === 1 ? "" : "s"} with negative stock and {unresCount} unresolved — material cost may be understated.
             </span>
-          </button>
+            <button
+              type="button"
+              aria-expanded={showMatWarnings}
+              onClick={() => setShowMatWarnings((v) => !v)}
+              className="h-[30px] rounded-lg border border-[#D9C77F] bg-white px-3 text-[12.5px] font-semibold text-[#1F1D1B] hover:bg-[#FBF7E8]"
+            >
+              {showMatWarnings ? "Hide" : "View"}
+            </button>
+          </div>
           {showMatWarnings && (
-            <div className="mt-2 space-y-3 pl-6 text-sm">
+            <div className="mt-2 space-y-3 rounded-lg bg-white px-3 py-2 text-sm">
               {negCount > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-[#9A3A2D] mb-1">Negative stock ({negCount}) — fix opening stock or GRN receipts so layers cover issues:</p>
@@ -6218,150 +6226,131 @@ function PLStatementTab() {
           )}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {lineTabs.map((t) => (
-          <button key={t.k} onClick={() => setLine(t.k)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${line === t.k ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{t.label}</button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-            <optgroup label="Monthly">
-              {months.map((m) => <option key={m} value={m}>{m}</option>)}
-            </optgroup>
-            <optgroup label="Quarter">
-              {years.flatMap((yr) => [1, 2, 3, 4].map((q) => <option key={`${yr}-Q${q}`} value={`${yr}-Q${q}`}>Q{q} {yr}</option>))}
-            </optgroup>
-            <optgroup label="Full year">
-              {years.map((yr) => <option key={`${yr}`} value={`${yr}`}>Full Year {yr}</option>)}
-            </optgroup>
-          </select>
-          <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(4); setCollapsed(new Set()); } }}
-            className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
-            {edit ? "Done" : "Edit"}
-          </button>
-          {[1, 2, 3, 4].map((L) => (
-            <button key={L} onClick={() => applyLevel(rows, L)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${level === L ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-          ))}
-          {!loading && rows.length > 0 && (
-            <ExportButtons build={buildExport} filenameBase={`PL-${line}-${period}`} title={`P&L ${line === "all" ? "Overall" : line === "sofa" ? "Sofa" : "Bedframe"}`} subtitle={`Period: ${data?.periodLabel ?? period} · ${data?.fyLabel ?? ""}`} />
-          )}
-        </div>
-      </div>
-      {edit && <p className="text-[11px] text-[#6B5C32]">Drag an account row onto a target group to reclassify it (within the same side: Revenue ↔ Other Income; Labour / Manufacturing / Operating Expenses / Payroll are interchangeable) · all months recompute under the new rule · Net Profit unchanged · drag back to undo</p>}
+      {edit && (
+        <EditLayoutBanner>
+          Drag an account row (⠿) onto a target group to reclassify it (within the same side: Revenue ↔ Other Income; Labour / Manufacturing / Operating Expenses / Payroll are interchangeable) · all months recompute under the new rule · Net Profit unchanged · drag back to undo
+        </EditLayoutBanner>
+      )}
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="text-center mb-3">
-            <div className="font-semibold text-[15px] text-[#1F1D1B]">HOOKKA MANUFACTURING SDN BHD</div>
-            <div className="text-[13px] text-[#6B7280] mt-0.5">{line === "all" ? "Manufacturing & Profit-and-Loss Account (Overall)" : line === "sofa" ? "Profit-and-Loss Account — SOFA" : "Profit-and-Loss Account — BEDFRAME"}</div>
-            <div className="text-[12px] text-[#9CA3AF] mt-0.5">Period: {data?.periodLabel ?? period} · {data?.fyLabel ?? ""} · % = of net sales</div>
-          </div>
-          {loading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <div className="overflow-x-auto">
-            <table data-col-resize="first" className="w-full text-[13px]">
-              <thead>
-                <tr className="text-[12px] text-[#6B7280]">
-                  <td />
-                  <td className="text-right px-2 pb-1">FY YTD (RM)</td>
-                  <td className="text-right px-2 pb-1 w-14">YTD %</td>
-                  <td className="text-right px-2 pb-1">{data?.periodLabel ?? period} (RM)</td>
-                  <td className="text-right px-2 pb-1 w-14">%</td>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map(({ row }, i) => {
-                  if (row.kind === "gap") return <tr key={i}><td colSpan={5} className="py-1.5" /></tr>;
-                  const isOpen = row.kind === "group" && row.groupId ? !collapsed.has(row.groupId) : false;
-                  const pad = { paddingLeft: `${8 + row.depth * 18}px` };
-                  if (row.kind === "grandtotal") {
-                    return (
-                      <tr key={i} className="border-t-2 border-[#1F1D1B] font-bold text-[#1F1D1B]">
-                        <td className="py-2" style={pad}>{row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
-                      </tr>
-                    );
-                  }
-                  if (row.kind === "total") {
-                    return (
-                      <tr key={i} className="border-t border-[#9CA3AF] font-semibold bg-[#F0ECE9]/40">
-                        <td className="py-1" style={pad}>{row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
-                      </tr>
-                    );
-                  }
-                  if (row.kind === "group") {
-                    const dropOk = edit && !!row.bucket && dragClass !== null && classOfBucket(row.bucket) === dragClass;
-                    return (
-                      <tr key={i} className={`font-semibold text-[#1F1D1B] bg-[#F0ECE9]/40 ${!edit ? "cursor-pointer hover:bg-[#F7F4EF]" : ""} ${dropOk && dragOverBucket === row.bucket ? "ring-2 ring-inset ring-[#6B5C32]" : ""}`}
-                        onClick={!edit ? () => { const n = new Set(collapsed); if (n.has(row.groupId!)) n.delete(row.groupId!); else n.add(row.groupId!); setCollapsed(n); } : undefined}
-                        onDragOver={dropOk ? (e) => { e.preventDefault(); setDragOverBucket(row.bucket!); } : undefined}
-                        onDragLeave={dropOk ? () => { if (dragOverBucket === row.bucket) setDragOverBucket(null); } : undefined}
-                        onDrop={dropOk ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverBucket(null); setDragCode(null); setDragClass(null); if (src && row.bucket) void moveTo(src, row.bucket); } : undefined}>
-                        <td className="py-1" style={pad}>{!edit ? (isOpen ? "▾" : "▸") : "•"} {row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
-                      </tr>
-                    );
-                  }
-                  const draggable = edit && !!row.accountCode;
-                  const drillCode = row.drillCode ?? row.accountCode;
-                  const drillKey = drillCode ? `${period}|${drillCode}` : "";
-                  const canDrill = !edit && !!drillCode;
-                  const drilled = canDrill && drillOpen.has(drillKey);
+      <ReportFrame
+        company="HOOKKA MANUFACTURING SDN BHD"
+        title={line === "all" ? "Manufacturing & Profit-and-Loss Account (Overall)" : line === "sofa" ? "Profit-and-Loss Account — SOFA" : "Profit-and-Loss Account — BEDFRAME"}
+        note={`Period: ${periodLabel(period, today)} · ${data?.fyLabel ?? ""} · % = of net sales`}
+        maxHeight="calc(100vh - 300px)"
+      >
+        {loading ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
+        ) : (
+          <table data-col-resize="first" data-fin-report className="min-w-[640px]">
+            <thead>
+              <tr data-row="h1">
+                <th rowSpan={2} data-cell="stick" className="min-w-[280px]">Item</th>
+                <th colSpan={2} data-cell="split" className="text-center">{data?.fyLabel ?? "FY"} YTD</th>
+                <th colSpan={2} data-cell="split" className="text-center">{periodLabel(period, "")}</th>
+              </tr>
+              <tr data-row="h2">
+                <th data-cell="num split">RM</th>
+                <th data-cell="num pct">% Sales</th>
+                <th data-cell="num split">RM</th>
+                <th data-cell="num pct">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map(({ row, close }, i) => {
+                const pad = { paddingLeft: `${14 + row.depth * 18}px` };
+                if (close) {
                   return (
-                    <Fragment key={i}>
-                    <tr className={`${row.estSen ? EST_ROW : "hover:bg-[#F7F4EF]"} ${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""} ${drilled && !row.estSen ? "bg-[#F7F4EF]" : ""}`}
-                      title={row.estSen ? estTitle(row.estFrom) : undefined}
-                      draggable={draggable}
-                      onDragStart={draggable ? (e) => { setDragCode(row.accountCode!); setDragClass(classOfBucket(row.bucket)); e.dataTransfer.setData("text/plain", row.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
-                      onDragEnd={draggable ? () => { setDragCode(null); setDragClass(null); setDragOverBucket(null); } : undefined}>
-                      <td className={`py-0.5 ${row.estSen ? "" : "text-[#4B5563]"}`} style={pad}>
-                        {canDrill ? (
-                          <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
-                            onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{row.label}
-                          </button>
-                        ) : <>{draggable ? "⠿ " : ""}{row.label}</>}
-                        {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
-                        {row.estSen ? <span className="ml-1.5 text-[9px] not-italic font-semibold">est.</span> : null}
-                      </td>
-                      <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                      <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                      <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                      <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
+                    <tr key={i} data-row="sub">
+                      <td data-cell="stick" style={pad}>{row.totalLabel ?? `TOTAL ${row.label}`}</td>
+                      <td data-cell="num split">{amt(row.ytdSen)}</td>
+                      <td data-cell="num pct">{pct(row.ytdSen)}</td>
+                      <td data-cell="num split">{amt(row.periodSen)}</td>
+                      <td data-cell="num pct">{pct(row.periodSen)}</td>
                     </tr>
-                    {drilled && drillCode && (
-                      <tr><td colSpan={5} className="p-0"><PlDrillPanel period={period} account={drillCode} line={line} /></td></tr>
-                    )}
-                    </Fragment>
                   );
-                })}
-              </tbody>
-            </table>
-            </div>
-          )}
-          {rows.some((r) => r.estSen) && (
-            <p className="text-[11px] text-[#9C6F1E] mt-3">
-              Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
-              month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
-            </p>
-          )}
-          <p className="text-[11px] text-[#9CA3AF] mt-3">
-            Stock (raw material / WIP / FG) is live from the cost ledger; labour, overhead, carriage, SST, revenue and
-            expenses from the GL. Sofa = Sofa + Accessory. For Sofa/Bedframe, directly-attributable material &amp; labour
-            follow the production order; shared/indirect costs are apportioned by the net-sales ratio.
-          </p>
-        </CardContent>
-      </Card>
+                }
+                if (row.kind === "gap") return <tr key={i} aria-hidden="true"><td colSpan={cols} style={{ padding: 0, height: 10, border: 0 }} /></tr>;
+                if (row.kind === "grandtotal" || row.kind === "total") {
+                  const grand = row.kind === "grandtotal";
+                  return (
+                    <tr key={i} data-row={grand ? "res" : "sub"} data-fin-double={grand && row === lastGrand ? "" : undefined}>
+                      <td data-cell="stick" style={pad}>{row.label}</td>
+                      <td data-cell="num split">{amt(row.ytdSen)}</td>
+                      <td data-cell="num pct">{pct(row.ytdSen)}</td>
+                      <td data-cell="num split">{amt(row.periodSen)}</td>
+                      <td data-cell="num pct">{pct(row.periodSen)}</td>
+                    </tr>
+                  );
+                }
+                if (row.kind === "group") {
+                  const isOpen = row.groupId ? !collapsed.has(row.groupId) : false;
+                  const dropOk = edit && !!row.bucket && dragClass !== null && classOfBucket(row.bucket) === dragClass;
+                  return (
+                    <tr key={i} data-row={row.depth === 0 ? "sec" : "grp"}
+                      data-fin-drop={dropOk && dragOverBucket === row.bucket ? "" : undefined}
+                      className={!edit ? "cursor-pointer select-none" : undefined}
+                      title={!edit ? (isOpen ? "Click to fold" : "Click to open") : undefined}
+                      onClick={!edit ? () => { const n = new Set(collapsed); if (n.has(row.groupId!)) n.delete(row.groupId!); else n.add(row.groupId!); setCollapsed(n); } : undefined}
+                      onDragOver={dropOk ? (e) => { e.preventDefault(); setDragOverBucket(row.bucket!); } : undefined}
+                      onDragLeave={dropOk ? () => { if (dragOverBucket === row.bucket) setDragOverBucket(null); } : undefined}
+                      onDrop={dropOk ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverBucket(null); setDragCode(null); setDragClass(null); if (src && row.bucket) void moveTo(src, row.bucket); } : undefined}>
+                      <td data-cell="stick" style={pad}><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{!edit ? (isOpen ? "▾" : "▸") : "•"}</span>{row.label}</td>
+                      {/* An open group shows its figure on its total line below. */}
+                      <td data-cell="num split">{isOpen ? "" : amt(row.ytdSen)}</td>
+                      <td data-cell="num pct">{isOpen ? "" : pct(row.ytdSen)}</td>
+                      <td data-cell="num split">{isOpen ? "" : amt(row.periodSen)}</td>
+                      <td data-cell="num pct">{isOpen ? "" : pct(row.periodSen)}</td>
+                    </tr>
+                  );
+                }
+                const draggable = edit && !!row.accountCode;
+                const drillCode = row.drillCode ?? row.accountCode;
+                const drillKey = drillCode ? `${period}|${drillCode}` : "";
+                const canDrill = !edit && !!drillCode;
+                const drilled = canDrill && drillOpen.has(drillKey);
+                return (
+                  <Fragment key={i}>
+                  <tr data-row="line" data-est={row.estSen ? "" : undefined} className={`${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""}`}
+                    title={row.estSen ? estTitle(row.estFrom) : undefined}
+                    draggable={draggable}
+                    onDragStart={draggable ? (e) => { setDragCode(row.accountCode!); setDragClass(classOfBucket(row.bucket)); e.dataTransfer.setData("text/plain", row.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                    onDragEnd={draggable ? () => { setDragCode(null); setDragClass(null); setDragOverBucket(null); } : undefined}>
+                    <td data-cell="stick" style={pad}>
+                      {canDrill ? (
+                        <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
+                          onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                          <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{row.label}
+                        </button>
+                      ) : <>{draggable ? <span className="mr-1.5 text-[12px] text-[#9CA3AF]">⠿</span> : null}{row.label}</>}
+                      {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
+                      {row.estSen ? <span className="ml-1.5 text-[10px] font-semibold">· est.</span> : null}
+                    </td>
+                    <td data-cell="num split">{amt(row.ytdSen)}</td>
+                    <td data-cell="num pct">{pct(row.ytdSen)}</td>
+                    <td data-cell="num split">{amt(row.periodSen)}</td>
+                    <td data-cell="num pct">{pct(row.periodSen)}</td>
+                  </tr>
+                  {drilled && drillCode && (
+                    <tr><td colSpan={cols} style={{ padding: 0 }}><PlDrillPanel period={period} account={drillCode} line={line} /></td></tr>
+                  )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
+      {rows.some((r) => r.estSen) && (
+        <p className="text-[11px] text-[#9C6F1E]">
+          Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+        </p>
+      )}
+      <p className="text-[11px] text-[#9CA3AF]">
+        Stock (raw material / WIP / FG) is live from the cost ledger; labour, overhead, carriage, SST, revenue and
+        expenses from the GL. Sofa = Sofa + Accessory. For Sofa/Bedframe, directly-attributable material &amp; labour
+        follow the production order; shared/indirect costs are apportioned by the net-sales ratio.
+      </p>
     </div>
   );
 }
@@ -9343,8 +9332,9 @@ function BackToTopButton() {
 // account header, the table header, the Balance B/F row and the per-account
 // totals row). Together they size the placeholder that holds a card's space
 // while it is off-screen — a few pixels out costs a small jump, nothing more.
+// Measured on prod 2026-10-16 (v2 look): chrome 140–141px, folded card 44px.
 const GL_ROW_PX = 29;
-const GL_CARD_CHROME_PX = 142;
+const GL_CARD_CHROME_PX = 141;
 const GL_CARD_HEAD_PX = 44;
 
 const GL_CTRL = "h-[34px] rounded-lg border border-[#D9D3CA] bg-white px-3 text-[13px] text-[#1F1D1B] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]";
@@ -9673,13 +9663,13 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <table data-fin-report data-fin-dense>
                           <thead>
                             <tr>
-                              <th>Date</th>
+                              <th className="w-[110px]">Date</th>
                               <th>Description</th>
-                              <th>DE Account</th>
-                              <th>Source</th>
-                              <th data-cell="num split">Debit</th>
-                              <th data-cell="num">Credit</th>
-                              <th data-cell="num">Balance</th>
+                              <th className="w-[220px]">DE Account</th>
+                              <th className="w-[130px]">Source</th>
+                              <th data-cell="num split" className="w-[150px]">Debit</th>
+                              <th data-cell="num" className="w-[150px]">Credit</th>
+                              <th data-cell="num" className="w-[160px]">Balance</th>
                             </tr>
                           </thead>
                           <tbody>

@@ -384,3 +384,35 @@ export function AccountMultiPicker({
     </span>
   );
 }
+
+/** Joined switch buttons on a report toolbar (P&L Statement | Monthly P&L |
+ *  Cost Structure; Overall | Sofa | Bedframe): the one that is on is ink. */
+export function SegmentedSwitch<K extends string>({
+  options,
+  value,
+  onChange,
+  label,
+}: {
+  options: { key: K; label: string; hint?: string }[];
+  value: K;
+  onChange: (k: K) => void;
+  label: string;
+}) {
+  return (
+    <span className={`inline-flex overflow-hidden ${CTRL}`} role="tablist" aria-label={label}>
+      {options.map((o, i) => (
+        <button
+          key={o.key}
+          type="button"
+          role="tab"
+          aria-selected={value === o.key}
+          title={o.hint}
+          onClick={() => onChange(o.key)}
+          className={`whitespace-nowrap px-3 transition-colors ${i ? "border-l border-[#D9D3CA]" : ""} ${value === o.key ? "bg-[#1F1D1B] text-white" : "text-[#374151] hover:bg-[#F4F6F8]"}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </span>
+  );
+}
