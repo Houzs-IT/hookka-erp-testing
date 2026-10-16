@@ -83,5 +83,9 @@ test("the General Ledger opens from a drill's link with the account and dates pi
   const gl = slice(ui, "function GeneralLedgerTab(", "\nfunction ");
   assert.match(gl, /useState<string\[\]>\(\(\) => \{ const a = new URLSearchParams\(window\.location\.search\)\.get\("account"\); return a \? \[a\] : \[\]; \}\)/);
   assert.match(gl, /useState\(\(\) => new URLSearchParams\(window\.location\.search\)\.get\("from"\) \?\? ""\)/);
-  assert.match(ui, /return `\/accounting\?tab=gl&account=\$\{encodeURIComponent\(account\)\}&from=\$\{fromYm\}-01&to=\$\{last\}`;/);
+  // The link runs to the last day of the drill's last month, through the shared
+  // helper the Trial Balance double-click uses too.
+  assert.match(ui, /const glHref = \(account: string, fromYm: string, toYm: string\) =>\n  glLink\(\{ account, fromYm, toDate: monthEnd\(toYm\) \}\);/);
+  const lib = read("src/lib/finance-reports.ts");
+  assert.match(lib, /return `\/accounting\?tab=gl&account=\$\{encodeURIComponent\(o\.account\)\}&from=\$\{o\.fromYm\}-01&to=\$\{o\.toDate\}`;/);
 });

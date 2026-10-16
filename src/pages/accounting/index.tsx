@@ -97,6 +97,7 @@ import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
+import { glLink, monthEnd } from "@/lib/finance-reports";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -5816,11 +5817,8 @@ function MonthlyPlTab() {
 // row's figure for that month) and opens the General Ledger. Same pass as the
 // statement drill (/pl-drill over the financial year's months), so the lines
 // add up to the row; months keyed from the old books have no lines behind them.
-const glHref = (account: string, fromYm: string, toYm: string) => {
-  const [y, m] = toYm.split("-").map(Number);
-  const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-  return `/accounting?tab=gl&account=${encodeURIComponent(account)}&from=${fromYm}-01&to=${last}`;
-};
+const glHref = (account: string, fromYm: string, toYm: string) =>
+  glLink({ account, fromYm, toDate: monthEnd(toYm) });
 const drillCellAmt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
 function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   account: string;
