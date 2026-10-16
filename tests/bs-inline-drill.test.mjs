@@ -47,7 +47,9 @@ test("the sheet: an account's name opens the drill (not in Edit, not the unclose
   const tab = slice(ui, "function BalanceSheetTab(", "\nfunction ");
   assert.match(tab, /const canDrill = !edit && e\.accountCode !== "NP-CURRENT";/);
   assert.match(tab, /const drillKey = `\$\{period\}\|\$\{company\}\|\$\{e\.accountCode\}`;/, "a new month / company starts closed");
-  assert.match(tab, /<tr><td colSpan=\{3\} className="p-0"><BsDrillPanel period=\{period\} account=\{e\.accountCode\} company=\{company\} \/><\/td><\/tr>/);
+  // Finance v2: the report table's cells carry padding, so the drill's cell
+  // drops it inline (a utility class would lose to the finance sheet).
+  assert.match(tab, /<tr><td colSpan=\{3\} style=\{\{ padding: 0 \}\}><BsDrillPanel period=\{period\} account=\{e\.accountCode\} company=\{company\} \/><\/td><\/tr>/);
   const panel = slice(ui, "function BsDrillPanel(", "\nfunction ");
   assert.match(panel, /fetch\(`\/api\/accounting\/bs-drill\?period=\$\{encodeURIComponent\(period\)\}&account=\$\{encodeURIComponent\(account\)\}\$\{orgIdParam\(company\)\}`\)/);
   for (const h of ["Date", "Description", "Other side", "Ref. 1", "Ref. 2", "Amount"]) assert.ok(panel.includes(`>${h}</th>`), `column ${h}`);

@@ -34,7 +34,7 @@ import { useRowMenu, lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { amountInWords } from "@/lib/amount-in-words";
 import { COMPANY } from "@/lib/constants";
-import { COA_TYPE_COLOR, SUCCESS, DANGER, INFO, ACCENT_PLUM } from "@/lib/design-tokens";
+import { COA_TYPE_COLOR, DANGER } from "@/lib/design-tokens";
 import {
   BookOpen,
   TrendingUp,
@@ -12732,7 +12732,9 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
 // real check possible, but choosing that basis is an owner/finance decision.
 
 function StockSummaryTab() {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [month, setMonth] = useState(() => today.slice(0, 7));
+  const monthOpts = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
   const [data, setData] = useState<{
     rows: { group: string; description: string; openingSen: number; purchasesSen: number; consumptionSen: number; closingSen: number; balanced: boolean; accounts: { stock: string; opening: string; closing: string } }[];
     wip: { openingSen: number; closingSen: number };
@@ -12773,116 +12775,162 @@ function StockSummaryTab() {
   // sheet 就让他的 closing stock 和 P&L closing stock 一样」): the Balance Sheet
   // reads this month-end's closing stock itself, so nothing needs posting.
 
+  // Finance v2: a report amount ("-" for none), the period stepper's months
+  // and one download.
+  const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
+  // TOTAL STOCK = raw materials + work in progress + finished goods, each the
+  // server's own figure (the design's total line).
+  const stockOpening = data ? data.totals.openingSen + data.wip.openingSen + data.fg.openingSen : 0;
+  const stockClosing = data ? data.totals.closingSen + data.wip.closingSen + data.fg.closingSen : 0;
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Code", "Material Group", "Opening (RM)", "Purchases (RM)", "Consumption (RM)", "Closing (RM)"]];
+    const kinds: PdfRowKind[] = [];
+    if (!data) return { aoa, kinds };
+    const n = (sen: number) => sen / 100;
+    for (const r of data.rows) { aoa.push([r.accounts.stock, r.description, n(r.openingSen), n(r.purchasesSen), n(r.consumptionSen), n(r.closingSen)]); kinds.push(undefined); }
+    aoa.push(["", "RAW MATERIAL TOTAL", n(data.totals.openingSen), n(data.totals.purchasesSen), n(data.totals.consumptionSen), n(data.totals.closingSen)]); kinds.push("subtotal");
+    aoa.push(["330-8000", "WORK IN PROGRESS", n(data.wip.openingSen), "", "", n(data.wip.closingSen)]); kinds.push(undefined);
+    aoa.push(["330-9000", "FINISHED GOODS", n(data.fg.openingSen), "", "", n(data.fg.closingSen)]); kinds.push(undefined);
+    aoa.push(["", "TOTAL STOCK", n(stockOpening), n(data.totals.purchasesSen), n(data.totals.consumptionSen), n(stockClosing)]); kinds.push("grand");
+    return { aoa, kinds };
+  };
+  const fileBase = `stock-summary-${month}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Stock Summary", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf(`${fileBase}.pdf`, "Stock Summary", periodLabel(month, today), aoa, { rowKind: (_r, i) => kinds[i], leftCols: [1], company: COMPANY.HOOKKA.name, print: true });
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Month</label>
-            <input type="month" value={month} onChange={(e) => { setData(null); setMonth(e.target.value); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
-          </div>
-          {data && (
-            <span className="text-xs text-[#6B7280] pb-2">The Balance Sheet shows this month-end&apos;s closing stock by itself — the same figure as the P&amp;L.</span>
-          )}
-          <p className="text-[11px] text-[#9CA3AF] pb-1">Opening + Purchases − Consumption = Closing, per material group, live from the cost ledger.</p>
-        </CardContent>
-      </Card>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={month} options={monthOpts} onChange={(m) => { setData(null); setMonth(m); }} today={today} />
+          {data && <DownloadMenu items={downloads} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
 
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {data === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Material group</th>
-                  <th className="px-3 py-2 text-right">Opening</th>
-                  <th className="px-3 py-2 text-right">Purchases</th>
-                  <th className="px-3 py-2 text-right">Consumption</th>
-                  <th className="px-3 py-2 text-right">Closing</th>
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={`Stock Summary · ${periodLabel(month, today)}`}
+        note="All figures RM · Opening + Purchases − Consumption = Closing, per material group, live from the cost ledger · the Balance Sheet shows this month-end's closing stock by itself — the same figure as the P&L"
+      >
+        {data === null ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
+        ) : (
+          <table data-fin-report className="min-w-[720px]">
+            <thead>
+              <tr>
+                <th className="w-[110px]">Code</th>
+                <th>Material Group</th>
+                <th data-cell="num split" className="w-[150px]">Opening</th>
+                <th data-cell="num" className="w-[150px]">Purchases</th>
+                <th data-cell="num" className="w-[150px]">Consumption</th>
+                <th data-cell="num" className="w-[150px]">Closing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r) => (
+                <tr key={r.group} data-row="line">
+                  <td data-cell="code">{r.accounts.stock}</td>
+                  <td>{r.description}</td>
+                  <td data-cell="num split" data-neg={r.openingSen < 0 ? "" : undefined}>{amt(r.openingSen)}</td>
+                  <td data-cell="num" data-neg={r.purchasesSen < 0 ? "" : undefined}>{amt(r.purchasesSen)}</td>
+                  <td data-cell="num" data-neg={r.consumptionSen < 0 ? "" : undefined}>{amt(r.consumptionSen)}</td>
+                  <td data-cell="num" data-neg={r.closingSen < 0 ? "" : undefined}>{amt(r.closingSen)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((r) => (
-                  <tr key={r.group} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{r.accounts.stock}</span>{r.description}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.openingSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.purchasesSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.consumptionSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(r.closingSen)}</td>
-                  </tr>
-                ))}
-                <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                  <td className="px-3 py-1.5">330-8000 WORK IN PROGRESS</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(data.wip.openingSen)}</td>
-                  <td className="px-3 py-1.5 text-right" colSpan={2} />
-                  <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(data.wip.closingSen)}</td>
-                </tr>
-                <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                  <td className="px-3 py-1.5">330-9000 FINISHED GOODS</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(data.fg.openingSen)}</td>
-                  <td className="px-3 py-1.5 text-right" colSpan={2} />
-                  <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(data.fg.closingSen)}</td>
-                </tr>
-                <tr className="bg-[#F0ECE9]/60 font-semibold">
-                  <td className="px-3 py-2">RAW MATERIAL TOTAL</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.openingSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.purchasesSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.consumptionSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.closingSen)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
+              ))}
+              <tr data-row="sub">
+                <td />
+                <td>RAW MATERIAL TOTAL</td>
+                <td data-cell="num split">{amt(data.totals.openingSen)}</td>
+                <td data-cell="num">{amt(data.totals.purchasesSen)}</td>
+                <td data-cell="num">{amt(data.totals.consumptionSen)}</td>
+                <td data-cell="num">{amt(data.totals.closingSen)}</td>
+              </tr>
+              <tr data-row="line">
+                <td data-cell="code">330-8000</td>
+                <td>WORK IN PROGRESS</td>
+                <td data-cell="num split">{amt(data.wip.openingSen)}</td>
+                <td data-cell="num" />
+                <td data-cell="num" />
+                <td data-cell="num">{amt(data.wip.closingSen)}</td>
+              </tr>
+              <tr data-row="line">
+                <td data-cell="code">330-9000</td>
+                <td>FINISHED GOODS</td>
+                <td data-cell="num split">{amt(data.fg.openingSen)}</td>
+                <td data-cell="num" />
+                <td data-cell="num" />
+                <td data-cell="num">{amt(data.fg.closingSen)}</td>
+              </tr>
+              <tr data-row="fin">
+                <td />
+                <td>TOTAL STOCK</td>
+                <td data-cell="num split">{amt(stockOpening)}</td>
+                <td data-cell="num">{amt(data.totals.purchasesSen)}</td>
+                <td data-cell="num">{amt(data.totals.consumptionSen)}</td>
+                <td data-cell="num">{amt(stockClosing)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
 
       {/* Phase 4.5 — consumption + labour split by product line, following
           the RM_ISSUE / LABOR_POSTED → production-order category. */}
       {byLine && (
-        <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+          <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+            <span className="text-[15px] font-bold text-[#1F1D1B]">By Product Line</span>
+            <span className="text-[12px] text-[#9CA3AF]">{periodLabel(month, today)} · consumption and labour follow the production order · all figures RM</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table data-fin-report className="min-w-[560px]">
               <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">By product line (this month)</th>
-                  <th className="px-3 py-2 text-right">Material consumed</th>
-                  <th className="px-3 py-2 text-right">Labour</th>
-                  <th className="px-3 py-2 text-right">Sales</th>
+                <tr>
+                  <th>Product Line</th>
+                  <th data-cell="num split" className="w-[170px]">Material Consumed</th>
+                  <th data-cell="num" className="w-[150px]">Labour</th>
+                  <th data-cell="num" className="w-[150px]">Sales</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-[#F0ECE9]">
-                  <td className="px-3 py-1.5">Sofa <span className="text-[11px] text-[#9CA3AF]">(incl. Accessory)</span></td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.sofa.materialSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.sofa.labourSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.salesByLine.sofa)}</td>
+                <tr data-row="line">
+                  <td>Sofa <span className="text-[11px] text-[#9CA3AF]">(incl. Accessory)</span></td>
+                  <td data-cell="num split">{amt(byLine.sofa.materialSen)}</td>
+                  <td data-cell="num">{amt(byLine.sofa.labourSen)}</td>
+                  <td data-cell="num">{amt(byLine.salesByLine.sofa)}</td>
                 </tr>
-                <tr className="border-b border-[#F0ECE9]">
-                  <td className="px-3 py-1.5">Bedframe</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.bedframe.materialSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.bedframe.labourSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.salesByLine.bedframe)}</td>
+                <tr data-row="line">
+                  <td>Bedframe</td>
+                  <td data-cell="num split">{amt(byLine.bedframe.materialSen)}</td>
+                  <td data-cell="num">{amt(byLine.bedframe.labourSen)}</td>
+                  <td data-cell="num">{amt(byLine.salesByLine.bedframe)}</td>
                 </tr>
                 {(byLine.unallocated.materialSen !== 0 || byLine.unallocated.labourSen !== 0) && (
-                  <tr className="border-b border-[#F0ECE9] text-[#9A3A2D]">
-                    <td className="px-3 py-1.5">Unallocated <span className="text-[11px]">(issue/labour with no PO category — fix the PO)</span></td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.unallocated.materialSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.unallocated.labourSen)}</td>
-                    <td className="px-3 py-1.5 text-right" />
+                  <tr data-row="line" className="text-[#9A3A2D]">
+                    <td>Unallocated <span className="text-[11px]">(issue/labour with no PO category — fix the PO)</span></td>
+                    <td data-cell="num split">{amt(byLine.unallocated.materialSen)}</td>
+                    <td data-cell="num">{amt(byLine.unallocated.labourSen)}</td>
+                    <td data-cell="num" />
                   </tr>
                 )}
-                <tr className="bg-[#F0ECE9]/60 font-semibold">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.totalMaterialSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.totalLabourSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.salesByLine.sofa + byLine.salesByLine.bedframe)}</td>
+                <tr data-row="fin">
+                  <td>TOTAL</td>
+                  <td data-cell="num split">{amt(byLine.totalMaterialSen)}</td>
+                  <td data-cell="num">{amt(byLine.totalLabourSen)}</td>
+                  <td data-cell="num">{amt(byLine.salesByLine.sofa + byLine.salesByLine.bedframe)}</td>
                 </tr>
               </tbody>
             </table>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
       <p className="text-[11px] text-[#9CA3AF]">
         Sofa material + Bedframe material + Unallocated = total consumption (the COGS material part). Shared/indirect
@@ -16282,19 +16330,13 @@ function BsDrillPanel({ period, account, company }: { period: string; account: s
 }
 
 function BalanceSheetTab() {
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [period, setPeriod] = useState(() => today.slice(0, 7));
   // Multi-company (Phase 2): "" = All companies (group) → URL unchanged =
   // today's consolidated sheet. A company code scopes /pl via &orgId=.
   const [company, setCompany] = useState("");
   const companyOptions = useCompanyOptions();
-  const months: string[] = [];
-  {
-    const now = new Date();
-    for (let i = 0; i < 18; i++) {
-      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-      months.push(d.toISOString().slice(0, 7));
-    }
-  }
+  const periodOpts = monthOptions(today.slice(0, 7), 18);
   const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp; sheetStock?: { month: string; totalSen: number } | null; sheetStockError?: string | null } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
   const bsData: BalanceSheetEntry[] = useMemo(
     () => (bsResp?.success && bsResp.data?.balanceSheet ? bsResp.data.balanceSheet : []),
@@ -16352,21 +16394,22 @@ function BalanceSheetTab() {
   const totalLiabilities = totalCurrentLiab + totalLongTermLiab;
   const totalEquity = equityItems.reduce((s, e) => s + e.balance, 0);
   const totalLiabEquity = totalLiabilities + totalEquity;
+  const sheetDiff = totalAssets - totalLiabEquity;
 
+  // Finance v2: the same sections and order (the new layout waits for the
+  // owner, 2026-10-16), in the report look.
   const renderBSSection = (
     title: string,
     entries: BalanceSheetEntry[],
     total: number,
-    colorClass: string,
-    bgClass: string,
     section: string,
   ) => (
     <>
-      <tr className={`${bgClass} ${edit && dragCode && dragOverSec === section ? "ring-2 ring-inset ring-[#6B5C32]" : ""}`}
+      <tr data-row="grp" data-fin-drop={edit && dragCode && dragOverSec === section ? "" : undefined}
         onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
         onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
         onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
-        <td colSpan={3} className={`px-4 py-2 font-semibold ${colorClass}`}>{title}</td>
+        <td colSpan={3} style={{ paddingLeft: 26 }}>{title}</td>
       </tr>
       {entries.map((e) => {
         const draggable = edit && e.accountCode !== "NP-CURRENT";
@@ -16376,146 +16419,140 @@ function BalanceSheetTab() {
         const drilled = canDrill && bsDrillOpen.has(drillKey);
         return (
           <Fragment key={e.id}>
-          <tr className={`border-t border-[#E2DDD8]/50 ${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
+          <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
             draggable={draggable}
             onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
             onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
-            <td className="px-4 py-1.5 pl-8 text-[#6B7280] text-xs">{draggable ? "⠿ " : ""}{e.accountCode}</td>
-            <td className="px-4 py-1.5 text-[#4B5563]">
+            <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode}</td>
+            <td style={{ paddingLeft: 40 }}>
               {canDrill ? (
                 <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
                   onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                  <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{e.accountName}
+                  <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
                 </button>
               ) : e.accountName}
             </td>
-            <td className={`px-4 py-1.5 text-right font-medium ${e.balance < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-              {e.balance < 0 ? `(${formatCurrency(Math.abs(e.balance))})` : formatCurrency(e.balance)}
-            </td>
+            <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
           </tr>
           {drilled && (
-            <tr><td colSpan={3} className="p-0"><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
+            <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
           )}
           </Fragment>
         );
       })}
-      <tr className={`border-t border-[#E2DDD8] ${bgClass} font-semibold`}>
-        <td colSpan={2} className={`px-4 py-2 ${colorClass}`}>Total {title}</td>
-        <td className={`px-4 py-2 text-right ${colorClass}`}>{formatCurrency(total)}</td>
+      <tr data-row="sub">
+        <td />
+        <td style={{ paddingLeft: 26 }}>Total {title}</td>
+        <td data-cell="num split" data-neg={total < 0 ? "" : undefined}>{fmtAmt(total)}</td>
       </tr>
     </>
   );
 
+  // The download carries the sheet as shown.
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Code", "Account", "Amount (RM)"]];
+    const kinds: PdfRowKind[] = [];
+    const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
+    const sec = (title: string, entries: BalanceSheetEntry[], total: number) => {
+      push(["", title, ""], "section");
+      for (const e of entries) push([e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+      push(["", `Total ${title}`, total / 100], "subtotal");
+    };
+    push(["", "ASSETS", ""], "section");
+    sec("Current Assets", currentAssets, totalCurrentAssets);
+    sec("Fixed Assets (Net)", fixedAssets, totalFixedAssets);
+    push(["", "TOTAL ASSETS", totalAssets / 100], "grand");
+    push(["", "LIABILITIES", ""], "section");
+    sec("Current Liabilities", currentLiabilities, totalCurrentLiab);
+    sec("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab);
+    push(["", "Total Liabilities", totalLiabilities / 100], "subtotal");
+    sec("Equity", equityItems, totalEquity);
+    push(["", "TOTAL LIABILITIES + EQUITY", totalLiabEquity / 100], "grand");
+    return { aoa, kinds };
+  };
+  const fileBase = `balance-sheet-${period}${company ? `-${company}` : ""}`;
+  const asAtLabel = `As At End Of ${periodLabel(period, today)}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Balance Sheet", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf(`${fileBase}.pdf`, "Balance Sheet", asAtLabel, aoa, { rowKind: (_r, i) => kinds[i], leftCols: [1], company: COMPANY.HOOKKA.name, print: true });
+      },
+    },
+  ];
+
   return (
-    <div className="space-y-6 max-md:space-y-4">
+    <div className="space-y-4">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
+          <PeriodStepper value={period} options={periodOpts} onChange={setPeriod} today={today} />
+          <EditLayoutToggle on={edit} onToggle={() => setEdit((v) => !v)} />
+          <DownloadMenu items={downloads} />
+        </ReportToolbar>
+      </FinanceTitleActions>
       <YearCloseCard />
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs font-semibold text-[#1F1D1B]">As at month-end</label>
-        <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-          {months.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
-        <button onClick={() => setEdit((v) => !v)}
-          className={`ml-2 rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
-          {edit ? "Done" : "Edit"}
-        </button>
-        {edit && <span className="text-[11px] text-[#6B5C32]">Drag an account row onto a target section to reclassify it · Assets ↔ Liabilities is allowed too (the sign flips on the move, the statement still balances) · all months recompute under the new rule · drag back to undo</span>}
-      </div>
+      {edit && (
+        <EditLayoutBanner>
+          Drag an account row (⠿) onto a target section to reclassify it · Assets ↔ Liabilities is allowed too (the sign flips on the move, the statement still balances) · all months recompute under the new rule · drag back to undo
+        </EditLayoutBanner>
+      )}
       {/* Group P&L / net-worth by company — only on the consolidated (group)
           view; picking a single company hides it (you're already scoped). */}
       {company === "" && <GroupByCompanyCard period={period} options={companyOptions} />}
-      {/* Balance equation */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-[#6B7280]">Total Assets</p>
-            <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(totalAssets)}</p>
-          </CardContent>
-        </Card>
-        <Card className="flex items-center justify-center">
-          <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-[#6B5C32]">=</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-[#6B7280]">Liabilities + Equity</p>
-            <p className="text-xl font-bold text-[#6B4A6D]">{formatCurrency(totalLiabEquity)}</p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Balance check: assets against liabilities + equity. */}
+      <CheckStrip ok={sheetDiff === 0} label={sheetDiff === 0 ? "Balanced ✓" : checkLabel(sheetDiff)}>
+        <span>Total Assets <b className="tabular-nums">{fmtAmt(totalAssets)}</b></span>
+        <span className="text-[#6B7280]">=</span>
+        <span>Liabilities + Equity <b className="tabular-nums">{fmtAmt(totalLiabEquity)}</b></span>
+      </CheckStrip>
 
-      {/* Balance Sheet Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <Scale className="h-5 w-5 text-[#6B5C32]" />
-            Balance Sheet as at end {period}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="border border-[#E2DDD8] rounded-lg overflow-hidden overflow-x-auto">
-            <table data-col-resize="first" className="w-full text-sm">
-              <thead>
-                <tr className="bg-[#F0ECE9]">
-                  <th className="text-left px-4 py-2 font-semibold text-[#1F1D1B] w-28">Code</th>
-                  <th className="text-left px-4 py-2 font-semibold text-[#1F1D1B]">Account</th>
-                  <th className="text-right px-4 py-2 font-semibold text-[#1F1D1B] w-40">Amount (RM)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* ASSETS — INFO (teal) tint */}
-                <tr className={`${INFO.bg} border-t-2 ${INFO.border}`}>
-                  <td colSpan={3} className={`px-4 py-2 font-bold text-base ${INFO.text}`}>ASSETS</td>
-                </tr>
-                {renderBSSection("Current Assets", currentAssets, totalCurrentAssets, INFO.text, INFO.bg, "CURRENT_ASSET")}
-                {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, INFO.text, INFO.bg, "FIXED_ASSET")}
-                <tr className={`border-t-2 ${INFO.border} ${INFO.bg} font-bold`}>
-                  <td colSpan={2} className={`px-4 py-3 ${INFO.text}`}>TOTAL ASSETS</td>
-                  <td className={`px-4 py-3 text-right ${INFO.text}`}>{formatCurrency(totalAssets)}</td>
-                </tr>
-
-                {/* LIABILITIES — DANGER (red) tint */}
-                <tr className={`${DANGER.bg} border-t-2 ${DANGER.border}`}>
-                  <td colSpan={3} className={`px-4 py-2 font-bold text-base ${DANGER.text}`}>LIABILITIES</td>
-                </tr>
-                {renderBSSection("Current Liabilities", currentLiabilities, totalCurrentLiab, DANGER.text, DANGER.bg, "CURRENT_LIABILITY")}
-                {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, DANGER.text, DANGER.bg, "LONG_TERM_LIABILITY")}
-                <tr className={`border-t border-[#E2DDD8] font-semibold ${DANGER.bg}`}>
-                  <td colSpan={2} className={`px-4 py-2 ${DANGER.text}`}>Total Liabilities</td>
-                  <td className={`px-4 py-2 text-right ${DANGER.text}`}>{formatCurrency(totalLiabilities)}</td>
-                </tr>
-
-                {/* EQUITY — ACCENT_PLUM tint */}
-                {renderBSSection("Equity", equityItems, totalEquity, ACCENT_PLUM.text, ACCENT_PLUM.bg, "EQUITY")}
-
-                {/* Total L+E */}
-                <tr className="border-t-2 border-[#1F1D1B] bg-[#1F1D1B] text-white font-bold">
-                  <td colSpan={2} className="px-4 py-3">TOTAL LIABILITIES + EQUITY</td>
-                  <td className="px-4 py-3 text-right">{formatCurrency(totalLiabEquity)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* Balance check */}
-          <div className={`mt-3 p-3 rounded-lg text-sm border ${totalAssets === totalLiabEquity ? `${SUCCESS.bg} ${SUCCESS.text} ${SUCCESS.border}` : `${DANGER.bg} ${DANGER.text} ${DANGER.border}`}`}>
-            {totalAssets === totalLiabEquity ? (
-              <span className="flex items-center gap-2"><Check className="h-4 w-4" /> Balance sheet is balanced. Assets = Liabilities + Equity</span>
-            ) : (
-              <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: {formatCurrency(Math.abs(totalAssets - totalLiabEquity))}</span>
-            )}
-          </div>
-          {bsStock && (
-            <p className="mt-2 text-xs text-[#6B7280]">
-              Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
-            </p>
-          )}
-          {bsStockError && (
-            <p className="mt-2 text-xs text-[#9A3412]">The stock could not be read ({bsStockError}) — the stock lines show the ledger&apos;s own balance.</p>
-          )}
-        </CardContent>
-      </Card>
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={`Balance Sheet ${asAtLabel}`}
+        note="All figures RM · click an account to see the ledger lines behind its balance"
+      >
+        <table data-col-resize="first" data-fin-report className="min-w-[560px]">
+          <thead>
+            <tr>
+              <th className="w-28">Code</th>
+              <th>Account</th>
+              <th data-cell="num split" className="w-44">Amount (RM)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-row="sec"><td colSpan={3}>ASSETS</td></tr>
+            {renderBSSection("Current Assets", currentAssets, totalCurrentAssets, "CURRENT_ASSET")}
+            {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, "FIXED_ASSET")}
+            <tr data-row="res">
+              <td colSpan={2}>TOTAL ASSETS</td>
+              <td data-cell="num split">{fmtAmt(totalAssets)}</td>
+            </tr>
+            <tr data-row="sec"><td colSpan={3}>LIABILITIES</td></tr>
+            {renderBSSection("Current Liabilities", currentLiabilities, totalCurrentLiab, "CURRENT_LIABILITY")}
+            {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, "LONG_TERM_LIABILITY")}
+            <tr data-row="sub">
+              <td colSpan={2}>Total Liabilities</td>
+              <td data-cell="num split">{fmtAmt(totalLiabilities)}</td>
+            </tr>
+            {renderBSSection("Equity", equityItems, totalEquity, "EQUITY")}
+            <tr data-row="res" data-fin-double="">
+              <td colSpan={2}>TOTAL LIABILITIES + EQUITY</td>
+              <td data-cell="num split">{fmtAmt(totalLiabEquity)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </ReportFrame>
+      {bsStock && (
+        <p className="text-xs text-[#6B7280]">
+          Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
+        </p>
+      )}
+      {bsStockError && (
+        <p className="text-xs text-[#9A3412]">The stock could not be read ({bsStockError}) — the stock lines show the ledger&apos;s own balance.</p>
+      )}
     </div>
   );
 }
