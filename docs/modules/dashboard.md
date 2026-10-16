@@ -1,5 +1,6 @@
 # Dashboard & Command Center — Module Guide
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-staging`, to `staging`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/compare-fabric-purchasing-tab`): the dashboard-overview.ts line anchors re-derived after new imports moved the handler. Nothing else re-checked.
 
 > **Last verified: 2026-10-09** (branch `feat/dashboard-month-static-kpis`): the month-awareness summary (daily Pending Delivery / Outstanding save) and the cache-key version re-checked against `dashboard-state-snapshot.ts` and `dashboard-overview.ts`. Nothing else re-checked.
@@ -26,10 +27,10 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
   - Lazy recharts wrappers → `src/pages/dashboard-b/charts.tsx` (`RevenueChart:60`, `CustomerPieChart:149`)
   - Route + prefetch wiring → `src/dashboard-routes.tsx:20` (lazy import), `:572` (chunk prefetch map)
 - API routes
-  - Overview aggregate (single GET) → `src/api/routes/dashboard-overview.ts` (2249 lines), mounted at `/api/dashboard/overview` (`src/api/worker.ts:1304`)
+  - Overview aggregate (single GET) → `src/api/routes/dashboard-overview.ts` (2249 lines), mounted at `/api/dashboard/overview` (`src/api/worker.ts:1312`)
   - Read-through snapshot lib → `src/api/lib/dashboard-snapshot.ts` (272)
   - Daily point-in-time state snapshot lib → `src/api/lib/dashboard-state-snapshot.ts` (148)
-  - Nightly cron invalidation → `app.post("/api/internal/rebuild-dashboard-snapshot")` `src/api/worker.ts:387`
+  - Nightly cron invalidation → `app.post("/api/internal/rebuild-dashboard-snapshot")` `src/api/worker.ts:395`
 
 ## Data model
 - `dashboard_snapshot` — one row per `org_id`; the `built_from` column makes it data-change-aware (freshness Layer 1). `readSnapshot`/`writeSnapshot`, `ON CONFLICT (org_id)` upsert.
@@ -67,7 +68,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | `readSnapshot` / `writeSnapshot` / `isSnapshotFresh` | `src/api/lib/dashboard-snapshot.ts:100 / 211 / 187` | Read-through snapshot (Layer 1) |
 | `getMaxSourceUpdatedAt` | `src/api/lib/dashboard-snapshot.ts:155` | Data-change probe for freshness |
 | `writeStateSnapshot` / `readStateSnapshotForMonth` | `src/api/lib/dashboard-state-snapshot.ts:63 / 108` | Daily state UPSERT + past-month read |
-| rebuild cron endpoint | `src/api/worker.ts:387` | Nightly force-invalidate all snapshots |
+| rebuild cron endpoint | `src/api/worker.ts:395` | Nightly force-invalidate all snapshots |
 
 ## Gotchas
 - **`dashboard-b` IS the production dashboard.** The old `/dashboard` page was retired 2026-05-21; `/dashboard` lazy-loads `dashboard-b`, and `/dashboard-b` just redirects (`dashboard-routes.tsx:233`). There is no separate `dashboard` page.

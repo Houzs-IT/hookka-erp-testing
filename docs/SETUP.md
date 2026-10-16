@@ -1,5 +1,6 @@
 # Setup
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-staging`, to `staging`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
@@ -81,7 +82,7 @@ This boots the Workers runtime on http://localhost:8787 with
 `functions/api/[[route]].ts` → `src/api/worker.ts` mounted at `/api/*`, and
 runs Vite behind it. The API talks to Supabase Postgres via `DATABASE_URL`
 in `.dev.vars` (Hyperdrive is only bound on Cloudflare, so local dev falls
-back to the raw URL — see `pickDbUrl` in `src/api/worker.ts:305`).
+back to the raw URL — see `pickDbUrl` in `src/api/worker.ts:313`).
 
 ### Hot reload
 
@@ -147,7 +148,7 @@ is to re-export a mix of components, types, and helpers.
    files live there).
 2. If it's a new resource, create the file and `app.route("/api/<name>", …)`
    it in `src/api/worker.ts`. Mount it **after** `app.use("/api/*",
-   authMiddleware)` (`src/api/worker.ts:913`) unless it is deliberately
+   authMiddleware)` (`src/api/worker.ts:921`) unless it is deliberately
    public — public routes are mounted above that line to bypass the gate.
 3. Use `c.var.DB` (the `SupabaseAdapter` D1-shaped wrapper over Postgres),
    never `c.env.DB` — the D1 binding was retired 2026-04-27.
@@ -237,7 +238,7 @@ If `npm run dev:worker` is running and `/api/*` still fails:
 1. `curl http://localhost:8787/api/health` — a 500 here means the DB, not
    the routing.
 2. Is `DATABASE_URL` set in `.dev.vars`? Without it `pickDbUrl`
-   (`src/api/worker.ts:305`) has nothing to fall back to, since the
+   (`src/api/worker.ts:313`) has nothing to fall back to, since the
    `HYPERDRIVE` binding only exists on Cloudflare.
 3. File-storage routes returning `503 file storage unavailable` are
    expected locally — `SUPABASE_PROJECT_REF` / `SUPABASE_SERVICE_KEY` are

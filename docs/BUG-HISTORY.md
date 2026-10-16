@@ -1,5 +1,7 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/fg-sticker-notes-wrap`, to `staging`; 292 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: entry BUG-2026-10-16-291 (branch
 > `fix/dev-05-allocation-loser-note`, DEV-05 A9 + A7 pins, to `staging`). Renumbered
@@ -156,6 +158,49 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-296 — A salesperson's narrowed order list could be served to the whole factory from the KV cache `production` `customer-scope` `cache` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`). Found in passing on 2026-10-16 while adding the ETag (BUG-2026-10-16-294); not reported by a user.
+
+**Symptom (expected, not observed).** After a SALES user loads a page that lists production orders, other users on the same URL could see only the orders that salesperson may see, until the next write refreshes the entry or the cache expires (300 s for the full list, 60 s for a paged one).
+
+**Root cause.** `GET /api/production-orders` keeps two KV caches in front of the snapshot layer: `buildPoListBodyKey` (full list) and `buildPoListCacheKey` (paged list). Both keys are org + query string, with no user in them. For a customer-scoped user (`isCustomerScoped`, role SALES) the list is narrowed in SQL (`salesOrderScopeSql`), and `buildListPayload` already keeps that narrowed list out of the snapshot. The KV block did not: on a MISS, on the background stale refresh (`schedulePoListBodyRefresh`) and on a paged MISS, the narrowed body was written to the shared org entry. The other direction was not a leak: a scoped user served the shared body is still narrowed by `customerScopeMiddleware` on the way out. C22 (a cache key coarser than the handler it names), row 4.
+
+**Prod, measured read-only 2026-10-16.** 3 active SALES users (latest login 2026-10-07), none owning a customer. 7 customers are assigned to 2 salespeople in other roles, and all production orders come from those 7 customers, so a SALES user's narrowed list is 5 of 5,012 orders. **UNMEASURED:** whether any SALES user has actually loaded `/sales`, `/consignment` or `/warehouse` (`?fields=minimal&include=`) or the production pages since the KV body cache shipped. The database has no request log for it.
+
+**Fix.** The whole KV block is skipped for scoped users (`if (kvCache && !isCustomerScoped(c))`), so they neither read nor write either key and the stale refresh is never scheduled for them. They already computed live past the snapshot, and there are few of them.
+
+**Not changed.** The snapshot and middleware paths. The sticker-print `scope=` path already skipped both caches.
+
+**Regression.** `tests/po-list-kv-scoped-user.test.mjs` (source-level; fails on the old `if (kvCache) {`).
+
+
+## BUG-2026-10-16-294 — /production re-downloaded the whole order list every 8 seconds `production` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Measured on prod 2026-10-15 at about 23:00 (read-only): each 8 s poll of `/api/production-orders?fields=minimal&excludeCompleted=true` was 906 KB on the wire (15.9 MB unpacked), almost always an identical body. That is about 0.9 Mbit/s per open tab, so a few factory tablets on this page can fill shared Wi-Fi and slow every page.
+
+**Root cause.** Every `/api/*` reply is sent `no-store` (`worker.ts`, added 2026-04-26 after stale rows were seen following a direct D1 reset). The list reply also had no validator, so the browser could neither keep a copy nor ask "has it changed?".
+
+**Fix.** The non-paginated list stores a SHA-1 of its body in the KV metadata (`h`, next to `v`) at both write sites, sends it as `ETag`, and answers a matching `If-None-Match` (a weak `W/` prefix accepted) with a bodyless 304. The global header middleware sends `private, no-cache` only when a reply has an ETag; every other route keeps `no-store`. `private` keeps Cloudflare's edge from storing it and `no-cache` makes the browser ask the server on every poll, so a change is still seen on the next poll. Customer-scoped users get no ETag, because the response middleware narrows the shared body per user. KV entries written before this have no `h` and get no ETag until they are rewritten (5 min TTL).
+
+**Not changed.** The poll interval and the client. Prod bytes per idle poll after deploy are UNMEASURED.
+
+**Regression.** `tests/po-list-etag-304.test.mjs`.
+
+## BUG-2026-10-16-295 — A scan landing during a list rebuild could stay hidden until the next write `production` `cache` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Suspected, not reproduced: a scan made while the background list refresh was running could stay invisible on the dept sheets for up to the 5 min KV TTL.
+
+**Root cause.** `schedulePoListBodyRefresh` read the org cache version AFTER building the body. Writers bump the version after their commit (checked on the scan path: `invalidateProductionCachesAfterScan` runs after the writes), so a write landing mid-build stamped the pre-write body with the post-write version, and later reads served it as a fresh HIT. The comment there claimed the opposite.
+
+**Fix.** Read the version before the build. A write landing mid-build now leaves the stamp behind and the next poll refreshes again.
+
+**Regression.** `tests/po-list-etag-304.test.mjs` (the version-order case).
 
 ## BUG-2026-10-16-293 — Packing sticker cut the Notes line to one line `production` `printing` 🟡
 

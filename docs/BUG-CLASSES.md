@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging`, adds C22 row 4, fixed (BUG-2026-10-16-296). Nothing else re-checked.
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging`, adds C2 row 9 (BUG-2026-10-16-295). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages`: C30 row 2 closed (a status column exports with spaces, as on screen). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/export-all-pages` **adds C31 — a list that shows one server page, read as if it were the whole list** (BUG-2026-10-12-281). Nothing else re-checked.
 > **Last verified: 2026-10-12**: branch `fix/bug87-auto-grn-read` adds C23 row 2 (purchase-invoices auto receipt id read snake_case only).
@@ -301,6 +303,7 @@ lies"). Wipe explicitly.
 | 6 | `import-completion.ts` | 2026-07-23 | ditto |
 | 7 | `service-orders.ts` cascade | 2026-07-23 | ditto |
 | 8 | `sheets-sync.ts` webhook | 2026-07-23 | ditto |
+| 9 | not a writer: the background KV refresh (`schedulePoListBodyRefresh`) read the version AFTER building, so a write landing mid-build was stamped as already seen | 2026-10-16 on branch `fix/po-list-cache-staging` (BUG-2026-10-16-295) | suspected from the code, not reproduced; `tests/po-list-etag-304.test.mjs` |
 
 Rows 5–8 are the point of this file: the 07-22 fix repaired 3 and 4 and stopped, because
 nothing counted the rest.
@@ -1582,6 +1585,7 @@ Same family as C15 (*"`0` is a claim, not a blank"*): in both, a value that
 | 1 | `GET /api/production-orders` — `buildPoListBodyKey` + `buildPoListCacheKey` dropped empty-valued params; `?fields=minimal` and `?fields=minimal&include=` collided | ✅ 2026-09-11 (BUG-2026-09-11-180) — filter removed from both; `tests/po-list-cache-key-collision.test.mjs` |
 | 2 | **every other cache key in the repo** | ⬜ unswept. The pattern to look for is a key builder that filters, defaults or omits any part of the request. At the time of the fix `.filter(([, v]) => v !== "")` appeared in exactly these two functions, but no test forbids a third — a new key builder can reintroduce it silently |
 | 3 | **callers that express a choice as an empty value** | ⬜ open. `src/pages/sales/index.tsx`, `src/pages/consignment/index.tsx` and `src/pages/warehouse.tsx` still send `include=` to mean "no job cards". `include=none` says the same thing without depending on how emptiness is handled anywhere downstream |
+| 4 | `GET /api/production-orders` KV keys carry no user scope: both `buildPoListBodyKey` (full list) and `buildPoListCacheKey` (paged) are org + query string, so a customer-scoped user's MISS or stale refresh wrote their narrowed list (5 of 5,012 orders on prod) into the shared org entry for every other user. The snapshot layer already kept scoped payloads out; the KV layer in front of it did not | ✅ 2026-10-16 on branch `fix/po-list-cache-staging` (BUG-2026-10-16-296): the KV block is skipped for scoped users; `tests/po-list-kv-scoped-user.test.mjs`. Whether a SALES user hit these URLs on prod is UNMEASURED |
 
 Row 2 is why this is a class and not a line in the bug entry: the fix repaired
 the two builders that existed, and nothing stops the third.
