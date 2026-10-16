@@ -1,11 +1,12 @@
 # Observability — what we emit and where
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-staging`, to `staging`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
 > re-verified; the rest of this file still carries its earlier stamp.
 
-> **Last verified: 2026-08-13** against `src/api/lib/observability.ts:98-135, 276-335`, `src/api/routes/admin-health.ts:82-95, 367-392`, `src/api/routes/auth.ts:199-277`, `src/api/lib/audit.ts:217,241`, `src/api/worker.ts:1082,1474`, and `wrangler.toml` (`[[analytics_engine_datasets]]`, `[vars] SENTRY_DSN`, `CF_ACCOUNT_ID`).
+> **Last verified: 2026-08-13** against `src/api/lib/observability.ts:98-135, 276-335`, `src/api/routes/admin-health.ts:82-95, 367-392`, `src/api/routes/auth.ts:199-277`, `src/api/lib/audit.ts:217,241`, `src/api/worker.ts:1090,1474`, and `wrangler.toml` (`[[analytics_engine_datasets]]`, `[vars] SENTRY_DSN`, `CF_ACCOUNT_ID`).
 > Corrected 2026-08-13: four things were wrong — (1) every `src/api/routes-d1/...` path; that directory does not exist, the files are in `src/api/routes/`. (2) "no Sentry account required" — Sentry IS wired, both worker-side and client-side. (3) `/api/admin/health/kpis` no longer always returns `_mock: true`; the real AE-SQL path shipped. (4) The AE row shapes were incomplete and the D1 caveats are dead.
 
 This document describes the observability surface added in Phase 6 (P6.1 → P6.4 in [UPGRADE-CONTROL-BOARD.md](archive/UPGRADE-CONTROL-BOARD.md)). It runs on Cloudflare primitives plus Sentry.
@@ -21,7 +22,7 @@ This document describes the observability surface added in Phase 6 (P6.1 → P6.
 
 ### Sentry (not optional, not absent)
 
-- Worker side: `wrangler.toml [vars] SENTRY_DSN` is set, and `src/api/worker.ts:1474` calls `reportWorkerError(err, c.env.SENTRY_DSN, …)` from the global `onError` (via `src/api/lib/monitoring.ts`, which dynamic-imports toucan-js).
+- Worker side: `wrangler.toml [vars] SENTRY_DSN` is set, and `src/api/worker.ts:1482` calls `reportWorkerError(err, c.env.SENTRY_DSN, …)` from the global `onError` (via `src/api/lib/monitoring.ts`, which dynamic-imports toucan-js).
 - Client side: `.github/workflows/deploy.yml` injects `VITE_SENTRY_DSN` at build time; `@sentry/react` is a direct dependency.
 - Both DSNs live in plaintext deliberately — a Sentry DSN grants event submission only.
 

@@ -1,5 +1,16 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-297 (branch `fix/production-poll-skip-inflight`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/fg-sticker-notes-wrap`, to `staging`; 292 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: entry BUG-2026-10-16-291 (branch
+> `fix/dev-05-allocation-loser-note`, DEV-05 A9 + A7 pins, to `staging`). Renumbered
+> twice while this branch sat open: -223 was taken by the DO duplicate-guard bug, then
+> -273 by the stock-take price-list bug. Highest on staging at the merge was -290.
+> A log, so "verified" means this entry matches the code on its branch, not that every
+> older entry was re-checked.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-290 (branch `design/mobile-home-dashboard`, to staging; open, logged only). Logged on that branch as 289, renumbered to 290 in the staging merge because staging's BOM DRAFT entry took 289 first; 290 unused on `upstream/staging` and `upstream/main`; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate`, to staging; no open PR holds 289); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
@@ -147,6 +158,151 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/cached-fetch-inflight-298` → `staging`). Found 2026-10-16 while reproducing BUG-2026-10-16-297; not reported by a user. How often it happens on the live sites is UNMEASURED.
+
+**Symptom.** A page that refreshes its data while the previous request is still running (the /production 8 s poll before BUG-2026-10-16-297, the come-back-to-the-tab refresh, a cache invalidation) could leave a request running that nothing was waiting for. The server built the full response and the browser downloaded it, then threw it away.
+
+**Root cause.** `joinInflight` in `src/lib/cached-fetch.ts` keeps one entry per URL so callers share a request and the last one to leave can cancel it. When a request settled, its `.finally` ran `inflight.delete(url)`, deleting by URL. A cancelled request settles a moment after it is cancelled, and by then a newer request for the same URL may have registered. The old request's `.finally` then deleted the NEWER entry. The next refresh looked for an entry to cancel, found none, and started a third request, while the second ran on to the end for a consumer that had already left.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (refresh every 100 ms, response 300 ms): in 1 s, 10 requests started, 5 were aborted and 3 finished unwatched. With the fix: every superseded request is aborted and none finishes.
+
+**Fix.** The `.finally` deletes the entry only if it is still its own (`inflight.get(url)?.promise === promise`). Abort, ref counting and the 502/503/504 retry are unchanged; the existing `cached-fetch-*` tests pass.
+
+**Same shape, not fixed (open).** `releaseInflight(url)` also finds the entry by URL. Two components sharing one URL: request A settles and its entry is dropped, component 2 refreshes and starts B, then component 1 unmounts and its cleanup decrements B's count to 0 and aborts B while component 2 is still waiting on it. Found by reading the code; not reproduced. One component alone cannot hit it (React runs the old cleanup before the new request starts).
+
+**Regression.** `tests/cached-fetch-inflight-identity.test.mjs`.
+
+
+---
+
+## BUG-2026-10-16-297 — /production cancelled its own order list when the list took longer than 8 seconds `production` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/production-poll-skip-inflight` → `staging`). Seen 2026-10-16 in the app's network panel while checking BUG-2026-10-16-294: `GET /api/production-orders`, status 0, AbortError, at 8,007 ms. Which site that was, and how often it happens, are UNMEASURED.
+
+**Symptom.** A list request still running 8 s after it started is cancelled and a new one starts. If every response takes over 8 s, the sheet never refreshes, while the server still builds every list it is asked for.
+
+**Root cause.** The 8 s poll on `/production` called `refresh()` from `useCachedJson` without checking whether the previous request had finished. `refresh()` bumps `tick`, the fetch effect's cleanup runs `releaseInflight`, the ref count drops to 0, and the running request is aborted. A cancelled consumer stays silent by design, so the page kept its older copy and showed no error.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms poll, 300 ms response). In one 1 s run: 10 requests started, 5 were aborted, 3 finished, and the page got data from none of them. `tests/production-poll-skip-inflight.test.mjs` keeps the no-guard case (data stays empty, at least 3 aborts).
+
+**Fix.** `useCachedJson` now returns `isFetching()`, true from the moment its request starts until it settles (a cancelled run leaves the flag to the run that replaced it). The `/production` poll tick returns early while it is true. `loading` could not be used: it is only true when there is no cached copy, so it stays false on every poll. The abort and ref-count rules in `cached-fetch.ts` are unchanged. The flag clears on every settle path: a 2xx, an HTTP error, and the 30 s global abort from `api-client.ts`. So a request that never answers now costs one 30 s gap in polling, not an endless 8 s cancel loop.
+
+**Found in passing, fixed separately as BUG-2026-10-16-298.** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still could. C15 row 8.
+
+**Other timed refreshes checked.** Every other `setInterval` / `useInterval` in `src/` (sidebar unread counts, IT support tickets, the scan-queue polls in the two scan modals, presence, version check, RUM flush) uses a plain fetch that does not cancel the previous call. `/production` was the only poll through `useCachedJson().refresh`. The same page's come-back-to-the-tab refresh (3 s gate only) can still cancel a running list request; not changed here. Same mechanism, not a timer: `revalidateOnFocus: true` (`sales/create.tsx`, `sales/edit.tsx`) refetches on focus when the saved copy is over 2 s old, which during a slow first load (no copy) cancels and restarts the request.
+
+**Regression.** `tests/production-poll-skip-inflight.test.mjs`. The return-line pin in `tests/record-load-failure-class.test.mjs` now allows fields after `refresh`.
+
+
+## BUG-2026-10-16-296 — A salesperson's narrowed order list could be served to the whole factory from the KV cache `production` `customer-scope` `cache` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`). Found in passing on 2026-10-16 while adding the ETag (BUG-2026-10-16-294); not reported by a user.
+
+**Symptom (expected, not observed).** After a SALES user loads a page that lists production orders, other users on the same URL could see only the orders that salesperson may see, until the next write refreshes the entry or the cache expires (300 s for the full list, 60 s for a paged one).
+
+**Root cause.** `GET /api/production-orders` keeps two KV caches in front of the snapshot layer: `buildPoListBodyKey` (full list) and `buildPoListCacheKey` (paged list). Both keys are org + query string, with no user in them. For a customer-scoped user (`isCustomerScoped`, role SALES) the list is narrowed in SQL (`salesOrderScopeSql`), and `buildListPayload` already keeps that narrowed list out of the snapshot. The KV block did not: on a MISS, on the background stale refresh (`schedulePoListBodyRefresh`) and on a paged MISS, the narrowed body was written to the shared org entry. The other direction was not a leak: a scoped user served the shared body is still narrowed by `customerScopeMiddleware` on the way out. C22 (a cache key coarser than the handler it names), row 4.
+
+**Prod, measured read-only 2026-10-16.** 3 active SALES users (latest login 2026-10-07), none owning a customer. 7 customers are assigned to 2 salespeople in other roles, and all production orders come from those 7 customers, so a SALES user's narrowed list is 5 of 5,012 orders. **UNMEASURED:** whether any SALES user has actually loaded `/sales`, `/consignment` or `/warehouse` (`?fields=minimal&include=`) or the production pages since the KV body cache shipped. The database has no request log for it.
+
+**Fix.** The whole KV block is skipped for scoped users (`if (kvCache && !isCustomerScoped(c))`), so they neither read nor write either key and the stale refresh is never scheduled for them. They already computed live past the snapshot, and there are few of them.
+
+**Not changed.** The snapshot and middleware paths. The sticker-print `scope=` path already skipped both caches.
+
+**Regression.** `tests/po-list-kv-scoped-user.test.mjs` (source-level; fails on the old `if (kvCache) {`).
+
+
+## BUG-2026-10-16-294 — /production re-downloaded the whole order list every 8 seconds `production` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Measured on prod 2026-10-15 at about 23:00 (read-only): each 8 s poll of `/api/production-orders?fields=minimal&excludeCompleted=true` was 906 KB on the wire (15.9 MB unpacked), almost always an identical body. That is about 0.9 Mbit/s per open tab, so a few factory tablets on this page can fill shared Wi-Fi and slow every page.
+
+**Root cause.** Every `/api/*` reply is sent `no-store` (`worker.ts`, added 2026-04-26 after stale rows were seen following a direct D1 reset). The list reply also had no validator, so the browser could neither keep a copy nor ask "has it changed?".
+
+**Fix.** The non-paginated list stores a SHA-1 of its body in the KV metadata (`h`, next to `v`) at both write sites, sends it as `ETag`, and answers a matching `If-None-Match` (a weak `W/` prefix accepted) with a bodyless 304. The global header middleware sends `private, no-cache` only when a reply has an ETag; every other route keeps `no-store`. `private` keeps Cloudflare's edge from storing it and `no-cache` makes the browser ask the server on every poll, so a change is still seen on the next poll. Customer-scoped users get no ETag, because the response middleware narrows the shared body per user. KV entries written before this have no `h` and get no ETag until they are rewritten (5 min TTL).
+
+**Not changed.** The poll interval and the client. Prod bytes per idle poll after deploy are UNMEASURED.
+
+**Regression.** `tests/po-list-etag-304.test.mjs`.
+
+## BUG-2026-10-16-295 — A scan landing during a list rebuild could stay hidden until the next write `production` `cache` 🟡
+
+🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
+
+**Symptom.** Suspected, not reproduced: a scan made while the background list refresh was running could stay invisible on the dept sheets for up to the 5 min KV TTL.
+
+**Root cause.** `schedulePoListBodyRefresh` read the org cache version AFTER building the body. Writers bump the version after their commit (checked on the scan path: `invalidateProductionCachesAfterScan` runs after the writes), so a write landing mid-build stamped the pre-write body with the post-write version, and later reads served it as a fresh HIT. The comment there claimed the opposite.
+
+**Fix.** Read the version before the build. A write landing mid-build now leaves the stamp behind and the next poll refreshes again.
+
+**Regression.** `tests/po-list-etag-304.test.mjs` (the version-order case).
+
+## BUG-2026-10-16-293 — Packing sticker cut the Notes line to one line `production` `printing` 🟡
+
+🟡 Fixed on the branch, not yet checked on a printed sticker. The FG (packing)
+sticker printed Notes as one truncated line, e.g. "TAG ★ Nylon Fabric, Extend …",
+so the packer could not read the rest of the Special Order. Fab Cut / Fab Sew
+stickers already wrapped their Notes (owner 2026-07-11); only the FG sticker,
+print and on-screen tile, still used `truncate`.
+
+**Fix** (`src/pages/production/index.tsx`, FG print and FG tile): Notes moved out
+of the spec block into its own row that fills the space above the QR
+(`flex-1 min-h-0 overflow-hidden`, same as Fab Cut) and wraps. The FG card has
+only about 11mm free there, so wrapping alone still clips: `notesFontSize`
+shrinks the text from 11pt to 7pt as the note gets longer.
+
+**Ceiling**: measured on a mock of the 100x150mm sofa card, about 110 characters
+fit in full. A longer note, or a bedframe card (Gap / Divan take two more rows),
+still clips at the bottom of the Notes area instead of pushing the QR off.
+
+No unit test: the size rule is inline JSX. Checked with a static mock of the
+print layout at note lengths 30 to 220.
+
+Real note lengths, measured on staging 2026-10-16 (4,844 production orders, 1,042 with a
+Special Order): median 14 characters, 90% at 39 or less, longest 179. Six are over the
+~106 that fit. The reported sticker (SV-2609-025) is Nylon Fabric, Extend 5" plus TAG,
+about 30 characters, so it now prints in full at 11pt; only the 5" was being cut.
+
+---
+
+## BUG-2026-10-16-291 — the order that lost the race was told nothing `sales` `inventory` 🟢
+
+🟢 Fixed. DEV-05 acceptance criterion **A9** is *"two orders want the same
+piece; one gets it, the other is told."* The first half worked — contention was
+measured on staging and there was no overselling: order X took all four finished
+pieces and queued none, order Y queued four fresh ones. The second half did not.
+Y's confirm was **silent**: no note, no mention of stock, nothing separating
+"somebody beat you to it" from "we have never stocked this product".
+
+Root cause is that losing a race is **invisible from the allocation pool**.
+`loadAllocatablePOs` only ever returns production orders still owned by Factory
+Stock, so the moment X claims them they stop being returned — and an emptied
+pool is byte-for-byte identical to a product nobody stocks. `planAutoAllocation`
+did `if (taken.length === 0) continue;`, which is the correct decision and the
+wrong silence.
+
+**Fix** (`src/api/lib/stock-allocations.ts:510`, `:534`): `loadAvailability` is
+now read once alongside the pool and consulted **only** when a line takes
+nothing. On hand > 0 with available = 0 is contention, and says so by number:
+*"all 4 on hand are already committed to other orders."* The oversized-set case
+(the only stock is a set of 3 and the line wants 1 — sets go out whole, owner
+2026-09-17) gets its own sentence. Everything else stays quiet: a note on every
+product the factory does not stock is noise, not information.
+
+**The availability read cannot change what is taken.** It is loaded for the
+notes and nothing else — the pool stays the single authority on what moves, so
+a stale aggregate can only produce a wrong sentence, never a wrong allocation.
+
+**Why the tests missed it**: every auto-allocation test asserted on
+`plan.statements`, and the two zero-allocation tests asserted
+`notes.length === 0` — they pinned the silence as correct. The suite now has a
+contention case (stock on hand, none available → the loser is told) and keeps a
+no-stock case asserting silence, so the two are no longer the same test.
 
 ---
 

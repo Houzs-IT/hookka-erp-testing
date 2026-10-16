@@ -1,11 +1,12 @@
 # Disaster Recovery Runbook
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-staging`, to `staging`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
 > re-verified; the rest of this file still carries its earlier stamp.
 
-> **Last verified: 2026-08-13** against `.github/workflows/backup.yml` (every step), `src/api/cron/daily-backup.ts:53-151`, `src/api/worker.ts:815` (`POST /api/internal/backup-prune`), `wrangler.toml` (`[triggers]` still commented out), and `ls scripts/`.
+> **Last verified: 2026-08-13** against `.github/workflows/backup.yml` (every step), `src/api/cron/daily-backup.ts:53-151`, `src/api/worker.ts:823` (`POST /api/internal/backup-prune`), `wrangler.toml` (`[triggers]` still commented out), and `ls scripts/`.
 > Corrected 2026-08-13: three load-bearing claims were false. (1) **There is no GitHub Actions artifact.** `backup.yml` contains zero `upload-artifact` steps, so the "off-vendor floor, 90-day artifact" this runbook leans on in three places does not exist. (2) Retention is no longer pruned by the Workers cron — that cron was never provisioned and never ran; `backup.yml` now calls `POST /api/internal/backup-prune` after each upload. (3) `scripts/verify-journal-hash-chain.mjs` does not exist, so drill step 6 cannot be run as written.
 
 > **Added 2026-08-19 — why the missing off-vendor copy has not simply been added.**
@@ -84,7 +85,7 @@ designed to run inside the Workers cron; since that cron was never
 provisioned, dumps accumulated unbounded until the 2026-07-03 IT-hygiene
 audit. It now runs from `backup.yml`'s final step, which POSTs to the
 `CRON_SECRET`-gated `POST /api/internal/backup-prune`
-(`src/api/worker.ts:815`) after each successful upload — that endpoint
+(`src/api/worker.ts:823`) after each successful upload — that endpoint
 calls the same `pruneOldBackups` in `daily-backup.ts:151`.
 
 ---

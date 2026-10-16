@@ -217,7 +217,15 @@ app.use("/api/*", timingMiddleware);
 // catch regressions.
 app.use("/api/*", async (c, next) => {
   await next();
-  c.res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  // An ETag reply (the production-orders list) may be kept by this browser
+  // only, and must be revalidated every time: the server answers 304 when it
+  // is unchanged. Everything else stays no-store.
+  c.res.headers.set(
+    "Cache-Control",
+    c.res.headers.has("ETag")
+      ? "private, no-cache"
+      : "no-store, no-cache, must-revalidate, max-age=0",
+  );
   c.res.headers.set("Pragma", "no-cache");
   c.res.headers.set("Expires", "0");
 

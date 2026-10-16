@@ -1,5 +1,13 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/cached-fetch-inflight-298`, to `staging`: BUG-2026-10-16-298 added as item 5 of the /production poll entry (still the newest entry).
+> **Last verified: 2026-10-16**: branch `fix/production-poll-skip-inflight`, to `staging` (BUG-2026-10-16-297) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-296) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-294/295) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
+> re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
+> BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
+> staging measurement are in the entry below, dated 2026-09-29.
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -243,6 +251,26 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
+
+1. 🟡 Confirm with evidence: code read end to end, reproduced with the real hook in node (5 of 10 requests aborted, none delivered). Site and frequency of the 8,007 ms abort UNMEASURED.
+2. 🟡 Poll tick skips while the list request runs (`useCachedJson().isFetching()`); shared abort rules unchanged.
+3. 🟡 Other timed refreshes listed: none go through `useCachedJson().refresh`. `joinInflight` settle deleted by URL: fixed, item 5.
+4. 🟡 Test `tests/production-poll-skip-inflight.test.mjs`.
+5. 🟡 BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, after the branch above merged): identity check in the `joinInflight` `.finally` (C15 row 8 closed), test `tests/cached-fetch-inflight-identity.test.mjs` (10 started, 5 aborted, 3 finished unwatched before). Open: `releaseInflight` also finds its entry by URL (two components sharing a URL).
+## 2026-10-16 — 🟡 Production order list: keep a salesperson's narrowed list out of the shared KV cache (branch `fix/po-list-cache-staging` → `staging`)
+
+1. 🟡 Confirm with evidence: code read, prod measured read-only (3 active SALES users; page use UNMEASURED). See BUG-2026-10-16-296.
+2. 🟡 Skip the KV read and write for scoped users, MISS write and stale refresh both (`production-orders.ts` GET /).
+3. 🟡 Regression test `tests/po-list-kv-scoped-user.test.mjs`; C22 row 4 flipped.
+## 2026-10-16 — 🔵 /production poll: 304 when the order list is unchanged (branch `fix/po-list-cache-staging` → `staging`, BUG-2026-10-16-294/295)
+
+From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on the wire. Asks:
+1. 🔵 ETag + 304 for the non-paginated PO list; `no-store` relaxed to `private, no-cache` only for ETag replies (BUG-2026-10-16-295).
+2. 🔵 Background list refresh reads the cache version before the build (BUG-2026-10-16-295).
+3. ⚪ Self-reload when leaving a page (`vite:preloadError` in `src/main.tsx`): not in this branch, cause not confirmed yet.
+4. ⚪ Bundle split (React out of the `charts` chunk, lazy `WorkerLayout`): not in this branch.
+5. 🔵 Check on staging: a second poll with unchanged data returns 304, and a scan still shows within about 8 s. After deploy, prod bytes per idle poll are UNMEASURED.
 ## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
@@ -7184,3 +7212,40 @@ for prod and staging carry the SAME Supabase project ref.
 Sales row + gotcha; `modules/sales.md` + `modules/inventory.md` restamped with
 re-derived anchors; BUG-181/182/183 logged.
 
+## 2026-09-29 — DEV-05 A9: the order that lost the race is now told
+
+Branch `fix/dev-05-allocation-loser-note` (→ `staging`). Closing the second half
+of acceptance criterion A9, found while verifying A7/A9 on staging.
+
+**The ask** (one, from the acceptance run): A9 says *"two orders want the same
+piece; one gets it, **the other is told**."* Contention itself was already
+right and measured on staging — X took the four finished pieces and queued none,
+Y queued four fresh ones, nothing oversold. But Y's confirm said **nothing**,
+and from the customer's side "somebody beat you to it" and "we have never
+stocked this" looked identical.
+
+**Built** (`src/api/lib/stock-allocations.ts:510`, `:534`): `loadAvailability`
+is read once beside the pool and consulted **only** when a line takes nothing.
+Stock on hand with zero available → *"all N on hand are already committed to
+other orders"*. Only-stock-is-an-oversized-set → its own sentence. No stock at
+all → still silent, because a note on every unstocked product is noise. The
+availability read is for the notes and nothing else; the pool stays the single
+authority on what moves, so a stale aggregate can only produce a wrong sentence,
+never a wrong allocation. Logged BUG-2026-10-16-291.
+
+**Why it hid**: an emptied pool is byte-for-byte identical to a product nobody
+stocks — `loadAllocatablePOs` stops returning pieces the moment another order
+owns them. The old tests asserted `notes.length === 0` on the zero-allocation
+paths, i.e. they pinned the silence as correct. The suite now separates the two:
+a contention case that must speak, a no-stock case that must not.
+
+**Verified**: `tests/stock-allocations.test.mjs` 29/29; full suite 5,161 pass /
+0 fail / 3 skipped; `tsc -p tsconfig.app.json` exit 0; docs-freshness,
+gen-api-docs `--check`, check-codebase-map and check-secrets all OK.
+**UNMEASURED**: not yet re-run against staging with two live orders — the
+behaviour change is in note text only, no allocation decision moved.
+
+**Still open on DEV-05**: A7 (invoice for an allocated piece must show the
+customer's order and the customer's price, not the placeholder at zero) is not
+verified. And A9's design gap stands: the owner's rule is *earliest sales order
+date wins*; the implementation is *first to confirm wins*. Not yet raised.
