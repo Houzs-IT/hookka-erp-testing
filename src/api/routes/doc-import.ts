@@ -22,12 +22,14 @@ import { requirePermission } from "../lib/rbac";
 import { runDocImport, type DocImportAdapter } from "../lib/doc-import";
 import { invoiceImportAdapter } from "../lib/doc-import-invoice";
 import { soImportAdapter } from "../lib/doc-import-so";
+import { poImportAdapter } from "../lib/doc-import-po";
 
 /** docType (lower-case, as in the URL) → adapter. */
 export const ADAPTERS: Record<string, DocImportAdapter> = {
   di: invoiceImportAdapter,
   si: invoiceImportAdapter,
   so: soImportAdapter,
+  po: poImportAdapter,
 };
 
 const MAX_ROWS = 5000;
