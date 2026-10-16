@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-16**: branch `fix/wip-save-one-transaction`, to `staging`: the WIP time auto-sync entry below got its one-transaction hardening (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
 > now allocatable (finished pieces always first). Entry below; the stage threshold is a
 > null constant because the owner has not been asked which stage counts.
@@ -7424,3 +7425,12 @@ job cards in one transaction with a 5 s lock limit (branch `fix/wip-save-one-tra
 `staging`). Busy job cards give "nothing was saved, try again" instead of a 30 s hang, and the
 retry works because nothing half-saved. The lock queue itself is fixed for every table by
 BUG-2026-10-16-304 (#911 to `main`, #913 to `staging`). **Not yet verified on staging.**
+
+## 2026-10-16 — Self-apply ALTERs no longer lock a table when the column exists (BUG-2026-10-16-304)
+
+Asked (owner, 2026-10-16): fix the job card save stalls seen on staging after deploys.
+
+1. [x] Skip a no-op `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in the database adapter by
+   checking `information_schema` first (branch `fix/self-apply-skip-existing-column`, to `main`).
+2. [ ] Verify on staging after deploy: the slow-SQL log should stop showing those ALTERs.
+
