@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone nav drawer reskin, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -7221,3 +7222,19 @@ behaviour change is in note text only, no allocation decision moved.
 customer's order and the customer's price, not the placeholder at zero) is not
 verified. And A9's design gap stands: the owner's rule is *earliest sales order
 date wins*; the implementation is *first to confirm wins*. Not yet raised.
+
+---
+
+## 2026-10-16 — Phone nav drawer reskin to the Claude Design Home (branch `design/mobile-sidebar`, local only)
+
+Source: claude.ai/design project d53d5dfb, `Home.dc.html` (drawer, lines 358–406).
+
+1. [ ] Restyle the phone `NavDrawer` to the design: rounded 28px right edge, shadowed white cards (no borders), round close chip, round 32px icon tiles, gold bar + tinted row for the current page, pinned footer with Sign out.
+2. [ ] Typography stays the repo standard (owner): sizes / weights / text colours from the existing `/m` screens, not the design's.
+3. [ ] Remove the Install card from the drawer (owner: Home already shows it).
+4. [ ] Keep "Open the desktop app" (owner choice 1), moved into the footer in the design's footer-label style: it is the only phone route back to desktop and carries the `setPreferDesktop` fix (BUG-2026-10-02-250).
+5. [ ] `/m/more` unchanged: the shared `ModuleMenu` pieces are not restyled.
+
+**Built**: `src/pages/m/components/NavDrawer.tsx` (drawer-local `DrawerProfile` / `DrawerThemeToggle` / `DrawerModuleList`, footer); `ModuleMenu.tsx` only exports `initialsOf` / `prettyRole` now. `/m/more` untouched.
+**Verified**: `tsc -p tsconfig.app.json` exit 0; `tests/mobile-*.test.mjs` 110/111 — the one failure ("phone view switch is local", Updates) fails identically with this change stashed, so it is pre-existing. `tests/mobile-nav-drawer.test.mjs` drawer test rewritten for the new layout + owner decisions.
+**Not yet done**: visual check in a browser at 390px, light + dark (no browser tool in this session).

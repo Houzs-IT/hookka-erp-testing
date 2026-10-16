@@ -11,40 +11,9 @@ import { MobileCard } from "./MobileCard";
 import type { ModuleGroup } from "../nav";
 import { M } from "../theme";
 import { useMobileThemeMode } from "../lib/theme-mode";
-import { getCurrentUser, clearAuth } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 import { setPreferDesktop } from "@/lib/prefer-desktop";
-
-// POST /api/auth/logout, then clear local state and bounce to /login — the same
-// best-effort flow the desktop top bar uses (a network hiccup must not trap the
-// user; the client token is wiped regardless so a reload won't auto-sign-in).
-export async function handleSignOut(): Promise<void> {
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-  } catch {
-    // ignore — best effort
-  }
-  clearAuth();
-  window.location.href = "/login";
-}
-
-/** Initials from a display name (up to 2), falling back to email / "H". */
-function initialsOf(name: string, email: string): string {
-  const src = (name || email || "H").trim();
-  const parts = src.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return src.slice(0, 2).toUpperCase();
-}
-
-/** Human-readable role (SUPER_ADMIN → "Super Admin"). */
-function prettyRole(role: string): string {
-  if (!role) return "";
-  return role
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
+import { handleSignOut, initialsOf, prettyRole } from "./module-menu-data";
 
 /** Profile header card — avatar + name + role·company + sign-out. */
 export function ProfileCard({ marginBottom = 18 }: { marginBottom?: number }) {
