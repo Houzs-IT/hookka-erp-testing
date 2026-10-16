@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: BUG-2026-10-16-302 corrected after the #907 staging run (the cut-off was the app's 30 s timeout after a server stall; branch `docs/bug302-staging-verified`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-302 (branch `fix/wip-sync-audit-atomic`, to `staging`; 299 to 301 are taken on other branches); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) now carries BOTH halves
 > measured on staging — the note on a real confirm, and the positive take-from-stock
@@ -209,7 +210,9 @@ So the sender now downgrades, narrowly: a mail with ONE To, no copies, no reply-
 
 **Fix.** Each chunk is now one batch (one transaction): every UPDATE is followed by its audit INSERT, which is written only if the card now holds the new minutes (`buildAuditStatement` gained an optional `onlyIf` condition: `INSERT ... SELECT ... WHERE EXISTS (...)`). A card and its audit row now land together or not at all, and a card the guard left alone still gets no audit row. Callers that pass no condition get the same INSERT as before.
 
-**Not found:** why the browser aborted that PUT. The app's own timeout is 30 s, and this request was cut within milliseconds during a scripted test, so it was most likely the test, not a user path. UNMEASURED on a real save.
+**Why the request was cut off (corrected 2026-10-16 after #907 was on staging).** It was the app's own 30 s client timeout (`src/lib/api-client.ts`), not the test: the server stalled on the job-card write for over 30 s. Under #907 the same stall happened once more (8 to 9): the BOM saved, the card stayed at 8, no audit row, so the one-transaction write held. The next tries completed in 1.0 s (no card write), 1.4 s (8 to 9) and through the page (9 to 8), each with its audit row (08:32:34 and 08:34:05). Why the write stalled for about 20 minutes is UNMEASURED; the slow-SQL log in the same window shows `ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS` taking up to 24 s, which fits a lock queue on `job_cards`. Checking needs `pg_stat_activity` / `pg_locks` on the staging project.
+
+**Risk that stays.** A save that stalls past 30 s can still finish on the server after the page has shown an error (the #905 case above). The banner is not proof of the outcome in that window; re-open the page to see the real state.
 
 **Regression.** `tests/refresh-open-minutes.test.mjs` TC-14 (each UPDATE followed by its conditional audit in one batch; a raced card gets no audit row).
 

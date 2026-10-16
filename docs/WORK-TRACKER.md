@@ -3,6 +3,7 @@
 > **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
 > now allocatable (finished pieces always first). Entry below; the stage threshold is a
 > null constant because the owner has not been asked which stage counts.
+> **Last verified: 2026-10-16**: branch `docs/bug302-staging-verified`, to `staging`: the WIP time auto-sync entry below got its staging result (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/wip-times-auto-sync-jobcards`, to `staging` (WIP time save updates open job cards, button removed) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone nav drawer reskin, local only) added below (its entry is the newest).
 
@@ -7409,3 +7410,10 @@ button, `sync-open-jobcards-dialog.tsx` and `/refresh-open-minutes` are gone. Te
 **Changed the same day (owner):** only cards still at the time the BOM had before the save
 move. Cards that were already out of date (1,095 on staging) stay as they are; the banner
 counts them.
+
+**Verified on staging 2026-10-16 (#905 + #907).** 5543-LONG PILLOW / Fab Sew, BOM 8, three
+unfinished cards: one at 8, two already at 10. Saving 9 moved only the card at 8 (1.4 s, audit
+row 08:32:34), saving 8 through the page moved it back (audit row 08:34:05, banner "1 updated,
+2 left as they were"); the two cards at 10 were never touched. Staging ends as it started. A
+stall of the job-card write past the app's 30 s timeout was seen twice in an earlier window and
+is UNMEASURED (BUG-2026-10-16-302).
