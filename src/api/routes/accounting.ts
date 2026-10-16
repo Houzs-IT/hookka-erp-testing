@@ -4681,12 +4681,15 @@ app.get("/ap-invoices", async (c) => {
     const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
     const lc = String(b.lifecycleState ?? b.lifecycle_state ?? "ACTIVE");
     const st = String(b.status ?? "");
+    const rowStatus = lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN";
     rows.push({
       kind: "AP", id: String(b.id), no: String(b.billNo ?? b.bill_no ?? ""), supplier: String(b.partyName ?? b.party_name ?? ""),
       partyId: String(b.partyId ?? b.party_id ?? ""),
       supplierRef: String(b.referenceNo ?? b.reference_no ?? ""), date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null,
-      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: total - paid,
-      status: lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN",
+      // Only an open bill still owes anything (BUG-2026-10-17-306: a cancelled
+      // bill kept its face amount as "outstanding" and the All view added it in).
+      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0,
+      status: rowStatus,
       opening: false,
     });
   }
@@ -4694,13 +4697,15 @@ app.get("/ap-invoices", async (c) => {
     const total = Math.round(Number(p.amountSen ?? p.amount_sen) || 0);
     const paid = Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
     const st = String(p.status ?? "");
+    const rowStatus = st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN";
     rows.push({
       kind: "PI", id: String(p.id), no: String(p.piNo ?? p.pi_no ?? ""), supplier: String(p.supplierName ?? p.supplier_name ?? ""),
       partyId: String(p.supplierId ?? p.supplier_id ?? ""),
       supplierRef: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""), date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
       dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
-      description: "", totalSen: total, paidSen: paid, outstandingSen: total - paid,
-      status: st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN",
+      // Same rule as the bills: a cancelled or paid invoice owes nothing (BUG-2026-10-17-306).
+      description: "", totalSen: total, paidSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0,
+      status: rowStatus,
       opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
     });
   }

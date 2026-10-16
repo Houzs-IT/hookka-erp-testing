@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: BUG-2026-10-17-306 (found in the plan 5 part B prod check) added to the plan 5 entry, branch `fix/ap-invoices-cancelled-outstanding`.
 > **Last verified: 2026-10-17**: finance v2 plan 5 part A (#935) prod-verified; part B (Tasks 2–3) added to its entry, branch `feat/finance-v2-debtors-creditors-b`.
 > **Last verified: 2026-10-17**: the owner's three answers (#934) prod-verified; plan 4 closed; branch `feat/finance-v2-debtors-creditors` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: finance v2 plan 4 part C (#933) prod-verified; the owner's three answers added as a new entry.
@@ -208,6 +209,7 @@ Plan: `docs/superpowers/plans/2026-10-17-finance-v2-debtors-creditors.md`. Waiti
 2. 🔵 Part B — AP Invoices (both buttons on the title row, the three open totals as KPI cards, the shared chips with counts, the list in the v2 look), Supplier Discount (both lists in the v2 look, rows holding inputs stay put, a note count), Other Debtors / Creditors (Add Party on the title row, the control balance and the names count as cards, status chips with counts instead of the select, the list in the v2 look; nested on the Bills page its buttons stay in the fold).
 3. 🔵 Part B — the other-party aging, bills and payments lists in the v2 list look (row menus and double-clicks unchanged; the aging total in `<tfoot>`); Credit / Debit Notes: the three summary figures as KPI cards, a caption with the count, the grid with the v2 header menu and draggable headers (columns memoised).
 4. ⚪ Part B ship and prod check (read-only: each list's rows and totals equal the API; no write pressed).
+5. 🔵 BUG-2026-10-17-306, found by the part B prod check: AP Invoices' All view counted cancelled bills / invoices as outstanding (their face amount on the row and in "N shown · outstanding"), above the Open · all card. Fix: `/ap-invoices` gives only OPEN rows an outstanding amount (branch `fix/ap-invoices-cancelled-outstanding`).
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2: the owner's three answers (「1. Hookka industries sdn Bhd 2. 可以 3. 可以」)(branch `feat/finance-v2-owner-answers` → `main`)
 

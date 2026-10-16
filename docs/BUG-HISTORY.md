@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-306 (branch `fix/ap-invoices-cancelled-outstanding`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-305 flipped to 🟢 after the #927 prod check (branch `feat/finance-v2-reports-5`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-305 (branch `feat/finance-v2-reports-4`, to main; 304 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-303 flipped to 🟢 after the #910 prod check (branch `feat/finance-v2-foundation`).
@@ -126,6 +127,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-306 — AP Invoices counted cancelled documents as outstanding `accounting` `reports` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 in the finance v2 prod check of AP Invoices (#936). The default All view's "N shown · outstanding" line sat above the "Open · all" card by the face value of every cancelled document. On prod that was 1 voided AP bill and 34 cancelled purchase invoices. Each of those rows also showed its face amount in the Outstanding column. The cards were right because they count OPEN rows only. The line predates finance v2: before, it read "Shown outstanding".
+
+**Root cause.** `GET /api/accounting/ap-invoices` set `outstandingSen = total − paid` on every row, whatever its status. The page sums `outstandingSen` over the rows it shows.
+
+**Fix.** A row owes `total − paid` only when its status is OPEN. Cancelled and paid rows carry 0. Total and Paid are unchanged. The cards, the per-row column and the All line now agree.
+
+**Regression.** `tests/ap-invoices-cancelled-outstanding.test.mjs` runs the route over a made-up voided bill, a cancelled invoice, open and paid ones. It asserts that cancelled and paid rows owe 0, that open rows owe total − paid, and that the All view's sum equals the open total. Both tests fail without the fix. Class: BUG-CLASSES C15 row 46.
 
 ## BUG-2026-10-16-305 — The P&L statement's year-to-date % was of one month's sales `accounting` `reports` 🟢
 
