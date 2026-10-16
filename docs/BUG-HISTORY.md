@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-301 (branch `fix/resigned-month-absence`, to main; no open PR holds 301); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-300 (branch `fix/po-edit-save-rowid`, to main; no open PR holds 300); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-ups (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887, and the Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
@@ -121,6 +122,20 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-301 — A worker who resigned this month showed near full pay on the month's payroll `payroll` 🟡
+
+🟡 **Fixed on branch** (`fix/resigned-month-absence` → `main`). Prod check after deploy still to do.
+
+**Symptom.** Reported 2026-10-16 as "payroll still running for resigned employees". Measured read-only on prod the same day: the October draft (generated 16 Oct) held three workers resigned in October. One (resigned 15 Oct) showed more than a full month of pay with 0 absent days. One who resigned on 1 Oct, and one who joined on 13 Oct and resigned on 15 Oct, each showed about half a month. The live preview gave the same figures, so the draft was not stale. No one was paid in any month after their resignation month (checked May to October on prod and staging).
+
+**Root cause.** Under the unified ÷26 model (owner 2026-06-11) a resigned worker keeps a final-month payslip and the working days after their last day dock as absences. But absences are only counted up to the absence cutoff (today minus the data-entry grace), and `computeMonthlyLabor` ignored `employmentEndDay`. So mid-month, the days after a resignation were not docked yet, and the draft paid close to a full month. Closing the month and regenerating would have corrected it; approving early would have overpaid.
+
+**Fix.** `src/lib/labor-engine.ts`: working days after `employmentEndDay` with no logged hours dock straight away, whatever the cutoff (`postEmploymentAbsentDates`, used by both `computeMonthlyLabor` and `computeAttendanceDayDetail`, so the payslip's absent-date list matches the amount). Days up to the resignation day still wait for the cutoff. Only resigned workers pass `employmentEndDay` (payslips POST, the projected preview, and the labour projection), so everyone else is unchanged.
+
+**Not changed.** Office ERP logins (`users`) are not linked to employee records, so resigning an employee does not disable an office account; that has to be done by hand in User Management. Prod has no office account matching a resigned or inactive employee's name today. The worker phone app already locks out non-ACTIVE workers.
+
+**Regression.** `tests/labor-engine.test.mjs`: three tests (mid-month draft equals the closed-month result, a logged day after resigning is not an absence, the absent-date list).
 
 ## BUG-2026-10-16-300 — Saving an edited PO always failed with "Something went wrong" `procurement` 🟡
 
