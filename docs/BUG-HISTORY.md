@@ -1,6 +1,7 @@
 # Bug History
 
 > **Last verified: 2026-10-16**: staging<-main sync (branch `chore/sync-staging-from-main-1016`): both sides kept. Bugs that main logged again under a different number keep staging's number with a "Ported to main" line. Where main reused a number for another entry, main's copy is suffixed `b` (BUG-2026-10-16-293b, BUG-2026-10-14-288b, BUG-2026-09-30-223b).
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-304 (branch `fix/self-apply-skip-existing-column`, to `main`; 302 is taken on `staging`, 303 on `main`); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-302 corrected after the #907 staging run (the cut-off was the app's 30 s timeout after a server stall; branch `docs/bug302-staging-verified`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-302 (branch `fix/wip-sync-audit-atomic`, to `staging`; 299 to 301 are taken on other branches); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) now carries BOTH halves
@@ -176,6 +177,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-16-304 — A no-op self-apply ALTER locked the whole table and stalled every query behind it `database` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/self-apply-skip-existing-column` → `main`). Found 2026-10-16 on staging while testing the WIP time auto-sync (BUG-2026-10-16-302); not reported by a user. How often it bites production is UNMEASURED.
+
+**Symptom.** Right after a deploy, a save that writes job cards hung past the app's 30 s timeout, twice in about 20 minutes, then ran in 1.4 s a few minutes later. The staging slow-SQL log for the same window shows `ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS distributedAt TEXT` (from `/api/production-orders`) at p95 24 s, next to job-card SELECTs of 5 to 15 s.
+
+**Root cause.** Routes self-apply columns with `ALTER TABLE t ADD COLUMN IF NOT EXISTS c` once per isolate (233 distinct statements in `src/api`). Postgres takes an ACCESS EXCLUSIVE lock on `t` before it checks whether `c` exists, so a no-op ALTER waits behind any running query on `t`, and every later query on `t` queues behind the ALTER. A deploy starts many fresh isolates, so the busy tables get a burst of these. The lock queue itself was not observed (no `pg_locks` access from this session); the cause is inferred from the code, Postgres's documented lock order and the timing.
+
+**Fix.** `PgBoundStatement.run/all/first` in `src/api/lib/supabase-compat.ts` recognise the single-column self-apply shape (`parseAddColumnIfNotExists`, on the SQL after the adapter's own rename, with Postgres's case folding), look the column up in `information_schema.columns` (no lock on the table) and skip the ALTER when it exists. A hit is remembered for the isolate, since a column is only ever added. A missing column, an unrecognised shape or a failed lookup runs the ALTER exactly as before. All 233 distinct statements in `src/api` match the shape. Statements inside `batch()` are not touched.
+
+**Regression.** `tests/self-apply-skip-existing-column.test.mjs`.
 
 ---
 
