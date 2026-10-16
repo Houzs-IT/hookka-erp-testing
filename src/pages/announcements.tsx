@@ -67,6 +67,10 @@ type Announcement = {
   targetDeptCodes?: string[];
   targetWorkerIds?: string[];
   category?: AnnouncementCategory;
+  // Order notice (HK-0025) — null on an ordinary announcement.
+  priority?: string | null;
+  orderNo?: string | null;
+  createdByName?: string | null;
 };
 
 // Minimal shapes from the existing /api/departments + /api/workers list
@@ -996,6 +1000,12 @@ export default function AnnouncementsPage() {
                         <span className="font-semibold text-[#1F1D1B]">
                           {a.title}
                         </span>
+                        {a.priority && (
+                          <span className="rounded-full bg-[#FCEBEB] px-2 py-0.5 text-[11px] font-semibold text-[#A32D2D]">
+                            {a.priority}
+                            {a.orderNo ? ` · ${a.orderNo}` : ""}
+                          </span>
+                        )}
                         {live ? (
                           <span className="rounded-full bg-[#E7F3EC] px-2 py-0.5 text-[11px] font-semibold text-[#2A6B4A]">
                             Live
@@ -1034,6 +1044,7 @@ export default function AnnouncementsPage() {
                       </p>
                       <p className="mt-1 text-xs text-[#9CA3AF]">
                         Posted {fmtDateTime(a.createdAt)}
+                        {a.createdByName ? ` by ${a.createdByName}` : ""}
                         {a.expiresAt
                           ? ` · hides ${fmtDateTime(a.expiresAt)}`
                           : ""}

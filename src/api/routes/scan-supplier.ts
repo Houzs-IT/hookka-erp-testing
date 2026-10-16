@@ -24,6 +24,7 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { distillSupplierRules } from "../lib/ocr-distill";
 import { runExtract } from "../lib/scan-engine";
+import { learnFromConfirm } from "../lib/scan-corrections";
 
 const app = new Hono<Env>();
 
@@ -163,6 +164,27 @@ app.post("/samples/:id/confirm", async (c) => {
   if (changed === 0) {
     return c.json({ success: false, error: "Sample not found." }, 404);
   }
+
+  // HK-0005: keep the mistake, not only the corrected answer.
+  const srow = await c.var.DB.prepare(
+    "SELECT supplierId, rawJson FROM supplier_scan_samples WHERE id = ? AND orgId = ?",
+  )
+    .bind(id, orgId)
+    .first<{ supplierId: string | null; rawJson: string | null }>()
+    .catch(() => null);
+  await learnFromConfirm(c.var.DB as never, {
+    orgId,
+    kind: "supplier",
+    scopeId: srow?.supplierId,
+    raw: srow?.rawJson,
+    corrected: (() => {
+      try {
+        return JSON.parse(correctedJson);
+      } catch {
+        return null;
+      }
+    })(),
+  });
 
   // Gold-mark → re-distil this supplier's rules now (don't wait for the cron).
   let distillQueued = false;

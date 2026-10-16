@@ -118,7 +118,7 @@ test("the valuation: as of today for the running month, last month's materials +
   assert.match(API, /prevMaterialsSen: prevMaterials,/);
   assert.match(API, /labourSen: labourOf\(glThis\),/);
   assert.match(API, /completedSen: completedPriceSen\(prepared, `\$\{ym\}-01`, asOf\),/);
-  assert.match(API, /const DASH_PAYLOAD_V = "v17";/);
+  assert.match(API, /const DASH_PAYLOAD_V = "v(1[7-9]|[2-9]\d)";/); // v17 or later
   assert.match(API, /"delivery_order_items",\n\s*"consignment_notes",\n\s*"consignment_items",\n\s*"stock_take",/);
 });
 

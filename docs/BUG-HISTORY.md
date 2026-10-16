@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: staging<-main sync (branch `chore/sync-staging-from-main-1016`): both sides kept. Bugs that main logged again under a different number keep staging's number with a "Ported to main" line. Where main reused a number for another entry, main's copy is suffixed `b` (BUG-2026-10-16-293b, BUG-2026-10-14-288b, BUG-2026-09-30-223b).
 > **Last verified: 2026-10-16**: BUG-2026-10-16-302 corrected after the #907 staging run (the cut-off was the app's 30 s timeout after a server stall; branch `docs/bug302-staging-verified`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-302 (branch `fix/wip-sync-audit-atomic`, to `staging`; 299 to 301 are taken on other branches); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) now carries BOTH halves
@@ -20,6 +21,15 @@
 > older entry was re-checked.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-290 (branch `design/mobile-home-dashboard`, to staging; open, logged only). Logged on that branch as 289, renumbered to 290 in the staging merge because staging's BOM DRAFT entry took 289 first; 290 unused on `upstream/staging` and `upstream/main`; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate`, to staging; no open PR holds 289); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-303 (branch `fix/pv-print-bill-date`, to main; 302 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-301 (branch `fix/resigned-month-absence`, to main; no open PR holds 301); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-300 (branch `fix/po-edit-save-rowid`, to main; no open PR holds 300); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-ups (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887, and the Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-292 (branch `fix/po-pick-exact-rm-row`, to main; 290 and 291 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-15**: newest entry FEATURE-2026-10-15-HK0005 (branch `feat/hk0005-scan-originals-learning`, to staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
 > **Last verified: 2026-10-14**: newest entry BUG-2026-10-14-288 (branch `fix/topbar-over-grid-header`, to staging; no open PR holds 288); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: newest entries BUG-2026-10-14-286 and -287 (branch `fix/pi-revoid-and-finance-auto-receipt`, to staging; 285 is taken); a log, so "verified" means the entry matches the code on its branch.
@@ -54,6 +64,7 @@
 > **Last verified: 2026-10-08**: newest entry BUG-2026-10-08-267 (branch `fix/kpi-delivery-rules-main` (to `main`); the same entry is on staging's #749); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-266 (branch `fix/empty-auto-invoice-guard`, to main; 263 and 264 are staging's, 265 is main's).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-265 (branch `perf/production-dept-tab-cache-main`, to main; 263 and 264 are staging's).
+> **Last verified: 2026-10-07**: newest entry BUG-2026-09-30-223 (branch `fix/bug06-do-duplicate-guard-main`, to main; the same fix reached staging on 2026-09-30 through #593).
 > **Last verified: 2026-10-07**: newest entry BUG-2026-10-07-262 (branch `fix/rm-uom-bottle-main`, to main).
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-261 (branch `fix/bom-wip-delete-move`, to main); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
 > **Last verified: 2026-10-06**: newest entry BUG-2026-10-06-260 (branch `fix/production-overview-scrollbar`, to main; no open PR holds 260); a log, so "verified" means the newest entry matches the code on its branch, not that every older entry is still true.
@@ -168,6 +179,64 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-16-303 — A payment voucher's printout never showed its bill date `accounting` `printing` 🟡
+
+🟡 **Fixed on branch** (`fix/pv-print-bill-date` → `main`). Prod check after deploy still to do.
+
+**Symptom.** Found 2026-10-16 while comparing the finance v2 design with the code: a payment voucher with a bill no. and a bill date printed "Bill no. X" but never "dated dd/mm/yyyy" after it, since the voucher form gained the bill date (#663, 2026-10-01).
+
+**Root cause.** `buildPvVoucher` (`src/pages/accounting/index.tsx`) adds the date only when it looks like YYYY-MM-DD, but the check was `/^d{4}-d{2}-d{2}$/`: the backslashes were lost when the line was written through a shell, so the pattern matched the letters "dddd-dd-dd" and never a real date.
+
+**Fix.** The check is `/^\d{4}-\d{2}-\d{2}$/` again. A search of `src/` found no other regex with a digit pattern that lost its backslash.
+
+**Regression.** `tests/pv-print-bill-date.test.mjs`: the bill-date check is a real digit pattern (a real date passes, "dddd-dd-dd" does not), plus a class guard that fails on any regex line in `src/` quantifying a bare `d` (`d{4}` with no backslash).
+
+## BUG-2026-10-16-302 — Saving a WIP time could change a job card without writing its audit row `production` `audit` 🟡
+
+🟡 **Fixed on branch** (`fix/wip-sync-audit-atomic` → `staging`). Found 2026-10-16 while testing #905 on staging, not reported by a user. The feature is on `staging` only; `main` never had it.
+
+**Symptom.** Saving 5543-LONG PILLOW / Fab Sew from 9 back to 8 on WIP Production Times moved the one card that was following the BOM (SO-2610-043-09, 9 to 8), but its audit trail kept only the earlier 8 to 9 row. Read fresh (a new `limit` value, so not Hyperdrive's cache) more than two minutes later: still one row. The browser's network log shows that PUT as `net::ERR_ABORTED`; the BOM and the card were written anyway.
+
+**Root cause.** `syncOpenCardsToBom` (`jobcard-sync.ts`) wrote in two steps: a batch of guarded job-card UPDATEs, then a second batch with the audit rows for the UPDATEs that applied. When the request was cut off between the two, the Worker stopped after the first batch, so the card changed with no audit row.
+
+**Fix.** Each chunk is now one batch (one transaction): every UPDATE is followed by its audit INSERT, which is written only if the card now holds the new minutes (`buildAuditStatement` gained an optional `onlyIf` condition: `INSERT ... SELECT ... WHERE EXISTS (...)`). A card and its audit row now land together or not at all, and a card the guard left alone still gets no audit row. Callers that pass no condition get the same INSERT as before.
+
+**Why the request was cut off (corrected 2026-10-16 after #907 was on staging).** It was the app's own 30 s client timeout (`src/lib/api-client.ts`), not the test: the server stalled on the job-card write for over 30 s. Under #907 the same stall happened once more (8 to 9): the BOM saved, the card stayed at 8, no audit row, so the one-transaction write held. The next tries completed in 1.0 s (no card write), 1.4 s (8 to 9) and through the page (9 to 8), each with its audit row (08:32:34 and 08:34:05). Why the write stalled for about 20 minutes is UNMEASURED; the slow-SQL log in the same window shows `ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS` taking up to 24 s, which fits a lock queue on `job_cards`. Checking needs `pg_stat_activity` / `pg_locks` on the staging project.
+
+**Risk that stays.** A save that stalls past 30 s can still finish on the server after the page has shown an error (the #905 case above). The banner is not proof of the outcome in that window; re-open the page to see the real state.
+
+**Regression.** `tests/refresh-open-minutes.test.mjs` TC-14 (each UPDATE followed by its conditional audit in one batch; a raced card gets no audit row).
+
+---
+
+## BUG-2026-10-16-301 — A worker who resigned this month showed near full pay on the month's payroll `payroll` 🟡
+
+🟡 **Fixed on branch** (`fix/resigned-month-absence` → `main`). Prod check after deploy still to do.
+
+**Symptom.** Reported 2026-10-16 as "payroll still running for resigned employees". Measured read-only on prod the same day: the October draft (generated 16 Oct) held three workers resigned in October. One (resigned 15 Oct) showed more than a full month of pay with 0 absent days. One who resigned on 1 Oct, and one who joined on 13 Oct and resigned on 15 Oct, each showed about half a month. The live preview gave the same figures, so the draft was not stale. No one was paid in any month after their resignation month (checked May to October on prod and staging).
+
+**Root cause.** Under the unified ÷26 model (owner 2026-06-11) a resigned worker keeps a final-month payslip and the working days after their last day dock as absences. But absences are only counted up to the absence cutoff (today minus the data-entry grace), and `computeMonthlyLabor` ignored `employmentEndDay`. So mid-month, the days after a resignation were not docked yet, and the draft paid close to a full month. Closing the month and regenerating would have corrected it; approving early would have overpaid.
+
+**Fix.** `src/lib/labor-engine.ts`: working days after `employmentEndDay` with no logged hours dock straight away, whatever the cutoff (`postEmploymentAbsentDates`, used by both `computeMonthlyLabor` and `computeAttendanceDayDetail`, so the payslip's absent-date list matches the amount). Days up to the resignation day still wait for the cutoff. Only resigned workers pass `employmentEndDay` (payslips POST, the projected preview, and the labour projection), so everyone else is unchanged.
+
+**Not changed.** Office ERP logins (`users`) are not linked to employee records, so resigning an employee does not disable an office account; that has to be done by hand in User Management. Prod has no office account matching a resigned or inactive employee's name today. The worker phone app already locks out non-ACTIVE workers.
+
+**Regression.** `tests/labor-engine.test.mjs`: three tests (mid-month draft equals the closed-month result, a logged day after resigning is not an absence, the absent-date list).
+
+## BUG-2026-10-16-300 — Saving an edited PO always failed with "Something went wrong" `procurement` 🟡
+
+🟡 **Fixed on branch** (`fix/po-edit-save-rowid` → `main`). Prod check after deploy still to do.
+
+**Symptom.** Reported 2026-10-16 on PO-2610-033 (CONFIRMED): changing the price and pressing Save Changes showed "Something went wrong. Please try again." Reported as a permission problem; it was not one (a refused permission answers "Forbidden", which the toast shows as is).
+
+**Root cause.** #863 (HK-0037, merged 2026-10-15) added a read of the stored PO lines to the edit save: `ORDER BY line_no, rowid`. `rowid` is a SQLite pseudo-column. Prod runs Postgres, where it does not exist, so the query threw, the route returned the raw `column "rowid" does not exist` as a 500, and the toast replaced that technical text with the generic line. Every PO edit that sends lines (all of them, from the Edit form) failed, whatever was changed. Staging never had #863, so it saved fine there. Inferred from the code and the toast; the prod response body was not captured.
+
+**Fix.** `ORDER BY line_no, id`.
+
+**Not changed.** `admin.ts` invoice price backfill still orders `invoice_items` by `rowid` (same failure on Postgres). That table has no line number and the backfill pairs lines by position, so a replacement order would be a guess; logged open as BUG-CLASSES C32 row 2.
+
+**Regression.** `tests/no-sqlite-rowid-in-sql.test.mjs` fails on any new `rowid` in API code.
+
 ## BUG-2026-10-16-299 — The staging mail sender nested its recipient list and dropped every copy and threading header `mail-center` `staging` 🟡
 
 🟡 **Fixed on branch** (`feat/t012-mail-center` → `staging`). Found 2026-10-16 while setting up the staging verification for PRD T-012; nobody reported it, because the only sends staging had made since were single-recipient. **STAGING ONLY** — production is unaffected.
@@ -200,24 +269,6 @@ So the sender now downgrades, narrowly: a mail with ONE To, no copies, no reply-
 
 ---
 
-## BUG-2026-10-16-302 — Saving a WIP time could change a job card without writing its audit row `production` `audit` 🟡
-
-🟡 **Fixed on branch** (`fix/wip-sync-audit-atomic` → `staging`). Found 2026-10-16 while testing #905 on staging, not reported by a user. The feature is on `staging` only; `main` never had it.
-
-**Symptom.** Saving 5543-LONG PILLOW / Fab Sew from 9 back to 8 on WIP Production Times moved the one card that was following the BOM (SO-2610-043-09, 9 to 8), but its audit trail kept only the earlier 8 to 9 row. Read fresh (a new `limit` value, so not Hyperdrive's cache) more than two minutes later: still one row. The browser's network log shows that PUT as `net::ERR_ABORTED`; the BOM and the card were written anyway.
-
-**Root cause.** `syncOpenCardsToBom` (`jobcard-sync.ts`) wrote in two steps: a batch of guarded job-card UPDATEs, then a second batch with the audit rows for the UPDATEs that applied. When the request was cut off between the two, the Worker stopped after the first batch, so the card changed with no audit row.
-
-**Fix.** Each chunk is now one batch (one transaction): every UPDATE is followed by its audit INSERT, which is written only if the card now holds the new minutes (`buildAuditStatement` gained an optional `onlyIf` condition: `INSERT ... SELECT ... WHERE EXISTS (...)`). A card and its audit row now land together or not at all, and a card the guard left alone still gets no audit row. Callers that pass no condition get the same INSERT as before.
-
-**Why the request was cut off (corrected 2026-10-16 after #907 was on staging).** It was the app's own 30 s client timeout (`src/lib/api-client.ts`), not the test: the server stalled on the job-card write for over 30 s. Under #907 the same stall happened once more (8 to 9): the BOM saved, the card stayed at 8, no audit row, so the one-transaction write held. The next tries completed in 1.0 s (no card write), 1.4 s (8 to 9) and through the page (9 to 8), each with its audit row (08:32:34 and 08:34:05). Why the write stalled for about 20 minutes is UNMEASURED; the slow-SQL log in the same window shows `ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS` taking up to 24 s, which fits a lock queue on `job_cards`. Checking needs `pg_stat_activity` / `pg_locks` on the staging project.
-
-**Risk that stays.** A save that stalls past 30 s can still finish on the server after the page has shown an error (the #905 case above). The banner is not proof of the outcome in that window; re-open the page to see the real state.
-
-**Regression.** `tests/refresh-open-minutes.test.mjs` TC-14 (each UPDATE followed by its conditional audit in one batch; a raced card gets no audit row).
-
----
-
 ## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
 
 🟡 **Fixed on branch** (`fix/cached-fetch-inflight-298` → `staging`). Found 2026-10-16 while reproducing BUG-2026-10-16-297; not reported by a user. How often it happens on the live sites is UNMEASURED.
@@ -239,6 +290,8 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (refresh 
 
 ## BUG-2026-10-16-297 — /production cancelled its own order list when the list took longer than 8 seconds `production` `performance` 🟡
 
+Ported to `main` on branch `fix/po-list-cache-main`.
+
 🟡 **Fixed on branch** (`fix/production-poll-skip-inflight` → `staging`). Seen 2026-10-16 in the app's network panel while checking BUG-2026-10-16-294: `GET /api/production-orders`, status 0, AbortError, at 8,007 ms. Which site that was, and how often it happens, are UNMEASURED.
 
 **Symptom.** A list request still running 8 s after it started is cancelled and a new one starts. If every response takes over 8 s, the sheet never refreshes, while the server still builds every list it is asked for.
@@ -258,6 +311,8 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms p
 
 ## BUG-2026-10-16-296 — A salesperson's narrowed order list could be served to the whole factory from the KV cache `production` `customer-scope` `cache` 🟡
 
+Ported to `main` on branch `fix/po-list-cache-main`.
+
 🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`). Found in passing on 2026-10-16 while adding the ETag (BUG-2026-10-16-294); not reported by a user.
 
 **Symptom (expected, not observed).** After a SALES user loads a page that lists production orders, other users on the same URL could see only the orders that salesperson may see, until the next write refreshes the entry or the cache expires (300 s for the full list, 60 s for a paged one).
@@ -275,6 +330,8 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms p
 
 ## BUG-2026-10-16-294 — /production re-downloaded the whole order list every 8 seconds `production` `performance` 🟡
 
+Ported to `main` on branch `fix/po-list-cache-main`, where it is logged as BUG-2026-10-16-299.
+
 🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
 
 **Symptom.** Measured on prod 2026-10-15 at about 23:00 (read-only): each 8 s poll of `/api/production-orders?fields=minimal&excludeCompleted=true` was 906 KB on the wire (15.9 MB unpacked), almost always an identical body. That is about 0.9 Mbit/s per open tab, so a few factory tablets on this page can fill shared Wi-Fi and slow every page.
@@ -289,6 +346,8 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms p
 
 ## BUG-2026-10-16-295 — A scan landing during a list rebuild could stay hidden until the next write `production` `cache` 🟡
 
+Ported to `main` on branch `fix/po-list-cache-main`.
+
 🟡 **Fixed on branch** (`fix/po-list-cache-staging` → `staging`).
 
 **Symptom.** Suspected, not reproduced: a scan made while the background list refresh was running could stay invisible on the dept sheets for up to the 5 min KV TTL.
@@ -300,6 +359,8 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms p
 **Regression.** `tests/po-list-etag-304.test.mjs` (the version-order case).
 
 ## BUG-2026-10-16-293 — Packing sticker cut the Notes line to one line `production` `printing` 🟡
+
+Ported to `main` on branch `fix/fg-sticker-notes-wrap-main`, where it is logged as BUG-2026-10-16-294.
 
 🟡 Fixed on the branch, not yet checked on a printed sticker. The FG (packing)
 sticker printed Notes as one truncated line, e.g. "TAG ★ Nylon Fabric, Extend …",
@@ -324,6 +385,25 @@ Real note lengths, measured on staging 2026-10-16 (4,844 production orders, 1,04
 Special Order): median 14 characters, 90% at 39 or less, longest 179. Six are over the
 ~106 that fit. The reported sticker (SV-2609-025) is Nylon Fabric, Extend 5" plus TAG,
 about 30 characters, so it now prints in full at 11pt; only the 5" was being cut.
+
+**Follow-up 2026-10-16, bedframe regression from #887** (branch `fix/fg-sticker-notes-bedframe-main`):
+a bedframe print preview showed Notes sliced in half under the dashed line. Measured per sticker
+type on the mock, the room above the QR is: sofa 10.6mm, sofa + legs 13.7mm, sofa + pillow
+19.1mm, accessory 18.3mm, bedframe 3.0mm (Gap and Divan rows), bedframe + legs 6.1mm. The
+`min-h-0` row could shrink to that 3mm. Fix: the Notes row now has a one-line minimum
+(`minHeight: 1.25em`, same as before #887), and `notesFontSize` picks the largest size from
+11 to 7pt whose wrapped lines fit the room (17.5pt bedframe, 30pt otherwise) instead of a
+sofa-only formula. Checked on all seven types at 14, 39, 75 and 179 characters: everything up
+to 75 fits; 179 still clips on most types. The bedframe bottom margin is 2.9mm, the same as
+before #887.
+
+**Follow-up 2026-10-16, Foam Bonding preview** (same branch): the
+Foam Bonding tab has its own half-size copy of the packing sticker ("Show Packing Stickers"). It
+showed only "★ note", truncated, with no Notes label and no TAG, so it did not match the real
+print it claims to mirror. It now has the same Notes row as the print: label, TAG / LABEL, the
+note wrapping above the QR, a one-line minimum, and `notesFontSize` scaled by 9/14 (the tile's
+9px labels stand for the print's 14pt). Preview only; the print from that tab already used the
+fixed print layout.
 
 ---
 
@@ -423,6 +503,72 @@ entry keeps only what bears on the bug it describes.
 
 **Fix (not done).** Give `ColumnDef` a money flag (or a `numCol` variant) and convert RM → sen in `FilterSheet` for those columns, then label the box "RM". Regression: a test that a money column filter of `10000` keeps a 1,000,000-sen row.
 
+---
+
+## BUG-2026-10-16-293b — Cards lost their top padding on phones on main (IT Support report form flush at the top) `ui-frontend` 🟡
+
+🟡 **Fixed on branch** (`fix/card-phone-padding` -> `main`). Seen on `/m` IT Support > Report an issue: the "What is the issue?" label sits on the card's top edge. Staging already had the fix (#684, BUG-2026-10-02-252) and never sent it to main.
+
+**Cause.** `CardContent` in `src/components/ui/card.tsx` carried `max-md:p-[var(--card-pad,1rem)] max-md:pt-0` in its base classes (and `CardHeader` the same `max-md:p-[…]`). tailwind-merge cannot know a caller's plain `p-6` should beat a `max-md:` variant, so below 768px every card that set its own padding got 0 top and 1rem sides anyway.
+
+**Fix.** Same two lines as staging: the phone default goes through a CSS variable (`[--card-pad-auto:1.5rem] max-md:[--card-pad-auto:1rem]`), so the base has no `max-md:` padding class left. Cards that set no padding look the same. Cards that set their own (`p-4`, `p-6 sm:p-8`, …) now get it on phones too, so some cards are roomier on phones than before.
+
+**Regression.** `tests/card-padding-phone.test.mjs` (card part of staging's test; staging's KPI_ROW case is staging-only and left out).
+
+## BUG-2026-10-15-292 — Picking the MTR row of a material added the ROLL one to the PO `procurement` `inventory` 🟡
+
+🟡 **Fixed on branch** (`fix/po-pick-exact-rm-row` → `main`).
+
+**Symptom.** Reported 2026-10-15 on PO-2610-036: the user picked PC151-17 in MTR ("Comfy HK 1 - Frost Linen"), but the line was saved and printed as "FABRIC" in ROLL.
+
+**Root cause.** Measured on prod (read-only, 2026-10-15): PC151-17 is three active raw materials: "FABRIC" in ROLL, and two MTR rows "HK COMFY 1 -FROST LINEN" and "COMFY 1 -FROST LINEN". Duplicate item codes are allowed on purpose (`raw-materials.ts` `ensureDupCodesUnlocked`). New PO's Select Materials lists each row, but Add passed only `rm.itemCode`, and `addItemFromRM` took `rawMaterials.find(r => r.itemCode === code)`, the first row: ROLL / FABRIC. The server keeps the unit the page sends (`poLineUnit`), so the line saved as ROLL. Edit PO (`detail.tsx` `addLineFromRM`) and the older PO popup (`index.tsx` `addItemFromRM`) had the same code-only lookup. New PO also marked rows "Added" by code, so adding one PC151-17 greyed out the other two.
+
+**Fix.** All three add helpers take the clicked `RawMaterial` row instead of its code. New PO lines carry `rmId`, and "Added" is keyed by RM id + supplier.
+
+**Not changed.** Typing a code into a PO line's code box, and the `?prefillRm=` link from the fabric shortage chip, still resolve by code (a typed code cannot say which row). PO-2610-036 itself still holds the ROLL / FABRIC line and needs editing by hand. The two near-identical MTR rows look like a duplicate to merge; left to the owner.
+
+**Regression.** `tests/po-add-picked-rm-row.test.mjs`.
+
+## FEATURE-2026-10-15-HK0005 — Document scanning: originals kept and viewable, corrections learned, leaner prompts `ocr` `scan-queue` 🟡
+
+🟡 **Built on branch** (`feat/hk0005-scan-originals-learning` → `staging`). Ticket HK-0005 (support.houzscentury.com, size L, Development).
+
+**Symptom.** Scans were slow; the learning loop only saw the corrected answer, never the mistake; originals were kept for two document types and were downloaded, not shown.
+
+**Root cause.** File bytes sat as base64 text in a `scan_queue` row, re-read and decoded per worker, and NULLed on consume. Every customer's rules (including empty stubs) were packed into every PO prompt. `po_scan_samples` held raw and corrected JSON but nothing diffed them into reusable pairs.
+
+**Fix.** (1) `src/api/lib/scan-file-store.ts`: bytes go to object storage keyed by org + content hash, the row keeps `file_key`; base64 stays only as the fallback where storage is not configured; consume no longer evicts. (2) `formatCustomerRules` drops customers with no rules, and narrows to one block when the file-name hint is exactly a customer code or name. (3) `src/api/lib/scan-corrections.ts`: the confirm routes diff raw vs corrected into `scan_field_corrections` (scope = picked customer / supplier, field, raw, corrected); the next extraction replays them after the sample row is written. (4) `GET /api/scan-queue/:id/original` serves PDFs and images inline and writes `scan_original_access`; OCR dashboard links use it.
+
+**Regression.** `tests/scan-corrections.test.mjs`, `tests/scan-customer-rules-focus.test.mjs`, `tests/scan-originals.test.mjs`.
+
+**Not measured.** The "scan time drops by a third" acceptance is UNMEASURED: no staging or prod timing was taken. The row-size effect and the prompt-size effect are real by construction; the wall-clock effect is not proven.
+
+## BUG-2026-10-14-288b — Table column headers showed through the notifications panel `ui` `layout` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0080-po-scan-date-iso` -> `main`). Ticket HK-0080 (Violet, 2026-10-07: "why are there many PO overdue? is OCR using convert?"). Whether this is THE cause of the volume she saw is UNMEASURED (no prod access from this branch); it is a real hole on the path she named.
+
+**Symptom.** Production Overview shows many overdue orders; the reporter suspects scanned POs.
+
+**Cause.** Overview overdue is `NULLIF(sales_orders.hookkaExpectedDD,'') < today` on a TEXT column (`src/api/routes/production-orders.ts` overdue-counts). The scan prompt only ASKS the model for YYYY-MM-DD (`scan-engine.ts` rule 8); nothing on the server checked it, and `POST /api/sales-orders` stored `body.customerDeliveryDate` / `body.hookkaExpectedDD` verbatim. A `15/10/2026` string sorts before `2026-10-15`, so the order is overdue from the day it is created. Answer to "is OCR using convert": only inside the prompt, never enforced in code.
+
+**Fix.** New `src/api/lib/iso-date.ts` `toIsoDate` (ISO passes, DD/MM/YYYY, DD.MM.YYYY, DD-MM-YY convert day-first, impossible dates -> null). Used in `scan-po.ts` `validateAndEnrichPO` (converted or cleared, with a warning on the card) and in the SO create handler (covers the template-fallback scan path and manual API callers).
+
+**Not fixed / not checked.** (1) Rows already stored non-ISO: UNMEASURED; read-only check `SELECT count(*) FROM sales_orders WHERE hookkaExpectedDD <> '' AND hookkaExpectedDD !~ '^\d{4}-\d{2}-\d{2}'`. (2) Review fix: `POST /` and `PUT /:id` now answer 400 when a supplied customer / expected delivery date cannot be read (never a silent blank); on PUT only a CHANGED value is validated, so echoing a legacy stored value is not blocked. Day-first is an ASSUMPTION: `03/06/2026` is read as 3 June (Malaysian paper); a US-style sheet would be misread, and the scan card keeps the "converted to ..." warning so the operator sees it. (3) The template-fallback scan path sends `hookkaExpectedDD = customer delivery date` with no buffer (`scan-po-modal.tsx` ~1254); left for the owner. (4) The ticket's "PO" could mean Purchase Order; the Purchase Order list was not changed.
+
+**Regression.** `tests/scan-delivery-date-iso.test.mjs` (helper + the create route's 400).
+## BUG-2026-10-15-HK0037 — RM unit shown as "ea" / defaulted to "pcs" after DEV-20 `inventory` `procurement` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0037-rm-uom-propagation`, PR #863). Prod occurrences UNMEASURED.
+
+**Symptom.** DEV-20 (#720) made the RM unit list selectable, but the unit did not follow the material: Inventory Adjustments showed a hardcoded "ea", a PO line took "pcs" unless the client sent a unit, and RM create silently turned an unlisted unit into PCS.
+
+**Root cause.** Four readers/writers each had their own fallback instead of the RM's `baseUOM`: `adjustments.tsx`, `purchase-orders.ts` POST/PUT, `inventory.ts` RM create, and the GRN receive row.
+
+**Fix.** RM create rejects a unit not on the list (same check as `raw-materials.ts`). PO POST/PUT take the line unit from the RM base unit (`poLineUnit`) only when the client sent none or the legacy "pcs" default; a unit chosen on purpose (the phone form's free-text Unit field) is kept as sent, no conversion. A line with receipts keeps its stored unit, matched by id, else by materialCode and line order. The RM base-unit lookup is chunked at 90 codes per query (D1 100-parameter cap). Adjustments show `baseUOM`; the GRN row shows the PO line unit.
+
+**Not changed.** Per-category lists and ROLL/MTR conversion (owner rulings 2026-09-29 / 2026-10-07); other PO writers (`import-completion/procurement-backfills.ts`, `convert-from-po-modal.tsx`) still pick their own unit.
+
+**Regression.** `tests/rm-uom-options.test.mjs`: `poLineUnit`, `rmUnitMap`, create rejects an unlisted unit, no `|| "ea"`, PUT keeps a received line's unit (`tests/po-put-line-unit.test.mjs`: PUT through the route with ids dropped, chunked lookup, explicit unit kept).
 ## BUG-2026-10-15-289 — Bulk-generated BOMs were stuck on DRAFT, so WIP times never listed them `bom` `production` 🟡
 
 🟡 **Fixed on branch** (`feat/bom-draft-activate` → `staging`).
@@ -476,6 +622,22 @@ entry keeps only what bears on the bug it describes.
 **Regression.** `tests/purchasing-convert-flow.test.mjs` "BUG-2026-10-14-286": void, unvoid, void, unvoid all answer 200 and no void leg number repeats. The mock now reads the invoice's legs back and raises on a duplicate leg like the real index; the test fails 500 without the fix.
 
 **Verified on staging (after #852 deployed, 2026-10-14).** PI-2610-023 third void 200 (202 → 199). PI-2610-024: void, unvoid, void, unvoid, void all 200, stock moving 199 → 196 → 199 → 196 → 199 → 196. Fresh PI-2610-027: confirm, void, unvoid, void again all 200, and only two auto receipts (confirm, unvoid), no extra cancelled ones. Test documents cleaned up, stock back at 196.
+
+## BUG-2026-10-14-285 — A CN printed right after it was created had no CO No. and no fabric `consignment` `do-cn-parity` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0093-cn-print-co-fabric` → `main`). Reported on IT Hub HK-0093 (Siti).
+
+**Symptom.** CGN-2610-002 (2990 HOME, 4 lines from CO-2610-010) printed `-` in every CO No. cell and no fabric in the Description, while the per-line racks (`Floor`) printed fine. Measured on prod 2026-10-14 (read-only): all 4 `consignment_items` carry `production_order_id`, and each PO has `company_co_id = CO-2610-010`, `fabric_code = HG1313-01`. The data was never missing. Printing the same CN again later on prod, with the `/ready-planning` snapshot rebuilt by then, put CO-2610-010 and HG1313-01 on every line.
+
+**Root cause.** `buildCnPdfData` took CO No. and fabric from the CN row, which reads them from `poToCoNoMap` / `poToFabricMap`. Those maps are built from `GET /api/consignment-notes/ready-planning` `poLookups`, which `withSnapshot` serves `staleWhileRevalidate`. The first read after a CN is created returns the blob built before the CN existed, so its POs are not in `poLookups` and both fields come back empty. The racks come from `GET /:id/print-extras`, which joins `production_orders` on every call, so they were unaffected. The DO is not affected: `delivery_order_items` stores `salesOrderNo` and `fabricCode` on the line itself.
+
+**Fix.** `print-extras` also returns `fabricCode` and `companyCOId` from the PO it already joins, and `buildCnPdfData` uses them first, falling back to the row's values. Every print path runs `ensureCnExtras` before `buildCnPdfData`, so the single CN, the packing list and the dispatch notice PDF get them. The CN grid's CO No. / Fabric columns still read the snapshot and can lag for the same reason until the next poll; printing no longer depends on them.
+
+**Same ticket, second ask (reporter, 2026-10-14).** The customer's own CO number (2990's `2990-PCO-2610-019`, `consignment_orders.customer_co_id`) was on neither the CN nor the packing sticker: `production_orders.customer_po_id` is blank on every CO-origin PO (0 of 166, measured), and the sticker's Cust SO only looks up sales orders. Siti asked for it on the sticker and as the CN's PO. `print-extras` now joins the line's CO (`COALESCE(po.consignmentOrderId, <CN's CO>)`) and returns `customerPOId`; the CN PDF's first column is now **Order**, stacked `Our CO: <our CO>` / `PO: <customer CO no.>` like the DO's Order column (`Our SO:` / `PO:`), the layout Siti picked from the DO (22 → 32 mm). Siti then asked for it on every production page too (「ya for all production also need 2990's co number」), so it is filled once at the source: `attachCustomerSO` (`production-orders/_helpers.ts`), which already joins `consignment_orders.customerCOId` into `customerSO`, now also sets `customerPOId` on a CO-origin PO whose own value is blank. That one field feeds the Customer PO column on every dept sheet and the Overview, its filter / sort / search, the packing sticker's "PO No" and the job-card stickers' "PO No". SO-origin POs are unchanged. The production list snapshot has no payload version, so an existing cached body shows the new value from the next `production_orders` / `job_cards` write (UNMEASURED how long that takes off-hours).
+
+**Regression.** `tests/cn-pdf-co-fabric-fresh.test.mjs` pins the two `print-extras` columns, the page's preference for them, and the `ensureCnExtras` call ahead of `buildCnPdfData`. It fails on the old code. `tests/cn-pdf-size-column.test.mjs` updated for the new `fabricCode` line. Not yet verified on the live site after deploy.
+
+---
 
 ## BUG-2026-10-13-284 — Scans failed for users whose internet provider routes to Cloudflare in Hong Kong `scanning` 🟡
 
@@ -790,6 +952,23 @@ _Logged on `staging` as BUG-2026-10-08-269. Renumbered in the 2026-10-13 staging
 **Fix.** `fetchOrders` refetches the sheet and the overdue chips without invalidating; the stock-PO create path invalidates first. `cached-fetch.ts` keeps a body that localStorage refuses in memory (up to 9 entries, ~6 MB heap each, measured), cleared by every invalidation path. The dead seed is removed; dept pages keep loading every open order (owner's choice). Same test, new code: 0.55 s, no "(loading…)".
 
 **Guard.** `tests/production-dept-tab-cache.test.mjs`.
+## BUG-2026-09-30-223b — (main port of 223) "Transfer to Delivery Order" skipped the once-only-delivery guard, so one production order could be delivered twice `delivery-orders` 🔵
+
+🔵 Fixed on `fix/bug06-do-duplicate-guard-main` (to `main`). Already on `staging` since 2026-09-30 (#593, T-006 R1 before it); this brings the same code to main.
+
+**Symptom (BUG-06).** The Sales page "Transfer to Delivery Order" posted `{ salesOrderId, items }` with items copied from the SO and no `productionOrderIds`. `validateDoComposition`, the once-only-delivery guard, only ran over `productionOrderIds`, so the same SO could be transferred again and again. A direct API call could do the same with `items` naming an already-delivered production order, with or without a sales order.
+
+**Cause.** `createDeliveryOrderForPOs` writes `body.items` as sent but guarded only `body.productionOrderIds`.
+
+**Fix.**
+- Server: create guards every production order named in `productionOrderIds` or in `items`. An SO-linked create with no production orders at all is refused 400.
+- Sales page: the dialog lists the SO's production orders that are ready to deliver (`/api/delivery-orders/ready-planning`, the Delivery page's own source) and sends their ids. The button is disabled when nothing is ready.
+- Consignment page: its "Transfer to Delivery Order" sent the same refused shape and could never succeed (a consignment PO is already refused on a DO). It is now "Create Consignment Note", which opens `/consignment/note`.
+- Review fixes (2026-10-15): the production_orders lookup in create now filters `orgId = ?` (the ids can come from `items[].productionOrderId`, so an unscoped lookup would read another org's rows); with `productionOrderIds` non-empty, a line with no `productionOrderId`, or one not among the loaded orders, is refused 400. Still open and documented, not fixed: no per-line selection on the Sales dialog, and the ready-planning fetch is large.
+
+**Verified.** Staging, 2026-09-30, all 10 BUG-06 cases passed on the same code. On main: tests only. Prod not checked yet (UNMEASURED).
+
+**Guard.** `tests/do-create-requires-production-orders.test.mjs` runs the real create function on a fake DB (no DO row written for the refused shapes). `tests/t006-r1-transfer-to-do.test.mjs` checks the Sales page request body.
 
 ---
 

@@ -7,9 +7,12 @@
 // other column looked up by code (0 if absent). Read-only; all sen.
 // ---------------------------------------------------------------------------
 
-export interface PnlLine { code: string; name: string; amountSen: number }
+// estSen / estFrom: the part of the figure that is a running-month estimate for
+// a recurring cost not recorded yet, and the month it was taken from
+// (src/lib/expense-estimates.ts). Absent on every ledger-only line.
+export interface PnlLine { code: string; name: string; amountSen: number; estSen?: number; estFrom?: string }
 export interface PnlRmGroup { group: string; description: string; openingSen: number; purchasesSen: number; closingSen: number }
-export interface PnlExpenseLine { code: string; name: string; amountSen: number; salary: boolean }
+export interface PnlExpenseLine { code: string; name: string; amountSen: number; salary: boolean; estSen?: number; estFrom?: string }
 
 export interface PnlWindowLike {
   netSalesSen: number;
@@ -46,6 +49,10 @@ export interface PnlMatrixRow {
   drillCode?: string;
   values: number[];
   pctValues: number[];
+  // Per column, the part of the value that is a running-month estimate (only
+  // on lines that carry one in some column), and the month it came from.
+  estValues?: number[];
+  estFrom?: string;
 }
 export interface PnlMatrix { columns: { key: string; label: string; accum: boolean }[]; rows: PnlMatrixRow[] }
 
@@ -75,6 +82,15 @@ export function buildPnlMatrix(cols: PnlMatrixCol[]): PnlMatrix {
   const line = (label: string, depth: number, ex: (w: PnlWindowLike) => number, accountCode?: string, drillCode?: string) =>
     push("line", depth, label, ex, drillCode ? { accountCode, drillCode } : { accountCode });
   const tot = (label: string, depth: number, ex: (w: PnlWindowLike) => number) => push("total", depth, label, ex);
+  // The line just pushed: which columns are (partly) estimates.
+  const markEst = (pick: (w: PnlWindowLike) => { code: string; name?: string; estSen?: number; estFrom?: string }[], key: string) => {
+    const hits = windows.map((w) => pick(w).find((l) => keyOf(l) === key));
+    const vals = hits.map((h) => h?.estSen ?? 0);
+    if (!vals.some((v) => v !== 0)) return;
+    const r = rows[rows.length - 1];
+    r.estValues = vals;
+    r.estFrom = hits.find((h) => h?.estFrom)?.estFrom;
+  };
   const grand = (label: string, ex: (w: PnlWindowLike) => number) => push("grandtotal", 0, label, ex);
   const gap = () => rows.push({ kind: "gap", depth: 0, label: "", values: [], pctValues: [] });
 
@@ -99,7 +115,7 @@ export function buildPnlMatrix(cols: PnlMatrixCol[]): PnlMatrix {
   group("DIRECT LABOUR", 1, (w) => w.labourSen);
   for (const ll of spine.labourLines) line(ll.name, 2, (w) => byCode(w.labourLines, keyOf(ll)), ll.code);
   group("FACTORY OVERHEAD", 1, (w) => w.overheadSen);
-  for (const ol of spine.overheadLines) line(ol.name, 2, (w) => byCode(w.overheadLines, keyOf(ol)), ol.code);
+  for (const ol of spine.overheadLines) { line(ol.name, 2, (w) => byCode(w.overheadLines, keyOf(ol)), ol.code); markEst((w) => w.overheadLines, keyOf(ol)); }
   group("WORK IN PROGRESS", 1, (w) => w.wipOpen - w.wipClose);
   line("WIP - OPENING", 2, (w) => w.wipOpen);
   line("WIP - CLOSING", 2, (w) => -w.wipClose);
@@ -119,9 +135,9 @@ export function buildPnlMatrix(cols: PnlMatrixCol[]): PnlMatrix {
   const salLines = spine.expenseLines.filter((l) => l.salary);
   if (salLines.length > 0) {
     group("SALARIES & CONTRIBUTION", 1, (w) => w.expenseLines.filter((l) => l.salary).reduce((s, l) => s + l.amountSen, 0));
-    for (const sl of salLines) line(sl.name, 2, (w) => byCode(w.expenseLines, keyOf(sl)), sl.code);
+    for (const sl of salLines) { line(sl.name, 2, (w) => byCode(w.expenseLines, keyOf(sl)), sl.code); markEst((w) => w.expenseLines, keyOf(sl)); }
   }
-  for (const el of spine.expenseLines.filter((l) => !l.salary)) line(el.name, 1, (w) => byCode(w.expenseLines, keyOf(el)), el.code);
+  for (const el of spine.expenseLines.filter((l) => !l.salary)) { line(el.name, 1, (w) => byCode(w.expenseLines, keyOf(el)), el.code); markEst((w) => w.expenseLines, keyOf(el)); }
   grand("NET PROFIT / (LOSS)", (w) => w.netProfitSen);
 
   return { columns, rows };

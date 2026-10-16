@@ -22,7 +22,9 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { toIsoDate } from "../lib/iso-date";
 import { distillCustomerRules } from "../lib/ocr-distill";
+import { learnFromConfirm } from "../lib/scan-corrections";
 import { matchByCompanyName } from "../../lib/company-name-match";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import {
@@ -302,6 +304,22 @@ function validateAndEnrichPO(po: ExtractedPO, catalog: Catalog): Warning[] {
   const customerByName = new Map(
     catalog.customers.map((c) => [c.name.toUpperCase(), c]),
   );
+  // HK-0080: the model is only ASKED for YYYY-MM-DD; nothing enforced it, and
+  // a DD/MM/YYYY string compares as "overdue" against today's ISO date in SQL.
+  if (po.deliveryDate) {
+    const iso = toIsoDate(po.deliveryDate);
+    if (iso !== po.deliveryDate) {
+      warnings.push({
+        field: "deliveryDate",
+        value: po.deliveryDate,
+        message: iso
+          ? `Delivery date converted to ${iso}.`
+          : "Delivery date is not a valid date and was cleared; enter it by hand.",
+      });
+      po.deliveryDate = iso;
+    }
+  }
+
   const hubShortNames = new Set(
     catalog.customers.flatMap((c) =>
       c.hubs.map((h) => h.shortName.toUpperCase()),
@@ -791,6 +809,20 @@ app.post("/samples/:id/confirm", async (c) => {
       404,
     );
   }
+
+  // HK-0005: keep the mistake, not only the corrected answer.
+  const rawRow = await (c.var.DB as unknown as DBLike)
+    .prepare("SELECT rawExtracted FROM po_scan_samples WHERE id = ?")
+    .bind(id)
+    .first<{ rawExtracted: string | null }>()
+    .catch(() => null);
+  await learnFromConfirm(c.var.DB as never, {
+    orgId: getOrgId(c),
+    kind: "po",
+    scopeId: pickedCustomerId,
+    raw: rawRow?.rawExtracted,
+    corrected,
+  });
 
   let distillQueued = false;
   if (goldFlag === 1) {

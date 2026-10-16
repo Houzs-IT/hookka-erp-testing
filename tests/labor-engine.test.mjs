@@ -895,3 +895,40 @@ test("the month total applies the same minimum", () => {
   assert.equal(real.otWeekdayHours, 1);
   assert.ok(real.payroll.otPaySen > 0);
 });
+
+// BUG-2026-10-16-301: a worker who resigned mid-month showed near full pay on
+// the current month's draft. Days after their last day were only docked once
+// the absence cutoff (today minus grace) passed them, but they are known
+// absences the moment the resignation date is set.
+const RESIGNED_15_MAY = MAY_WORKDAYS.filter((d) => d <= "2026-05-15").map((date) => ({ date, hours: 8 }));
+const POST_RESIGN_MAY = MAY_WORKDAYS.filter((d) => d > "2026-05-15");
+
+test("computeMonthlyLabor: days after the resignation date dock before the cutoff reaches them", () => {
+  const base = { worker: ANN, year: 2026, month: 5, days: RESIGNED_15_MAY, publicHolidays: MAY_HOLIDAYS };
+  const midMonth = labor.computeMonthlyLabor({ ...base, absenceThroughDay: 13, employmentEndDay: 15 });
+  const monthEnd = labor.computeMonthlyLabor({ ...base, absenceThroughDay: 31, employmentEndDay: 15 });
+  assert.equal(POST_RESIGN_MAY.length, 12);
+  assert.equal(midMonth.payroll.absentDays, 12);
+  // The mid-month draft already pays what the closed month will pay.
+  assert.deepEqual(midMonth.payroll, monthEnd.payroll);
+  // Still employed (no end day): the same mid-month draft docks nothing yet.
+  const stillEmployed = labor.computeMonthlyLabor({ ...base, absenceThroughDay: 13 });
+  assert.equal(stillEmployed.payroll.absentDays, 0);
+});
+
+test("computeMonthlyLabor: a logged day after the resignation date is not an absence", () => {
+  const r = labor.computeMonthlyLabor({
+    worker: ANN, year: 2026, month: 5, publicHolidays: MAY_HOLIDAYS,
+    days: [...RESIGNED_15_MAY, { date: "2026-05-18", hours: 8 }],
+    absenceThroughDay: 13, employmentEndDay: 15,
+  });
+  assert.equal(r.payroll.absentDays, 11);
+});
+
+test("computeAttendanceDayDetail: lists the post-resignation days as absences mid-month", () => {
+  const detail = labor.computeAttendanceDayDetail({
+    worker: ANN, year: 2026, month: 5, days: RESIGNED_15_MAY, publicHolidays: MAY_HOLIDAYS,
+    absenceThroughDay: 13, employmentEndDay: 15,
+  });
+  assert.deepEqual(detail.absentDates, POST_RESIGN_MAY);
+});
