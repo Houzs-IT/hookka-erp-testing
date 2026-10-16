@@ -1527,18 +1527,11 @@ Ask (DEV-20, requester VIOLET): the RM UOM should be selectable from options tha
 
 ---
 
-## 2026-09-25 — 🔵 /dashboard-experimental: Employees > Efficiency drills into one employee day by day (branch `feat/dashboard-efficiency-employee-drill`, stacked on #533)
+## 2026-09-21 — ✅ PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (shipped to prod 2026-10-16, verified live)
 
-## 2026-09-21 — 🟡 PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (on `staging` since 2026-10-16; this is the port to `main`, owner testing on canary)
-
-1. 🔵 The Efficiency sub-tab had no chart (only tables and the ranking). It now opens with the Daily efficiency chart (the Time & attendance one, extracted to `DailyEfficiencyCard` in `EmployeesInsights.tsx`; Time & attendance renders it unchanged).
-2. 🔵 With an employee picked, that chart shows the person for every day of the selected month: working vs production hours as bars and their own efficiency as the line, days off as empty slots. Driven by the existing `emp` filter in `EmployeesView.tsx`, so the Employee select, Reset and a new "← All employees" button on the chart header all return to the pool view. Data is the already-fetched `performance.byDay[].workers`; no API change. New pure helper `workerDays` in `dashboard-shared-lib.ts` (test in `tests/dashboard-period.test.mjs`).
-3. 🔵 Warning audit rows and Top/Bottom 5 rows are keyboard operable (Tab + Enter/Space) and scroll the chart into view when picked.
-4. 🔵 The warning audit is now its own `WarningAuditPanel` (shared `useRankedPeople` in `EmployeesInsights.tsx`). Efficiency keeps it; Time & attendance shows a COPY under the Attendance log, rendered through the log's new `below` slot so it follows the log's Today / Yesterday switch. That copy ignores the employee pick (dept filter only) so the list stays whole; a row click opens that person's log above it and highlights the row, a second click goes back.
-5. 🔵 The Time & attendance copy is now `DailyWarningAudit`: one row per person PER DAY outside the band (Employee, Role/Dept, Date, Production time, Prod hours, Efficiency, Status), highest first, so a single wild day (e.g. 0.4h clocked / 2.3h earned = 583%) shows even when the month average is inside the band. No minimum-minutes cut on this list. The over-reporting threshold is now 150% (was 110%) for both audits, and its status pill reads "Over 150%".
-6. 🔵 Daily warning audit: over-reporting is stepped, with status pills Over 150% / Over 300% / Over 500% / Over 1000% (pure `auditTier` + `OVER_TIERS` in `dashboard-shared-lib.ts`, test in `tests/dashboard-period.test.mjs`). A filter menu in the card header picks All / each Over step (cumulative, so Over 300% includes 500% and 1000% days) / Needs Attention, with a count per option. 10 rows a page with prev / next.
-
-Verified: `tsc -p tsconfig.app.json` exit 0, `npm test` 4881 pass / 0 fail. Visual check NOT done (local preview needs a login + worker).
+Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
+`T-012-Hookka-mail-center - wei siang.pdf` (not in repo). Sheet row DEV-04 (Samuel). All 16
+requirements built, merged to `staging` (#655, #895, #896) and ported to `main` (#898).
 
 **Done (all 16), eight commits on `feat/t012-mail-center`:** R1-R4 `8a6e5f9d`, R5/R6/R11
 `210caab7`, R7/R8/R15 `7b17e7aa`, R9/R10 `b0357db5`, R12/R13 `eb40d744`, R14 `457b48b5`,
@@ -1570,6 +1563,65 @@ handlers). CODEBASE-MAP restamped.
 Storage upload were not exercised end-to-end — verify on staging: compose with Cc + Bcc to a
 colleague, reply-all from the colleague's box, "Read by", request + confirm an acknowledgement,
 Auto-sent attachment download for a post-deploy notice.
+
+**VERIFIED LIVE ON PRODUCTION 2026-10-16** (#898 deployed 04:56 UTC). Measured on
+`erp.hookka.com`, not inferred:
+
+- **Schema self-apply on the prod database: 539 ms, no error.** `mail_thread_reads`,
+  `mail_acknowledgements` and the three `email_messages` columns were created through
+  canary-898 (which talks to prod — `docs/CANARY-DEPLOY.md`) before merge, then used after.
+- **A real send carried several recipients, a copy and a blind copy correctly.** From
+  `kiansin@hookka.com` through Brevo to a Gmail and three `+` tags of it. On a **To**
+  recipient's delivered copy: `To: kiansin1998@gmail.com, kiansin1998+to2@gmail.com`, the Cc
+  present, and **no `Bcc` line anywhere** — confirmed in Gmail's "Show original" raw text and
+  corroborated by the DKIM and ARC `h=` lists, which enumerate `to` and `cc` and omit `bcc`.
+  The **Bcc** recipient's own copy showed its own `bcc:` line, which is correct behaviour.
+  SPF, DKIM (`hookka.com`) and DMARC all PASS.
+- **Brevo REWRITES our `Message-ID`.** Sent `<...@hookka.com>`, delivered as
+  `<35b74908-...@smtp-relay.sendinblue.com>`. This is exactly why an outbound row stores both
+  `message_id` (ours) and `provider_message_id` (theirs), and why `ingestInboundEmail` resolves
+  a thread by EITHER: a customer's reply quotes the provider's id. Without the dual match, PRD
+  finding 5 ("customer replies start new threads") would have reproduced. Now measured.
+- Per-person read ("Read by 1 of 4"), the org-chart picker, the Cc/Bcc compose UI, the
+  visibility panel, server-side paging and the four pre-send validation refusals were exercised
+  on staging and seen again on prod.
+
+**Production configuration applied 2026-10-16**, per the owner's ruling (*"Only management can
+see support and whole company"*): `mail_user_scope` = `company` for Lim Wei Siang, Nico Choong
+and Violet — **written BEFORE the merge**, so `support@hookka.com` and `hr@hookka.com` were
+never unreadable for a moment. Everyone else stays `personal`. IT accounts (Kiansin, Laphii,
+Zaim, yh, zulaikha) were deliberately NOT given `company`: R12's whole point is that visibility
+follows the job, not the role.
+
+**Open — operational, not code:**
+
+1. **`support@hookka.com` and `hr@hookka.com` have no assigned owner** (`assigned_user_id`
+   NULL) and the `email_address_access` matrix is empty (measured on prod). Management can read
+   them via `company`, but nobody is named responsible for either. Owner to decide.
+2. **`kiansin@hookka.com` has an `email_addresses` row but no mail ROUTE.** Mail sent to it
+   never reached the ERP after an hour. The row records who owns a mailbox; a Cloudflare Email
+   Routing rule is what makes it receive. The same will apply to every address R5 provisions for
+   a new starter — worth checking whether the catch-all actually covers them.
+3. Staging carries a `kiansin@hookka.com` row and the same three `company` rows, added while
+   testing. Harmless; drop them if staging is re-cloned from prod.
+
+**Docs note:** this entry's heading had briefly overwritten the 2026-09-25
+`/dashboard-experimental` entry below, from a cherry-pick conflict resolved the wrong way on
+`feat/t012-mail-center-main`. Restored here; that entry's items 1-6 and its `npm test 4881`
+line belong to it, not to T-012.
+
+---
+
+## 2026-09-25 — 🔵 /dashboard-experimental: Employees > Efficiency drills into one employee day by day (branch `feat/dashboard-efficiency-employee-drill`, stacked on #533)
+
+1. 🔵 The Efficiency sub-tab had no chart (only tables and the ranking). It now opens with the Daily efficiency chart (the Time & attendance one, extracted to `DailyEfficiencyCard` in `EmployeesInsights.tsx`; Time & attendance renders it unchanged).
+2. 🔵 With an employee picked, that chart shows the person for every day of the selected month: working vs production hours as bars and their own efficiency as the line, days off as empty slots. Driven by the existing `emp` filter in `EmployeesView.tsx`, so the Employee select, Reset and a new "← All employees" button on the chart header all return to the pool view. Data is the already-fetched `performance.byDay[].workers`; no API change. New pure helper `workerDays` in `dashboard-shared-lib.ts` (test in `tests/dashboard-period.test.mjs`).
+3. 🔵 Warning audit rows and Top/Bottom 5 rows are keyboard operable (Tab + Enter/Space) and scroll the chart into view when picked.
+4. 🔵 The warning audit is now its own `WarningAuditPanel` (shared `useRankedPeople` in `EmployeesInsights.tsx`). Efficiency keeps it; Time & attendance shows a COPY under the Attendance log, rendered through the log's new `below` slot so it follows the log's Today / Yesterday switch. That copy ignores the employee pick (dept filter only) so the list stays whole; a row click opens that person's log above it and highlights the row, a second click goes back.
+5. 🔵 The Time & attendance copy is now `DailyWarningAudit`: one row per person PER DAY outside the band (Employee, Role/Dept, Date, Production time, Prod hours, Efficiency, Status), highest first, so a single wild day (e.g. 0.4h clocked / 2.3h earned = 583%) shows even when the month average is inside the band. No minimum-minutes cut on this list. The over-reporting threshold is now 150% (was 110%) for both audits, and its status pill reads "Over 150%".
+6. 🔵 Daily warning audit: over-reporting is stepped, with status pills Over 150% / Over 300% / Over 500% / Over 1000% (pure `auditTier` + `OVER_TIERS` in `dashboard-shared-lib.ts`, test in `tests/dashboard-period.test.mjs`). A filter menu in the card header picks All / each Over step (cumulative, so Over 300% includes 500% and 1000% days) / Needs Attention, with a count per option. 10 rows a page with prev / next.
+
+Verified: `tsc -p tsconfig.app.json` exit 0, `npm test` 4881 pass / 0 fail. Visual check NOT done (local preview needs a login + worker).
 
 ---
 
