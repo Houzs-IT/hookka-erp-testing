@@ -69,6 +69,9 @@ test("the toolbar sits on the title row; one download: Excel and Print / PDF", (
 
 test("the PDF export takes a company line and falls back to a file when a pop-up is blocked", () => {
   const pdf = read("src/lib/export-report.ts");
-  assert.match(pdf, /doc\.text\(opts\?\.company \?\? "HOOKKA MANUFACTURING SDN BHD", 40, 38\);/, "other reports print what they printed before");
+  // Owner 2026-10-17: the legal name is HOOKKA INDUSTRIES SDN BHD on every report.
+  assert.match(pdf, /doc\.text\(opts\?\.company \?\? COMPANY\.HOOKKA\.name, 40, 38\);/);
+  assert.match(pdf, /import \{ COMPANY \} from "\.\/constants";/);
+  assert.doesNotMatch(pdf, /MANUFACTURING/);
   assert.match(pdf, /if \(window\.open\(doc\.output\("bloburl"\), "_blank"\)\) return;\n\s*\}\n\s*doc\.save\(filename\);/);
 });

@@ -22,7 +22,7 @@ import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type L
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
 // and a null the caller must refuse. See src/lib/parse-money.ts.
 import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/money-field";
-import { exportReportCsv, exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
+import { exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
 import { buildAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
@@ -4092,7 +4092,7 @@ function ARControlPanel({ company = "" }: { company?: string }) {
       .join("");
     w.document.write(`<html><head><title>Statement — ${stmt.customer.name}</title>
 <style>body{font-family:Segoe UI,sans-serif;font-size:12px;padding:24px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:4px 8px;text-align:left}h2{margin:0}p{color:#555}</style>
-</head><body><h2>HOOKKA MANUFACTURING SDN BHD</h2><p>Statement of Account — ${stmt.customer.name} (${stmt.customer.code})${stmtFrom || stmtTo ? ` · ${stmtFrom || "…"} → ${stmtTo || "…"}` : ""}</p>
+</head><body><h2>${COMPANY.HOOKKA.name}</h2><p>Statement of Account — ${stmt.customer.name} (${stmt.customer.code})${stmtFrom || stmtTo ? ` · ${stmtFrom || "…"} → ${stmtTo || "…"}` : ""}</p>
 <table><tr><th>Date</th><th>Ref</th><th>Type</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th><th style="text-align:right">Balance</th></tr>
 <tr><td colspan="5">Opening balance</td><td style="text-align:right">${formatCurrency(stmt.openingSen)}</td></tr>
 ${rows}
@@ -5217,9 +5217,6 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 // finance sheet paints it (tr[data-est], td[data-cell~="est"]; finance v2).
 const estTitle = (fromYm?: string) => `Estimated from ${fromYm ? drillMonthLabel(fromYm) : "last month"} — nothing recorded yet this month`;
 type PlLine = "all" | "sofa" | "bedframe";
-// The company line the P&L family prints (statement head and PDF default) —
-// kept until the owner confirms the legal name (finance v2, 2026-10-16).
-const PL_COMPANY = "HOOKKA MANUFACTURING SDN BHD";
 type PnlStmtRow = {
   kind: "group" | "line" | "total" | "grandtotal" | "gap";
   depth: number;
@@ -5430,8 +5427,6 @@ function CostStructureTab({ line }: { line: PlLine }) {
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
     { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, data?.fyLabel ?? "", buildExport(), { print: true }); } },
-    // CSV stays in the menu until the owner decides (2026-10-16).
-    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
   ];
 
   return (
@@ -5741,8 +5736,6 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Monthly P&L", buildExport()); } },
     { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Monthly P&L", exportSub, buildExport(), { print: true }); } },
-    // CSV stays in the menu until the owner decides (2026-10-16).
-    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
   ];
   const anchorOptions = useMemo(() => monthOptions(thisMonth, 18), [thisMonth]);
   const span = cols.length * 2 + 1;
@@ -5774,7 +5767,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       </ReportToolbar>
 
       <ReportFrame
-        company={PL_COMPANY}
+        company={COMPANY.HOOKKA.name}
         title={line === "all" ? "Monthly Profit-and-Loss (Overall)" : line === "sofa" ? "Monthly Profit-and-Loss — SOFA" : "Monthly Profit-and-Loss — BEDFRAME"}
         note={data ? `${data.fyLabel} · read-only · all amounts RM · % = of net sales` : "Loading…"}
         maxHeight="calc(100vh - 300px)"
@@ -5983,7 +5976,6 @@ function ExportButtons({ build, filenameBase, title, subtitle, pdfOpts, moneyFor
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <button onClick={() => exportReportCsv(`${filenameBase}.csv`, build(), moneyFormat ? { moneyFormat: true } : undefined)} className="rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1.5 text-xs text-[#4B5563] hover:bg-[#F0ECE9] cursor-pointer">CSV</button>
       <button onClick={() => exportReportXlsx(`${filenameBase}.xlsx`, title.slice(0, 28), build(), moneyFormat ? { moneyFormat: true } : undefined)} className="rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1.5 text-xs text-[#4B5563] hover:bg-[#F0ECE9] cursor-pointer">Excel</button>
       <button onClick={() => exportReportPdf(`${filenameBase}.pdf`, title, subtitle, build(), pdfOpts)} className="rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1.5 text-xs text-[#4B5563] hover:bg-[#F0ECE9] cursor-pointer">PDF</button>
     </div>
@@ -6213,8 +6205,6 @@ function PLStatementTab({ line }: { line: PlLine }) {
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
     { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, exportSub, buildExport(), { print: true }); } },
-    // CSV stays in the menu until the owner decides (2026-10-16).
-    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
   ];
 
   // The periods /pl-statement reads: 18 months, the calendar quarters and
@@ -6291,7 +6281,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
       )}
 
       <ReportFrame
-        company={PL_COMPANY}
+        company={COMPANY.HOOKKA.name}
         title={line === "all" ? "Manufacturing & Profit-and-Loss Account (Overall)" : line === "sofa" ? "Profit-and-Loss Account — SOFA" : "Profit-and-Loss Account — BEDFRAME"}
         note={[`Period: ${periodLabel(period, today)}`, data?.fyLabel, "% = of net sales"].filter(Boolean).join(" · ")}
         maxHeight="calc(100vh - 300px)"
@@ -9354,7 +9344,7 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
       .join("");
     const grandLine = `<p style="margin-top:16px;font-size:12px;font-weight:bold;text-align:right">TOTAL DR ${formatCurrency(grandDrSen)} &nbsp;·&nbsp; TOTAL CR ${formatCurrency(grandCrSen)} &nbsp;·&nbsp; Balance ${formatCurrency(grandBalSen)}</p>`;
     w.document.write(
-      `<html><head><title>${title}</title></head><body><h2>HOOKKA MANUFACTURING SDN BHD</h2><p>${title}${data.from || data.to ? ` · ${data.from || "…"} → ${data.to || "…"}` : ""}</p>${sections}${grandLine}</body></html>`,
+      `<html><head><title>${title}</title></head><body><h2>${COMPANY.HOOKKA.name}</h2><p>${title}${data.from || data.to ? ` · ${data.from || "…"} → ${data.to || "…"}` : ""}</p>${sections}${grandLine}</body></html>`,
     );
     w.document.close();
     w.print();
@@ -11262,7 +11252,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <CardContent className="p-4 space-y-2">
             <div className="text-sm font-semibold text-[#1F1D1B]">Print footer — payment details / terms on every voucher</div>
             <p className="text-[11px] text-[#6B7280]">Printed above the signature lines. Leave empty to print nothing. Line breaks are kept.</p>
-            <textarea value={footerDraft} onChange={(e) => setFooterDraft(e.target.value)} rows={4} className="w-full rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" placeholder={"e.g. Payment by bank transfer — Hong Leong Bank 123-456789-0 / All cheques payable to HOOKKA MANUFACTURING SDN BHD"} />
+            <textarea value={footerDraft} onChange={(e) => setFooterDraft(e.target.value)} rows={4} className="w-full rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" placeholder={"e.g. Payment by bank transfer — Hong Leong Bank 123-456789-0 / All cheques payable to HOOKKA INDUSTRIES SDN BHD"} />
             <div className="flex gap-2">
               <Button variant="primary" size="sm" onClick={() => void saveFooter()}>Save</Button>
               <Button variant="outline" size="sm" onClick={() => setFooterOpen(false)}>Cancel</Button>
@@ -16574,6 +16564,11 @@ function BalanceSheetTab() {
   // Accounts opened in the inline drill, keyed by period + company + account
   // so a new month starts with everything closed.
   const [bsDrillOpen, setBsDrillOpen] = useState<Set<string>>(new Set());
+  // Finance v2 (owner 2026-10-17): DETAIL L1 totals only, L2 sections, L3 every
+  // account (the default), L4 every account with its ledger lines; a heading
+  // click folds or opens one section.
+  const [level, setLevel] = useState(3);
+  const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (!edit) return;
     fetch("/api/accounting/bs/section-map")
@@ -16608,86 +16603,114 @@ function BalanceSheetTab() {
 
   const totalCurrentAssets = currentAssets.reduce((s, e) => s + e.balance, 0);
   const totalFixedAssets = fixedAssets.reduce((s, e) => s + e.balance, 0);
-  const totalAssets = totalCurrentAssets + totalFixedAssets;
   const totalCurrentLiab = currentLiabilities.reduce((s, e) => s + e.balance, 0);
   const totalLongTermLiab = longTermLiabilities.reduce((s, e) => s + e.balance, 0);
-  const totalLiabilities = totalCurrentLiab + totalLongTermLiab;
   const totalEquity = equityItems.reduce((s, e) => s + e.balance, 0);
-  const totalLiabEquity = totalLiabilities + totalEquity;
-  const sheetDiff = totalAssets - totalLiabEquity;
+  // The design's sheet (owner 2026-10-17 「可以」): Fixed Assets, then Current
+  // Assets less Current Liabilities = Net Current Assets, financed by Equity and
+  // Non-Current Liabilities. Same entries, same sections — only the arrangement
+  // and the two totals compared change (left − right = assets − liabilities − equity).
+  const netCurrent = totalCurrentAssets - totalCurrentLiab;
+  const leftTotal = totalFixedAssets + netCurrent;
+  const rightTotal = totalEquity + totalLongTermLiab;
+  const sheetDiff = leftTotal - rightTotal;
 
-  // Finance v2: the same sections and order (the new layout waits for the
-  // owner, 2026-10-16), in the report look.
+  // A section: its heading (folds; a drop target while editing), its accounts,
+  // its total. At L1 only the total shows.
   const renderBSSection = (
+    key: string,
     title: string,
     entries: BalanceSheetEntry[],
     total: number,
     section: string,
-  ) => (
-    <>
-      <tr data-row="grp" data-fin-drop={edit && dragCode && dragOverSec === section ? "" : undefined}
-        onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
-        onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
-        onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
-        <td colSpan={3} style={{ paddingLeft: 26 }}>{title}</td>
-      </tr>
-      {entries.map((e) => {
-        const draggable = edit && e.accountCode !== "NP-CURRENT";
-        // The unclosed-earnings line is the P&L's result, not an account.
-        const canDrill = !edit && e.accountCode !== "NP-CURRENT";
-        const drillKey = `${period}|${company}|${e.accountCode}`;
-        const drilled = canDrill && bsDrillOpen.has(drillKey);
-        return (
-          <Fragment key={e.id}>
-          <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
-            draggable={draggable}
-            onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
-            onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
-            <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode}</td>
-            <td style={{ paddingLeft: 40 }}>
-              {canDrill ? (
-                <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
-                  onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                  <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
-                </button>
-              ) : e.accountName}
-            </td>
-            <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
+  ) => {
+    const totalLabel = `Total ${title.replace("Less: ", "")}`;
+    if (level < 2 && !edit) {
+      return (
+        <tr data-row="sub">
+          <td />
+          <td style={{ paddingLeft: 26 }}>{totalLabel}</td>
+          <td data-cell="num split" data-neg={total < 0 ? "" : undefined}>{fmtAmt(total)}</td>
+        </tr>
+      );
+    }
+    const open = edit || (openSec[key] !== undefined ? openSec[key] : level >= 3);
+    return (
+      <>
+        <tr data-row="grp" data-fin-drop={edit && dragCode && dragOverSec === section ? "" : undefined}
+          className={!edit ? "cursor-pointer select-none" : undefined}
+          title={!edit ? (open ? "Click to fold" : "Click to open") : undefined}
+          onClick={!edit ? () => setOpenSec({ ...openSec, [key]: !open }) : undefined}
+          onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
+          onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
+          onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
+          <td colSpan={2} style={{ paddingLeft: 14 }}>
+            {!edit && <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{open ? "▾" : "▸"}</span>}
+            {title}{edit && entries.length === 0 ? "  (empty — drop here)" : ""}
+          </td>
+          <td data-cell="num split" data-neg={!open && total < 0 ? "" : undefined}>{open ? "" : fmtAmt(total)}</td>
+        </tr>
+        {open && entries.map((e) => {
+          const draggable = edit && e.accountCode !== "NP-CURRENT";
+          // The unclosed-earnings line is the P&L's result, not an account.
+          const canDrill = !edit && e.accountCode !== "NP-CURRENT";
+          const drillKey = `${period}|${company}|${e.accountCode}`;
+          // L4 opens every account's ledger lines; a click then folds one.
+          const drilled = canDrill && (level >= 4 ? !bsDrillOpen.has(drillKey) : bsDrillOpen.has(drillKey));
+          return (
+            <Fragment key={e.id}>
+            <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
+              draggable={draggable}
+              onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
+              onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
+              <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
+              <td style={{ paddingLeft: 32 }}>
+                {canDrill ? (
+                  <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
+                    onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                    <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
+                  </button>
+                ) : e.accountName}
+              </td>
+              <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
+            </tr>
+            {drilled && (
+              <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
+            )}
+            </Fragment>
+          );
+        })}
+        {open && (
+          <tr data-row="sub">
+            <td />
+            <td style={{ paddingLeft: 14 }}>{totalLabel}</td>
+            <td data-cell="num split" data-neg={total < 0 ? "" : undefined}>{fmtAmt(total)}</td>
           </tr>
-          {drilled && (
-            <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
-          )}
-          </Fragment>
-        );
-      })}
-      <tr data-row="sub">
-        <td />
-        <td style={{ paddingLeft: 26 }}>Total {title}</td>
-        <td data-cell="num split" data-neg={total < 0 ? "" : undefined}>{fmtAmt(total)}</td>
-      </tr>
-    </>
-  );
+        )}
+      </>
+    );
+  };
 
-  // The download carries the sheet as shown.
+  // The download carries the sheet in the same arrangement, every account.
   const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
     const aoa: Aoa = [["Code", "Account", "Amount (RM)"]];
     const kinds: PdfRowKind[] = [];
     const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
     const sec = (title: string, entries: BalanceSheetEntry[], total: number) => {
       push(["", title, ""], "section");
-      for (const e of entries) push([e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
-      push(["", `Total ${title}`, total / 100], "subtotal");
+      for (const e of entries) push([e.accountCode === "NP-CURRENT" ? "" : e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+      push(["", `Total ${title.replace("Less: ", "")}`, total / 100], "subtotal");
     };
-    push(["", "ASSETS", ""], "section");
-    sec("Current Assets", currentAssets, totalCurrentAssets);
     sec("Fixed Assets (Net)", fixedAssets, totalFixedAssets);
-    push(["", "TOTAL ASSETS", totalAssets / 100], "grand");
-    push(["", "LIABILITIES", ""], "section");
-    sec("Current Liabilities", currentLiabilities, totalCurrentLiab);
-    sec("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab);
-    push(["", "Total Liabilities", totalLiabilities / 100], "subtotal");
+    push(["", "CURRENT ASSETS LESS CURRENT LIABILITIES", ""], "section");
+    sec("Current Assets", currentAssets, totalCurrentAssets);
+    sec("Less: Current Liabilities", currentLiabilities, totalCurrentLiab);
+    push(["", "Net Current Assets", netCurrent / 100], "subtotal");
+    push(["", "FIXED ASSETS + CURRENT ASSETS − CURRENT LIABILITIES", leftTotal / 100], "grand");
+    push(["", "FINANCED BY", ""], "section");
     sec("Equity", equityItems, totalEquity);
-    push(["", "TOTAL LIABILITIES + EQUITY", totalLiabEquity / 100], "grand");
+    sec("Non-Current Liabilities", longTermLiabilities, totalLongTermLiab);
+    push(["", "TOTAL EQUITY + NON-CURRENT LIABILITIES", rightTotal / 100], "grand");
     return { aoa, kinds };
   };
   const fileBase = `balance-sheet-${period}${company ? `-${company}` : ""}`;
@@ -16708,8 +16731,16 @@ function BalanceSheetTab() {
       <FinanceTitleActions>
         <ReportToolbar>
           <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
-          <PeriodStepper value={period} options={periodOpts} onChange={setPeriod} today={today} />
+          <PeriodStepper value={period} options={periodOpts} onChange={(p) => { setPeriod(p); setBsDrillOpen(new Set()); }} today={today} />
           <EditLayoutToggle on={edit} onToggle={() => setEdit((v) => !v)} />
+          {!edit && (
+            <DetailLevels
+              levels={[1, 2, 3, 4]}
+              value={level}
+              onChange={(L) => { setLevel(L); setOpenSec({}); setBsDrillOpen(new Set()); }}
+              tips={{ 1: "Totals only", 2: "Sections", 3: "Every account", 4: "Every account with its ledger lines" }}
+            />
+          )}
           <DownloadMenu items={downloads} />
         </ReportToolbar>
       </FinanceTitleActions>
@@ -16722,17 +16753,17 @@ function BalanceSheetTab() {
       {/* Group P&L / net-worth by company — only on the consolidated (group)
           view; picking a single company hides it (you're already scoped). */}
       {company === "" && <GroupByCompanyCard period={period} options={companyOptions} />}
-      {/* Balance check: assets against liabilities + equity. */}
+      {/* Balance check: what the business holds against how it is financed. */}
       <CheckStrip ok={sheetDiff === 0} label={sheetDiff === 0 ? "Balanced ✓" : checkLabel(sheetDiff)}>
-        <span>Total Assets <b className="tabular-nums">{fmtAmt(totalAssets)}</b></span>
+        <span>Fixed Assets + Current Assets − Current Liabilities <b className="tabular-nums">{fmtAmt(leftTotal)}</b></span>
         <span className="text-[#6B7280]">=</span>
-        <span>Liabilities + Equity <b className="tabular-nums">{fmtAmt(totalLiabEquity)}</b></span>
+        <span>Total Equity + Non-Current Liabilities <b className="tabular-nums">{fmtAmt(rightTotal)}</b></span>
       </CheckStrip>
 
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={`Balance Sheet ${asAtLabel}`}
-        note="All figures RM · click an account to see the ledger lines behind its balance"
+        note="All figures RM · brackets = negative · stock = the P&L's closing stock · click an account to see the ledger lines behind it"
       >
         <table data-col-resize="first" data-fin-report className="min-w-[560px]">
           <thead>
@@ -16743,24 +16774,24 @@ function BalanceSheetTab() {
             </tr>
           </thead>
           <tbody>
-            <tr data-row="sec"><td colSpan={3}>ASSETS</td></tr>
-            {renderBSSection("Current Assets", currentAssets, totalCurrentAssets, "CURRENT_ASSET")}
-            {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, "FIXED_ASSET")}
+            {renderBSSection("FA", "Fixed Assets (Net)", fixedAssets, totalFixedAssets, "FIXED_ASSET")}
+            <tr data-row="sec"><td colSpan={3}>CURRENT ASSETS LESS CURRENT LIABILITIES</td></tr>
+            {renderBSSection("CA", "Current Assets", currentAssets, totalCurrentAssets, "CURRENT_ASSET")}
+            {renderBSSection("CL", "Less: Current Liabilities", currentLiabilities, totalCurrentLiab, "CURRENT_LIABILITY")}
             <tr data-row="res">
-              <td colSpan={2}>TOTAL ASSETS</td>
-              <td data-cell="num split">{fmtAmt(totalAssets)}</td>
+              <td colSpan={2}>Net Current Assets</td>
+              <td data-cell="num split" data-neg={netCurrent < 0 ? "" : undefined}>{fmtAmt(netCurrent)}</td>
             </tr>
-            <tr data-row="sec"><td colSpan={3}>LIABILITIES</td></tr>
-            {renderBSSection("Current Liabilities", currentLiabilities, totalCurrentLiab, "CURRENT_LIABILITY")}
-            {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, "LONG_TERM_LIABILITY")}
-            <tr data-row="sub">
-              <td colSpan={2}>Total Liabilities</td>
-              <td data-cell="num split">{fmtAmt(totalLiabilities)}</td>
+            <tr data-row="fin">
+              <td colSpan={2}>FIXED ASSETS + CURRENT ASSETS − CURRENT LIABILITIES</td>
+              <td data-cell="num split" data-neg={leftTotal < 0 ? "" : undefined}>{fmtAmt(leftTotal)}</td>
             </tr>
-            {renderBSSection("Equity", equityItems, totalEquity, "EQUITY")}
-            <tr data-row="res" data-fin-double="">
-              <td colSpan={2}>TOTAL LIABILITIES + EQUITY</td>
-              <td data-cell="num split">{fmtAmt(totalLiabEquity)}</td>
+            <tr data-row="sec"><td colSpan={3}>FINANCED BY</td></tr>
+            {renderBSSection("EQ", "Equity", equityItems, totalEquity, "EQUITY")}
+            {renderBSSection("LL", "Non-Current Liabilities", longTermLiabilities, totalLongTermLiab, "LONG_TERM_LIABILITY")}
+            <tr data-row="fin">
+              <td colSpan={2}>TOTAL EQUITY + NON-CURRENT LIABILITIES</td>
+              <td data-cell="num split" data-neg={rightTotal < 0 ? "" : undefined}>{fmtAmt(rightTotal)}</td>
             </tr>
           </tbody>
         </table>
@@ -17506,8 +17537,6 @@ function CashFlowTab() {
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Statement of Cash Flow", buildExport()); } },
     { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}`, buildExport(), { print: true }); } },
-    // CSV stays in the menu until the owner decides (2026-10-16).
-    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
   ];
 
   return (
@@ -17573,7 +17602,7 @@ function CashFlowTab() {
       {/* The statement's letterhead (owner 2026-08-27 排版 pass), now the v2
           frame; the company line is what the statement has printed so far. */}
       <ReportFrame
-        company="HOOKKA INDUSTRIES SDN. BHD."
+        company={COMPANY.HOOKKA.name}
         title="Statement Of Cash Flow"
         note={`Prepared on cash basis · all figures RM · Accumulated + trailing 12 months · view ${periodLabel(period, "")}`}
         maxHeight="calc(100vh - 280px)"

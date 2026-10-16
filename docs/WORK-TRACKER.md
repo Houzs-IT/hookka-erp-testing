@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: finance v2 plan 4 part C (#933) prod-verified; the owner's three answers added as a new entry.
 > **Last verified: 2026-10-17**: finance v2 plan 4 part B (#932) prod-verified; part C (Stock Take, Cash Book) added to its entry.
 > **Last verified: 2026-10-17**: finance v2 plan 4 part A (#931) prod-verified; part B (Labour, Fixed Assets) added to its entry.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-monthly` (to `main`) added below (its entry is the newest).
@@ -197,11 +198,17 @@ design/mobile-home-dashboard
 
 
 
+## 2026-10-17 — 🔵 Finance & Forecasting v2: the owner's three answers (「1. Hookka industries sdn Bhd 2. 可以 3. 可以」)(branch `feat/finance-v2-owner-answers` → `main`)
+
+1. 🔵 Every report head and PDF prints HOOKKA INDUSTRIES SDN BHD (`COMPANY.HOOKKA.name`): the P&L family, Cash Flow, the PDF default, the customer statement and party-ledger prints.
+2. 🔵 Balance Sheet in the design's arrangement (Fixed Assets; Current Assets less Current Liabilities = Net Current Assets; Financed By), the check comparing the two sides, DETAIL L1–L4; same entries and sections, drag and drill unchanged.
+3. 🔵 CSV removed from the finance downloads (Excel and PDF only).
+
 ## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 4: Monthly group (branch `feat/finance-v2-monthly` → `main`; shipped in parts)
 
 1. ✅ Part A (#931 8721544c) — KPI cards + status banner (shared); Self-check as one list with result pills, items under the row and fix links, under a "N of M OK" card; Corrections on DataGrid under a count card, last 90 days by default or by month. Same reads. Prod check (read-only): Self-check shows its 7 checks with the card's OK count matching the pills, the Trial balance line agrees with the API's balanced flag, items open under a row, Run again sits on the title row; Corrections lists exactly the API's rows for the last 90 days and for the running month, its total row equals an independent sum, and the card's per-kind counts add up to the row count.
 2. ✅ Part B (#932 d7245e08) — Labour (title-row month / map / Check in Payroll / the same Post–Unpost; banner and cards from the preview) and Fixed Assets (title-row month / Add Asset / the same Post / download; the preview loads with the month; banner and cards; run and register grouped by asset account with subtotals). Prod check (read-only, nothing pressed): Labour's running month reads Not posted (amber) with the card equal to the preview's total and the department list equal to the API's departments and total; the previous, posted month reads Posted (green) with its credit accounts and offers Unpost. Fixed Assets: the register on prod is empty, so the page reads No assets with no Post button — the grouped register itself is UNMEASURED on prod (no rows to show).
-3. 🔵 Part C — Stock Take (title-row month + its four buttons, v2 tables) and Cash Book (title-row account / month / import / auto-match, four cards from the reconciliation, v2 tables; the reconciliation card untouched).
+3. ✅ Part C (#933 2be2a76a) — Stock Take (title-row month + its four buttons, v2 tables) and Cash Book (title-row account / month / import / auto-match, four cards from the reconciliation, v2 tables; the reconciliation card untouched). Prod check (read-only, nothing pressed): Cash Book on a finalised month — the four cards equal the reconciliation card's own figures and the pill reads Finalised · Tally ✓ · all recorded; Stock Take — month stepper and its four buttons on the title row, the month card names the month, the group list in the v2 look.
 4. ⚪ Close-out. Every posting / matching / saving button keeps its behaviour; prod checks never press them.
 
 ## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 3: Reports (branch `feat/finance-v2-reports` → `main`; shipped in parts)
