@@ -291,9 +291,22 @@ export async function sendEmailViaBrevo(
 //
 // API doc: https://docs.mailslurp.com/api/
 // Send:    POST https://api.mailslurp.com/inboxes/{inboxId}  (x-api-key header)
-//          { to: [..], subject, body, isHTML, attachments?: [attachmentId] }
+//          { to: [..], cc: [..], bcc: [..], replyTo, customHeaders,
+//            subject, body, isHTML, attachments?: [attachmentId] }
 // Attach:  POST https://api.mailslurp.com/attachments
 //          { base64Contents, contentType, filename } -> [attachmentId]
+//
+// Field names verified 2026-10-16 against the SendEmailOptions model in the
+// mailslurp-client SDK (dist/generated/models/SendEmailOptions.d.ts): `to`,
+// `cc` and `bcc` are string arrays, `replyTo` a string, and custom RFC
+// headers ride `customHeaders` as a flat string map.
+//
+// T-012 note: this sender was written (2026-09-29) while SendEmailArgs.to was
+// a single string, so it spelled `to: [args.to]`. `to` is now
+// `string | string[]`, which that spelling would nest into [[...]] — hence
+// toRecipientList. Copies and threading headers were dropped here entirely,
+// which made a staging send look like cc/bcc were broken when only this path
+// was. Nothing about this reaches production: Brevo and Resend take priority.
 // ---------------------------------------------------------------------------
 export async function sendEmailViaMailSlurp(
   apiKey: string,
@@ -331,10 +344,18 @@ export async function sendEmailViaMailSlurp(
       method: "POST",
       headers,
       body: JSON.stringify({
-        to: [args.to],
+        to: toRecipientList(args.to),
         subject: args.subject,
         body: args.html,
         isHTML: true,
+        // Each omitted when empty so a plain transactional send keeps the
+        // exact payload it had before copies existed.
+        ...(args.cc && args.cc.length > 0 ? { cc: args.cc } : {}),
+        ...(args.bcc && args.bcc.length > 0 ? { bcc: args.bcc } : {}),
+        ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+        ...(args.headers && Object.keys(args.headers).length > 0
+          ? { customHeaders: args.headers }
+          : {}),
         ...(attachmentIds.length > 0 ? { attachments: attachmentIds } : {}),
       }),
     });

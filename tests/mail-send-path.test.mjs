@@ -59,6 +59,20 @@ test("Resend and Brevo both forward cc / bcc / reply-to / headers", () => {
   assert.match(brevo, /headers: args\.headers/);
 });
 
+test("the MailSlurp path carries the same recipients and headers (staging only)", () => {
+  // Written while `to` was a single string, it spelled `to: [args.to]` --
+  // which nests [[...]] now that `to` is string | string[] -- and dropped
+  // cc / bcc / headers, so a staging test of copies tested nothing.
+  const ms = fn(email, "sendEmailViaMailSlurp");
+  assert.match(ms, /to: toRecipientList\(args\.to\)/);
+  assert.doesNotMatch(ms, /to: \[args\.to\]/);
+  assert.match(ms, /\{ cc: args\.cc \}/);
+  assert.match(ms, /\{ bcc: args\.bcc \}/);
+  assert.match(ms, /replyTo: args\.replyTo/);
+  // Custom RFC headers ride customHeaders on this provider.
+  assert.match(ms, /customHeaders: args\.headers/);
+});
+
 test("compose stamps a Message-ID and stores it on the message row", () => {
   const h = handler("post", "/compose");
   assert.match(h, /const messageId = newMessageId\(\)/);
