@@ -43,6 +43,14 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # main → "production", staging → "staging" in the repo home page's
+    # "Deployments" sidebar: in progress while it builds/deploys, then Active /
+    # Failed (no URL shown, on purpose). Only those two branches are recorded
+    # (deployment: false otherwise) — PR canary / other branch runs still build
+    # + deploy exactly as before.
+    environment:
+      name: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
+      deployment: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' }}
     permissions:
       contents: read
       deployments: write
@@ -64,11 +72,17 @@ jobs:
       # those are triaged, lint as a deploy gate would fail every PR. Sprint
       # 6 flipped bundle-size to blocking (above) but kept lint non-blocking
       # — to be promoted once the known errors are cleared.
+      #
+      # Lint and tests are skipped on `staging` pushes (~4 of ~6.5 minutes,
+      # measured 2026-09-28). Staging is a preview; the same code gets both
+      # again on its PR into main, which is the gate that matters.
       - name: Lint (app)
+        if: github.ref != 'refs/heads/staging'
         run: npm run lint:app
         continue-on-error: true
 
       - run: npm test
+        if: github.ref != 'refs/heads/staging'
 
       # Strict build: runs `typecheck:app && vite build`. The typecheck gate
       # is BLOCKING — any TS error fails the deploy. Paired with `strict: true`
@@ -122,7 +136,21 @@ jobs:
           restore-keys: |
             asset-history-${{ github.ref_name }}-
 
-      - run: npm run build:strict
+      # /staging-notes page data: the latest merged PRs labelled `staging`,
+      # read from the GitHub API. Goes into public/ so vite copies it into
+      # dist. STAGING ONLY: this step and the page live on `staging` and are
+      # never PR'd into main.
+      - name: Staging patch notes
+        if: github.ref == 'refs/heads/staging'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/gen-staging-notes.mjs
+
+      # Staging skips the typecheck (63s of this step's 68s, measured
+      # 2026-09-28); vite still builds TS with errors, and the PR into main
+      # runs build:strict before anything reaches prod.
+      - run: npm run build${{ github.ref != 'refs/heads/staging' && ':strict' || '' }}
         env:
           VITE_SENTRY_DSN: https://0b81e5f99dab7b31f74514a5bb9f6f62@o4511302465814528.ingest.us.sentry.io/4511302481346560
 
@@ -226,8 +254,9 @@ jobs:
       #
       # Non-blocking — this reports, it does not gate. A false alarm here must
       # never be able to hold up a deploy.
+      # Skipped on staging (it is mostly a 20s sleep); main still runs it.
       - name: Verify the previous build's entry chunk still resolves
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref != 'refs/heads/staging'
         continue-on-error: true
         run: |
           set -u

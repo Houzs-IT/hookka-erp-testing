@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useUrlState, useUrlStateNumber } from "@/lib/use-url-state";
-import { useSessionState } from "@/lib/use-session-state";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
+import { useUrlState, useUrlStateNumber, useUrlBatch } from "@/lib/use-url-state";
+import { pageSlice } from "@/lib/delivery-list-filters";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { askCreditOverride, isCreditBlock } from "./credit-override";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +50,7 @@ import PrintDO from "@/components/delivery/print-do";
 import type { PrintDOData, PrintMode } from "@/components/delivery/print-do";
 import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
 import { fetchJson, FetchJsonError } from "@/lib/fetch-json";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { mutationWithData, MutationResultSchema } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
@@ -551,6 +554,25 @@ const TAB_DO_STATUSES: Record<string, DOStatus[]> = {
 // PO-based tabs (show production orders, not delivery orders)
 const PO_TABS = new Set(["planning", "pending_delivery"]);
 
+// The DO rows each tab fetches (2026-09-22). A stage tab pages through ITS OWN
+// statuses, server-side, LIST_PAGE_SIZE at a time (the PO tabs page the same
+// size client-side — see pageSlice). Packing List takes the newest
+// 200 LIVE DOs — the only ones its PL-level bulk buttons can move
+// (runPlBulkTransition: DRAFT → LOADED, LOADED/IN_TRANSIT → DELIVERED). The PO
+// tabs show production orders, so they fetch no DOs at all (null = no request).
+// Before this, every tab read the newest 200 DOs of EVERY status and filtered
+// them in the browser: "Delivered" showed only the delivered rows that fell in
+// that window, and "Page 1 / 3" paged across all statuses at once.
+const LIST_PAGE_SIZE = 50;
+function doBrowseUrl(tab: string, page: number): string | null {
+  if (tab === "packing_list") {
+    return "/api/delivery-orders?page=1&limit=200&status=DRAFT,LOADED,IN_TRANSIT";
+  }
+  const statuses = TAB_DO_STATUSES[tab];
+  if (!statuses) return null;
+  return `/api/delivery-orders?page=${page}&limit=${LIST_PAGE_SIZE}&status=${statuses.join(",")}`;
+}
+
 // Identifier keys that must stay searchable on every delivery grid even when
 // the operator hides that column via the "Columns" menu. Passed to DataGrid's
 // `alwaysSearchKeys` so a DO/PO is always findable by SO no., customer
@@ -893,9 +915,18 @@ export default function DeliveryPage() {
   const [searchResults, setSearchResults] = useState<DeliveryOrderRow[]>([]);
   const [planningPOs, setPlanningPOs] = useState<ReadyPORow[]>([]);
   const [readyPOs, setReadyPOs] = useState<ReadyPORow[]>([]);
-  const [loading, setLoading] = useState(true);
   // Active inner tab — URL-synced for the same reason as pageTab above.
-  const [activeTab, setActiveTab] = useUrlState<string>("tab", "planning");
+  const [activeTab] = useUrlState<string>("tab", "planning");
+  const setUrl = useUrlBatch();
+  // The ONLY way this page changes tab: tab + page reset in ONE URL write.
+  // The old shape — setActiveTab, then a `setPage(1)` effect on activeTab —
+  // fired a second navigation, and with it a second full render of this
+  // 7k-line page, on every click (see useUrlBatch for the race it also risks).
+  // "planning" is the default and lives in the URL as no param at all.
+  const goTab = useCallback(
+    (key: string) => setUrl({ tab: key === "planning" ? null : key, page: null }),
+    [setUrl],
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [detailDO, setDetailDO] = useState<DeliveryOrderRow | null>(null);
   // Per-line customer PO / SO no. for the open DO. The /api/sales-orders
@@ -942,6 +973,8 @@ export default function DeliveryPage() {
   // with a non-empty selection).
   const [plFirstGroups, setPlFirstGroups] = useState<PlFirstPreviewGroup[] | null>(null);
   const [plFirstPreviewError, setPlFirstPreviewError] = useState<string | null>(null);
+  // Credit blocks this user may override (BUG-34) — shown, not blocking.
+  const [plFirstCreditWarnings, setPlFirstCreditWarnings] = useState<string[]>([]);
   const [plFirstCreating, setPlFirstCreating] = useState(false);
   // When set, the packing-list dialog is in EDIT mode (re-assign driver/lorry/
   // provider on an existing list) rather than CREATE mode. pendingDriverName
@@ -975,6 +1008,10 @@ export default function DeliveryPage() {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [selectedReadyPOs, setSelectedReadyPOs] = useState<Set<string>>(new Set());
   const [creatingDOFromPO, setCreatingDOFromPO] = useState(false);
+  // T-006 R10 — the DO create route is wrapped in withIdempotency server-side;
+  // without this header that wrapper is a no-op. A create that times out at
+  // fetchJson's 15s mark may already have shipped the goods on paper.
+  const createDoIdem = useIdempotencyKey();
   const [dragDropIdx, setDragDropIdx] = useState<number | null>(null);
 
   // ----- Detail Edit mode -----
@@ -1093,6 +1130,8 @@ export default function DeliveryPage() {
   // editDialogDrivers can finish the resolve. Cleared when match found or
   // when the user closes the edit dialog.
   const pendingDriverNameToResolveRef = useRef<string>("");
+  // The SO lookup the effect below builds, kept for the all-pages Export.
+  const soRefMapRef = useRef<Map<string, { customerSO: string; reference: string; customerPO: string }>>(new Map());
 
   // ----- Customer hub lookup -----
   const [customersData, setCustomersData] = useState<Customer[]>([]);
@@ -1122,12 +1161,10 @@ export default function DeliveryPage() {
   // edits: it commits only on an explicit Save). Nothing shared at this level.
 
   // ---------- Pagination (DO list only) ----------
-  // Server-side pagination for the DO fetch; PO-based tabs (planning,
-  // pending_delivery) and the other sibling fetches (POs, SOs, customers)
-  // remain full-set and unaffected.
-  // 200 — same rationale as sales/invoices: big enough that daily working
-  // set fits on page 1 so search works normally.
-  const PAGE_SIZE = 200;
+  // Server-side, per stage tab (doBrowseUrl): 50 rows of THAT tab's statuses
+  // per page. PO-based tabs (planning, pending_delivery) and the sibling
+  // fetches (POs, SOs, customers) remain full-set and unaffected. The page is
+  // reset to 1 by goTab, in the same URL write as the tab.
   const [page, setPage] = useUrlStateNumber("page", 1);
   // Mirrors the DO grid's global search box (fed via DataGrid onSearchChange).
   // Drives cross-status search: while non-empty, filteredOrders spans every
@@ -1141,17 +1178,18 @@ export default function DeliveryPage() {
   const [search, setSearch] = useState("");
 
   // ---------- Fetch ----------
-  // Browse load — ALWAYS paginated, NEVER search-filtered. This is the set the
-  // page derives from: linkedPOIds (→ Pending Delivery / readyPOs), deliveredMTD,
-  // tab counts. It must stay whole regardless of search, or POs already on
-  // other DOs wrongly resurface as "ready" the moment you type a search term.
+  // Browse load — the DO rows the CURRENT tab shows and nothing more (see
+  // doBrowseUrl). NEVER search-filtered: search has its own fetch below.
+  // Nothing whole-table is derived from this page of rows any more — counts,
+  // tab money and Delivered (MTD) come from /stats, the already-on-a-DO set
+  // from /linked-po-ids.
   const { data: doRaw, loading: doLoading, refresh: refreshDOs } = useCachedJson<{
     success?: boolean;
     data?: DeliveryOrder[];
     page?: number;
     limit?: number;
     total?: number;
-  }>(`/api/delivery-orders?page=${page}&limit=${PAGE_SIZE}`);
+  }>(doBrowseUrl(activeTab, page));
   // Search load — SEPARATE from the browse load so it never disturbs the
   // derivations above. When the operator is searching, hit the server with the
   // term (high limit) so matches come from the WHOLE table across every status,
@@ -1175,34 +1213,44 @@ export default function DeliveryPage() {
     byStatus?: Record<string, number>;
     valueByStatus?: Record<string, number>;
     total?: number;
+    deliveredMtd?: number;
   }>("/api/delivery-orders/stats");
+  // Per-tab: the server counts only the statuses this tab fetches.
   const totalDOsServer = doRaw?.total ?? (doRaw?.data?.length ?? 0);
-  const totalPages = Math.max(1, Math.ceil(totalDOsServer / PAGE_SIZE));
 
-  // Reset to page 1 when the active tab changes.
+  // Scroll position restoration — keyed per active tab so each tab remembers
+  // its own scroll position independently. sessionStorage directly, NOT React
+  // state: holding window.scrollY in state re-rendered this whole page on
+  // every scroll event, and each of those urgent updates interrupted and
+  // restarted the (transition-scheduled) tab-switch render — the "click a tab
+  // and nothing happens" feel. Same key as the old useSessionState, so saved
+  // positions carry over.
   useEffect(() => {
-    setPage(1);
-    // setPage is stable (memoized inside useUrlStateNumber).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
-
-  // Scroll position restoration — keyed per active tab so each tab
-  // remembers its own scroll position independently.
-  const [savedScroll, setSavedScroll] = useSessionState<number>(
-    `delivery:scrollY:${pageTab}:${activeTab}`,
-    0,
-  );
-  useEffect(() => {
-    if (savedScroll > 0 && window.scrollY === 0) {
-      window.scrollTo(0, savedScroll);
+    const key = `hookka:ss:delivery:scrollY:${pageTab}:${activeTab}`;
+    let saved = 0;
+    try {
+      saved = Number(sessionStorage.getItem(key)) || 0;
+    } catch {
+      /* storage disabled — restore is best-effort */
     }
+    if (saved > 0 && window.scrollY === 0) window.scrollTo(0, saved);
+    let raf = 0;
     const onScroll = () => {
-      setSavedScroll(window.scrollY);
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        try {
+          sessionStorage.setItem(key, String(window.scrollY));
+        } catch {
+          /* quota / disabled — best-effort */
+        }
+      });
     };
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-    // savedScroll is read on mount only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [pageTab, activeTab]);
   // 2026-05-12 perf: fields=minimal drops piece_pics + ~20 unused PO fields
   // from the response. include=jobCards keeps the per-PO JC array (DO page
@@ -1215,6 +1263,32 @@ export default function DeliveryPage() {
   // /api/production-orders?fields=minimal&include=jobCards payload just to derive
   // these two lists — it fetches the small { ready, planning } result instead.
   const { data: rpRaw, loading: poLoading, refresh: refreshPOs } = useCachedJson<{ success?: boolean; ready?: ReadyPORow[]; planning?: ReadyPORow[] }>("/api/delivery-orders/ready-planning");
+  // What "loading" means on this page (2026-09-22, BUG-2026-09-22-004): the
+  // rows THIS tab shows have not arrived yet. It used to be ANY of five fetches
+  // (DOs, ready-planning, sales orders, customers, products) — so one slow
+  // /api/customers painted skeletons over a Planning grid that already held all
+  // 335 rows, and a 504 there kept the whole page blank until the 30 s abort.
+  // SO / customer / product data only ENRICH rows (refs, hub, m³); they may
+  // land late without hiding the grid. The summary cards gate on /stats.
+  const loading = PO_TABS.has(activeTab)
+    ? poLoading
+    : activeTab === "packing_list"
+      ? false
+      : doLoading;
+  // Planning / Pending Delivery page client-side: the rows are one server
+  // payload already in memory, so a page is a slice (owner 2026-09-22: "335 of
+  // 335 records" read as "loads everything every time"). Same 50-row page and
+  // the same footer as the DO tabs; bypassed while searching, so a term always
+  // spans the whole list (search-safe rule).
+  const searching = !!search.trim();
+  const planningPage = useMemo(
+    () => pageSlice(planningPOs, page, LIST_PAGE_SIZE, searching),
+    [planningPOs, page, searching],
+  );
+  const readyPage = useMemo(
+    () => pageSlice(readyPOs, page, LIST_PAGE_SIZE, searching),
+    [readyPOs, page, searching],
+  );
   // Slim projection: this page joins Customer PO/SO + reference + expected-DD
   // onto DO rows, plus a per-SO {productCode → unitPriceSen} price map for the
   // PO-based Planning / Pending Delivery Sales-Figure fallback. ?fields=
@@ -1222,7 +1296,7 @@ export default function DeliveryPage() {
   // scalars + SLIM items (product code + unit price only — no scan image, no
   // other line fields) — the full list was ~1.4MB; the slim variant is a
   // fraction of that.
-  const { data: soRaw, loading: soLoading, refresh: refreshSOs } = useCachedJson<{ success?: boolean; data?: { id: string; hookkaExpectedDD?: string; companySOId?: string; customerId?: string; customerSO?: string; customerSOId?: string; customerPO?: string; customerPOId?: string; reference?: string; items?: { productCode?: string; unitPriceSen?: number }[] }[] }>("/api/sales-orders?fields=delivery-refs");
+  const { data: soRaw, refresh: refreshSOs } = useCachedJson<{ success?: boolean; data?: { id: string; hookkaExpectedDD?: string; companySOId?: string; customerId?: string; customerSO?: string; customerSOId?: string; customerPO?: string; customerPOId?: string; reference?: string; items?: { productCode?: string; unitPriceSen?: number }[] }[] }>("/api/sales-orders?fields=delivery-refs");
   // Exact per-PO Sales Figure from the server (same resolver the DO /
   // invoice path uses) so Planning / Pending Delivery reconcile to the
   // cent instead of the page guessing price by product code.
@@ -1232,13 +1306,13 @@ export default function DeliveryPage() {
   // older off-page DOs, so they wrongly resurfaced as Pending Delivery
   // (BUG-2026-06-27, e.g. SO-2603-157 delivered on March DOs).
   const { data: linkedRaw } = useCachedJson<{ success?: boolean; poIds?: string[] }>("/api/delivery-orders/linked-po-ids");
-  const { data: custRaw, loading: custLoading, refresh: refreshCustomers } = useCachedJson<{ success?: boolean; data?: Customer[] }>("/api/customers");
+  const { data: custRaw, refresh: refreshCustomers } = useCachedJson<{ success?: boolean; data?: Customer[] }>("/api/customers");
   // Pull product master data so each Planning / Pending Delivery row can
   // surface its per-unit m³ next to the qty. Source-of-truth is the
   // Products page (`unitM3` column) — fetching the same /api/products
   // payload here keeps the value in lockstep with whatever the user last
   // edited there.
-  const { data: prodRaw, loading: prodLoading, refresh: refreshProducts } =
+  const { data: prodRaw, refresh: refreshProducts } =
     useCachedJson<{ success?: boolean; data?: { code: string; unitM3: number }[] }>("/api/products");
   // Saved packing lists (one per truck run, grouping several DOs). Populates
   // the "Packing List" tab. Defaults to empty if the endpoint/table isn't
@@ -1306,8 +1380,6 @@ export default function DeliveryPage() {
 
   /* eslint-disable react-hooks/set-state-in-effect -- mirror SWR data into mutable local state for optimistic UI */
   useEffect(() => {
-    const anyLoading = doLoading || poLoading || soLoading || custLoading || prodLoading;
-    setLoading(anyLoading);
     const dRes = doRaw || { success: false };
     const sRes = doSearchRaw || { success: false };
     // Planning + Ready come from the server now (rpRaw). The old client-side
@@ -1379,6 +1451,7 @@ export default function DeliveryPage() {
             if (so.companySOId) soRefMap.set(so.companySOId, v);
           }
         }
+        soRefMapRef.current = soRefMap;
         if (dRes.success && dRes.data) {
           const realRows = (dRes.data as DeliveryOrder[])
             .filter((d) => !d.id.startsWith("virt-"))
@@ -1595,7 +1668,7 @@ export default function DeliveryPage() {
         }
       }
     }
-  }, [doRaw, doSearchRaw, rpRaw, soRaw, poValRaw, custRaw, linkedRaw, doLoading, poLoading, soLoading, custLoading]);
+  }, [doRaw, doSearchRaw, rpRaw, soRaw, poValRaw, custRaw, linkedRaw]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // ----- 3PL Provider helpers -----
@@ -2249,7 +2322,7 @@ export default function DeliveryPage() {
     }
     if (tabsHit.size === 1) {
       const only = Array.from(tabsHit)[0];
-      if (only !== activeTab) setActiveTab(only);
+      if (only !== activeTab) goTab(only);
     }
     // activeTab intentionally excluded — see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2289,21 +2362,9 @@ export default function DeliveryPage() {
   const pendingDispatchCount = uniqueDOsByStatus.draft;
   const dispatchedCount = uniqueDOsByStatus.dispatched;
   const inTransitCount = uniqueDOsByStatus.inTransit;
-  const deliveredMTD = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const doIds = new Set(
-      deliveryOrders
-        .filter(
-          (d) =>
-            d.status === "DELIVERED" &&
-            d.receivedDate &&
-            new Date(d.receivedDate) >= startOfMonth
-        )
-        .map((d) => d.id)
-    );
-    return doIds.size;
-  }, [deliveryOrders]);
+  // Server-counted (/stats.deliveredMtd, Malaysian month). Used to be counted
+  // off the browse page, which now holds only the active tab's statuses.
+  const deliveredMTD = doStatsRaw?.deliveredMtd ?? 0;
 
   // ---------- Selection ----------
   const toggleSelect = (id: string) => {
@@ -2457,12 +2518,27 @@ export default function DeliveryPage() {
     }
 
     setCreatingDOFromPO(true);
+    const postDo = (b: Record<string, unknown>) =>
+      createDoIdem.withKey((key) =>
+        fetchJson("/api/delivery-orders", DOMutationSchema, {
+          method: "POST",
+          headers: { "Idempotency-Key": key },
+          body: b,
+        }),
+      );
     try {
-      const data = await fetchJson("/api/delivery-orders", DOMutationSchema, {
-        method: "POST",
-        body,
-      });
-      if (!data.success) {
+      let data: Awaited<ReturnType<typeof postDo>> | null;
+      try {
+        data = await postDo(body);
+      } catch (e) {
+        // Customer credit block (BUG-34): explain it, and re-send with the
+        // override reason when the server allows one.
+        const eb = e instanceof FetchJsonError ? e.body : null;
+        if (!isCreditBlock(eb)) throw e;
+        const reason = await askCreditOverride(confirm, toast, eb);
+        data = reason ? await postDo({ ...body, creditOverride: { reason } }) : null;
+      }
+      if (data && !data.success) {
         toast.error(data.error || "Failed to create delivery order");
       }
     } catch (e) {
@@ -2492,6 +2568,7 @@ export default function DeliveryPage() {
     setCreateDOForm({ driverId: "", vehicleId: "", driverPersonId: "", remarks: "", deliveryDate: "" });
     setPlFirstGroups(null);
     setPlFirstPreviewError(null);
+    setPlFirstCreditWarnings([]);
     setPlFirstDialogOpen(true);
     try {
       const r = await fetch("/api/delivery-orders/packing-list-first", {
@@ -2502,6 +2579,7 @@ export default function DeliveryPage() {
       const j = (await r.json().catch(() => ({}))) as {
         success?: boolean;
         groups?: PlFirstPreviewGroup[];
+        creditWarnings?: string[];
         error?: string;
       };
       if (!r.ok || !j.success) {
@@ -2509,6 +2587,7 @@ export default function DeliveryPage() {
         return;
       }
       setPlFirstGroups(j.groups ?? []);
+      setPlFirstCreditWarnings(j.creditWarnings ?? []);
     } catch (e) {
       setPlFirstPreviewError(
         e instanceof Error ? e.message : "Could not load the grouping preview.",
@@ -2535,18 +2614,31 @@ export default function DeliveryPage() {
     }
     setPlFirstCreating(true);
     try {
-      const r = await fetch("/api/delivery-orders/packing-list-first", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productionOrderIds: poIds,
-          providerId: createDOForm.driverId || null,
-          vehicleId: createDOForm.vehicleId || null,
-          driverId: createDOForm.driverPersonId || null,
-          deliveryDate: createDOForm.deliveryDate || "",
-          remarks: createDOForm.remarks,
-        }),
-      });
+      const plBody: Record<string, unknown> = {
+        productionOrderIds: poIds,
+        providerId: createDOForm.driverId || null,
+        vehicleId: createDOForm.vehicleId || null,
+        driverId: createDOForm.driverPersonId || null,
+        deliveryDate: createDOForm.deliveryDate || "",
+        remarks: createDOForm.remarks,
+      };
+      const postPl = () =>
+        fetch("/api/delivery-orders/packing-list-first", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(plBody),
+        });
+      let r = await postPl();
+      if (r.status === 409 || r.status === 403) {
+        // Customer credit block (BUG-34) — ask for the override reason.
+        const eb: unknown = await r.clone().json().catch(() => null);
+        if (isCreditBlock(eb)) {
+          const reason = await askCreditOverride(confirm, toast, eb);
+          if (!reason) return;
+          plBody.creditOverride = { reason };
+          r = await postPl();
+        }
+      }
       const j = (await r.json().catch(() => ({}))) as {
         success?: boolean;
         data?: {
@@ -2566,7 +2658,7 @@ export default function DeliveryPage() {
       setPlFirstDialogOpen(false);
       setSelectedReadyPOs(new Set());
       fetchData();
-      setActiveTab("packing_list");
+      goTab("packing_list");
     } catch (e) {
       toast.error(
         e instanceof Error ? e.message : "Failed to create the packing list",
@@ -2658,7 +2750,7 @@ export default function DeliveryPage() {
       setSelectedIds(new Set());
       invalidateCachePrefix("/api/packing-lists");
       refreshPLs();
-      setActiveTab("packing_list");
+      goTab("packing_list");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create packing list");
     } finally {
@@ -3009,11 +3101,21 @@ export default function DeliveryPage() {
     const succeededIds: string[] = [];
     for (const id of doIds) {
       try {
-        const r = await fetch(`/api/delivery-orders/${id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus }),
-        });
+        const put = (extra: Record<string, unknown> = {}) =>
+          fetch(`/api/delivery-orders/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: nextStatus, ...extra }),
+          });
+        let r = await put();
+        if (r.status === 409 || r.status === 403) {
+          // Customer credit block at dispatch (BUG-34) — asked per DO.
+          const eb: unknown = await r.clone().json().catch(() => null);
+          if (isCreditBlock(eb)) {
+            const reason = await askCreditOverride(confirm, toast, eb);
+            if (reason) r = await put({ creditOverride: { reason } });
+          }
+        }
         if (!r.ok) {
           const body = (await r.json().catch(() => ({}))) as { error?: string };
           failures.push(body?.error || `HTTP ${r.status}`);
@@ -4049,7 +4151,11 @@ export default function DeliveryPage() {
         render: (_v, row) => <EditableExpectedDD row={row} onSave={updateExpectedDD} />,
       },
     ],
-    [selectedReadyPOs, updateExpectedDD]
+    // NOT selectedReadyPOs (BUG-2026-09-22-005): no column reads it, and
+    // listing it rebuilt these columns on every selection emission, which
+    // made DataGrid recompute its rows and emit the selection again — the
+    // loop that froze this tab. Selection state belongs to the grid.
+    [updateExpectedDD]
   );
 
   // ---------- DO Columns ----------
@@ -4085,6 +4191,7 @@ export default function DeliveryPage() {
         label: "Packing List",
         width: "110px",
         align: "center",
+        exportValue: (row) => doPackingMap.get(row.id) ?? "",
         render: (_value, row) => {
           const inPL = doPackingMap.get(row.id);
           return inPL ? (
@@ -4130,6 +4237,12 @@ export default function DeliveryPage() {
         // the planned deliveryDate (set at SO/DO creation) with a small
         // "(planned)" tag so operators see SOMETHING to plan against instead
         // of a "-" placeholder.
+        exportValue: (row) =>
+          row.dispatchDate
+            ? row.dispatchDate.slice(0, 10)
+            : row.deliveryDate
+              ? `${row.deliveryDate.slice(0, 10)} (planned)`
+              : "",
         render: (_value, row) => {
           if (row.dispatchDate) {
             return <span>{formatDate(row.dispatchDate)}</span>;
@@ -4157,6 +4270,10 @@ export default function DeliveryPage() {
         // customerName as the primary, and bump the count if dropPoints
         // carries multi-drop info). Shows "Houzs Century +1 more" style
         // when the DO is multi-customer.
+        exportValue: (row) => {
+          const drops = (row as DeliveryOrderRow & { dropPoints?: number }).dropPoints ?? 1;
+          return drops > 1 ? `${row.customerName || "-"} +${drops - 1} more` : row.customerName || "";
+        },
         render: (_value, row) => {
           const drops = (row as DeliveryOrderRow & { dropPoints?: number }).dropPoints ?? 1;
           if (drops > 1) {
@@ -4183,6 +4300,16 @@ export default function DeliveryPage() {
         // row.hubState (resolved server-side via delivery_hubs.state on hubId)
         // over the legacy hubBranch (which mirrors customerState — frequently
         // NULL on production rows even when hubId is set).
+        exportValue: (row) => {
+          const states = Array.from(
+            new Set(
+              (row.items || [])
+                .map((it) => (it as DOItem & { hubState?: string }).hubState)
+                .filter((s): s is string => Boolean(s))
+            )
+          );
+          return states.length > 0 ? states.join(", ") : row.hubState || row.hubBranch || "";
+        },
         render: (_value, row) => {
           const states = Array.from(
             new Set(
@@ -4205,6 +4332,12 @@ export default function DeliveryPage() {
         // Distinct SO numbers from items[]. A DO can span multiple SOs
         // (e.g. one truck trip consolidating SO-2604-326 + SO-2604-328);
         // shown comma-separated.
+        exportValue: (row) => {
+          const sos = Array.from(
+            new Set((row.items || []).map((it) => it.salesOrderNo).filter((s): s is string => Boolean(s)))
+          );
+          return sos.length > 0 ? sos.join(", ") : row.salesOrderId || "";
+        },
         render: (_value, row, _index, highlight) => {
           const sos = Array.from(
             new Set(
@@ -4267,6 +4400,7 @@ export default function DeliveryPage() {
         type: "text",
         width: "120px",
         sortable: true,
+        exportValue: (row) => (row.valueSen ?? 0) / 100,
         render: (_value, row) => (
           <span className="font-medium text-[#1F1D1B] tabular-nums">
             {formatCurrency(row.valueSen ?? 0)}
@@ -4279,6 +4413,7 @@ export default function DeliveryPage() {
         type: "status",
         width: "180px",
         sortable: true,
+        exportValue: (row) => STATUS_LABEL[row.status] ?? row.status,
         render: (_value, row) => (
           <div className="flex flex-col gap-0.5 text-xs leading-tight">
             <span className="font-medium">{STATUS_LABEL[row.status] ?? row.status}</span>
@@ -4326,6 +4461,7 @@ export default function DeliveryPage() {
         type: "text",
         width: "180px",
         sortable: true,
+        exportValue: (row) => providers.find((p) => p.id === row.driverId)?.name ?? row.driverId ?? "",
         render: (_value, row) => {
           const company = providers.find((p) => p.id === row.driverId)?.name ?? row.driverId;
           return (
@@ -4395,10 +4531,10 @@ export default function DeliveryPage() {
         action: async () => {
           // 2026-05-27 verifiedSave migration — confirms the status flip
           // landed before reporting success.
-          const result = await verifiedSave<DeliveryOrder>({
+          const dispatch = (extra: Record<string, unknown> = {}) => verifiedSave<DeliveryOrder>({
             endpoint: `/api/delivery-orders/${row.id}`,
             method: "PUT",
-            body: { status: "LOADED" },
+            body: { status: "LOADED", ...extra },
             readback: async () => {
               const r = await fetch(`/api/delivery-orders/${row.id}?_v=${Date.now()}`, {
                 credentials: "include",
@@ -4410,6 +4546,21 @@ export default function DeliveryPage() {
             },
             expect: { status: "LOADED" },
           });
+          let result = await dispatch();
+          // Customer credit block (BUG-34): explain it; re-send with the
+          // override reason when the server allows one.
+          if (!result.ok && result.reason === "http") {
+            let eb: unknown = null;
+            try { eb = JSON.parse(result.body); } catch { /* not JSON */ }
+            if (isCreditBlock(eb)) {
+              const reason = await askCreditOverride(confirm, toast, eb);
+              if (!reason) {
+                fetchData();
+                return;
+              }
+              result = await dispatch({ creditOverride: { reason } });
+            }
+          }
           if (!result.ok) {
             if (result.reason === "mismatch") toast.error(formatMismatchError(result.diffs));
             else if (result.reason === "http") {
@@ -4726,7 +4877,7 @@ export default function DeliveryPage() {
               <Package className="h-5 w-5 text-[#9C6F1E]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#9C6F1E]">{loading ? "-" : pendingDispatchCount}</p>
+              <p className="text-2xl font-bold text-[#9C6F1E]">{doStatsRaw ? pendingDispatchCount : "-"}</p>
               <p className="text-xs text-[#6B7280]">Pending Dispatch</p>
             </div>
           </CardContent>
@@ -4737,7 +4888,7 @@ export default function DeliveryPage() {
               <Send className="h-5 w-5 text-[#3E6570]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#3E6570]">{loading ? "-" : dispatchedCount}</p>
+              <p className="text-2xl font-bold text-[#3E6570]">{doStatsRaw ? dispatchedCount : "-"}</p>
               <p className="text-xs text-[#6B7280]">Dispatched</p>
             </div>
           </CardContent>
@@ -4748,7 +4899,7 @@ export default function DeliveryPage() {
               <Truck className="h-5 w-5 text-[#6B4A6D]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#6B4A6D]">{loading ? "-" : inTransitCount}</p>
+              <p className="text-2xl font-bold text-[#6B4A6D]">{doStatsRaw ? inTransitCount : "-"}</p>
               <p className="text-xs text-[#6B7280]">In Transit</p>
             </div>
           </CardContent>
@@ -4759,7 +4910,7 @@ export default function DeliveryPage() {
               <CheckCircle2 className="h-5 w-5 text-[#4F7C3A]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#4F7C3A]">{loading ? "-" : deliveredMTD}</p>
+              <p className="text-2xl font-bold text-[#4F7C3A]">{doStatsRaw ? deliveredMTD : "-"}</p>
               <p className="text-xs text-[#6B7280]">Delivered (MTD)</p>
             </div>
           </CardContent>
@@ -4782,7 +4933,7 @@ export default function DeliveryPage() {
           // 2026-07-16: "快速切换 tab 很卡顿"). Pure scheduling; no logic
           // change. The real cure is decomposing this 7k-line page.
           React.startTransition(() => {
-            setActiveTab(key);
+            goTab(key);
             setSelectedIds(new Set());
             setSelectedReadyPOs(new Set());
           });
@@ -4808,7 +4959,7 @@ export default function DeliveryPage() {
             <button
               key={t.key}
               type="button"
-              onClick={() => setActiveTab(t.key)}
+              onClick={() => goTab(t.key)}
               className={cn(
                 "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
                 activeTab === t.key
@@ -4829,7 +4980,7 @@ export default function DeliveryPage() {
           <CardContent>
             <DataGrid<ReadyPORow>
               columns={planningColumns}
-              data={planningPOs}
+              data={planningPage}
               keyField="id"
               // Its own id: a different row type and a different column set
               // from the DO list, so it cannot share that layout.
@@ -4845,6 +4996,15 @@ export default function DeliveryPage() {
               onSearchChange={setSearch}
               alwaysSearchKeys={PO_SEARCH_KEYS}
             />
+            {!search.trim() && (
+              <PagerFooter
+                total={planningPOs.length}
+                noun="production order"
+                page={page}
+                pageSize={LIST_PAGE_SIZE}
+                onPage={setPage}
+              />
+            )}
           </CardContent>
         </Card>
       )}
@@ -4895,7 +5055,7 @@ export default function DeliveryPage() {
           <CardContent>
             <DataGrid<ReadyPORow>
               columns={pendingDeliveryColumns}
-              data={readyPOs}
+              data={readyPage}
               keyField="id"
               gridId="delivery-pending-delivery-pos"
               loading={loading}
@@ -4920,6 +5080,15 @@ export default function DeliveryPage() {
                 )
               }
             />
+            {!search.trim() && (
+              <PagerFooter
+                total={readyPOs.length}
+                noun="production order"
+                page={page}
+                pageSize={LIST_PAGE_SIZE}
+                onPage={setPage}
+              />
+            )}
           </CardContent>
         </Card>
       )}
@@ -4995,37 +5164,28 @@ export default function DeliveryPage() {
               contextMenuItems={getContextMenuItems}
               exportName="delivery-orders"
               exportSheetLabel="Delivery Orders"
+              // One 50-row page per tab is loaded; Export walks the tab's
+              // statuses page by page. Search already loads every match.
+              exportAllRows={search.trim() || !TAB_DO_STATUSES[activeTab] ? undefined : () => {
+                const statuses = TAB_DO_STATUSES[activeTab];
+                return fetchAllPages<DeliveryOrder>((p, l) => `/api/delivery-orders?page=${p}&limit=${l}&status=${statuses.join(",")}`)
+                  .then((rows) => rows
+                    .filter((d) => !d.id.startsWith("virt-"))
+                    .map((d) => mapDOToRow(d, soRefMapRef.current))
+                    .filter((d) => statuses.includes(d.status)));
+              }}
               detailExport={{ label: "Detail Listing", build: (rows) => buildDoDetailListingAoa(rows) }}
             />
 
-            {/* Pagination footer */}
-            <div className="flex items-center justify-between border-t border-[#E2DDD8] pt-3 mt-3 text-sm text-[#6B7280] flex-wrap gap-2">
-              <span>
-                {totalDOsServer.toLocaleString()} delivery order
-                {totalDOsServer === 1 ? "" : "s"}
-              </span>
-              <div className="flex items-center gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(Math.max(1, page - 1))}
-                  disabled={page <= 1 || doLoading}
-                >
-                  ← Prev
-                </Button>
-                <span className="tabular-nums text-[#1F1D1B]">
-                  Page {page} / {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(Math.min(totalPages, page + 1))}
-                  disabled={page >= totalPages || doLoading}
-                >
-                  Next →
-                </Button>
-              </div>
-            </div>
+            {/* Pagination footer — per-tab: total = this tab's statuses only */}
+            <PagerFooter
+              total={totalDOsServer}
+              noun="delivery order"
+              page={page}
+              pageSize={LIST_PAGE_SIZE}
+              busy={doLoading}
+              onPage={setPage}
+            />
           </CardContent>
         </Card>
       )}
@@ -5538,6 +5698,14 @@ export default function DeliveryPage() {
                     ? ` — will create ${plFirstGroups.length} delivery order${plFirstGroups.length === 1 ? "" : "s"}`
                     : ""}
                 </label>
+                {plFirstCreditWarnings.length > 0 && (
+                  <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+                    {plFirstCreditWarnings.map((w) => (
+                      <p key={w}>{w}</p>
+                    ))}
+                    <p className="font-medium">Creating will ask for an override reason.</p>
+                  </div>
+                )}
                 {plFirstPreviewError ? (
                   <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-xs text-rose-700">
                     {plFirstPreviewError}
@@ -7474,6 +7642,57 @@ export default function DeliveryPage() {
           onClose={() => setQrDialog(null)}
         />
       )}
+    </div>
+  );
+}
+
+// One pagination footer for every list on this page (DO stage tabs server-
+// paged, Planning / Pending Delivery client-sliced): "<N> <noun>s · Prev ·
+// Page p / P · Next". Declared after DeliveryPage on purpose — appending here
+// keeps every docs/CODEBASE-MAP + module-guide anchor above it stable.
+function PagerFooter({
+  total,
+  noun,
+  page,
+  pageSize,
+  busy = false,
+  onPage,
+}: {
+  total: number;
+  noun: string;
+  page: number;
+  pageSize: number;
+  busy?: boolean;
+  onPage: (n: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="flex items-center justify-between border-t border-[#E2DDD8] pt-3 mt-3 text-sm text-[#6B7280] flex-wrap gap-2">
+      <span>
+        {total.toLocaleString()} {noun}
+        {total === 1 ? "" : "s"}
+      </span>
+      <div className="flex items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPage(Math.max(1, page - 1))}
+          disabled={page <= 1 || busy}
+        >
+          ← Prev
+        </Button>
+        <span className="tabular-nums text-[#1F1D1B]">
+          Page {page} / {totalPages}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPage(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages || busy}
+        >
+          Next →
+        </Button>
+      </div>
     </div>
   );
 }

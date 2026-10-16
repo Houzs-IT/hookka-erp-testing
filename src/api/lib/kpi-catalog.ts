@@ -156,6 +156,28 @@ export interface KpiDef {
   curve?: AttainmentCurve;
   /** PENALTY_PER_PCT only — points lost per percentage point. */
   penaltyPerPct?: number;
+  /**
+   * PENALTY_PER_PCT only — the early-delivery bonus. Every `earlyStepPct` of
+   * orders delivered before the promised date earns `earlyBonusPerStep` points,
+   * up to `earlyMaxBonus`. The bonus only wins back late points: the score
+   * never goes above 100 (owner 2026-10-05). Late points stop at 0 before the
+   * bonus is added (owner 2026-10-08).
+   */
+  earlyStepPct?: number;
+  earlyBonusPerStep?: number;
+  earlyMaxBonus?: number;
+  /**
+   * PENALTY_PER_PCT only — an order promised within `urgentDays` of its order
+   * date is urgent. Urgent orders leave the late % and early % and earn
+   * urgent points on their own (owner 2026-10-13): `urgentBasePoints` at 0%
+   * on time or early, plus `urgentPointsPerStep` for every `urgentStepPct`,
+   * and `urgentFullPoints` at 100%.
+   */
+  urgentDays?: number;
+  urgentBasePoints?: number;
+  urgentStepPct?: number;
+  urgentPointsPerStep?: number;
+  urgentFullPoints?: number;
   /** PENALTY_PER_UNIT only — points lost per whole unit of the actual. */
   penaltyPerUnit?: number;
   /**
@@ -209,36 +231,157 @@ export interface KpiDef {
  */
 export const GATE_FAIL_CAP = 60;
 
+/**
+ * The scoring numbers Super Admin can change from the Library tab, per KPI.
+ * One set for the whole company, stored in kpi_rule_settings. A KPI not listed
+ * here has no editable rules.
+ */
+export const EDITABLE_RULES = {
+  customer_delivery_date: [
+    "penaltyPerPct", "earlyStepPct", "earlyBonusPerStep", "earlyMaxBonus", "urgentDays",
+    "urgentBasePoints", "urgentStepPct", "urgentPointsPerStep", "urgentFullPoints",
+  ],
+} as const satisfies Record<string, ReadonlyArray<keyof KpiDef>>;
+
+export type RuleField = (typeof EDITABLE_RULES)[keyof typeof EDITABLE_RULES][number];
+export type KpiRules = Partial<Record<RuleField, number>>;
+
+export function editableRules(key: string): readonly RuleField[] {
+  return (EDITABLE_RULES as Record<string, readonly RuleField[]>)[key] ?? [];
+}
+
+type UrgentRule = "urgentBasePoints" | "urgentStepPct" | "urgentPointsPerStep" | "urgentFullPoints";
+
+/**
+ * The urgent points rule with Violet's numbers as the fallback (owner
+ * 2026-10-13): 0% → 5, +5 per 10%, 100% → 60. Editable from the Library.
+ */
+function urgentRule(def: Partial<Pick<KpiDef, UrgentRule>>) {
+  const n = (v: unknown, d: number) => (Number.isFinite(Number(v)) && v != null ? Number(v) : d);
+  return {
+    base: n(def.urgentBasePoints, 5),
+    step: n(def.urgentStepPct, 10),
+    per: n(def.urgentPointsPerStep, 5),
+    full: n(def.urgentFullPoints, 60),
+  };
+}
+
+/** Full steps of `step`% in a share below 100%. */
+const urgentSteps = (pct: number, step: number) => (step > 0 ? Math.floor(pct / step + 1e-9) : 0);
+
+/** Points for the share of urgent orders delivered on time or early. */
+export function urgentPoints(def: Partial<Pick<KpiDef, UrgentRule>>, onTimePct: number): number {
+  const r = urgentRule(def);
+  if (onTimePct + 1e-9 >= 100) return r.full;
+  return r.base + urgentSteps(onTimePct, r.step) * r.per;
+}
+
+/**
+ * The delivery KPI's wording, built from its numbers so the card can never
+ * describe a rule different from the one that scored it.
+ */
+function deliveryText(
+  per: number, step: number, bonus: number, max: number, urgentDays: number,
+  urgent: Partial<Pick<KpiDef, UrgentRule>>,
+): Pick<KpiDef, "detail" | "formula" | "measurement"> {
+  const zeroAt = per > 0 ? Math.round((100 / per) * 10) / 10 : null;
+  const lateRows: string[] = [];
+  if (zeroAt !== null) {
+    for (let i = 0; i < zeroAt; i++) lateRows.push(`${i}% → ${Math.round((100 - i * per) * 10) / 10}`);
+    lateRows.push(`${zeroAt}% or worse → 0`);
+  }
+  const earlyRows: string[] = [];
+  if (step > 0 && bonus > 0 && max > 0) {
+    earlyRows.push(`under ${step}% → 0`);
+    const steps = Math.ceil(max / bonus);
+    for (let k = 1; k <= steps; k++) {
+      earlyRows.push(`${k * step}%${k === steps ? " or more" : ""} → +${Math.min(max, k * bonus)}`);
+    }
+  }
+  const u = urgentRule(urgent);
+  const urgentRows: string[] = [];
+  if (u.step > 0) {
+    for (let k = 0; k * u.step < 100; k++) urgentRows.push(`${k * u.step}% → ${u.base + k * u.per}`);
+  } else {
+    urgentRows.push(`under 100% → ${u.base}`);
+  }
+  urgentRows.push(`100% → ${u.full}`);
+  return {
+    detail: `Every 1% of orders delivered late costs ${per} points`,
+    formula:
+      `100 − (late % × ${per}), never below 0, + early bonus + urgent points, capped at 100.` +
+      (zeroAt !== null ? ` ${zeroAt}% late or worse scores 0 before the bonuses, and the bonuses still count.` : ""),
+    measurement: [
+      "Take the date promised to the customer on the sales order. Our own internal estimate is never used.",
+      "Find the date the goods were DELIVERED, on the Malaysia calendar. An order sent in several deliveries is judged on its LAST one, because the customer has their order only when the last piece arrives.",
+      "An order still waiting for any of its deliveries is left out until it is fully delivered. It counts in the month its last delivery arrives.",
+      `An urgent order is one promised within ${urgentDays} days of its order date. Urgent orders are scored on their own (urgent points below) and are left out of the late % and early %.`,
+      "Late % = the other orders delivered after the promised date ÷ the other orders fully delivered that month × 100. Early % is the same for orders delivered before it; delivered on the day is neither.",
+      zeroAt !== null
+        ? `Late points, starting at 100 and losing ${per} per 1% late: ${lateRows.join(" · ")}.`
+        : "Late orders cost no points.",
+      earlyRows.length
+        ? `Early bonus, added after the late points (even at 0): ${earlyRows.join(" · ")}.`
+        : "Delivering early earns nothing extra.",
+      `Urgent points, for the share of urgent orders delivered on time or early: ${urgentRows.join(" · ")}. A month with no urgent orders adds nothing.`,
+      "Score = late points + early bonus + urgent points. It never goes above 100.",
+      "That score is then multiplied by whatever weight this KPI was assigned.",
+    ],
+  };
+}
+
+/**
+ * The catalogue entry with the company's saved rules applied, wording
+ * included. Unknown or non-editable fields in `rules` are ignored.
+ */
+export function withRules(def: KpiDef, rules?: KpiRules): KpiDef {
+  const fields = editableRules(def.key);
+  if (!fields.length || !rules) return def;
+  const d: KpiDef = { ...def };
+  for (const f of fields) {
+    const v = Number(rules[f]);
+    if (rules[f] != null && Number.isFinite(v)) d[f] = v;
+  }
+  if (d.key === "customer_delivery_date") {
+    Object.assign(d, deliveryText(d.penaltyPerPct!, d.earlyStepPct!, d.earlyBonusPerStep!, d.earlyMaxBonus!,
+      d.urgentDays!, d));
+  }
+  return d;
+}
+
 export const KPI_CATALOG: KpiDef[] = [
   {
     key: "customer_delivery_date",
     label: "On-time delivery to the customer's promised date",
-    detail: "Every 1% of orders shipped late costs 10 points",
+    ...deliveryText(10, 10, 1, 5, 7, {}),
     shape: "RATIO",
     direction: "LOWER_IS_BETTER",
     unit: "%",
     scoring: "AUTO",
     curve: "PENALTY_PER_PCT",
     penaltyPerPct: 10,
+    // Owner 2026-10-05: 10% early → +1 … 50% early → +5.
+    earlyStepPct: 10,
+    earlyBonusPerStep: 1,
+    earlyMaxBonus: 5,
+    // Owner 2026-10-08: ordered 1/10, promised 7/10 is urgent.
+    urgentDays: 7,
+    // Owner 2026-10-13: 0% on time or early → 5, +5 per 10%, 100% → 60.
+    urgentBasePoints: 5,
+    urgentStepPct: 10,
+    urgentPointsPerStep: 5,
+    urgentFullPoints: 60,
     purpose:
       "A late delivery is the one failure the customer always notices. Everything else in the factory can slip; this is the promise we made.",
     definition:
-      "The PERCENTAGE of sales orders shipped in the month whose first dispatch left after the date promised to that customer. Counted once per order, not per delivery note — a customer promised one date was let down once, however many trips it took.",
-    measurement: [
-      "Take the date promised to the customer on the sales order. Our own internal estimate is never used.",
-      "Find the first dispatch date across every delivery order carrying that order's production.",
-      "Late % = orders dispatched after the promised date ÷ orders dispatched that month × 100.",
-      "Score starts at 100 and loses 10 points per 1% late: 0% → 100, 1% → 90, 5% → 50, 10% or worse → 0.",
-      "That score is then multiplied by whatever weight this KPI was assigned.",
-    ],
-    formula: "100 − (late % × 10). 1% late costs 10 points; 10% late scores nothing.",
+      "The PERCENTAGE of sales orders fully delivered in the month whose LAST delivery arrived after the date promised to that customer. Counted once per order, not per delivery note — a customer promised one date was let down once, however many trips it took. Urgent orders are scored apart.",
     defaultTarget: 0,
     defaultWeight: 30,
     available: true,
     // Opens the Sales list narrowed to the orders this % was computed from,
     // for this month. The id set comes from
-    // GET /api/sales-orders/late-to-customer, which shares its SQL with
-    // `customerDeliveryLate`.
+    // GET /api/sales-orders/late-to-customer, which reads the same rows and
+    // verdict as `customerDeliveryLate` (on-time-delivery.ts).
     drillPath: "/sales?filter=late-to-customer&period={period}",
     roles: ["OFFICE", "SALES"],
   },
@@ -351,6 +494,40 @@ export const KPI_CATALOG: KpiDef[] = [
     // aggregates.
     drillPath: "/daily-report?edition=monthly&period={period}",
     roles: ["PRODUCTION", "QA"],
+  },
+  {
+    // DEV-36, owner 2026-10-06: an office lead (R&D, Upholstery …) is scored
+    // on their own department's efficiency as Dashboard Experimental shows it.
+    // Kept apart from production_efficiency, which stays the payslip figure.
+    key: "department_efficiency",
+    label: "Department efficiency",
+    detail: "The Dashboard Experimental efficiency for the departments you are assigned. 100% is the norm",
+    shape: "RATIO",
+    direction: "HIGHER_IS_BETTER",
+    unit: "%",
+    scoring: "AUTO",
+    curve: "EFFICIENCY_BANDS",
+    efficiencyFloorPct: 80,
+    efficiencyFloorScore: 60,
+    efficiencyZeroPct: 75,
+    purpose:
+      "A department lead answers for how well their people's paid hours turn into finished work. This is the number they already watch on Dashboard Experimental, so the score never comes as a surprise.",
+    definition:
+      "For the workers whose home department is one of the assigned departments: the production time their completed job cards earned, divided by the hours they clocked in production departments, as a percentage. It is the same figure Dashboard Experimental > People > Efficiency shows for those departments and month.",
+    measurement: [
+      "Workers: everyone whose home department (on their worker record) is one of the assigned departments. With no department assigned, the whole floor.",
+      "Production time: each completed or transferred job card in the month, valued at its standard time and shared between the people on it.",
+      "Clocked time: hours those workers logged against production departments that day. Days with no clocked hours are left out.",
+      "Efficiency % = production time ÷ clocked time × 100, over the whole month.",
+      "Scored like Production time efficiency: 100% or better scores the full 100, 80% is the floor and scores 60, and 75% or under scores 0.",
+    ],
+    formula:
+      "100% → 100 pts · 90% → 80 · 80% → 60 (the floor) · 78% → 36 · 75% or below → 0",
+    defaultTarget: 100,
+    defaultWeight: 30,
+    available: true,
+    drillPath: "/dashboard-experimental?tab=people&sub=efficiency&month={period}",
+    roles: ["OFFICE", "PRODUCTION", "QA"],
   },
   {
     key: "service_case_resolution",
@@ -486,6 +663,68 @@ export function kpisForRole(role: string): KpiDef[] {
 }
 
 /**
+ * PENALTY_PER_PCT's three parts, so the card can show the sum it scored.
+ * The late part stops at 0 before the bonuses are added, so 10.5% late with
+ * a full bonus scores the bonus, not 0 (owner 2026-10-08).
+ */
+export function penaltyParts(
+  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus" | UrgentRule>>,
+  actual: number,
+  earlyPct?: number | null,
+  urgentOnTimePct?: number | null,
+): { late: number; early: number; urgent: number } {
+  const per = Number.isFinite(Number(def.penaltyPerPct)) ? Number(def.penaltyPerPct) : 10;
+  const step = Number(def.earlyStepPct) || 0;
+  const early = Number(earlyPct) || 0;
+  return {
+    late: Math.round(Math.max(0, 100 - actual * per) * 10) / 10,
+    early:
+      step > 0 && early > 0
+        ? Math.min(
+            Number(def.earlyMaxBonus) || 0,
+            Math.floor(early / step + 1e-9) * (Number(def.earlyBonusPerStep) || 0),
+          )
+        : 0,
+    urgent: urgentOnTimePct == null ? 0 : urgentPoints(def, urgentOnTimePct),
+  };
+}
+
+/**
+ * The delivery card's "Your result" lines: each part's orders, % and points,
+ * from the same penaltyParts the score is added up from.
+ */
+export function deliveryBreakdown(
+  def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus" | UrgentRule>>,
+  actual: number,
+  earlyPct: number | null | undefined,
+  urgentOnTimePct: number | null | undefined,
+  n: { late: number; early: number; judged: number; urgentOnTime: number; urgentJudged: number },
+): string[] {
+  const p = penaltyParts(def, actual, earlyPct, urgentOnTimePct);
+  const per = Number.isFinite(Number(def.penaltyPerPct)) ? Number(def.penaltyPerPct) : 10;
+  const step = Number(def.earlyStepPct) || 0;
+  const bonus = Number(def.earlyBonusPerStep) || 0;
+  const raw = Math.round((100 - actual * per) * 10) / 10;
+  const steps = step > 0 ? Math.floor((Number(earlyPct) || 0) / step + 1e-9) : 0;
+  const u = urgentRule(def);
+  const uSteps = urgentOnTimePct == null ? 0 : urgentSteps(urgentOnTimePct, u.step);
+  return [
+    `Late: ${n.late} of ${n.judged} orders = ${actual}% late → ${p.late} points` +
+      ` (100 − ${actual} × ${per} = ${raw}${raw < 0 ? ", never below 0" : ""})`,
+    `Early: ${n.early} of ${n.judged} orders = ${earlyPct ?? 0}% early → +${p.early} points` +
+      (step > 0 && bonus > 0
+        ? ` (${steps} full ${step}% step(s) × +${bonus} = +${steps * bonus}${steps * bonus > p.early ? `, capped at +${p.early}` : ""})`
+        : ""),
+    urgentOnTimePct == null
+      ? "Urgent: no urgent orders this month → +0 points"
+      : `Urgent: ${n.urgentOnTime} of ${n.urgentJudged} urgent orders on time or early = ${urgentOnTimePct}% → +${p.urgent} points` +
+        (urgentOnTimePct + 1e-9 >= 100
+          ? ` (100% → ${u.full})`
+          : ` (${u.base} + ${uSteps} full ${u.step}% step(s) × ${u.per} = ${p.urgent})`),
+  ];
+}
+
+/**
  * Attainment as a percentage of target, capped at 120.
  *
  * Capped because an uncapped ratio lets one runaway metric paper over a
@@ -499,6 +738,10 @@ export function attainment(
         KpiDef,
         | "curve"
         | "penaltyPerPct"
+        | "earlyStepPct"
+        | "earlyBonusPerStep"
+        | "earlyMaxBonus"
+        | UrgentRule
         | "penaltyPerUnit"
         | "graceDays"
         | "efficiencyFloorPct"
@@ -508,14 +751,19 @@ export function attainment(
     >,
   target: number,
   actual: number,
+  /** PENALTY_PER_PCT only — % of orders delivered early, for the bonus. */
+  earlyPct?: number | null,
+  /** PENALTY_PER_PCT only — % of urgent orders on time or early; null with none. */
+  urgentOnTimePct?: number | null,
 ): number {
   if (!Number.isFinite(actual)) return 0;
 
   // Straight penalty off a perfect start. Used where the target is zero and a
-  // ratio would divide by it.
+  // ratio would divide by it. The early bonus can win points back but never
+  // lifts the score past 100.
   if (def.curve === "PENALTY_PER_PCT") {
-    const per = Number(def.penaltyPerPct) || 10;
-    return Math.max(0, Math.min(120, Math.round((100 - actual * per) * 10) / 10));
+    const p = penaltyParts(def, actual, earlyPct, urgentOnTimePct);
+    return Math.min(100, Math.round((p.late + p.early + p.urgent) * 10) / 10);
   }
   // Same shape, but the actual is a COUNT (document-days late) rather than a
   // percentage, so nothing is normalised by a denominator first.

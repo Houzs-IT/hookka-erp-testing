@@ -461,12 +461,87 @@ const PAGE_CSS = `
   .print-bar { position: sticky; top: 0; background: #F4EFE3; padding: 8px 12px; border-bottom: 1px solid #E5E1DC; text-align: right; z-index: 10; }
   .print-bar button { padding: 6px 14px; font-size: 10pt; border: 1px solid #1F1D1B; background: #1F1D1B; color: #fff; cursor: pointer; border-radius: 4px; }
   .secondary { color: #6B7280; font-size: 8pt; }
+  .full-link { margin: 8px 0 0; font-size: 10pt; color: #6B5C32; }
+  .dept-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  .dept-filter .chip { font-size: 9pt; padding: 3px 10px; border: 1px solid #E5E1DC; border-radius: 999px; color: #1F1D1B; background: #fff; text-decoration: none; }
+  .dept-filter .chip.on { background: #1F1D1B; border-color: #1F1D1B; color: #fff; }
+  table.share { width: 100%; border-collapse: collapse; margin: 0 0 6px; }
+  table.share thead th { background: #F4EFE3; color: #1F1D1B; font-size: 8pt; font-weight: 700; padding: 5px 8px; text-align: right; letter-spacing: 0.3px; border-bottom: 1px solid #E5E1DC; }
+  table.share tbody td { font-size: 9pt; padding: 5px 8px; border-bottom: 1px solid #F0ECE9; text-align: right; }
+  table.share th:first-child, table.share td:first-child { text-align: left; }
+  table.share tbody td:first-child { font-weight: 600; }
   .num { font-variant-numeric: tabular-nums; }
 `;
 
-export function renderScheduleHtml(data: ScheduleReport): string {
+// Phone layout for the Schedule and Overdue emails (BUG-36): below 900px
+// (phones, and the narrow reading pane of Gmail or Outlook) each table row
+// becomes a card and the 4 summary boxes go two per row. `screen` only, so
+// the A4 print is unchanged. The small labels are hidden on desktop, where
+// the table header names the columns.
+const PHONE_CSS = `
+  .m-lbl { display: none; }
+  @media screen and (max-width: 900px) {
+    body { font-size: 11pt; }
+    .page { padding: 10px 12px; }
+    h1 { font-size: 16pt; }
+    .summary { display: block; overflow: hidden; }
+    .summary .cell { display: block; float: left; width: 50%; padding: 6px 8px; }
+    .summary .val { font-size: 14pt; }
+    table.data, table.data tbody, table.data tr, table.data td { display: block; width: auto !important; }
+    table.data colgroup, table.data thead { display: none; }
+    table.data tbody tr { border: 1px solid #E5E1DC; border-radius: 6px; margin-bottom: 8px; padding: 8px 10px; }
+    table.data tbody tr:last-child td, table.data tbody td { border: 0; padding: 1px 0; overflow: visible; text-align: left !important; font-size: 10.5pt; }
+    table.data tbody td.m-inline { display: inline-block; margin-right: 14px; }
+    table.data tbody td:empty { display: none; }
+    .m-lbl { display: inline; color: #6B7280; font-weight: 400; font-size: 9pt; }
+    .secondary { font-size: 9pt; }
+    table.share th, table.share td { padding: 5px 4px; font-size: 9pt; }
+    table.share thead th { white-space: normal; vertical-align: bottom; }
+    .dept-card { border: 0; }
+    .dept-head { flex-wrap: wrap; gap: 2px 10px; border-radius: 4px; margin-bottom: 8px; }
+  }
+`;
+
+// The EMAIL is the summary only: the four top boxes, the department table and
+// one "Show full list" link. Job rows live on the in-app page (the link), which
+// adds a department filter above them. A full day's rows were ~199 KB and Gmail
+// clips past ~102 KB, so the email no longer carries rows at all.
+export function renderScheduleHtml(
+  data: ScheduleReport,
+  opts: { email?: boolean; fullListUrl?: string; dept?: string } = {},
+): string {
   const { date, totals, byDepartment } = data;
   const longDate = formatDateLong(date);
+
+  // Department summary: planned time and job cards per department, with each
+  // department's share of the day. Heaviest first. Display only: every figure
+  // is the one already on the department header.
+  const pct = (n: number, of: number) => (of > 0 ? `${(Math.round((n / of) * 1000) / 10).toFixed(1)}%` : "—");
+  const shareRows = [...byDepartment]
+    .sort((a, b) => b.prodMinutes - a.prodMinutes)
+    .map(
+      (d) =>
+        `<tr><td>${escapeHtml(d.name)}</td><td class="num">${d.count}</td><td class="num">${formatMinutes(d.prodMinutes)}</td><td class="num">${pct(d.prodMinutes, totals.prodMinutes)}</td><td class="num">${pct(d.count, totals.jobCards)}</td></tr>`,
+    )
+    .join("");
+  const shareTable =
+    byDepartment.length > 0
+      ? `<h2>Departments</h2>
+  <table class="share"><thead><tr><th>Department</th><th>Job cards</th><th>Planned time</th><th>% of planned time</th><th>% of job cards</th></tr></thead><tbody>${shareRows}</tbody></table>`
+      : "";
+  const showFull = opts.fullListUrl ? `<a href="${escapeHtml(opts.fullListUrl)}">Show full list</a>` : "Full list in Reports";
+
+  // In-app page: department filter as plain links (works without script and
+  // in print preview); ?dept= picks one department's section, All shows every one.
+  const picked = byDepartment.some((d) => d.code === opts.dept) ? opts.dept : undefined;
+  const chip = (label: string, dept?: string) => {
+    const href = `?date=${encodeURIComponent(date)}${dept ? `&dept=${encodeURIComponent(dept)}` : ""}`;
+    return `<a class="chip${dept === picked ? " on" : ""}" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+  };
+  const filter =
+    byDepartment.length > 1
+      ? `<div class="dept-filter no-print">${chip("All")}${byDepartment.map((d) => chip(d.name, d.code)).join("")}</div>`
+      : "";
 
   const colWidths = `
     <colgroup>
@@ -482,22 +557,23 @@ export function renderScheduleHtml(data: ScheduleReport): string {
     </colgroup>`;
 
   const deptSections = byDepartment
+    .filter((d) => !picked || d.code === picked)
     .map((d) => {
       const rows = d.rows
         .map((r) => {
-          const status = `<span style="color:${statusColor(r.status)};font-weight:600;">${escapeHtml(r.status)}</span>`;
+          const status = `<span style="color:${statusColor(r.status)};font-weight:600;">${escapeHtml(r.status.replace(/_/g, " "))}</span>`;
           const pic = [r.pic1Name, r.pic2Name].filter(Boolean).join(", ");
           return `<tr>
-            <td>${escapeHtml(r.poNo)}</td>
+            <td><strong>${escapeHtml(r.poNo)}</strong></td>
             <td>${escapeHtml(r.customerName)}</td>
             <td>${escapeHtml(r.productCode)}<br><span class="secondary">${escapeHtml(r.productName)}</span></td>
-            <td>${escapeHtml(r.sizeLabel ?? "")}</td>
-            <td>${escapeHtml(r.wipLabel ?? "")}</td>
-            <td class="num" style="text-align:right;">${r.quantity}</td>
-            <td class="num" style="text-align:right;">${formatMinutes(r.prodMinutes)}</td>
-            <td>${status}</td>
-            <td>${escapeHtml(pic || "—")}</td>
-          </tr>`;
+            <td class="m-inline">${r.sizeLabel ? `<span class="m-lbl">Size </span>${escapeHtml(r.sizeLabel)}` : ""}</td>
+            <td class="m-inline">${r.wipLabel ? `<span class="m-lbl">Stage </span>${escapeHtml(r.wipLabel)}` : ""}</td>
+            <td class="num m-inline" style="text-align:right;"><span class="m-lbl">Qty </span>${r.quantity}</td>
+            <td class="num m-inline" style="text-align:right;"><span class="m-lbl">Mins </span>${formatMinutes(r.prodMinutes)}</td>
+            <td class="m-inline">${status}</td>
+            <td class="m-inline"><span class="m-lbl">PIC </span>${escapeHtml(pic || "—")}</td>
+          </tr>`.replace(/>\s+</g, "><");
         })
         .join("");
       return `<div class="dept-card">
@@ -524,15 +600,24 @@ export function renderScheduleHtml(data: ScheduleReport): string {
     })
     .join("\n");
 
+  const below =
+    byDepartment.length === 0
+      ? `<p style="text-align:center;padding:30px;color:#9CA3AF;">No job cards scheduled for this date.</p>`
+      : opts.email
+        ? `<p class="full-link">${showFull}</p>`
+        : `${filter}
+  ${deptSections}`;
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Production Schedule — ${escapeHtml(longDate)}</title>
-<style>${PAGE_CSS}</style>
+<style>${PAGE_CSS}${PHONE_CSS}</style>
 </head>
 <body>
-<div class="print-bar no-print"><button onclick="window.print()">Print / Save as PDF</button></div>
+${opts.email ? "" : `<div class="print-bar no-print"><button onclick="window.print()">Print / Save as PDF</button></div>`}
 <div class="page">
   <h1>Production Schedule</h1>
   <div class="meta">${escapeHtml(longDate)} &nbsp;·&nbsp; Hookka Manufacturing ERP</div>
@@ -542,7 +627,8 @@ export function renderScheduleHtml(data: ScheduleReport): string {
     <div class="cell"><div class="lbl">Planned Time</div><div class="val num">${formatMinutes(totals.prodMinutes)}</div><div class="sub">sum of estimates</div></div>
     <div class="cell"><div class="lbl">Departments</div><div class="val num">${totals.departments}</div><div class="sub">with work scheduled</div></div>
   </div>
-  ${deptSections || `<p style="text-align:center;padding:30px;color:#9CA3AF;">No job cards scheduled for this date.</p>`}
+  ${shareTable}
+  ${below}
   <div class="footer">Generated ${escapeHtml(new Date(data.generatedAtIso).toLocaleString("en-GB", { timeZone: "Asia/Singapore" }))} SGT</div>
 </div>
 </body>
@@ -558,7 +644,11 @@ function formatRM(sen: number): string {
   });
 }
 
-export function renderOverdueHtml(data: OverdueReport): string {
+
+export function renderOverdueHtml(
+  data: OverdueReport,
+  opts: { email?: boolean } = {},
+): string {
   const { date, totals, rows } = data;
   const longDate = formatDateLong(date);
 
@@ -599,18 +689,18 @@ export function renderOverdueHtml(data: OverdueReport): string {
           : r.daysOverdue >= 14
             ? "#FFF7ED"
             : "transparent";
-      const status = `<span style="color:${statusColor(r.status)};font-weight:600;">${escapeHtml(r.status)}</span>`;
+      const status = `<span style="color:${statusColor(r.status)};font-weight:600;">${escapeHtml(r.status.replace(/_/g, " "))}</span>`;
       return `<tr style="background:${rowBg};">
         <td><strong>${escapeHtml(r.companySOId || r.salesOrderId)}</strong></td>
         <td>${escapeHtml(r.customerName)}${r.customerState ? ` <span class="secondary">· ${escapeHtml(r.customerState)}</span>` : ""}</td>
         <td>${escapeHtml(r.productSummary || "—")}</td>
-        <td class="num" style="text-align:right;">${r.itemCount}</td>
-        <td class="num" style="text-align:right;">${r.totalQty}</td>
-        <td class="num">${escapeHtml(r.customerDeliveryDate)}</td>
-        <td class="num"><span class="secondary">${escapeHtml(r.hookkaExpectedDD ?? "—")}</span></td>
-        <td class="num" style="text-align:right;font-weight:700;color:${daysColor};">${r.daysOverdue}d</td>
-        <td class="num" style="text-align:right;">${escapeHtml(formatRM(r.totalSen))}</td>
-        <td>${status}</td>
+        <td class="num m-inline" style="text-align:right;"><span class="m-lbl">Items </span>${r.itemCount}</td>
+        <td class="num m-inline" style="text-align:right;"><span class="m-lbl">Units </span>${r.totalQty}</td>
+        <td class="num m-inline"><span class="m-lbl">Customer DD </span>${escapeHtml(r.customerDeliveryDate)}</td>
+        <td class="num m-inline"><span class="m-lbl">Our target </span><span class="secondary">${escapeHtml(r.hookkaExpectedDD ?? "—")}</span></td>
+        <td class="num m-inline" style="text-align:right;font-weight:700;color:${daysColor};"><span class="m-lbl">Overdue </span>${r.daysOverdue}d</td>
+        <td class="num m-inline" style="text-align:right;">${escapeHtml(formatRM(r.totalSen))}</td>
+        <td class="m-inline">${status}</td>
       </tr>`;
     })
     .join("");
@@ -630,11 +720,12 @@ export function renderOverdueHtml(data: OverdueReport): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Overdue Report — ${escapeHtml(longDate)}</title>
-<style>${PAGE_CSS}</style>
+<style>${PAGE_CSS}${PHONE_CSS}</style>
 </head>
 <body>
-<div class="print-bar no-print"><button onclick="window.print()">Print / Save as PDF</button></div>
+${opts.email ? "" : `<div class="print-bar no-print"><button onclick="window.print()">Print / Save as PDF</button></div>`}
 <div class="page">
   <h1>Overdue Report</h1>
   <div class="meta">${escapeHtml(longDate)} &nbsp;·&nbsp; Hookka Manufacturing ERP &nbsp;·&nbsp; sales orders past customer delivery date</div>

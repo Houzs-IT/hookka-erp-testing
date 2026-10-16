@@ -1,5 +1,9 @@
 # Payroll & Worker Portal — Explanation Guide
 
+> **Last verified: 2026-10-07** (branch `feat/worker-home-eff-formula`) — the Home performance tiles bullet (Production Hours / Production Time / Efficiency %), read from `src/pages/worker/index.tsx` and the `/history` handler in `src/api/routes/worker.ts`. Nothing else re-checked.
+
+> **Last verified: 2026-10-01** (branch `feat/dev31-worker-dept-hours`) — the Home / Scan / My Pay bullets about department hours (DEV-31), read from `src/pages/worker/dept-day-card.tsx`, `src/pages/worker/pay.tsx`, `src/api/routes/worker.ts`. Nothing else re-checked.
+
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
@@ -50,11 +54,27 @@ Workers log in with their employee PIN at `/worker`. Pages:
 - The punch time uses Malaysia time and lands instantly in the office's
   **Attendance** tab (time + location badge + the two selfies) and pre-fills
   the **Working Hours** grid's Punch column.
+- After punching in, a **Today's departments** card shows where the worker is
+  now (the last department QR scanned, else their own department since
+  clock-in) and the hours so far in each department, worked out the same way
+  punch-out will save them (pay rules first, then split by scan time). After
+  punch-out it shows the saved Working Hours rows instead.
+- The performance block (From / To dates) shows three tiles, **Production
+  Hours**, **Production Time** and **Efficiency %**, read as a formula: hours
+  credited from finished job cards (plus approved extra production time)
+  divided by hours logged in production departments. A line under the tiles
+  spells it out with the same hours (e.g. 30.8 ÷ 41.8 × 100 = 73.8%). The
+  percentage is the office efficiency figure, worked out before the hours are
+  rounded, so a calculator on the shown hours can be 0.1% off.
 
 ### Scan
 - Shop-floor job-card scanning (Fab Cut / Fab Sew stickers). Not pay-related.
+- Scanning a **department QR** moves the worker's hours to that department
+  from that minute and shows the same Today's departments card.
 
 ### My Pay
+- **Daily Attendance** lists each day's hours by department under the punch
+  times, the same rows the office sees on Working Hours.
 - **Month picker** (current month = live estimate; past months = the
   finalised payslip).
 - The **estimate** updates in real time as Working Hours are keyed and is
@@ -73,8 +93,15 @@ Workers log in with their employee PIN at `/worker`. Pages:
     public holiday 3×.
   - **Efficiency allowance** — the flat bonus when the month's cumulative
     efficiency reaches the worker's target (otherwise RM0).
-  - **Gross** — basic + OT + allowance. Statutory deductions (EPF/SOCSO/EIS)
-    then produce net pay on the payslip.
+  - **Leadership allowance** *(added 2026-09, migration 0233, DEV-06)* — a flat
+    per-worker bonus with **no efficiency/performance threshold**, pro-rated by
+    attendance using the same `worked / workingDays` formula as the efficiency
+    allowance (`src/api/lib/leadership-allowance.ts`,
+    `resolveLeadershipAllowanceSen`). On the payslip / My Pay it is summed into
+    the same "Allowance" line as the efficiency allowance rather than shown as
+    a separate row.
+  - **Gross** — basic + OT + allowance (efficiency + leadership combined).
+    Statutory deductions (EPF/SOCSO/EIS) then produce net pay on the payslip.
 
 ---
 
@@ -95,13 +122,14 @@ Workers log in with their employee PIN at `/worker`. Pages:
 | Absence | − salary ÷ 26 per confirmed absent working day; a blank day is "Pending" for 2 working days before it becomes an absence; backfilling the hours removes it automatically |
 | Join / resign mid-month | No proration — working days not worked (before joining or after the last day) simply count as absences at the ÷26 day rate (e.g. RM4,000: each missed working day deducts RM153.85) |
 | Efficiency allowance | Flat per-worker amount, paid only when monthly cumulative efficiency ≥ the worker's target; no proration |
+| Leadership allowance | Flat per-worker amount, **no threshold** — always pays, pro-rated by `worked / workingDays` (migration 0233, DEV-06) |
 | Statutory | EPF 11% / 13%, SOCSO ~RM7.45 / 26.15, EIS ~RM3.90 / 3.90 — per-worker toggle |
 
 Maintained where:
 - **Public holidays** → the Public Holidays panel (drives 3× OT and
   working-day counts).
 - **Salary (with effective date), OT multiplier, hours/day, statutory
-  toggles, efficiency allowance** → Employee Master.
+  toggles, efficiency allowance, leadership allowance** → Employee Master.
 - **Shift times, lunch, late grace/blocks, the fallback hour divisor, Sunday /
   holiday multipliers, absence grace, statutory rates** → the **Pay Rules
   panel** on the Payroll tab. Changes are scheduled with an effective date

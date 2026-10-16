@@ -23,8 +23,19 @@ import {
   loadDoValueMapCached,
   loadPoValueMap,
 } from "../lib/do-value";
-import { requirePermission } from "../lib/rbac";
+import { requirePermission, requireReadOrDashboardTab } from "../lib/rbac";
+import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
 import { customerScopeSql, salesOrderScopeSql, isCustomerScoped } from "../lib/customer-scope";
+import { saveStateKpisLater } from "../lib/dashboard-state-snapshot";
+
+// Today's dispatch-chain money for the dashboard's daily Pending Delivery save
+// (the same DRAFT / LOADED + IN_TRANSIT fold the tile does).
+function dispatchKpis(v: Record<string, number> | undefined) {
+  return {
+    pendingDispatchSen: v?.DRAFT ?? 0,
+    inTransitSen: (v?.LOADED ?? 0) + (v?.IN_TRANSIT ?? 0),
+  };
+}
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { checkDeliveryOrderLocked } from "../lib/lock-helpers";
@@ -41,10 +52,8 @@ import {
   type ReadyPlanningPO,
   type ReadyPORow,
 } from "../../lib/delivery-pipeline";
-import {
-  groupPosByCustomerHub,
-  projectCreditFailure,
-} from "../lib/pl-first-grouping";
+import { groupPosByCustomerHub } from "../lib/pl-first-grouping";
+import { checkCustomerCredit, gateCredit } from "../lib/customer-credit";
 import {
   ensureDoPartialInvoiceColumns,
   loadDoBillingState,
@@ -56,6 +65,8 @@ import {
 // of the simplified branded fallback. buildSimpleTablePdf stays the ULTIMATE
 // fallback if the unified render ever throws on Workers.
 import { getOrCreateQrToken, qrScanUrl } from "../lib/do-qr-token";
+import { freshReads } from "../lib/worker-perf";
+import { parseStatusList, startOfMonthMYT } from "../../lib/delivery-list-filters";
 // Company office number — the driver-contact fallback on dispatch notices
 // (owner rule: no driver phone on file → give the company's number).
 
@@ -287,6 +298,17 @@ app.get("/", async (c) => {
       " OR so2.customer_so_id ILIKE ? OR so2.reference ILIKE ?)))";
     dBinds = [like, like, like, like, like, like, like, like, like, like];
   }
+  // ?status=DRAFT,LOADED — the delivery page's stage tabs fetch ONLY their own
+  // statuses (2026-09-22). Before this, every tab paged through the newest 200
+  // DOs of EVERY status and filtered in the browser, so "Delivered" showed just
+  // the delivered rows that happened to fall inside that window, and the page
+  // count counted every status. Bound, never interpolated; an unknown value
+  // simply matches nothing.
+  const statusList = parseStatusList(c.req.query("status"));
+  if (statusList.length > 0) {
+    dWhere += ` AND status IN (${statusList.map(() => "?").join(", ")})`;
+    dBinds.push(...statusList);
+  }
 
   const [countRes, pageRes] = await Promise.all([
     db
@@ -349,7 +371,9 @@ app.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 app.get("/stats", async (c) => {
   // RBAC gate — stats are aggregate reads of the same data, gated identically.
-  const denied = await requirePermission(c, "delivery-orders", "read");
+  // A role whose dashboard Sales tab reads it (Order Pipeline card) passes too,
+  // see DASHBOARD_TABS_BY_ROLE in role-policy.ts.
+  const denied = await requireReadOrDashboardTab(c, "delivery-orders", "sales");
   if (denied) return denied;
 
   const orgId = getOrgId(c);
@@ -358,6 +382,22 @@ app.get("/stats", async (c) => {
   // tab totals would be everybody's) and must not write into it. Same reason
   // the Sales Orders cards were showing 1,229 over an empty grid.
   const statsScope = await customerScopeSql(c, "customerId");
+  const scopeAnd = statsScope.clause ? ` AND ${statsScope.clause}` : "";
+
+  // "Delivered (MTD)" card (2026-09-22). Deliberately OUTSIDE the snapshot: the
+  // snapshot is keyed by the data signature, not by the date, so a month
+  // rollover would never invalidate it. One COUNT; deliveredAt is ISO TEXT, so
+  // the string compare is exact. INVOICED counts too — an invoiced DO is still
+  // a delivered DO (the Delivered tab's rule). Was counted in the browser off
+  // the paginated browse page, which no longer holds delivered rows on any
+  // other tab.
+  const mtdRow = await c.var.DB.prepare(
+    `SELECT COUNT(*) AS n FROM delivery_orders
+      WHERE orgId = ? AND status IN ('DELIVERED', 'INVOICED') AND deliveredAt >= ?${scopeAnd}`,
+  )
+    .bind(orgId, startOfMonthMYT(), ...statsScope.binds)
+    .first<{ n: number }>();
+  const deliveredMtd = Number(mtdRow?.n ?? 0);
 
   // PR 3 (2026-05-20) — cache-aside snapshot. See lib/delivery-snapshot.ts
   // for the architecture. Mirror of the pattern in routes/dashboard-overview.ts.
@@ -371,7 +411,8 @@ app.get("/stats", async (c) => {
       getDeliveryStatsSignature(c.var.DB),
     ]);
     if (isSnapshotFresh(snap, sig.maxUpdatedAt, sig.rowCount) && snap) {
-      return c.json({ success: true, ...snap.data });
+      saveStateKpisLater(c, orgId, dispatchKpis(snap.data.valueByStatus as Record<string, number>));
+      return c.json({ success: true, ...snap.data, deliveredMtd });
     }
   }
 
@@ -383,9 +424,7 @@ app.get("/stats", async (c) => {
   // row-per-DO read (exact, no item-join multiplication).
   const [statusRes, valueMap] = await Promise.all([
     c.var.DB.prepare(
-      `SELECT id, status FROM delivery_orders WHERE orgId = ?${
-        statsScope.clause ? ` AND ${statsScope.clause}` : ""
-      }`,
+      `SELECT id, status FROM delivery_orders WHERE orgId = ?${scopeAnd}`,
     )
       .bind(orgId, ...statsScope.binds)
       .all<{ id: string; status: string }>(),
@@ -422,8 +461,9 @@ app.get("/stats", async (c) => {
   } catch (e) {
     console.warn("[delivery-stats-snapshot] write-back failed:", e);
   }
+  if (!statsScope.clause) saveStateKpisLater(c, orgId, dispatchKpis(valueByStatus));
 
-  return c.json({ success: true, ...payload });
+  return c.json({ success: true, ...payload, deliveredMtd });
 });
 
 // ---------------------------------------------------------------------------
@@ -525,9 +565,15 @@ app.get("/linked-po-ids", async (c) => {
 // ---------------------------------------------------------------------------
 async function loadDeliveryReadyPlanning(
   c: Context<Env>,
+  // fresh: a caller about to act on one order (the Sales "Transfer to Delivery
+  // Order" box) must not get the serve-stale copy, which still showed a
+  // just-finished order as not ready. It skips serve-stale and reads past
+  // Hyperdrive's query cache (freshReads), so a stale snapshot is rebuilt
+  // before the answer. The Delivery page keeps serve-stale for its speed.
+  fresh = false,
 ): Promise<{ ready: ReadyPORow[]; planning: ReadyPORow[] }> {
   const orgId = getOrgId(c);
-  const db = c.var.DB;
+  const db = fresh ? freshReads(c.var.DB) : c.var.DB;
 
   // Runtime self-apply — migration files are inert on deploy, so the snapshot
   // table must be created here (awaited) before withSnapshot reads/writes it.
@@ -700,7 +746,7 @@ async function loadDeliveryReadyPlanning(
     compute,
     "",
     c,
-    { staleWhileRevalidate: true },
+    { staleWhileRevalidate: !fresh },
   );
   return data;
 }
@@ -708,7 +754,8 @@ async function loadDeliveryReadyPlanning(
 app.get("/ready-planning", async (c) => {
   const denied = await requirePermission(c, "delivery-orders", "read");
   if (denied) return denied;
-  return c.json({ success: true, ...(await loadDeliveryReadyPlanning(c)) });
+  const fresh = c.req.query("fresh") === "1";
+  return c.json({ success: true, ...(await loadDeliveryReadyPlanning(c, fresh)) });
 });
 
 // ---------------------------------------------------------------------------
@@ -738,11 +785,22 @@ app.get("/ready-planning", async (c) => {
 // exact — no float ever enters. Registered BEFORE /:id (Hono static-first).
 // ---------------------------------------------------------------------------
 app.get("/pending-value", async (c) => {
-  const denied = await requirePermission(c, "delivery-orders", "read");
+  // One total, read by the dashboard Sales tab's Order Pipeline card, so a role
+  // whose dashboard tab map includes Sales passes too.
+  const denied = await requireReadOrDashboardTab(c, "delivery-orders", "sales");
   if (denied) return denied;
   const { ready } = await loadDeliveryReadyPlanning(c);
   let pendingDeliveryValueSen = 0;
   for (const r of ready) pendingDeliveryValueSen += r.valueSen || 0;
+  // Daily save for a finished month's Pending Delivery, whole-company only:
+  // loadDeliveryReadyPlanning narrows by both scopes for a scoped caller.
+  const [pvPoScope, pvSoScope] = await Promise.all([
+    salesOrderScopeSql(c, "salesOrderId"),
+    customerScopeSql(c, "customerId"),
+  ]);
+  if (!pvPoScope.clause && !pvSoScope.clause) {
+    saveStateKpisLater(c, getOrgId(c), { pendingDeliveryValueSen });
+  }
   return c.json({
     success: true,
     pendingDeliveryValueSen,
@@ -2022,6 +2080,10 @@ app.post("/", async (c) => {
   const denied = await requirePermission(c, "delivery-orders", "create");
   if (denied) return denied;
 
+  // T-006 R10 — a retried create (network blip on the round-trip) must not
+  // mint a second DO. No-op when the client sends no Idempotency-Key.
+  const idemKey = readIdempotencyKey(c);
+  return withIdempotency(c, "delivery-orders", idemKey, async () => {
   try {
     const body = await c.req.json();
     // The whole former inline body lives in createDeliveryOrderForPOs —
@@ -2038,6 +2100,7 @@ app.post("/", async (c) => {
     }
     return c.json({ success: false, error: msg || "Internal error creating delivery order" }, 500);
   }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2048,7 +2111,7 @@ app.post("/", async (c) => {
 // driver / delivery date ONCE, and this endpoint:
 //   1. Groups the POs by (customerId, hubId) — one DO per customer per hub.
 //   2. PRE-VALIDATES everything (CO guard, once-only-delivery, customer
-//      resolution, credit limit summed ACROSS each customer's groups)
+//      resolution, customer credit summed ACROSS each customer's groups)
 //      BEFORE creating anything — any failure creates NOTHING.
 //   3. Creates one DRAFT DO per group SEQUENTIALLY through the same
 //      createDeliveryOrderForPOs core as POST / (genNextDoNo is read-MAX+1,
@@ -2081,6 +2144,7 @@ app.post("/packing-list-first", async (c) => {
       deliveryDate?: string | null;
       remarks?: string | null;
       preview?: boolean;
+      creditOverride?: unknown;
     }>();
     const productionOrderIds = Array.isArray(body.productionOrderIds)
       ? [
@@ -2255,14 +2319,12 @@ app.post("/packing-list-first", async (c) => {
     const customerIds = [...new Set(groups.map((g) => g.customerId))];
     const cph = customerIds.map(() => "?").join(",");
     const custRes = await c.var.DB.prepare(
-      `SELECT id, name, creditLimitSen, outstandingSen FROM customers WHERE id IN (${cph})`,
+      `SELECT id, name FROM customers WHERE id IN (${cph})`,
     )
       .bind(...customerIds)
       .all<{
         id: string;
         name: string;
-        creditLimitSen: number;
-        outstandingSen: number;
       }>();
     const customerById = new Map((custRes.results ?? []).map((r) => [r.id, r]));
     for (const g of groups) {
@@ -2278,73 +2340,44 @@ app.post("/packing-list-first", async (c) => {
       }
     }
 
-    // ---- Step 4: credit pre-validation per customer ACROSS groups ---------
-    // The per-DO gate inside the core only sees one group at a time and
-    // outstandingSen doesn't move at DO create, so N same-customer groups
-    // would each pass individually even when their SUM blows the limit.
-    // projectCreditFailure (pl-first-grouping.ts) checks the sum up front.
-    const creditGroups = groups.map((g) => {
-      const soSet = new Set<string>();
-      const items: { productCode: string; quantity: number }[] = [];
-      for (const poId of g.poIds) {
-        const po = poById.get(poId);
-        if (!po) continue;
-        if (po.salesOrderId) soSet.add(po.salesOrderId);
-        items.push({
-          productCode: po.productCode ?? "",
-          quantity: Number(po.quantity) || 0,
-        });
-      }
-      return { customerId: g.customerId, soIds: [...soSet], items };
-    });
-    let priceRows: {
-      salesOrderId: string;
-      productCode: string | null;
-      unitPriceSen: number;
-    }[] = [];
-    if (soIds.length > 0) {
-      const ph = soIds.map(() => "?").join(",");
-      const priceRes = await c.var.DB.prepare(
-        `SELECT salesOrderId, productCode, unitPriceSen
-           FROM sales_order_items
-          WHERE salesOrderId IN (${ph})`,
-      )
-        .bind(...soIds)
-        .all<{
-          salesOrderId: string;
-          productCode: string | null;
-          unitPriceSen: number;
-        }>();
-      priceRows = priceRes.results ?? [];
-    }
-    const creditFail = projectCreditFailure(
-      creditGroups,
-      priceRows,
-      [...customerById.values()].map((r) => ({
-        id: r.id,
-        creditLimitSen: Number(r.creditLimitSen) || 0,
-        outstandingSen: Number(r.outstandingSen) || 0,
-      })),
-    );
-    if (creditFail) {
-      const failName =
-        customerById.get(creditFail.customerId)?.name ?? creditFail.customerId;
-      return c.json(
-        {
-          success: false,
-          error: `Credit limit exceeded for ${failName}. The selected orders together exceed the remaining credit — nothing was created.`,
-          code: "CREDIT_LIMIT_EXCEEDED",
-          details: {
-            customerId: creditFail.customerId,
-            customerName: failName,
-            limit: creditFail.limitSen,
-            outstanding: creditFail.outstandingSen,
-            doTotal: creditFail.doTotalSen,
-            projected: creditFail.projectedSen,
-          },
-        },
-        409,
+    // ---- Step 4: customer credit per customer ACROSS groups ---------------
+    // The same shared gate the core runs (customer-credit.ts: overdue term +
+    // limit), fed ALL of a customer's groups at once. The core only sees one
+    // group, so N same-customer groups would each pass while their SUM blows
+    // the limit. An allowed body.creditOverride passes here and in the core.
+    // A preview for a user who MAY override reports the block as a warning
+    // (so the dialog stays usable) instead of refusing.
+    const creditWarnings: string[] = [];
+    for (const customerId of customerIds) {
+      const items = groups
+        .filter((g) => g.customerId === customerId)
+        .flatMap((g) =>
+          g.poIds.map((poId) => {
+            const po = poById.get(poId);
+            return {
+              productionOrderId: poId,
+              productCode: po?.productCode ?? null,
+              quantity: Number(po?.quantity) || 0,
+              salesOrderId: po?.salesOrderId ?? null,
+            };
+          }),
+        );
+      const gate = await gateCredit(
+        c,
+        await checkCustomerCredit(c.var.DB, customerId, items),
+        body.creditOverride,
+        { resource: "customers", resourceId: customerId },
       );
+      if (!gate.ok) {
+        if (body.preview === true && gate.body.overrideAllowed === true) {
+          creditWarnings.push(String(gate.body.error));
+          continue;
+        }
+        return c.json(
+          { ...gate.body, error: `${String(gate.body.error)} Nothing was created.` },
+          gate.status,
+        );
+      }
     }
 
     // ---- Step 5: packing_lists storage pre-flight -------------------------
@@ -2396,6 +2429,7 @@ app.post("/packing-list-first", async (c) => {
         preview: true,
         doCount: groups.length,
         groups: groupMeta,
+        creditWarnings,
       });
     }
 
@@ -2495,6 +2529,7 @@ app.post("/packing-list-first", async (c) => {
             deliveryDate:
               typeof body.deliveryDate === "string" ? body.deliveryDate : "",
             remarks: typeof body.remarks === "string" ? body.remarks : "",
+            creditOverride: body.creditOverride,
           },
           (info) => createdDos.push(info),
         );

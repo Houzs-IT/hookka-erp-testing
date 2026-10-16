@@ -70,6 +70,7 @@ function makeDb() {
     const sql = norm(rawSql);
     let binds = [];
     const api = {
+      sql,
       bind(...args) {
         binds = args;
         return this;
@@ -90,11 +91,18 @@ function makeDb() {
   }
 
   async function batch(stmts) {
-    // stmts are the prepared-statement objects from prepare().bind(); each
-    // carries its own captured SQL+binds via the closure. We re-run them.
-    const out = [];
-    for (const s of stmts) out.push(await s.run());
-    return out;
+    // The real adapter runs a batch as ONE transaction (sql.begin in
+    // supabase-compat.ts): a statement that raises rolls back every statement
+    // before it. Model that, or "nothing was written" cannot be asserted.
+    const snapshot = structuredClone(tables);
+    try {
+      const out = [];
+      for (const s of stmts) out.push(await s.run());
+      return out;
+    } catch (e) {
+      for (const k of Object.keys(tables)) tables[k] = snapshot[k];
+      throw e;
+    }
   }
 
   // ---- write side -----------------------------------------------------------
@@ -108,12 +116,24 @@ function makeDb() {
     if (m) {
       const table = m[1];
       const cols = m[2].split(",").map((c) => c.trim());
+      const vals = m[3].split(",").map((v) => v.trim());
       const row = {};
+      let bi = 0;
       cols.forEach((col, i) => {
-        row[col] = binds[i];
+        // A literal in VALUES (e.g. 'GRN') takes no bind.
+        row[col] = /^'[^']*'$/.test(vals[i] ?? "") ? vals[i].slice(1, -1) : binds[bi++];
       });
       if (table === "grn_items" && row.id == null) row.id = autoId++;
-      tables[table].push(row);
+      // Prod's idx_lje_idempotent: one leg per (org, sourceType, sourceId, legNo).
+      if (
+        table === "ledger_journal_entries" &&
+        (tables.ledger_journal_entries ?? []).some(
+          (l) => l.orgId === row.orgId && l.sourceType === row.sourceType && l.sourceId === row.sourceId && Number(l.legNo) === Number(row.legNo),
+        )
+      ) {
+        throw new Error('duplicate key value violates unique constraint "idx_lje_idempotent"');
+      }
+      (tables[table] ??= []).push(row);
       return;
     }
     // UPDATE grn_items SET invoiced_qty = COALESCE(invoiced_qty,0) + ? WHERE id = ?
@@ -132,7 +152,28 @@ function makeDb() {
       if (gi) gi.invoiced_qty = (Number(gi.invoiced_qty) || 0) - Number(delta);
       return;
     }
-    // UPDATE purchase_order_items SET receivedQty = receivedQty + ? WHERE id = ?
+    // T-006 R2 — the guarded increment. Binds: (check qty, increase, id).
+    // Evaluated against the row's REAL value at write time, like Postgres does
+    // after waiting on the row lock, and it raises the way the failed cast does.
+    m = sql.match(/^UPDATE purchase_order_items SET receivedQty = CASE WHEN receivedQty \+ \? <= quantity \* 1\.1 THEN receivedQty \+ \? ELSE CAST\('po_line_over_receipt:' \|\| id AS DOUBLE PRECISION\) END WHERE id = \?/i);
+    if (m) {
+      const [check, bump, id] = binds;
+      const poi = tables.purchase_order_items.find((r) => String(r.id) === String(id));
+      if (!poi) return;
+      const cur = Number(poi.receivedQty) || 0;
+      if (cur + Number(check) <= Number(getCol(poi, "quantity")) * 1.1) {
+        poi.receivedQty = cur + Number(bump);
+        return;
+      }
+      const err = new Error(
+        `invalid input syntax for type double precision: "po_line_over_receipt:${poi.id}"`,
+      );
+      err.code = "22P02";
+      throw err;
+    }
+    // The UNGUARDED increase the route used before T-006 R2. Kept so that a
+    // regression back to it shows up as what it is, a PO line received twice,
+    // instead of as a statement this mock silently ignores.
     m = sql.match(/^UPDATE purchase_order_items SET receivedQty = receivedQty \+ \? WHERE id = \?/i);
     if (m) {
       const [delta, id] = binds;
@@ -154,6 +195,14 @@ function makeDb() {
       const id = binds[binds.length - 1];
       const g = tables.grns.find((r) => String(r.id) === String(id));
       if (g) applySet(g, m[1], binds.slice(0, -1));
+      return;
+    }
+    // UPDATE purchase_invoices SET ... WHERE id = ?  (last bind is id)
+    m = sql.match(/^UPDATE purchase_invoices SET (.+) WHERE id = \?$/i);
+    if (m) {
+      const id = binds[binds.length - 1];
+      const pi = tables.purchase_invoices.find((r) => String(r.id) === String(id));
+      if (pi) applySet(pi, m[1], binds.slice(0, -1));
       return;
     }
     // UPDATE purchase_orders SET ... WHERE id = ? [AND status IN (...)]
@@ -234,9 +283,30 @@ function makeDb() {
     if (/FROM purchase_invoices WHERE piNo LIKE/i.test(sql)) return [];
     if (/FROM purchase_orders WHERE poNo LIKE/i.test(sql)) return [];
 
+    // The invoice's posted legs, and the highest leg number per source.
+    if (/FROM ledger_journal_entries WHERE sourceId = \? AND hidden = 0 AND sourceType LIKE 'purchase_invoice%'/i.test(sql)) {
+      return (tables.ledger_journal_entries ?? []).filter(
+        (l) => l.sourceId === binds[0] && !Number(l.hidden) && String(l.sourceType).startsWith("purchase_invoice"),
+      );
+    }
+    if (/SELECT COALESCE\(MAX\(legNo\), 0\) AS m FROM ledger_journal_entries WHERE sourceType = \? AND sourceId = \?/i.test(sql)) {
+      const legs = (tables.ledger_journal_entries ?? []).filter((l) => l.sourceType === binds[0] && l.sourceId === binds[1]);
+      return [{ m: legs.reduce((mx, l) => Math.max(mx, Number(l.legNo) || 0), 0) }];
+    }
+
     // RBAC role_permissions join — short-circuited by SUPER_ADMIN, but answer empty.
     if (/FROM role_permissions/i.test(sql)) return [];
 
+    // PO lines by id list (the GRN restore path reads these before decrementing).
+    if (/FROM purchase_order_items WHERE id IN \(/i.test(sql)) {
+      return tables.purchase_order_items.filter((r) => binds.map(String).includes(String(r.id)));
+    }
+    // The lots a GRN posted (GRN cancel reverses exactly these).
+    if (/FROM rm_batches WHERE source = 'GRN' AND sourceRefId = \?/i.test(sql)) {
+      return tables.rm_batches.filter(
+        (r) => r.source === "GRN" && String(getCol(r, "sourceRefId")) === String(binds[0]),
+      );
+    }
     // SELECT * FROM grns WHERE id = ?
     if (/FROM grns WHERE id = \?/i.test(sql)) {
       return tables.grns.filter((r) => String(r.id) === String(binds[0]));
@@ -302,11 +372,14 @@ function makeDb() {
         .filter((r) => String(getCol(r, "purchaseOrderId")) === String(binds[0]))
         .map((r) => ({ quantity: getCol(r, "quantity"), receivedQty: Number(getCol(r, "receivedQty")) || 0 }));
     }
-    // SELECT material_code, materialName, quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ?
+    // T-006 R8 — SELECT id, material_code, materialName, quantity, receivedQty
+    // FROM purchase_order_items WHERE purchaseOrderId = ? (checkPoRemaining
+    // now keys the ceiling by the PO line's own id, not material_code).
     if (/FROM purchase_order_items WHERE purchaseOrderId = \?/i.test(sql)) {
       return tables.purchase_order_items
         .filter((r) => String(getCol(r, "purchaseOrderId")) === String(binds[0]))
         .map((r) => ({
+          id: r.id,
           material_code: getCol(r, "material_code"),
           materialName: getCol(r, "materialName"),
           quantity: getCol(r, "quantity"),
@@ -318,7 +391,11 @@ function makeDb() {
 
     // SELECT * FROM purchase_invoices WHERE id = ?
     if (/FROM purchase_invoices WHERE id = \?/i.test(sql)) {
-      return tables.purchase_invoices.filter((r) => String(r.id) === String(binds[0]));
+      // The real adapter camelCases result rows (db-pg.ts), so a route that
+      // reads a snake_case key only sees undefined there; do the same here.
+      return tables.purchase_invoices
+        .filter((r) => String(r.id) === String(binds[0]))
+        .map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()), v])));
     }
     // SELECT piNo FROM purchase_invoices WHERE grn_id = ? AND status != 'CANCELLED'
     if (/SELECT piNo FROM purchase_invoices WHERE grn_id = \? AND status != 'CANCELLED'/i.test(sql)) {
@@ -336,9 +413,13 @@ function makeDb() {
     if (/FROM purchase_invoice_items WHERE pi_id = \?/i.test(sql)) {
       return tables.purchase_invoice_items.filter((r) => String(getCol(r, "pi_id")) === String(binds[0]));
     }
-    // Already-invoiced against a PO, per material code:
-    //   SELECT pii.material_code AS mc, COALESCE(SUM(pii.qty),0) AS qty
+    // T-006 R8 — already-invoiced against a PO, resolved to po_item_id (via
+    // pii.grn_item_id → grn_items.po_item_id) where resolvable, else
+    // material_code for a legacy/manual line with no GRN behind it:
+    //   SELECT gi.po_item_id AS "poItemId", pii.material_code AS mc,
+    //          COALESCE(SUM(pii.qty),0) AS qty
     //     FROM purchase_invoice_items pii JOIN purchase_invoices pi ...
+    //     LEFT JOIN grn_items gi ON gi.id = pii.grn_item_id
     //    WHERE COALESCE(pii.po_id, pi.purchaseOrderId) = ? AND pi.status != 'CANCELLED'
     // A GRN-sourced line counts here through its own po_id — which is exactly
     // why the GRN-then-PO order was already blocked while PO-then-GRN was not.
@@ -347,7 +428,7 @@ function makeDb() {
       // The re-line path excludes the invoice being edited (AND pii.pi_id != ?)
       // — its current lines are about to be replaced.
       const excluded = /pii\.pi_id != \?/.test(sql) ? String(binds[1]) : null;
-      const byCode = new Map();
+      const byKey = new Map();
       for (const it of tables.purchase_invoice_items) {
         if (excluded && String(getCol(it, "pi_id")) === excluded) continue;
         const pi = tables.purchase_invoices.find(
@@ -357,11 +438,28 @@ function makeDb() {
         const effectivePo =
           getCol(it, "po_id") ?? getCol(pi, "purchaseOrderId") ?? null;
         if (effectivePo == null || String(effectivePo) !== wanted) continue;
+        const grnItemId = getCol(it, "grn_item_id");
+        const gi = grnItemId
+          ? tables.grn_items.find((g) => String(g.id) === String(grnItemId))
+          : null;
+        const poItemId = gi ? getCol(gi, "po_item_id") ?? null : null;
         const code = getCol(it, "material_code");
-        if (!code) continue;
-        byCode.set(code, (byCode.get(code) ?? 0) + (Number(getCol(it, "qty")) || 0));
+        if (!poItemId && !code) continue; // wholly unresolvable — not guarded here
+        const key = poItemId ?? `code:${code}`;
+        const prev = byKey.get(key) ?? { poItemId, mc: code ?? null, qty: 0 };
+        prev.qty += Number(getCol(it, "qty")) || 0;
+        byKey.set(key, prev);
       }
-      return [...byCode].map(([mc, qty]) => ({ mc, qty }));
+      return [...byKey.values()];
+    }
+    // raw_materials lookup behind resolveRmForGRNItem — without it every GRN
+    // line resolves to "unresolved" and no stock statements are built, which
+    // would make the A3 single-batch test silently vacuous.
+    if (/FROM raw_materials WHERE (itemCode|description) = \?/i.test(sql)) {
+      const col = /WHERE itemCode/i.test(sql) ? "itemCode" : "description";
+      return tables.raw_materials.filter(
+        (r) => String(getCol(r, col)) === String(binds[0]),
+      );
     }
     // suppliers / poNo lookups not used here
     if (/FROM purchase_orders WHERE id = \?/i.test(sql)) {
@@ -375,11 +473,11 @@ function makeDb() {
 
 // Wrap a route sub-app so c.var.DB + userRole are injected (SUPER_ADMIN
 // short-circuits RBAC). Mirrors what worker.ts middleware does in prod.
-function mount(routeApp, db) {
+function mount(routeApp, db, role = "SUPER_ADMIN") {
   const root = new Hono();
   root.use("*", async (c, next) => {
     c.set("DB", db);
-    c.set("userRole", "SUPER_ADMIN");
+    c.set("userRole", role);
     c.set("userId", "test-user");
     c.set("orgId", "org-test");
     await next();
@@ -658,7 +756,7 @@ test("PO-linked + arrival ARRIVED at create → POSTED + receivedQty cascades", 
   const grnRoot = mount(grnApp, db);
 
   // Goods physically arrived against the PO at receipt time → arrival ARRIVED →
-  // born POSTED → postGRNToStock + cascadePOStatusAfterGRNPost run.
+  // born POSTED → stock statements + PO counter statements run in the create batch.
   const res = await grnRoot.request("/", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -822,6 +920,59 @@ test("a legitimate split still passes: 60 off the PO, then 40 off the GRN", asyn
   assert.equal(over.status, 409);
 });
 
+// T-006 R8 / BUG-2026-08-13-052 — every PO-sourced GRN line stores
+// material_code = "" in production (root cause diagnosed, deliberately NOT
+// fixed at the source — see BUG-HISTORY.md). checkPoRemaining used to match
+// PO lines to invoice lines by material_code alone, so a blank code meant the
+// ceiling could never find its PO line and silently let ANY quantity through.
+// po_item_id is an explicit FK that survives the blank code entirely.
+test("the PO ceiling rejects even when the GRN line's material_code is blank", async () => {
+  const db = makeDb();
+  seedPoAndReceipt(db);
+  // Simulate the real-world state directly rather than relying on
+  // seedPoAndReceipt's normally-populated fixture.
+  const gi = db.tables.grn_items.find((r) => r.id === 201);
+  gi.materialCode = "";
+  const piRoot = mount(piApp, db);
+
+  assert.equal((await post(piRoot, poDirectPI(100))).status, 200);
+
+  const res = await post(piRoot, {
+    grnId: "grn-2",
+    supplierId: "sup-2",
+    supplierName: "ADD WOOD",
+    purchaseOrderId: "po-2",
+    items: [
+      { materialCode: "", materialName: "WOOD-2 - Pine plank", qty: 100, unitPriceSen: 10000, grnItemId: 201 },
+    ],
+  });
+  assert.equal(res.status, 409, "a blank material_code must not let the ceiling silently pass");
+  assert.match((await res.json()).error, /remaining 0/);
+});
+
+// T-006 R9 — a PI with no header grnId AND no header purchaseOrderId fell
+// through both branches that call checkPoRemaining. A line still naming its
+// own poId got INSERTed with that poId (so it counted against the PO on the
+// NEXT invoice), but this invoice itself was never checked against the
+// ceiling at all.
+test("a header with neither grnId nor purchaseOrderId still honours a line's own poId", async () => {
+  const db = makeDb();
+  seedPoAndReceipt(db);
+  const piRoot = mount(piApp, db);
+
+  assert.equal((await post(piRoot, poDirectPI(100))).status, 200);
+
+  const res = await post(piRoot, {
+    supplierId: "sup-2",
+    supplierName: "ADD WOOD",
+    items: [
+      { materialCode: "WOOD-2", materialName: "WOOD-2 - Pine plank", qty: 1, unitPriceSen: 10000, poId: "po-2" },
+    ],
+  });
+  assert.equal(res.status, 409, "a line-level-only poId must still hit the PO ceiling");
+  assert.match((await res.json()).error, /remaining 0/);
+});
+
 test("two GRN-sourced invoices split 60/40 without double-counting the PO", async () => {
   const db = makeDb();
   seedPoAndReceipt(db);
@@ -942,4 +1093,594 @@ test("explicit body.status DRAFT forces DRAFT even for arrived goods", async () 
   assert.equal(res.status, 201);
   const data = (await res.json()).data;
   assert.equal(data.status, "DRAFT");
+});
+
+// ---------------------------------------------------------------------------
+// T-006 follow-up — R8's switch from material_code to po_item_id silently
+// dropped the OLD code's aggregation. The pre-R8 ceiling summed every PO line
+// sharing a material_code into one bucket (`prev?.qty ?? 0 + ...`); R8's
+// itemIdByMaterialCode is a plain code→id map, so with the same material on
+// two PO lines the LAST line wins and a PO-direct invoice is measured against
+// that one line's quantity instead of the material's total on the PO.
+// A perfectly legitimate invoice for the whole order then 409s.
+// ---------------------------------------------------------------------------
+function seedPoTwoLinesSameCode(db, { each = 50 } = {}) {
+  db.tables.suppliers.push({ id: "sup-3", code: "S3", name: "TWIN CO", email: null });
+  db.tables.purchase_orders.push({
+    id: "po-3", poNo: "PO-3", supplierId: "sup-3", supplierName: "TWIN CO",
+    subtotalSen: each * 2 * 10000, totalSen: each * 2 * 10000, status: "CONFIRMED",
+    orderDate: "2026-09-01", expectedDate: "", receivedDate: "", notes: "",
+    orgId: "org-test",
+  });
+  // Same material, two lines — a real pattern: two delivery dates, two
+  // sub-locations, or simply the operator adding the line twice.
+  for (const suffix of ["a", "b"]) {
+    db.tables.purchase_order_items.push({
+      id: `poi-3${suffix}`, purchaseOrderId: "po-3", materialCategory: "WOOD",
+      material_code: "WOOD-3", materialName: "WOOD-3 - Oak plank", supplierSKU: "",
+      quantity: each, unitPriceSen: 10000, totalSen: each * 10000, receivedQty: 0,
+      unit: "pcs", orgId: "org-test",
+    });
+  }
+}
+
+test("a PO with the same material on two lines is billable for the full ordered qty", async () => {
+  const db = makeDb();
+  seedPoTwoLinesSameCode(db); // 50 + 50 = 100 ordered of WOOD-3
+  const piRoot = mount(piApp, db);
+
+  // One invoice for the whole purchase order. No GRN, so the line resolves by
+  // material_code — and the material's ceiling on this PO is 100, not 50.
+  const res = await post(piRoot, {
+    purchaseOrderId: "po-3",
+    supplierId: "sup-3",
+    supplierName: "TWIN CO",
+    items: [
+      { materialCode: "WOOD-3", materialName: "WOOD-3 - Oak plank", qty: 100, unitPriceSen: 10000, poId: "po-3" },
+    ],
+  });
+  assert.equal(
+    res.status,
+    200,
+    `billing the full ordered quantity must pass — got ${res.status}: ${JSON.stringify(await res.clone().json())}`,
+  );
+});
+
+test("the same-code PO still refuses more than the two lines add up to", async () => {
+  const db = makeDb();
+  seedPoTwoLinesSameCode(db);
+  const piRoot = mount(piApp, db);
+
+  const res = await post(piRoot, {
+    purchaseOrderId: "po-3",
+    supplierId: "sup-3",
+    supplierName: "TWIN CO",
+    items: [
+      { materialCode: "WOOD-3", materialName: "WOOD-3 - Oak plank", qty: 101, unitPriceSen: 10000, poId: "po-3" },
+    ],
+  });
+  assert.equal(res.status, 409, "101 against a 100 ceiling must still be refused");
+});
+
+// ---------------------------------------------------------------------------
+// T-006 A2 — "Two 100-unit GRNs against a 100-unit PO: the second is refused."
+// The over-receipt tolerance used to compare 110% of the ORDERED quantity
+// against THIS document's receivedQty alone, so two separate receipts each
+// read "under tolerance" and both posted. Until now this was asserted only by
+// grepping grn.ts for the cumulative expression; this drives both receipts
+// through the real route.
+// ---------------------------------------------------------------------------
+test("A2 — a second receipt that busts the PO's tolerance is refused", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // PO-9 line poi-9: 5 ordered, 0 received
+  const grnRoot = mount(grnApp, db);
+
+  const receive = (qty) =>
+    grnRoot.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        poId: "po-9",
+        receivedBy: "Ahmad",
+        arrival_state: "ARRIVED",
+        items: [{ poItemIndex: 0, receivedQty: qty, acceptedQty: qty, rejectedQty: 0 }],
+      }),
+    });
+
+  // Receipt #1 takes the whole order.
+  assert.equal((await receive(5)).status, 201);
+  assert.equal(Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty), 5);
+
+  // Receipt #2 for the same 5 — on its own it reads "5 <= 5.5", which is how
+  // the same goods used to be received twice. Cumulatively it is 10.
+  const second = await receive(5);
+  assert.equal(second.status, 400, "the second full receipt must be refused");
+  assert.match((await second.json()).error, /already received 5/);
+
+  // And nothing was written: the PO line still reads 5, not 10.
+  assert.equal(
+    Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty),
+    5,
+    "a refused receipt must not draw the PO line down",
+  );
+  assert.equal(db.tables.grns.length, 1, "a refused receipt must not leave a GRN behind");
+});
+
+test("A2 — the tolerance still allows a legitimate split receipt up to 110%", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // 5 ordered → ceiling 5.5
+  const grnRoot = mount(grnApp, db);
+
+  const receive = (qty) =>
+    grnRoot.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        poId: "po-9",
+        receivedBy: "Ahmad",
+        arrival_state: "ARRIVED",
+        items: [{ poItemIndex: 0, receivedQty: qty, acceptedQty: qty, rejectedQty: 0 }],
+      }),
+    });
+
+  assert.equal((await receive(3)).status, 201);
+  assert.equal((await receive(2)).status, 201, "3 + 2 = 5 against a 5-unit order must pass");
+  assert.equal(Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty), 5);
+});
+
+// ---------------------------------------------------------------------------
+// T-006 A3 — "Killing the worker between GRN batches leaves no posted GRN
+// without stock." R3's answer is that there are no longer separate batches to
+// die between: header + lines + stock + PO counter go into ONE db.batch().
+// The in-memory mock cannot simulate a mid-batch crash (it has no rollback),
+// but it CAN prove the property that makes the crash survivable — that every
+// one of those writes travels in a single batch call, so the database's own
+// atomicity covers them together.
+// ---------------------------------------------------------------------------
+test("A3 — a born-POSTED GRN's header, stock and PO counter go in ONE batch", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+  // Give the receipt a resolvable raw material so the stock statements are
+  // actually built (an unresolved line posts no rm_batches row).
+  db.tables.raw_materials.push({
+    id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0,
+  });
+
+  const batches = [];
+  const realBatch = db.batch;
+  db.batch = async (stmts) => {
+    batches.push(stmts.length);
+    return realBatch(stmts);
+  };
+
+  const res = await mount(grnApp, db).request("/", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      poId: "po-9",
+      receivedBy: "Ahmad",
+      arrival_state: "ARRIVED",
+      items: [
+        { poItemIndex: 0, materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", receivedQty: 5, acceptedQty: 5, rejectedQty: 0, unitPrice: 10000 },
+      ],
+    }),
+  });
+  assert.equal(res.status, 201);
+
+  // The three groups that used to be three separate db.batch() calls —
+  // header+lines, stock, PO counter — now arrive as one.
+  assert.equal(
+    batches.length,
+    1,
+    `a born-POSTED create must issue exactly ONE batch, got ${batches.length}`,
+  );
+
+  // ...and that one batch really did carry all three: a GRN row, a stock
+  // batch row, and the drawn-down PO counter.
+  assert.equal(db.tables.grns.length, 1, "GRN header written");
+  assert.equal(db.tables.grn_items.length, 1, "GRN line written");
+  assert.equal(db.tables.rm_batches.length, 1, "stock posted in the same batch");
+  assert.equal(
+    Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty),
+    5,
+    "PO counter drawn down in the same batch",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// T-006 R2, the concurrency half. The over-receipt check reads the PO line's
+// receivedQty BEFORE db.batch(), so two receipts that interleave between that
+// read and the write both used to pass and both post. The ceiling now also
+// sits inside the statement that raises the counter.
+//
+// What this CAN prove: given a stale read, the route ends with nothing written
+// and a 409, and the guard travels in the same batch as the counter update.
+// What it CANNOT prove: that Postgres really makes the second transaction wait
+// on the row and re-evaluate. The mock has no locks. That half is verified on
+// staging by firing two receipts at once.
+// ---------------------------------------------------------------------------
+
+/** The "other receipt" commits right after this request's pre-batch read. */
+function raceAfterRead(db, sqlPattern, commitOther) {
+  const realPrepare = db.prepare;
+  let fired = false;
+  db.prepare = (rawSql) => {
+    const stmt = realPrepare(rawSql);
+    if (!sqlPattern.test(stmt.sql)) return stmt;
+    const realAll = stmt.all.bind(stmt);
+    stmt.all = async () => {
+      const res = await realAll();
+      const stale = { results: res.results.map((r) => ({ ...r })) };
+      if (!fired) {
+        fired = true;
+        commitOther();
+      }
+      return stale;
+    };
+    return stmt;
+  };
+}
+
+const receiveAgainstPo9 = (root, qty, extra = {}) =>
+  root.request("/", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      poId: "po-9",
+      receivedBy: "Ahmad",
+      arrival_state: "ARRIVED",
+      items: [{ poItemIndex: 0, receivedQty: qty, acceptedQty: qty, rejectedQty: 0 }],
+      ...extra,
+    }),
+  });
+
+test("R2 race — a receipt that read a stale receivedQty writes nothing and gets a 409", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // poi-9: 5 ordered, 0 received, ceiling 5.5
+  db.tables.raw_materials.push({
+    id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0,
+  });
+  const poi = () => db.tables.purchase_order_items.find((r) => r.id === "poi-9");
+
+  // This request reads receivedQty 0. Before its batch runs, another receipt
+  // for the full 5 commits.
+  raceAfterRead(db, /^SELECT \* FROM purchase_order_items WHERE purchaseOrderId = \?/i, () => {
+    poi().receivedQty = 5;
+  });
+
+  const res = await mount(grnApp, db).request("/", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      poId: "po-9",
+      receivedBy: "Ahmad",
+      arrival_state: "ARRIVED",
+      items: [
+        { poItemIndex: 0, materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", receivedQty: 5, acceptedQty: 5, rejectedQty: 0, unitPrice: 10000 },
+      ],
+    }),
+  });
+
+  assert.equal(res.status, 409, "the raced receipt must be refused, not posted");
+  assert.match((await res.json()).error, /received by another GRN/);
+
+  // Nothing of the refused receipt survives.
+  assert.equal(Number(poi().receivedQty), 5, "only the other receipt's 5 is on the PO line, not 10");
+  assert.equal(db.tables.grns.length, 0, "no GRN header left behind");
+  assert.equal(db.tables.grn_items.length, 0, "no GRN line left behind");
+  assert.equal(db.tables.rm_batches.length, 0, "no stock posted");
+  assert.equal(Number(db.tables.raw_materials[0].balanceQty), 0, "stock balance untouched");
+  assert.equal(
+    db.tables.purchase_orders.find((r) => r.id === "po-9").status,
+    "CONFIRMED",
+    "the refused receipt must not move the PO status",
+  );
+});
+
+test("R2 race — the ceiling guard is the counter update, inside the create batch", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+
+  const batches = [];
+  const realBatch = db.batch;
+  db.batch = async (stmts) => {
+    batches.push(stmts.map((s) => s.sql));
+    return realBatch(stmts);
+  };
+
+  assert.equal((await receiveAgainstPo9(mount(grnApp, db), 5)).status, 201);
+
+  assert.equal(batches.length, 1, "a born-POSTED create issues exactly one batch");
+  const counter = batches[0].filter((q) => /^UPDATE purchase_order_items SET receivedQty/i.test(q));
+  assert.equal(counter.length, 1, "one counter statement for the one PO line");
+  assert.match(counter[0], /CASE WHEN receivedQty \+ \? <= quantity \* 1\.1 THEN receivedQty \+ \?/);
+  assert.match(counter[0], /ELSE CAST\('po_line_over_receipt:' \|\| id AS DOUBLE PRECISION\) END WHERE id = \?$/);
+  assert.ok(
+    batches[0].some((q) => /^INSERT INTO grns /i.test(q)),
+    "the GRN header insert is in that same batch, so a raised guard rolls it back",
+  );
+
+  // The adapter rewrites camelCase identifiers. A guard that named a column
+  // the rewriter does not know would fail on every receipt, not only a raced one.
+  const { translateSql } = await import(
+    pathToFileURL(resolve(process.cwd(), "src/api/lib/supabase-compat.ts")).href
+  );
+  const pg = translateSql(counter[0]);
+  assert.match(pg, /SET received_qty = CASE WHEN received_qty \+ \$1 <= quantity \* 1\.1 THEN received_qty \+ \$2/);
+  assert.match(pg, /CAST\('po_line_over_receipt:' \|\| id AS DOUBLE PRECISION\) END WHERE id = \$3$/);
+});
+
+test("R2 race — posting a DRAFT goes through the same guard and rolls back whole", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // 5 ordered
+  db.tables.raw_materials.push({
+    id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0,
+  });
+  const root = mount(grnApp, db);
+  const poi = () => db.tables.purchase_order_items.find((r) => r.id === "poi-9");
+  const draft = async () => {
+    const res = await root.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        poId: "po-9",
+        receivedBy: "Ahmad",
+        arrival_state: "ARRIVED",
+        status: "DRAFT",
+        items: [
+          { poItemIndex: 0, materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", receivedQty: 5, acceptedQty: 5, rejectedQty: 0, unitPrice: 10000 },
+        ],
+      }),
+    });
+    assert.equal(res.status, 201);
+    return (await res.json()).data.id;
+  };
+  const postIt = (id) =>
+    root.request(`/${id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "POSTED" }),
+    });
+
+  // Two drafts for the full order. Neither drew the PO line down, so both
+  // passed the create check.
+  const first = await draft();
+  const second = await draft();
+  assert.equal(Number(poi().receivedQty), 0);
+
+  assert.equal((await postIt(first)).status, 200);
+  assert.equal(Number(poi().receivedQty), 5);
+  const stockAfterFirst = db.tables.rm_batches.length;
+
+  const res = await postIt(second);
+  assert.equal(res.status, 409, "the second post would take the line to 10 of 5");
+  assert.equal(Number(poi().receivedQty), 5, "PO line not drawn down twice");
+  assert.equal(
+    db.tables.grns.find((g) => g.id === second).status,
+    "DRAFT",
+    "the refused GRN must stay DRAFT, not end up POSTED without a PO draw-down",
+  );
+  assert.equal(db.tables.rm_batches.length, stockAfterFirst, "no stock posted for the refused GRN");
+});
+
+// ---------------------------------------------------------------------------
+// GRN number collision. generateGrnNumber reads the last number and adds one,
+// so two GRNs created in the same instant pick the same number and the second
+// INSERT hits ux_grns_grn_number. Seen live on staging 2026-09-30 as a raw 500
+// "duplicate key value violates unique constraint". The route now reads the
+// next number and retries. The mock has no unique index, so the collision is
+// injected: the batch fails the way Postgres does, as if another GRN had just
+// committed the number this request picked.
+// ---------------------------------------------------------------------------
+function collideOnGrnNumber(db, times) {
+  const d = new Date();
+  const prefix = `GRN-${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, "0")}-`;
+  let taken = 0;
+  let left = times;
+  const realPrepare = db.prepare;
+  db.prepare = (rawSql) => {
+    const stmt = realPrepare(rawSql);
+    if (/FROM grns WHERE grnNumber LIKE/i.test(stmt.sql)) {
+      stmt.first = async () => (taken ? { grnNumber: prefix + String(taken).padStart(3, "0") } : null);
+    }
+    return stmt;
+  };
+  const realBatch = db.batch;
+  db.batch = async (stmts) => {
+    if (left > 0 && stmts.some((s) => /^INSERT INTO grns /i.test(s.sql))) {
+      left -= 1;
+      taken += 1; // the other GRN now owns the number this request picked
+      throw new Error('duplicate key value violates unique constraint "ux_grns_grn_number"');
+    }
+    return realBatch(stmts);
+  };
+  return prefix;
+}
+
+const createFoamReceipt = (db) =>
+  mount(grnApp, db).request("/", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      poId: "po-9",
+      receivedBy: "Ahmad",
+      arrival_state: "ARRIVED",
+      items: [
+        { poItemIndex: 0, materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", receivedQty: 5, acceptedQty: 5, rejectedQty: 0, unitPrice: 10000 },
+      ],
+    }),
+  });
+
+test("GRN number collision: the create retries with the next number instead of a 500", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+  db.tables.raw_materials.push({ id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0 });
+  const prefix = collideOnGrnNumber(db, 1);
+
+  const res = await createFoamReceipt(db);
+  assert.equal(res.status, 201, "a number collision must be retried, not surface as a 500");
+  assert.equal(db.tables.grns.length, 1, "exactly one GRN written");
+  assert.equal(db.tables.grns[0].grnNumber, prefix + "002", "the retry takes the next number");
+  const poi = db.tables.purchase_order_items.find((r) => r.id === "poi-9");
+  assert.equal(Number(poi.receivedQty), 5, "the failed attempt rolled back, so the PO line counts the receipt once");
+  assert.equal(db.tables.rm_batches.length, 1, "stock posted once");
+});
+
+test("GRN number collision: after the retries run out the answer is a clear 409 and nothing is written", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+  db.tables.raw_materials.push({ id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0 });
+  collideOnGrnNumber(db, 99);
+
+  const res = await createFoamReceipt(db);
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /took this GRN number\. Please try again/);
+  assert.equal(db.tables.grns.length, 0);
+  assert.equal(Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty), 0);
+  assert.equal(db.tables.rm_batches.length, 0);
+});
+
+
+// ---------------------------------------------------------------------------
+// BUG-87 — an invoice billed straight off a PO puts its goods into stock
+// through an automatic goods receipt, and takes them out again when it goes.
+// ---------------------------------------------------------------------------
+function seedBug87(db, { received = 0 } = {}) {
+  seedOpenPo(db);
+  db.tables.raw_materials.push({ id: "rm-9", itemCode: "FOAM-9", description: "Foam block", balanceQty: 0 });
+  if (received) db.tables.purchase_order_items[0].receivedQty = received;
+}
+const directPi = (qty, extra = {}) => ({
+  purchaseOrderId: "po-9", supplierId: "sup-9", supplierName: "OPEN CO", ...extra,
+  items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty, unitPriceSen: 10000, poId: "po-9" }],
+});
+const lotQty = (db) => db.tables.rm_batches.reduce((s, b) => s + Number(b.originalQty ?? b.original_qty ?? 0), 0);
+
+const send = (root, path, method, body) =>
+  root.request(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+async function directDraft(db, qty) {
+  const piRoot = mount(piApp, db);
+  const res = await post(piRoot, directPi(qty));
+  assert.equal(res.status, 200);
+  return { piRoot, pi: (await res.json()).data };
+}
+async function directConfirmed(db, qty) {
+  const { piRoot, pi } = await directDraft(db, qty);
+  const res = await send(piRoot, `/${pi.id}`, "PUT", { status: "CONFIRMED" });
+  assert.equal(res.status, 200, await res.clone().text());
+  return { piRoot, pi };
+}
+
+test("BUG-87 — a draft holds no stock; deleting it touches nothing", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directDraft(db, 5);
+  assert.equal(db.tables.grns.length, 0, "no receipt while the invoice is a draft");
+  assert.equal(db.tables.purchase_orders[0].status, "CONFIRMED");
+  assert.equal((await piRoot.request(`/${pi.id}`, { method: "DELETE" })).status, 200);
+  assert.equal(db.tables.grns.length, 0);
+  assert.equal(lotQty(db), 0);
+});
+
+test("BUG-87 — Confirm receives the goods: one lot, PO received, receipt remembered", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { pi } = await directConfirmed(db, 5);
+  assert.equal(lotQty(db), 5, "5 into stock");
+  assert.equal(Number(db.tables.purchase_order_items[0].receivedQty), 5);
+  assert.equal(db.tables.purchase_orders[0].status, "RECEIVED", "the PO leaves the overdue list");
+  const grn = db.tables.grns[0];
+  assert.equal(grn.status, "POSTED");
+  assert.match(String(grn.notes), new RegExp(pi.piNo));
+  assert.equal(db.tables.purchase_invoices[0].auto_grn_id, grn.id);
+  assert.equal(db.tables.purchase_invoice_items[0].grn_item_id ?? null, null, "invoice lines stay PO-direct");
+});
+
+test("BUG-87 — goods a real GRN already received are not stocked twice", async () => {
+  const db = makeDb();
+  seedBug87(db, { received: 5 });
+  await directConfirmed(db, 5);
+  assert.equal(db.tables.grns.length, 0, "nothing left to receive, no auto receipt");
+  assert.equal(lotQty(db), 0);
+});
+
+test("BUG-87 — a partly received PO only receives the rest", async () => {
+  const db = makeDb();
+  seedBug87(db, { received: 2 });
+  await directConfirmed(db, 5);
+  assert.equal(lotQty(db), 3, "only the 3 nobody received");
+  assert.equal(Number(db.tables.purchase_order_items[0].receivedQty), 5);
+});
+
+test("BUG-87 — quantities on received lines are frozen; prices are not", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  const put = (qty, unitPriceSen) =>
+    send(piRoot, `/${pi.id}`, "PUT", {
+      items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty, unitPriceSen, poId: "po-9" }],
+    });
+  const qtyEdit = await put(4, 10000);
+  assert.equal(qtyEdit.status, 409);
+  assert.match((await qtyEdit.json()).error, /can't change here/);
+  assert.equal((await put(5, 9000)).status, 200, "a price-only edit still saves");
+  assert.equal(lotQty(db), 5);
+});
+
+test("BUG-87 — void takes the goods out, unvoid receives them again", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  const v = await send(piRoot, `/${pi.id}/void`, "POST");
+  assert.equal(v.status, 200, await v.clone().text());
+  assert.equal(lotQty(db), 0, "void took the 5 out");
+  assert.equal(Number(db.tables.purchase_order_items[0].receivedQty), 0);
+
+  const u = await send(piRoot, `/${pi.id}/unvoid`, "POST");
+  assert.equal(u.status, 200, await u.clone().text());
+  assert.equal(lotQty(db), 5, "unvoid put the 5 back");
+  const live = db.tables.grns.filter((g) => g.status !== "CANCELLED");
+  assert.equal(live.length, 1);
+  assert.equal(db.tables.purchase_invoices[0].auto_grn_id, live[0].id);
+});
+
+test("BUG-2026-10-14-286 — void, unvoid, void again: each reversal gets new leg numbers", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  for (const [step, want] of [["void", 0], ["unvoid", 5], ["void", 0], ["unvoid", 5]]) {
+    const r = await send(piRoot, `/${pi.id}/${step}`, "POST");
+    assert.equal(r.status, 200, `${step}: ${await r.clone().text()}`);
+    assert.equal(lotQty(db), want, `${step} leaves ${want} in stock`);
+  }
+  const voidLegs = db.tables.ledger_journal_entries.filter((l) => l.sourceType === "purchase_invoice_void");
+  assert.ok(voidLegs.length >= 4, "two voids posted legs");
+  assert.equal(new Set(voidLegs.map((l) => l.legNo)).size, voidLegs.length, "no leg number reused");
+  assert.equal(db.tables.grns.filter((g) => g.status !== "CANCELLED").length, 1, "one live receipt");
+});
+
+test("BUG-2026-10-14-287 — Finance can void and unvoid a PO-direct invoice", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { pi } = await directConfirmed(db, 5);
+  const finance = mount(piApp, db, "FINANCE");
+  const v = await send(finance, `/${pi.id}/void`, "POST");
+  assert.equal(v.status, 200, await v.clone().text());
+  assert.equal(lotQty(db), 0, "the auto receipt was cancelled without Finance holding grn:delete");
+  const u = await send(finance, `/${pi.id}/unvoid`, "POST");
+  assert.equal(u.status, 200, await u.clone().text());
+  assert.equal(lotQty(db), 5);
+});
+
+test("BUG-87 — a void is refused when the received stock was already used", async () => {
+  const db = makeDb();
+  seedBug87(db);
+  const { piRoot, pi } = await directConfirmed(db, 5);
+  const lot = db.tables.rm_batches[0];
+  if ("remainingQty" in lot) lot.remainingQty = 2; else lot.remaining_qty = 2;
+  const v = await send(piRoot, `/${pi.id}/void`, "POST");
+  assert.equal(v.status, 409);
+  assert.match((await v.json()).error, /already been issued or returned/);
+  assert.equal(db.tables.purchase_invoices[0].status, "CONFIRMED", "the invoice stays live");
+  assert.equal(db.tables.grns[0].status, "POSTED", "the receipt is kept");
 });

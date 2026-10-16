@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { customerScopeSql, isCustomerScoped } from "../lib/customer-scope";
+import { saveStateKpisLater } from "../lib/dashboard-state-snapshot";
 import { lateToCustomerOrders } from "../lib/kpi-metrics";
 import { assertCustomerBillable } from "../lib/customer-stage";
 import { emitAudit, buildAuditStatement } from "../lib/audit";
@@ -41,6 +42,12 @@ import {
   loadProductCatalog,
 } from "./_shared/item-catalog-snap";
 import { withOrgScope, getOrgId } from "../lib/tenant";
+import {
+  ensureStockAllocationSchema,
+  planAutoAllocation,
+  SYSTEM_ALLOCATION_ACTOR,
+} from "../lib/stock-allocations";
+import { ensureStockOrderSchema } from "../lib/stock-orders";
 import {
   resolveCompanyCode,
   readCompanyCode,
@@ -92,6 +99,7 @@ import {
   soListToOrdersDue,
   ORDERS_DUE_DEFAULT_TOP,
   findIncompleteBomProducts,
+  findEmptyWipProducts,
   rowToStatusChange,
   rowToPriceOverride,
   genSoId,
@@ -109,6 +117,7 @@ import {
   canonicalizeRepairScopesAgainstBom,
   ensurePendingMigrations,
   pushNewlyCreatedJobCardsToSheet,
+  buildPoDeliveryMap,
 } from "./sales-orders/_helpers";
 import type {
   SalesOrderRow,
@@ -164,6 +173,10 @@ const app = new Hono<Env>();
 // the moment a second tenant is seeded.
 app.get("/", async (c) => {
   const db = c.var.DB;
+  // This list filters on is_stock, which a fresh DB may not have yet — no SO
+  // write need ever have run here. Memoized per isolate, so only the first
+  // request pays for it.
+  await ensurePendingMigrations(db);
   const pageParam = c.req.query("page");
   const limitParam = c.req.query("limit");
   const paginate = pageParam !== undefined || limitParam !== undefined;
@@ -209,12 +222,22 @@ app.get("/", async (c) => {
   // Tenant scope — first bind param on every query against soSourceSql.
   // Items are scoped transitively via salesOrderId IN (...) so they don't
   // need their own orgId filter (the archive table doesn't have orgId yet).
-  const extraWhere =
+  // 0236 — make-to-stock orders are booked against the internal Factory Stock
+  // customer and are not what a salesperson is looking for here. Excluded by
+  // default, the way service orders are; ?isStock=all brings them back for
+  // admin/reporting. There is deliberately no "stock only" mode — the stock
+  // orders' own surface is the Production page.
+  const stockWhere =
+    c.req.query("isStock") === "all"
+      ? ""
+      : "(is_stock = FALSE OR is_stock IS NULL)";
+  const serviceWhere =
     serviceOrderFilter === "true"
       ? "is_service_order = TRUE"
       : serviceOrderFilter === "false"
         ? "(is_service_order = FALSE OR is_service_order IS NULL)"
         : "";
+  const extraWhere = [serviceWhere, stockWhere].filter(Boolean).join(" AND ");
   const { whereSql: orgWhere, params: orgParams } = withOrgScope(
     c,
     "sales_orders",
@@ -983,6 +1006,8 @@ app.get("/status-changes", async (c) => {
 
 app.get("/stats", async (c) => {
   const orgId = getOrgId(c);
+  // Reads is_stock — ensure it exists on this DB first, same as GET / above.
+  await ensurePendingMigrations(c.var.DB);
   // 0134 — Service Order vs Sales Order scope. Same semantics as the GET
   // list above so /service-order's tab badges + dashboard cards read off
   // a SV-only aggregate instead of the combined ~570-row total.
@@ -996,12 +1021,20 @@ app.get("/stats", async (c) => {
       : isServiceOrderParam === "all"
         ? "all"
         : "false";
-  const extraWhere =
+  // Stock orders are excluded from the list above, so they are excluded from
+  // its tile cards too — a card that counts rows the grid below cannot show is
+  // exactly the "No confirmed orders / 1,229 orders" mismatch noted below.
+  const stockWhere =
+    c.req.query("isStock") === "all"
+      ? ""
+      : "(is_stock = FALSE OR is_stock IS NULL)";
+  const serviceWhere =
     serviceOrderFilter === "true"
       ? "is_service_order = TRUE"
       : serviceOrderFilter === "false"
         ? "(is_service_order = FALSE OR is_service_order IS NULL)"
         : "";
+  const extraWhere = [serviceWhere, stockWhere].filter(Boolean).join(" AND ");
 
   // A salesperson's totals must come from a NARROWED aggregate — there is no
   // row here for the response filter to drop, which is how the grid could read
@@ -1093,6 +1126,11 @@ app.get("/stats", async (c) => {
     "",
     c,
   );
+  // Daily save for a finished month's Outstanding tile: the whole-company,
+  // default-filter figure only (scoped and Service Order calls returned above).
+  if (c.req.query("isStock") !== "all") {
+    saveStateKpisLater(c, orgId, { outstandingItemsSen: Number(data.outstandingItemsSen) || 0 });
+  }
   return c.json({ success: true, ...data });
 });
 
@@ -1278,8 +1316,23 @@ app.get("/late-to-customer", async (c) => {
     );
   }
   const scope = await customerScopeSql(c, "so.customerId");
-  const rows = await lateToCustomerOrders(c, period, scope);
+  // ?all=1 — every order shipped that month, each tagged LATE / EARLY /
+  // ON_TIME. The KPI card's inline order list.
+  const rows = await lateToCustomerOrders(c, period, scope, c.req.query("all") === "1");
   return c.json({ success: true, period, data: rows });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/sales-orders/empty-wip?productCodes=A,B — which of these products
+// have an empty WIP tab (or no BOM). Feeds the per-line warning on Create SO;
+// see findEmptyWipProducts. Registered BEFORE /:id.
+// ---------------------------------------------------------------------------
+app.get("/empty-wip", async (c) => {
+  const denied = await requirePermission(c, "sales-orders", "read");
+  if (denied) return denied;
+  const codes = (c.req.query("productCodes") ?? "").split(",");
+  const data = await findEmptyWipProducts(c.var.DB, codes);
+  return c.json({ success: true, data });
 });
 
 // ---------------------------------------------------------------------------
@@ -1755,11 +1808,16 @@ app.post("/", async (c) => {
       }
     }
 
-    // Duplicate-document guard (owner 2026-07): a customer PO/SO reference
-    // already on a non-cancelled sales order for THIS customer is almost always
-    // a re-scan or double-entry — block it with a clear message. (One customer
-    // PO = one SO; partial deliveries are handled by multiple DOs off the same
-    // SO, not multiple SOs, so a repeat reference is a duplicate.)
+    // Duplicate-reference WARNING (owner 2026-07; softened DEV-12 2026-09-23):
+    // a customer PO/SO reference already on a non-cancelled sales order for
+    // THIS customer is usually a re-scan or double-entry — but not always
+    // (Houzs reuses its S/O no. across POs, e.g. HC-SO-013492). This used to
+    // 409, and the PO-scan modal then consumed the scan, so the order was lost
+    // instead of saved. Now the SO is saved as DRAFT (every new SO is DRAFT)
+    // and the response carries `duplicateOf` + `warning` for the UI to show.
+    // A true duplicate customer PO still cannot be CONFIRMED — BR-SO-010 in
+    // the confirm handler blocks it.
+    let duplicateWarning: { duplicateOf: string | null; warning: string } | null = null;
     {
       const soRefs = [body.customerPOId, body.customerSOId]
         .map((v) => (v == null ? "" : String(v).trim()))
@@ -1788,14 +1846,10 @@ app.post("/", async (c) => {
             soRefs.find(
               (r) => r === dup.customerPOId || r === dup.customerSOId,
             ) ?? soRefs[0];
-          return c.json(
-            {
-              success: false,
-              error: `Customer reference "${matched}" is already on sales order ${dup.companySOId ?? "(an existing SO)"} for this customer — looks like a duplicate. Open that SO, or change the reference if it's genuinely a different order.`,
-              duplicateOf: dup.companySOId,
-            },
-            409,
-          );
+          duplicateWarning = {
+            duplicateOf: dup.companySOId,
+            warning: `Customer reference "${matched}" is also on sales order ${dup.companySOId ?? "(an existing SO)"} for this customer. Saved as DRAFT — check it isn't a duplicate before confirming.`,
+          };
         }
       }
     }
@@ -1997,6 +2051,7 @@ app.post("/", async (c) => {
     // specialOrderPriceSen — i.e. the scan-a-customer-PO paths. null degrades
     // to the static catalog in src/lib/pricing-options.ts.
     const cfgSpecialsForPricing = await loadSpecialsConfig(c.var.DB);
+    const cfgSofaSpecialsForPricing = await loadSpecialsConfig(c.var.DB, "sofaSpecials");
     // Owner-editable divan / leg height price lists (2026-07-22). Same
     // one-read-per-order pattern, consulted only for items that omit the price
     // — i.e. the scan-a-customer-PO paths.
@@ -2131,7 +2186,9 @@ app.post("/", async (c) => {
         // (Service Orders are free by design) and a hand-discounted price.
         const specialOrderPriceSen = resolveSpecialOrderPriceSen(
           item,
-          cfgSpecialsForPricing,
+          String(item.itemCategory ?? "") === "SOFA"
+            ? cfgSofaSpecialsForPricing
+            : cfgSpecialsForPricing,
         );
         // 2026-07-23: total-height (gap+divan+leg) now derives server-side like
         // divan/leg — the typed form sends it, the scan/import paths never did,
@@ -2470,7 +2527,7 @@ app.post("/", async (c) => {
       action: "create",
       after: created,
     });
-    return c.json({ success: true, data: created }, 201);
+    return c.json({ success: true, data: created, ...duplicateWarning }, 201);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[POST /api/sales-orders] failed:", msg, err);
@@ -2668,12 +2725,82 @@ app.post("/:id/confirm", async (c) => {
     );
   }
 
+  // DEV-05 — hand already-built stock to this order (owner 2026-09-07:
+  // allocation is automatic on confirm), and do it BEFORE the production orders
+  // are built.
+  //
+  // THE ORDER OF THESE TWO STEPS IS THE WHOLE FEATURE. Allocating four pieces
+  // and then queueing all ten for production is not a cosmetic slip — it is
+  // precisely the waste this exists to prevent, and it would have shipped under
+  // a note reading "(6 to be produced)" while ten were on the floor. A5 says
+  // "allocate four pieces from stock AND PRODUCE THE REMAINING SIX".
+  //
+  // The statements ride the SAME batch as the confirm below, so an allocation
+  // can never land without the confirm that caused it. Best-effort: a factory
+  // must still be able to confirm an order when the ledger is unreachable, but
+  // the failure is LOUD rather than a silent "nothing was available" — those
+  // two read identically on screen and that is how a planner's "0 items" came
+  // to mean "cannot see".
+  let allocationStmts: D1PreparedStatement[] = [];
+  let allocatedByItemId = new Map<string, number>();
+  const allocationNotes: string[] = [];
+  try {
+    await ensureStockOrderSchema(c.var.DB);
+    await ensureStockAllocationSchema(c.var.DB);
+    const userId = (c as unknown as { get: (k: string) => unknown }).get("userId");
+    const plan = await planAutoAllocation(
+      c.var.DB,
+      getOrgId(c),
+      existing,
+      items.map((it) => ({
+        productCode: it.productCode ?? "",
+        soItemId: it.id ?? null,
+        soLineNo: it.lineNo ?? null,
+        quantity: Number(it.quantity) || 0,
+      })),
+      typeof userId === "string" && userId
+        ? { type: "USER", id: userId, name: null }
+        : SYSTEM_ALLOCATION_ACTOR,
+      now,
+    );
+    allocationStmts = plan.statements;
+    allocatedByItemId = plan.allocatedByItemId;
+    allocationNotes.push(...plan.notes);
+  } catch (err) {
+    console.error(
+      `[dev-05] auto-allocation failed for SO ${id} — order confirmed WITHOUT stock allocation. err=${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    allocationNotes.push(
+      "Stock allocation could not be checked — allocate from the order detail page.",
+    );
+  }
+
+  // Produce only what stock could not cover. A line taken entirely from stock
+  // is DROPPED, not left at quantity 0 — the builder floors piece count at 1
+  // (`Math.max(1, item.quantity)`, production-builder.ts:519), so a zero-qty
+  // line would still queue one production order.
+  const itemsToProduce = items
+    .map((it) => {
+      const taken = allocatedByItemId.get(it.id) ?? 0;
+      if (taken <= 0) return it;
+      return { ...it, quantity: (Number(it.quantity) || 0) - taken };
+    })
+    .filter((it) => (Number(it.quantity) || 0) > 0);
+
   const { statements: poStmts, created: productionOrders, preExisting } =
-    await createProductionOrdersForSO(c.var.DB, existing, items);
+    itemsToProduce.length > 0
+      ? await createProductionOrdersForSO(c.var.DB, existing, itemsToProduce)
+      : { statements: [], created: [], preExisting: false };
 
   const autoActions = preExisting
     ? ["Production orders already exist for this SO — skipped duplicate creation."]
     : productionOrders.map((po) => `Created PO ${po.poNo}`);
+  autoActions.push(...allocationNotes);
+  if (allocatedByItemId.size > 0 && itemsToProduce.length === 0) {
+    autoActions.push("Filled entirely from stock — nothing to produce.");
+  }
 
   // 2026-04-28: confirm lands at IN_PRODUCTION directly. The PO cascade
   // below kicks off lead-time scheduling, so the SO IS in production the
@@ -2698,6 +2825,7 @@ app.post("/:id/confirm", async (c) => {
       JSON.stringify(autoActions),
     ),
     ...poStmts,
+    ...allocationStmts,
   ]);
 
   const order = await fetchSOWithItems(c.var.DB, id);
@@ -2971,7 +3099,8 @@ app.get("/:id", async (c) => {
   // status. Lets the Linked Production Orders table show a real per-line
   // delivery state (DO no. + Delivered/Dispatched/…) instead of the operator
   // cross-checking the Delivery page. Reuses the DOs already fetched above.
-  const poDeliveryMap = new Map<string, { doNo: string; status: string }>();
+  // A live DO beats a cancelled one (BUG-2026-09-30-225).
+  let poDeliveryMap = new Map<string, { doNo: string; status: string }>();
   if (doIds.length > 0) {
     const diRes = await c.var.DB.prepare(
       `SELECT productionOrderId, deliveryOrderId
@@ -2981,13 +3110,7 @@ app.get("/:id", async (c) => {
     )
       .bind(...doIds)
       .all<{ productionOrderId: string; deliveryOrderId: string }>();
-    const doById = new Map(linkedDOs.map((d) => [d.id, d]));
-    for (const di of diRes.results ?? []) {
-      const d = doById.get(di.deliveryOrderId);
-      if (d && !poDeliveryMap.has(di.productionOrderId)) {
-        poDeliveryMap.set(di.productionOrderId, { doNo: d.doNo, status: d.status });
-      }
-    }
+    poDeliveryMap = buildPoDeliveryMap(diRes.results ?? [], linkedDOs);
   }
 
   // Invoices: by SO link OR by any of this SO's DOs. A consolidated invoice
@@ -3561,6 +3684,7 @@ app.put("/:id", async (c) => {
       // request (BUG-2026-07-17-002). Needed on PUT too — without it, editing a
       // scanned SO would re-store the surcharge as 0.
       const cfgSpecialsForPricing = await loadSpecialsConfig(c.var.DB);
+      const cfgSofaSpecialsForPricing = await loadSpecialsConfig(c.var.DB, "sofaSpecials");
       // Ditto for the divan / leg height price lists (2026-07-22). Same
       // reasoning: an edit that omits the price must not zero a height that the
       // owner's list prices.
@@ -3573,7 +3697,8 @@ app.put("/:id", async (c) => {
         // CURRENT composition — add a piece and the combo pass below discounts
         // the new set; remove a piece and the survivors return to full
         // per-piece price (a combo-split base must not stick once the set is
-        // broken). Non-sofa lines keep the operator-typed price (Tier 1).
+        // broken). Non-sofa lines: the customer price wins; the operator-typed
+        // price only stands when the customer has none (see below).
         const isSofaLine = String(item.itemCategory ?? "") === "SOFA";
         // Seat height for per-seat pricing: the create page sends seatHeight,
         // but edit/stored payloads carry the bare seat size in sizeCode/sizeLabel.
@@ -3589,56 +3714,43 @@ app.put("/:id", async (c) => {
         // Service orders: the operator's typed price IS the price — no sofa
         // re-derive, no customer/catalog resolution (0 = free repair; see
         // the POST-side comment, SV-2606-001 RM 730 incident).
-        let basePriceSen =
-          isSofaLine && !mergedIsServiceOrder ? 0 : incomingBase;
-        // Customer-specific price: when the request didn't supply a usable
-        // price (or the line is a sofa being re-derived).
+        let basePriceSen = incomingBase;
+        // Customer price list is AUTHORITATIVE on edit too — the SAME
+        // resolveSoBasePriceSen precedence as POST (customer > incoming >
+        // product). PUT used to consult the customer price only when the line
+        // arrived at 0, so every non-sofa line saved from the edit screen (which
+        // seeds from the master product) kept the MASTER price, and the invoice
+        // copied it (BUG-35, Conts invoice). SOFA lines pass incoming=0 so they
+        // still always re-derive (owner 2026-06-11, combo pass below).
         const productIdForLookup = (item.productId as string) || "";
-        if (!mergedIsServiceOrder && basePriceSen === 0 && productIdForLookup && customerId) {
-          try {
-            const cp = customerPriceMap.get(productIdForLookup) ?? null;
-            if (cp) {
-              if (cp.seatHeightPrices && cp.seatHeightPrices.length > 0 && seatHeightForPrice) {
-                const shp = cp.seatHeightPrices.find(
-                  (p) => p.height === seatHeightForPrice || p.height === `${seatHeightForPrice}"`,
-                );
-                basePriceSen = shp?.priceSen ?? cp.basePriceSen ?? 0;
-              } else {
-                basePriceSen = cp.basePriceSen ?? 0;
-              }
+        if (!mergedIsServiceOrder && productIdForLookup) {
+          const cp = customerPriceMap.get(productIdForLookup) ?? null;
+          const prod = productMap.get(productIdForLookup) ?? null;
+          let prodSeats: Array<{ height: string; priceSen: number }> = [];
+          if (Array.isArray(prod?.seatHeightPrices)) {
+            prodSeats = prod.seatHeightPrices as typeof prodSeats;
+          } else if (typeof prod?.seatHeightPrices === "string") {
+            try {
+              prodSeats = JSON.parse(prod.seatHeightPrices || "[]");
+            } catch {
+              prodSeats = [];
             }
-          } catch {
-            // Non-fatal — keep basePriceSen at 0 if lookup fails.
           }
-        }
-        // Catalog fallback — parity with POST. Without this, editing a line
-        // whose customer price didn't resolve silently zeroed basePriceSen.
-        if (!mergedIsServiceOrder && basePriceSen === 0 && productIdForLookup) {
-          try {
-            const prod = productMap.get(productIdForLookup) ?? null;
-            if (prod) {
-              let shp: Array<{ height: string; priceSen: number }> = [];
-              if (Array.isArray(prod.seatHeightPrices)) {
-                shp = prod.seatHeightPrices as typeof shp;
-              } else if (typeof prod.seatHeightPrices === "string") {
-                try {
-                  shp = JSON.parse(prod.seatHeightPrices || "[]");
-                } catch {
-                  shp = [];
-                }
-              }
-              if (seatHeightForPrice && shp.length > 0) {
-                const cell = shp.find(
+          const matchSeat = (
+            list: Array<{ height: string; priceSen: number }> | null | undefined,
+          ): number | null =>
+            list && seatHeightForPrice
+              ? list.find(
                   (p) => p.height === seatHeightForPrice || p.height === `${seatHeightForPrice}"`,
-                );
-                basePriceSen = cell?.priceSen ?? (Number(prod.basePriceSen) || 0);
-              } else {
-                basePriceSen = Number(prod.basePriceSen) || 0;
-              }
-            }
-          } catch {
-            // Non-fatal — leave at 0; the unpriced gate below surfaces it.
-          }
+                )?.priceSen ?? null
+              : null;
+          basePriceSen = resolveSoBasePriceSen({
+            incomingSen: isSofaLine ? 0 : incomingBase,
+            customerSeatSen: matchSeat(cp?.seatHeightPrices),
+            customerBaseSen: cp?.basePriceSen ?? null,
+            productSeatSen: matchSeat(prodSeats),
+            productBaseSen: Number(prod?.basePriceSen) || 0,
+          });
         }
         // 2026-07-22 BUG FIX (under-billing, RM 12,455 across divan + leg):
         // these were `Number(item.divanPriceSen) || 0` — the same trust-the-
@@ -3674,7 +3786,9 @@ app.put("/:id", async (c) => {
         // (Service Orders are free by design) and a hand-discounted price.
         const specialOrderPriceSen = resolveSpecialOrderPriceSen(
           item,
-          cfgSpecialsForPricing,
+          String(item.itemCategory ?? "") === "SOFA"
+            ? cfgSofaSpecialsForPricing
+            : cfgSpecialsForPricing,
         );
         // 2026-07-23 — same as the POST path: derive total-height server-side so
         // an SO EDIT re-prices the line WITH its total-height surcharge (stored

@@ -11,6 +11,7 @@ import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, getStatusColor } from "@/lib/utils";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useUrlState } from "@/lib/use-url-state";
 import { buildGrnDetailListingAoa } from "@/lib/doc-detail-listings";
@@ -697,6 +698,10 @@ export default function GRNPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: GoodsReceiptNote) => {
+        const code = row.purchaseOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: GoodsReceiptNote) => {
         const code = row.purchaseOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -716,6 +721,8 @@ export default function GRNPage() {
     },
     { key: "totalAmount", label: "Total", type: "currency", width: "120px", sortable: true },
     { key: "arrival_state", label: "Arrival", type: "status", width: "130px", sortable: true,
+      exportValue: (row: GoodsReceiptNote) =>
+        ARRIVAL_LABELS[row.arrival_state as ArrivalState] ?? row.arrival_state.replace(/_/g, " "),
       render: (_v: unknown, row: GoodsReceiptNote) => (
         <Badge variant="status" status={row.arrival_state}>
           {ARRIVAL_LABELS[row.arrival_state as ArrivalState] ?? row.arrival_state.replace(/_/g, " ")}
@@ -1222,6 +1229,11 @@ export default function GRNPage() {
             emptyMessage={tab === "DRAFT" ? "No draft GRNs." : "No GRNs found."}
             onSearchChange={setGridSearch}
             exportName="goods-receipts"
+            // Unfiltered, the grid holds one 200-row page; Export walks them
+            // all with the same tab rule as filteredGRNs.
+            exportAllRows={grnFiltersActive ? undefined : () =>
+              fetchAllPages<GoodsReceiptNote>((p, l) => `/api/grn?page=${p}&limit=${l}`)
+                .then((rows) => rows.filter((g) => !(tab === "DRAFT" && g.status !== "DRAFT") && !(tab === "CONFIRMED" && g.status === "DRAFT")))}
             exportSheetLabel="Goods Receipts"
             detailExport={{ label: "Detail Listing", build: (rows) => buildGrnDetailListingAoa(rows) }}
           />

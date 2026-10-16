@@ -40,6 +40,8 @@ export type Env = {
     API_CORS_ORIGIN: string;
     APP_URL: string;              // e.g. "http://localhost:8788" or "https://hookka-erp-testing.pages.dev"
     RESEND_API_KEY?: string;      // Optional — set via wrangler secret for prod, .dev.vars for local
+    MAILSLURP_API_KEY?: string;   // Staging only — MailSlurp sender fallback (lib/email.ts sendMail)
+    MAILSLURP_INBOX_ID?: string;  // Staging only — the MailSlurp inbox mail is sent from
     RESEND_FROM_EMAIL: string;    // e.g. "Hookka Manufacturing ERP <onboarding@resend.dev>"
     ANTHROPIC_API_KEY?: string;   // Claude API key — set via `wrangler secret put ANTHROPIC_API_KEY`. Used by routes/scan-po.ts.
     // Per-user daily cap on AI Assistant questions (routes/assistant.ts).
@@ -141,6 +143,15 @@ export type Env = {
     // the queue worker cannot drive extractions — uploads still queue but
     // every row will land in 'failed' with a clear error message.
     SCAN_WORKER_TOKEN?: string;
+    // IT Support (routes/it-support.ts). Tickets live in the Houzs IT Hub;
+    // IT_HUB_URL is its origin (public, a [vars] entry or a Pages variable),
+    // IT_HUB_API_KEY is Hookka's key for it (`wrangler pages secret put`).
+    // With either unset the routes answer 503 and the page says so.
+    IT_HUB_URL?: string;
+    IT_HUB_API_KEY?: string;
+    // The hub sends this as x-it-hub-secret when it pushes a ticket event to
+    // /api/it-support/hub-events (>= 16 chars). Unset: that endpoint answers 503.
+    IT_HUB_WEBHOOK_SECRET?: string;
   };
   // Per-request variables.  DB is the Supabase-backed D1-compat adapter
   // installed by the middleware below; typed as D1Database so existing route
@@ -291,10 +302,16 @@ app.use("*", async (c, next) => {
 // production is `hookka-erp-testing.pages.dev` exactly; preview deploys
 // are `<commit-hash>.hookka-erp-testing.pages.dev` or
 // `<branch-alias>.hookka-erp-testing.pages.dev`. Detect from there.
+//
+// Exception (2026-09-23): PR canaries (`canary-<PR>.…`) use the PRODUCTION
+// DB. On staging data a canary could not answer "are the real figures right"
+// (canary-490, dashboard revenue). A canary write is a real prod write, and
+// its runtime self-apply DDL runs against prod too.
 function isPreviewHostname(requestUrl: string): boolean {
   try {
     const host = new URL(requestUrl).hostname.toLowerCase();
     if (host === "hookka-erp-testing.pages.dev") return false; // prod
+    if (host.startsWith("canary-")) return false; // PR canary → prod DB
     if (host.endsWith(".hookka-erp-testing.pages.dev")) return true; // preview
     return false; // custom domain → treat as prod
   } catch {
@@ -308,6 +325,17 @@ function pickDbUrl(env: Env["Bindings"], requestUrl: string): string | undefined
   }
   return env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL;
 }
+
+// Staging/preview gets its own slice of the shared SESSION_CACHE namespace
+// (see lib/kv-prefix.ts). Before auth, which caches sessions in KV. c.env is
+// replaced per request, never mutated — the bindings object is isolate-wide.
+app.use("/api/*", async (c, next) => {
+  if (c.env.SESSION_CACHE && isPreviewHostname(c.req.url)) {
+    const { prefixedKv } = await import("./lib/kv-prefix");
+    c.env = { ...c.env, SESSION_CACHE: prefixedKv(c.env.SESSION_CACHE, "stg:") };
+  }
+  await next();
+});
 
 // Must run before authMiddleware (which itself hits the DB to verify tokens).
 // The adapter is further wrapped in instrumentD1 so every prepare/all/first/
@@ -809,7 +837,7 @@ app.post("/api/internal/scan-queue-sweep", async (c) => {
     return c.json({ ok: false, error: "forbidden" }, 403);
   }
   try {
-    const result = await sweepStuckScans(c.var.DB, c.env, c.executionCtx);
+    const result = await sweepStuckScans(c.var.DB);
     return c.json({ ok: true, ...result });
   } catch (err) {
     console.error("[scan-queue-sweep] error:", err);
@@ -909,6 +937,29 @@ app.post("/api/mail-center/inbound", async (c) => {
   }
 });
 
+// IT Hub ticket events: the hub POSTs each IT reply / status change here and
+// it lands in the reporter's top-bar bell. Machine-to-machine, so registered
+// BEFORE authMiddleware and gated on IT_HUB_WEBHOOK_SECRET (x-it-hub-secret),
+// same constant-time pattern as above. Idempotent on the hub's event id.
+app.post("/api/it-support/hub-events", async (c) => {
+  const expected = c.env.IT_HUB_WEBHOOK_SECRET;
+  if (!expected || expected.length < 16) {
+    console.error("[it-hub-events] IT_HUB_WEBHOOK_SECRET unset or too short — refusing");
+    return c.json({ ok: false, error: "service unavailable" }, 503);
+  }
+  const given = c.req.header("x-it-hub-secret") || "";
+  if (!(await constantTimeEqual(given, expected))) {
+    return c.json({ ok: false, error: "forbidden" }, 403);
+  }
+  try {
+    const { recordHubEvent } = await import("./routes/it-support");
+    return await recordHubEvent(c);
+  } catch (err) {
+    console.error("[it-hub-events] error:", err);
+    return c.json({ ok: false, error: "record failed" }, 500);
+  }
+});
+
 // Web Push — Worker Portal notifications (additive). Registered BEFORE
 // authMiddleware because each handler does its OWN auth: /subscribe +
 // /unsubscribe gate on X-Worker-Token, /clock-reminder on the x-push-secret
@@ -980,6 +1031,7 @@ import globalSearch from "./routes/search";
 import productConfigs from "./routes/product-configs";
 import workers from "./routes/workers";
 import orgChart from "./routes/org-chart";
+import userPermissions from "./routes/user-permissions";
 import workerAuth from "./routes/worker-auth";
 import workerPortal from "./routes/worker";
 import departments from "./routes/departments";
@@ -992,6 +1044,7 @@ import salesLeads from "./routes/sales-leads";
 import sofaCombos from "./routes/sofa-combos";
 import organisations from "./routes/organisations";
 import salesOrders from "./routes/sales-orders";
+import stockAllocations from "./routes/stock-allocations";
 import purchaseOrders from "./routes/purchase-orders";
 import purchaseInvoices, { backfillPiGlPostings } from "./routes/purchase-invoices";
 import creditNotes from "./routes/credit-notes";
@@ -1078,7 +1131,9 @@ import jobCards from "./routes/job-cards";
 import auditEvents from "./routes/audit-events";
 import dashboardOverview from "./routes/dashboard-overview";
 import dashboardPrototype from "./routes/dashboard-prototype";
+import dashboardFinance from "./routes/dashboard-finance";
 import kpi from "./routes/kpi";
+import itSupport from "./routes/it-support";
 // Phase C #4 quick-win — MDM duplicate-detection review queue.
 import mdm from "./routes/mdm";
 // Phase B.4 — file_assets storage (Supabase Storage-backed; was R2 before
@@ -1103,6 +1158,7 @@ import attendance from "./routes/attendance";
 import workingHourEntries from "./routes/working-hour-entries";
 import payrollHourDeductions from "./routes/payroll-hour-deductions";
 import employeeAdvances from "./routes/employee-advances";
+import workerPenalties from "./routes/worker-penalties";
 import cashFlow from "./routes/cash-flow";
 import consignments from "./routes/consignments";
 import consignmentNotes from "./routes/consignment-notes";
@@ -1204,6 +1260,7 @@ app.route("/api/sales-leads", salesLeads);
 app.route("/api/sofa-combos", sofaCombos);
 app.route("/api/organisations", organisations);
 app.route("/api/sales-orders", salesOrders);
+app.route("/api/stock-allocations", stockAllocations);
 app.route("/api/purchase-orders", purchaseOrders);
 app.route("/api/purchase-invoices", purchaseInvoices);
 app.route("/api/credit-notes", creditNotes);
@@ -1315,9 +1372,14 @@ app.route("/api/audit-events", auditEvents);
 app.route("/api/dashboard/overview", dashboardOverview);
 // Read-only feed for the /dashboard-experimental page.
 app.route("/api/dashboard/prototype", dashboardPrototype);
+// Finance tab: ledger-derived, accounting-permission gated, never cached/shared.
+app.route("/api/dashboard/finance", dashboardFinance);
 // KPI module (owner 2026-08-06). /me is self-only; every other route is
 // SUPER_ADMIN — enforced in the route, not the page.
 app.route("/api/kpi", kpi);
+// IT Support: a proxy to the Houzs IT Hub. Self-scoped like /api/kpi/me (the
+// reporter is the session's user), so signed in is the only gate.
+app.route("/api/it-support", itSupport);
 // Phase C #4 quick-win — MDM duplicate-detection review queue. Routes
 // scoped by orgId via getOrgId(c); detection-pass endpoint is admin-only
 // in spirit (gated by the existing auth middleware until role-aware
@@ -1344,6 +1406,9 @@ app.route("/api/payroll-hour-deductions", payrollHourDeductions);
 // Salary advances (cash handed to a worker mid-month). Recovered from that
 // month's net pay — see src/api/lib/employee-advances.ts.
 app.route("/api/employee-advances", employeeAdvances);
+// DEV-22 worker penalties — approved ones come off net pay in their payroll
+// month; see src/api/lib/worker-penalties.ts.
+app.route("/api/worker-penalties", workerPenalties);
 app.route("/api/cash-flow", cashFlow);
 app.route("/api/consignments", consignments);
 app.route("/api/consignment-notes", consignmentNotes);
@@ -1414,9 +1479,10 @@ app.route("/api/scan-supplier", scanSupplier);
 app.route("/api/party-aliases", partyAliases);
 app.route("/api/scan-finance", scanFinance);
 // Background scan queue (async OCR). Upload returns a batchId IMMEDIATELY;
-// processBatch() drives Claude calls under waitUntil() so the user can
-// close the tab while a 100-file batch processes server-side. Same RBAC
-// gate as /api/scan-po + /api/scan-supplier (purchase-orders:create).
+// the modal then drives the rows through POST /batch/:id/work, one row per
+// held-open request (BUG-2026-09-22-178: waitUntil is cancelled 30 s after
+// the response, so it can NOT run a Sonnet call — never re-add it). Same
+// RBAC gate as /api/scan-po + /api/scan-supplier (purchase-orders:create).
 app.route("/api/scan-queue", scanQueue);
 // One-shot historical job_card completion importer. POST
 // /api/import/job-card-completion drives backfill of pre-ERP orders from a
@@ -1461,6 +1527,13 @@ app.route("/api/assistant", assistant);
 import agentConsole from "./routes/agent-console";
 app.route("/api/agents", agentConsole);
 app.route("/api/org-chart", orgChart);
+app.route("/api/user-permissions", userPermissions);
+// STAGING ONLY (never PR'd into main): sent-mail viewer, 404s off staging.
+import stagingMail from "./routes/staging-mail";
+app.route("/api/staging-mail", stagingMail);
+// STAGING ONLY, never PR into main: read-only schema check, see routes/staging-schema.ts.
+import stagingSchema from "./routes/staging-schema";
+app.route("/api/staging-schema", stagingSchema);
 
 // Catch-all error handler (Sprint 5). Hono's default behaviour is to surface
 // a 500 with the error message — fine for dev, but in prod we want every

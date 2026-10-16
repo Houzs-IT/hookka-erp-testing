@@ -535,6 +535,12 @@ export type VariantsConfig = {
   // Add FG bulk-generate catalogs (owner 2026-07-11).
   bedframeSizes?: unknown[];
   sofaCompartments?: string[];
+  // Extra BOM WIP type names (src/lib/wip-types.ts); the six built-ins are implied.
+  wipTypes?: string[];
+  // Product types allowed per WIP type code (wipTypeAllowed in src/lib/wip-types.ts).
+  wipTypeProducts?: Record<string, string[]>;
+  // BOM code-builder variant fields ticked per product type (src/lib/bom-variant-fields.ts).
+  bomVariantFields?: Record<string, string[]>;
   // Add RM bulk-generate: raw-material category (itemGroup) → variant suffixes.
   materialVariants?: Record<string, string[]>;
   // FILLER (sponge) area-based consumption: per item-group DEFAULT sheet size
@@ -542,6 +548,15 @@ export type VariantsConfig = {
   // per-SKU sheet size uses its group default here (backend falls back to 8×4
   // for any FILLER group). length/width share the same unit as the BOM cut size.
   sheetDefaults?: Record<string, { length?: number; width?: number }>;
+  // DEV-20: units added in RM Settings on top of ALL_RM_UOMS, for every
+  // category. Enforced by the raw-materials route too.
+  extraUoms?: string[];
+  // DEV-20 (retired 2026-10-07): per-category allowed units. Only read so a
+  // unit typed into it still counts; cleared when the unit list is saved.
+  uomOptions?: Record<string, string[]>;
+  // DEV-20: units whose RM balance cannot be typed as a fraction on the
+  // Inventory page (all categories). Absent → DEFAULT_WHOLE_UOMS.
+  wholeUoms?: string[];
   // Add FG bulk-generate per-variant defaults, keyed by size code (bedframe:
   // K/Q/…) or compartment code (sofa: 1A(LHF)/…). defaultBom = the source BOM
   // template productCode to copy from on generate (its {PRODUCT_CODE} etc.

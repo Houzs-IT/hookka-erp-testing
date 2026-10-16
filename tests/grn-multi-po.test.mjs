@@ -59,22 +59,39 @@ test("a line's own PO is used, with the header PO only as fallback", () => {
   assert.match(body, /const explicitPo = \(\(l\.poId \?\? l\.po_id\) \?\? headerPoId \?\? ""\)\.trim\(\)/);
 });
 
-test("posting draws down each line's own PO line", () => {
-  const body = fnBody("cascadePOStatusAfterGRNPost");
-  assert.match(body, /resolveGrnLineTargets\(db, grnId, grn\?\.poId \?\? null\)/);
-  assert.match(body, /receivedQty = receivedQty \+ \?[\s\S]*?\.bind\(t\.qty, t\.poItemId\)/);
-  // No positional lookup survives in the cascade itself.
+// T-006 R3 folded the cascade's SQL-building into buildPOCounterStatements
+// (a pure builder, no execution) so the create path can push its statements
+// into the SAME batch as the header+lines insert instead of a separate one.
+// T-006 R2 then did the same for the DRAFT -> POSTED path: the PUT handler
+// calls the builder itself and the old execute-in-its-own-batch wrapper
+// (cascadePOStatusAfterGRNPost) is gone. The increase goes through
+// poCounterIncrement, which carries the 110% ceiling in the statement.
+test("the counter-statement builder draws down each line's own PO line", () => {
+  const body = fnBody("buildPOCounterStatements");
+  assert.match(body, /resolveGrnLineTargets\(db, grnId, headerPoId, preloadedLines\)/);
+  assert.match(body, /perLine\.get\(t\.poItemId\)/);
+  assert.match(body, /poCounterIncrement\(db, poItemId, q\.bump, q\.check\)/);
+  // No positional lookup survives in the builder itself.
   assert.doesNotMatch(body, /poItemIndex/);
 });
 
-test("posting recomputes EVERY purchase order the receipt touched", () => {
-  const body = fnBody("cascadePOStatusAfterGRNPost");
+const PUT_HANDLER = SRC.slice(SRC.indexOf('app.put("/:id", async (c) => {'), SRC.indexOf('app.put("/:id/arrival"'));
+
+test("posting calls the counter-statement builder with the header PO", () => {
   assert.match(
-    body,
-    /for \(const poId of \[\.\.\.new Set\(targets\.map\(\(t\) => t\.poId\)\)\]\)/,
+    PUT_HANDLER,
+    /buildPOCounterStatements\(\s*c\.var\.DB,\s*id,\s*header\?\.poId \?\? null,\s*replacedDraftLines,\s*\)/,
+  );
+  assert.doesNotMatch(SRC, /cascadePOStatusAfterGRNPost\(/, "the separate-batch wrapper must stay gone");
+});
+
+test("posting recomputes EVERY purchase order the receipt touched", () => {
+  assert.match(
+    PUT_HANDLER,
+    /for \(const poId of poIdsToRecompute\)/,
     "a second PO must not be left at CONFIRMED while its goods are in the building",
   );
-  assert.match(body, /recomputePoStatusFromReceipts\(db, poId\)/);
+  assert.match(PUT_HANDLER, /recomputePoStatusFromReceipts\(c\.var\.DB, poId\)/);
 });
 
 test("reversal decrements each line's own PO line and clamps at zero", () => {
@@ -104,8 +121,8 @@ test("reversal also recomputes every touched purchase order", () => {
 test("partial receipt still accumulates rather than overwrites", () => {
   // The owner confirmed a PO is received across several deliveries, so the
   // draw-down must be += / -=, never =.
-  const post = fnBody("cascadePOStatusAfterGRNPost");
-  assert.match(post, /receivedQty = receivedQty \+ \?/);
+  const post = SRC.slice(SRC.indexOf("function poCounterIncrement("), SRC.indexOf("function isPoOverReceiptRace("));
+  assert.match(post, /THEN receivedQty \+ \?/);
   assert.doesNotMatch(post, /SET receivedQty = \?/);
 });
 
@@ -155,7 +172,9 @@ test("the resolver prefers the line id, and only then its own PO's index", () =>
 
 test("the over-receipt guard checks the line's own ordered quantity", () => {
   const guard = SRC.slice(SRC.indexOf("// Over-receipt validation"));
-  assert.match(guard.slice(0, 400), /const poItem = resolvePoItem\(item\)/);
+  // T-006 R2 lengthened the header comment (cumulative-receipt fix) —
+  // widened from 400 to still capture the marker below it.
+  assert.match(guard.slice(0, 700), /const poItem = resolvePoItem\(item\)/);
 });
 
 test("every PO the lines name is loaded, not just the header", () => {

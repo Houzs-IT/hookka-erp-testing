@@ -454,68 +454,83 @@ export type IncompleteProduct = {
   reason: string;
 };
 
-// BOM completeness guard: a product is confirm-incomplete when its ACTIVE
-// bom_templates row is missing OR both wipComponents[] AND l1Processes[] are
-// empty. Accessory SKUs (pillows) legitimately have empty wipComponents but
-// at least one l1Process (FAB_CUT/FAB_SEW/PACKING), so those pass. Falls back
-// to the most recent version if no ACTIVE row exists — mirrors the cascade's
-// reverse-schedule lookup.
+// BOM completeness guard for confirm. Owner 2026-10-05: a product whose BOM
+// WIP tab is empty must be stopped BEFORE the job-card builder falls back to
+// cards of its own (the L1 steps, or FG_MAIN across every dept), accessories
+// included. Same rule as the Create SO warning (findEmptyWipProducts), so the
+// warning and this block can never disagree. Drafts are not affected.
 export async function findIncompleteBomProducts(
   db: D1Database,
   items: SalesOrderItemRow[],
 ): Promise<IncompleteProduct[]> {
-  const incomplete: IncompleteProduct[] = [];
-  const seen = new Set<string>();
+  const names = new Map<string, string>();
   for (const item of items) {
     const productCode = item.productCode ?? "";
-    if (!item.productId || !productCode) continue;
-    if (seen.has(productCode)) continue;
-    seen.add(productCode);
+    if (!item.productId || !productCode || names.has(productCode)) continue;
+    names.set(productCode, item.productName ?? productCode);
+  }
+  const empty = await findEmptyWipProducts(db, [...names.keys()]);
+  return empty.map((productCode) => ({
+    productCode,
+    productName: names.get(productCode) ?? productCode,
+    reason: "BOM has no WIP components",
+  }));
+}
 
-    let bomRow = await db
-      .prepare(
-        `SELECT wipComponents, l1Processes FROM bom_templates
-           WHERE productCode = ? AND versionStatus = 'ACTIVE'
-           ORDER BY effectiveFrom DESC LIMIT 1`,
-      )
-      .bind(productCode)
-      .first<{ wipComponents: string | null; l1Processes: string | null }>();
-    if (!bomRow) {
-      bomRow = await db
-        .prepare(
-          `SELECT wipComponents, l1Processes FROM bom_templates
-             WHERE productCode = ? ORDER BY effectiveFrom DESC LIMIT 1`,
-        )
-        .bind(productCode)
-        .first<{ wipComponents: string | null; l1Processes: string | null }>();
-    }
-
-    const parseLen = (raw: string | null): number => {
-      if (!raw) return 0;
-      try {
-        const arr = JSON.parse(raw);
-        return Array.isArray(arr) ? arr.length : 0;
-      } catch {
-        return 0;
-      }
-    };
-
-    const isIncomplete =
-      !bomRow ||
-      (parseLen(bomRow.wipComponents) === 0 &&
-        parseLen(bomRow.l1Processes) === 0);
-
-    if (isIncomplete) {
-      incomplete.push({
-        productCode,
-        productName: item.productName ?? productCode,
-        reason: !bomRow
-          ? "No BOM template exists"
-          : "BOM has no WIP components and no FG-level processes",
-      });
+// Create-SO warning: which of these product codes have an empty WIP tab (or
+// no BOM at all). Owner 2026-10-05: an empty WIP tab must be flagged when the
+// line is added, accessories included, because the job-card builder fills the
+// gap with cards of its own (the L1 steps, or FG_MAIN across every dept).
+// findIncompleteBomProducts blocks confirm on the same rule.
+//
+// Picks the BOM row exactly as production-builder does (newest ACTIVE, else
+// newest of any status) and asks breakBomIntoWips, so "empty" means what the
+// builder will see: missing, unparseable, [] or no usable top-level node.
+export async function findEmptyWipProducts(
+  db: D1Database,
+  productCodes: string[],
+): Promise<string[]> {
+  // Codes are used as-is (the builder matches them untrimmed: one product is
+  // "SERVICE CHARGE " with a space). Service charge is never checked (owner).
+  const codes = [...new Set(productCodes.filter(
+    (c) => c.trim() && c.trim().toUpperCase() !== "SERVICE CHARGE",
+  ))];
+  if (codes.length === 0) return [];
+  const ph = codes.map(() => "?").join(",");
+  const rows = await db
+    .prepare(
+      `SELECT productCode, wipComponents, versionStatus, effectiveFrom
+         FROM bom_templates WHERE productCode IN (${ph})`,
+    )
+    .bind(...codes)
+    .all<{
+      productCode: string | null;
+      wipComponents: string | null;
+      versionStatus: string | null;
+      effectiveFrom: string | null;
+    }>();
+  const best = new Map<
+    string,
+    { wipComponents: string | null; active: boolean; eff: string }
+  >();
+  for (const r of rows.results ?? []) {
+    const code = r.productCode || "";
+    if (!code) continue;
+    const active = (r.versionStatus || "").toUpperCase() === "ACTIVE";
+    const eff = r.effectiveFrom || "";
+    const prev = best.get(code);
+    if (
+      !prev ||
+      (active && !prev.active) ||
+      (active === prev.active && eff > prev.eff)
+    ) {
+      best.set(code, { wipComponents: r.wipComponents, active, eff });
     }
   }
-  return incomplete;
+  return codes.filter((code) => {
+    const wips = breakBomIntoWips(best.get(code)?.wipComponents ?? null, code);
+    return wips.length === 1 && wips[0].wipKey === `${code}::FG_MAIN`;
+  });
 }
 
 export function rowToStatusChange(r: SOStatusChangeRow) {
@@ -1368,6 +1383,15 @@ export function ensurePendingMigrations(db: D1Database): Promise<void> {
       // self-apply because deploy.yml does NOT replay migration files.
       "ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS sales_org_code TEXT NOT NULL DEFAULT 'HOOKKA'",
       "UPDATE sales_orders SET sales_org_code = 'HOOKKA' WHERE sales_org_code IS NULL OR sales_org_code = ''",
+      // 0236 — make-to-stock flag (DEV-05). The SO LIST filters on this column,
+      // and the list is a read path that can run before any SO write has ever
+      // touched this DB (a fresh preview deploy), so it is ensured here and
+      // awaited by GET / too — same reason production-orders ensures the
+      // hold_reason trio on its read path (BUG-2026-06-20-002).
+      // The archive twin is altered as well: ?includeArchive=true unions the two
+      // tables and the filter must resolve on both sides.
+      "ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS is_stock BOOLEAN NOT NULL DEFAULT FALSE",
+      "ALTER TABLE sales_orders_archive ADD COLUMN IF NOT EXISTS is_stock BOOLEAN NOT NULL DEFAULT FALSE",
     ];
       await runSelfApply(db, "sales-orders", stmts);
     },
@@ -1458,5 +1482,32 @@ export async function pushNewlyCreatedJobCardsToSheet(
       },
     );
   }
+}
+
+/**
+ * Which DO each production order shows in the SO detail page's "Linked
+ * Production Orders" Delivery column (BUG-2026-09-30-225, class C21).
+ *
+ * A production order can sit on a CANCELLED DO and on the live DO that
+ * replaced it, and the item rows come back in no chosen order. A live DO
+ * always beats a cancelled one; a cancelled DO shows only when nothing live
+ * does. Two live DOs (a split delivery) keep the first seen: display only,
+ * it decides no identity or money.
+ */
+export function buildPoDeliveryMap(
+  items: ReadonlyArray<{ productionOrderId: string; deliveryOrderId: string }>,
+  dos: ReadonlyArray<{ id: string; doNo: string; status: string }>,
+): Map<string, { doNo: string; status: string }> {
+  const doById = new Map(dos.map((d) => [d.id, d]));
+  const out = new Map<string, { doNo: string; status: string }>();
+  for (const di of items) {
+    const d = doById.get(di.deliveryOrderId);
+    if (!d) continue;
+    const prev = out.get(di.productionOrderId);
+    if (!prev || (prev.status === "CANCELLED" && d.status !== "CANCELLED")) {
+      out.set(di.productionOrderId, { doNo: d.doNo, status: d.status });
+    }
+  }
+  return out;
 }
 

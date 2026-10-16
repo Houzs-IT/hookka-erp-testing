@@ -201,6 +201,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   const [quotationAsOf, setQuotationAsOf] = useState<string>(() =>
     new Date().toISOString().slice(0, 10),
   );
+  const seatHeights = useSofaSeatHeights();
   const { data: resp, refresh } = useCachedJson<{ success?: boolean; data?: CustomerProduct[] }>(
     customerId ? `/api/customer-products?customerId=${customerId}&asOf=${quotationAsOf}` : null
   );
@@ -810,11 +811,11 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   const isAccessoryView = categoryTab === "ACCESSORY";
   // Column count (used as colSpan when rendering the table-level wrapper).
   // BEDFRAME / ALL: Code | Description | Category | Size | Price 2 | Price 1 | Actions = 7
-  // SOFA:           Code | Description | Model | 24 | 28 | 30 | 32 | 35 | Actions = 9
+  // SOFA:           Code | Description | Model | <one per Maintenance size> | Actions
   // ACCESSORY:      Code | Description | Base Price | Actions = 4
-  const colSpanN = isSofaView ? 9 : isAccessoryView ? 4 : 7;
+  const colSpanN = isSofaView ? 4 + seatHeights.length : isAccessoryView ? 4 : 7;
   const gridCols = isSofaView
-    ? "1.3fr 1.5fr 0.7fr 0.95fr 0.95fr 0.95fr 0.95fr 0.95fr 0.7fr"
+    ? `1.3fr 1.5fr 0.7fr ${seatHeights.map(() => "0.95fr").join(" ")} 0.7fr`
     : isAccessoryView
     ? "1.3fr 2.5fr 1fr 0.7fr"
     : "1.3fr 2fr 0.8fr 0.8fr 1fr 1fr 0.7fr";
@@ -1102,11 +1103,9 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                         {isSofaView ? (
                           <>
                             <div className={`${thCls} text-left`}>Model</div>
-                            <div className={`${thCls} text-right`}>24</div>
-                            <div className={`${thCls} text-right`}>28</div>
-                            <div className={`${thCls} text-right`}>30</div>
-                            <div className={`${thCls} text-right`}>32</div>
-                            <div className={`${thCls} text-right`}>35</div>
+                            {seatHeights.map((h) => (
+                              <div key={h} className={`${thCls} text-right`}>{sofaSeatLabel(h)}</div>
+                            ))}
                             <div className={`${thCls} text-right`}>Actions</div>
                           </>
                         ) : isAccessoryView ? (
@@ -1185,17 +1184,16 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                               <>
                                 {/* Model */}
                                 <div className="px-3 py-1.5 text-sm text-[#111827]">{baseModel || "—"}</div>
-                                {/* 5 seat-height columns, tier-aware */}
-                                {(['24"', '28"', '30"', '32"', '35"'] as const).map((h) => {
-                                  const hNum = h.replace('"', '');
-                                  const norm = (v: unknown) => String(v ?? "").replace('"', '').trim();
+                                {/* One column per Maintenance size (numeric or named, e.g. DEFAULT), tier-aware */}
+                                {seatHeights.map((hNum) => {
+                                  const norm = (v: unknown) => String(v ?? "").replace(/"/g, "").trim();
                                   const sh = (row.seatHeightPrices || []).find(
                                     (s) => norm(s.height) === hNum && custEntryTier(s.tier) === sofaTier,
                                   );
-                                  const editKey = `${row.id}__${h}__${sofaTier}`;
+                                  const editKey = `${row.id}__${hNum}__${sofaTier}`;
                                   const isEditingThisCell = editingSeatKey === editKey;
                                   return (
-                                    <div key={h} className="px-3 py-1.5 text-right">
+                                    <div key={hNum} className="px-3 py-1.5 text-right">
                                       {isEditingThisCell ? (
                                         <input
                                           autoFocus
@@ -3737,6 +3735,7 @@ export default function CustomersPage() {
       sortable: true,
       // Stored as users.id, rendered as the name — so renaming a user in User
       // Management never orphans the assignment.
+      exportValue: (row) => (row.salespersonUserId ? salespersonName.get(row.salespersonUserId) ?? "" : ""),
       render: (_value, row) => {
         const name = row.salespersonUserId ? salespersonName.get(row.salespersonUserId) : "";
         return name ? (
@@ -3751,6 +3750,7 @@ export default function CustomersPage() {
       label: "Delivery Hubs",
       width: "200px",
       sortable: false,
+      exportValue: (row) => (row.deliveryHubs || []).map((h) => `${h.state} ${h.shortName}`).join("; "),
       render: (_value, row) => {
         const hubs = row.deliveryHubs || [];
         if (hubs.length === 0) return <span className="text-xs text-[#9CA3AF]">No hubs</span>;
@@ -3771,6 +3771,10 @@ export default function CustomersPage() {
       label: "PIC",
       width: "150px",
       sortable: true,
+      exportValue: (row) => {
+        const hubs = row.deliveryHubs || [];
+        return hubs.length <= 1 ? row.contactName ?? "" : hubs.map((h) => h.contactName).join("; ");
+      },
       render: (_value, row) => {
         const hubs = row.deliveryHubs || [];
         if (hubs.length <= 1) return <span className="text-sm">{row.contactName}</span>;
@@ -3787,6 +3791,12 @@ export default function CustomersPage() {
       key: "phone",
       label: "PIC Contact",
       width: "200px",
+      exportValue: (row) => {
+        const hubs = row.deliveryHubs || [];
+        return hubs.length <= 1
+          ? [row.phone, row.email].filter(Boolean).join(" / ")
+          : hubs.map((h) => h.phone).join("; ");
+      },
       render: (_value, row) => {
         const hubs = row.deliveryHubs || [];
         if (hubs.length <= 1) {
@@ -3839,6 +3849,7 @@ export default function CustomersPage() {
       width: "140px",
       sortable: true,
       align: "right",
+      exportValue: (row) => row.outstandingSen / 100,
       render: (_value, row) => {
         const pct = row.creditLimitSen > 0
           ? (row.outstandingSen / row.creditLimitSen) * 100
@@ -3870,6 +3881,7 @@ export default function CustomersPage() {
       sortable: true,
       align: "right",
       sortAccessor: (row) => row.creditLimitSen - row.outstandingSen,
+      exportValue: (row) => (row.creditLimitSen > 0 ? (row.creditLimitSen - row.outstandingSen) / 100 : null),
       render: (_value, row) => {
         if (row.creditLimitSen <= 0) return <span className="text-[#9CA3AF]">—</span>;
         const available = row.creditLimitSen - row.outstandingSen;

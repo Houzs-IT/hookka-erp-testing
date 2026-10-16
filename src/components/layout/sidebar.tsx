@@ -54,6 +54,7 @@ import {
   Receipt,
   List,
   FlaskConical,
+  ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -76,11 +77,19 @@ interface NavGroup {
 }
 
 const navigationGroups: NavGroup[] = [
+  // STAGING ONLY (never PR'd into main): latest PRs merged into staging.
+  ...(window.location.hostname.startsWith("staging.")
+    ? [{ label: "PATCH NOTES", items: [{ name: "Patch Notes", href: "/staging-notes", icon: ScrollText }, { name: "Schema Check", href: "/staging-schema", icon: Grid3x3 }, { name: "Mail Outbox", href: "/staging-mail", icon: Mail }] }]
+    : []),
   {
     label: "OVERVIEW",
     items: [
       { name: "Dashboard Experimental", href: "/dashboard-experimental", icon: FlaskConical },
       { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      // STAGING ONLY (never PR'd into main): 7-day vs 14-day Plant Load.
+      ...(window.location.hostname.startsWith("staging.")
+        ? [{ name: "Dashboard Compare", href: "/dashboard/compare", icon: LayoutDashboard }]
+        : []),
       { name: "Hookka Report", href: "/daily-report", icon: ClipboardCheck },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "Announcements", href: "/announcements", icon: Megaphone },
@@ -116,6 +125,7 @@ const navigationGroups: NavGroup[] = [
         { name: "Fab Sew", href: "/production/fab-sew", icon: Shirt },
         { name: "Foam Cutting", href: "/production/foam-cutting", icon: Scissors },
         { name: "Foam Bonding", href: "/production/foam", icon: Box },
+        { name: "Fibre", href: "/production/fibre", icon: Layers },
         { name: "Wood Cut", href: "/production/wood-cut", icon: Axe },
         { name: "Framing", href: "/production/framing", icon: Frame },
         { name: "Webbing", href: "/production/webbing", icon: Grid3x3 },
@@ -203,67 +213,72 @@ const navigationGroups: NavGroup[] = [
   {
     label: "FINANCE",
     items: [
-      // Owner UI reorg (2026-06): seven expandable groups. Accounting
-      // reports/screens deep-link via /accounting?tab=<key>; standalone
-      // pages (Supplier Payment, Credit/Debit Notes, e-Invoice, Reports)
-      // keep their own routes.
+      // Owner UI reorg (2026-06: seven expandable groups) → slimmed 2026-09-22
+      // (owner: 「很多功能重复」, 40 entries → 28). One door per job: money out
+      // = Payment Vouchers (expense + AP Payment), money in = Receipts
+      // (customer / other debtor / official), bills owed = AP Invoices
+      // (mirror + raise other-creditor bills), P&L = one entry with three
+      // views. Retired from the MENU only — every route / tab still answers
+      // its old URL: /invoices/payments, /invoices/supplier-payments (FX PIs,
+      // advance knock-off, TF repayment — linked from Payment Vouchers),
+      // ?tab=ocreditorpay / odebtorpay / odebtor / ocreditorbills /
+      // plmonthly / coststruct.
       {
-        name: "Monthly Report", href: "/accounting?tab=overview", icon: BarChart3, children: [
+        name: "Reports", href: "/accounting?tab=overview", icon: BarChart3, children: [
           { name: "Overview", href: "/accounting?tab=overview", icon: LayoutDashboard },
           { name: "P&L", href: "/accounting?tab=pl", icon: BarChart3 },
-          { name: "Cost Structure", href: "/accounting?tab=coststruct", icon: Layers },
           { name: "Cash Flow", href: "/accounting?tab=cashflow", icon: Wallet },
           { name: "Balance Sheet", href: "/accounting?tab=bs", icon: Scale },
           { name: "Trial Balance", href: "/accounting?tab=tb", icon: Scale },
           { name: "General Ledger", href: "/accounting?tab=gl", icon: BookOpen },
-          { name: "Monthly P&L", href: "/accounting?tab=plmonthly", icon: BarChart3 },
+          { name: "Stock Summary", href: "/accounting?tab=stock", icon: Boxes },
         ],
       },
       {
-        name: "Daily Operation", href: "/accounting?tab=payments", icon: Wallet, children: [
-          { name: "Expense Payment", href: "/accounting?tab=payments", icon: Wallet },
+        name: "Daily", href: "/accounting?tab=payments", icon: Wallet, children: [
+          { name: "Payment Vouchers", href: "/accounting?tab=payments", icon: Wallet },
           { name: "Receipts", href: "/accounting?tab=receipts", icon: Receipt },
-          { name: "Fund Transfer", href: "/accounting?tab=transfer", icon: Wallet },
+          // Fund Transfer left the menu 2026-10-01: a transfer is now a voucher
+          // (Payment Vouchers → New Payment Voucher → Transfer); ?tab=transfer
+          // still opens the old page and its entries are listed on the hub.
           { name: "Cash Position", href: "/accounting?tab=dailycash", icon: Wallet },
-          { name: "Customer Payment", href: "/invoices/payments", icon: CreditCard },
-          { name: "Supplier Payment", href: "/invoices/supplier-payments", icon: CreditCard },
+        ],
+      },
+      {
+        name: "Monthly", href: "/accounting?tab=journals", icon: Calculator, children: [
+          { name: "Journal Entries", href: "/accounting?tab=journals", icon: BookOpen },
+          { name: "Cash Book", href: "/accounting?tab=cashbook", icon: Wallet },
+          { name: "Stock Take", href: "/accounting?tab=stocktake", icon: Scale },
+          { name: "Labour", href: "/accounting?tab=labor", icon: Users },
+          { name: "Fixed Assets", href: "/accounting?tab=assets", icon: Building2 },
+          { name: "Self-check", href: "/accounting?tab=selfcheck", icon: Calculator },
+          { name: "Corrections", href: "/accounting?tab=corrections", icon: BookOpen },
+        ],
+      },
+      {
+        name: "Debtors", href: "/accounting?tab=ar", icon: Users, children: [
+          { name: "Debtor Aging", href: "/accounting?tab=ar", icon: Users },
+          { name: "Other Debtor Bills", href: "/accounting?tab=odebtorbills", icon: BookOpen },
           { name: "Credit Notes", href: "/invoices/credit-notes", icon: FileX },
           { name: "Debit Notes", href: "/invoices/debit-notes", icon: FilePlus },
         ],
       },
       {
-        name: "Monthly Operation", href: "/accounting?tab=journals", icon: Calculator, children: [
-          { name: "Journal Entries", href: "/accounting?tab=journals", icon: BookOpen },
-          { name: "Cash Book", href: "/accounting?tab=cashbook", icon: Wallet },
-          { name: "Fixed Assets", href: "/accounting?tab=assets", icon: Building2 },
-        ],
-      },
-      {
-        name: "Debtor / Other Debtor", href: "/accounting?tab=ar", icon: Users, children: [
-          { name: "Debtor Aging", href: "/accounting?tab=ar", icon: Users },
-          { name: "Other Debtor", href: "/accounting?tab=odebtor", icon: Users },
-          { name: "Other Debtor Bills", href: "/accounting?tab=odebtorbills", icon: BookOpen },
-          { name: "Other Debtor Receipts", href: "/accounting?tab=odebtorpay", icon: Wallet },
-        ],
-      },
-      {
-        name: "Creditor / Other Creditor", href: "/accounting?tab=ap", icon: Building2, children: [
+        name: "Creditors", href: "/accounting?tab=ap", icon: Building2, children: [
           { name: "Creditor Aging", href: "/accounting?tab=ap", icon: Building2 },
+          { name: "AP Invoices", href: "/accounting?tab=apinvoices", icon: BookOpen },
+          // Back in the menu (owner 2026-09-29 「other creditor maintenance 放 sidebar
+          // 旁边」): the creditor register, no longer folded under AP Invoices.
+          { name: "Other Creditors", href: "/accounting?tab=ocreditor", icon: Users },
           { name: "Supplier Discount", href: "/accounting?tab=supplier-discount", icon: CreditCard },
-          { name: "Other Creditor", href: "/accounting?tab=ocreditor", icon: Building2 },
-          { name: "Other Creditor Bills", href: "/accounting?tab=ocreditorbills", icon: BookOpen },
-          { name: "Other Creditor Payments", href: "/accounting?tab=ocreditorpay", icon: Wallet },
         ],
       },
       { name: "e-Invoice", href: "/invoices/e-invoice", icon: FileCheck },
       {
-        name: "Maintenance", href: "/accounting?tab=coa", icon: Settings, children: [
+        name: "Setup", href: "/accounting?tab=coa", icon: Settings, children: [
           { name: "Chart of Accounts", href: "/accounting?tab=coa", icon: List },
-          { name: "Labour", href: "/accounting?tab=labor", icon: Users },
-          { name: "Stock", href: "/accounting?tab=stock", icon: Boxes },
           { name: "Stock Mapping", href: "/accounting?tab=stockmap", icon: Boxes },
           { name: "Opening Stock", href: "/accounting?tab=openstock", icon: Scale },
-          { name: "Stock Take", href: "/accounting?tab=stocktake", icon: Scale },
           { name: "Opening Balance", href: "/accounting?tab=opening", icon: Scale },
           { name: "Audit Log", href: "/accounting?tab=audit", icon: FileCheck },
           { name: "Settings", href: "/accounting?tab=maint", icon: Wrench },
@@ -309,6 +324,11 @@ const SUPER_ADMIN_LINK: NavItem = {
   href: "/settings/users",
   icon: Users,
 };
+const SUPER_ADMIN_REPORTS_LINK: NavItem = {
+  name: "Email Reports",
+  href: "/settings/email-reports",
+  icon: Mail,
+};
 const SUPER_ADMIN_HEALTH_LINK: NavItem = {
   name: "System Health",
   href: "/admin/health",
@@ -327,6 +347,13 @@ const AGENTS_LINK: NavItem = {
   name: "Agent Console",
   href: "/agents",
   icon: Bot,
+};
+// IT Support: every login, own tickets only (the Houzs IT Hub holds them).
+// The badge counts tickets IT has answered that this person has not opened.
+const IT_SUPPORT_LINK: NavItem = {
+  name: "IT Support",
+  href: "/it-support",
+  icon: Wrench,
 };
 
 type OrgInfo = {
@@ -383,6 +410,7 @@ export function Sidebar({
   });
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [itUnread, setItUnread] = useState(0);
   const [orgs, setOrgs] = useState<OrgInfo[]>([]);
   const [activeOrgId, setActiveOrgId] = useState("");
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
@@ -476,17 +504,32 @@ export function Sidebar({
     }
   }, []);
 
+  // A badge is a nudge, not a fact the page depends on: when the hub is not
+  // connected (503) or is down (502) the last known count simply stays.
+  const fetchItUnread = useCallback(async () => {
+    try {
+      const res = await fetch("/api/it-support/unread-count");
+      if (!res.ok) return;
+      const body = (await res.json()) as { data?: { unread?: number } } | null;
+      setItUnread(Number(body?.data?.unread) || 0);
+    } catch {
+      // silently ignore fetch errors
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount; pre-existing pattern, separate cleanup task
     fetchOrgs();
     fetchUnreadCount();
-  }, [fetchOrgs, fetchUnreadCount]);
+    fetchItUnread();
+  }, [fetchOrgs, fetchUnreadCount, fetchItUnread]);
 
   // Poll the unread-notifications count once a minute. useInterval pauses when
   // the tab is hidden (saves a request/min on idle pinned tabs) and clears on
   // unmount automatically.
   useInterval(() => {
     fetchUnreadCount();
+    fetchItUnread();
   }, 60_000);
 
   // P3.6 — load the current user's permission set so we can hide nav links
@@ -539,6 +582,7 @@ export function Sidebar({
       items = [
         ...items.slice(0, insertAt),
         SUPER_ADMIN_LINK,
+        SUPER_ADMIN_REPORTS_LINK,
         SUPER_ADMIN_HEALTH_LINK,
         ...items.slice(insertAt),
       ];
@@ -550,7 +594,13 @@ export function Sidebar({
     if (group.label === "SYSTEM") {
       const idx = items.findIndex((i) => i.name === "Settings");
       const at = idx === -1 ? items.length : idx;
-      items = [...items.slice(0, at), KPI_LINK, AGENTS_LINK, ...items.slice(at)];
+      items = [
+        ...items.slice(0, at),
+        KPI_LINK,
+        AGENTS_LINK,
+        { ...IT_SUPPORT_LINK, badge: itUnread },
+        ...items.slice(at),
+      ];
     }
     // Drop the items this user may not see, and their sub-items with them —
     // a parent that survives only to show a submenu of forbidden pages is
@@ -602,6 +652,7 @@ export function Sidebar({
       href === "/production/wood-cut" ||
       href === "/production/framing" ||
       href === "/production/webbing" ||
+      href === "/production/fibre" ||
       href === "/production/upholstery" ||
       href === "/production/packing"
     ) {
@@ -778,15 +829,27 @@ export function Sidebar({
                           // production"). Open the full sidebar and expand this
                           // menu so the departments become tappable, same as
                           // desktop.
+                          // FINANCE opens one group at a time (owner 2026-10-01
+                          // 「我点 daily，report 就收起来」); every other section
+                          // keeps its menus independent.
+                          const openOnly = (prev: Set<string>) => {
+                            const next = new Set(prev);
+                            if (group.label === "FINANCE") {
+                              for (const other of group.items) if (other.name !== item.name) next.delete(other.name);
+                            }
+                            next.add(item.name);
+                            return next;
+                          };
                           if (collapsed) {
                             onToggleCollapsed();
-                            setExpandedMenus((prev) => new Set(prev).add(item.name));
+                            setExpandedMenus((prev) => openOnly(prev));
                             return;
                           }
-                          const next = new Set(expandedMenus);
-                          if (isExpanded) next.delete(item.name);
-                          else next.add(item.name);
-                          setExpandedMenus(next);
+                          if (isExpanded) {
+                            const next = new Set(expandedMenus);
+                            next.delete(item.name);
+                            setExpandedMenus(next);
+                          } else setExpandedMenus(openOnly(expandedMenus));
                         }}
                         className={cn(
                           "w-full group relative flex items-center gap-3 rounded-md text-sm font-medium transition-colors",

@@ -218,6 +218,11 @@ function genId(): string {
 // GET /api/attendance                            → all records
 // ---------------------------------------------------------------------------
 app.get("/", async (c) => {
+  // Permission gate. getOrgId() below answers WHICH COMPANY, not whether
+  // this person may see it — every logged-in account of every role could
+  // read this until now. RBAC audit 2026-09-11.
+  const denied = await requirePermission(c, "attendance", "read");
+  if (denied) return denied;
   const orgId = getOrgId(c);
   const date = c.req.query("date");
   const from = c.req.query("from");
@@ -350,6 +355,11 @@ app.delete("/:id", async (c) => {
 // Fetched on demand. Scoped by org — no cross-tenant read.
 // ---------------------------------------------------------------------------
 app.get("/:id/photo", async (c) => {
+  // Permission gate. getOrgId() below answers WHICH COMPANY, not whether
+  // this person may see it — every logged-in account of every role could
+  // read this until now. RBAC audit 2026-09-11.
+  const denied = await requirePermission(c, "attendance", "read");
+  if (denied) return denied;
   const orgId = getOrgId(c);
   const id = c.req.param("id");
   const which = c.req.query("which") === "out" ? "out" : "in";
@@ -410,11 +420,11 @@ app.post("/", async (c) => {
       return c.json({ success: false, error: "Worker not found" }, 400);
     }
 
-    const date = body.date || new Date().toISOString().split("T")[0];
-    const now = new Date();
-    const time =
-      body.time ||
-      `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    // Defaults on the Malaysia clock (UTC+8), not the UTC Workers runtime;
+    // same shift as worker.ts malaysiaNow() (BUG-2026-10-01-243).
+    const my = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+    const date = body.date || my.slice(0, 10);
+    const time = body.time || my.slice(11, 16);
 
     const existing = await c.var.DB.prepare(
       "SELECT * FROM attendance_records WHERE employeeId = ? AND date = ?",

@@ -74,7 +74,7 @@ test("unvoid exists and is gated by the same finance guard as void", () => {
 });
 
 test("unvoid restores the ledger to BASE — the invoice's own legs, not zero", () => {
-  assert.match(UNVOID, /buildPiDeltaLegs\(base, total,/);
+  assert.match(UNVOID, /buildPiDeltaLegs\(db, base, total,/);
   assert.match(UNVOID, /sourceType: "purchase_invoice_unvoid"/);
 });
 
@@ -92,7 +92,8 @@ test("unvoid re-claims the GRN quantity, and is REFUSED if it no longer fits", (
   const guardAt = UNVOID.indexOf("if (!reconsume.ok)");
   const writeAt = UNVOID.indexOf("await db.batch(statements)");
   assert.ok(guardAt > 0 && guardAt < writeAt, "the refusal must come before the batch");
-  assert.match(SRC, /if \(invoiced \+ qty > accepted\) \{/);
+  // Goods returned off the GRN since the void count too (BUG-2026-09-24-206).
+  assert.match(SRC, /if \(invoiced \+ returned \+ qty > accepted\) \{/);
 });
 
 test("the status returns to what it WAS, not a hardcoded guess", () => {
@@ -109,8 +110,8 @@ test("unvoiding a live invoice is a no-op, not an error", () => {
 test("the reversal is idempotent — voiding twice cannot double-reverse", () => {
   // Derived from what is POSTED, not from how many times the button was
   // pressed: a second void computes delta = −total = 0 and writes nothing.
-  assert.match(VOID, /buildPiDeltaLegs\(new Map\(\), total,/);
-  assert.match(SRC, /if \(delta === 0\) continue;/);
+  assert.match(VOID, /buildPiDeltaLegs\(db, new Map\(\), total,/);
+  assert.match(SRC, /\.filter\(\(d\) => d\.delta !== 0\)/);
 });
 
 test("the GRN convert-chain gets its quantity back", () => {

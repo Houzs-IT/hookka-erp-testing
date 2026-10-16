@@ -56,27 +56,52 @@ import {
   CircleCheck,
   ChevronDown,
   Check,
+  Factory,
+  ShoppingBag,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { formatCurrency } from "@/lib/utils";
+import { stateKpiTile, type StateKpis } from "@/pages/dashboards/dashboard-widgets-lib";
 import { getCurrentUser } from "@/lib/auth";
 import {
   SO_STATUS_COLOR,
   type SemanticStyle,
 } from "@/lib/design-tokens";
 import type { RawMaterial } from "@/types";
-import { MobileCard, StatusPill, FormSheet, Sheet } from "../components";
+import { MobileCard, StatusPill, FormSheet, Sheet, InstallAppCard, MobileHeader, SegmentedSwitch } from "../components";
 import { GlobalSearchSheet } from "../components/GlobalSearchSheet";
 import { ORDERS_DUE_URL, STOCK_ALERTS_URL } from "../lib/preload";
 import { M, M_ACCENT, M_DELTA } from "../theme";
 import { type FormSpec } from "../config/form-types";
+import { useResponsiveLayout } from "../lib/responsive-layout";
+import { useNotificationFeed } from "../lib/use-notification-feed";
 import {
   newSalesOrderSpec,
   newDeliveryOrderSpec,
   newPurchaseOrderSpec,
 } from "../config/forms";
+import {
+  SHADOW_HEADER_BTN,
+  PhoneSectionHeading,
+  PhonePeriodPill,
+  PhonePeriodList,
+  PhoneHero,
+  PhoneQuickActions,
+  PhoneDailyReport,
+  PhoneOrdersDue,
+  PhonePipeline,
+  PhonePlantLoad,
+  PhoneDeptBacklog,
+  PhoneStockAlerts,
+  PhonePurchasing,
+  PhoneRevenue,
+  PhoneWorkerEfficiency,
+  PhoneSalesByCustomer,
+  PhoneTopSellers,
+  PhoneFabricUsage,
+  type LoadState,
+} from "./HomePhone";
 
 // ---------- API response shapes (subset of the desktop dashboard's) ----------
 type StatsResp = {
@@ -90,6 +115,7 @@ type StatsResp = {
 type JobsBreakdown = { bedframeUnits: number; sofaSets: number };
 type OverviewResp = {
   success?: boolean;
+  stateKpis?: StateKpis | null;
   salesThisMonthSen?: number;
   invoicesThisMonthSen?: number;
   monthlyRevenue?: {
@@ -155,13 +181,12 @@ type JcSummaryResp = {
 type WheSummaryResp = {
   data?: {
     workerId: string;
+    name?: string | null;
+    departmentCode?: string | null;
     totalHours: number;
     byDept: Record<string, number>;
     daysWithEntries?: number;
   }[];
-};
-type WorkersResp = {
-  data?: { id: string; name: string; departmentCode?: string }[];
 };
 // Orders-due row — the SEVEN fields OrderDueCard renders, and nothing else.
 // This is the whole payload of /api/sales-orders?fields=orders-due.
@@ -231,7 +256,7 @@ function todayISO(): string {
 // eff% = production minutes ÷ (production-dept clocked hours × 60). Only the
 // eight production departments count toward the denominator.
 const PROD_DEPTS = new Set([
-  "FAB_CUT", "FAB_SEW", "WOOD_CUT", "FOAM_CUTTING", "FOAM",
+  "FAB_CUT", "FAB_SEW", "WOOD_CUT", "FOAM_CUTTING", "FOAM", "FIBRE",
   "FRAMING", "WEBBING", "UPHOLSTERY", "PACKING",
 ]);
 const DEPT_LABEL: Record<string, string> = {
@@ -240,6 +265,7 @@ const DEPT_LABEL: Record<string, string> = {
   WOOD_CUT: "Wood Cutting",
   FOAM_CUTTING: "Foam Cutting",
   FOAM: "Foam Bonding",
+  FIBRE: "Fibre",
   FRAMING: "Framing",
   WEBBING: "Webbing",
   UPHOLSTERY: "Upholstery",
@@ -286,6 +312,26 @@ function rm2(sen: number): string {
  */
 const SBC_COLORS = ["#16425B", "#1F6E8C", "#2E8FA3", "#4FA8B8", "#7FB9C6", "#A9C7D0"];
 
+/** Phone Home views (owner 2026-10-13). Operations is the default. */
+type HomeView = "operations" | "performance";
+const HOME_VIEWS: { key: HomeView; label: string }[] = [
+  { key: "operations", label: "Operations" },
+  { key: "performance", label: "Performance" },
+];
+
+/** Where each Daily Report chip lands (for its accessible name). */
+const DAILY_DEST: Record<string, string> = {
+  "/m/sales": "Sales Orders",
+  "/m/procurement": "Purchase Orders",
+  "/m/employees": "Employees",
+};
+
+/** Section fetch state: data wins; an error only counts when there is none. */
+function loadState(data: unknown, error: string | null, enabled = true): LoadState {
+  if (data != null) return "ready";
+  return enabled && error ? "error" : "loading";
+}
+
 /** Local time-of-day greeting (design says "Good morning,"). */
 function greeting(): string {
   const h = new Date().getHours();
@@ -302,7 +348,17 @@ export default function MobileHome() {
   // rail as 4 columns instead of 2×2. Other dashboard cards stay stacked
   // vertically (the design has a 2-col grid there too — bigger refactor,
   // deferred).
-  const fold = useMediaQuery("(min-width: 720px) and (orientation: landscape)");
+  const { mode, contentWidth } = useResponsiveLayout();
+  const expanded = mode === "tablet-landscape";
+  // Phone only (owner 2026-10-13): one Home split into two views by a
+  // switch, to cut scrolling. Tablets keep every section in one column, in
+  // the original order: `show()` is always true there, and the four blocks
+  // that sit elsewhere on a phone render in their original slot when
+  // !isPhone. Hooks and fetches don't depend on `view`, so switching only
+  // changes what is rendered: no refetch, and the month is kept.
+  const isPhone = mode === "phone";
+  const [view, setView] = useState<HomeView>("operations");
+  const show = (v: HomeView) => !isPhone || view === v;
 
   // Quick-action create form: holds the active FormSpec, or null. "Staff" has
   // no in-scope create endpoint, so it routes to the Employees directory.
@@ -310,6 +366,9 @@ export default function MobileHome() {
   // Global search overlay (CHANGELOG O.1) — fans out across the localStorage
   // cache that preload.ts warmed at /m mount.
   const [searchOpen, setSearchOpen] = useState(false);
+  // Bell dot = real unread notifications (same rows /m/updates lists). Not
+  // announcements: office users have no per-user read state for those yet.
+  const { unread: unreadNotifications } = useNotificationFeed();
 
   // ---- Pending Delivery + the analytics cards are the expensive part of this
   // Home (Pending Delivery itself is now two small server-computed fetches:
@@ -344,10 +403,10 @@ export default function MobileHome() {
     return () => window.clearTimeout(t);
   }, []);
 
-  const { data: stats } = useCachedJson<StatsResp>("/api/sales-orders/stats");
+  const { data: stats, error: statsError } = useCachedJson<StatsResp>("/api/sales-orders/stats");
   // Current-month overview = the dashboard's default Command Center period, so
   // salesThisMonthSen / invoicesThisMonthSen match the desktop KPI rail.
-  const { data: overview } = useCachedJson<OverviewResp>(
+  const { data: overview, error: overviewError } = useCachedJson<OverviewResp>(
     `/api/dashboard/overview?period=${period}`,
   );
   // ---- Orders due — the SIX rows this card renders, and nothing else.
@@ -365,13 +424,13 @@ export default function MobileHome() {
   // break the same way, same slice) — the rendered list is unchanged by
   // construction. `overdue` stays client-side because it compares against the
   // PHONE's local today, not the server's. ----
-  const { data: soList } = useCachedJson<OrdersDueResp>(ORDERS_DUE_URL);
+  const { data: soList, error: soListError } = useCachedJson<OrdersDueResp>(ORDERS_DUE_URL);
   // Stock alerts. perf 2026-08-13 (BUG-2026-08-13-021): the URL is now
   // STOCK_ALERTS_URL ("/api/inventory?buckets=rawMaterials") and is defined ONCE
   // in ../lib/preload.ts, because the preload warms it by URL string — see the
   // constant there for why the bucket projection is byte-identical for the
   // `rawMaterials` array this screen reads (line ~794).
-  const { data: inventory } = useCachedJson<InventoryResp>(STOCK_ALERTS_URL);
+  const { data: inventory, error: inventoryError } = useCachedJson<InventoryResp>(STOCK_ALERTS_URL);
 
   // ---- Pending Delivery — SAME two fetches + the same fold as the dashboard's
   // consolidated "Pending Delivery" KTile (src/pages/dashboard-b/index.tsx).
@@ -406,8 +465,9 @@ export default function MobileHome() {
     pdEnabled ? "/api/delivery-orders/stats" : null,
   );
 
-  // ---- Worker Efficiency — 3 extra fetches (job-card prod mins + clocked
-  // hours + worker directory), merged exactly like the desktop dashboard-b.
+  // ---- Worker Efficiency: 2 extra fetches (job-card prod mins + clocked
+  // hours, which carries each worker name and department), merged exactly
+  // like the desktop dashboard-b.
   // Gated behind the same `pdEnabled` idle flag so first paint stays the KPI
   // rail. Window = current month [1st..today]. ----
   const effWin = useMemo(() => monthWindow(period), [period]);
@@ -419,15 +479,12 @@ export default function MobileHome() {
       ? `/api/working-hour-entries/summary?from=${effWin.from}&to=${effWin.to}`
       : null,
   );
-  const { data: workersRaw } = useCachedJson<WorkersResp>(
-    pdEnabled ? "/api/workers" : null,
-  );
   // Daily Report chips now read the SAME compliance engine the desktop Daily
   // Report + Command Center card use (owner tally audit 2026-07-11). The old
   // client-side re-derivations used different date columns / status sets / a
   // 70% low-efficiency bar (desktop uses 60%), so the phone's total never
   // matched the desktop's. One source of truth: /api/reports/compliance.json.
-  const { data: complianceRaw } = useCachedJson<{
+  const { data: complianceRaw, error: complianceError } = useCachedJson<{
     success?: boolean;
     data?: {
       counts?: {
@@ -467,6 +524,21 @@ export default function MobileHome() {
   // true while deferred (pdEnabled false) and while either dataset is still in
   // flight. Once both land, the real value renders (same computation).
   const pendingDeliveryLoading = !pdEnabled || !pendingRaw || !doStatsRaw;
+
+  // A finished month shows its saved month-end figure (or "no record"), not
+  // today's live one. Same rule as /dashboard (stateKpiTile).
+  const pdTile = stateKpiTile(period, overview?.stateKpis?.pendingDeliverySen, overview?.stateKpis?.asOf, pendingDeliverySen);
+  const outTile = stateKpiTile(period, overview?.stateKpis?.outstandingSen, overview?.stateKpis?.asOf, outstandingSen);
+  const tileValue = (t: typeof pdTile, liveLoading: boolean) =>
+    t.past
+      ? !overview
+        ? "…"
+        : t.sen == null
+          ? "—"
+          : formatCurrency(t.sen)
+      : liveLoading
+        ? "…"
+        : formatCurrency(t.sen ?? 0);
 
   // ---- Sales month-over-month delta (This Month Sales card) ----
   const salesDeltaPct = useMemo(() => {
@@ -524,15 +596,20 @@ export default function MobileHome() {
       { label: "Delivered", sen: delivered, color: M_DELTA.up },
     ].map((p) => ({ ...p, pct: Math.round((p.sen / max) * 100) }));
     const ratePct = confirmed > 0 ? (delivered / confirmed) * 100 : null;
+    // /api/sales-orders/stats has no date filter, so the phone card says
+    // "Live" and drops the month from its note (owner 2026-10-13). Tablets
+    // keep the month wording (follow-up in WORK-TRACKER).
+    const liveNote =
+      confirmed > 0
+        ? `${formatCurrency(outstanding)} still to ship of ${formatCurrency(
+            confirmed,
+          )} confirmed`
+        : null;
     return {
       bars,
       ratePct,
-      note:
-        confirmed > 0
-          ? `${formatCurrency(outstanding)} still to ship of ${formatCurrency(
-              confirmed,
-            )} confirmed · ${period}`
-          : null,
+      liveNote,
+      note: liveNote ? `${liveNote} · ${period}` : null,
     };
   }, [stats, period]);
 
@@ -599,7 +676,7 @@ export default function MobileHome() {
       loadPct,
       workforce: overview?.employee?.activeHeadcount ?? null,
       rows: [
-        { label: "Daily Capacity", sub: `${period} avg`, value: dailyCap ? hrs(dailyCap) : "—", icon: Calendar },
+        { label: "Daily Capacity", sub: period === CUR_YM ? "14-day avg" : `${period} avg`, value: dailyCap ? hrs(dailyCap) : "—", icon: Calendar },
         {
           label: "Total Backlog",
           sub: "per dept",
@@ -636,12 +713,6 @@ export default function MobileHome() {
     const prodMin = new Map<string, number>();
     for (const r of jcSumRaw?.data ?? [])
       prodMin.set(r.workerId, Number(r.productionMinutes) || 0);
-    const name = new Map<string, string>();
-    const dept = new Map<string, string>();
-    for (const w of workersRaw?.data ?? []) {
-      name.set(w.id, w.name || w.id);
-      dept.set(w.id, DEPT_LABEL[w.departmentCode || ""] ?? w.departmentCode ?? "");
-    }
     const rows: { name: string; dept: string; pct: number }[] = [];
     for (const e of wheSumRaw?.data ?? []) {
       if ((e.daysWithEntries ?? 0) === 0) continue;
@@ -650,15 +721,15 @@ export default function MobileHome() {
         if (PROD_DEPTS.has(d)) prodHours += Number(h) || 0;
       if (prodHours <= 0) continue;
       rows.push({
-        name: name.get(e.workerId) ?? e.workerId,
-        dept: dept.get(e.workerId) ?? "",
+        name: e.name || e.workerId,
+        dept: DEPT_LABEL[e.departmentCode || ""] ?? e.departmentCode ?? "",
         pct: ((prodMin.get(e.workerId) ?? 0) / (prodHours * 60)) * 100,
       });
     }
     if (rows.length === 0) return null;
     rows.sort((a, b) => b.pct - a.pct);
     return { top: rows.slice(0, 5), low: rows.slice(-5).reverse() };
-  }, [jcSumRaw, wheSumRaw, workersRaw]);
+  }, [jcSumRaw, wheSumRaw]);
 
   // Low efficiency: production workers with eff% < 70 this period (the same
   // band Worker Efficiency card colours red). Daily-report chips + total
@@ -777,6 +848,8 @@ export default function MobileHome() {
       // Bottleneck (#1) red; hot (>20d) gold; rest brown — matches the design.
       color: i === 0 ? "#9A3A2D" : (d.backlogDays ?? Infinity) > 20 ? "#C9A961" : "#5E5129",
       dColor: i === 0 ? "#9A3A2D" : M.ink,
+      // Raw days for the phone card's own palette (same >20d rule).
+      raw: d.backlogDays,
     }));
   }, [overview]);
 
@@ -790,12 +863,16 @@ export default function MobileHome() {
       suppliers: (p.topSuppliers ?? []).slice(0, 5).map((s) => ({
         name: s.name,
         amt: formatCurrency(s.spendSen || 0),
+        // Raw sen for the phone card's relative bar.
+        sen: s.spendSen || 0,
       })),
     };
   }, [overview]);
 
   // ---- Stock alerts (raw materials at or below reorder / low threshold) ----
-  const stockAlerts = useMemo(() => {
+  // Every low material, lowest first; the card lists the first five. The
+  // phone heading counts all of them ("N low" used to count only the five).
+  const lowStock = useMemo(() => {
     const rms = inventory?.data?.rawMaterials ?? [];
     return rms
       .filter((rm) => {
@@ -804,13 +881,591 @@ export default function MobileHome() {
         const min = typeof rm.minStock === "number" ? rm.minStock : null;
         return min != null && min > 0 ? qty <= min : qty < 5;
       })
-      .sort((a, b) => (Number(a.balanceQty) || 0) - (Number(b.balanceQty) || 0))
-      .slice(0, 5);
+      .sort((a, b) => (Number(a.balanceQty) || 0) - (Number(b.balanceQty) || 0));
   }, [inventory]);
+  const stockAlerts = useMemo(() => lowStock.slice(0, 5), [lowStock]);
+
+  // ---- Phone presentation inputs (Claude Design, owner 2026-10-15). Only
+  // labels and load states; every figure is one computed above. ----
+  const statsState = loadState(stats, statsError);
+  const soListState = loadState(soList, soListError);
+  const inventoryState = loadState(inventory, inventoryError);
+  const complianceState = loadState(complianceRaw, complianceError, pdEnabled);
+  const isCurrentPeriod = period === CUR_YM;
+  // The MoM deltas compare the LAST two months of monthlyRevenue, i.e. the
+  // latest month with data, whatever period is picked. The hero shows a delta
+  // only when that month IS the selected period; otherwise it is hidden.
+  const revMonths = overview?.monthlyRevenue ?? [];
+  const deltaMonth = revMonths[revMonths.length - 1]?.month;
+  const heroDelta = (pct: number | null) =>
+    pct == null || deltaMonth !== period
+      ? null
+      : { text: `${pct >= 0 ? "+" : ""}${pct}% MoM`, good: pct >= 0 };
+  const overviewValue = (sen: number) =>
+    overview ? formatCurrency(sen) : overviewError ? "—" : "…";
+  const outstandingLive = !outTile.past && !stats;
+  const opsHeroCells = [
+    {
+      icon: Package,
+      label: "Pending Delivery",
+      value: tileValue(pdTile, pendingDeliveryLoading),
+      note: pdTile.past ? pdTile.tag : undefined,
+    },
+    {
+      icon: Clock,
+      label: "Outstanding",
+      value: outstandingLive ? (statsError ? "—" : "…") : tileValue(outTile, false),
+      note: outTile.past ? outTile.tag : undefined,
+    },
+  ];
+  const perfHeroCells = [
+    {
+      icon: DollarSign,
+      // "This Month" only when the selected period is this month.
+      label: isCurrentPeriod ? "This Month Sales" : "Sales",
+      value: overviewValue(salesThisMonthSen),
+      delta: heroDelta(salesDeltaPct),
+    },
+    {
+      icon: FileText,
+      label: isCurrentPeriod ? "This Month Invoices" : "Invoices",
+      value: overviewValue(invoicesThisMonthSen),
+      delta: heroDelta(invoiceDeltaPct),
+    },
+  ];
+  // Plant Load tiles: same values as plant.rows; sub-labels say what each
+  // number is. "Completed" is yesterday's count for the current month and the
+  // month's LAST day for a past month (dashboard-overview.ts, completed widget).
+  const lastDayLabel = (() => {
+    const yr = Number(period.slice(0, 4));
+    const mo = Number(period.slice(5, 7));
+    return `${new Date(yr, mo, 0).getDate()} ${MONTHS_SHORT[mo - 1] ?? ""}`.trim();
+  })();
+  const phonePlantTiles = plant
+    ? [
+        { ...plant.rows[0], sub: isCurrentPeriod ? "14-day avg" : `${periodLabel(period)} avg` },
+        { ...plant.rows[1], sub: "days · hours queued" },
+        { ...plant.rows[2], sub: "pending · bedframe / sofa" },
+        { ...plant.rows[3], sub: `${isCurrentPeriod ? "yesterday" : lastDayLabel} · bedframe / sofa` },
+      ]
+    : [];
+
+  // Header pieces, shared by the phone and tablet header layouts below.
+  const greetingBlock = (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 13, color: M.muted }}>{greeting()}</div>
+      <div
+        style={{
+          fontSize: 18,
+          fontWeight: 700,
+          color: M.raisin,
+          letterSpacing: "-0.3px",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {firstName}
+      </div>
+    </div>
+  );
+  const periodChip = isPhone ? (
+    // Phone (Claude Design): 36px pill with a calendar icon, same sheet.
+    <PhonePeriodPill label={periodLabel(period)} onClick={() => setPickerOpen(true)} />
+  ) : (
+    <>
+      {/* Period chip — dc12 design v12: tap to pick last 12 months,
+          re-fetches every analytics card under it. Defaults to current
+          month so first paint matches the desktop Command Center. */}
+      <button
+        aria-label="Pick analytics period"
+        onClick={() => setPickerOpen(true)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          flex: "none",
+          height: 34,
+          padding: "0 11px",
+          borderRadius: 11,
+          backgroundColor: M.card,
+          border: `1px solid ${M.hairline}`,
+          fontSize: 12,
+          fontWeight: 700,
+          color: M.taupe,
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        {periodLabel(period)}
+        <ChevronDown size={14} strokeWidth={1.75} color={M.taupe} />
+      </button>
+    </>
+  );
+  const headerActions = (
+    <>
+      {/* Global Search — CHANGELOG O.1. Opens GlobalSearchSheet which
+          fans out across the preloaded localStorage cache (every
+          endpoint in preload.ts). Searchable: customer / PO / SO /
+          reference / doc number — across every module. */}
+      <button
+        onClick={() => setSearchOpen(true)}
+        aria-label="Search"
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: "50%",
+          backgroundColor: M.card,
+          // Phone (Claude Design): borderless with a soft shadow.
+          border: isPhone ? "none" : `1px solid ${M.hairline}`,
+          boxShadow: isPhone ? SHADOW_HEADER_BTN : undefined,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flex: "none",
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        <SearchIcon size={20} strokeWidth={1.75} color={M.ink} />
+      </button>
+      {/* Notification bell (round white button). The dot renders ONLY while a
+          real notification is unread; it opens /m/updates (Notifications). */}
+      <button
+        aria-label={
+          unreadNotifications > 0
+            ? `Notifications, ${unreadNotifications} unread`
+            : "Notifications"
+        }
+        onClick={() => navigate("/m/updates")}
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: "50%",
+          backgroundColor: M.card,
+          // Phone (Claude Design): borderless with a soft shadow.
+          border: isPhone ? "none" : `1px solid ${M.hairline}`,
+          boxShadow: isPhone ? SHADOW_HEADER_BTN : undefined,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+          flex: "none",
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        <Bell size={20} strokeWidth={1.75} color={M.ink} />
+        {unreadNotifications > 0 ? (
+          <span
+            data-testid="mobile-notification-unread-dot"
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: isPhone ? 9 : 8,
+              right: isPhone ? 10 : 9,
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: isPhone ? "#9A3A2D" : "#C0463A",
+              ...(isPhone
+                ? { boxShadow: `0 0 0 2px ${M.card}` }
+                : { border: `1.5px solid ${M.card}` }),
+            }}
+          />
+        ) : null}
+      </button>
+    </>
+  );
+
+  // ---- Section blocks rendered in two places: their original slot on
+  // tablets, and a different slot in a phone view. Moved here verbatim. ----
+  // Mirrors dashboard KTile "This Month Sales" (overview.salesThisMonthSen).
+  const salesKpi = (
+        <KpiCard
+          icon={DollarSign}
+          accent="gold"
+          label="This Month Sales"
+          value={formatCurrency(salesThisMonthSen)}
+          delta={
+            salesDeltaPct == null
+              ? null
+              : {
+                  text: `${salesDeltaPct >= 0 ? "+" : ""}${salesDeltaPct}% MoM`,
+                  good: salesDeltaPct >= 0,
+                }
+          }
+        />
+  );
+  // Mirrors dashboard KTile "This Month Invoices" (overview.invoicesThisMonthSen).
+  const invoicesKpi = (
+        <KpiCard
+          icon={FileText}
+          accent="info"
+          label="This Month Invoices"
+          value={formatCurrency(invoicesThisMonthSen)}
+          delta={
+            invoiceDeltaPct == null
+              ? null
+              : {
+                  text: `${invoiceDeltaPct >= 0 ? "+" : ""}${invoiceDeltaPct}% MoM`,
+                  good: invoiceDeltaPct >= 0,
+                }
+          }
+        />
+  );
+  // Mirrors dashboard KTile "Pending Delivery" (consolidated live).
+  const pendingKpi = (
+        <KpiCard
+          icon={Package}
+          accent="moss"
+          label="Pending Delivery"
+          note={pdTile.past ? pdTile.tag : undefined}
+          // Lazy-loaded after first paint — show a placeholder until its two
+          // deferred fetches resolve, then the real (dashboard-identical) value.
+          value={tileValue(pdTile, pendingDeliveryLoading)}
+          // Live point-in-time figure — no prior-period delta (as on desktop).
+          delta={null}
+        />
+  );
+  // Mirrors dashboard KTile "Outstanding" (stats.outstandingItemsSen).
+  const outstandingKpi = (
+        <KpiCard
+          icon={Clock}
+          accent="danger"
+          label="Outstanding"
+          note={outTile.past ? outTile.tag : undefined}
+          value={tileValue(outTile, false)}
+          // Live point-in-time figure — no prior-period delta (as on desktop).
+          delta={null}
+        />
+  );
+  const pipelineNote = pipeline.note;
+  // ===== Order Pipeline — header + rate badge + bars + note =====
+  // Phone: one stacked bar; /api/sales-orders/stats has no date filter, so
+  // the phone card says "all months" (tablet keeps the month, WORK-TRACKER).
+  const pipelineBlock = isPhone ? (
+    <PhonePipeline
+      confirmed={stats?.csRevenueSen ?? 0}
+      delivered={stats?.deliveredItemsSen ?? 0}
+      outstanding={stats?.outstandingItemsSen ?? 0}
+      ratePct={pipeline.ratePct}
+      note={pipeline.liveNote}
+      state={statsState}
+    />
+  ) : (
+    <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
+            Order Pipeline · {periodLabel(period)}
+          </div>
+          <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
+            shipped vs still to ship
+          </div>
+        </div>
+        {pipeline.ratePct != null ? (
+          <div style={{ textAlign: "right" }}>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                color: "#A89F8D",
+              }}
+            >
+              DELIVERED RATE
+            </div>
+            <div
+              style={{
+                fontSize: 17,
+                fontWeight: 800,
+                color: M_DELTA.up,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {Math.round(pipeline.ratePct)}%
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div style={{ marginTop: 14 }}>
+        {pipeline.bars.map((p) => (
+          <div
+            key={p.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 10,
+            }}
+          >
+            <span
+              style={{
+                width: 74,
+                flex: "none",
+                fontSize: 12,
+                color: M.body,
+                fontWeight: 600,
+              }}
+            >
+              {p.label}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                height: 14,
+                background: "#F0EBE0",
+                borderRadius: 5,
+                overflow: "hidden",
+              }}
+            >
+              <span
+                style={{
+                  display: "block",
+                  width: `${p.pct}%`,
+                  height: "100%",
+                  background: p.color,
+                  borderRadius: 5,
+                }}
+              />
+            </span>
+            <span
+              style={{
+                width: 108,
+                flex: "none",
+                textAlign: "right",
+                fontSize: 12,
+                fontWeight: 700,
+                color: M.raisin,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {formatCurrency(p.sen)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {pipelineNote ? (
+        <div style={{ fontSize: 11, color: M.muted, marginTop: 6 }}>
+          {pipelineNote}
+        </div>
+      ) : null}
+    </MobileCard>
+  );
+  // ===== Stock alerts =====
+  const stockAlertsBlock = isPhone ? (
+    <PhoneStockAlerts
+      total={lowStock.length}
+      state={inventoryState}
+      onOpen={() => navigate("/m/inventory")}
+      rows={stockAlerts.map((rm) => {
+        const qty = Number(rm.balanceQty) || 0;
+        const min = typeof rm.minStock === "number" ? rm.minStock : null;
+        return {
+          id: rm.id,
+          title: rm.description || rm.itemCode,
+          code: `${rm.itemCode}${rm.itemGroup ? ` · ${rm.itemGroup}` : ""}`,
+          qty,
+          qtyText: `${qty} ${rm.baseUOM || ""}`.trim(),
+          minText: min != null ? `min ${min}` : "low",
+        };
+      })}
+    />
+  ) : (
+    <>
+      <SectionHeader
+        title="Stock alerts"
+        right={
+          stockAlerts.length > 0 ? (
+            <span
+              style={{
+                background: M_ACCENT.danger.bg,
+                color: M_ACCENT.danger.fg,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "2px 9px",
+                borderRadius: 20,
+                border: "1px solid #E8B2A1",
+              }}
+            >
+              {stockAlerts.length} low
+            </span>
+          ) : undefined
+        }
+      />
+      <MobileCard padded={false} radius={16}>
+        {stockAlerts.length === 0 ? (
+          <EmptyRow text="No low-stock materials" />
+        ) : (
+          stockAlerts.map((rm, i) => {
+            const qty = Number(rm.balanceQty) || 0;
+            const min =
+              typeof rm.minStock === "number" ? rm.minStock : null;
+            const danger = qty === 0;
+            const accent = danger ? M_ACCENT.danger : M_ACCENT.warning;
+            const AlertIcon = danger ? CircleAlert : TriangleAlert;
+            const last = i === stockAlerts.length - 1;
+            return (
+              <div
+                key={rm.id}
+                onClick={() => navigate("/m/inventory")}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/m/inventory");
+                  }
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "13px 15px",
+                  borderBottom: last
+                    ? "none"
+                    : `1px solid ${M.divider}`,
+                  cursor: "pointer",
+                  WebkitTapHighlightColor: "transparent",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    background: accent.bg,
+                    flex: "none",
+                  }}
+                >
+                  <AlertIcon size={17} strokeWidth={1.75} color={accent.fg} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      color: M.raisin,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {rm.description || rm.itemCode}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: M.muted }}>
+                    {rm.itemCode}
+                    {rm.itemGroup ? ` · ${rm.itemGroup}` : ""}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flex: "none" }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: M_ACCENT.danger.fg,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {`${qty} ${rm.baseUOM || ""}`.trim()}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: M.faint }}>
+                    {min != null ? `min ${min}` : "low"}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </MobileCard>
+    </>
+  );
+  // ===== Orders due =====
+  // Phone title says what the list is: the six soonest open orders by
+  // Expected DD (overdue included), not "this week". Tablet keeps its title.
+  const ordersDueBlock = isPhone ? (
+    <PhoneOrdersDue
+      title="Orders due soonest"
+      state={soListState}
+      onOpen={() => navigate("/m/sales")}
+      onSeeAll={() => navigate("/m/sales")}
+      rows={ordersDue.map(({ so, overdue }) => ({
+        id: so.id,
+        so: so.companySO || so.companySOId,
+        customer: so.customerName,
+        status: so.status,
+        dd: (so.hookkaExpectedDD || "").slice(0, 10),
+        overdue,
+        amount: formatCurrency(so.totalSen || 0),
+      }))}
+    />
+  ) : (
+    <>
+      <SectionHeader
+        title="Orders due this week"
+        right={
+          <button
+            onClick={() => navigate("/m/sales")}
+            style={{
+              background: "none",
+              border: "none",
+              color: M.taupe,
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            See all
+          </button>
+        }
+      />
+      <div style={{ display: "grid", gap: 10 }}>
+        {ordersDue.length === 0 ? (
+          <MobileCard padded={false} radius={16}>
+            <EmptyRow text="No upcoming orders" />
+          </MobileCard>
+        ) : (
+          ordersDue.map(({ so, overdue }) => (
+            <OrderDueCard
+              key={so.id}
+              so={so}
+              overdue={overdue}
+              onClick={() => navigate("/m/sales")}
+            />
+          ))
+        )}
+      </div>
+    </>
+  );
+
 
   return (
-    <div style={{ paddingTop: "env(safe-area-inset-top)" }}>
-      {/* ===== Header — greeting + avatar + bell ===== */}
+    // Phones: MobileHeader owns the top safe-area inset; tablets keep the
+    // original single-row header, which pads for it here.
+    <div style={{ paddingTop: mode === "phone" ? 0 : "env(safe-area-inset-top)" }}>
+      {mode === "phone" ? (
+        <>
+          {/* Phone (owner 2026-10-13, global header consistency): the shared
+              sticky header row (hamburger | Home | search + bell), then a
+              non-sticky row with the greeting and the period chip. */}
+          <MobileHeader title="Home" menu trailing={headerActions} />
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, padding: "6px 18px 16px" }}>
+            {greetingBlock}
+            {periodChip}
+          </div>
+        </>
+      ) : (
+      /* ===== Tablet header — brand tile + greeting + period + search + bell ===== */
       <div style={{ padding: "12px 18px 16px" }}>
         <div
           style={{
@@ -838,293 +1493,219 @@ export default function MobileHome() {
               H
             </span>
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, color: M.muted }}>{greeting()}</div>
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 700,
-                color: M.raisin,
-                letterSpacing: "-0.3px",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {firstName}
-            </div>
-          </div>
-          {/* Period chip — dc12 design v12: tap to pick last 12 months,
-              re-fetches every analytics card under it. Defaults to current
-              month so first paint matches the desktop Command Center. */}
-          <button
-            aria-label="Pick analytics period"
-            onClick={() => setPickerOpen(true)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              flex: "none",
-              height: 34,
-              padding: "0 11px",
-              borderRadius: 11,
-              backgroundColor: M.card,
-              border: `1px solid ${M.hairline}`,
-              fontSize: 12,
-              fontWeight: 700,
-              color: M.taupe,
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            {periodLabel(period)}
-            <ChevronDown size={14} strokeWidth={1.75} color={M.taupe} />
-          </button>
-          {/* Global Search — CHANGELOG O.1. Opens GlobalSearchSheet which
-              fans out across the preloaded localStorage cache (every
-              endpoint in preload.ts). Searchable: customer / PO / SO /
-              reference / doc number — across every module. */}
-          <button
-            onClick={() => setSearchOpen(true)}
-            aria-label="Search"
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: "50%",
-              backgroundColor: M.card,
-              border: `1px solid ${M.hairline}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flex: "none",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <SearchIcon size={20} strokeWidth={1.75} color={M.ink} />
-          </button>
-          {/* Notification bell (round white button, unread dot) */}
-          <button
-            aria-label="Notifications"
-            // TODO(wave-x): wire to a real notifications surface (none in /m yet).
-            onClick={() => navigate("/m/announcements")}
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: "50%",
-              backgroundColor: M.card,
-              border: `1px solid ${M.hairline}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-              flex: "none",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <Bell size={20} strokeWidth={1.75} color={M.ink} />
-            <span
-              style={{
-                position: "absolute",
-                top: 8,
-                right: 9,
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#C0463A",
-                border: "1.5px solid #fff",
-              }}
-            />
-          </button>
+          {greetingBlock}
+          {periodChip}
+          {headerActions}
         </div>
       </div>
+      )}
 
       <div style={{ padding: "0 18px" }}>
-        {/* ===== Quick actions (FIRST per dc13 order) ===== */}
-        <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
-          <QuickAction
-            icon={Plus}
-            accent="gold"
-            label="New SO"
-            onClick={() => setFormSpec(newSalesOrderSpec())}
+        {/* One-tap install offer (hidden once installed or dismissed). */}
+        <InstallAppCard dismissible />
+        {/* Phone only: Operations | Performance switch (owner 2026-10-13). */}
+        {isPhone && (
+          <SegmentedSwitch options={HOME_VIEWS} value={view} onChange={setView} ariaLabel="Home view" />
+        )}
+        {/* Phone (owner 2026-10-15, decision 2): the view's KPI hero comes
+            BEFORE Quick Actions. Same values, notes and loading states as the
+            tablet KpiCards below. */}
+        {isPhone && (
+          <PhoneHero
+            eyebrow={view === "operations" ? "OPERATIONS" : "PERFORMANCE"}
+            periodText={periodLabel(period)}
+            cells={view === "operations" ? opsHeroCells : perfHeroCells}
+            width={contentWidth}
           />
-          <QuickAction
-            icon={Truck}
-            accent="info"
-            label="Delivery"
-            onClick={() => setFormSpec(newDeliveryOrderSpec())}
-          />
-          <QuickAction
-            icon={PackageCheck}
-            accent="moss"
-            label="Receive"
-            onClick={() => setFormSpec(newPurchaseOrderSpec())}
-          />
-          <QuickAction
-            icon={HardHat}
-            accent="plum"
-            label="Staff"
-            // No staff-create endpoint is in scope. Route to the directory.
-            onClick={() => navigate("/m/employees")}
-          />
-        </div>
+        )}
+        {/* ===== Quick actions (FIRST per dc13 order on tablets) ===== */}
+        {show("operations") && (
+          isPhone ? (
+            <PhoneQuickActions
+              actions={[
+                { icon: Plus, label: "New SO", hex: M_ACCENT.gold.fg, onClick: () => setFormSpec(newSalesOrderSpec()) },
+                { icon: Truck, label: "Delivery", hex: M_ACCENT.info.fg, onClick: () => setFormSpec(newDeliveryOrderSpec()) },
+                // Opens the New Purchase Order form, so it is labelled as one
+                // (it used to read "Receive", which is goods receiving).
+                { icon: ShoppingBag, label: "New PO", hex: M_ACCENT.moss.fg, onClick: () => setFormSpec(newPurchaseOrderSpec()) },
+                { icon: HardHat, label: "Staff", hex: M_ACCENT.plum.fg, onClick: () => navigate("/m/employees") },
+              ]}
+            />
+          ) : (
+          <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
+            <QuickAction
+              icon={Plus}
+              accent="gold"
+              label="New SO"
+              onClick={() => setFormSpec(newSalesOrderSpec())}
+            />
+            <QuickAction
+              icon={Truck}
+              accent="info"
+              label="Delivery"
+              onClick={() => setFormSpec(newDeliveryOrderSpec())}
+            />
+            <QuickAction
+              icon={PackageCheck}
+              accent="moss"
+              label="Receive"
+              onClick={() => setFormSpec(newPurchaseOrderSpec())}
+            />
+            <QuickAction
+              icon={HardHat}
+              accent="plum"
+              label="Staff"
+              // No staff-create endpoint is in scope. Route to the directory.
+              onClick={() => navigate("/m/employees")}
+            />
+          </div>
+          )
+        )}
 
         {/* ===== KPI grid — 2×2 on phone, 1×4 on fold (dc13 sizing — was
             too loose at 25px font, dc13 uses 18px + tighter padding). ===== */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: fold ? "repeat(4, 1fr)" : "1fr 1fr",
-            gap: 9,
-            marginTop: 11,
-          }}
-        >
-          {/* Mirrors dashboard KTile "This Month Sales" (overview.salesThisMonthSen). */}
-          <KpiCard
-            icon={DollarSign}
-            accent="gold"
-            label="This Month Sales"
-            value={formatCurrency(salesThisMonthSen)}
-            delta={
-              salesDeltaPct == null
-                ? null
-                : {
-                    text: `${salesDeltaPct >= 0 ? "+" : ""}${salesDeltaPct}% MoM`,
-                    good: salesDeltaPct >= 0,
-                  }
-            }
-          />
-          {/* Mirrors dashboard KTile "This Month Invoices" (overview.invoicesThisMonthSen). */}
-          <KpiCard
-            icon={FileText}
-            accent="info"
-            label="This Month Invoices"
-            value={formatCurrency(invoicesThisMonthSen)}
-            delta={
-              invoiceDeltaPct == null
-                ? null
-                : {
-                    text: `${invoiceDeltaPct >= 0 ? "+" : ""}${invoiceDeltaPct}% MoM`,
-                    good: invoiceDeltaPct >= 0,
-                  }
-            }
-          />
-          {/* Mirrors dashboard KTile "Pending Delivery" (consolidated live). */}
-          <KpiCard
-            icon={Package}
-            accent="moss"
-            label="Pending Delivery"
-            // Lazy-loaded after first paint — show a placeholder until its two
-            // deferred fetches resolve, then the real (dashboard-identical) value.
-            value={pendingDeliveryLoading ? "…" : formatCurrency(pendingDeliverySen)}
-            // Live point-in-time figure — no prior-period delta (as on desktop).
-            delta={null}
-          />
-          {/* Mirrors dashboard KTile "Outstanding" (stats.outstandingItemsSen). */}
-          <KpiCard
-            icon={Clock}
-            accent="danger"
-            label="Outstanding"
-            value={formatCurrency(outstandingSen)}
-            // Live point-in-time figure — no prior-period delta (as on desktop).
-            delta={null}
-          />
-        </div>
+        {/* Tablets: all four, original order. Phones show the hero above. */}
+        {!isPhone && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: expanded ? "repeat(4, minmax(0, 1fr))" : "1fr 1fr",
+              gap: 9,
+              marginTop: 11,
+            }}
+          >
+            {salesKpi}
+            {invoicesKpi}
+            {pendingKpi}
+            {outstandingKpi}
+          </div>
+        )}
 
         {/* ===== Daily Report — dc12: total + 4 chips (Overdue / SO no DO /
             PO not received / Low efficiency). Each chip taps through to the
             relevant module screen. Chips with 0 count hide. */}
-        <MobileCard
-          radius={16}
-          style={{ padding: "15px 16px", marginTop: 14 }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 11,
-                background: M_ACCENT.gold.bg,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flex: "none",
-              }}
-            >
-              <ClipboardCheck size={20} strokeWidth={1.75} color={M.taupe} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+        {show("operations") && (
+          isPhone ? (
+            <PhoneDailyReport
+              total={dailyReportTotal}
+              state={complianceState}
+              chips={dailyChips.map((c) => ({
+                label: c.label,
+                count: c.count,
+                dest: DAILY_DEST[c.to] ?? c.to,
+                onClick: () => navigate(c.to),
+              }))}
+            />
+          ) : (
+          <MobileCard
+            radius={16}
+            style={{ padding: "15px 16px", marginTop: 14 }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
               <div
                 style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: 1,
-                  color: "#A89F8D",
+                  width: 40,
+                  height: 40,
+                  borderRadius: 11,
+                  background: M_ACCENT.gold.bg,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flex: "none",
                 }}
               >
-                DAILY REPORT
+                <ClipboardCheck size={20} strokeWidth={1.75} color={M.taupe} />
               </div>
-              <div
-                style={{
-                  fontSize: 22,
-                  fontWeight: 800,
-                  color: M.raisin,
-                  letterSpacing: "-0.4px",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {dailyReportTotal}
-              </div>
-            </div>
-          </div>
-          <div style={{ fontSize: 11.5, color: M.muted, marginTop: 3 }}>
-            process &amp; SOP exceptions to action today
-          </div>
-          {dailyChips.length > 0 ? (
-            <div
-              style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 11 }}
-            >
-              {dailyChips.map((c) => (
-                <span
-                  key={c.label}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(c.to);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      navigate(c.to);
-                    }
-                  }}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    fontSize: 11.5,
-                    fontWeight: 600,
-                    color: M_ACCENT.danger.fg,
-                    background: M_ACCENT.danger.bg,
-                    border: "1px solid #E8B2A1",
-                    padding: "3px 9px",
-                    borderRadius: 20,
-                    cursor: "pointer",
-                    WebkitTapHighlightColor: "transparent",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                    color: "#A89F8D",
                   }}
                 >
-                  {c.label} <b>{c.count}</b>
-                </span>
-              ))}
+                  DAILY REPORT
+                </div>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: M.raisin,
+                    letterSpacing: "-0.4px",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {dailyReportTotal}
+                </div>
+              </div>
             </div>
-          ) : null}
-        </MobileCard>
+            <div style={{ fontSize: 11.5, color: M.muted, marginTop: 3 }}>
+              process &amp; SOP exceptions to action today
+            </div>
+            {dailyChips.length > 0 ? (
+              <div
+                style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 11 }}
+              >
+                {dailyChips.map((c) => (
+                  <span
+                    key={c.label}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(c.to);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigate(c.to);
+                      }
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      color: M_ACCENT.danger.fg,
+                      background: M_ACCENT.danger.bg,
+                      border: "1px solid #E8B2A1",
+                      padding: "3px 9px",
+                      borderRadius: 20,
+                      cursor: "pointer",
+                      WebkitTapHighlightColor: "transparent",
+                    }}
+                  >
+                    {c.label} <b>{c.count}</b>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </MobileCard>
+          )
+        )}
+
+        {/* Phone Operations: Orders due, then Order Pipeline. */}
+        {isPhone && view === "operations" && (
+          <>
+            {ordersDueBlock}
+            {pipelineBlock}
+          </>
+        )}
 
         {/* ===== Revenue — 3-line area chart (per-day x-axis) ===== */}
-        {revenue ? (
+        {show("performance") && revenue ? (
+          isPhone ? (
+            <PhoneRevenue
+              periodText={periodLabel(period)}
+              lines={revenue.lines}
+              days={revenue.days}
+              hidden={revHide}
+              onToggle={(k) => setRevHide((p) => ({ ...p, [k]: !p[k] }))}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Revenue · {periodLabel(period)}
@@ -1214,10 +1795,25 @@ export default function MobileHome() {
               ))}
             </div>
           </MobileCard>
+          )
+        ) : null}
+
+        {/* Phone Operations: "Production" heading over Plant Load +
+            Department Backlog (owner decision 5). */}
+        {isPhone && view === "operations" && (plant || deptBacklog) ? (
+          <PhoneSectionHeading icon={Factory} title="Production" />
         ) : null}
 
         {/* ===== Plant Load — gauge + workforce/queue-load + 4 rows ===== */}
-        {plant ? (
+        {show("operations") && plant ? (
+          isPhone ? (
+            <PhonePlantLoad
+              queue={plant.queue}
+              loadPct={plant.loadPct}
+              workforce={plant.workforce}
+              tiles={phonePlantTiles}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: 16, marginTop: 14 }}>
             <div
               style={{
@@ -1360,116 +1956,17 @@ export default function MobileHome() {
               );
             })}
           </MobileCard>
+          )
         ) : null}
 
-        {/* ===== Order Pipeline — header + rate badge + bars + note ===== */}
-        <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
-                Order Pipeline · {periodLabel(period)}
-              </div>
-              <div style={{ fontSize: 11, color: M.muted, marginTop: 2 }}>
-                shipped vs still to ship
-              </div>
-            </div>
-            {pipeline.ratePct != null ? (
-              <div style={{ textAlign: "right" }}>
-                <div
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: 0.5,
-                    color: "#A89F8D",
-                  }}
-                >
-                  DELIVERED RATE
-                </div>
-                <div
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 800,
-                    color: M_DELTA.up,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {Math.round(pipeline.ratePct)}%
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <div style={{ marginTop: 14 }}>
-            {pipeline.bars.map((p) => (
-              <div
-                key={p.label}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 10,
-                }}
-              >
-                <span
-                  style={{
-                    width: 74,
-                    flex: "none",
-                    fontSize: 12,
-                    color: M.body,
-                    fontWeight: 600,
-                  }}
-                >
-                  {p.label}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    height: 14,
-                    background: "#F0EBE0",
-                    borderRadius: 5,
-                    overflow: "hidden",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "block",
-                      width: `${p.pct}%`,
-                      height: "100%",
-                      background: p.color,
-                      borderRadius: 5,
-                    }}
-                  />
-                </span>
-                <span
-                  style={{
-                    width: 108,
-                    flex: "none",
-                    textAlign: "right",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: M.raisin,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {formatCurrency(p.sen)}
-                </span>
-              </div>
-            ))}
-          </div>
-          {pipeline.note ? (
-            <div style={{ fontSize: 11, color: M.muted, marginTop: 6 }}>
-              {pipeline.note}
-            </div>
-          ) : null}
-        </MobileCard>
+        {/* ===== Order Pipeline ===== (phone: under Orders due) */}
+        {!isPhone && pipelineBlock}
 
         {/* ===== Worker Efficiency — TOP 5 + LOWEST 5 ===== */}
-        {workerEff ? (
+        {show("performance") && workerEff ? (
+          isPhone ? (
+            <PhoneWorkerEfficiency periodText={periodLabel(period)} top={workerEff.top} low={workerEff.low} />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Worker Efficiency
@@ -1506,10 +2003,25 @@ export default function MobileHome() {
               <WorkerRow key={`wl${i}`} w={w} first={i === 0} />
             ))}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Sales by Customer — category tabs + donut + rows ===== */}
-        {salesByCustomer ? (
+        {show("performance") && salesByCustomer ? (
+          isPhone ? (
+            <PhoneSalesByCustomer
+              cat={sbcCat}
+              onCat={setSbcCat}
+              rows={salesByCustomer.rows.map((r) => ({
+                name: r.name,
+                total: formatCurrency(r.total),
+                pct: r.pct,
+                sub: r.sub,
+              }))}
+              top3={salesByCustomer.top3}
+              total={formatCurrency(salesByCustomer.total)}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Sales by Customer
@@ -1676,10 +2188,14 @@ export default function MobileHome() {
               </div>
             ))}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Top Sellers — BEDFRAME by units · SOFA by sets ===== */}
-        {topSellers ? (
+        {show("performance") && topSellers ? (
+          isPhone ? (
+            <PhoneTopSellers bed={topSellers.bed} sofa={topSellers.sofa} />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Top Sellers
@@ -1704,10 +2220,19 @@ export default function MobileHome() {
               </>
             ) : null}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Fabric Usage — BEDFRAME + SOFA (code, metres, avg/m) ===== */}
-        {fabricUsage ? (
+        {show("performance") && fabricUsage ? (
+          isPhone ? (
+            <PhoneFabricUsage
+              bedAvg={fabricUsage.bedAvg}
+              sofaAvg={fabricUsage.sofaAvg}
+              bed={fabricUsage.bed}
+              sofa={fabricUsage.sofa}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div
               style={{
@@ -1738,10 +2263,14 @@ export default function MobileHome() {
               </>
             ) : null}
           </MobileCard>
+          )
         ) : null}
 
         {/* ===== Department Backlog — bottleneck first ===== */}
-        {deptBacklog ? (
+        {show("operations") && deptBacklog ? (
+          isPhone ? (
+            <PhoneDeptBacklog rows={deptBacklog} />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Department Backlog
@@ -1807,10 +2336,21 @@ export default function MobileHome() {
               ))}
             </div>
           </MobileCard>
+          )
         ) : null}
 
+        {/* Phone Operations: Stock alerts sit above Purchasing. */}
+        {isPhone && view === "operations" && stockAlertsBlock}
+
         {/* ===== Purchasing — open POs + month spend + top suppliers ===== */}
-        {purchasing ? (
+        {show("operations") && purchasing ? (
+          isPhone ? (
+            <PhonePurchasing
+              openPOs={purchasing.openPOs}
+              spend={purchasing.spend}
+              suppliers={purchasing.suppliers}
+            />
+          ) : (
           <MobileCard radius={16} style={{ padding: "15px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin }}>
               Purchasing
@@ -1879,153 +2419,14 @@ export default function MobileHome() {
               </>
             ) : null}
           </MobileCard>
+          )
         ) : null}
 
-        {/* ===== Stock alerts ===== */}
-        <SectionHeader
-          title="Stock alerts"
-          right={
-            stockAlerts.length > 0 ? (
-              <span
-                style={{
-                  background: M_ACCENT.danger.bg,
-                  color: M_ACCENT.danger.fg,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  padding: "2px 9px",
-                  borderRadius: 20,
-                  border: "1px solid #E8B2A1",
-                }}
-              >
-                {stockAlerts.length} low
-              </span>
-            ) : undefined
-          }
-        />
-        <MobileCard padded={false} radius={16}>
-          {stockAlerts.length === 0 ? (
-            <EmptyRow text="No low-stock materials" />
-          ) : (
-            stockAlerts.map((rm, i) => {
-              const qty = Number(rm.balanceQty) || 0;
-              const min =
-                typeof rm.minStock === "number" ? rm.minStock : null;
-              const danger = qty === 0;
-              const accent = danger ? M_ACCENT.danger : M_ACCENT.warning;
-              const AlertIcon = danger ? CircleAlert : TriangleAlert;
-              const last = i === stockAlerts.length - 1;
-              return (
-                <div
-                  key={rm.id}
-                  onClick={() => navigate("/m/inventory")}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      navigate("/m/inventory");
-                    }
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "13px 15px",
-                    borderBottom: last
-                      ? "none"
-                      : `1px solid ${M.divider}`,
-                    cursor: "pointer",
-                    WebkitTapHighlightColor: "transparent",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 34,
-                      height: 34,
-                      borderRadius: 10,
-                      background: accent.bg,
-                      flex: "none",
-                    }}
-                  >
-                    <AlertIcon size={17} strokeWidth={1.75} color={accent.fg} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 13.5,
-                        fontWeight: 600,
-                        color: M.raisin,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {rm.description || rm.itemCode}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: M.muted }}>
-                      {rm.itemCode}
-                      {rm.itemGroup ? ` · ${rm.itemGroup}` : ""}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right", flex: "none" }}>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: M_ACCENT.danger.fg,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {`${qty} ${rm.baseUOM || ""}`.trim()}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: M.faint }}>
-                      {min != null ? `min ${min}` : "low"}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </MobileCard>
+        {/* ===== Stock alerts ===== (phone: above Purchasing) */}
+        {!isPhone && stockAlertsBlock}
 
-        {/* ===== Orders due ===== */}
-        <SectionHeader
-          title="Orders due this week"
-          right={
-            <button
-              onClick={() => navigate("/m/sales")}
-              style={{
-                background: "none",
-                border: "none",
-                color: M.taupe,
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              See all
-            </button>
-          }
-        />
-        <div style={{ display: "grid", gap: 10 }}>
-          {ordersDue.length === 0 ? (
-            <MobileCard padded={false} radius={16}>
-              <EmptyRow text="No upcoming orders" />
-            </MobileCard>
-          ) : (
-            ordersDue.map(({ so, overdue }) => (
-              <OrderDueCard
-                key={so.id}
-                so={so}
-                overdue={overdue}
-                onClick={() => navigate("/m/sales")}
-              />
-            ))
-          )}
-        </div>
+        {/* ===== Orders due ===== (phone: under Daily Report) */}
+        {!isPhone && ordersDueBlock}
       </div>
 
       <div style={{ height: 8 }} />
@@ -2052,6 +2453,16 @@ export default function MobileHome() {
         onClose={() => setPickerOpen(false)}
         title="Period"
       >
+        {isPhone ? (
+          <PhonePeriodList
+            options={periodOptions}
+            value={period}
+            onPick={(ym) => {
+              setPeriod(ym);
+              setPickerOpen(false);
+            }}
+          />
+        ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {periodOptions.map((opt) => {
             const active = opt.ym === period;
@@ -2091,6 +2502,7 @@ export default function MobileHome() {
             );
           })}
         </div>
+        )}
       </Sheet>
     </div>
   );
@@ -2106,12 +2518,15 @@ function KpiCard({
   label,
   value,
   delta,
+  note,
 }: {
   icon: LucideIcon;
   accent: AccentKey;
   label: string;
   value: string;
   delta: { text: string; good: boolean } | null;
+  /** Small muted line under the label, e.g. "as of 2026-09-30". */
+  note?: string;
 }) {
   // dc13 mobile tightening: 13×14 padding · 18px value · 11.5px label ·
   // delta on its own line under the label. Was 15×16 / 25px / 12px / delta
@@ -2172,6 +2587,9 @@ function KpiCard({
         >
           {delta.text}
         </div>
+      ) : null}
+      {note ? (
+        <div style={{ fontSize: 10.5, fontWeight: 600, color: M.muted, marginTop: 1 }}>{note}</div>
       ) : null}
     </MobileCard>
   );

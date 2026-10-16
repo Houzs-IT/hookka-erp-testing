@@ -2,6 +2,13 @@
 // dashboard-shared.tsx because a file mixing component exports with
 // constant/function exports breaks Vite Fast Refresh (react-refresh/only-
 // export-components).
+import { formatCurrency } from "../../lib/utils";
+
+// A row of number tiles: fills the width the row actually has (not the screen
+// width, which ignores the sidebar). No tile is narrower than 10rem; a short
+// last row stretches to fill, so there is never a cramped or empty slot.
+export const KPI_ROW = "flex flex-wrap gap-3 [&>*]:min-w-0 [&>*]:flex-[1_1_10rem]";
+
 export const TAUPE = "#6B5C32";
 export const TEAL = "#3E6570";
 export const MUTED = "#6B7280";
@@ -31,6 +38,38 @@ export function fmtRMAxis(n: number): string {
   if (v >= 1_000_000) return `RM ${(n / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1)}m`;
   if (v >= 1_000) return `RM ${Math.round(n / 1_000)}k`;
   return `RM ${n}`;
+}
+
+// ---------------------------------------------------------------------------
+// DashboardWidgets.tsx formatters — owner rule 2026-09-23: no
+// rounding, TRUNCATE to 2 decimals (0.299 -> 0.29, -0.001 -> 0.00).
+// toPrecision(15) first so a float like 0.29*100 = 28.999999999999996 is read
+// as the 29 it means before the cut; `|| 0` turns -0 (and NaN) into 0.
+// ---------------------------------------------------------------------------
+export function truncDp(n: number, dp = 2): number {
+  return Math.trunc(Number((n * 10 ** dp).toPrecision(15))) / 10 ** dp || 0;
+}
+export function fmtDec2(n: number): string {
+  return truncDp(n).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+export function fmtPct2(n: number | null | undefined): string {
+  return n == null ? "—" : `${fmtDec2(n)}%`;
+}
+/** Integer sen, truncated (never rounded) — formatCurrency prints 2dp. */
+export function fmtRM2(sen: number | null | undefined): string {
+  return formatCurrency(Math.trunc(sen ?? 0) || 0);
+}
+/** Minutes as "Xh Ym", truncated to the whole minute. */
+export function fmtHM(min: number | null | undefined): string {
+  const m = Math.max(0, Math.trunc(min ?? 0));
+  return `${Math.floor(m / 60).toLocaleString("en-MY")}h ${m % 60}m`;
+}
+/** /dashboard's `period` query value: YTD reads all-time, else the month. */
+export function widgetPeriod(p: Period): string {
+  return p.mode === "ytd" ? "all" : p.month;
+}
+export function widgetPeriodLabel(p: Period): string {
+  return widgetPeriod(p) === "all" ? "All-time" : monthLabel(p.month);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +146,14 @@ export function monthLabel(m: string): string {
   return `${MONTH_NAMES[Number(mm) - 1] ?? mm} ${y}`;
 }
 
-export function periodLabel(p: Period): string {
+/**
+ * `today` is optional and only sharpens the YTD label ("2026 (Jan – Present)"
+ * for the real current year vs "(Jan – Dec)" for a past one, since a past
+ * year has no "present" to speak of) - every other case is unaffected, so
+ * the ~40 read-only callers across the dashboard views that only ever show a
+ * PAST period never need to pass it.
+ */
+export function periodLabel(p: Period, today?: string): string {
   if (p.day) return dayLabel(p.day);
   if (p.mode === "range") {
     if (p.label) return p.label;
@@ -115,14 +161,177 @@ export function periodLabel(p: Period): string {
     return p.from === p.to ? dayLabel(p.from) : `${dayLabel(p.from)} – ${dayLabel(p.to)}`;
   }
   if (!p.month) return "—";
-  // The year alone — the window IS the year, so "2026 YTD" would claim a
-  // cut-off that no longer exists.
-  return p.mode === "monthly" ? monthLabel(p.month) : p.month.slice(0, 4);
+  if (p.mode === "monthly") return monthLabel(p.month);
+  const year = p.month.slice(0, 4);
+  if (!today) return year;
+  return `${year} (Jan – ${year === today.slice(0, 4) ? "Present" : "Dec"})`;
 }
 
 export function dayLabel(d: string): string {
   const [y, m, day] = d.split("-");
   return `${Number(day)} ${MONTH_NAMES[Number(m) - 1] ?? m} ${y}`;
+}
+
+/**
+ * The days a time-audit warning happened on. A person is flagged on their
+ * PERIOD ratio (sum production / sum working); these are the days whose own
+ * ratio sits on the same side of the band. Never empty for a flagged person:
+ * the period ratio is a working-weighted average of the daily ones. Compared
+ * by multiplication, so a day with production but no working minutes counts
+ * as over, not as a divide-by-zero.
+ */
+export function warnDays(days: { date: string; w: number; p: number }[], over: boolean, low: number, high: number): string[] {
+  return days
+    .filter((d) => (over ? d.p * 100 > d.w * high : d.p * 100 < d.w * low))
+    .map((d) => d.date)
+    .sort();
+}
+
+/** "3 Sep, 5 Sep, 9 Sep +2 more": the first `max` days, year dropped (the period label carries it). */
+export function dayList(dates: string[], max = 3): string {
+  const shown = dates.slice(0, max).map((d) => dayLabel(d).replace(/ \d{4}$/, ""));
+  return shown.join(", ") + (dates.length > max ? ` +${dates.length - max} more` : "");
+}
+
+/**
+ * The period a view actually reads, from the period in the URL.
+ *
+ * A BARE URL (nothing picked yet: monthly, no month, no day) opens on TODAY -
+ * this month with `day` = today - because the daily check is the common visit
+ * (owner 2026-09-22). Every dated figure then narrows to the day via inFocus,
+ * while trend charts keep drawing the whole month around it. Clearing the
+ * highlight writes the month into the URL, so it stays cleared. If the book
+ * has nothing in today's month yet, it opens on the newest month instead,
+ * with no day: a highlighted day outside the charted month helps nobody.
+ *
+ * Overview and Sales are the exception (owner 2026-09-21): they are read by
+ * the month, so the shells pass `openOnToday` = false for them (see
+ * opensOnToday) and a bare URL resolves to the plain month. A day the user
+ * picked themselves is still honoured on every tab.
+ *
+ * Otherwise an unset or unknown month resolves to the newest month that
+ * exists. DERIVED, never synced with an effect.
+ */
+export function resolvePeriod(period: Period, months: string[], today: string, openOnToday = true): Period {
+  const thisMonth = today.slice(0, 7);
+  if (period.mode === "monthly" && !period.month && !period.day && months.includes(thisMonth)) {
+    return openOnToday ? { mode: "monthly", month: thisMonth, day: today } : { mode: "monthly", month: thisMonth };
+  }
+  const month = period.month && months.includes(period.month) ? period.month : (months[months.length - 1] ?? "");
+  return { ...period, month };
+}
+
+/** Tabs whose bare URL opens on the MONTH, not on today. Same keys on desktop and /m. */
+const MONTHLY_TABS = new Set(["overview", "sales", "ocr"]);
+
+export function opensOnToday(tab: string | undefined): boolean {
+  return !MONTHLY_TABS.has(tab ?? "");
+}
+
+// ---- Period picker logic (pure: tests/dashboard-period.test.mjs) ----------
+// Shared by the desktop PeriodPicker and the /m PeriodChip so a phone and a
+// desktop step, preset and highlight identically.
+
+/** Distinct YYYY years the book has a month in, oldest first. */
+export function yearsWithData(months: string[]): string[] {
+  return [...new Set(months.map((m) => m.slice(0, 4)))].sort();
+}
+
+/**
+ * One step of the < > arrows. They move by whatever the mode MEASURES: a year
+ * in YTD (landing on the newest month that year has, so YTD covers all of it),
+ * otherwise a month - and a range steps back out to a plain month rather than
+ * sliding a window whose length nobody asked to keep. Targets are resolved
+ * against the months the book actually has; a direction with no data is null.
+ */
+export function stepPeriod(period: Period, months: string[], dir: -1 | 1): Period | null {
+  if (period.mode === "ytd") {
+    const years = yearsWithData(months);
+    const yi = years.indexOf(period.month.slice(0, 4));
+    const target = years[yi + dir];
+    if (yi < 0 || !target) return null;
+    const last = months.filter((m) => m.startsWith(target)).pop();
+    return last ? { mode: "ytd", month: last } : null;
+  }
+  const next = months[months.indexOf(period.month) + dir];
+  return next ? { mode: "monthly", month: next } : null;
+}
+
+/**
+ * One calendar day, uncapped going back (a past day with nothing sold is a
+ * real answer - see periodPresets), never past `maxDay` going forward (an
+ * unknowable future day is not). Not bounded to `months` - unlike the month
+ * and year steppers, the Day view genuinely means every calendar day, so a
+ * gap in the book should show empty rather than be skipped over.
+ */
+export function stepDay(day: string, delta: number, maxDay: string): string | null {
+  const [y, m, d] = day.split("-").map(Number);
+  const next = ymd(new Date(y, m - 1, d + delta));
+  return next <= maxDay ? next : null;
+}
+
+/**
+ * Today / Yesterday / Last 7 Days.
+ *
+ * Today and Yesterday mean the real calendar day - same as `resolvePeriod`'s
+ * default-open day, so the picker never claims two different dates are
+ * "today". A day with no sales yet shows empty, same as a fresh page load
+ * already does; that is a real answer, not a reason to relabel yesterday.
+ *
+ * Last 7 Days stays anchored to the newest day the book ACTUALLY has, not the
+ * end of the newest month (owner 2026-09-21: that made it select Sep 24-30
+ * when data stopped on Sep 15, an all-zero window) - a relative multi-day
+ * window has no calendar meaning of its own to preserve the way a single
+ * named day does.
+ */
+export function periodPresets(latestDay: string | undefined, months: string[], today: string): { label: string; period: Period }[] {
+  const one = (label: string, day: string) => ({ label, period: { mode: "monthly" as const, month: day.slice(0, 7), day } });
+  const iso = latestDay || (months.length ? `${months[months.length - 1]}-01` : "");
+  if (!iso && !today) return [];
+  const last7: { label: string; period: Period }[] = [];
+  if (iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const back = (n: number) => ymd(new Date(y, m - 1, d - n));
+    const from = back(6);
+    last7.push({ label: "Last 7 Days", period: { mode: "range", month: from.slice(0, 7), from, to: back(0), label: "Last 7 Days" } });
+  }
+  if (!today) return last7;
+  const [ty, tm, td] = today.split("-").map(Number);
+  const todayBack = (n: number) => ymd(new Date(ty, tm - 1, td - n));
+  return [one("Today", todayBack(0)), one("Yesterday", todayBack(1)), ...last7];
+}
+
+/** Is this preset the current selection? */
+export function presetActive(preset: Period, period: Period): boolean {
+  return preset.mode === "range"
+    ? period.mode === "range" && period.from === preset.from && period.to === preset.to
+    : period.day === preset.day;
+}
+
+/**
+ * Monday-first calendar cells for YYYY-MM: leading nulls, then each YYYY-MM-DD.
+ * Anything that is not a month is [] - the period's month is "" until the feed
+ * has loaded, and `Array(NaN)` throws a RangeError that took the whole /m
+ * dashboard down on first paint.
+ */
+export function calendarCells(viewMonth: string): (string | null)[] {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(viewMonth)) return [];
+  const [y, m] = viewMonth.split("-").map(Number);
+  // JS getDay() is Sunday=0, so shift by one and wrap.
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;
+  const days = new Date(y, m, 0).getDate();
+  return [
+    ...Array<null>(lead).fill(null),
+    ...Array.from({ length: days }, (_, i) => `${viewMonth}-${String(i + 1).padStart(2, "0")}`),
+  ];
+}
+
+/** YYYY-MM moved by `delta` months (a non-month comes back unchanged). */
+export function shiftMonth(month: string, delta: number): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return month;
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 export function ymd(d: Date): string {
@@ -172,4 +381,125 @@ export function previousPeriod(p: Period, months: string[]): Period | null {
   const prevYear = String(Number(p.month.slice(0, 4)) - 1);
   const lastOfPrev = [...months].filter((m) => m.slice(0, 4) === prevYear).pop();
   return lastOfPrev ? { mode: "ytd", month: lastOfPrev } : null;
+}
+
+// The rows a "focused" panel should read: the single highlighted day when one
+// is picked (chart click or datepicker), otherwise the whole period. Charts
+// keep using inPeriod so they still draw the whole month around the highlight.
+export function inFocus(p: Period, date: string | null | undefined): boolean {
+  if (p.day) return String(date ?? "").slice(0, 10) === p.day;
+  return inPeriod(p, date);
+}
+
+/**
+ * Overall efficiency for the period: total earned production minutes divided
+ * by total clocked working minutes (performance.byDay from the prototype
+ * route). A weighted total, not an average of each person's %. Null when
+ * nobody clocked any time, so the card shows a dash, not 0%. The Employees
+ * and Operations overview cards both read this, so they cannot disagree.
+ *
+ * Days with no clocked production time are skipped entirely. Job cards finish
+ * during the day but working hours are entered after it, so today (and any day
+ * whose hours are not in yet) carries earned minutes with nothing to divide
+ * them by. Counting them pushed the month's figure up (MEASURED 2026-09-25:
+ * 95.0% with today's 105.8h of earned time vs 92.9% without).
+ */
+export function overallEfficiencyPct(
+  byDay: readonly { date: string; workingMinutes: number; productionMinutes: number }[],
+  p: Period,
+): number | null {
+  let w = 0;
+  let prod = 0;
+  for (const d of byDay) {
+    if (!inFocus(p, d.date) || d.workingMinutes <= 0) continue;
+    w += d.workingMinutes;
+    prod += d.productionMinutes;
+  }
+  return w > 0 ? (prod / w) * 100 : null;
+}
+
+/**
+ * One worker's day-by-day hours for the Efficiency drill-down, read from
+ * performance.byDay[].workers. EVERY calendar day of a monthly or range period
+ * is returned, so a day off shows as an empty slot and the x axis reads as the
+ * month. YTD would be 365 slots, so it keeps only the days the person worked.
+ * `eff` is null when nothing was clocked that day: no ratio to draw.
+ */
+export function workerDays(
+  byDay: readonly { date: string; workers?: readonly { workerId: string; workingMinutes: number; productionMinutes: number }[] }[],
+  workerId: string,
+  p: Period,
+): { date: string; workingMinutes: number; productionMinutes: number; eff: number | null }[] {
+  const hit = new Map<string, { w: number; p: number }>();
+  for (const d of byDay) {
+    if (!inPeriod(p, d.date)) continue;
+    const x = d.workers?.find((r) => r.workerId === workerId);
+    if (!x) continue;
+    const k = d.date.slice(0, 10);
+    const cur = hit.get(k) ?? { w: 0, p: 0 };
+    hit.set(k, { w: cur.w + x.workingMinutes, p: cur.p + x.productionMinutes });
+  }
+  let dates = [...hit.keys()].sort();
+  if (p.mode !== "ytd") {
+    const [y, m] = p.month.split("-").map(Number);
+    const from = p.mode === "range" ? p.from : `${p.month}-01`;
+    const to = p.mode === "range" ? p.to : `${p.month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
+    dates = [];
+    if (from && to) {
+      for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 86400000) {
+        dates.push(new Date(t).toISOString().slice(0, 10));
+      }
+    }
+  }
+  return dates.map((date) => {
+    const v = hit.get(date) ?? { w: 0, p: 0 };
+    return { date, workingMinutes: v.w, productionMinutes: v.p, eff: v.w > 0 ? (v.p / v.w) * 100 : null };
+  });
+}
+
+// Sub-tab strips live in the page's sticky row (next to the period picker), so
+// the keys are shared between the shell and the views.
+// Tabs and sub-tabs are named after the FUNCTION, never the person who reads
+// them: a chart has one home, and whoever holds the role opens that home.
+export const PEOPLE_SUBS = [
+  { key: "overview", label: "Overview" },
+  { key: "time", label: "Time & attendance" },
+  { key: "efficiency", label: "Efficiency" }, // also holds the department ledger (was its own "departments" sub)
+] as const;
+export const OPS_SUBS = [
+  { key: "overview", label: "Overview" },
+  { key: "production", label: "Output" },
+  { key: "plan", label: "Plan vs Actual" },
+  { key: "cost", label: "Revenue & Cost" },
+  { key: "materials", label: "Materials" },
+] as const;
+export type PeopleSub = (typeof PEOPLE_SUBS)[number]["key"];
+export type OpsSub = (typeof OPS_SUBS)[number]["key"];
+export const SERVICE_SUBS = [
+  { key: "overview", label: "Report" },
+  { key: "performance", label: "Performance" },
+  { key: "overdue", label: "Overdue" },
+  { key: "approvals", label: "Approvals" },
+  { key: "issues", label: "Top issues" },
+] as const;
+export type ServiceSub = (typeof SERVICE_SUBS)[number]["key"];
+export const FIN_SUBS = [
+  { key: "perhead", label: "Per head" },
+  { key: "returns", label: "Returns & balance sheet" },
+  { key: "outlook", label: "Outlook & P/E" },
+] as const;
+export type FinSub = (typeof FIN_SUBS)[number]["key"];
+
+/** Over-reporting steps of the daily warning audit, highest first. */
+export const OVER_TIERS = [1000, 500, 300, 150] as const;
+export type AuditTier = (typeof OVER_TIERS)[number] | "low";
+
+/**
+ * Tier for one person-day efficiency %: the highest over-reporting step it is
+ * ABOVE, "low" under the floor, null inside the band (floor..150 inclusive).
+ */
+export function auditTier(effPct: number, low = 90): AuditTier | null {
+  const over = OVER_TIERS.find((t) => effPct > t);
+  if (over) return over;
+  return effPct < low ? "low" : null;
 }

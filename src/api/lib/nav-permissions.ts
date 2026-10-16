@@ -33,6 +33,12 @@ export const NAV_RESOURCE: Record<string, string> = {
   // kept away from. Mapped to `accounting`, which only Finance-side roles and
   // SUPER_ADMIN hold, so the command centre cannot leak past them.
   "/dashboard": "dashboard",
+  // Not covered by "/dashboard": prefix match stops at "/", so this needs its
+  // own row. Also gates the /m phone dashboard (DASHBOARD_NAV_HREF in
+  // dashboard-m-lib.ts). Its own resource since 2026-09-25: every dashboard
+  // viewer holds it (withDashboardAccess in role-policy.ts), and so does a role
+  // in DASHBOARD_TABS_BY_ROLE, which sees only its listed tabs on the page.
+  "/dashboard-experimental": "dashboard-experimental",
   "/daily-report": "dashboard",
 
   // Comms — everyone has these, but map them so a future role could not.
@@ -69,7 +75,11 @@ export const NAV_RESOURCE: Record<string, string> = {
   // tooling screen is not part of reading a price list; it needs its own gate.
   "/cnc-templates": "cnc-templates",
   "/agents": "agent-console",
-  "/kpi": "kpi",
+  // "/kpi" has no row on purpose (DEV-37, 2026-10-06): every login opens their
+  // own card there. What is not theirs is refused by requireSuperAdmin on each
+  // /api/kpi route, so a gate here would only hide a person's own KPIs.
+  // "/it-support" has no row for the same reason: every login reports issues
+  // and reads only its own tickets (the reporter comes off the session).
   "/bom": "bom",
   "/maintenance/sofa-combos": "sofa-combos",
 

@@ -31,7 +31,9 @@ import {
 } from "@/lib/pricing-options";
 
 import {
-  deriveSpecialOrderSurchargeSen,
+  calcSpecialsSurchargeSen,
+  specialCodeForName,
+  specialNameForCode,
   HB_DIVAN_TOP_COMBO_DISCOUNT_SEN,
 } from "@/lib/special-order-surcharge";import { fetchVariantsConfig, getVariantsConfigSync, subscribeKvConfig, VARIANTS_CONFIG_KEY } from "@/lib/kv-config";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -196,11 +198,8 @@ function parseInches(h: string): number | null {
  * moment the owner edits a price in Settings. Two implementations of one money
  * rule is how the two sides drift, and a price that drifts is not a display bug.
  */
-function calcSpecialOrderSurcharge(codes: string[]): number {
-  const names = codes
-    .map((c) => specialOrderOptions.find((o) => o.code === c)?.name)
-    .filter((n): n is string => !!n);
-  return deriveSpecialOrderSurchargeSen(names.join("; "));
+function calcSpecialOrderSurcharge(codes: string[], rawCfg?: unknown): number {
+  return calcSpecialsSurchargeSen(codes, rawCfg);
 }
 
 export default function CreateSalesOrderPageWrapper() {
@@ -417,6 +416,43 @@ function CreateSalesOrderPage() {
   const [hookkaExpectedDD, setHookkaExpectedDD] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<LineItem[]>([makeEmptyLine()]);
+
+  // R14 — what is already built, per line. This screen fetched no stock, no
+  // work-in-progress and no availability of any kind, so a salesperson
+  // promised a delivery date with no way to see that the thing being sold was
+  // already finished and sitting in the yard. Short TTL: the number moves as
+  // other orders are confirmed, and a stale "4 available" is worse than none.
+  const stockCodes = useMemo(
+    () =>
+      [...new Set(items.map((i) => i.productCode).filter(Boolean))].sort(),
+    [items],
+  );
+  const { data: stockResp } = useCachedJson<{ data?: StockAvailability[] }>(
+    stockCodes.length
+      ? `/api/stock-allocations/availability?productCodes=${encodeURIComponent(stockCodes.join(","))}`
+      : null,
+    30,
+  );
+  const stockByCode = useMemo(
+    () =>
+      Object.fromEntries(
+        (stockResp?.data ?? []).map((r) => [r.productCode, r]),
+      ) as Record<string, StockAvailability>,
+    [stockResp],
+  );
+
+  // Products whose BOM WIP tab is empty (or that have no BOM). Production
+  // would make job cards of its own for them, so flag each line up front.
+  const { data: emptyWipResp } = useCachedJson<{ data?: string[] }>(
+    stockCodes.length
+      ? `/api/sales-orders/empty-wip?productCodes=${encodeURIComponent(stockCodes.join(","))}`
+      : null,
+    30,
+  );
+  const emptyWipCodes = useMemo(
+    () => new Set(emptyWipResp?.data ?? []),
+    [emptyWipResp],
+  );
 
   // Multi-Company Phase 2 — active companies for the Company dropdown.
   const activeOrgs = useMemo(
@@ -956,11 +992,14 @@ function CreateSalesOrderPage() {
       const prod = products.find(p => p.id === pid);
       if (!prod) return null;
       const isSofa = prod.category === "SOFA";
-      let priceSen = prod.costPriceSen || 0;
+      // Customer price list first (BUG-35), master product only as fallback.
+      const cp = customerProductsMap.get(prod.id);
+      const seats = (cp?.seatHeightPrices?.length ? cp.seatHeightPrices : prod.seatHeightPrices) ?? [];
+      let priceSen = cp?.basePriceSen || prod.costPriceSen || 0;
       // If seat height already chosen, look up height-specific price
-      if (template.seatHeight && prod.seatHeightPrices) {
-        const tier = prod.seatHeightPrices.find(t => t.height === template.seatHeight);
-        if (tier) priceSen = tier.priceSen;
+      if (template.seatHeight) {
+        const tier = resolveSofaTierPrice(seats, template.seatHeight, template.fabricCode);
+        if (tier !== null) priceSen = tier;
       }
       return {
         ...EMPTY_LINE,
@@ -976,6 +1015,8 @@ function CreateSalesOrderPage() {
         // Template.legPriceSen is already 0 in this mode (selectLeg zeroes
         // it), but belt-and-braces guard the basePrice here too.
         basePriceSen: isServiceOrderMode ? 0 : priceSen,
+        price1Sen: cp?.price1Sen ?? prod.price1Sen ?? null,
+        seatHeightPrices: seats,
         seatHeight: template.seatHeight,
         fabricCode: template.fabricCode,
         quantity: 1,
@@ -1131,8 +1172,9 @@ function CreateSalesOrderPage() {
     // uses. Drop any that don't have a known code so the line doesn't
     // carry orphan IDs through to the API.
     const defaultSpecialCodes: string[] = (def.specials ?? [])
-      .map((name) => specialOrderOptions.find((o) => o.name === name)?.code)
-      .filter((c): c is string => !!c);
+      .filter(Boolean)
+      .map((name) => specialCodeForName(name));
+    const specialsCfg = maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"];
 
     // BF default values (only apply to bedframes — the inputs are hidden
     // for sofa/accessory).
@@ -1152,7 +1194,7 @@ function CreateSalesOrderPage() {
     // handles the HB+Divan combined-cover rule so the prefill matches what
     // toggleSpecialOrder would produce).
     const defaultSpecialSurcharge = defaultSpecialCodes.length > 0
-      ? calcSpecialOrderSurcharge(defaultSpecialCodes)
+      ? calcSpecialOrderSurcharge(defaultSpecialCodes, specialsCfg)
       : 0;
     // Fabric default — resolve by code so downstream fabric picker shows
     // the right selection. Skip if defaults didn't set one.
@@ -1202,7 +1244,7 @@ function CreateSalesOrderPage() {
       specialOrders: defaultSpecialCodes,
       specialOrder: [
         ...defaultSpecialCodes
-          .map((c) => specialOrderOptions.find((o) => o.code === c)?.name ?? "")
+          .map((c) => specialNameForCode(c, specialsCfg) ?? "")
           .filter(Boolean),
         ...items[idx].customSpecials
           .map((cs) => cs.description.trim())
@@ -1306,12 +1348,11 @@ function CreateSalesOrderPage() {
       const prod = products.find(p => p.id === item.productId);
       let newPrice = item.basePriceSen;
       if (prod) {
-        // Prefer customer-resolved price1Sen cached on the line; fall back
-        // to global product price1Sen, then global basePriceSen.
+        // Prefer customer-resolved prices; fall back to the master product.
         const p1 = item.price1Sen ?? prod.price1Sen ?? null;
         newPrice = priceTier === "PRICE_1" && p1
           ? p1
-          : (prod.basePriceSen || 0);
+          : (customerProductsMap.get(prod.id)?.basePriceSen || prod.basePriceSen || 0);
       }
       updateItem(idx, { fabricCode: fab.code, basePriceSen: newPrice });
     } else {
@@ -1428,33 +1469,20 @@ function CreateSalesOrderPage() {
   // the HB+Divan combined-cover rule and the maintenance-config overrides.
   // Pulled out of toggleSpecialOrder so it can be reused when the custom
   // specials list changes (since both feed the same specialOrderPriceSen).
-  const calcPredefinedSurcharge = (codes: string[], isSofa: boolean): number => {
-    const cfgKey = isSofa ? "sofaSpecials" : "specials";
-    const cfgSpecials = maintenanceConfig?.[cfgKey];
-    if (!cfgSpecials || !Array.isArray(cfgSpecials)) {
-      return calcSpecialOrderSurcharge(codes);
-    }
-    // The owner's edited prices go straight into the SHARED rule — this used to
-    // be a third copy of the combo maths, with its own hardcoded RM 100.
-    const names = codes
-      .map((c) => specialOrderOptions.find((o) => o.code === c)?.name)
-      .filter((n): n is string => !!n);
-    const cfg = (cfgSpecials as unknown[])
-      .filter(
-        (e): e is { value: string; priceSen: number } =>
-          !!e && typeof e === "object" && "value" in e && "priceSen" in e,
-      )
-      .map((e) => ({ value: e.value, priceSen: e.priceSen }));
-    return deriveSpecialOrderSurchargeSen(names.join("; "), null, cfg);
-  };
+  // The owner's edited prices go straight into the SHARED rule. Config-only
+  // options (added in Settings) resolve through the config too — they used to
+  // be dropped here, so ticking one added RM 0 (BUG-2026-09-23).
+  const calcPredefinedSurcharge = (codes: string[], isSofa: boolean): number =>
+    calcSpecialOrderSurcharge(codes, maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"]);
 
   // Build the joined `specialOrder` text column from predefined codes and
   // the custom-special list. Predefined names come first, "OTHER: <desc>"
   // tokens follow — this is the format legacy readers (DO print, invoice,
   // detail page) already render verbatim.
-  const buildSpecialOrderText = (codes: string[], customs: CustomSpecial[]): string => {
+  const buildSpecialOrderText = (codes: string[], customs: CustomSpecial[], isSofa: boolean): string => {
+    const cfg = maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"];
     const predefinedTokens = codes
-      .map(c => specialOrderOptions.find(o => o.code === c)?.name || c);
+      .map(c => specialNameForCode(c, cfg) || c);
     const customTokens = customs
       .map(c => c.description.trim())
       .filter(Boolean)
@@ -1492,7 +1520,7 @@ function CreateSalesOrderPage() {
     const surcharge = isServiceOrderMode
       ? 0
       : calcTotalSpecialSurcharge(next, item.customSpecials, isSofa);
-    const label = buildSpecialOrderText(next, item.customSpecials);
+    const label = buildSpecialOrderText(next, item.customSpecials, isSofa);
     const patch = {
       specialOrders: next,
       specialOrder: label,
@@ -1519,7 +1547,7 @@ function CreateSalesOrderPage() {
     const surcharge = isServiceOrderMode
       ? 0
       : calcTotalSpecialSurcharge(item.specialOrders, customs, isSofa);
-    const label = buildSpecialOrderText(item.specialOrders, customs);
+    const label = buildSpecialOrderText(item.specialOrders, customs, isSofa);
     const patch: Partial<LineItem> = {
       customSpecials: customs,
       specialOrder: label,
@@ -1876,7 +1904,7 @@ function CreateSalesOrderPage() {
           caseId: isServiceOrderMode && linkedCase ? linkedCase.id : undefined,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; data?: { id?: string; companySOId?: string } };
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; warning?: string; data?: { id?: string; companySOId?: string } };
 
       if (!res.ok || !data.success) {
         setSaving(false);
@@ -1893,7 +1921,11 @@ function CreateSalesOrderPage() {
       // guard + PO cascade -> the server lands the SO at IN_PRODUCTION.
       // A 422 here leaves the SO as DRAFT on the server — we surface the
       // BOM-incomplete modal and keep the user on the new SO's detail page.
-      if (status === "CONFIRMED" && newId) {
+      // Customer PO/SO ref already on another active SO (DEV-12): the server
+      // saved it as DRAFT with a warning. Don't auto-confirm a likely duplicate
+      // into production — leave it a draft for the operator to check.
+      if (data.warning) toast.warning(data.warning);
+      if (status === "CONFIRMED" && newId && !data.warning) {
         // Switch loading copy from "Creating..." to "Confirming..." so the
         // user sees both phases of the chained call.
         setPendingStatus("CONFIRMING");
@@ -1972,7 +2004,7 @@ function CreateSalesOrderPage() {
               <button onClick={() => setBomError({ open: false, incompleteProducts: [], soId: null })} className="text-[#9CA3AF] hover:text-[#374151]"><X className="h-5 w-5" /></button>
             </div>
             <p className="text-sm text-[#374151]">
-              Cannot confirm — the following products have no BOM yet:
+              Cannot confirm — these products have no WIP components in their BOM yet:
             </p>
             <ul className="space-y-1 text-sm bg-[#FBF3F1] border border-[#E8B2A1] rounded-md p-3 max-h-64 overflow-y-auto">
               {bomError.incompleteProducts.map((p) => (
@@ -1982,7 +2014,7 @@ function CreateSalesOrderPage() {
               ))}
             </ul>
             <p className="text-xs text-[#6B7280]">
-              Please complete their BOM in Products &rarr; BOM first, then retry. The order has been saved as DRAFT.
+              Fill in their WIP components in Products &rarr; BOM first, then retry. The order has been saved as DRAFT.
             </p>
             <div className="flex justify-end gap-3">
               {bomError.incompleteProducts.length === 1 && (
@@ -2249,6 +2281,8 @@ function CreateSalesOrderPage() {
               key={item._uid}
               item={item}
               idx={idx}
+              stock={stockByCode[item.productCode]}
+              emptyWip={emptyWipCodes.has(item.productCode)}
               // Filter the catalogue down to what's actually assigned to
               // this customer. When no customer is selected, fall through
               // to the full master list — stays compatible with workflows
@@ -2988,6 +3022,15 @@ function CopyFromSourceModal({
 
 // ─── Line Item Card ──────────────────────────────────────────
 
+// R14 — the shape GET /api/stock-allocations/availability returns per product.
+type StockAvailability = {
+  productCode: string;
+  onHandQty: number;
+  inProductionQty: number;
+  allocatedQty: number;
+  availableQty: number;
+};
+
 type LineItemCardProps = {
   item: LineItem;
   idx: number;
@@ -3009,6 +3052,10 @@ type LineItemCardProps = {
   canRemove: boolean;
   getUnitPrice: (item: LineItem) => number;
   getLineTotal: (item: LineItem) => number;
+  /** R14 — availability for this line's product code, when there is any. */
+  stock?: StockAvailability;
+  /** This line's product has an empty BOM WIP tab (or no BOM). */
+  emptyWip: boolean;
   getTotalHeight: (item: LineItem) => number;
   maintenanceConfig: Record<string, MaintenanceConfigValue[]> | null;
   // 0134 — Service Order mode lets the operator type Base Price directly
@@ -3027,6 +3074,8 @@ function LineItemCard({
   onAddSofaModules, onUpdate, onRemove, canRemove,
   getUnitPrice, getLineTotal, getTotalHeight, maintenanceConfig,
   isServiceOrderMode,
+  stock,
+  emptyWip,
 }: LineItemCardProps) {
   const [showSpecialOrders, setShowSpecialOrders] = useState(false);
   const [showModuleDropdown, setShowModuleDropdown] = useState(false);
@@ -3345,6 +3394,41 @@ function LineItemCard({
         );
       })()}
 
+      {emptyWip && (
+        <div className="mt-2 flex items-start gap-1.5 rounded px-2 py-1 text-xs bg-[#FAEFCB] text-[#9C6F1E]">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            WIP components for {item.productCode} are not filled in its BOM yet.
+            You can save this order as a draft, but it can't be confirmed until they're filled in Products &rarr; BOM.
+          </span>
+        </div>
+      )}
+
+      {/* R14 — what already exists, before a delivery date is promised. This
+          screen fetched no stock of any kind: a salesperson could sell a thing
+          sitting finished in the yard and start it again from scratch. Only
+          shown when there IS something; an "0 available" line on every order
+          would be noise. */}
+      {stock && (stock.availableQty > 0 || stock.inProductionQty > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          {stock.availableQty > 0 && (
+            <span className="rounded px-2 py-0.5 font-medium bg-[#E8F0E0] text-[#3F6B2A]">
+              {stock.availableQty} available from stock
+            </span>
+          )}
+          {stock.inProductionQty > 0 && (
+            <span className="rounded px-2 py-0.5 bg-[#F0ECE9] text-[#6B7280]">
+              {stock.inProductionQty} being made
+            </span>
+          )}
+          {item.quantity > stock.availableQty && stock.availableQty > 0 && (
+            <span className="text-[#6B7280]">
+              {item.quantity - stock.availableQty} of this line would be produced
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Qty / Configuration (category-dependent) */}
       {item.itemCategory === "ACCESSORY" ? (
         // Accessories (pillows etc.) need nothing beyond SKU + fabric + qty —
@@ -3480,7 +3564,7 @@ function LineItemCard({
         {item.specialOrders.length > 0 && !showSpecialOrders && (
           <div className="flex flex-wrap gap-1 mt-1.5">
             {item.specialOrders.map(code => {
-              const opt = specialOrderOptions.find(o => o.code === code);
+              const opt = availableSpecials.find(o => o.code === code);
               if (!opt) return null;
               const sc = getConfigSurcharge(isSofa ? "sofaSpecials" : "specials", opt.name, opt.surcharge);
               return (
@@ -3707,7 +3791,7 @@ function LineItemCard({
             </div>
           )}
           {item.specialOrders.length > 0 && item.specialOrders.map(code => {
-            const opt = specialOrderOptions.find(o => o.code === code);
+            const opt = availableSpecials.find(o => o.code === code);
             if (!opt) return null;
             const sc = getConfigSurcharge(isSofa ? "sofaSpecials" : "specials", opt.name, opt.surcharge);
             if (sc === 0) return null;

@@ -13,12 +13,14 @@ import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
 import { roundUnitPriceSen, lineTotalSen } from "@/lib/unit-price";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import type { Supplier, PurchaseOrder, SupplierMaterialBinding, RawMaterial } from "@/types";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
 import { useSessionState } from "@/lib/use-session-state";
 import { matchesCompanyFilter } from "@/lib/company-dimension";
 import { buildPoDetailListingAoa } from "@/lib/doc-detail-listings";
+import { poItemsSearchText } from "@/lib/po-items-search";
 import {
   Plus, ShoppingBag, Truck, Trash2, X, Package,
   FileText, Download, Filter, AlertTriangle,
@@ -791,6 +793,10 @@ function POFormDialog({
 // ============================================================
 // PO STATUS OPTIONS
 // ============================================================
+// Searched even though there is no column for it: a PO must stay findable by
+// the raw material it bought (internal code / supplier SKU / description).
+const PO_ALWAYS_SEARCH_KEYS = ["itemsSearchText"];
+
 const ALL_PO_STATUSES = [
   { value: "", label: "All Statuses" },
   { value: "DRAFT", label: "Draft" },
@@ -907,8 +913,14 @@ export default function ProcurementPage() {
     () => (supResp?.success ? supResp.data ?? [] : Array.isArray(supResp) ? supResp : []),
     [supResp]
   );
+  // `itemsSearchText` flattens each PO's line items (internal code / supplier
+  // SKU / description) so the grid's global search finds the PO a raw material
+  // was bought under — see `alwaysSearchKeys` on the DataGrid below.
   const purchaseOrders: PurchaseOrder[] = useMemo(
-    () => (poResp?.success ? poResp.data ?? [] : Array.isArray(poResp) ? poResp : []),
+    () => {
+      const rows: PurchaseOrder[] = poResp?.success ? poResp.data ?? [] : Array.isArray(poResp) ? poResp : [];
+      return rows.map((po) => ({ ...po, itemsSearchText: poItemsSearchText(po.items) }));
+    },
     [poResp]
   );
   // Whole-dataset PO header rows for the summary widgets (counts + aging), so a
@@ -1596,6 +1608,10 @@ export default function ProcurementPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: PurchaseOrder) => {
+        const code = row.purchaseOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: PurchaseOrder) => {
         const code = row.purchaseOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -1616,6 +1632,10 @@ export default function ProcurementPage() {
       width: "110px",
       align: "right" as const,
       sortable: false,
+      exportValue: (row: PurchaseOrder) => {
+        const stat = otrMap[row.supplierId];
+        return !stat || stat.totalPOs === 0 ? null : Math.round(stat.onTimeRate);
+      },
       render: (_v: unknown, row: PurchaseOrder) => {
         const stat = otrMap[row.supplierId];
         if (!stat || stat.totalPOs === 0) {
@@ -1647,6 +1667,7 @@ export default function ProcurementPage() {
       width: "80px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: PurchaseOrder) => row.items.reduce((s, it) => s + it.quantity, 0),
       render: (_v: unknown, row: PurchaseOrder) => {
         const total = row.items.reduce((s, it) => s + it.quantity, 0);
         return <span>{total}</span>;
@@ -1659,6 +1680,10 @@ export default function ProcurementPage() {
       width: "95px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: PurchaseOrder) =>
+        row.status === "RECEIVED" || row.status === "CANCELLED"
+          ? null
+          : row.items.reduce((s, it) => s + Math.max(0, it.quantity - (it.receivedQty || 0)), 0),
       render: (_v: unknown, row: PurchaseOrder) => {
         if (row.status === "RECEIVED" || row.status === "CANCELLED") {
           return <span className="text-[#9CA3AF]">—</span>;
@@ -2125,8 +2150,16 @@ export default function ProcurementPage() {
             maxHeight="calc(100vh - 300px)"
             emptyMessage={tab === "DRAFT" ? "No draft purchase orders." : "No purchase orders found."}
             onSearchChange={setGridSearch}
+            alwaysSearchKeys={PO_ALWAYS_SEARCH_KEYS}
             gridId="purchase-orders-list"
             exportName="purchase-orders"
+            // Unfiltered, the grid holds one 200-row page; Export walks them
+            // all, mapped and tab-filtered like purchaseOrders / filteredOrders.
+            exportAllRows={poFiltersActive ? undefined : () =>
+              fetchAllPages<PurchaseOrder>((p, l) => `/api/purchase-orders?page=${p}&limit=${l}`)
+                .then((rows) => rows
+                  .map((po) => ({ ...po, itemsSearchText: poItemsSearchText(po.items) }))
+                  .filter((po) => !(tab === "DRAFT" && po.status !== "DRAFT") && !(tab === "CONFIRMED" && po.status === "DRAFT")))}
             exportSheetLabel="Purchase Orders"
             detailExport={{ label: "Detail Listing", build: (rows) => buildPoDetailListingAoa(rows) }}
           />

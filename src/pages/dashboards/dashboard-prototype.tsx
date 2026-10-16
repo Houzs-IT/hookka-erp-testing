@@ -1,11 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { PeriodPicker } from "./dashboard-shared";
-import type { Period } from "./dashboard-shared-lib";
+import { resolvePeriod, opensOnToday, ymd, type Period, type PeopleSub, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
+import { TAB_SUBS } from "./dashboard-url-state-lib";
+import { useDashboardUrlState } from "./use-dashboard-url-state";
+import { FinanceView } from "./FinanceView";
 import { AllOverviewView } from "./AllOverviewView";
 import { SalesOrdersView } from "./SalesOrdersView";
+import { OperationsView } from "./OperationsView";
+import { EmployeesView } from "./EmployeesView";
+import { ServiceView } from "./ServiceView";
+import { OcrView } from "./OcrView";
 import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
+import { usePermissions } from "@/lib/use-permission";
 
 // ---------------------------------------------------------------------------
 // Dashboard Prototype — a native React port of the design prototype, which
@@ -15,11 +24,16 @@ import { Tabs, type TabItem } from "@/components/ui/tabs";
 // and — the real reason — it was a dead end for a REAL page: nothing in an
 // injected srcdoc document can be a real, navigable, testable React screen.
 //
-// This branch carries TWO tabs — All Overview (the landing tab) and Sales
-// Orders — so the first merge to main is small enough to review properly. Both
-// read the same cached GET /api/dashboard/prototype payload; no tab has an
-// endpoint of its own. The other five domain tabs live on
-// laphii/feature/dashboard and land in a follow-up.
+// Tabs are named after the FUNCTION, never after the person who reads them:
+// Overview, Sales, Operations, Employees (key `people`), Service, Finance — the same keys the
+// /m dashboard uses (OCR is desktop-only: it reads GET /api/ocr-accuracy/models,
+// not the shared feed) (m/screens/dashboard/dashboard-m-lib.ts). A reviewer has
+// no tab of their own: each chart lives in the tab that owns it, approvals
+// live in Service > Approvals, and Overview's "Needs action" strip links
+// there. All read the same cached GET /api/dashboard/prototype payload; no
+// tab has an endpoint of its own.
+// The remaining domain tabs (Delivery, Inventory, Purchase, Production) live
+// on laphii/feature/dashboard / other branches and land in follow-ups.
 //
 // PERIOD: the Monthly/YTD picker below the tab strip is global. Tabs with a
 // date column filter by it; Inventory and Production are point-in-time
@@ -36,18 +50,42 @@ import { Tabs, type TabItem } from "@/components/ui/tabs";
 // font is loaded — the app's default font-sans (system-ui) applies here too.
 // ---------------------------------------------------------------------------
 
-// Only the two tabs being trialled on main. The remaining five (Delivery,
-// Inventory, Purchase, Employees, Production) are built and live on
-// laphii/feature/dashboard — they are held back from this branch so the first
-// merge carries the smallest reviewable surface.
-const TABS: TabItem<"overview" | "sales">[] = [
-  { key: "overview", label: "All Overview" },
-  { key: "sales", label: "Sales Orders" },
+// Old keys (siti / lim / employee / department, people:departments) still resolve: see LEGACY in
+// dashboard-url-state-lib.ts.
+const TABS: TabItem<"overview" | "sales" | "operations" | "people" | "service" | "finance" | "ocr">[] = [
+  { key: "overview", label: "Overview" },
+  { key: "sales", label: "Sales" },
+  { key: "operations", label: "Operations" },
+  { key: "people", label: "Employees" },
+  { key: "service", label: "Service" },
+  { key: "finance", label: "Finance" },
+  { key: "ocr", label: "OCR" },
 ];
 
+const TAB_KEYS = TABS.map((t) => t.key);
+
 export default function DashboardPrototypePage() {
-  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("overview");
-  const [period, setPeriod] = useState<Period>({ mode: "monthly", month: "" });
+  // Tab, sub-tab and period all live in the URL (use-dashboard-url-state.ts):
+  // refresh keeps the place, Back/Forward walks tab changes. Sub-tabs are ONE
+  // value keyed by the current tab; see TAB_SUBS in dashboard-url-state-lib.ts.
+  type TabKey = (typeof TABS)[number]["key"];
+  // A tab-restricted role (role-policy.ts DASHBOARD_TABS_BY_ROLE, e.g.
+  // PRODUCTION) sees only its tabs and lands on the first. Any other tab,
+  // reached by URL, shows "Under maintenance" instead of its content. The feed
+  // itself is cut to those tabs on the server; this only shapes the page.
+  const { dashboardTabs } = usePermissions();
+  const visibleTabs = useMemo(
+    () => (dashboardTabs ? TABS.filter((t) => dashboardTabs.includes(t.key)) : TABS),
+    [dashboardTabs],
+  );
+  const { tab, sub, period, setTab, setSub, setPeriod } = useDashboardUrlState<TabKey>(
+    TAB_KEYS,
+    visibleTabs[0]?.key,
+  );
+  const blocked = !visibleTabs.some((t) => t.key === tab);
+  /** The tab whose content renders: never a tab this role may not see. */
+  const view: TabKey | null = blocked ? null : tab;
+  const subTabs = blocked ? undefined : TAB_SUBS[tab];
 
   // The page reads the feed only for `meta.months` — the months that actually
   // exist in the book, which bound the stepper. Every tab below calls the same
@@ -64,7 +102,7 @@ export default function DashboardPrototypePage() {
   // Jan-Apr window genuinely contains no other sales month, while the picker
   // implied Feb was there to be found.
   //
-  // This list stays sales-driven when the Employees tab lands too. Attendance
+  // Stays sales-driven now that the Employees tab has landed too. Attendance
   // covers three extra months (2025-08, 2025-12, 2026-02) holding ONE row each;
   // owner 2026-09-15 confirmed those are test rows, not a real 2025 book, so
   // widening to the union would offer a year the factory never traded in. If a
@@ -83,58 +121,104 @@ export default function DashboardPrototypePage() {
     [data],
   );
 
-  // The selected month is DERIVED, not synced with an effect: until the user
-  // picks one (and any time the stored month is not in the book) it resolves
-  // to the newest month that exists. Doing this with a setState-in-effect
-  // caused a cascading re-render on every load.
+  // DERIVED, not synced with an effect (a setState-in-effect here caused a
+  // cascading re-render on every load). A bare URL opens on TODAY - see
+  // resolvePeriod - except Overview and Sales, which open on the month.
   const effectivePeriod = useMemo<Period>(
-    () => ({
-      ...period,
-      month:
-        period.month && months.includes(period.month)
-          ? period.month
-          : (months[months.length - 1] ?? ""),
-    }),
-    [period, months],
+    () => resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab)),
+    [period, months, tab],
   );
 
+  // Publishes the sticky header's live height as --dash-sticky-top so a tab's
+  // own sticky bar (Employees filter) docks right under it at any width.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const ro = new ResizeObserver(() =>
+      rootRef.current?.style.setProperty("--dash-sticky-top", `calc(var(--app-sticky-h, 0px) + ${header.offsetHeight}px)`),
+    );
+    ro.observe(header);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <div className="space-y-6 max-md:space-y-4">
+    // Dashboard cards are flat with a tighter radius and only lift on hover.
+    // Scoped here so every other page keeps the default Card look. pb-20
+    // lets the last card scroll clear of the floating chat button (56px at
+    // bottom-6).
+    // [&_.grid>*]:min-w-0: a grid box may shrink below its content (a chart, a
+    // nowrap list), or one wide card pushes the whole page sideways on a phone.
+    <div ref={rootRef} className="space-y-4 max-md:space-y-3 pb-20 [--card-pad:0.75rem] [&_.grid>*]:min-w-0 [&_[data-slot=card]]:rounded-md [&_[data-slot=card]]:shadow-none [&_[data-slot=card]]:transition-shadow [&_[data-slot=card]:hover]:shadow-md">
       {/* Sticky: the title, the tab strip and the period control stay put while
           a long tab scrolls, so you can switch tab or month without scrolling
           back up. -mx/px cancels the page gutter so the backdrop reaches the
           full width; the bottom border separates it from the content beneath. */}
-      <div className="sticky top-0 z-30 -mx-4 px-4 md:-mx-6 md:px-6 pt-1 pb-3 bg-[#F7F5F3]/95 backdrop-blur border-b border-[#E2DDD8] space-y-3">
+      <div ref={headerRef} className="sticky top-[var(--app-sticky-h,0px)] z-[25] -mx-4 px-4 md:-mx-6 md:px-6 pt-1 pb-3 max-md:pb-2 bg-[#F7F5F3]/95 backdrop-blur border-b border-[#E2DDD8] space-y-3 max-md:space-y-2">
+        {/* Phones: no big title and no tab strip (keeps the sticky block to two
+            short rows) - the tab is a native <select> beside the period button
+            below, which opens the OS picker. md+: the PageHeader, unchanged. */}
+        <h1 className="sr-only md:hidden">Dashboard</h1>
         <PageHeader
-          title="Overview"
-          subtitle="Operations · live where noted"
-          actions={
-            <Tabs tabs={TABS} value={tab} onChange={setTab} variant="pill" />
-          }
+          className="max-md:hidden"
+          title="Dashboard"
+          subtitle="Experimental dashboard: Data may be inaccurate. Use with caution"
+          actions={<Tabs tabs={visibleTabs} value={tab} onChange={setTab} variant="pill" />}
         />
 
-        {months.length > 0 && (
-          <div className="flex justify-end">
-            <PeriodPicker
-              period={effectivePeriod}
-              months={months}
-              latestDay={latestDay}
-              onChange={setPeriod}
-            />
-          </div>
-        )}
+        {/* Sub-tab strip shares this sticky row with the period picker, so
+            both stay put while a long tab scrolls. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 max-md:gap-y-2">
+          <select
+            aria-label="Dashboard section"
+            value={tab}
+            onChange={(e) => setTab(e.target.value as TabKey)}
+            className="md:hidden order-1 h-11 min-w-0 flex-1 rounded-md border border-[#E2DDD8] bg-white px-3 text-base font-semibold text-[#1F1D1B] focus:outline-none focus:border-[#6B5C32]"
+          >
+            {blocked && <option value={tab} disabled>Choose a section</option>}
+            {visibleTabs.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+          {subTabs ? (
+            <div className="max-md:order-3 max-md:w-full min-w-0">
+              <Tabs tabs={[...subTabs]} value={sub} onChange={setSub} variant="pill" scrollable />
+            </div>
+          ) : (
+            <div />
+          )}
+          {months.length > 0 && (
+            <div className="max-md:order-2">
+              <PeriodPicker
+                period={effectivePeriod}
+                months={months}
+                latestDay={latestDay}
+                onChange={setPeriod}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
-      {tab === "overview" && (
+      {blocked && (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-[#6B7280]">Under maintenance</CardContent>
+        </Card>
+      )}
+      {view === "overview" && (
         <AllOverviewView
           period={effectivePeriod}
           months={months}
-          onOpenTab={(t) => setTab(t as (typeof TABS)[number]["key"])}
+          onOpenTab={(t, s) => setTab(t as TabKey, s)}
         />
       )}
-      {tab === "sales" && (
+      {view === "sales" && (
         <SalesOrdersView period={effectivePeriod} months={months} onPeriodChange={setPeriod} />
       )}
+      {view === "operations" && <OperationsView period={effectivePeriod} sub={sub as OpsSub} onPeriodChange={setPeriod} />}
+      {view === "people" && <EmployeesView period={effectivePeriod} sub={sub as PeopleSub} onPeriodChange={setPeriod} />}
+      {view === "service" && <ServiceView period={effectivePeriod} sub={sub as ServiceSub} onPeriodChange={setPeriod} onSubChange={(x) => setSub(x)} />}
+      {view === "finance" && <FinanceView period={effectivePeriod} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} />}
+      {view === "ocr" && <OcrView period={effectivePeriod} />}
     </div>
   );
 }

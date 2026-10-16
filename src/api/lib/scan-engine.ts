@@ -48,6 +48,7 @@
 import type { Env } from "../worker";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import { matchByCompanyName } from "../../lib/company-name-match";
+import { claudeFetch } from "./claude-fetch";
 
 // ---------- Anthropic config ------------------------------------------------
 // Owner ruling 2026-06-29 evening: scans were timing out on Sonnet
@@ -65,7 +66,11 @@ const PO_MODEL = "claude-sonnet-4-6";
 // the heavy Sonnet/Haiku extractor runs, we let Haiku scan ONLY the page
 // boundaries — much cheaper and parallelisable per chunk afterwards.
 const BOUNDARY_MODEL = "claude-haiku-4-5-20251001";
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+/** The extraction model a queue row of this kind ran on — stamped on
+ *  scan_queue.ocr_model so the OCR dashboard can compare models. */
+export function ocrModelFor(kind: "po" | "supplier"): string {
+  return kind === "supplier" ? SUPPLIER_MODEL : PO_MODEL;
+}
 
 // Hard ceiling on a single Anthropic call. WITHOUT this, a request the model
 // never finishes (a page it chokes on, an upstream stall) hangs the fetch
@@ -193,6 +198,7 @@ export function sanitizeSupplierDoc(
     .map((l) => {
       const qty = num(l?.qty);
       const amount = num(l?.amount);
+      const discount = num(l?.discount);
       let unitPrice = num(l?.unitPrice);
       // Derive a missing unit price from the line amount (BUG price=0): a faint
       // scan often reads the bold line TOTAL but misses the small unit-price
@@ -209,7 +215,11 @@ export function sanitizeSupplierDoc(
         // Four decimals, not two: RM 33.00 over 600 pcs is RM 0.055, and
         // rounding it here to RM 0.06 re-creates the very RM 3.00 error
         // this derivation exists to avoid.
-        unitPrice = Math.round((amount / qty) * 10000) / 10000;
+        // The printed amount on a discounted line is NET of the discount, and
+        // the PI takes the discount off the unit price again (DEV-14) — so add
+        // it back, or the line is discounted twice.
+        const gross = amount + (discount != null && discount > 0 ? discount : 0);
+        unitPrice = Math.round((gross / qty) * 10000) / 10000;
       }
       return {
         supplierCode: str(l?.supplierCode),
@@ -219,7 +229,7 @@ export function sanitizeSupplierDoc(
         unitPrice,
         amount,
         tax: num(l?.tax),
-        discount: num(l?.discount),
+        discount,
         density: str(l?.density),
         thickness: str(l?.thickness),
       };
@@ -926,7 +936,7 @@ async function runSupplierExtract(
   let errorMsg: string | null = null;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1132,7 +1142,7 @@ async function runPoExtract(
   let cacheCreated = false;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1341,7 +1351,7 @@ export async function detectSupplierDocBoundaries(
   };
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
+    const resp = await claudeFetch({
       method: "POST",
       headers: {
         "content-type": "application/json",

@@ -18,7 +18,7 @@
 //
 // Usage in a Hono route handler:
 //   import { requirePermission } from "../lib/rbac";
-import { permissionsForRole } from "./role-policy";
+import { permissionsForRole, dashboardTabsForRole, dashboardReadsForRole } from "./role-policy";
 //   app.post("/", async (c) => {
 //     const denied = await requirePermission(c, "sales-orders", "create");
 //     if (denied) return denied;       // 403 response, abort handler
@@ -27,6 +27,8 @@ import { permissionsForRole } from "./role-policy";
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
 import type { Env } from "../worker";
+import { getUserOverride } from "./user-permissions";
+import { EXPLICIT_ONLY_RIGHTS } from "../../lib/explicit-rights";
 
 const PERM_CACHE_TTL_S = 300;
 // In-isolate memo for role→permission sets (perf audit 2026-07-31). 5s TTL,
@@ -100,11 +102,16 @@ async function loadRolePermissions(
       .all<{ resource: string; action: string }>();
   } catch (err) {
     console.warn(
-      `[rbac] role_permissions JOIN failed for role=${role} — falling back to legacy defaults. err=${
+      `[rbac] role_permissions JOIN failed for role=${role} — denying this request. err=${
         err instanceof Error ? err.message : String(err)
       }`,
     );
-    // rows stays empty → legacy fallback below kicks in.
+    // Fail CLOSED, and keep the failure out of the cache. Returning a set here
+    // would let getRolePermissions write it to KV for PERM_CACHE_TTL_S, so one
+    // transient DB error would become five minutes of wrong answers. Rethrowing
+    // costs exactly one request: requirePermission / hasPermission catch it and
+    // deny. RBAC audit 2026-09-11 — this used to fall through to `*:read`.
+    throw err;
   }
 
   const set: PermSet = new Set();
@@ -119,12 +126,16 @@ async function loadRolePermissions(
       `[rbac] role=${role} had 0 grants in role_permissions — seeded ${set.size} legacy defaults. Migrate user to new roleId.`,
     );
   }
-  // No rows, no legacy default — give ANY authenticated caller read-only
-  // access. Mutations stay locked. This is the fail-safe for an unknown
-  // role text (e.g. "FINANCE" before its row exists) so the user doesn't
-  // get stuck on a blank dashboard. Surfaced in the warn log above.
+  // No rows and no legacy default — the role holds nothing, so it is denied
+  // everything. This used to grant `*:read` "so the user doesn't get stuck on a
+  // blank dashboard", which made any unrecognised role text a read-the-whole-ERP
+  // account and let every gate be walked around (RBAC audit 2026-09-11).
+  // /me/permissions already returns [] for this case, so the menu and the gate
+  // now agree. Fix a missing role by seeding its grants, not by widening this.
   if (set.size === 0) {
-    set.add("*:read");
+    console.warn(
+      `[rbac] role=${role} has no grants and no legacy default — denying everything. Seed role_permissions for it.`,
+    );
   }
   return set;
 }
@@ -166,8 +177,23 @@ export async function getRolePermissions(
   return set;
 }
 
+/**
+ * The set the gate checks: the account's own list when a Super Admin has
+ * edited it (user-permissions.ts), otherwise its role's. Throws on a lookup
+ * failure; both callers catch and fail closed.
+ */
+async function getEffectivePermissions(c: Context<Env>, role: string): Promise<PermSet> {
+  const userId = (c as unknown as { get: (k: string) => string | undefined }).get("userId");
+  if (userId) {
+    const own = await getUserOverride(c, userId);
+    if (own) return own;
+  }
+  return getRolePermissions(c, role);
+}
+
 /** Wildcard match — allow `*:*`, `*:action`, `resource:*` and the exact match. */
 function permitted(set: PermSet, resource: string, action: string): boolean {
+  if (EXPLICIT_ONLY_RIGHTS.has(`${resource}:${action}`)) return set.has(`${resource}:${action}`);
   return (
     set.has(`${resource}:${action}`) ||
     set.has(`${resource}:*`) ||
@@ -209,23 +235,26 @@ export async function requirePermission(
   // missing seed. Lower roles still flow through the table below.
   if (role === "SUPER_ADMIN" || role === "ADMIN") return null;
   // Defensive try/catch (2026-04-26 prod 500 dogfood report): if the
-  // permission lookup throws (KV blip, D1 transient, schema drift), fall
-  // back to legacy users.role text — SUPER_ADMIN / ADMIN keep full access,
-  // anything else degrades to read-only via permitted() against ["*:read"].
-  // This is strictly safer than letting a 500 escape, because the worst
-  // case is a mutation getting blocked (caller retries) rather than the
-  // whole page going blank. The thrown error is logged so ops can root-
-  // cause via wrangler tail.
+  // permission lookup throws (KV blip, DB transient, schema drift), answer
+  // with a 403 rather than letting a 500 escape. SUPER_ADMIN / ADMIN never
+  // reach this (short-circuited above); an explicit legacy role such as
+  // READ_ONLY keeps its listed default; every other role gets NOTHING.
+  //
+  // Until the RBAC audit of 2026-09-11 the default here was ["*:read"], so a
+  // single transient DB error turned any account into a read-everything
+  // account — the exact opposite of what the gates were added to prevent.
+  // hasPermission() below already failed closed; this now matches it. The
+  // cost of a blip is one refused request, logged so ops can root-cause it.
   let set: PermSet;
   try {
-    set = await getRolePermissions(c, role);
+    set = await getEffectivePermissions(c, role);
   } catch (err) {
     console.warn(
-      `[rbac] getRolePermissions threw for role=${role} resource=${resource} action=${action} — falling back to legacy. err=${
+      `[rbac] permission lookup threw for role=${role} resource=${resource} action=${action} — denying unless the role has a legacy default. err=${
         err instanceof Error ? err.message : String(err)
       }`,
     );
-    set = new Set(LEGACY_ROLE_DEFAULTS[role] ?? ["*:read"]);
+    set = new Set(LEGACY_ROLE_DEFAULTS[role] ?? []);
   }
   if (!permitted(set, resource, action)) {
     return c.json(
@@ -273,7 +302,7 @@ export async function hasPermission(
   if (role === "SUPER_ADMIN" || role === "ADMIN") return true;
   let set: PermSet;
   try {
-    set = await getRolePermissions(c, role);
+    set = await getEffectivePermissions(c, role);
   } catch {
     // Fail CLOSED for a field check. A transient failure hiding a price column
     // is a cosmetic problem; showing one is the thing being prevented.
@@ -339,4 +368,28 @@ export async function invalidateRolePermissions(
 ): Promise<void> {
   if (!kv || !role) return;
   await kv.delete(permKey(role));
+}
+
+/**
+ * The feed sections the caller's dashboard tab map lets it read, or null when
+ * its role is not tab-restricted (see DASHBOARD_TABS_BY_ROLE in role-policy.ts).
+ */
+export function dashboardReadsFor(c: Context<Env>): Set<string> | null {
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole");
+  return dashboardReadsForRole(role ?? "");
+}
+
+/**
+ * requirePermission(resource, "read"), except that a role whose dashboard tab
+ * map includes `tab` may read this endpoint because that tab draws on it.
+ * For small aggregate reads a dashboard card needs; never for a write.
+ */
+export async function requireReadOrDashboardTab(
+  c: Context<Env>,
+  resource: string,
+  tab: string,
+): Promise<Response | null> {
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole");
+  if (dashboardTabsForRole(role ?? "")?.includes(tab)) return null;
+  return requirePermission(c, resource, "read");
 }

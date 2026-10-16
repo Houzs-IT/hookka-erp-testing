@@ -10,6 +10,8 @@ import {
 // rather than a batch, so it uses the best-effort recorder — see the note on
 // recordFgStockEvents for why that trade is made HERE and nowhere else.
 import {
+  buildFgStockEventStatements,
+  ensureFgStockEventsSchema,
   loadFgUnitsForEvent,
   recordFgStockEvents,
   SYSTEM_ACTOR,
@@ -411,6 +413,150 @@ const STATUS_RANK: Record<string, number> = {
 // allowed so a no-status-change PATCH (e.g. items replace, carrier edit)
 // passes through.
 // ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// T-006 R4 — voiding a CN-sourced invoice must release the CN back to its
+// pre-conversion status, not leave it stuck at FULLY_SOLD forever.
+//
+// convert-to-invoice has no status gate (a CN can convert from ACTIVE,
+// PARTIALLY_SOLD, or IN_TRANSIT), so there is no single fixed prior value to
+// restore — it has to be recorded at conversion time.
+// ---------------------------------------------------------------------------
+let cnStatusBeforeConversionColumnReady = false;
+export async function ensureCnStatusBeforeConversionColumn(
+  db: D1Database,
+): Promise<void> {
+  if (cnStatusBeforeConversionColumnReady) return;
+  try {
+    await db
+      .prepare(
+        "ALTER TABLE consignment_notes ADD COLUMN IF NOT EXISTS status_before_conversion TEXT",
+      )
+      .run();
+  } catch {
+    // ignore — column may already exist or DDL transiently rejected
+  }
+  cnStatusBeforeConversionColumnReady = true;
+}
+
+// Called from BOTH ways an invoice dies in invoices.ts — void (PUT → CANCELLED)
+// and DELETE (a draft thrown away). The CN link is
+// one-way — consignment_notes.convertedInvoiceId points at the invoice, the
+// invoice carries nothing back — so this looks the CN up by that column.
+// Returns [] when the invoice did not come from a CN (the common case).
+export async function buildInvoiceDeathCnReleaseStatements(
+  db: D1Database,
+  args: { invoiceId: string },
+): Promise<D1PreparedStatement[]> {
+  await ensureCnStatusBeforeConversionColumn(db);
+  const cn = await db
+    .prepare(
+      "SELECT id, status_before_conversion FROM consignment_notes WHERE convertedInvoiceId = ?",
+    )
+    .bind(args.invoiceId)
+    .first<{
+      id: string;
+      statusBeforeConversion?: string | null;
+      status_before_conversion?: string | null;
+    }>();
+  if (!cn) return [];
+  // Dual-keyed: the Postgres client camelCases the column, so the snake-only
+  // read was always undefined and every release fell back to PARTIALLY_SOLD.
+  const restoreTo =
+    cn.statusBeforeConversion ?? cn.status_before_conversion ?? "PARTIALLY_SOLD";
+
+  // convert-to-invoice stamps ONE `now` on everything it changes: the
+  // invoice's created_at, each AT_BRANCH item's soldDate (→ SOLD), each LOADED
+  // unit's deliveredAt (→ DELIVERED) and, if unset, the CN's deliveredAt. So
+  // that stamp identifies exactly what the conversion did — and only that is
+  // undone. An item sold, or a unit delivered, at any other moment is left
+  // alone. Without this the CN went back to ACTIVE while its items stayed
+  // SOLD and its units DELIVERED (measured on staging, 2026-09-24), and
+  // /return then matched no LOADED unit.
+  const inv = await db
+    .prepare("SELECT created_at FROM invoices WHERE id = ?")
+    .bind(args.invoiceId)
+    .first<{ createdAt?: string | null; created_at?: string | null }>();
+  const convertedAt = inv?.createdAt ?? inv?.created_at ?? null;
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `UPDATE consignment_notes
+            SET status = ?,
+                status_before_conversion = NULL,
+                convertedInvoiceId = NULL,
+                deliveredAt = CASE WHEN deliveredAt = ? THEN NULL ELSE deliveredAt END
+          WHERE id = ?`,
+      )
+      .bind(restoreTo, convertedAt, cn.id),
+  ];
+  if (!convertedAt) return statements;
+
+  statements.push(
+    db
+      .prepare(
+        `UPDATE consignment_items SET status = 'AT_BRANCH', soldDate = NULL
+          WHERE consignmentNoteId = ? AND status = 'SOLD' AND soldDate = ?`,
+      )
+      .bind(cn.id, convertedAt),
+  );
+  // Units: read the FROM side with the SAME predicate the UPDATE uses, so the
+  // ledger records exactly the transition that happens (fg-stock-events.ts).
+  await ensureFgStockEventsSchema(db);
+  const unitWhere = "cnId = ? AND status = 'DELIVERED' AND deliveredAt = ?";
+  const units = await loadFgUnitsForEvent(db, unitWhere, [cn.id, convertedAt]);
+  if (units.length > 0) {
+    statements.push(
+      db
+        .prepare(`UPDATE fg_units SET status = 'LOADED', deliveredAt = NULL WHERE ${unitWhere}`)
+        .bind(cn.id, convertedAt),
+      ...buildFgStockEventStatements(db, units, {
+        toStatus: "LOADED",
+        doc: { docType: "CONSIGNMENT_NOTE", docId: cn.id, docNo: null },
+        actor: SYSTEM_ACTOR,
+        occurredAt: new Date().toISOString(),
+        note: `Invoice ${args.invoiceId} voided/deleted — CN conversion undone`,
+        reverses: { docType: "CONSIGNMENT_NOTE", docId: cn.id },
+      }),
+    );
+  }
+  return statements;
+}
+
+// Side quest H (BUG-2026-09-24-207). convert-to-invoice runs
+// cascadeCNCompletionToCO: once every CN of a consignment order is sold, the CO
+// goes DELIVERED. The void / delete release above puts the CN back to ACTIVE,
+// but nothing stepped the CO back, so it read "complete" with goods still at
+// the branch. The caller reads the CO BEFORE its batch (the release clears
+// convertedInvoiceId) and reopens it AFTER — cascadeCNReversalToCO is the
+// existing inverse and only moves a DELIVERED CO whose CNs are no longer all
+// sold. Best-effort, exactly like the completion cascade on convert.
+export async function consignmentOrderForInvoice(
+  db: D1Database,
+  invoiceId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT consignmentOrderId FROM consignment_notes WHERE convertedInvoiceId = ?")
+    .bind(invoiceId)
+    .first<{ consignmentOrderId?: string | null; consignment_order_id?: string | null }>();
+  return row?.consignmentOrderId ?? row?.consignment_order_id ?? null;
+}
+
+export async function reopenConsignmentOrderAfterRelease(
+  db: D1Database,
+  consignmentOrderId: string | null,
+): Promise<void> {
+  if (!consignmentOrderId) return;
+  try {
+    await cascadeCNReversalToCO(db, consignmentOrderId);
+  } catch (err) {
+    console.error(
+      "[invoice void/delete] CO reversal cascade failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
 export const CN_VALID_TRANSITIONS: Record<string, string[]> = {
   ACTIVE: ["ACTIVE", "PARTIALLY_SOLD"],
   PARTIALLY_SOLD: [
@@ -451,7 +597,8 @@ export type UpdateCNResult =
       ok: false;
       reason: "items_locked";
       currentStatus: string | null;
-    };
+    }
+  | { ok: false; reason: "po_conflict"; message: string };
 
 // ----------------------------------------------------------------------------
 // validatePOMutex (latent gap 1, 2026-04-29).
@@ -470,12 +617,24 @@ export type UpdateCNResult =
 // Note: the symmetric DO-side guard is NOT added (per task spec — DO is
 // reference-only). When a future DO refactor lands, mirror this helper
 // from the DO POST/PUT items-replace path.
+//
+// CN side also rejects a PO that is already on another non-cancelled CN
+// (BUG-2026-10-01-238), the mirror of the DO rule "a PO can only be delivered
+// once" in delivery-orders/_helpers.ts. Same predicate as the Pending CN
+// dedup in /ready-planning (`status <> 'CANCELLED'`), so a PO hidden from that
+// list is exactly a PO this refuses. `excludeCnId` = the CN being edited.
+// `message` is the user-facing 409 text; every caller returns it verbatim.
 // ----------------------------------------------------------------------------
 export async function validatePOMutex(
   db: D1Database,
   poIds: string[],
   sourceType: "DO" | "CN",
-): Promise<{ ok: true } | { ok: false; conflicts: string[]; reason: "do_active" | "cn_active" }> {
+  excludeCnId: string | null = null,
+): Promise<
+  | { ok: true }
+  | { ok: false; conflicts: string[]; reason: "do_active" | "cn_active"; message: string }
+> {
+  poIds = [...new Set(poIds.filter((x) => x))];
   if (poIds.length === 0) return { ok: true };
   const ph = poIds.map(() => "?").join(",");
   // Active = anything that isn't a terminal/cancelled state. For DO that's
@@ -499,7 +658,34 @@ export async function validatePOMutex(
       .map((r) => r.poId)
       .filter((s): s is string => !!s);
     if (conflicts.length > 0) {
-      return { ok: false, conflicts, reason: "do_active" };
+      return {
+        ok: false,
+        conflicts,
+        reason: "do_active",
+        message: `Cannot create consignment note: ${conflicts.length} PO${conflicts.length === 1 ? "" : "s"} already on an active delivery order: ${conflicts.join(", ")}`,
+      };
+    }
+    // Same PO on another non-cancelled CN.
+    const cnRows = await db
+      .prepare(
+        `SELECT DISTINCT ci.productionOrderId AS poId, cn.noteNumber AS noteNumber, po.poNo AS poNo
+           FROM consignment_items ci
+           JOIN consignment_notes cn ON cn.id = ci.consignmentNoteId
+           LEFT JOIN production_orders po ON po.id = ci.productionOrderId
+          WHERE ci.productionOrderId IN (${ph})
+            AND cn.status <> 'CANCELLED'${excludeCnId ? " AND cn.id <> ?" : ""}`,
+      )
+      .bind(...poIds, ...(excludeCnId ? [excludeCnId] : []))
+      .all<{ poId: string; noteNumber: string | null; poNo: string | null }>();
+    const onCn = cnRows.results ?? [];
+    if (onCn.length > 0) {
+      const lines = onCn.map((r) => `${r.poNo || r.poId} on ${r.noteNumber || "another CN"}`);
+      return {
+        ok: false,
+        conflicts: [...new Set(onCn.map((r) => r.poId))],
+        reason: "cn_active",
+        message: `These production orders are already on a consignment note (a PO can only be consigned once): ${lines.join(", ")}. Remove them from the selection.`,
+      };
     }
     return { ok: true };
   }
@@ -519,7 +705,12 @@ export async function validatePOMutex(
     .map((r) => r.poId)
     .filter((s): s is string => !!s);
   if (conflicts.length > 0) {
-    return { ok: false, conflicts, reason: "cn_active" };
+    return {
+      ok: false,
+      conflicts,
+      reason: "cn_active",
+      message: `${conflicts.length} PO${conflicts.length === 1 ? "" : "s"} already on an active consignment note: ${conflicts.join(", ")}`,
+    };
   }
   return { ok: true };
 }
@@ -602,6 +793,17 @@ export async function updateConsignmentNoteById(
       reason: "items_locked",
       currentStatus: existing.status,
     };
+  }
+
+  // Items replace may add a PO that is already on a DO or another CN
+  // (BUG-2026-10-01-238). Checked before any write; this CN's own lines are
+  // excluded so re-saving an unchanged list passes.
+  if (Array.isArray(body.items)) {
+    const poIds = (body.items as Array<Record<string, unknown>>)
+      .map((it) => it.productionOrderId)
+      .filter((s): s is string => typeof s === "string" && s.length > 0);
+    const mutex = await validatePOMutex(db, poIds, "CN", id);
+    if (!mutex.ok) return { ok: false, reason: "po_conflict", message: mutex.message };
   }
 
   // Auto-stamp lifecycle timestamps (idempotent on forward transitions).

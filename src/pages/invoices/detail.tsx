@@ -199,7 +199,8 @@ export default function InvoiceDetailPage() {
       discountSeed,
     });
     // Expected new invoice subtotal — sum of max(0, unit×qty − discount) per line.
-    // Backend recomputes identically; comparing on totalAmount catches stale reads.
+    // Backend recomputes identically and stores it as subtotalSen (pre-tax);
+    // comparing on that catches stale reads.
     const expectedTotal = invoice.items.reduce((sum, it) => {
       const e = priceEdits.find((p) => p.id === it.id);
       // An untouched line keeps the price it already carries — it is not in the
@@ -218,7 +219,9 @@ export default function InvoiceDetailPage() {
       return sum + Math.max(0, unit * (Number(it.quantity) || 0) - discount);
     }, 0);
     // 2026-05-27 verifiedSave migration. Money-touching write — confirm
-    // the new totalAmount actually persisted.
+    // the new subtotal actually persisted. This used to expect `totalAmount`,
+    // a field GET /api/invoices/:id never returns, so every price save
+    // reported "did NOT take effect ... (empty)" even when it had saved.
     const result = await verifiedSave<Invoice>({
       endpoint: `/api/invoices/${id}`,
       method: "PUT",
@@ -232,7 +235,7 @@ export default function InvoiceDetailPage() {
         const j = (await r.json()) as { success?: boolean; data?: Invoice } | Invoice;
         return (j as { data?: Invoice })?.data ?? (j as Invoice) ?? null;
       },
-      expect: { totalAmount: expectedTotal },
+      expect: { subtotalSen: expectedTotal },
     });
     if (result.ok) {
       if (id) invalidateCache(`/api/invoices/${id}`);
@@ -275,6 +278,13 @@ export default function InvoiceDetailPage() {
   // A4 invoice. "download" saves the file; "view" opens it on screen.
   const printInvoicePdf = async (mode: "download" | "view" = "download") => {
     if (!invoice) return;
+    // Open the tab now, inside the click — after the awaits below the browser
+    // would treat it as an unsolicited popup and block it.
+    const viewWin = mode === "view" ? window.open("", "_blank") : null;
+    if (mode === "view" && !viewWin) {
+      setToast("Please allow pop-ups to view the invoice.");
+      return;
+    }
     let extras: import("@/lib/generate-invoice-pdf").InvoicePrintExtras = {};
     try {
       const r = await fetch(
@@ -288,9 +298,17 @@ export default function InvoiceDetailPage() {
     } catch {
       /* graceful — PDF still renders without extras */
     }
-    const { downloadUnifiedInvoicePdf } = await import("@/lib/unified-doc-download");
-    void mode; // unified generator saves the file; "view" no longer applicable
-    await downloadUnifiedInvoicePdf(invoice, extras);
+    const { downloadUnifiedInvoicePdf, viewUnifiedInvoicePdf } = await import("@/lib/unified-doc-download");
+    if (viewWin) {
+      try {
+        await viewUnifiedInvoicePdf(invoice, extras, viewWin);
+      } catch (e) {
+        viewWin.close();
+        throw e;
+      }
+    } else {
+      await downloadUnifiedInvoicePdf(invoice, extras);
+    }
   };
 
   const sendInvoice = async () => {

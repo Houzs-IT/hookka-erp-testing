@@ -76,6 +76,8 @@ import {
   type FgEventActor,
 } from "../../lib/fg-stock-events";
 import { availableQty } from "../../../lib/convert-chain";
+import { dueDateForTerms } from "../../../lib/terms";
+import { checkCustomerCredit, gateCredit } from "../../lib/customer-credit";
 
 // Status transitions allowed by the mock-data impl. Preserved here so the
 // frontend sees identical error messages.
@@ -1442,34 +1444,33 @@ export async function computeDoInvoiceLines(
   ]);
   const doItems = doItemsRes.results ?? [];
 
-  // Partial-delivery: a line that went into a Delivery Return is NOT delivered,
-  // so it's excluded from the invoice (the good lines are billed; the returned
-  // ones drop out). Best-effort — if the delivery_return tables don't exist yet
-  // (no returns raised on this deployment), the query throws and we bill all.
-  let returnedPoIds = new Set<string>();
+  // Partial-delivery (T-006 R7): a line with a Delivery Return against it is
+  // invoiceable only for what WASN'T returned — return 1 of 3 still leaves 2
+  // billable, it doesn't drop the whole line. Was a Set<productionOrderId>
+  // membership filter that excluded the entire line on ANY return against it,
+  // so a 1-of-3 return zeroed out the other 2 that were still good. Best-effort
+  // — if the delivery_return tables don't exist yet (no returns raised on this
+  // deployment), the query throws and nothing is excluded.
+  let returnedQtyByPoId = new Map<string, number>();
   try {
     const retRes = await db
       .prepare(
-        `SELECT dri.production_order_id AS "poId"
+        `SELECT dri.production_order_id AS "poId", COALESCE(SUM(dri.quantity),0) AS "qty"
            FROM delivery_return_items dri
            JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
-          WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'`,
+          WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'
+          GROUP BY dri.production_order_id`,
       )
       .bind(doId)
-      .all<{ poId: string | null }>();
-    returnedPoIds = new Set(
+      .all<{ poId: string | null; qty: number }>();
+    returnedQtyByPoId = new Map(
       (retRes.results ?? [])
-        .map((r) => r.poId)
-        .filter((x): x is string => !!x),
+        .filter((r): r is { poId: string; qty: number } => !!r.poId)
+        .map((r) => [r.poId, Number(r.qty) || 0]),
     );
   } catch {
     /* delivery_return tables not present — nothing to exclude */
   }
-  const activeDoItems = returnedPoIds.size
-    ? doItems.filter(
-        (di) => !di.productionOrderId || !returnedPoIds.has(di.productionOrderId),
-      )
-    : doItems;
 
   // How much of each line this invoice is allowed to take. Default: everything
   // still un-invoiced. With a `select`, only what was ticked — clamped to the
@@ -1490,10 +1491,14 @@ export async function computeDoInvoiceLines(
 
   const draws: DoLineSelection[] = [];
   let invItems: InvItem[] = [];
-  for (const di of activeDoItems) {
+  for (const di of doItems) {
     const delivered = Number(di.quantity) || 0;
+    const returned = di.productionOrderId
+      ? returnedQtyByPoId.get(di.productionOrderId) ?? 0
+      : 0;
+    const effectiveDelivered = Math.max(0, delivered - returned);
     const already = Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0;
-    const remaining = availableQty(delivered, already);
+    const remaining = availableQty(effectiveDelivered, already);
     const billQty = select
       ? Math.min(wanted.get(di.id) ?? 0, remaining)
       : remaining;
@@ -1537,8 +1542,18 @@ export async function computeDoInvoiceLines(
   // invoice would bill the whole sales order again on top of what the first
   // invoice already charged. Restrict them to what they were always for — the
   // FIRST, whole-document bill of a delivery nothing has drawn on yet.
+  //
+  // And only when there IS something delivered to bill: lines that survived to
+  // invItems but priced at zero, or a legacy DO with no lines at all. A DO whose
+  // lines all came back on a Delivery Return has an empty invItems for the
+  // right reason — nothing is left — and must bill RM 0, not fall through to
+  // billing the whole SO (a fully-returned single-line DO billed RM 830.00 on
+  // staging, 2026-09-24).
+  const somethingToBill = invItems.length > 0 || doItems.length === 0;
   const freshWholeDo =
-    !select && activeDoItems.every((di) => (Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0) === 0);
+    somethingToBill &&
+    !select &&
+    doItems.every((di) => (Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0) === 0);
 
   // Fallback 1: nothing priced at all → bill the linked SO lines directly.
   if (computedTotal === 0 && freshWholeDo) {
@@ -1710,12 +1725,54 @@ export async function buildDoDeliveredSoAndInvoice(
   await ensureDoPartialInvoiceColumns(db);
   const billing = await loadDoBillingState(db, doRow.id);
 
-  if (!billing.fullyInvoiced && soIds.length > 0 && !incomplete) {
-    const { invItems, computedTotal, draws } = await computeDoInvoiceLines(
-      db,
-      doRow.id,
-      soIds,
-    );
+  const lines =
+    !billing.fullyInvoiced && soIds.length > 0 && !incomplete
+      ? await computeDoInvoiceLines(db, doRow.id, soIds)
+      : null;
+  // BUG-2026-10-07-266 — the same "nothing to invoice" refusal the manual
+  // POST /api/invoices has always made (invoices.ts). Without it, two
+  // DELIVERED requests 0.6 s apart (a double click, DO-2610-013) both passed
+  // the billing gate above before either committed; the second then read the
+  // lines the first had just drawn down and posted INV-2610-021 at RM 0 with
+  // no lines — and the delivered email attaches the NEWEST live invoice, so
+  // the customer got the empty one. The losing request still has to leave the
+  // SOs and the DO at INVOICED: its own batch carries SO→DELIVERED and the
+  // DO's DELIVERED update from the stale read, which would otherwise undo the
+  // winner's status bumps.
+  if (lines && lines.invItems.length === 0 && lines.computedTotal === 0) {
+    const after = await loadDoBillingState(db, doRow.id);
+    if (after.fullyInvoiced) {
+      for (const sid of soBillable) {
+        statements.push(
+          db
+            .prepare(
+              "UPDATE sales_orders SET status = 'INVOICED', updated_at = ? WHERE id = ? AND status = 'DELIVERED'",
+            )
+            .bind(now, sid),
+        );
+      }
+      statements.push(
+        db
+          .prepare(
+            "UPDATE delivery_orders SET status = 'INVOICED', overdue = 'INVOICED', updated_at = ? WHERE id = ?",
+          )
+          .bind(now, doRow.id),
+      );
+    }
+    return {
+      statements,
+      rebuildInvoiceInsert: null,
+      invoiceStmtIdx: -1,
+      createdInvoice: false,
+      invoiceTotalSen: 0,
+      soAdvanced,
+    };
+  }
+
+  // Nothing left to bill (every line came back on a Delivery Return) → raise
+  // no invoice at all, rather than an empty RM 0 one.
+  if (lines && (lines.invItems.length > 0 || lines.computedTotal > 0)) {
+    const { invItems, computedTotal, draws } = lines;
 
     const invId = genInvoiceId();
     const invoiceNo = await nextInvoiceNo(db);
@@ -1730,11 +1787,13 @@ export async function buildDoDeliveredSoAndInvoice(
       (doRow.deliveryDate && doRow.deliveryDate.split("T")[0]) ||
       now.split("T")[0];
     const invoiceDate = shipDate;
-    // Due date stays relative to the invoice (dispatch) date so terms remain
-    // consistent with when the invoice is dated.
-    const due = new Date(`${shipDate}T00:00:00.000Z`);
-    due.setDate(due.getDate() + 30);
-    const dueDate = due.toISOString().split("T")[0];
+    // Due date = last day of (invoice month + the customer's term), the same
+    // calendar-month rule the credit check uses (BUG-34). Was +30 days.
+    const termsRow = await db
+      .prepare("SELECT creditTerms FROM customers WHERE id = ?")
+      .bind(doRow.customerId)
+      .first<{ creditTerms: string | null }>();
+    const dueDate = dueDateForTerms(invoiceDate, termsRow?.creditTerms);
     // Combined invoice spans multiple SOs — anchor the header SO to the
     // DO's own (legacy single-SO) or the first resolved one so the row
     // isn't orphaned; the authoritative link is deliveryOrderId.
@@ -1980,7 +2039,7 @@ export type DoCreateOutcome =
       /** Single-SO id stamped onto the DO row (null for multi-SO DOs). */
       salesOrderId: string | null;
     }
-  | { ok: false; status: 400 | 409 | 500; body: Record<string, unknown> };
+  | { ok: false; status: 400 | 403 | 409 | 500; body: Record<string, unknown> };
 
 // Service-PO destination metadata. Service POs (production_orders.
 // serviceOrderId set, salesOrderId NULL) carry their delivery hub on the
@@ -2253,11 +2312,20 @@ export async function createDeliveryOrderForPOs(
       itemCategory: string | null;
       specialOrder: string | null;
     };
-    const productionOrderIds: string[] = Array.isArray(body.productionOrderIds)
-      ? (body.productionOrderIds as unknown[]).filter(
-          (x): x is string => typeof x === "string" && x.length > 0,
-        )
-      : [];
+    // BUG-06: body.items is written as sent, so the guard below must see
+    // every production order those items name too, not only
+    // body.productionOrderIds (the edit path already derives its ids from
+    // the items). Otherwise items for an already-delivered PO pass the guard.
+    const productionOrderIds: string[] = [
+      ...new Set(
+        [
+          ...(Array.isArray(body.productionOrderIds) ? body.productionOrderIds : []),
+          ...(Array.isArray(body.items)
+            ? (body.items as Array<Record<string, unknown>>).map((it) => it?.productionOrderId)
+            : []),
+        ].filter((x): x is string => typeof x === "string" && x.length > 0),
+      ),
+    ];
     let poRowsForItems: PoRow[] = [];
     let resolvedSalesOrderId: string | undefined = body.salesOrderId ?? undefined;
     if (productionOrderIds.length > 0) {
@@ -2337,6 +2405,24 @@ export async function createDeliveryOrderForPOs(
     }
 
     const salesOrderId: string | undefined = resolvedSalesOrderId;
+
+    // T-006 R1 — server-side backstop. An SO-linked DO with NO
+    // productionOrderIds is exactly the Sales-page "Transfer to Delivery
+    // Order" bug that bypassed validateDoComposition's once-only-delivery
+    // guard (BUG-2026-05-16: 13 duplicate DOs, RM 24,647 double-consumed) —
+    // it built `items` by hand instead of going through a production order,
+    // so the guard above never ran because productionOrderIds was empty.
+    // Refuse outright rather than silently accepting hand-built items again.
+    if (salesOrderId && productionOrderIds.length === 0) {
+      return {
+        ok: false,
+        status: 400,
+        body: {
+          success: false,
+          error: "A delivery order for a sales order must be created from its production orders (productionOrderIds), not hand-built items — this is what makes the once-only-delivery guard run.",
+        },
+      };
+    }
 
     // Validate customer (salesOrder link optional at this phase).
     let salesOrderRow: {
@@ -2625,70 +2711,28 @@ export async function createDeliveryOrderForPOs(
     const totalItems = items.reduce((s, i) => s + i.quantity, 0);
 
     // -------------------------------------------------------------------
-    // Credit-limit gate (Policy A — gate at DO POST):
-    //   Customer can place SO of any amount; pickup (DO dispatch) is
-    //   gated by credit limit. This is the only gate — DELIVERED
-    //   transition no longer rechecks (option B/C is intentionally
-    //   not implemented).
-    //
-    //   The "DO total" we project here matches the auto-DRAFT-invoice
-    //   total computed at the DELIVERED cascade (delivery-orders.ts
-    //   ~L1647-1685): DO line quantity × the SO line unit price for the
-    //   matching productCode. We sum across every SO referenced by
-    //   either body.salesOrderId OR the production_orders attached to
-    //   the DO's items (multi-SO DOs leave salesOrderId null but still
-    //   pull prices from each item's parent SO).
-    //
-    //   When creditLimitSen <= 0 the customer has no limit configured
-    //   (common during onboarding) — let the DO through unchecked.
+    // Customer credit gate (BUG-34) — overdue invoice past the customer's
+    // term, or outstanding + undelivered DOs + this DO over the limit.
+    // One shared rule for every path that releases goods; see
+    // src/api/lib/customer-credit.ts. body.creditOverride = { reason }
+    // passes a block when the override switch + permission allow it.
     // -------------------------------------------------------------------
-    let projectedDoTotalSen = 0;
-    if (customerRow.creditLimitSen > 0) {
-      const soIdsForPricing = new Set<string>();
-      if (salesOrderId) soIdsForPricing.add(salesOrderId);
-      for (const po of poRowsForItems) {
-        if (po.salesOrderId) soIdsForPricing.add(po.salesOrderId);
-      }
-      const priceByCode = new Map<string, number>();
-      if (soIdsForPricing.size > 0) {
-        const ph = [...soIdsForPricing].map(() => "?").join(",");
-        const priceRes = await c.var.DB.prepare(
-          `SELECT productCode, unitPriceSen
-             FROM sales_order_items
-            WHERE salesOrderId IN (${ph})`,
-        )
-          .bind(...soIdsForPricing)
-          .all<{ productCode: string | null; unitPriceSen: number }>();
-        for (const r of priceRes.results ?? []) {
-          if (r.productCode && !priceByCode.has(r.productCode)) {
-            priceByCode.set(r.productCode, r.unitPriceSen);
-          }
-        }
-      }
-      for (const it of items) {
-        const unit = priceByCode.get(it.productCode) ?? 0;
-        projectedDoTotalSen += unit * it.quantity;
-      }
-      const projectedOutstanding =
-        customerRow.outstandingSen + projectedDoTotalSen;
-      if (projectedOutstanding > customerRow.creditLimitSen) {
-        return {
-          ok: false,
-          status: 409,
-          body: {
-            success: false,
-            error: "Credit limit exceeded",
-            code: "CREDIT_LIMIT_EXCEEDED",
-            details: {
-              limit: customerRow.creditLimitSen,
-              outstanding: customerRow.outstandingSen,
-              doTotal: projectedDoTotalSen,
-              projected: projectedOutstanding,
-            },
-          },
-        };
-      }
-    }
+    const creditOutcome = await gateCredit(
+      c,
+      await checkCustomerCredit(
+        c.var.DB,
+        customerRow.id,
+        items.map((it) => ({
+          productionOrderId: it.productionOrderId || null,
+          productCode: it.productCode,
+          quantity: it.quantity,
+          salesOrderId: salesOrderId ?? null,
+        })),
+      ),
+      body.creditOverride,
+      { resource: "customers", resourceId: customerRow.id },
+    );
+    if (!creditOutcome.ok) return creditOutcome;
 
     const now = new Date().toISOString();
     const id = genDoId();
@@ -4330,6 +4374,8 @@ export async function applyDeliveryOrderUpdate(
           409,
         );
       }
+      // No credit check at dispatch (BUG-2026-10-12-282): the gate runs when
+      // the DO is created; a DO that exists can always leave.
       // A cancel is a whole-document reversal (see the `cancelled` block
       // below). Replacing the line items in the SAME request would make it
       // reverse a composition that was never delivered — refuse and let the

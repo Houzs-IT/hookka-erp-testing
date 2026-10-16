@@ -1293,6 +1293,7 @@ const DEPT_TABS: { key: string; label: string; code: string }[] = [
   { key: "fab_sew", label: "Fab Sew", code: "FAB_SEW" },
   { key: "foam_cutting", label: "Foam Cut", code: "FOAM_CUTTING" },
   { key: "foam", label: "Foam Bonding", code: "FOAM" },
+  { key: "fibre", label: "Fibre", code: "FIBRE" },
   { key: "wood_cut", label: "Wood Cut", code: "WOOD_CUT" },
   { key: "framing", label: "Framing", code: "FRAMING" },
   { key: "webbing", label: "Webbing", code: "WEBBING" },
@@ -2527,6 +2528,7 @@ const employeeDetail: DetailConfig = {
     fld("Join Date", (d) => dateOnly(d, "joinDate")),
     fld("Basic Salary", (d) => money(num(d, "basicSalarySen"))),
     fld("Efficiency Allowance", (d) => money(num(d, "efficiencyAllowanceSen"))),
+    fld("Leadership Allowance", (d) => money(num(d, "leadershipAllowanceSen"))),
     fld("OT Multiplier", (d) => {
       const ot = num(d, "otMultiplier");
       return ot > 0 ? `${ot}×` : "—";

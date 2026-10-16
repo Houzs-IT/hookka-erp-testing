@@ -23,6 +23,7 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureNonprodRequests } from "./worker";
+import { loadProductionRevenue } from "../lib/production-revenue";
 
 const app = new Hono<Env>();
 
@@ -198,6 +199,10 @@ function validateEntry(input: EntryInput): { ok: true; data: { departmentCode: s
 //
 // Response also includes a `rows` array — one entry per recognized PO — for
 // the "Revenue Raw Data" audit table on the Labor Cost tab.
+//
+// The recognition SQL lives in src/api/lib/production-revenue.ts, shared with
+// the finance dashboard's Production Revenue (owner 2026-10-12) so the two
+// screens never disagree.
 // ---------------------------------------------------------------------------
 app.get("/production-revenue", async (c) => {
   // Owner 2026-08-05: "我们的 HR 也是可以把 Total Revenue 还有 Remain 这样子的
@@ -214,91 +219,7 @@ app.get("/production-revenue", async (c) => {
     return c.json({ success: false, error: "Provide from + to (YYYY-MM-DD)" }, 400);
   }
 
-  // Single SQL: per_po CTE collapses UPHOLSTERY job_cards to one row per PO
-  // (recognition date = MAX completedDate of done JCs), then we join out to
-  // PO/SO/SO line/product for qty/price/category/display. ORDER BY DESC so
-  // the rows array is already sorted for the frontend table.
-  //
-  // Bug fix 2026-04-28: revenue was being recognized when *any* upholstery
-  // JC completed for a PO, not when ALL of them did. A bedframe with HB
-  // and Divan would book full revenue the moment Divan upholstery
-  // finished, even with HB still WAITING - so SO-2604-325 booked RM 520
-  // when only the Divan was done.
-  //
-  // Fix: GROUP BY across the PO's full upholstery JC set (no status
-  // filter in WHERE), then HAVING requires done_uph = total_uph - i.e.
-  // every upholstery JC must be COMPLETED or TRANSFERRED with a non-null
-  // completedDate. Recognition date is the MAX completedDate of the
-  // done JCs (which equals MAX overall once they are all done).
-  const rowsRes = await c.var.DB
-    .prepare(
-      `WITH per_po AS (
-         SELECT productionOrderId,
-                COUNT(*) AS total_uph,
-                SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN 1 ELSE 0 END) AS done_uph,
-                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) AS unit_completed_at
-           FROM job_cards
-          WHERE departmentCode = 'UPHOLSTERY'
-          GROUP BY productionOrderId
-         HAVING COUNT(*) > 0
-            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN 1 ELSE 0 END) = COUNT(*)
-            AND MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) >= ?
-            AND MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) <= ?
-       )
-       SELECT po.id                AS poId,
-              per_po.unit_completed_at AS completedAt,
-              po.productCode       AS productCode,
-              po.productName       AS productName,
-              po.customerName      AS customerName,
-              COALESCE(po.salesOrderNo, po.companyCOId) AS soNo,
-              po.quantity          AS qty,
-              po.itemCategory      AS category,
-              -- CO-aware unit price: SO line item OR CO line item OR
-              -- product master fallback. Without the CO branch, every CO
-              -- PO got 0 revenue contribution.
-              COALESCE(
-                soi.unitPriceSen,
-                coi.unitPriceSen,
-                (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                   FROM products p
-                  WHERE p.code = po.productCode
-                  ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                  LIMIT 1),
-                0
-              ) AS unitPriceSen
-         FROM per_po
-         JOIN production_orders po ON po.id = per_po.productionOrderId
-         LEFT JOIN sales_order_items soi
-                ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = po.lineNo
-         LEFT JOIN consignment_order_items coi
-                ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = po.lineNo
-        WHERE po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
-        ORDER BY per_po.unit_completed_at DESC`,
-    )
-    .bind(from, to)
-    .all<{
-      poId: string;
-      completedAt: string;
-      productCode: string | null;
-      productName: string | null;
-      customerName: string | null;
-      soNo: string | null;
-      qty: number | string | null;
-      category: "SOFA" | "BEDFRAME" | "ACCESSORY";
-      unitPriceSen: number | string | null;
-    }>();
+  const recognized = await loadProductionRevenue(c.var.DB, from, to);
 
   const totals: Record<"SOFA" | "BEDFRAME" | "ACCESSORY", number> = {
     SOFA: 0,
@@ -326,25 +247,19 @@ app.get("/production-revenue", async (c) => {
   };
   const recognizedPOs: RecognizedPO[] = [];
 
-  for (const r of rowsRes.results ?? []) {
-    if (r.category !== "SOFA" && r.category !== "BEDFRAME" && r.category !== "ACCESSORY") continue;
-    const unitPriceSen = Math.round(typeof r.unitPriceSen === "number" ? r.unitPriceSen : Number(r.unitPriceSen) || 0);
-    const qty = Math.max(1, Math.round(typeof r.qty === "number" ? r.qty : Number(r.qty) || 1));
-    const totalPriceSen = unitPriceSen * qty;
-    totals[r.category] += totalPriceSen;
-    recognizedPOs.push({ poId: r.poId, category: r.category, totalPriceSen });
-    // completedAt may include time-of-day; the table only needs the date.
-    const date = (r.completedAt ?? "").slice(0, 10);
+  for (const r of recognized) {
+    totals[r.category] += r.totalPriceSen;
+    recognizedPOs.push({ poId: r.poId, category: r.category, totalPriceSen: r.totalPriceSen });
     rows.push({
-      date,
-      productCode: r.productCode ?? "",
-      productName: r.productName ?? "",
+      date: r.date,
+      productCode: r.productCode,
+      productName: r.productName,
       category: r.category,
-      qty,
-      unitPriceSen,
-      totalPriceSen,
-      customerName: r.customerName ?? "",
-      soNo: r.soNo ?? "",
+      qty: r.qty,
+      unitPriceSen: r.unitPriceSen,
+      totalPriceSen: r.totalPriceSen,
+      customerName: r.customerName,
+      soNo: r.soNo,
     });
   }
 
@@ -514,7 +429,9 @@ app.get("/summary", async (c) => {
     tableName: "whe_summary_snapshot",
     sourceTables: ["working_hour_entries"],
   };
-  const _cacheKeySum = `from=${from}&to=${to}`;
+  // v2: each entry gained name + departmentCode. A v1 snapshot has neither,
+  // so the key changes rather than serving it until the source moves.
+  const _cacheKeySum = `v2:from=${from}&to=${to}`;
   const _checkSum = await Promise.all([
     _snapMod.readSnapshot(c.var.DB, _snapCfgSum, _orgIdSum, _cacheKeySum),
     _snapMod.getSourceSignature(c.var.DB, _snapCfgSum.sourceTables),
@@ -565,13 +482,35 @@ app.get("/summary", async (c) => {
     daysByWorker.set(r.workerId, Number(r.dayCount) || 0);
   }
 
-  const byWorker = new Map<string, { workerId: string; totalHours: number; byDept: Record<string, number>; daysWithEntries: number }>();
+  // Name and home department travel with the hours. The efficiency cards used
+  // to look them up in /api/workers, which needs workers:read, so a role that
+  // can read hours but not the directory (PRODUCTION) saw raw worker ids.
+  const namesRes = await c.var.DB
+    .prepare(
+      `SELECT w.id, w.name, w.departmentCode
+         FROM workers w
+        WHERE w.id IN (SELECT DISTINCT workerId FROM working_hour_entries
+                        WHERE date >= ? AND date <= ?)`,
+    )
+    .bind(from, to)
+    .all<Record<string, unknown>>();
+  const infoByWorker = new Map<string, { name: string | null; departmentCode: string | null }>();
+  for (const r of namesRes.results ?? []) {
+    infoByWorker.set(String(r.id), {
+      name: (r.name as string | null) ?? null,
+      departmentCode: ((r.departmentCode ?? r.department_code) as string | null) ?? null,
+    });
+  }
+
+  const byWorker = new Map<string, { workerId: string; name: string | null; departmentCode: string | null; totalHours: number; byDept: Record<string, number>; daysWithEntries: number }>();
   for (const r of rowsRes.results ?? []) {
     const hours = typeof r.hours === "number" ? r.hours : Number(r.hours) || 0;
     let entry = byWorker.get(r.workerId);
     if (!entry) {
       entry = {
         workerId: r.workerId,
+        name: infoByWorker.get(r.workerId)?.name ?? null,
+        departmentCode: infoByWorker.get(r.workerId)?.departmentCode ?? null,
         totalHours: 0,
         byDept: {},
         daysWithEntries: daysByWorker.get(r.workerId) ?? 0,

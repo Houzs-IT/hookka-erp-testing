@@ -27,6 +27,7 @@ import {
   resolveEfficiencyAllowanceSen,
   monthBounds,
 } from "../lib/efficiency-allowance";
+import { resolveLeadershipAllowanceSen } from "../lib/leadership-allowance";
 import {
   // DEFAULT_PAY_RULES is deliberately NOT imported any more: it used to be
   // calcStatutory's default `rates` argument, and a defaulted rate set is how a
@@ -37,7 +38,7 @@ import {
   // used to call it twice, straight from basicSalarySen, and both calls read 0
   // for an outsourced person. The day rate now comes from
   // labor-engine's workerPayrollDayRateSen, which knows about pay mode.
-  payrollHourDivisor,
+  payrollHourRateSen,
   type PayRulesConfig,
 } from "../../lib/pay-rules";
 import { loadPayRuleVersions } from "../lib/pay-rules-store";
@@ -62,9 +63,18 @@ import {
   ensureAdvanceTables,
   loadPeriodAdvances,
   markAdvancesSettled,
-  netPayAfterAdvanceSen,
   totalAdvanceSen,
 } from "../lib/employee-advances";
+// DEV-22 worker penalties — approved ones come off net pay in their payroll
+// month, after statutory, exactly like advances. See ../lib/worker-penalties.ts.
+import {
+  ensureWorkerPenaltyTables,
+  loadPeriodPenaltySen,
+  linkPenaltyLinesToPayslip,
+  netPayAfterAdvanceAndPenaltySen,
+  findPenaltyDrift,
+  postPenaltiesForPeriod,
+} from "../lib/worker-penalties";
 
 // Data-entry grace before an unrecorded working day is treated as a confirmed
 // absence. Spec (Wei Siang, 2026-06-02): the office keys Working Hours a few
@@ -114,6 +124,9 @@ type WorkerRow = {
   // legacy rows ⇒ no bonus.
   efficiencyAllowanceSen?: number | null;
   efficiencyThresholdPct?: number | null;
+  // Per-worker leadership allowance (migration 0233, DEV-06). Flat bonus (sen)
+  // pro-rated by attendance — no threshold. Default 0 on legacy rows ⇒ no bonus.
+  leadershipAllowanceSen?: number | null;
   // How this worker is paid — the DEFAULT; a payslip may override it per month.
   paymentMethod?: string | null;
   bankName?: string | null;
@@ -161,6 +174,10 @@ type PayslipRow = {
   // deleting an advance later can never move an approved net pay.
   advanceDeductionSen?: number | null;
   advance_deduction_sen?: number | null;
+  // Approved worker penalties recovered in this payslip (DEV-22). Snapshotted
+  // for the same reason as the advance column.
+  penaltyDeductionSen?: number | null;
+  penalty_deduction_sen?: number | null;
   bankAccount: string;
   paymentMethod: string | null;
   bankName: string | null;
@@ -212,6 +229,8 @@ function rowToPayslip(r: PayslipRow) {
     // hands the raw column through. Absent (legacy row) reads as 0.
     advanceDeductionSen:
       Number(r.advanceDeductionSen ?? r.advance_deduction_sen ?? 0) || 0,
+    penaltyDeductionSen:
+      Number(r.penaltyDeductionSen ?? r.penalty_deduction_sen ?? 0) || 0,
     bankAccount: r.bankAccount,
     paymentMethod: normalizePaymentMethod(r.paymentMethod),
     bankName: r.bankName ?? "",
@@ -587,6 +606,7 @@ app.get("/", async (c) => {
   // the advance feature has no advance_deduction_sen and every row would read
   // back a silent 0 that looks like "no advance taken".
   await ensureAdvanceTables(c.var.DB);
+  await ensureWorkerPenaltyTables(c.var.DB);
   // RBAC gate (P3.3-followup) — payslips:read.
   const denied = await requirePermission(c, "payslips", "read");
   if (denied) return denied;
@@ -674,7 +694,7 @@ app.get("/", async (c) => {
             },
             cfg,
           );
-          const hourRate = dayRate / payrollHourDivisor(Number(w.workingHoursPerDay) || 0, cfg);
+          const hourRate = payrollHourRateSen(dayRate, Number(w.workingHoursPerDay) || 0, cfg);
           lateSenByWorker.set(
             d.workerId,
             (lateSenByWorker.get(d.workerId) ?? 0) + Math.round(h * hourRate),
@@ -729,7 +749,7 @@ app.get("/projected", async (c) => {
 
   // Same worker scope as POST: ACTIVE, plus RESIGNED in their final month.
   const wres = await c.var.DB.prepare(
-    "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
+    "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
   )
     .bind(`${period}-%`)
     .all<WorkerRow>();
@@ -815,6 +835,8 @@ app.get("/projected", async (c) => {
   // the month-end generation uses, so the in-progress estimate and the
   // finalised payslip can never disagree about what is still owed.
   const advancesByWorker = await loadPeriodAdvances(c.var.DB, period);
+  // Approved penalties for the month — same helper as generation.
+  const penaltySenByWorker = await loadPeriodPenaltySen(c.var.DB, period);
 
   // Month-cumulative efficiency per worker (job_cards production minutes ÷
   // production-dept working hours) — drives the efficiency allowance below.
@@ -895,18 +917,24 @@ app.get("/projected", async (c) => {
       employmentStartDay: joinedDay,
       employmentEndDay: resignedDay,
     });
-    // Pro-rated by days actually worked — the same absentDays that produces
-    // the salary deduction two lines below, so the payslip cannot show one
-    // absence count against the salary and a different one against the bonus.
-    const allowances = resolveEfficiencyAllowanceSen(
+    // Combined non-statutory allowance bucket (efficiency + leadership). Both
+    // are pro-rated by the SAME attendance figure — the same absentDays that
+    // produces the salary deduction two lines below, so the payslip cannot
+    // show one absence count against the salary and a different one against
+    // the bonus — and folded into one amount: the payslip / PDF / reports
+    // show a single "Allowance" line, exactly as they did before leadership
+    // allowance existed.
+    const efficiencyAllowance = resolveEfficiencyAllowanceSen(
       effByWorker.get(worker.id),
       worker.efficiencyAllowanceSen,
       worker.efficiencyThresholdPct,
-      {
-        workingDays: worker.workingDaysPerMonth,
-        absentDays: labor.payroll.absentDays,
-      },
+      { workingDays: worker.workingDaysPerMonth, absentDays: labor.payroll.absentDays },
     );
+    const leadershipAllowance = resolveLeadershipAllowanceSen(worker.leadershipAllowanceSen, {
+      workingDays: worker.workingDaysPerMonth,
+      absentDays: labor.payroll.absentDays,
+    });
+    const allowances = efficiencyAllowance + leadershipAllowance;
     const ytd = ytdPcbInputs.get(worker.id) ?? NO_YTD;
     const stat = calcStatutory(
       effectiveSalarySen,
@@ -934,10 +962,15 @@ app.get("/projected", async (c) => {
     // Advances are NOT added to totalDeductions — that figure is the statutory
     // total the payslip and every YTD reads. They come off after it.
     const advanceSen = totalAdvanceSen(advancesByWorker.get(worker.id));
-    const hourlyRate =
-      worker.workingHoursPerDay > 0
-        ? Math.round(labor.payrollDailyRateSen / worker.workingHoursPerDay)
-        : 0;
+    const penaltySen = penaltySenByWorker.get(worker.id) ?? 0;
+    // The SAME rounded rate the engine priced the OT with (month-end rules,
+    // lunch per the pay-rule mode). It used to divide by the hours alone, so
+    // under "hours + lunch" the row read "4 hrs x RM 9.44 x 1.5 = RM 51.00".
+    const hourlyRate = payrollHourRateSen(
+      labor.payrollDailyRateSen,
+      worker.workingHoursPerDay,
+      statutoryRules,
+    );
     // Build the SAME camelCase shape rowToPayslip returns — but in-memory.
     // Day-typed OT (owner spec 2026-06-10): weekday / Sunday / public-holiday
     // buckets — hours rounded for the INTEGER columns; money is the engine's
@@ -972,8 +1005,9 @@ app.get("/projected", async (c) => {
       pcb: stat.pcb,
       pcbStatus: stat.pcbStatus,
       totalDeductions,
-      netPay: netPayAfterAdvanceSen(grossPay, totalDeductions, advanceSen),
+      netPay: netPayAfterAdvanceAndPenaltySen(grossPay, totalDeductions, advanceSen, penaltySen),
       advanceDeductionSen: advanceSen,
+      penaltyDeductionSen: penaltySen,
       bankAccount: worker.bankAccount ?? "",
       paymentMethod: normalizePaymentMethod(worker.paymentMethod),
       bankName: worker.bankName ?? "",
@@ -1009,6 +1043,7 @@ app.post("/", async (c) => {
   // binds that column, so the DDL has to have landed first.
   await ensurePaymentColumns(c.var.DB);
   await ensureAdvanceTables(c.var.DB);
+  await ensureWorkerPenaltyTables(c.var.DB);
   // Same reason: the INSERT below binds payslips.pcb_status, and the worker
   // SELECT reads the three tax-profile columns. Migration 0229 is inert until
   // this runs.
@@ -1074,7 +1109,7 @@ app.post("/", async (c) => {
       // partial, month) — the existing absence math prorates the days after
       // they left. Later months exclude them because resignedAt no longer
       // matches the period. Earlier months were generated while still ACTIVE.
-      "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
+      "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
     )
       .bind(`${period}-%`)
       .all<WorkerRow>();
@@ -1196,6 +1231,7 @@ app.post("/", async (c) => {
     // below. Same helper as /projected so the finalised figure equals the
     // estimate the screen was showing a moment earlier.
     const advancesByWorker = await loadPeriodAdvances(c.var.DB, period);
+    const penaltySenByWorker = await loadPeriodPenaltySen(c.var.DB, period);
 
     // Month-cumulative efficiency per worker — the basis for the efficiency
     // allowance written into each generated payslip's allowancesSen.
@@ -1276,15 +1312,20 @@ app.post("/", async (c) => {
       payRuleVersions,
       });
 
-      const allowances = resolveEfficiencyAllowanceSen(
+      // Combined non-statutory allowance bucket (efficiency + leadership) —
+      // see the projected path above for why these are summed rather than
+      // kept as separate payslip lines.
+      const efficiencyAllowance = resolveEfficiencyAllowanceSen(
         effByWorker.get(worker.id),
         worker.efficiencyAllowanceSen,
         worker.efficiencyThresholdPct,
-        {
-          workingDays: worker.workingDaysPerMonth,
-          absentDays: labor.payroll.absentDays,
-        },
+        { workingDays: worker.workingDaysPerMonth, absentDays: labor.payroll.absentDays },
       );
+      const leadershipAllowance = resolveLeadershipAllowanceSen(worker.leadershipAllowanceSen, {
+        workingDays: worker.workingDaysPerMonth,
+        absentDays: labor.payroll.absentDays,
+      });
+      const allowances = efficiencyAllowance + leadershipAllowance;
       // Statutory deductions computed on the month's effective monthly salary
       // (= the worker's salary, day-weighted if it changed mid-month).
       const ytd = ytdPcbInputs.get(worker.id) ?? NO_YTD;
@@ -1320,7 +1361,10 @@ app.post("/", async (c) => {
       // over. Snapshotted onto the row so a later edit to the advance cannot
       // move an approved net pay.
       const advanceSen = totalAdvanceSen(advancesByWorker.get(worker.id));
-      const netPay = netPayAfterAdvanceSen(grossPay, totalDeductions, advanceSen);
+      // Approved penalties (DEV-22) — outside totalDeductions for the same
+      // reason as the advance, and snapshotted the same way.
+      const penaltySen = penaltySenByWorker.get(worker.id) ?? 0;
+      const netPay = netPayAfterAdvanceAndPenaltySen(grossPay, totalDeductions, advanceSen, penaltySen);
       // Where the money actually goes. This used to be
       //   `CIMB-${empNo}XXXX`
       // — a placeholder MANUFACTURED from the employee number, printed on every
@@ -1336,15 +1380,17 @@ app.post("/", async (c) => {
       const bankName = paymentMethod === "CASH" ? null : (worker.bankName ?? null);
       const bankAccount = paymentMethod === "CASH" ? "" : (worker.bankAccount ?? "");
 
-      // Base hourly rate (full salary ÷ 26 ÷ hours/day) for the payslip's
+      // Base hourly rate (day rate ÷ the hour divisor, rounded to the sen —
+      // the same rate the engine priced the OT with) for the payslip's
       // OT-calculation display, day-typed (owner spec 2026-06-10): the engine
       // splits OT into weekday / Sunday / public-holiday buckets. Hours are
       // rounded for the INTEGER columns; the money is the engine's exact
       // per-bucket pay (otWeekdayPaySen / otSundayPaySen / otHolidayPaySen).
-      const hourlyRate =
-        worker.workingHoursPerDay > 0
-          ? Math.round(labor.payrollDailyRateSen / worker.workingHoursPerDay)
-          : 0;
+      const hourlyRate = payrollHourRateSen(
+        labor.payrollDailyRateSen,
+        worker.workingHoursPerDay,
+        statutoryRules,
+      );
 
       const id = await nextPayslipId(c.var.DB, period);
       await c.var.DB.prepare(
@@ -1356,7 +1402,7 @@ app.post("/", async (c) => {
            allowancesSen, grossPaySen, epfEmployeeSen, epfEmployerSen,
            socsoEmployeeSen, socsoEmployerSen, eisEmployeeSen, eisEmployerSen, pcbSen,
            pcb_status,
-           totalDeductionsSen, netPaySen, advance_deduction_sen,
+           totalDeductionsSen, netPaySen, advance_deduction_sen, penalty_deduction_sen,
            bankAccount, paymentMethod, bankName, status
          ) VALUES (
            ?, ?, ?, ?, ?, ?,
@@ -1366,7 +1412,7 @@ app.post("/", async (c) => {
            ?, ?, ?, ?,
            ?, ?, ?, ?, ?,
            ?,
-           ?, ?, ?,
+           ?, ?, ?, ?,
            ?, ?, ?, 'DRAFT'
          )`,
       )
@@ -1404,6 +1450,7 @@ app.post("/", async (c) => {
           totalDeductions,
           netPay,
           advanceSen,
+          penaltySen,
           bankAccount,
           paymentMethod,
           bankName,
@@ -1416,6 +1463,11 @@ app.post("/", async (c) => {
         .bind(id)
         .first<PayslipRow>();
       if (inserted) rows.push(inserted);
+      // Production Order -> Penalty -> Worker -> Payslip: the line now names
+      // the slip that carries its deduction.
+      if (inserted && penaltySen > 0) {
+        await linkPenaltyLinesToPayslip(c.var.DB, period, worker.id, id);
+      }
     }
 
     const data = rows.map(rowToPayslip);
@@ -1461,6 +1513,27 @@ app.put("/", async (c) => {
         400,
       );
     }
+    // A month cannot be signed off while its stored payslips disagree with the
+    // penalties approved for it (one approved after the drafts were generated,
+    // or revoked since). Approving anyway would post a deduction no payslip
+    // took. Regenerate first. Refused BEFORE the status flip, as a 409 with the
+    // names, not swallowed by the catch below.
+    if (status !== "DRAFT") {
+      await ensureWorkerPenaltyTables(c.var.DB);
+      const drift = await findPenaltyDrift(c.var.DB, period);
+      if (drift.length > 0) {
+        const names = drift.slice(0, 5).map((d) => d.employeeName || d.workerId).join(", ");
+        const more = drift.length > 5 ? ` and ${drift.length - 5} more` : "";
+        return c.json(
+          {
+            success: false,
+            error: `Worker penalties changed since these payslips were generated (${names}${more}). Regenerate the period before approving.`,
+            penaltyDrift: drift,
+          },
+          409,
+        );
+      }
+    }
     const res = await c.var.DB.prepare(
       `UPDATE payslips
          SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -1482,7 +1555,16 @@ app.put("/", async (c) => {
       // successful approval failed. Swallow it here instead.
       console.warn("[payslips] advance settle skipped:", e);
     }
-    return c.json({ success: true, updated: res.meta?.changes ?? 0 });
+    // Same for penalties: approving posts the month's lines against their
+    // payslips (a worker with no slip rolls to next month); back to DRAFT
+    // un-posts them. Best-effort for the same reason as above.
+    let penalties: { posted: number; rolled: number } | undefined;
+    try {
+      penalties = await postPenaltiesForPeriod(c.var.DB, period, status !== "DRAFT");
+    } catch (e) {
+      console.warn("[payslips] penalty posting skipped:", e);
+    }
+    return c.json({ success: true, updated: res.meta?.changes ?? 0, penalties });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -1594,7 +1676,7 @@ app.get("/:id", async (c) => {
       { workingDaysPerMonth: Number(payslip.workingDays) || 26, calendarDays: 30, workingDaysInMonth: 26 },
       cfg,
     );
-    const hourRate = dayRate / payrollHourDivisor(workingHoursPerDay, cfg);
+    const hourRate = payrollHourRateSen(dayRate, workingHoursPerDay, cfg);
     for (const d of ded.results ?? []) {
       const h = Number(d.hours) || 0;
       if (h <= 0) continue;

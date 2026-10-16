@@ -69,8 +69,105 @@ export interface Tier<T> {
 
 export interface Resolution<T> extends TextMatch<T> {
   tier: CandidateTier;
-  /** "sku" when the supplier's own code matched exactly; "text" when read. */
-  via: "sku" | "text";
+  /**
+   * "sku" when the supplier's own code matched a learned code exactly; "code"
+   * when it is the same code as ours in another form (`codeFamilyMatch`);
+   * "text" when read from the wording.
+   */
+  via: "sku" | "code" | "text";
+}
+
+/**
+ * A code as comparable parts: letter runs and number runs, numbers without
+ * leading zeros. `NICCA-06` → [NICCA, 6]; `PSF15.064HCS(14)` →
+ * [PSF, 15, 64, HCS, 14]. Punctuation, spacing and zero-padding are how the
+ * SAME code drifts between a supplier's system and ours.
+ */
+export function codeParts(code: string | null | undefined): string[] {
+  return ((code ?? "").toUpperCase().match(/[A-Z]+|\d+/g) ?? []).map((p) =>
+    /^\d+$/.test(p) ? p.replace(/^0+(?=\d)/, "") : p,
+  );
+}
+
+/**
+ * The same supplier code despite zero-padding and punctuation —
+ * `NICCA-6-FOG` (their invoice) and `NICCA-06-FOG` (the saved binding). Exact
+ * part-for-part, so `NICCA-6` and `NICCA-6-FOG` are NOT the same code.
+ */
+export function sameSupplierCode(a: string | null | undefined, b: string | null | undefined): boolean {
+  const pa = codeParts(a);
+  return pa.length > 0 && pa.join("|") === codeParts(b).join("|");
+}
+
+function containsRun(long: string[], short: string[]): boolean {
+  if (short.length === 0 || short.length > long.length) return false;
+  for (let i = 0; i + short.length <= long.length; i++) {
+    if (short.every((p, j) => long[i + j] === p)) return true;
+  }
+  return false;
+}
+
+/** Fewest parts / characters the shared run must have — `6` or `FOG` alone never identifies. */
+export const MIN_CODE_FAMILY_PARTS = 2;
+export const MIN_CODE_FAMILY_CHARS = 5;
+/** Floor when our code merely starts with the supplier's (`KS08` = `KS8` = 3 chars). */
+export const MIN_CODE_PREFIX_CHARS = 3;
+
+/**
+ * Our material whose code is the supplier's code in another form — one sits,
+ * part for part, inside the other. Owner 2026-09-24, Meditex SMI2608/599: the
+ * operators want a scan to fill itself, and the supplier's codes are ours with
+ * a prefix, a suffix or zero-padding —
+ *   `NICCA-6-FOG`        ↔ `NICCA-06`                (ours inside theirs)
+ *   `PSF15.064HCS(14)`   ↔ `MED-PSF15.064HCS(14)(L)` (theirs inside ours)
+ *   `TARONI-CREAM 82"`   ↔ `TARONI-CREAM 82"`        (identical)
+ * Before this, only an EXACT learned code or the wording could resolve a line,
+ * and "TEXTILE FABRIC,- FOG WIDTH 145CM" can never single out NICCA-06.
+ *
+ * The longest shared run wins; a tie is refused (null), so a family with two
+ * equally close members is left for the operator rather than guessed.
+ */
+export function codeFamilyMatch<T extends MaterialLike>(
+  supplierCode: string | null | undefined,
+  items: T[],
+): T | null {
+  const theirs = codeParts(supplierCodeOf(supplierCode));
+  if (theirs.length === 0) return null;
+  // The SAME code, punctuation and zero-padding aside (`KS08` ↔ `KS-08`), needs
+  // no length floor: there is nothing to infer, and it must beat `KS-08 SEA
+  // PINK`, which contains it and would otherwise tie it (INFAB, BUG-37). One
+  // exact hit answers; two identical codes are ambiguous, so refuse.
+  const exact = items.filter((it) => sameSupplierCode(it.itemCode, supplierCode));
+  if (exact.length > 0) {
+    return new Set(exact.map((it) => normKey(it.itemCode))).size === 1 ? exact[0] : null;
+  }
+  let best: T | null = null;
+  let bestLen = 0;
+  let tie = false;
+  const seen = new Set<string>();
+  for (const it of items) {
+    const key = normKey(it.itemCode);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const ours = codeParts(it.itemCode);
+    const short = ours.length <= theirs.length ? ours : theirs;
+    const long = short === ours ? theirs : ours;
+    // Our code STARTING with theirs (`KS08` → `KS-08 SEA PINK`) is a far safer
+    // reading than theirs turning up mid-way through ours, so it gets a lower
+    // length floor. A tie is still refused below.
+    const startsWithTheirs = ours.length > theirs.length && theirs.every((p, j) => ours[j] === p);
+    const minChars = startsWithTheirs ? MIN_CODE_PREFIX_CHARS : MIN_CODE_FAMILY_CHARS;
+    if (short.length < MIN_CODE_FAMILY_PARTS || short.join("").length < minChars) continue;
+    if (!containsRun(long, short)) continue;
+    if (short.length > bestLen) {
+      best = it;
+      bestLen = short.length;
+      tie = false;
+    } else if (short.length === bestLen) {
+      tie = true;
+    }
+  }
+  return tie ? null : best;
 }
 
 /**
@@ -356,12 +453,22 @@ export function resolveMaterialForLine<T extends MaterialLike>(
   // A row number from the document's "No." column is not a code to look up.
   const skuKey = normKey(supplierCodeOf(opts.supplierSku));
   if (skuKey && opts.skuIndex) {
-    const hit = opts.skuIndex.get(skuKey);
+    let hit = opts.skuIndex.get(skuKey);
+    // …or the same code with different zero-padding (NICCA-6-FOG / NICCA-06-FOG).
+    if (!hit) {
+      for (const [k, v] of opts.skuIndex) {
+        if (sameSupplierCode(k, skuKey)) { hit = v; break; }
+      }
+    }
     if (hit) return { item: hit, score: 1, margin: 1, tier: "supplier", via: "sku" };
   }
-  if (!text.trim()) return null;
   for (const t of tiers) {
     if (t.items.length === 0) continue;
+    // The supplier's code in another form outranks reading the wording — but
+    // tier by tier, so a narrower search space still answers first.
+    const family = codeFamilyMatch(opts.supplierSku, t.items);
+    if (family) return { item: family, score: 1, margin: 1, tier: t.tier, via: "code" };
+    if (!text.trim()) continue;
     const hit = matchCatalogItem(text, t.items, {
       minScore: t.minScore,
       minMargin: t.minMargin,

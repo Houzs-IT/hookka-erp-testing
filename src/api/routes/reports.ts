@@ -22,7 +22,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
-import { requirePermission } from "../lib/rbac";
+import { requirePermission, requireSuperAdmin } from "../lib/rbac";
 import { sendMail } from "../lib/email";
 import {
   collectEfficiencyData,
@@ -53,7 +53,20 @@ import {
   collectOperationsReport,
   type OperationsPeriodKind,
 } from "../lib/operations-report";
-import { getOrgId } from "../lib/tenant";
+import { getOrgId, DEFAULT_ORG_ID } from "../lib/tenant";
+import { productionRevenueByDay } from "../lib/production-revenue";
+import {
+  REPORT_KINDS,
+  invalidEmailsIn,
+  dueSlot,
+  loadLastSent,
+  loadReportSettings,
+  normalizeReportSettings,
+  saveLastSent,
+  seedLastSent,
+  saveReportSettings,
+  type ReportKind,
+} from "../lib/report-settings";
 
 const app = new Hono<Env>();
 export default app;
@@ -162,11 +175,23 @@ async function nonWorkingDayReason(c: {
 }
 
 // ---------------------------------------------------------------------------
-// Recipient resolution — DAILY_REPORT_RECIPIENTS env var (comma-separated)
+// Recipient resolution — a report configured on Settings → Email Reports
+// (kv_config['daily_report_settings'], BUG-36) uses its own PIC list, full
+// stop. Unconfigured reports: DAILY_REPORT_RECIPIENTS env var (comma-separated)
 // takes precedence. Fallback: all SUPER_ADMIN users in the users table.
 // ---------------------------------------------------------------------------
 
 async function resolveRecipients(
+  c: { env: Env["Bindings"]; var: Env["Variables"] },
+  kind: ReportKind,
+): Promise<string[]> {
+  const configured = (await loadReportSettings(c.var.DB))[kind];
+  if (configured) return configured.recipients;
+  return legacyRecipients(c);
+}
+
+// The pre-BUG-36 shared list, used by every report not yet configured.
+async function legacyRecipients(
   c: { env: Env["Bindings"]; var: Env["Variables"] },
 ): Promise<string[]> {
   const env = c.env as Env["Bindings"] & { DAILY_REPORT_RECIPIENTS?: string };
@@ -387,7 +412,7 @@ app.get("/schedule", async (c) => {
   const date = parseDateParam(c.req.query("date"), todayYmdSgt);
   try {
     const data = await collectScheduleData(c.var.DB, date);
-    return new Response(renderScheduleHtml(data), {
+    return new Response(renderScheduleHtml(data, { dept: c.req.query("dept") }), {
       status: 200,
       headers: {
         "Content-Type": "text/html; charset=utf-8",
@@ -737,8 +762,6 @@ async function buildBriefHtmlCached(
 
 export const internal = new Hono<Env>();
 
-type ReportKind = "efficiency" | "schedule" | "overdue" | "brief";
-
 async function authCron(c: {
   env: Env["Bindings"];
   req: { header(name: string): string | undefined };
@@ -759,7 +782,7 @@ async function authCron(c: {
 // Exported for the Agent Console's "Run now" (routes/agent-console.ts) — the
 // console triggers the SAME send path the cron uses, wrapped in an agent run.
 export async function dispatchReport(
-  c: { env: Env["Bindings"]; var: Env["Variables"]; req: { json(): Promise<unknown> } },
+  c: { env: Env["Bindings"]; var: Env["Variables"]; req: { json(): Promise<unknown>; url?: string } },
   kind: ReportKind,
   usageSink?: { tokensIn: number; tokensOut: number },
 ): Promise<{
@@ -776,32 +799,30 @@ export async function dispatchReport(
     body = {};
   }
   // Date resolution:
-  //   - efficiency: previous working day (skip Sun + PH walking back from today).
-  //     Monday 12pm → Saturday's report (not Sunday's empty one).
-  //   - schedule / overdue: today (the cron only fires on working days, so
-  //     today is by construction a working day — see cronGate).
+  //   - every kind: today. The efficiency email used to cover the previous
+  //     working day at 12:00; BUG-36 moved it to the evening covering TODAY
+  //     (with production revenue). The cron only fires on working days, so
+  //     today is by construction a working day — see cronGate.
   //   - body.date always wins as override (manual backfill).
-  let date: string;
-  if (typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
-    date = body.date;
-  } else if (kind === "efficiency") {
-    const holidays = await loadPublicHolidays(c);
-    date = previousWorkingDay(todayYmdSgt(), holidays);
-  } else {
-    date = todayYmdSgt();
-  }
+  const date =
+    typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
+      ? body.date
+      : todayYmdSgt();
   const overrideTo = Array.isArray(body.to)
     ? body.to
     : typeof body.to === "string"
       ? body.to.split(",").map((s) => s.trim()).filter(Boolean)
       : [];
   const recipients =
-    overrideTo.length > 0 ? overrideTo : await resolveRecipients(c);
+    overrideTo.length > 0 ? overrideTo : await resolveRecipients(c, kind);
   if (recipients.length === 0) {
     console.warn(`[reports/${kind}-trigger] no recipients — skipping send`);
     return { ok: false, date, sent: 0, failed: 0, errors: ["no recipients"] };
   }
-  return runAndSendReport(c, kind, date, recipients, usageSink);
+  // Links in the email point back at the site that sent it (cron → prod,
+  // a staging test send → staging).
+  const origin = c.req.url ? new URL(c.req.url).origin : undefined;
+  return runAndSendReport(c, kind, date, recipients, usageSink, origin);
 }
 
 // Crons skip on Sundays + declared public holidays (kv_config['public_holidays']).
@@ -830,6 +851,11 @@ async function cronGate(
       failed: 0,
     });
   }
+  // Switched off on Settings → Email Reports (BUG-36). Manual sends still work.
+  if ((await loadReportSettings(c.var.DB))[kind]?.enabled === false) {
+    console.log(`[reports/${kind}-trigger] skipping — disabled in Email Reports settings`);
+    return c.json({ ok: true, skipped: true, reason: "disabled", sent: 0, failed: 0 });
+  }
   return null;
 }
 
@@ -854,21 +880,94 @@ internal.post("/overdue-trigger", async (c) => {
 internal.post("/brief-trigger", async (c) => {
   const gated = await cronGate(c, "brief");
   if (gated) return gated;
-  // Agent Console gate — a paused Production agent (or the global kill
-  // switch) silences the automatic morning brief. Manual /brief/send and the
-  // console's Run-now stay available (explicit human actions).
+  return c.json(await sendScheduled(c, "brief"));
+});
+
+// One automatic send. The brief also honours the Agent Console: a paused
+// Production agent (or the global kill switch) silences it, and each send is
+// recorded as an agent run. Manual /brief/send and the console's Run-now stay
+// available (explicit human actions).
+async function sendScheduled(c: Parameters<typeof dispatchReport>[0], kind: ReportKind) {
+  if (kind !== "brief") return dispatchReport(c, kind);
   if (await isAgentPaused(c.var.DB, "PRODUCTION")) {
     console.log("[reports/brief-trigger] skipping — agent paused (Agent Console)");
-    return c.json({ ok: true, skipped: "paused", sent: 0, failed: 0 });
+    return { ok: true, skipped: "paused", sent: 0, failed: 0 };
   }
-  const result = await recordAgentRun(c.var.DB, "production-brief", async (run) => {
+  return recordAgentRun(c.var.DB, "production-brief", async (run) => {
     const sink = { tokensIn: 0, tokensOut: 0 };
     const res = await dispatchReport(c, "brief", sink);
     run.addTokens(sink.tokensIn, sink.tokensOut);
     run.setSummary(`${res.date} · sent ${res.sent} · failed ${res.failed}`);
     return res;
   });
-  return c.json(result);
+}
+
+// POST /api/internal/reports/due-trigger — the 15-minute cron
+// (.github/workflows/daily-reports.yml). Sends every report whose schedule on
+// Settings → Email Reports has a send time that has come due and not gone out.
+internal.post("/due-trigger", async (c) => {
+  const authDenied = await authCron(c);
+  if (authDenied) return authDenied;
+  const skip = await nonWorkingDayReason(c);
+  if (skip) return c.json({ ok: true, skipped: true, reason: skip, results: {} });
+  const [settings, lastSent] = await Promise.all([
+    loadReportSettings(c.var.DB),
+    loadLastSent(c.var.DB),
+  ]);
+  const now = new Date();
+  // First run on this database: record what the old fixed crons already sent
+  // today instead of sending it again (see seedLastSent).
+  const seeded = seedLastSent(settings, lastSent, now);
+  if (seeded.length > 0) await saveLastSent(c.var.DB, lastSent);
+  const results: Partial<Record<ReportKind, unknown>> = {};
+  for (const kind of REPORT_KINDS) {
+    if (seeded.includes(kind)) continue;
+    if (settings[kind]?.enabled === false) continue;
+    const slot = dueSlot(kind, settings[kind], now, lastSent[kind]);
+    if (!slot) continue;
+    // Marked before sending: a failed send is not retried, rather than risk
+    // emailing the same report twice.
+    lastSent[kind] = slot;
+    await saveLastSent(c.var.DB, lastSent);
+    results[kind] = await sendScheduled(c, kind);
+  }
+  return c.json({ ok: true, results });
+});
+
+// ---------------------------------------------------------------------------
+// Settings → Email Reports (BUG-36): per-report on/off + PIC list + schedule.
+//   GET  /api/reports/settings  → { settings, fallback }
+//        `fallback` is who an UNCONFIGURED report goes to today, so the page
+//        can prefill instead of showing an empty list.
+//   PUT  /api/reports/settings  body = { brief?: {enabled, recipients[],
+//        frequency, times[], weekday, monthDay}, ... }
+// SUPER_ADMIN only: the lists are staff emails.
+// ---------------------------------------------------------------------------
+app.get("/settings", async (c) => {
+  const denied = requireSuperAdmin(c);
+  if (denied) return denied;
+  const [settings, fallback] = await Promise.all([
+    loadReportSettings(c.var.DB),
+    legacyRecipients(c),
+  ]);
+  return c.json({ success: true, data: { kinds: REPORT_KINDS, settings, fallback } });
+});
+
+app.put("/settings", async (c) => {
+  const denied = requireSuperAdmin(c);
+  if (denied) return denied;
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return c.json({ success: false, error: "Invalid JSON" }, 400);
+  }
+  const bad = invalidEmailsIn(body);
+  if (bad.length > 0) {
+    return c.json({ success: false, error: `Not a valid email: ${bad.join(", ")}` }, 400);
+  }
+  // Merge so saving one card never wipes another report's settings.
+  const next = { ...(await loadReportSettings(c.var.DB)), ...normalizeReportSettings(body) };
+  await saveReportSettings(c.var.DB, next);
+  return c.json({ success: true, data: next });
 });
 
 // Manual send-now endpoints for schedule + overdue (parallel to /efficiency/send).
@@ -894,6 +993,7 @@ async function runAndSendReport(
   date: string,
   recipients: string[],
   usageSink?: { tokensIn: number; tokensOut: number },
+  origin?: string,
 ): Promise<{
   ok: boolean;
   date: string;
@@ -931,17 +1031,37 @@ async function runAndSendReport(
     subject = `[Hookka] Production Morning Brief — ${date} (${data.overdue.totals.salesOrders} overdue)`;
   } else if (kind === "efficiency") {
     const data = await collectEfficiencyData(c.var.DB, date);
-    html = renderEfficiencyHtml(data);
+    // Email only (the in-app /efficiency page is HR-readable; revenue is not
+    // theirs). Same query as the dashboard's Daily (Lim) tab.
+    try {
+      const orgId = (c.var as { orgId?: string }).orgId || DEFAULT_ORG_ID;
+      const [r] = await productionRevenueByDay(c.var.DB, orgId, date);
+      data.revenue = {
+        revenueSen: Number(r?.revenueSen) || 0,
+        orders: Number(r?.orders) || 0,
+        unpricedOrders: Number(r?.unpricedOrders) || 0,
+      };
+    } catch (err) {
+      console.error("[reports/efficiency] production revenue failed:", err);
+      data.revenue = null;
+    }
+    html = renderEfficiencyHtml(data, { email: true });
     text = renderEfficiencyEmailText(data);
-    subject = `[Hookka] Daily Efficiency Report — ${date} (${data.totals.efficiencyPct}% overall)`;
+    const rev = data.revenue
+      ? ` · RM ${(data.revenue.revenueSen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : "";
+    subject = `[Hookka] Production Efficiency & Revenue — ${date} (${data.totals.efficiencyPct}% overall${rev})`;
   } else if (kind === "schedule") {
     const data = await collectScheduleData(c.var.DB, date);
-    html = renderScheduleHtml(data);
+    html = renderScheduleHtml(data, {
+      email: true,
+      fullListUrl: origin ? `${origin}/api/reports/schedule?date=${date}` : undefined,
+    });
     text = renderScheduleEmailText(data);
     subject = `[Hookka] Production Schedule — ${date} (${data.totals.jobCards} JC · ${data.totals.quantity} units)`;
   } else {
     const data = await collectOverdueData(c.var.DB, date);
-    html = renderOverdueHtml(data);
+    html = renderOverdueHtml(data, { email: true });
     text = renderOverdueEmailText(data);
     subject = `[Hookka] Overdue Report — ${date} (${data.totals.salesOrders} SOs · worst ${data.totals.worstDays}d)`;
   }

@@ -30,24 +30,34 @@ import { parseDebtorCode } from "../../lib/debtor";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
-import { buildStatement, splitByLargestRemainder, rawMaterialLineFor, RM_LINES } from "../../lib/cashflow-engine";
-import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite } from "../../lib/cashflow-engine";
+import { buildStatement, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
+import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection } from "../../lib/cashflow-engine";
 import { getDocNumberPrefixes, issueDocNumber, issueDocNumberWithPrefix } from "../lib/doc-number-service";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { ensureFinanceOrgColumns } from "../lib/ensure-finance-org";
 import { apRowBeforeOpening, legBeforeOpening, rowBeforeOpening } from "../../lib/opening-floor";
 import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
+import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
+import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
 import { labourInjectMonths } from "../../lib/labour-inject";
+import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
+import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
+import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
 import { projectedLabourByDept } from "../lib/labour-projection";
+import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
+import { loadPreparedProduction } from "../lib/production-stock";
+import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
+import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
-import { tfTotals } from "../../lib/trade-finance";
+import { tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
 import { DOC_DATE_FAMILIES, stripLegSuffix, stripSourceIdSuffix, parseSourceIdDate } from "../../lib/doc-date";
+import { itemCodeKey } from "../../lib/stock-take-import";
 import {
   prefixForPartyType,
   computeBillTotals,
@@ -86,6 +96,13 @@ import {
   type ApReconPi,
   type ApReconPaymentRow,
 } from "../../lib/ap-recon";
+// The Payment Vouchers "AP Payment" road posts a supplier payment at APPROVE
+// through the SAME builders the Supplier Payment page uses (owner 2026-09-22,
+// Houzs adoption: 「ap payment 和 payment voucher 一起」).
+import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle } from "./supplier-payments";
+// PV attachments ride the generic file store (Supabase Storage + file_assets)
+// through its ONE upload/delete path, behind the voucher's own rules.
+import { storeUploadedFile, removeStoredFile } from "./files";
 
 const app = new Hono<Env>();
 
@@ -277,6 +294,21 @@ const PROTECTED_ACCOUNTS = new Set([
   "330-0001", "330-0002", "330-0003", "330-1001", "330-1002", "330-2001",
   "330-3005", "330-4000", "330-8000", "330-9000",
 ]);
+
+// An account with child accounts is a header (AutoCount convention) and is
+// NEVER postable, whatever its stored flag says. Owner 2026-09-29 「by right
+// 410-0000 不能选吧」: 410-0000 ACCRUALS was the one parent in the chart still
+// flagged postable, so salary vouchers were paid against it instead of
+// 410-0010 ACCRUAL - SALARY. The fragment below replaces the stored flag in the
+// SELECTs that feed line validation; accountHasChildren serves single lookups.
+// (snake_case alias: the PG adapter camelCases it back to isPostable.)
+const EFFECTIVE_POSTABLE_SQL =
+  "CASE WHEN EXISTS (SELECT 1 FROM chart_of_accounts k WHERE k.parentCode = chart_of_accounts.code) THEN 0 ELSE isPostable END AS is_postable";
+async function accountHasChildren(db: Env["Variables"]["DB"], code: string): Promise<boolean> {
+  const r = await db.prepare("SELECT COUNT(*) AS n_children FROM chart_of_accounts WHERE parentCode = ?")
+    .bind(code).first<Record<string, unknown>>();
+  return Number(r?.nChildren ?? r?.n_children ?? 0) > 0;
+}
 
 // "Does this account carry any amount?" — gate before promoting a leaf
 // account into a parent (drag & drop). Checks the immutable ledger plus
@@ -835,7 +867,13 @@ app.get("/coa", async (c) => {
   const res = await c.var.DB.prepare(
     "SELECT * FROM chart_of_accounts WHERE isActive = 1 ORDER BY code",
   ).all<CoaRow>();
-  const data = (res.results ?? []).map(rowToCoa);
+  // A parent is never postable (see EFFECTIVE_POSTABLE_SQL) — every account
+  // picker filters on isPostable, so a header can no longer be chosen.
+  const parents = new Set((res.results ?? []).map((r) => r.parentCode).filter((x): x is string => !!x));
+  const data = (res.results ?? []).map((r) => {
+    const row = rowToCoa(r);
+    return parents.has(row.code) ? { ...row, isPostable: false } : row;
+  });
   return c.json({ success: true, data, total: data.length });
 });
 
@@ -971,6 +1009,15 @@ app.put("/coa", async (c) => {
             ? 1
             : 0,
     };
+    if (await accountHasChildren(c.var.DB, String(code))) {
+      if (body.isPostable === true) {
+        return c.json(
+          { success: false, error: `${code} has child accounts — a parent (header) account can't be postable; post to one of its children` },
+          400,
+        );
+      }
+      merged.isPostable = 0;
+    }
     if (
       merged.cashFlowCategory &&
       !["O", "I", "F"].includes(merged.cashFlowCategory)
@@ -1201,6 +1248,32 @@ app.get("/journals", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// System postings (owner 2026-10-09 「journal 也要显示」): what the system writes
+// straight to the GL with no journal document of its own — the labour
+// month-end posting and its undo, closing stock, depreciation, the year-end
+// close, the opening balance. Listed on Journal Entries beside the manual
+// journals, read-only: each is redone or undone on the tab that made it. The
+// families and the one-entry-per-posting grouping: src/lib/system-journals.ts.
+app.get("/system-journals", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const families = Object.keys(SYSTEM_JOURNAL_FAMILIES);
+  const [legRes, coaRes, dc] = await Promise.all([
+    c.var.DB.prepare(
+      `SELECT sourceType, sourceId, postedAt, legNo, accountCode, debitSen, creditSen, description
+         FROM ledger_journal_entries
+        WHERE orgId = ? AND hidden = 0 AND sourceType IN (${families.map(() => "?").join(",")})
+        ORDER BY postedAt, legNo`,
+    ).bind(orgId, ...families).all<SystemLeg>(),
+    c.var.DB.prepare("SELECT code, name FROM chart_of_accounts").all<{ code: string; name: string }>(),
+    loadDocDateResolver(c.var.DB),
+  ]);
+  const names = new Map((coaRes.results ?? []).map((a) => [a.code, a.name] as const));
+  const data = buildSystemJournals(legRes.results ?? [], (code) => names.get(code) ?? "", dc.docDate);
+  return c.json({ success: true, data, total: data.length });
+});
+
 app.post("/journals", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
@@ -1369,7 +1442,7 @@ app.put("/journals/:id", async (c) => {
             400,
           );
         }
-        if ((acct.isPostable ?? 1) === 0) {
+        if ((acct.isPostable ?? 1) === 0 || (await accountHasChildren(c.var.DB, l.accountCode))) {
           return c.json(
             {
               success: false,
@@ -3200,7 +3273,7 @@ app.get("/ar-reconciliation", async (c) => {
         isOpening?: number | null; is_opening?: number | null;
       }>(),
     c.var.DB.prepare(
-      `SELECT pr.id AS id, pr.receiptNumber AS receiptNumber, pr.customerName AS customerName,
+      `SELECT pr.id AS id, pr.receiptNumber AS receiptNumber, pr.customerId AS customerId, pr.customerName AS customerName,
               pr.date AS date, pr.amount AS amount, pr.method AS method, pr.allocations AS allocations,
               dl.state AS lifecycleState
          FROM payment_records pr
@@ -3208,7 +3281,8 @@ app.get("/ar-reconciliation", async (c) => {
                 ON dl.sourceType = 'payment' AND dl.sourceId = pr.id
         WHERE 1=1`,
     ).all<{
-      id: string; receiptNumber?: string; receipt_number?: string; customerName?: string; customer_name?: string;
+      id: string; receiptNumber?: string; receipt_number?: string; customerId?: string; customer_id?: string;
+      customerName?: string; customer_name?: string;
       date?: string; amount?: number; method?: string; allocations?: string | unknown[];
       lifecycleState?: string | null; lifecyclestate?: string | null;
     }>().catch(() => ({ results: [] as never[] })),
@@ -3276,15 +3350,41 @@ app.get("/ar-reconciliation", async (c) => {
         date,
       });
     }
-    // NOTE: deliberately NO synthetic "unapplied remainder" row — /ar-control
-    // subtracts no advances, so the mirror must not either; a receipt whose GL
-    // exceeds its allocations surfaces as a payment_gl_mismatch item instead.
+    // What the receipt holds on account — the part its allocations don't cover.
+    // /ar-control nets it off as an unapplied customer advance
+    // (loadUnappliedCustomerAdvances: live receipts with a customer, amount −
+    // Σ allocations, positive only), so the mirror carries it as an advance row
+    // too. Before, every receipt held on account read as a "void payment GL
+    // leak" (BUG-2026-09-30-229).
+    const onAccountSen = Math.round(Number(r.amount) || 0) - allocs.reduce((s, a) => s + Math.round(Number(a.amount) || 0), 0);
+    if (onAccountSen > 0 && String(r.customerId ?? r.customer_id ?? "")) {
+      receiptRows.push({
+        paymentNo: recId,
+        purchaseInvoiceId: null,
+        bookedSen: 0,
+        amountSen: onAccountSen,
+        method: String(r.method ?? ""),
+        active,
+        supplierName: name,
+        date,
+      });
+    }
   }
 
   const report = buildApReconciliation(
     { legs400: legs300, pis: invoices, paymentRows: receiptRows, pcnPostedSen: 0, cnAllocCtlSen: 0 },
     AR_RECON_CFG,
   );
+  // The ledger keys a receipt by its record id; the owner reads receipt
+  // numbers (2026-10-01). A GL leg with no record keeps its id.
+  const receiptNoById = new Map<string, string>();
+  for (const r of recRes.results ?? []) {
+    const no = String(r.receiptNumber ?? r.receipt_number ?? "").trim();
+    if (no) receiptNoById.set(String(r.id), no);
+  }
+  for (const it of report.items) {
+    if (it.kind === "payment_gl_mismatch" || it.kind === "void_payment_gl_leak") it.ref = receiptNoById.get(it.ref) ?? it.ref;
+  }
 
   const coaRes = await c.var.DB.prepare(
     "SELECT code, name FROM chart_of_accounts WHERE specialAccountType = 'SDC'",
@@ -3971,7 +4071,7 @@ app.post("/other-party-bills", async (c) => {
 
     for (const code of [...new Set(items.map((i) => i.counterAccount))]) {
       const acct = await c.var.DB.prepare(
-        "SELECT code, isPostable FROM chart_of_accounts WHERE code = ?",
+        `SELECT code, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts WHERE code = ?`,
       )
         .bind(code)
         .first<{ code: string; isPostable: number }>();
@@ -4114,7 +4214,7 @@ app.put("/other-party-bills/:billNo", async (c) => {
     if (shapeErr) return c.json({ success: false, error: shapeErr }, 400);
     for (const code of [...new Set(items.map((i) => i.counterAccount))]) {
       const acct = await c.var.DB.prepare(
-        "SELECT code, isPostable FROM chart_of_accounts WHERE code = ?",
+        `SELECT code, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts WHERE code = ?`,
       ).bind(code).first<{ code: string; isPostable: number }>();
       if (!acct) return c.json({ success: false, error: `Account ${code} not found` }, 400);
       if (acct.isPostable !== 1)
@@ -4340,9 +4440,19 @@ app.get("/other-party-bills", async (c) => {
     }
   }
 
+  // Attachment count per bill (owner 2026-10-01 「OCB 附件要做」).
+  const attachCountById = new Map<string, number>();
+  if (bills.length > 0) {
+    const attRes = await c.var.DB.prepare(
+      "SELECT resourceId, COUNT(*) AS n_files FROM file_assets WHERE orgId = ? AND resourceType = ? GROUP BY resourceId",
+    ).bind(orgId, OCB_ATTACH_RESOURCE).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const r of attRes.results ?? []) attachCountById.set(String(r.resourceId ?? r.resource_id ?? ""), Math.round(Number(r.nFiles ?? r.n_files) || 0));
+  }
+
   const data = bills.map((b) => ({
     id: b.id,
     billNo: b.billNo,
+    attachmentCount: attachCountById.get(b.id) ?? 0,
     partyId: b.partyId,
     partyType: b.partyType,
     partyName: b.partyName,
@@ -4365,6 +4475,241 @@ app.get("/other-party-bills", async (c) => {
     })),
   }));
   return c.json({ success: true, data, total: data.length });
+});
+
+// ---------------------------------------------------------------------------
+// Other-party bill attachments (owner 2026-10-01 「OCB 附件要做」): the same file
+// store and the same one upload / one delete path as the payment vouchers
+// (resourceType 'other_party_bill', resourceId = the bill's id). A bill posts
+// the moment it is saved, so the evidence rules follow its life instead of an
+// approval ladder: a voided / deleted bill takes no new file, and once money
+// has been paid against the bill its files are locked (nothing deleted). Scan
+// Bill / Scan Bills attach the scanned file here automatically.
+// ---------------------------------------------------------------------------
+const OCB_ATTACH_RESOURCE = "other_party_bill";
+type OcbAttachTarget = { id: string; billNo: string; paidAmountSen: number; active: boolean };
+async function ocbForAttach(db: Env["Variables"]["DB"], orgId: string, billNo: string): Promise<OcbAttachTarget | null> {
+  const b = await db.prepare(
+    `SELECT other_party_bills.*, dl.state AS lifecycleState
+       FROM other_party_bills
+       LEFT JOIN document_lifecycle dl
+         ON dl.orgId = other_party_bills.orgId
+        AND dl.sourceType = 'other_party_bill'
+        AND dl.sourceId = other_party_bills.billNo
+      WHERE other_party_bills.billNo = ? AND other_party_bills.orgId = ?`,
+  ).bind(billNo, orgId).first<OtherPartyBillRow & { lifecycleState: string | null }>();
+  if (!b) return null;
+  return { id: b.id, billNo: b.billNo, paidAmountSen: Number(b.paidAmountSen) || 0, active: (b.lifecycleState ?? "ACTIVE") === "ACTIVE" };
+}
+
+app.get("/other-party-bills/:billNo/attachments", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const bill = await ocbForAttach(c.var.DB, orgId, c.req.param("billNo"));
+  if (!bill) return c.json({ success: false, error: "Bill not found" }, 404);
+  const res = await c.var.DB.prepare(
+    "SELECT id, filename, contentType, sizeBytes, uploadedAt, uploadedBy FROM file_assets WHERE orgId = ? AND resourceType = ? AND resourceId = ? ORDER BY uploadedAt ASC",
+  ).bind(orgId, OCB_ATTACH_RESOURCE, bill.id).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const rows = (res.results ?? []).map((r) => ({
+    id: String(r.id), filename: String(r.filename ?? ""), contentType: String(r.contentType ?? r.content_type ?? ""),
+    sizeBytes: Math.round(Number(r.sizeBytes ?? r.size_bytes) || 0), uploadedAt: String(r.uploadedAt ?? r.uploaded_at ?? ""),
+  }));
+  return c.json({
+    success: true,
+    data: {
+      rows,
+      // What the client may do — the server re-checks on write.
+      canAdd: bill.active,
+      canDelete: bill.active && bill.paidAmountSen === 0,
+    },
+  });
+});
+
+app.post("/other-party-bills/:billNo/attachments", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const bill = await ocbForAttach(c.var.DB, getOrgId(c), c.req.param("billNo"));
+  if (!bill) return c.json({ success: false, error: "Bill not found" }, 404);
+  if (!bill.active) return c.json({ success: false, error: "A voided bill takes no attachments" }, 400);
+  let form: FormData;
+  try { form = await c.req.formData(); } catch { return c.json({ success: false, error: "invalid multipart body" }, 400); }
+  const file = form.get("file");
+  if (!(file instanceof File)) return c.json({ success: false, error: "file field required" }, 400);
+  const stored = await storeUploadedFile(c, { file, resourceType: OCB_ATTACH_RESOURCE, resourceId: bill.id });
+  if (!stored.ok) return c.json({ success: false, error: stored.error }, stored.status);
+  return c.json({ success: true, data: stored.data }, 201);
+});
+
+app.delete("/other-party-bills/:billNo/attachments/:fileId", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const fileId = c.req.param("fileId");
+  const bill = await ocbForAttach(c.var.DB, getOrgId(c), c.req.param("billNo"));
+  if (!bill) return c.json({ success: false, error: "Bill not found" }, 404);
+  if (!bill.active) return c.json({ success: false, error: "A voided bill's attachments are kept as evidence" }, 400);
+  if (bill.paidAmountSen !== 0) {
+    return c.json({ success: false, error: `Evidence is locked once money is paid against a bill (${bill.billNo} is part-paid or paid)` }, 400);
+  }
+  // The file must belong to THIS bill — never delete by id alone.
+  const own = await c.var.DB.prepare(
+    "SELECT id FROM file_assets WHERE id = ? AND orgId = ? AND resourceType = ? AND resourceId = ?",
+  ).bind(fileId, getOrgId(c), OCB_ATTACH_RESOURCE, bill.id).first<{ id: string }>();
+  if (!own) return c.json({ success: false, error: "Attachment not found on this bill" }, 404);
+  const removed = await removeStoredFile(c, fileId);
+  if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);
+  return c.json({ success: true });
+});
+
+// Corrections report (Houzs adoption Phase 4, 2026-09-22): every posted
+// document that was later EDITED (restated) or CANCELLED (voided), from the
+// ledger itself — who, when, which document, the reversed amount and the
+// re-posted amount. Restates leave `<doc>_restate_rev:<stamp>` +
+// `<doc>_restate_post:<stamp>` leg families, voids leave `<doc>_void`; the
+// stamp groups one correction. Reasons come from the PV reject trail and the
+// bank-reco re-open journal where they exist. Read-only.
+app.get("/corrections", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const month = c.req.query("month") || ""; // YYYY-MM of the correction (postedAt), blank = last 90 days
+  const since = month && /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const until = month && /^\d{4}-\d{2}$/.test(month) ? `${month}-31T23:59:59` : "9999-12-31";
+  const res = await c.var.DB.prepare(
+    `SELECT sourceType, sourceId, actorUserId, MIN(postedAt) AS posted_at,
+            SUM(debitSen) AS dr_sen, SUM(creditSen) AS cr_sen, COUNT(*) AS legs
+       FROM ledger_journal_entries
+      WHERE orgId = ? AND postedAt >= ? AND postedAt <= ?
+        AND (sourceType LIKE '%\\_restate\\_rev:%' ESCAPE '\\' OR sourceType LIKE '%\\_restate\\_post:%' ESCAPE '\\' OR sourceType LIKE '%\\_void' ESCAPE '\\' OR sourceType = 'opening_balance_reversal')
+      GROUP BY sourceType, sourceId, actorUserId`,
+  ).bind(orgId, since, until).all<Record<string, unknown>>();
+  type Row = { stamp: string; docType: string; docId: string; kind: "edit" | "cancel" | "opening"; actorUserId: string | null; at: string; reversedSen: number; repostedSen: number; legs: number };
+  const byKey = new Map<string, Row>();
+  for (const r of res.results ?? []) {
+    const st = String(r.sourceType ?? r.source_type ?? "");
+    const sid = String(r.sourceId ?? r.source_id ?? "");
+    const at = String(r.postedAt ?? r.posted_at ?? "");
+    const actor = (r.actorUserId ?? r.actor_user_id) as string | null;
+    const dr = Math.round(Number(r.drSen ?? r.dr_sen) || 0);
+    const m = /^(.*)_restate_(rev|post):(.+)$/.exec(st);
+    let key: string, row: Row;
+    if (m) {
+      key = `${m[1]}|${sid}|${m[3]}`;
+      row = byKey.get(key) ?? { stamp: m[3], docType: m[1], docId: sid, kind: "edit", actorUserId: actor, at, reversedSen: 0, repostedSen: 0, legs: 0 };
+      if (m[2] === "rev") row.reversedSen += dr; else row.repostedSen += dr;
+    } else if (st === "opening_balance_reversal") {
+      key = `opening|${sid}|${at}`;
+      row = byKey.get(key) ?? { stamp: at, docType: "opening_balance", docId: sid, kind: "opening", actorUserId: actor, at, reversedSen: 0, repostedSen: 0, legs: 0 };
+      row.reversedSen += dr;
+    } else {
+      key = `${st}|${sid}|${at}`;
+      row = byKey.get(key) ?? { stamp: at, docType: st.replace(/_void$/, ""), docId: sid, kind: "cancel", actorUserId: actor, at, reversedSen: 0, repostedSen: 0, legs: 0 };
+      row.reversedSen += dr;
+    }
+    row.legs += Math.round(Number(r.legs) || 0);
+    if (at < row.at) row.at = at;
+    byKey.set(key, row);
+  }
+  const rows = [...byKey.values()].sort((a, b) => b.at.localeCompare(a.at));
+  // Names for the actors; reasons where a trail exists.
+  const ids = [...new Set(rows.map((r) => r.actorUserId).filter((x): x is string => !!x))];
+  const nameById = new Map<string, string>();
+  if (ids.length) {
+    const u = await c.var.DB.prepare(`SELECT id, displayName FROM users WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const x of u.results ?? []) nameById.set(String(x.id), String(x.displayName ?? x.display_name ?? ""));
+  }
+  const pvIds = rows.filter((r) => r.docType === "payment_voucher").map((r) => r.docId);
+  const pvNo = new Map<string, string>();
+  if (pvIds.length) {
+    const p = await c.var.DB.prepare(`SELECT id, pvNo FROM payment_vouchers WHERE id IN (${pvIds.map(() => "?").join(",")})`).bind(...pvIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const x of p.results ?? []) pvNo.set(String(x.id), String(x.pvNo ?? x.pv_no ?? ""));
+  }
+  const reopens = await c.var.DB.prepare("SELECT key, value, updated_at FROM kv_config WHERE key LIKE 'bank_reco_reopen:%' AND updated_at >= ? AND updated_at <= ?")
+    .bind(since, until).all<{ key: string; value: string | null; updated_at?: string; updatedAt?: string }>().catch(() => ({ results: [] as { key: string; value: string | null; updated_at?: string; updatedAt?: string }[] }));
+  const reopenRows = (reopens.results ?? []).map((r) => {
+    const parts = String(r.key).split(":"); // bank_reco_reopen:<acct>:<month>:<ts>
+    let v: { actorUserId?: string | null; reason?: string } = {};
+    try { v = r.value ? JSON.parse(r.value) : {}; } catch { v = {}; }
+    return { kind: "reopen" as const, docType: "bank_reconciliation", docId: `${parts[1]} ${parts[2]}`, docNo: `${parts[1]} · ${parts[2]}`, at: parts.slice(3).join(":"), actor: v.actorUserId ? (nameById.get(v.actorUserId) ?? v.actorUserId) : "", reason: v.reason ?? "", reversedSen: 0, repostedSen: 0 };
+  });
+  const data = [
+    ...rows.map((r) => ({
+      kind: r.kind, docType: r.docType, docId: r.docId, docNo: pvNo.get(r.docId) ?? r.docId, at: r.at,
+      actor: r.actorUserId ? (nameById.get(r.actorUserId) ?? r.actorUserId) : "", reason: "",
+      reversedSen: r.reversedSen, repostedSen: r.repostedSen,
+    })),
+    ...reopenRows,
+  ].sort((a, b) => b.at.localeCompare(a.at));
+  return c.json({ success: true, data: { since, rows: data } });
+});
+
+// AP Invoices — ONE list of everything the company owes on paper (owner
+// 2026-09-22, Houzs adoption Phase 2): other-creditor bills (kind AP, editable
+// on their own tab) beside a READ-ONLY mirror of purchase invoices (kind PI —
+// Procurement's page stays the place to create/edit/post them). Nothing here
+// writes; the mirror is a view, the PI row links back to its origin.
+app.get("/ap-invoices", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const status = c.req.query("status") || ""; // "", "OPEN", "PAID", "CANCELLED"
+  const [ocbRes, piRes] = await Promise.all([
+    c.var.DB.prepare(
+      `SELECT b.id, b.billNo, b.partyId, b.partyName, b.billDate, b.referenceNo, b.description, b.totalSen, b.paidAmountSen, b.status,
+              dl.state AS lifecycleState
+         FROM other_party_bills b
+         LEFT JOIN document_lifecycle dl ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
+        WHERE b.orgId = ? AND b.partyType = 'CREDITOR' AND (dl.state IS NULL OR dl.state <> 'DELETED')`,
+    ).bind(orgId).all<Record<string, unknown>>(),
+    c.var.DB.prepare(
+      `SELECT id, pi_no, supplier_id, supplier_name, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, is_opening
+         FROM purchase_invoices
+        WHERE status <> 'DRAFT'`,
+    ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
+  ]);
+  // partyId feeds the "Pay" deep-link into Payment Vouchers › New AP Payment.
+  type ApRow = {
+    kind: "AP" | "PI"; id: string; no: string; supplier: string; partyId: string; supplierRef: string; date: string; dueDate: string | null;
+    description: string; totalSen: number; paidSen: number; outstandingSen: number; status: string; opening: boolean;
+  };
+  const rows: ApRow[] = [];
+  for (const b of ocbRes.results ?? []) {
+    const total = Math.round(Number(b.totalSen ?? b.total_sen) || 0);
+    const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
+    const lc = String(b.lifecycleState ?? b.lifecycle_state ?? "ACTIVE");
+    const st = String(b.status ?? "");
+    rows.push({
+      kind: "AP", id: String(b.id), no: String(b.billNo ?? b.bill_no ?? ""), supplier: String(b.partyName ?? b.party_name ?? ""),
+      partyId: String(b.partyId ?? b.party_id ?? ""),
+      supplierRef: String(b.referenceNo ?? b.reference_no ?? ""), date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null,
+      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: total - paid,
+      status: lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN",
+      opening: false,
+    });
+  }
+  for (const p of piRes.results ?? []) {
+    const total = Math.round(Number(p.amountSen ?? p.amount_sen) || 0);
+    const paid = Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
+    const st = String(p.status ?? "");
+    rows.push({
+      kind: "PI", id: String(p.id), no: String(p.piNo ?? p.pi_no ?? ""), supplier: String(p.supplierName ?? p.supplier_name ?? ""),
+      partyId: String(p.supplierId ?? p.supplier_id ?? ""),
+      supplierRef: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""), date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
+      dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
+      description: "", totalSen: total, paidSen: paid, outstandingSen: total - paid,
+      status: st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN",
+      opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
+    });
+  }
+  const filtered = status ? rows.filter((r) => r.status === status) : rows;
+  filtered.sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
+  const totals = {
+    openSen: rows.filter((r) => r.status === "OPEN").reduce((s, r) => s + r.outstandingSen, 0),
+    openCount: rows.filter((r) => r.status === "OPEN").length,
+    apOpenSen: rows.filter((r) => r.status === "OPEN" && r.kind === "AP").reduce((s, r) => s + r.outstandingSen, 0),
+    piOpenSen: rows.filter((r) => r.status === "OPEN" && r.kind === "PI").reduce((s, r) => s + r.outstandingSen, 0),
+  };
+  return c.json({ success: true, data: { rows: filtered, totals } });
 });
 
 app.delete("/other-party-bills/:billNo", async (c) => {
@@ -4455,6 +4800,80 @@ app.post("/other-party-bills/:billNo/lifecycle", async (c) => {
 // ---------------------------------------------------------------------------
 // D2 — OTHER-PARTY PAYMENTS  POST / GET / void
 // ---------------------------------------------------------------------------
+
+// Every allocated bill must exist, be this party's, sit on the same side and
+// be open; amounts within outstanding (validateAllocations). Shared by the
+// immediate POST below and the Payment Vouchers AP road (create/edit/approve).
+async function validateOtherPartyPaymentAllocs(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  party: OtherPartyRow,
+  allocs: PaymentAllocInput[],
+): Promise<{ ok: true; outstandingByBill: Record<string, number> } | { ok: false; error: string }> {
+  const outstandingByBill: Record<string, number> = {};
+  for (const a of allocs) {
+    const bill = await db.prepare("SELECT * FROM other_party_bills WHERE id = ? AND orgId = ?")
+      .bind(a.billId, orgId).first<OtherPartyBillRow>();
+    if (!bill) return { ok: false, error: `Bill ${a.billId} not found` };
+    if (bill.partyId !== party.id) return { ok: false, error: "Bill does not belong to this party" };
+    if (bill.partyType !== party.type) return { ok: false, error: "Bill side mismatch" };
+    if (bill.status !== "OPEN" && bill.status !== "PARTIAL_PAID")
+      return { ok: false, error: `Bill ${bill.billNo} is not open` };
+    outstandingByBill[a.billId] = bill.totalSen - bill.paidAmountSen;
+  }
+  const allocErr = validateAllocations(allocs, outstandingByBill);
+  if (allocErr) return { ok: false, error: allocErr };
+  return { ok: true, outstandingByBill };
+}
+
+// The ONE builder of an other-party payment: payment rows per bill, bill
+// paidAmountSen bumps, GL legs (creditor: DR 405-0000 / CR bank). Used by the
+// immediate POST below and by the Payment Vouchers AP road, which posts at
+// APPROVE under the voucher's formal number. Caller mints the number, validates
+// (validateOtherPartyPaymentAllocs) and batches. Throws when the GL build fails.
+async function buildOtherPartyPaymentCreate(
+  db: Env["Variables"]["DB"],
+  input: {
+    orgId: string; actorUserId: string | null; party: OtherPartyRow; bankAccount: string; date: string;
+    reference: string | null; allocs: PaymentAllocInput[]; paymentNo: string;
+  },
+): Promise<D1PreparedStatement[]> {
+  const { orgId, actorUserId, party, bankAccount, date, reference, allocs, paymentNo: payNo } = input;
+  const partyType = party.type as PartyType;
+  const totalSen = computePaymentTotal(allocs);
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [];
+  for (const a of allocs) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO other_party_payments
+           (id, paymentNo, partyId, partyType, partyName, billId, date, amountSen, bankAccount, reference, orgId, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        `opp-${crypto.randomUUID().slice(0, 10)}`, payNo, party.id, partyType, party.name,
+        a.billId, date, a.amountSen, bankAccount, reference, orgId, now,
+      ),
+    );
+    statements.push(
+      db.prepare(
+        `UPDATE other_party_bills
+           SET paidAmountSen = paidAmountSen + ?,
+               status = CASE WHEN paidAmountSen + ? >= totalSen THEN 'PAID'
+                             WHEN paidAmountSen + ? > 0 THEN 'PARTIAL_PAID' ELSE status END,
+               updatedAt = ?
+         WHERE id = ?`,
+      ).bind(a.amountSen, a.amountSen, a.amountSen, now, a.billId),
+    );
+  }
+  const legs: LedgerEntryInput[] = buildPaymentLegs({ partyType, paymentNo: payNo, partyName: party.name, bankAccount, totalSen }).map((l) => ({
+    id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "other_party_payment", sourceId: payNo,
+    legNo: l.legNo, accountCode: l.accountCode, debitSen: l.debitSen, creditSen: l.creditSen, description: l.description, actorUserId, orgId,
+  }));
+  const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs);
+  statements.push(...ledgerStmts);
+  return statements;
+}
+
 app.post("/other-party-payments", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
@@ -4488,19 +4907,9 @@ app.post("/other-party-payments", async (c) => {
       if (allocs.length === 0) return c.json({ success: false, error: "Select at least one bill" }, 400);
 
       const partyType = party.type as PartyType;
-      const outstandingByBill: Record<string, number> = {};
-      for (const a of allocs) {
-        const bill = await c.var.DB.prepare("SELECT * FROM other_party_bills WHERE id = ? AND orgId = ?")
-          .bind(a.billId, orgId).first<OtherPartyBillRow>();
-        if (!bill) return c.json({ success: false, error: `Bill ${a.billId} not found` }, 400);
-        if (bill.partyId !== party.id) return c.json({ success: false, error: "Bill does not belong to this party" }, 400);
-        if (bill.partyType !== partyType) return c.json({ success: false, error: "Bill side mismatch" }, 400);
-        if (bill.status !== "OPEN" && bill.status !== "PARTIAL_PAID")
-          return c.json({ success: false, error: `Bill ${bill.billNo} is not open` }, 400);
-        outstandingByBill[a.billId] = bill.totalSen - bill.paidAmountSen;
-      }
-      const allocErr = validateAllocations(allocs, outstandingByBill);
-      if (allocErr) return c.json({ success: false, error: allocErr }, 400);
+      // Validate before the number is minted (a refused payment burns nothing).
+      const check = await validateOtherPartyPaymentAllocs(c.var.DB, orgId, party, allocs);
+      if (!check.ok) return c.json({ success: false, error: check.error }, 400);
 
       const totalSen = computePaymentTotal(allocs);
       const payNo = await issueDocNumber(c.var.DB, {
@@ -4508,40 +4917,13 @@ app.post("/other-party-payments", async (c) => {
         direction: partyType === "CREDITOR" ? "out" : "in",
         dateIso: date,
       });
-      const now = new Date().toISOString();
       const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
 
-      const statements: D1PreparedStatement[] = [];
-      for (const a of allocs) {
-        statements.push(
-          c.var.DB.prepare(
-            `INSERT INTO other_party_payments
-               (id, paymentNo, partyId, partyType, partyName, billId, date, amountSen, bankAccount, reference, orgId, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).bind(
-            `opp-${crypto.randomUUID().slice(0, 10)}`, payNo, party.id, partyType, party.name,
-            a.billId, date, a.amountSen, bankAccount, body.reference ?? null, orgId, now,
-          ),
-        );
-        statements.push(
-          c.var.DB.prepare(
-            `UPDATE other_party_bills
-               SET paidAmountSen = paidAmountSen + ?,
-                   status = CASE WHEN paidAmountSen + ? >= totalSen THEN 'PAID'
-                                 WHEN paidAmountSen + ? > 0 THEN 'PARTIAL_PAID' ELSE status END,
-                   updatedAt = ?
-             WHERE id = ?`,
-          ).bind(a.amountSen, a.amountSen, a.amountSen, now, a.billId),
-        );
-      }
-
+      let statements: D1PreparedStatement[];
       try {
-        const legs: LedgerEntryInput[] = buildPaymentLegs({ partyType, paymentNo: payNo, partyName: party.name, bankAccount, totalSen }).map((l) => ({
-          id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "other_party_payment", sourceId: payNo,
-          legNo: l.legNo, accountCode: l.accountCode, debitSen: l.debitSen, creditSen: l.creditSen, description: l.description, actorUserId, orgId,
-        }));
-        const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
-        statements.push(...ledgerStmts);
+        statements = await buildOtherPartyPaymentCreate(c.var.DB, {
+          orgId, actorUserId, party, bankAccount, date, reference: body.reference ?? null, allocs, paymentNo: payNo,
+        });
       } catch (e) {
         console.error(`[ledger] other_party_payment ${payNo} GL build failed — aborting:`, e);
         return c.json({ success: false, error: "Failed to build the ledger posting — nothing was saved." }, 500);
@@ -5931,6 +6313,21 @@ async function stockSummaryRange(
   const lastYm = endYm ?? new Date().toISOString().slice(0, 7);
   const data = await loadMaterialCostData(db, orgId, lastYm);
   const w = materialWindow(data, startYm, endYm);
+  // A month-end the Stock Take leaves blank: the same production-order FG / WIP
+  // the P&L carries (owner 2026-10-13 「Stock Summary 也一起改」). The doc-date
+  // context and section map are only loaded when there is something to value.
+  const openYm = startYm ? prevMonthYm(startYm) : null;
+  const closeYm = endYm ?? data.lastYm;
+  const openingDate = await getOpeningDate(db);
+  let blankOpen: { wip: number | null; fg: number | null } | null = null;
+  let blankClose: { wip: number | null; fg: number | null } | null = null;
+  if (blankStockParts(openYm, data, openingDate) || blankStockParts(closeYm, data, openingDate)) {
+    const [dc, override] = await Promise.all([loadDocDateResolver(db), getPnlSectionMap(db)]);
+    [blankOpen, blankClose] = await Promise.all([
+      blankMonthStock(db, orgId, openYm, data, dc, override),
+      blankMonthStock(db, orgId, closeYm, data, dc, override),
+    ]);
+  }
   const rows: StockGroupRow[] = w.rmGroups
     .filter((g) => g.openingSen !== 0 || g.purchaseSen !== 0 || g.consumedSen !== 0 || g.closingSen !== 0)
     .map((g) => ({
@@ -5949,8 +6346,8 @@ async function stockSummaryRange(
   };
   return {
     rows,
-    wip: { openingSen: w.wipOpenSen, closingSen: w.wipCloseSen },
-    fg: { openingSen: w.fgOpenSen, closingSen: w.fgCloseSen },
+    wip: { openingSen: blankOpen?.wip ?? w.wipOpenSen, closingSen: blankClose?.wip ?? w.wipCloseSen },
+    fg: { openingSen: blankOpen?.fg ?? w.fgOpenSen, closingSen: blankClose?.fg ?? w.fgCloseSen },
     totals,
   };
 }
@@ -6418,6 +6815,10 @@ interface DocDateCtx {
   // debit lines). The dashboard walks many one-month windows on one ctx; a
   // dry payroll projection must run at most once per month per request.
   labourMemo?: Map<string, { account: string; sen: number }[]>;
+  // Per-request memo for the production-order FG / WIP valuation (2026-10-13):
+  // the loaded production data once, each month's figures once (key = ym).
+  prodStock?: Promise<PreparedProduction>;
+  liveStockMemo?: Map<string, Promise<{ fgSen: number; wipSen: number; ratio: number }>>;
 }
 
 // Report-layer labour for one month (owner 2026-08-31 「任何时候我看P&L 时你都
@@ -6426,6 +6827,27 @@ interface DocDateCtx {
 // Labour tab's Post would. Returns [] when the month has neither payslips nor
 // clock data. Callers must ALREADY have established the month is unrecorded
 // (no salary-accrual credit in the GL) via labourInjectMonths.
+function salaryLegsIn(
+  rows: { accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string }[],
+  resolve: (code: string) => string,
+  docDate: (sourceType: string, sourceId: string, postedAt: string | null | undefined) => string,
+  obDate: string | null,
+): SalaryLegIn[] {
+  const docs = new Set<string>();
+  for (const l of rows) if (resolve(l.accountCode) === LABOUR_ACCRUAL_ACCT) docs.add(salaryDocKey(l.sourceType, l.sourceId));
+  const out: SalaryLegIn[] = [];
+  for (const l of rows) {
+    if (!docs.has(salaryDocKey(l.sourceType, l.sourceId))) continue;
+    const dd = docDate(l.sourceType, l.sourceId, l.postedAt);
+    const skip = legBeforeOpening(l.sourceType, dd, obDate) || isOpeningSource(l.sourceType);
+    out.push({
+      sourceType: l.sourceType, sourceId: l.sourceId, accountCode: resolve(l.accountCode),
+      debitSen: Number(l.debitSen) || 0, creditSen: Number(l.creditSen) || 0, ym: skip ? null : dd.slice(0, 7),
+    });
+  }
+  return out;
+}
+
 async function labourInjectionLines(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -6434,6 +6856,36 @@ async function labourInjectionLines(
 ): Promise<{ account: string; sen: number }[]> {
   const hit = memo?.get(ym);
   if (hit) return hit;
+  // The month still running (owner 2026-10-12 「任何的 payroll 还没 confirm 都拿
+  // 这个新卡显示的数据」): labour TO DATE — the Labor Cost page's "Labor Cost
+  // incl. EPF & Allowances" card, split by home department and EPF / SOCSO /
+  // EIS (src/api/lib/labour-to-date.ts) — not a whole month of draft or
+  // projected payroll against a part-month of sales. A finished month keeps its
+  // payslips below; a recorded month never gets here (the caller skips it).
+  if (ym === runningMonthYm()) {
+    try {
+      const td = await loadLabourToDate(db, orgId, ym);
+      const tdMap = await getLabourMap(db);
+      const tdByDept: LabourDeptAgg[] = (td?.byDept ?? []).map((d) => ({
+        departmentCode: d.departmentCode,
+        account: tdMap.byDept[d.departmentCode] ?? tdMap.fallback,
+        workers: d.workers,
+        grossSen: d.nonStatutorySen,
+        employerSen: d.epfSen + d.socsoSen + d.eisSen,
+        costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen,
+        epfSen: d.epfSen,
+        socsoSen: d.socsoSen,
+        eisSen: d.eisSen,
+        // Debit side only (P&L cost), as in the dry run below.
+        epfEmployeeSen: 0,
+        socsoEmployeeSen: 0,
+        eisEmployeeSen: 0,
+      }));
+      const tdLines = tdByDept.length ? labourDebitLines(tdByDept, tdMap) : [];
+      memo?.set(ym, tdLines);
+      return tdLines;
+    } catch { /* unreadable → the whole-month figures below, as before */ }
+  }
   let byDept: LabourDeptAgg[] = [];
   let map: LabourMap | null = null;
   try {
@@ -6455,6 +6907,11 @@ async function labourInjectionLines(
         epfSen: d.epfSen,
         socsoSen: d.socsoSen,
         eisSen: d.eisSen,
+        // Only the debit side is used here (P&L cost); employee shares matter
+        // to the posting's credit side alone.
+        epfEmployeeSen: 0,
+        socsoEmployeeSen: 0,
+        eisEmployeeSen: 0,
       }));
     } catch { byDept = []; }
   }
@@ -6494,19 +6951,35 @@ async function getPnlOpeningPriorCum(
 
 const PNL_TYPES: ReadonlySet<CoaRow["type"]> = new Set(["REVENUE", "COST", "EXPENSE"]);
 
+// The P&L inline drill (owner 2026-09-29 「我要点开看 detail，就是这样」) asks
+// glWindowSigned to TRACE one account: every ledger leg it adds to that
+// account's figure, every leg of those legs' entries (for the "other side"),
+// and the report-layer additions (payroll from payslips, the opening-month
+// slice). Same pass as the statement, so the drill sums to the line to the sen.
+type PnlTraceLeg = { id: string; accountCode: string; sourceType: string; sourceId: string; date: string; debitSen: number; creditSen: number; description: string };
+type PnlTrace = {
+  account: string; // resolved code
+  legs: PnlTraceLeg[];
+  entryLegs: Map<string, { accountCode: string; debitSen: number; creditSen: number }[]>; // sourceType::sourceId → legs
+  extra: { kind: "payroll" | "opening_slice"; ym: string; sen: number }[];
+};
+
 async function glWindowSigned(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
   endYm: string | null,
   dc: DocDateCtx,
+  trace?: PnlTrace,
 ): Promise<{ net: GlWindow; coa: Map<string, { name: string; type: CoaRow["type"] }> }> {
   const memoKey = `${startYm ?? ""}|${endYm ?? ""}`;
-  const cached = dc.glMemo?.get(memoKey);
+  const cached = trace ? undefined : dc.glMemo?.get(memoKey);
   if (cached) return cached;
   const [legRes, coaRes] = await Promise.all([
-    db.prepare("SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0")
-      .all<{ accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string }>(),
+    db.prepare(trace
+      ? "SELECT id, accountCode, sourceId, debitSen, creditSen, postedAt, sourceType, description FROM ledger_journal_entries WHERE hidden = 0"
+      : "SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0")
+      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>(),
     db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>(),
   ]);
   const resolve = await loadAccountResolver(db);
@@ -6519,24 +6992,10 @@ async function glWindowSigned(
   // everything else still gets the report-layer labour injection below.
   // Account-level, not month-level (BUG-2026-08-31-172): the owner's Aug'26
   // office-salary JV (CR 410-0010 55,000 → DR 900-S00x) used to silence the
-  // WHOLE month, wiping the production 750-x auto-extract with it.
-  const salaryEntryYm = new Map<string, string>(); // sourceType::sourceId → ym of its 410-0010 credit
-  for (const l of legRes.results ?? []) {
-    if ((Number(l.creditSen) || 0) <= 0) continue;
-    if (resolve(l.accountCode) !== LABOUR_ACCRUAL_ACCT) continue;
-    const dd = docDate(l.sourceType, l.sourceId, l.postedAt);
-    if (legBeforeOpening(l.sourceType, dd, obDate) || isOpeningSource(l.sourceType)) continue;
-    salaryEntryYm.set(`${l.sourceType}::${l.sourceId}`, dd.slice(0, 7));
-  }
-  const recordedSalaryAccts = new Map<string, Set<string>>(); // ym → debited accounts
-  for (const l of legRes.results ?? []) {
-    if ((Number(l.debitSen) || 0) <= 0) continue;
-    const ym = salaryEntryYm.get(`${l.sourceType}::${l.sourceId}`);
-    if (!ym) continue;
-    let set = recordedSalaryAccts.get(ym);
-    if (!set) { set = new Set(); recordedSalaryAccts.set(ym, set); }
-    set.add(resolve(l.accountCode));
-  }
+  // WHOLE month, wiping the production 750-x auto-extract with it. Net of any
+  // undo (BUG-2026-10-09-275): a Labour post that was unposted, or a voided JV,
+  // records nothing — see src/lib/recorded-salary.ts.
+  const recordedSalaryAccts = recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT);
   for (const l of legRes.results ?? []) {
     const dd = docDate(l.sourceType, l.sourceId, l.postedAt); // by document date
     if (legBeforeOpening(l.sourceType, dd, obDate)) continue; // pre-opening: not extracted
@@ -6556,6 +7015,23 @@ async function glWindowSigned(
     if (endYm && ym > endYm) continue;
     const code = resolve(l.accountCode);
     net.set(code, (net.get(code) ?? 0) + (Number(l.debitSen) || 0) - (Number(l.creditSen) || 0));
+    if (trace && code === trace.account) {
+      trace.legs.push({
+        id: String(l.id ?? ""), accountCode: l.accountCode, sourceType: l.sourceType, sourceId: l.sourceId, date: dd.slice(0, 10),
+        debitSen: Number(l.debitSen) || 0, creditSen: Number(l.creditSen) || 0, description: String(l.description ?? ""),
+      });
+    }
+  }
+  if (trace && trace.legs.length) {
+    // Every leg of the traced legs' entries — the drill's "other side".
+    const keys = new Set(trace.legs.map((t) => `${t.sourceType}::${t.sourceId}`));
+    for (const l of legRes.results ?? []) {
+      const key = `${l.sourceType}::${l.sourceId}`;
+      if (!keys.has(key)) continue;
+      let arr = trace.entryLegs.get(key);
+      if (!arr) { arr = []; trace.entryLegs.set(key, arr); }
+      arr.push({ accountCode: l.accountCode, debitSen: Number(l.debitSen) || 0, creditSen: Number(l.creditSen) || 0 });
+    }
   }
   // Report-layer labour (owner 2026-08-31 「任何时候我看P&L 时你都自动提取」):
   // the payroll figures show up without waiting for a post — stored payslips
@@ -6575,6 +7051,7 @@ async function glWindowSigned(
     for (const { account, sen } of await labourInjectionLines(db, orgId, ym, dc.labourMemo)) {
       if (recorded?.has(account)) continue;
       net.set(account, (net.get(account) ?? 0) + sen);
+      if (trace && account === trace.account && sen !== 0) trace.extra.push({ kind: "payroll", ym, sen });
     }
   }
   const coa = new Map((coaRes.results ?? []).map((a) => [a.code, { name: a.name, type: a.type }] as const));
@@ -6583,13 +7060,16 @@ async function glWindowSigned(
   // come from the owner-keyed historical P&L, so nothing double-counts.
   if (openingNet.size && windowCoversMonth(startYm, endYm, obDate ? obDate.slice(0, 7) : null)) {
     const priorCum = await getPnlOpeningPriorCum(db);
+    const before = trace ? (net.get(trace.account) ?? 0) : 0;
     applyOpeningSlice(net, openingNet, priorCum, (code) => {
       const t = coa.get(code)?.type;
       return t !== undefined && PNL_TYPES.has(t);
     });
+    const slice = trace ? (net.get(trace.account) ?? 0) - before : 0;
+    if (trace && slice !== 0 && obDate) trace.extra.push({ kind: "opening_slice", ym: obDate.slice(0, 7), sen: slice });
   }
   const out = { net, coa };
-  dc.glMemo?.set(memoKey, out);
+  if (!trace) dc.glMemo?.set(memoKey, out);
   return out;
 }
 
@@ -7491,6 +7971,119 @@ async function loadHistoricalPnl(
   return map;
 }
 
+// A "purchase account" = COST-type account that is not one of the dedicated
+// account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
+// overhead 780) — i.e. the 701~705 purchase band.
+function isPurchaseAccount(code: string, type: CoaRow["type"]): boolean {
+  return (
+    type === "COST" &&
+    defaultPnlBucket(code, type) === null &&
+    code !== "700-1015" &&
+    code !== "706-0000"
+  );
+}
+
+const lastDayIso = (ym: string): string => {
+  const [y, m] = ym.split("-").map(Number);
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+};
+
+// FG / WIP of month `ym` valued from the production orders (owner 2026-10-13:
+// 1.A — a month whose Stock Take has no FG / WIP figure; src/lib/production-stock.ts).
+// As of today (Malaysia) for the month still running, else as of its last day.
+// Cost ratio = last month's materials ÷ last month's completed goods at selling
+// price + this month's direct labour ÷ this month's completed goods (owner:
+// 「人工用这个月的」), no factory overhead (「先不加工厂费用」).
+async function liveStockFor(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string,
+  matData: MaterialCostData,
+  dc: DocDateCtx,
+  override: Record<string, string>,
+): Promise<{ fgSen: number; wipSen: number; ratio: number }> {
+  dc.liveStockMemo ??= new Map();
+  const hit = dc.liveStockMemo.get(ym);
+  if (hit) return hit;
+  const run = (async () => {
+    dc.prodStock ??= loadPreparedProduction(db, dc.openingDate);
+    const prepared = await dc.prodStock;
+    const asOf = ym === runningMonthYm() ? new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) : lastDayIso(ym);
+    const prev = prevMonthYm(ym);
+    const [glPrev, glThis] = await Promise.all([
+      glWindowSigned(db, orgId, prev, prev, dc),
+      glWindowSigned(db, orgId, ym, ym, dc),
+    ]);
+    const labourOf = (gl: { net: GlWindow; coa: Map<string, { name: string; type: CoaRow["type"] }> }) => {
+      let sen = 0;
+      for (const [code, v] of gl.net) {
+        const meta = gl.coa.get(code);
+        if (meta && pnlBucketFor(code, meta.type, override) === "DIRECT_LABOUR") sen += v;
+      }
+      return sen;
+    };
+    // Last month's materials used, as the statement's RAW MATERIALS line:
+    // opening − closing stock + the ledger purchases.
+    let prevMaterials = materialWindow(matData, prev, prev).rmGroups.reduce((s2, g) => s2 + g.openingSen - g.closingSen, 0);
+    for (const [code, v] of glPrev.net) {
+      const meta = glPrev.coa.get(code);
+      if (meta && isPurchaseAccount(code, meta.type)) prevMaterials += v;
+    }
+    const ratio = costRatio({
+      prevMaterialsSen: prevMaterials,
+      prevCompletedSen: completedPriceSen(prepared, `${prev}-01`, lastDayIso(prev)),
+      prevLabourSen: labourOf(glPrev),
+      labourSen: labourOf(glThis),
+      completedSen: completedPriceSen(prepared, `${ym}-01`, asOf),
+    });
+    const at = productionStockAt(prepared, asOf);
+    return { fgSen: Math.round(at.fgPriceSen * ratio), wipSen: Math.round(at.wipPriceSen * ratio), ratio };
+  })();
+  dc.liveStockMemo.set(ym, run);
+  return run;
+}
+
+// Which of a month-end's WIP / FG the Stock Take leaves blank (owner
+// 2026-10-13, 1.A): typed months keep their own figure, the opening seed month
+// keeps the seed, months before the books and months ahead aren't valued. FG
+// only under the "stock take only" mode — "auto" keeps its batch figures.
+// null = nothing to value.
+function blankStockParts(
+  ym: string | null,
+  matData: MaterialCostData,
+  openingDate: string | null,
+): { wipBlank: boolean; fgBlank: boolean } | null {
+  if (!ym) return null;
+  const openingYm = openingDate ? openingDate.slice(0, 7) : null;
+  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return null;
+  if (matData.fgSeedYm && ym <= matData.fgSeedYm) return null;
+  const wipBlank = !matData.stockTakeByGroupYm.get("WIP")?.has(ym);
+  const fgBlank = matData.fgValuationMode === "stock_take_only" && !matData.stockTakeByGroupYm.get("FG")?.has(ym);
+  return wipBlank || fgBlank ? { wipBlank, fgBlank } : null;
+}
+
+// The month-end FG / WIP to use at `ym` where the Stock Take is blank — the
+// production-order valuation (liveStockFor). null = leave the material
+// window's figure.
+async function blankMonthStock(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string | null,
+  matData: MaterialCostData,
+  dc: DocDateCtx,
+  override: Record<string, string>,
+): Promise<{ wip: number | null; fg: number | null } | null> {
+  const parts = blankStockParts(ym, matData, dc.openingDate);
+  if (!ym || !parts) return null;
+  const { wipBlank, fgBlank } = parts;
+  try {
+    const v = await liveStockFor(db, orgId, ym, matData, dc, override);
+    return { wip: wipBlank ? v.wipSen : null, fg: fgBlank ? v.fgSen : null };
+  } catch {
+    return null; // unreadable → the material window's figures, as before
+  }
+}
+
 async function computePnlWindow(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -7512,6 +8105,17 @@ async function computePnlWindow(
   ]);
   // Material window derived synchronously from the single-replay checkpoints.
   const mat = materialWindow(matData, startYm, endYm);
+  // A month-end the Stock Take leaves blank: FG / WIP from the production
+  // orders (owner 2026-10-13, 1.A) — the window's opening is the month before
+  // it starts, its close is its last month.
+  const [blankOpen, blankClose] = await Promise.all([
+    blankMonthStock(db, orgId, startYm ? prevMonthYm(startYm) : null, matData, dc, override),
+    blankMonthStock(db, orgId, endYm ?? matData.lastYm, matData, dc, override),
+  ]);
+  const matWipOpen = blankOpen?.wip ?? mat.wipOpenSen;
+  const matWipClose = blankClose?.wip ?? mat.wipCloseSen;
+  const matFgOpen = blankOpen?.fg ?? mat.fgOpenSen;
+  const matFgClose = blankClose?.fg ?? mat.fgCloseSen;
   const isAll = line === "all";
   const R = isAll ? 1 : line === "sofa" ? ratio.salesRatio.sofa : ratio.salesRatio.bedframe;
   // Helpers to read GL sums for an account band/predicate.
@@ -7572,14 +8176,7 @@ async function computePnlWindow(
       pnlPDefault
     );
   };
-  // A "purchase account" = COST-type account that is not one of the dedicated
-  // account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
-  // overhead 780) — i.e. the 701~705 purchase band.
-  const isPurchaseAcct = (code: string, type: CoaRow["type"]): boolean =>
-    type === "COST" &&
-    defaultPnlBucket(code, type) === null &&
-    code !== "700-1015" &&
-    code !== "706-0000";
+  const isPurchaseAcct = isPurchaseAccount;
   const acctRows = new Map<
     string,
     { openingSen: number; purchasesSen: number; closingSen: number; grpLines: Set<string> }
@@ -7659,10 +8256,10 @@ async function computePnlWindow(
   const overheadSen = overheadLines.reduce((s, l) => s + l.amountSen, 0);
 
   // --- WIP / FG movements (from the FIFO engine, as-of-date reconstructed) ---
-  const wipOpen = isAll ? mat.wipOpenSen : Math.round(mat.wipOpenSen * R);
-  const wipClose = isAll ? mat.wipCloseSen : Math.round(mat.wipCloseSen * R);
-  const fgOpen = isAll ? mat.fgOpenSen : Math.round(mat.fgOpenSen * R);
-  const fgClose = isAll ? mat.fgCloseSen : Math.round(mat.fgCloseSen * R);
+  const wipOpen = isAll ? matWipOpen : Math.round(matWipOpen * R);
+  const wipClose = isAll ? matWipClose : Math.round(matWipClose * R);
+  const fgOpen = isAll ? matFgOpen : Math.round(matFgOpen * R);
+  const fgClose = isAll ? matFgClose : Math.round(matFgClose * R);
 
   const manufacturingSen = rmConsumedSen + carriageSen + sstSen + labourSen + overheadSen + (wipOpen - wipClose);
   const cogsSen = fgOpen + manufacturingSen - fgClose;
@@ -7747,11 +8344,14 @@ async function costByLineWindow(
 
 // Assemble the statement row tree from a period window + the FY-YTD window.
 function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
-  type Row = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; periodSen?: number; ytdSen?: number; groupId?: string; totalLabel?: string; badge?: string; accountCode?: string; bucket?: string };
+  // drillCode: the account a line can be opened on (the P&L inline drill) when
+  // the line is one account's ledger figure but carries no accountCode (that
+  // field also drives the edit-mode drag, which these rows must not get).
+  type Row = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; periodSen?: number; ytdSen?: number; groupId?: string; totalLabel?: string; badge?: string; accountCode?: string; bucket?: string; drillCode?: string };
   const rows: Row[] = [];
   let gid = 0;
   const g = (label: string, depth: number, periodSen: number, ytdSen: number, totalLabel: string, bucket?: string) => { const id = `g${gid++}`; rows.push({ kind: "group", depth, label, periodSen, ytdSen, groupId: id, totalLabel, bucket }); return id; };
-  const line = (label: string, depth: number, ps: number, ys: number, accountCode?: string, bucket?: string) => rows.push({ kind: "line", depth, label, periodSen: ps, ytdSen: ys, accountCode, bucket });
+  const line = (label: string, depth: number, ps: number, ys: number, accountCode?: string, bucket?: string, drillCode?: string) => rows.push({ kind: "line", depth, label, periodSen: ps, ytdSen: ys, accountCode, bucket, drillCode });
   const tot = (label: string, depth: number, ps: number, ys: number) => rows.push({ kind: "total", depth, label, periodSen: ps, ytdSen: ys });
 
   // SALES
@@ -7769,11 +8369,11 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
     const yg = y.rmGroups.find((x) => x.group === pg.group);
     g(pg.description, 2, pg.openingSen + pg.purchasesSen - pg.closingSen, yg ? yg.openingSen + yg.purchasesSen - yg.closingSen : 0, `TOTAL ${pg.description}`);
     line("OPENING STOCK", 3, pg.openingSen, yg?.openingSen ?? 0);
-    line("PURCHASE", 3, pg.purchasesSen, yg?.purchasesSen ?? 0);
+    line("PURCHASE", 3, pg.purchasesSen, yg?.purchasesSen ?? 0, undefined, undefined, pg.group);
     line("CLOSING STOCK", 3, -pg.closingSen, yg ? -yg.closingSen : 0);
   }
-  line("CARRIAGE INWARDS", 1, p.carriageSen, y.carriageSen);
-  line("SST CHARGES", 1, p.sstSen, y.sstSen);
+  line("CARRIAGE INWARDS", 1, p.carriageSen, y.carriageSen, undefined, undefined, "700-1015");
+  line("SST CHARGES", 1, p.sstSen, y.sstSen, undefined, undefined, "706-0000");
   // Direct labour
   g("DIRECT LABOUR", 1, p.labourSen, y.labourSen, "TOTAL DIRECT LABOUR", "DIRECT_LABOUR");
   for (let i = 0; i < p.labourLines.length; i++) line(p.labourLines[i].name, 2, p.labourLines[i].amountSen, y.labourLines.find((x) => x.code === p.labourLines[i].code)?.amountSen ?? 0, p.labourLines[i].code, "DIRECT_LABOUR");
@@ -7921,24 +8521,9 @@ app.get("/cost-expense-classes", async (c) => {
   const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
   const byAcct = new Map<string, number[]>();
   const openingNetCec = new Map<string, number>(); // opening legs on COST/EXPENSE accounts
-  // Same account-level recorded-salary map as glWindowSigned (BUG-2026-08-31-172).
-  const salaryEntryYmCec = new Map<string, string>();
-  for (const l of legRes.results ?? []) {
-    if ((Number(l.creditSen) || 0) <= 0) continue;
-    if (resolve(l.accountCode) !== LABOUR_ACCRUAL_ACCT) continue;
-    const dd = docDate(l.sourceType, l.sourceId, l.postedAt);
-    if (legBeforeOpening(l.sourceType, dd, obDateCec) || isOpeningSource(l.sourceType)) continue;
-    salaryEntryYmCec.set(`${l.sourceType}::${l.sourceId}`, dd.slice(0, 7));
-  }
-  const recordedSalaryAcctsCec = new Map<string, Set<string>>();
-  for (const l of legRes.results ?? []) {
-    if ((Number(l.debitSen) || 0) <= 0) continue;
-    const ym = salaryEntryYmCec.get(`${l.sourceType}::${l.sourceId}`);
-    if (!ym) continue;
-    let set = recordedSalaryAcctsCec.get(ym);
-    if (!set) { set = new Set(); recordedSalaryAcctsCec.set(ym, set); }
-    set.add(resolve(l.accountCode));
-  }
+  // Same account-level recorded-salary map as glWindowSigned (BUG-2026-08-31-172,
+  // net of any undo since BUG-2026-10-09-275).
+  const recordedSalaryAcctsCec = recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDateCec), LABOUR_ACCRUAL_ACCT);
   for (const l of legRes.results ?? []) {
     const dd = docDate(l.sourceType, l.sourceId, l.postedAt); // by document date
     if (legBeforeOpening(l.sourceType, dd, obDateCec)) continue; // pre-opening: not extracted
@@ -8129,6 +8714,426 @@ app.get("/pl-statement", async (c) => {
   });
 });
 
+// An official receipt's payer and description, for the drills: its header
+// note when it has one, else its lines' text (the receipt popup shows both;
+// the note is often empty), else the document's kind (BUG-2026-09-30-228).
+async function officialReceiptTexts(
+  db: Env["Variables"]["DB"],
+  ids: string[],
+): Promise<Map<string, { payer: string; text: string }>> {
+  const out = new Map<string, { payer: string; text: string }>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200);
+    const ph = part.map(() => "?").join(",");
+    const lineText = new Map<string, string[]>();
+    try {
+      const lines = await db.prepare(`SELECT receiptId, description FROM official_receipt_lines WHERE receiptId IN (${ph}) ORDER BY lineOrder`)
+        .bind(...part).all<Record<string, unknown>>();
+      for (const r of lines.results ?? []) {
+        const id = String(r.receiptId ?? r.receipt_id ?? ""), text = String(r.description ?? "").trim();
+        const seen = lineText.get(id) ?? [];
+        if (id && text && !seen.includes(text)) lineText.set(id, [...seen, text]);
+      }
+    } catch { /* the header note, or the kind */ }
+    const heads = await db.prepare(`SELECT id, receivedFrom, description FROM official_receipts WHERE id IN (${ph})`)
+      .bind(...part).all<Record<string, unknown>>();
+    for (const r of heads.results ?? []) {
+      const id = String(r.id);
+      out.set(id, {
+        payer: String(r.receivedFrom ?? r.received_from ?? "").trim(),
+        text: ownDescription(String(r.description ?? "")) ?? (lineText.get(id)?.join(" · ") || "Official receipt"),
+      });
+    }
+  }
+  return out;
+}
+
+// One drill line per ledger leg, shared by the P&L and balance-sheet drills
+// (owner 2026-09-30: the P&L drill shows what the Cash Flow drill shows, and
+// 「Balance sheet 也要这样点开看」). Ref. 1 = the document, Ref. 2 = who it is
+// with, Description = the document's overall description, docs = the related
+// documents (hover), other side = the opposite accounts of the same entry.
+type DrillSourceLeg = { id: string; accountCode: string; sourceType: string; sourceId: string; date: string; debitSen: number; creditSen: number; description: string };
+async function buildDrillLines(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  legs: DrillSourceLeg[],
+  entryLegs: Map<string, { accountCode: string; debitSen: number; creditSen: number }[]>,
+  resolve: (code: string) => string,
+  coa: ReadonlyMap<string, { name: string }>,
+) {
+  // Like the Cash Flow drill (owner 2026-09-30 「P&L 同理，我想看 supplier 名字，
+  // p&L 点开要看的东西和 cash flow 一样」): Ref. 1 = the document; Ref. 2 =
+  // who it is with (customer / supplier / payee / other creditor / payer);
+  // Description = the document's overall description; the related documents
+  // (an invoice's SO, a PI's supplier invoice no., a bill's reference) ride
+  // along for the hover. One batched read per kind; a failed read only leaves
+  // the line's own text.
+  type DocInfo = { ref1?: string | null; party?: string | null; docs?: string | null; header?: string | null };
+  const info = new Map<string, DocInfo>();
+  const idsOf = (pred: (t: string) => boolean) => [...new Set(legs.filter((l) => pred(l.sourceType)).map((l) => l.sourceId))];
+  const chunked = async <T,>(ids: string[], sql: (ph: string) => string, extra: unknown[] = []): Promise<T[]> => {
+    const out: T[] = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const part = ids.slice(i, i + 200);
+      const res = await db.prepare(sql(part.map(() => "?").join(","))).bind(...part, ...extra).all<T>();
+      out.push(...(res.results ?? []));
+    }
+    return out;
+  };
+  const setInfo = (pred: (t: string) => boolean, id: string, v: DocInfo) => {
+    for (const l of legs) if (l.sourceId === id && pred(l.sourceType)) info.set(`${l.sourceType}::${l.sourceId}`, v);
+  };
+  const str = (v: unknown) => (v === null || v === undefined ? "" : String(v)).trim();
+  const isInvoice = (t: string) => t === "invoice" || t.startsWith("invoice_");
+  const isPi = (t: string) => t === "purchase_invoice" || t.startsWith("purchase_invoice_");
+  const isPv = (t: string) => t === "payment_voucher" || t.startsWith("payment_voucher_");
+  const isBill = (t: string) => t.startsWith("other_party_bill");
+  const isJv = (t: string) => t === "manual" || t.startsWith("manual_");
+  const isCn = (t: string) => t === "credit_note" || t.startsWith("credit_note_");
+  const isDn = (t: string) => t === "debit_note" || t.startsWith("debit_note_");
+  const isOr = (t: string) => t === "official_receipt" || t.startsWith("official_receipt_");
+  const isSp = (t: string) => t.startsWith("supplier_payment");
+  const isOp = (t: string) => t.startsWith("other_party_payment");
+  const isRc = (t: string) => t === "payment" || (t.startsWith("payment_") && !t.startsWith("payment_voucher"));
+  const isPcn = (t: string) => t.startsWith("purchase_credit_note");
+  try {
+    const inv = await chunked<Record<string, unknown>>(idsOf(isInvoice), (ph) => `SELECT id, invoiceNo, salesOrderId, doNo, customerName FROM invoices WHERE id IN (${ph})`);
+    const soIds = [...new Set(inv.map((r) => str(r.salesOrderId ?? r.sales_order_id)).filter(Boolean))];
+    const soNo = new Map<string, string>();
+    for (const r of await chunked<Record<string, unknown>>(soIds, (ph) => `SELECT id, companySOId FROM sales_orders WHERE id IN (${ph})`)) {
+      const no = str(r.companySOId ?? r.company_so_id);
+      if (no) soNo.set(String(r.id), no);
+    }
+    for (const r of inv) {
+      const so = soNo.get(str(r.salesOrderId ?? r.sales_order_id));
+      setInfo(isInvoice, String(r.id), {
+        ref1: str(r.invoiceNo ?? r.invoice_no) || null,
+        party: str(r.customerName ?? r.customer_name) || null,
+        docs: so ?? (str(r.doNo ?? r.do_no) || null),
+        header: "Sales invoice",
+      });
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    // An edit to a posted PI posts its correction under `<PI id>:edit-<time>`
+    // (purchase-invoices.ts): the same PI, so the same supplier.
+    const piSourceIds = new Map<string, Set<string>>(); // PI id → the sourceIds carrying it
+    for (const l of legs) {
+      if (!isPi(l.sourceType)) continue;
+      const id = l.sourceId.replace(/:edit-\d+$/, "");
+      (piSourceIds.get(id) ?? piSourceIds.set(id, new Set()).get(id)!).add(l.sourceId);
+    }
+    for (const r of await chunked<Record<string, unknown>>([...piSourceIds.keys()], (ph) => `SELECT id, piNo, poRef, supplier_invoice_no, supplierName FROM purchase_invoices WHERE id IN (${ph})`)) {
+      const supInv = str(r.supplierInvoiceNo ?? r.supplier_invoice_no), po = str(r.poRef ?? r.po_ref);
+      for (const sourceId of piSourceIds.get(String(r.id)) ?? []) {
+        setInfo(isPi, sourceId, {
+          ref1: str(r.piNo ?? r.pi_no) || null,
+          party: str(r.supplierName ?? r.supplier_name) || null,
+          docs: [supInv && `Supplier invoice ${supInv}`, po && `PO ${po}`].filter(Boolean).join(" · ") || null,
+          header: "Purchase invoice",
+        });
+      }
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isPv), (ph) => `SELECT id, pvNo, payee, description FROM payment_vouchers WHERE id IN (${ph})`)) {
+      setInfo(isPv, String(r.id), { ref1: str(r.pvNo ?? r.pv_no) || null, party: str(r.payee) || null, header: ownDescription(str(r.description)) });
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isBill), (ph) => `SELECT billNo, partyName, referenceNo, description FROM other_party_bills WHERE billNo IN (${ph}) AND orgId = ?`, [orgId])) {
+      const ref = str(r.referenceNo ?? r.reference_no);
+      setInfo(isBill, str(r.billNo ?? r.bill_no), {
+        ref1: str(r.billNo ?? r.bill_no) || null,
+        party: str(r.partyName ?? r.party_name) || null,
+        docs: ref ? `Reference ${ref}` : null,
+        header: ownDescription(str(r.description)),
+      });
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isJv), (ph) => `SELECT id, description FROM journal_entries WHERE id IN (${ph})`)) {
+      setInfo(isJv, String(r.id), { header: ownDescription(str(r.description)) });
+    }
+  } catch { /* the line keeps its own text */ }
+  for (const [pred, table, label] of [[isCn, "credit_notes", "Credit note"], [isDn, "debit_notes", "Debit note"]] as const) {
+    try {
+      for (const r of await chunked<Record<string, unknown>>(idsOf(pred), (ph) => `SELECT id, customerName FROM ${table} WHERE id IN (${ph})`)) {
+        setInfo(pred, String(r.id), { party: str(r.customerName ?? r.customer_name) || null, header: label });
+      }
+    } catch { /* the line keeps its own text */ }
+  }
+  try {
+    for (const [id, r] of await officialReceiptTexts(db, idsOf(isOr))) {
+      setInfo(isOr, id, { party: r.payer || null, header: r.text });
+    }
+  } catch { /* the line keeps its own text */ }
+  // The documents that mostly sit on balance-sheet accounts (the balance-sheet
+  // drill, owner 2026-09-30): a supplier payment names the supplier and lists
+  // the PIs it settled; an other-creditor payment names the creditor and its
+  // bills; a customer receipt names the customer; a purchase credit note the
+  // supplier. A payment made through a payment voucher takes the voucher's
+  // purpose as its description.
+  const pvPurposeByNo = new Map<string, string>();
+  try {
+    const payNos = [...new Set([...idsOf(isSp), ...idsOf(isOp)])];
+    for (const r of await chunked<Record<string, unknown>>(payNos, (ph) => `SELECT pvNo, description FROM payment_vouchers WHERE pvNo IN (${ph})`)) {
+      const purpose = ownDescription(str(r.description));
+      if (purpose) pvPurposeByNo.set(str(r.pvNo ?? r.pv_no), purpose);
+    }
+  } catch { /* description stays the ledger text */ }
+  try {
+    const partyByPay = new Map<string, string>();
+    const piByPay = new Map<string, Set<string>>();
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isSp), (ph) => `SELECT payment_no, purchase_invoice_id, supplier_name FROM supplier_payments WHERE payment_no IN (${ph}) AND org_id = ?`, [orgId])) {
+      const no = str(r.paymentNo ?? r.payment_no), pid = str(r.purchaseInvoiceId ?? r.purchase_invoice_id), nm = str(r.supplierName ?? r.supplier_name);
+      if (no && nm && !partyByPay.has(no)) partyByPay.set(no, nm);
+      if (no && pid) (piByPay.get(no) ?? piByPay.set(no, new Set()).get(no)!).add(pid);
+    }
+    const piNo = new Map<string, string>();
+    for (const r of await chunked<Record<string, unknown>>([...new Set([...piByPay.values()].flatMap((s) => [...s]))], (ph) => `SELECT id, piNo FROM purchase_invoices WHERE id IN (${ph})`)) {
+      piNo.set(String(r.id), str(r.piNo ?? r.pi_no));
+    }
+    for (const no of new Set([...partyByPay.keys(), ...piByPay.keys()])) {
+      const ids = [...(piByPay.get(no) ?? [])];
+      setInfo(isSp, no, {
+        party: partyByPay.get(no) ?? null,
+        docs: ids.length ? ids.map((id) => piNo.get(id) || (id.startsWith("pi-ob-") ? "Opening" : id)).join(", ") : null,
+        header: pvPurposeByNo.get(no) ?? "Supplier payment",
+      });
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    const partyByPay = new Map<string, string>();
+    const billsByPay = new Map<string, Set<string>>();
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isOp), (ph) => `SELECT payment_no, bill_id, party_name FROM other_party_payments WHERE payment_no IN (${ph})`)) {
+      const no = str(r.paymentNo ?? r.payment_no), bid = str(r.billId ?? r.bill_id), nm = str(r.partyName ?? r.party_name);
+      if (no && nm && !partyByPay.has(no)) partyByPay.set(no, nm);
+      if (no && bid) (billsByPay.get(no) ?? billsByPay.set(no, new Set()).get(no)!).add(bid);
+    }
+    const billNo = new Map<string, string>();
+    for (const r of await chunked<Record<string, unknown>>([...new Set([...billsByPay.values()].flatMap((s) => [...s]))], (ph) => `SELECT id, billNo FROM other_party_bills WHERE id IN (${ph})`)) {
+      billNo.set(String(r.id), str(r.billNo ?? r.bill_no));
+    }
+    for (const no of new Set([...partyByPay.keys(), ...billsByPay.keys()])) {
+      const ids = [...(billsByPay.get(no) ?? [])];
+      setInfo(isOp, no, {
+        party: partyByPay.get(no) ?? null,
+        docs: ids.length ? ids.map((id) => billNo.get(id) || id).join(", ") : null,
+        header: pvPurposeByNo.get(no) ?? "Other creditor payment",
+      });
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isRc), (ph) => `SELECT id, customerName FROM payment_records WHERE id IN (${ph})`)) {
+      setInfo(isRc, String(r.id), { party: str(r.customerName ?? r.customer_name) || null, header: "Receipt" });
+    }
+  } catch { /* the line keeps its own text */ }
+  try {
+    for (const r of await chunked<Record<string, unknown>>(idsOf(isPcn), (ph) => `SELECT id, noteNumber, supplierName, piNo FROM purchase_credit_notes WHERE id IN (${ph})`)) {
+      const pi = str(r.piNo ?? r.pi_no);
+      setInfo(isPcn, String(r.id), {
+        ref1: str(r.noteNumber ?? r.note_number) || null,
+        party: str(r.supplierName ?? r.supplier_name) || null,
+        docs: pi ? `PI ${pi}` : null,
+      });
+    }
+  } catch { /* the line keeps its own text */ }
+  // Trade-finance interest: charged by the lender whose facility account is
+  // the entry's other leg; the hover says whom the draw paid.
+  try {
+    const tfLegs = legs.filter((l) => tfChargeKind(l.sourceType));
+    if (tfLegs.length) {
+      const lenderByAcct = new Map((await getTfSources(db)).map((s) => [resolve(s.accountCode), s.lenderName] as const));
+      const draws = [...new Set(tfLegs.map((l) => tfInterestDrawId(l.sourceId)))];
+      const paidTo = new Map<string, string>();
+      for (const r of await chunked<Record<string, unknown>>(draws, (ph) => `SELECT payment_no, supplier_name FROM supplier_payments WHERE payment_no IN (${ph}) AND org_id = ?`, [orgId])) {
+        const no = str(r.paymentNo ?? r.payment_no), nm = str(r.supplierName ?? r.supplier_name);
+        if (no && nm && !paidTo.has(no)) paidTo.set(no, nm);
+      }
+      for (const r of await chunked<Record<string, unknown>>(draws.filter((d) => !paidTo.has(d)), (ph) => `SELECT payment_no, party_name FROM other_party_payments WHERE payment_no IN (${ph})`)) {
+        const no = str(r.paymentNo ?? r.payment_no), nm = str(r.partyName ?? r.party_name);
+        if (no && nm && !paidTo.has(no)) paidTo.set(no, nm);
+      }
+      for (const l of tfLegs) {
+        const key = `${l.sourceType}::${l.sourceId}`;
+        const paid = paidTo.get(tfInterestDrawId(l.sourceId));
+        info.set(key, {
+          ref1: tfInterestDrawId(l.sourceId),
+          party: (entryLegs.get(key) ?? []).map((x) => lenderByAcct.get(resolve(x.accountCode)) ?? "").find(Boolean) || null,
+          docs: paid ? `Drawn to pay ${paid}` : null,
+        });
+      }
+    }
+  } catch { /* the line keeps its own text */ }
+
+  return legs
+    .map((l) => {
+      const key = `${l.sourceType}::${l.sourceId}`;
+      const r = info.get(key);
+      const ref1 = docNoFromDescription(l.description) ?? r?.ref1 ?? l.sourceId;
+      const party = r?.party ?? null;
+      // The document's description replaces the ledger text, so a correction
+      // says what it is after it ("Purchase invoice · void").
+      const variant = drillVariant(l.sourceType, l.sourceId);
+      return {
+        id: l.id,
+        date: l.date,
+        description: r?.header ? (variant ? `${r.header} · ${variant}` : r.header) : tidyDescription(l.description, ref1, party),
+        otherSide: otherSideCodes(l, entryLegs.get(key) ?? [], resolve).map((code) => ({ code, name: coa.get(code)?.name ?? "" })),
+        ref1,
+        ref2: party,
+        docs: r?.docs ?? null,
+        debitSen: l.debitSen,
+        creditSen: l.creditSen,
+        sourceType: l.sourceType,
+        sourceId: l.sourceId,
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.ref1).localeCompare(String(b.ref1)));
+}
+
+// P&L inline drill (owner 2026-09-29 「我要点开看 detail，就是这样」— the Houzs
+// P&L's click-a-line view): the ledger lines behind ONE account line for the
+// statement's period, picked by the same pass the statement uses (a traced
+// glWindowSigned), so lines + report-layer additions (payroll from payslips,
+// the opening-month slice) sum to the line to the sen. Each line carries its
+// document (Ref. 1), the related document (Ref. 2: an invoice's SO, a PI's
+// supplier invoice no., a bill's reference, a voucher's payee) and the
+// accounts on the other side of its entry. Read-only; lines at full value
+// (the Sofa / Bedframe views carry a share of them). `from` + `to` (YYYY-MM)
+// ask for a run of months instead of `period` — the Monthly P&L lists one
+// row's lines under it across its financial year (owner 2026-10-01).
+app.get("/pl-drill", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  await ensurePnlHistorical(c.var.DB);
+  const db = c.var.DB;
+  const period = c.req.query("period") || new Date().toISOString().slice(0, 7);
+  const accountParam = (c.req.query("account") || "").trim();
+  if (!accountParam) return c.json({ success: false, error: "account is required" }, 400);
+  const orgId = getOrgId(c);
+  const resolve = await loadAccountResolver(db);
+  const account = resolve(accountParam);
+  const ymRe = /^\d{4}-(0[1-9]|1[0-2])$/;
+  const fromQ = c.req.query("from") ?? "";
+  const toQ = c.req.query("to") ?? "";
+  const ranged = ymRe.test(fromQ) && ymRe.test(toQ) && fromQ <= toQ;
+  const startYm = ranged ? fromQ : periodStartYm(period);
+  const endYm = ranged ? toQ : periodEndYm(period);
+  // A single month keyed from the old books has no ledger lines behind it.
+  const [historical, openingDateRaw] = await Promise.all([loadHistoricalPnl(db, orgId), getOpeningDate(db)]);
+  const openingMonth = openingDateRaw ? openingDateRaw.slice(0, 7) : null;
+  if (startYm && startYm === endYm && selectHistoricalWindow(historical, openingMonth, startYm, "all")) {
+    const a = await db.prepare("SELECT name FROM chart_of_accounts WHERE code = ?").bind(account).first<{ name: string }>();
+    return c.json({ success: true, data: { period, account: { code: account, name: a?.name ?? "" }, historical: true, openingMonth, lines: [], extra: [], debitSen: 0, creditSen: 0, netSen: 0, tied: true } });
+  }
+  const dc = await loadDocDateResolver(db);
+  const trace: PnlTrace = { account, legs: [], entryLegs: new Map(), extra: [] };
+  const { net, coa } = await glWindowSigned(db, orgId, startYm, endYm, dc, trace);
+
+  const lines = await buildDrillLines(db, orgId, trace.legs, trace.entryLegs, resolve, coa);
+  const extraDebit = trace.extra.reduce((s, e) => s + (e.sen > 0 ? e.sen : 0), 0);
+  const extraCredit = trace.extra.reduce((s, e) => s + (e.sen < 0 ? -e.sen : 0), 0);
+  const debitSen = lines.reduce((s, l) => s + l.debitSen, 0) + extraDebit;
+  const creditSen = lines.reduce((s, l) => s + l.creditSen, 0) + extraCredit;
+  const netSen = net.get(account) ?? 0;
+  return c.json({
+    success: true,
+    data: {
+      period,
+      account: { code: account, name: coa.get(account)?.name ?? "", type: coa.get(account)?.type ?? null },
+      historical: false,
+      // Months before it were keyed from the old books — no ledger lines.
+      openingMonth,
+      lines,
+      extra: trace.extra,
+      debitSen,
+      creditSen,
+      netSen,
+      tied: debitSen - creditSen === netSen,
+    },
+  });
+});
+
+// Balance-sheet inline drill (owner 2026-09-30 「Balance sheet 也要这样点开看」):
+// one balance-sheet account's balance brought forward, the month's ledger
+// lines (the same columns as the P&L / Cash Flow drills) and the balance
+// carried forward. Picked by the same pass as the /pl balance sheet — hidden
+// legs out, pre-opening legs out, by document date, old codes resolved, the
+// same optional company filter — so b/f + lines = c/f = the sheet's figure.
+// Read-only.
+app.get("/bs-drill", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const period = c.req.query("period") || new Date().toISOString().slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return c.json({ success: false, error: "period must be YYYY-MM" }, 400);
+  const accountParam = (c.req.query("account") || "").trim();
+  if (!accountParam) return c.json({ success: false, error: "account is required" }, 400);
+  const orgId = getOrgId(c);
+  const resolve = await loadAccountResolver(db);
+  const account = resolve(accountParam);
+  const coaRes = await db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>();
+  const coa = new Map((coaRes.results ?? []).map((a) => [a.code, { name: a.name, type: a.type }] as const));
+  const acct = coa.get(account);
+  if (!acct) return c.json({ success: false, error: `Account ${account} not found` }, 404);
+  const section = bsSectionFor(account, acct.type, await getBsSectionMap(db));
+  if (!section) return c.json({ success: false, error: `${account} is not a balance-sheet account` }, 400);
+  const assetSide = bsSectionClass(section) === "asset";
+  const coFilter = companyFilter(c, "orgId");
+  const legWhere = coFilter.active ? ` AND ${coFilter.sql}` : "";
+  const legRes = await db.prepare(
+    `SELECT id, accountCode, sourceId, sourceType, debitSen, creditSen, postedAt, description FROM ledger_journal_entries WHERE hidden = 0${legWhere}`,
+  )
+    .bind(...(coFilter.active ? [coFilter.param] : []))
+    .all<{ id: string; accountCode: string; sourceId: string; sourceType: string; debitSen: number; creditSen: number; postedAt: string; description: string | null }>();
+  const { docDate, openingDate } = await loadDocDateResolver(db);
+  let bf = 0;
+  let cf = 0;
+  const monthLegs: DrillSourceLeg[] = [];
+  for (const l of legRes.results ?? []) {
+    const dd = docDate(l.sourceType, l.sourceId, l.postedAt); // by document date
+    if (legBeforeOpening(l.sourceType, dd, openingDate)) continue; // pre-opening: not extracted
+    if (resolve(l.accountCode) !== account) continue;
+    const ym = dd.slice(0, 7);
+    if (ym > period) continue;
+    const v = (Number(l.debitSen) || 0) - (Number(l.creditSen) || 0);
+    cf += v;
+    if (ym < period) { bf += v; continue; }
+    monthLegs.push({
+      id: String(l.id ?? ""), accountCode: l.accountCode, sourceType: l.sourceType, sourceId: l.sourceId, date: dd.slice(0, 10),
+      debitSen: Number(l.debitSen) || 0, creditSen: Number(l.creditSen) || 0, description: String(l.description ?? ""),
+    });
+  }
+  const keys = new Set(monthLegs.map((l) => `${l.sourceType}::${l.sourceId}`));
+  const entryLegs = new Map<string, { accountCode: string; debitSen: number; creditSen: number }[]>();
+  for (const l of legRes.results ?? []) {
+    const k = `${l.sourceType}::${l.sourceId}`;
+    if (!keys.has(k)) continue;
+    let arr = entryLegs.get(k);
+    if (!arr) { arr = []; entryLegs.set(k, arr); }
+    arr.push({ accountCode: l.accountCode, debitSen: Number(l.debitSen) || 0, creditSen: Number(l.creditSen) || 0 });
+  }
+  const lines = await buildDrillLines(db, orgId, monthLegs, entryLegs, resolve, coa);
+  const moved = lines.reduce((s, l) => s + l.debitSen - l.creditSen, 0);
+  // Amounts on the sheet's own side: assets debit-positive, the rest credit.
+  const toSide = (v: number) => (assetSide ? v : -v);
+  return c.json({
+    success: true,
+    data: {
+      period,
+      account: { code: account, name: acct.name, type: acct.type, section },
+      assetSide,
+      bfSen: toSide(bf),
+      cfSen: toSide(cf),
+      lines,
+      tied: bf + moved === cf,
+    },
+  });
+});
+
 app.get("/pl-monthly", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -8198,13 +9203,148 @@ app.get("/pl-monthly", async (c) => {
   return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, columns: matrix.columns, rows: matrix.rows } });
 });
 
+// Finance dashboard tab feed (routes/dashboard-finance.ts → lib/dashboard-finance.ts).
+// Per month: the P&L's own figures (same per-month window logic as `/pl-monthly`:
+// pre-opening months come from pnl_historical, the rest from computePnlWindow)
+// and the Balance Sheet's month-end totals (same ledger legs, opening floor,
+// account resolver and section map as the `/pl` balanceSheet). Nothing is
+// re-derived: revenue = netSalesSen, labour = direct labour + salary opex lines,
+// net profit = netProfitSen. Equity includes the un-closed current-year earnings
+// line exactly as the Balance Sheet tab shows it.
+export type FinanceMonthRow = {
+  ym: string;
+  revenueSen: number;
+  labourSen: number;
+  netProfitSen: number;
+  assetsSen: number;
+  liabilitiesSen: number;
+  ltLiabilitiesSen: number;
+  equitySen: number;
+};
+export async function loadFinanceSeries(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  monthsIn: string[],
+): Promise<FinanceMonthRow[]> {
+  const months = [...monthsIn].sort();
+  if (months.length === 0) return [];
+  const last = months[months.length - 1];
+  await ensurePnlHistorical(db);
+  const override = await getPnlSectionMap(db);
+  const matData = await loadMaterialCostData(db, orgId, last);
+  const dc = await loadDocDateResolver(db);
+  const [historical, openingRaw] = await Promise.all([loadHistoricalPnl(db, orgId), getOpeningDate(db)]);
+  const openingMonth = openingRaw ? openingRaw.slice(0, 7) : null;
+  const EMPTY_W: PnlWindow["materialWarnings"] = { negatives: [], unresolved: [] };
+
+  const pnl = new Map<string, { revenueSen: number; labourSen: number; netProfitSen: number }>();
+  for (const ym of months) {
+    const hist = selectHistoricalWindow(historical, openingMonth, ym, "all");
+    // A month before the books opened with no owner-keyed history has no P&L
+    // (the ledger floor drops every pre-opening leg) — skip the heavy window.
+    if (!hist && openingMonth && ym < openingMonth) {
+      pnl.set(ym, { revenueSen: 0, labourSen: 0, netProfitSen: 0 });
+      continue;
+    }
+    const w: PnlWindow = hist
+      ? { ...hist, materialWarnings: EMPTY_W }
+      : await computePnlWindow(db, orgId, ym, ym, "all", matData, dc, override);
+    const salaryOpex = w.expenseLines.filter((l) => l.salary).reduce((s, l) => s + l.amountSen, 0);
+    pnl.set(ym, {
+      revenueSen: w.netSalesSen,
+      labourSen: w.labourSen + salaryOpex,
+      netProfitSen: Math.round(w.netProfitSen),
+    });
+  }
+
+  // Balance sheet at each month-end: cumulative ledger legs up to that month.
+  const [legRes, coaRes, bsOverride, resolveAcct] = await Promise.all([
+    db.prepare("SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0")
+      .all<{ accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string }>(),
+    db.prepare("SELECT code, type FROM chart_of_accounts").all<{ code: string; type: CoaRow["type"] }>(),
+    getBsSectionMap(db),
+    loadAccountResolver(db),
+  ]);
+  const coaType = new Map((coaRes.results ?? []).map((a) => [a.code, a.type] as const));
+  const perYm = new Map<string, Map<string, { dr: number; cr: number }>>();
+  for (const l of legRes.results ?? []) {
+    const dd = dc.docDate(l.sourceType, l.sourceId, l.postedAt);
+    if (legBeforeOpening(l.sourceType, dd, dc.openingDate)) continue;
+    const ym = dd.slice(0, 7);
+    if (ym > last) continue;
+    let m = perYm.get(ym);
+    if (!m) { m = new Map(); perYm.set(ym, m); }
+    const code = resolveAcct(l.accountCode);
+    const e = m.get(code) ?? { dr: 0, cr: 0 };
+    e.dr += Number(l.debitSen) || 0;
+    e.cr += Number(l.creditSen) || 0;
+    m.set(code, e);
+  }
+  const legYms = [...perYm.keys()].sort();
+  const run = new Map<string, { dr: number; cr: number }>();
+  let li = 0;
+  const out: FinanceMonthRow[] = [];
+  for (const ym of months) {
+    while (li < legYms.length && legYms[li] <= ym) {
+      for (const [code, v] of perYm.get(legYms[li])!) {
+        const e = run.get(code) ?? { dr: 0, cr: 0 };
+        e.dr += v.dr;
+        e.cr += v.cr;
+        run.set(code, e);
+      }
+      li++;
+    }
+    let assets = 0, liab = 0, lt = 0, equity = 0, unclosed = 0;
+    for (const [code, v] of run) {
+      const type = coaType.get(code);
+      if (!type) continue;
+      const section = bsSectionFor(code, type, bsOverride);
+      if (section) {
+        const asset = bsSectionClass(section) === "asset";
+        const bal = asset ? v.dr - v.cr : v.cr - v.dr;
+        if (asset) assets += bal;
+        else if (section === "EQUITY") equity += bal;
+        else { liab += bal; if (section === "LONG_TERM_LIABILITY") lt += bal; }
+      }
+      if (type === "REVENUE") unclosed += v.cr - v.dr;
+      else if (type === "COST" || type === "EXPENSE") unclosed -= v.dr - v.cr;
+    }
+    out.push({
+      ym, ...(pnl.get(ym) ?? { revenueSen: 0, labourSen: 0, netProfitSen: 0 }),
+      assetsSen: assets, liabilitiesSen: liab, ltLiabilitiesSen: lt, equitySen: equity + unclosed,
+    });
+  }
+  return out;
+}
+
 // The cash-flow statement computation, shared by GET /cashflow-statement and
 // the dashboard card — one engine, so the two can never disagree.
+// The Cash Flow inline drill (owner 2026-09-29 「cash flow 也要这样点开看」):
+// one row per payment / receipt that fed a statement line, with the share it
+// put there. Built from the engine's own sources, so the rows sum to the line.
+type CfDrillItem = {
+  key: string; ym: string; date: string; description: string;
+  otherSide: { code: string; name: string }[]; ref1: string; ref2: string | null;
+  // The documents the money settled (PI / bill numbers) — shown on hover, not
+  // in the column (owner 2026-09-30 「不需要看每一张 invoice 的 number」).
+  docs: string | null;
+  sen: number; ofSen: number | null;
+};
+const SECTION_ORDER_SET: ReadonlySet<string> = new Set<string>([
+  "REVENUE_COLLECTION", "RAW_MATERIALS", "TRADE_FINANCE", "DIRECT_LABOUR", "FACTORY_OVERHEAD", "GENERAL_EXPENSE",
+  "TAXATION", "FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN", "UNALLOCATED",
+]);
+type CfDrill = {
+  key: string; label: string; section: string; found: boolean; tied: boolean;
+  items: CfDrillItem[]; months: { ym: string; label: string; sen: number }[];
+};
+
 async function computeCashflowStatement(
   db: Env["Variables"]["DB"],
   period: string,
   editable: boolean,
   orgId: string,
+  opts?: { traceKey?: string },
 ) {
   // Local alias so the extracted body reads exactly as it did in the route.
   const c: { var: { DB: Env["Variables"]["DB"] } } = { var: { DB: db } };
@@ -8236,6 +9376,7 @@ async function computeCashflowStatement(
       debitSen: l.debitSen,
       creditSen: l.creditSen,
       ym: docDate(l.sourceType, l.sourceId, l.postedAt).slice(0, 7), // by document date
+      date: docDate(l.sourceType, l.sourceId, l.postedAt).slice(0, 10),
       description: l.description ?? "",
     }));
 
@@ -8276,14 +9417,71 @@ async function computeCashflowStatement(
   // is the month whose payslip department mix splits the cash (owner
   // 2026-08-27 「salary 那边也是要拆散成department」).
   const salaryLegs: { sourceId: string; description: string; ym: string }[] = [];
+  // Trade finance (owner 2026-09-28 「用 trade finance 还我要当做 trade finance -
+  // Houzs Century」, then 「倒反 … 我会看 total spend」): a supplier paid from the
+  // facility is SPEND in the month of the draw, the repayment to the lender is
+  // the offset. A draw (DR 400 · CR TF) never touches a bank, so it needs its
+  // own road below; a repayment (DR TF · CR bank) does, and would read as
+  // spend a second time, so its leg is flipped to a credit — the engine then
+  // shows it negative under the same Trade Finance block.
+  const tfSources = await getTfSources(c.var.DB).catch(() => [] as TfSource[]);
+  const tfAccounts = new Map<string, TfSource>();
+  for (const s of tfSources) tfAccounts.set(resolveAcct(s.accountCode), s);
+  const tfSupplierByNo = new Map<string, string>();
+  if (tfAccounts.size) {
+    const spRes = await c.var.DB.prepare(
+      "SELECT payment_no, MAX(supplier_name) AS supplier_name FROM supplier_payments WHERE org_id = ? GROUP BY payment_no",
+    ).bind(orgId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const r of spRes.results ?? []) {
+      const no = String(r.paymentNo ?? r.payment_no ?? "");
+      const nm = String(r.supplierName ?? r.supplier_name ?? "").trim();
+      if (no && nm) tfSupplierByNo.set(no, nm);
+    }
+  }
+  const tfPayee = (sourceType: string, sourceId: string, description: string): string =>
+    (sourceType.startsWith("supplier_payment") ? tfSupplierByNo.get(sourceId) : undefined) ?? description.trim();
+  // The payroll accruals under 410-0010's parent (ACCRUALS) are payroll money,
+  // not "Unallocated" (owner 2026-09-29). The parent's own legs are salary and
+  // split by department like 410-0010's; the section defaults (salary → Direct
+  // Labour, EPF / SOCSO / EIS → General Expense) come from
+  // payrollAccrualSections below. Found from the chart, not coded.
+  const salaryAccrualParent = coa.get(LABOUR_ACCRUAL_ACCT)?.parentCode ?? null;
   for (const legs of byEntry.values()) {
     const hasBank = legs.some((l) => bankCodes.has(l.code));
-    if (!hasBank) continue;
     const opening = legs.some((l) => isOpeningSource(l.sourceType));
+    // An entry with no bank leg is outside a cash statement — unless it moves
+    // the trade-finance facility: the lender paid for us (a draw) or charged
+    // us (interest). Those are grossed up (owner 2026-09-29 「raw material 加,
+    // drawdown 减, 一加一减」): the contra legs classify exactly as if a bank
+    // had paid (the supplier's PI splits by material, the interest lands on
+    // its expense account) and the facility leg carries the other side.
+    const viaTf = !hasBank && tfAccounts.size > 0 && !opening && legs.some((l) => tfAccounts.has(l.code));
+    if (!hasBank && !viaTf) continue;
     for (const l of legs) {
       if (bankCodes.has(l.code)) {
         bankLegs.push({ accountCode: l.code, debitSen: l.debitSen, creditSen: l.creditSen, ym: l.ym });
       } else if (!opening) {
+        if (tfAccounts.has(l.code)) {
+          // The facility leg, as posted: CR = the lender lent (negative in the
+          // outflow-signed block), DR = we repaid (positive, real cash out) —
+          // or a void's reversal of either, which nets on the same row.
+          // Interest (tf_interest legs, adjustments included) and bank charges
+          // (tf_bank_charge) are one row each per facility. Never split as a
+          // raw-material payment (no paymentNos).
+          const lender = tfAccounts.get(l.code)!.lenderName || "lender";
+          classified.push({
+            accountCode: l.code, debitSen: l.debitSen, creditSen: l.creditSen,
+            ym: l.ym, sourceType: l.sourceType, sourceId: l.sourceId,
+            lineLabel: l.sourceType.startsWith("tf_interest")
+              ? `Interest charged by ${lender}`
+              : l.sourceType.startsWith("tf_bank_charge")
+                ? `Bank charges by ${lender}`
+                : hasBank
+                  ? `Repaid to ${lender}`
+                  : `Drawdown — ${tfPayee(l.sourceType, l.sourceId, l.description) || "trade finance"}`,
+          });
+          continue;
+        }
         if (l.sourceType.startsWith("other_party_payment")) {
           opLegs.push({
             accountCode: l.code, debitSen: l.debitSen, creditSen: l.creditSen,
@@ -8296,37 +9494,116 @@ async function computeCashflowStatement(
           ym: l.ym, sourceType: l.sourceType, sourceId: l.sourceId,
         });
         if (l.sourceType.startsWith("supplier_payment")) paymentNos.add(l.sourceId);
-        else if (l.code === LABOUR_ACCRUAL_ACCT)
+        else if (l.code === LABOUR_ACCRUAL_ACCT || (salaryAccrualParent && l.code === salaryAccrualParent))
           salaryLegs.push({ sourceId: l.sourceId, description: l.description, ym: l.ym });
       }
     }
   }
 
-  const map = await getCashflowMap(c.var.DB);
+  const map: CfMap = { ...(await getCashflowMap(c.var.DB)) };
+  // The facility account belongs to the Trade Finance block unless the owner
+  // has dragged it somewhere himself.
+  for (const code of tfAccounts.keys()) if (!map[code]) map[code] = { section: "TRADE_FINANCE", order: 10 };
+  // Interest and other finance costs sit in their own block below the
+  // operating result (owner 2026-09-29 「这个应该是 finance cost 那边吧」):
+  // every account filed under the chart's FINANCE COSTS parent (902-0000 on
+  // this chart — found by name, not code) defaults to the Finance Cost
+  // section unless the owner has dragged it somewhere himself.
+  for (const [code, section] of payrollAccrualSections(coa, LABOUR_ACCRUAL_ACCT)) if (!map[code]) map[code] = { section, order: 10 };
+  const financeParents = new Set([...coa.values()].filter((a) => /^FINANCE COSTS?$/i.test(a.name.trim())).map((a) => a.code));
+  for (const a of coa.values()) if (a.parentCode && financeParents.has(a.parentCode) && !map[a.code]) map[a.code] = { section: "FINANCE_COST", order: 10 };
+  // Raw-material stock accounts → Raw Materials (owner 2026-09-30); see rawStockAccountSections.
+  for (const [code, section] of rawStockAccountSections(coa)) if (!map[code]) map[code] = { section, order: 10 };
   const sgOverride = await getCashflowStockGroupMap(c.var.DB);
   const rmSplit: RmSplit = {};
   if (paymentNos.size || opLegs.length) {
     const rmRes = await c.var.DB.prepare("SELECT * FROM raw_materials").all<Record<string, unknown>>();
     const grpByCode = new Map<string, string>();
+    // Exact description → group, kept only when ONE master item carries that
+    // description (an ambiguous description resolves nothing).
+    const grpByDesc = new Map<string, string | null>();
     for (const r of rmRes.results ?? []) {
       const code = String((r.item_code ?? r.itemCode) ?? "");
       const grp = String((r.item_group ?? r.itemGroup) ?? "");
       if (code) grpByCode.set(code, grp);
+      const desc = String(r.description ?? "").trim().toUpperCase();
+      if (desc && grp) grpByDesc.set(desc, grpByDesc.has(desc) && grpByDesc.get(desc) !== grp ? null : grp);
+    }
+    // Owner 2026-09-29 「不应该出现 unallocated，就是 meditex 那个」: a PI line
+    // whose code is not in the master used to fall straight to "Unallocated —
+    // <supplier>". Measured: MEDITEX keyed `MED-PSF15.064HCS(A1)` on 44 lines
+    // while the master item is `MED-PSF15.064HCS(14)(L)` — same product name
+    // ("POLYESTER FIBER 15D X 64MM 10KG/BAG"), same price (RM 8.36). The line
+    // now resolves the way GRN receiving already does (resolveRmForGRNItem,
+    // grn.ts): the supplier's SKU in the price list, then the EXACT product
+    // name of one master item. No guessing on the code: a line that matches
+    // neither still shows as "Unallocated — <supplier>", so a real mistake
+    // stays visible.
+    const bindRes = await c.var.DB.prepare("SELECT supplierSku, materialCode FROM supplier_material_bindings")
+      .all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    const codeBySku = new Map<string, string | null>();
+    for (const b of bindRes.results ?? []) {
+      const sku = String(b.supplierSku ?? b.supplier_sku ?? "").trim().toUpperCase();
+      const code = String(b.materialCode ?? b.material_code ?? "").trim();
+      if (!sku || !code) continue;
+      codeBySku.set(sku, codeBySku.has(sku) && codeBySku.get(sku) !== code ? null : code);
+    }
+    const groupForLine = (code: string, name: string): string => {
+      const direct = code ? grpByCode.get(code) : undefined;
+      if (direct) return direct;
+      const viaSku = code ? codeBySku.get(code.trim().toUpperCase()) : undefined;
+      if (viaSku) { const g = grpByCode.get(viaSku); if (g) return g; }
+      const viaName = name ? grpByDesc.get(name.trim().toUpperCase()) : undefined;
+      return viaName ?? "";
+    };
+    // Owner 2026-09-29 「load 这么慢」: measured 8.6–9.3 s on prod, and the
+    // cause was one query per ticked payment (115) plus one per settled PI
+    // (298) — ~415 serial round-trips. The same two reads now come in bulk,
+    // chunked IN lists, and the arithmetic below is byte-for-byte what it
+    // was (the owner's condition: 「主要确保数据对」).
+    const chunk = <T,>(arr: T[], n: number): T[][] => { const out: T[][] = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+    // 1. Every allocation row of every ticked payment.
+    const payRowsByNo = new Map<string, Record<string, unknown>[]>();
+    for (const part of chunk([...paymentNos], 200)) {
+      const res = await c.var.DB.prepare(
+        `SELECT sp.payment_no AS payment_no, sp.purchase_invoice_id AS purchase_invoice_id, sp.booked_sen AS booked_sen, sp.amount_sen AS amount_sen,
+                sp.supplier_name AS supplier_name, COALESCE(sp.method,'') AS method
+           FROM supplier_payments sp
+          WHERE sp.payment_no IN (${part.map(() => "?").join(",")}) AND COALESCE(sp.method,'') <> 'CREDIT_NOTE'`,
+      ).bind(...part).all<Record<string, unknown>>();
+      for (const r of res.results ?? []) {
+        const no = String(r.paymentNo ?? r.payment_no ?? "");
+        const arr = payRowsByNo.get(no) ?? [];
+        arr.push(r);
+        payRowsByNo.set(no, arr);
+      }
+    }
+    // 2. The item lines of every PI those rows settled.
+    const piIds = new Set<string>();
+    for (const rows of payRowsByNo.values()) for (const r of rows) { const id = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? ""); if (id) piIds.add(id); }
+    const piItemsById = new Map<string, Record<string, unknown>[]>();
+    for (const part of chunk([...piIds], 200)) {
+      const res = await c.var.DB.prepare(`SELECT * FROM purchase_invoice_items WHERE pi_id IN (${part.map(() => "?").join(",")})`).bind(...part).all<Record<string, unknown>>();
+      for (const it of res.results ?? []) {
+        const id = String(it.piId ?? it.pi_id ?? "");
+        const arr = piItemsById.get(id) ?? [];
+        arr.push(it);
+        piItemsById.set(id, arr);
+      }
     }
     // Per-PI material-line weights, computed once per PI and reused across
     // every payment that touched it. A PI belongs to exactly one supplier, so
     // the supplier-tagged fallback label is stable under the piId cache key.
     const piWeightCache = new Map<string, Map<string, number>>();
-    const piWeightsFor = async (piId: string, supplier: string): Promise<Map<string, number>> => {
+    const piWeightsFor = (piId: string, supplier: string): Map<string, number> => {
       const hit = piWeightCache.get(piId);
       if (hit) return hit;
       const w = new Map<string, number>();
-      const itRes = await c.var.DB.prepare("SELECT * FROM purchase_invoice_items WHERE pi_id = ?").bind(piId).all<Record<string, unknown>>();
-      for (const it of itRes.results ?? []) {
+      for (const it of piItemsById.get(piId) ?? []) {
         const lt = String((it.line_type ?? it.lineType) ?? "STOCKED");
         const amt = Number((it.line_total_sen ?? it.lineTotalSen) ?? 0);
         const mc = String((it.material_code ?? it.materialCode) ?? "");
-        const grp = mc ? grpByCode.get(mc) ?? "" : "";
+        const grp = groupForLine(mc, String((it.material_name ?? it.materialName) ?? ""));
         // Owner 2026-08-27 「拆散」: one row PER STOCK GROUP, not the four
         // rolled-up lines. The stock-group override map still renames a group
         // when set; tax rides its own line; a line with no resolvable group is
@@ -8344,23 +9621,17 @@ async function computeCashflowStatement(
     // 什么」): advances (no PI yet), opening-balance PIs (pi-ob-*, item
     // lines predate the system), trade-finance repayments. Discount
     // markers (CREDIT_NOTE) are not cash and stay out.
-    const weightsForPayment = async (payNo: string): Promise<Map<string, number>> => {
-      const rowsRes = await c.var.DB.prepare(
-        `SELECT sp.purchase_invoice_id AS purchase_invoice_id, sp.booked_sen AS booked_sen, sp.amount_sen AS amount_sen,
-                sp.supplier_name AS supplier_name, COALESCE(sp.method,'') AS method
-           FROM supplier_payments sp
-          WHERE sp.payment_no = ? AND COALESCE(sp.method,'') <> 'CREDIT_NOTE'`,
-      ).bind(payNo).all<Record<string, unknown>>();
+    const weightsForPayment = (payNo: string): Map<string, number> => {
       const weights = new Map<string, number>();
       const bump = (line: string, sen: number) => weights.set(line, (weights.get(line) ?? 0) + sen);
-      for (const row of rowsRes.results ?? []) {
+      for (const row of payRowsByNo.get(payNo) ?? []) {
         const piId = String(row.purchaseInvoiceId ?? row.purchase_invoice_id ?? "");
         const booked = Math.max(0, Number(row.bookedSen ?? row.booked_sen ?? row.amountSen ?? row.amount_sen) || 0);
         if (!booked) continue;
         const supplier = String(row.supplierName ?? row.supplier_name ?? "").trim() || "unknown supplier";
         if (String(row.method ?? "") === "TF_REPAYMENT") { bump("Trade finance repayment", booked); continue; }
         if (!piId) { bump("Supplier advance / deposit", booked); continue; }
-        const w = await piWeightsFor(piId, supplier);
+        const w = piWeightsFor(piId, supplier);
         let totalW = 0;
         for (const v of w.values()) totalW += v;
         // Owner 2026-08-31 「我想要分」: pre-system opening invoices carry no
@@ -8372,7 +9643,7 @@ async function computeCashflowStatement(
       return weights;
     };
     for (const payNo of paymentNos) {
-      const weights = await weightsForPayment(payNo);
+      const weights = weightsForPayment(payNo);
       if (weights.size) {
         rmSplit[payNo] = [...weights.entries()].map(([line, weight]) => ({ line, weight: Math.round(weight) }));
       }
@@ -8455,20 +9726,20 @@ async function computeCashflowStatement(
   }
 
   // Salary → department rows. Weights come from aggregateLabour of the payroll
-  // month the voucher description names ("… - May'26"); a leg with no parseable
-  // month uses its own document month; a month with no payslips gets no split
-  // and the leg stays on the account line.
+  // month the voucher description names (payrollMonthFrom: "… - May'26",
+  // "… - MAY'26", "… - JULY'26", "LATE SALARY JUNE" — owner 2026-09-29
+  // 「月份一起修」); a leg naming no month uses its own document month; a named
+  // month with no payslips falls back to the document month's mix (before,
+  // an unreadable name got that mix and a readable one — "Salaries - Apr'26",
+  // paid 22/05 — stayed unsplit on the account line; now both split); no
+  // payslips there either → no split, the leg stays on the account line.
+  // The month comes from the LEG's text (the voucher line), which can differ
+  // from the voucher header the drill shows.
   const deptSplit: RmSplit = {};
   if (salaryLegs.length) {
     if (!map[LABOUR_ACCRUAL_ACCT]) map[LABOUR_ACCRUAL_ACCT] = { section: "DIRECT_LABOUR", order: 10 };
-    const MONTHS3 = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" } as const;
-    const payrollYm = (desc: string, fallback: string): string => {
-      const m = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'(\d{2})\b/.exec(desc);
-      return m ? `20${m[2]}-${MONTHS3[m[1] as keyof typeof MONTHS3]}` : fallback;
-    };
     const mixCache = new Map<string, { line: string; weight: number }[]>();
-    for (const leg of salaryLegs) {
-      const ym = payrollYm(leg.description, leg.ym);
+    const mixFor = async (ym: string) => {
       let mix = mixCache.get(ym);
       if (!mix) {
         try {
@@ -8477,6 +9748,12 @@ async function computeCashflowStatement(
         } catch { mix = []; }
         mixCache.set(ym, mix);
       }
+      return mix;
+    };
+    for (const leg of salaryLegs) {
+      const ym = payrollMonthFrom(leg.description, leg.ym);
+      let mix = await mixFor(ym);
+      if (!mix.length && ym !== leg.ym) mix = await mixFor(leg.ym);
       if (mix.length && !deptSplit[leg.sourceId]) deptSplit[leg.sourceId] = mix;
     }
   }
@@ -8489,8 +9766,184 @@ async function computeCashflowStatement(
   }
   const statement = buildStatement({
     classified, bankLegs, coa, map, rmSplit, deptSplit, stockGroupOverride: sgOverride,
-    supplierCategory, fyeMonth, period, editable,
+    supplierCategory, fyeMonth, period, editable, trace: !!opts?.traceKey,
   });
+  let drill: CfDrill | undefined;
+  if (opts?.traceKey) {
+    const key = opts.traceKey;
+    const section = key.split("|")[0] ?? "";
+    const row = statement.rows.find((r) => r.kind === "line" && r.lineKey === key);
+    const monthCols = statement.columns.filter((col) => !col.accum);
+    const fyStart = monthCols.length ? monthCols[monthCols.length - 1].key : period;
+    const inFy = (ym: string) => ym >= fyStart && ym <= period;
+    // One row per entry: a payment that fed this line through two legs shows once.
+    const perEntry = new Map<string, { sourceType: string; sourceId: string; ym: string; sen: number }>();
+    for (const s of statement.sources?.[key] ?? []) {
+      if (!inFy(s.ym)) continue; // outside every column the statement shows
+      const k = `${s.sourceType}::${s.sourceId}`;
+      const cur = perEntry.get(k);
+      if (cur) cur.sen += s.sen;
+      else perEntry.set(k, { sourceType: s.sourceType, sourceId: s.sourceId, ym: s.ym, sen: s.sen });
+    }
+    // Ref. 2 — what the money settled: the PIs a supplier payment paid, the
+    // bills an other-creditor payment paid, a voucher's payee. Read only for
+    // the entries on this line; a failed read just leaves the column empty.
+    const ents = [...perEntry.values()];
+    const chunkIds = async (ids: string[], sql: (ph: string) => string, extra: unknown[] = []) => {
+      const out: Record<string, unknown>[] = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const part = ids.slice(i, i + 200);
+        const res = await c.var.DB.prepare(sql(part.map(() => "?").join(","))).bind(...part, ...extra).all<Record<string, unknown>>();
+        out.push(...(res.results ?? []));
+      }
+      return out;
+    };
+    // Ref. 2 = who the money went to / came from (owner 2026-09-30 「refer 2 是
+    // 看 supplier 名字和 overall description 就好，不需要看每一张 invoice 的
+    // number」): the supplier, the other creditor, the voucher's payee, the
+    // customer. The PIs / bills a payment settled ride along for the hover.
+    // A payment made through a payment voucher (an AP voucher: its number is
+    // the payment number) takes that voucher's purpose as its description.
+    const party = new Map<string, string>();
+    const docs = new Map<string, string>();
+    const pvPurpose = new Map<string, string>(); // voucher id → purpose
+    const pvPurposeByNo = new Map<string, string>(); // voucher number → purpose
+    const setOnce = (m: Map<string, string>, k: string, v: string) => { if (v && !m.has(k)) m.set(k, v); };
+    try {
+      const spNos = [...new Set(ents.filter((e) => e.sourceType.startsWith("supplier_payment")).map((e) => e.sourceId))];
+      const piByPay = new Map<string, Set<string>>();
+      for (const r of await chunkIds(spNos, (ph) => `SELECT payment_no, purchase_invoice_id, supplier_name FROM supplier_payments WHERE payment_no IN (${ph}) AND org_id = ?`, [orgId])) {
+        const no = String(r.paymentNo ?? r.payment_no ?? ""), pid = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? "");
+        setOnce(party, `sp::${no}`, String(r.supplierName ?? r.supplier_name ?? "").trim());
+        if (no && pid) (piByPay.get(no) ?? piByPay.set(no, new Set()).get(no)!).add(pid);
+      }
+      const piNo = new Map<string, string>();
+      for (const r of await chunkIds([...new Set([...piByPay.values()].flatMap((s) => [...s]))], (ph) => `SELECT id, piNo FROM purchase_invoices WHERE id IN (${ph})`)) {
+        piNo.set(String(r.id), String(r.piNo ?? r.pi_no ?? ""));
+      }
+      for (const [no, ids] of piByPay) docs.set(`sp::${no}`, [...ids].map((id) => piNo.get(id) || (id.startsWith("pi-ob-") ? "Opening" : id)).join(", "));
+    } catch { /* Ref. 2 stays empty */ }
+    try {
+      const opNos = [...new Set(ents.filter((e) => e.sourceType.startsWith("other_party_payment")).map((e) => e.sourceId))];
+      const billsByPay = new Map<string, Set<string>>();
+      for (const r of await chunkIds(opNos, (ph) => `SELECT payment_no, bill_id, party_name FROM other_party_payments WHERE payment_no IN (${ph})`)) {
+        const no = String(r.paymentNo ?? r.payment_no ?? ""), bid = String(r.billId ?? r.bill_id ?? "");
+        setOnce(party, `op::${no}`, String(r.partyName ?? r.party_name ?? "").trim());
+        if (no && bid) (billsByPay.get(no) ?? billsByPay.set(no, new Set()).get(no)!).add(bid);
+      }
+      const billNo = new Map<string, string>();
+      for (const r of await chunkIds([...new Set([...billsByPay.values()].flatMap((s) => [...s]))], (ph) => `SELECT id, billNo FROM other_party_bills WHERE id IN (${ph})`)) {
+        billNo.set(String(r.id), String(r.billNo ?? r.bill_no ?? ""));
+      }
+      for (const [no, ids] of billsByPay) docs.set(`op::${no}`, [...ids].map((id) => billNo.get(id) || id).join(", "));
+    } catch { /* Ref. 2 stays empty */ }
+    try {
+      const pvIds = [...new Set(ents.filter((e) => e.sourceType.startsWith("payment_voucher")).map((e) => e.sourceId))];
+      for (const r of await chunkIds(pvIds, (ph) => `SELECT id, payee, description FROM payment_vouchers WHERE id IN (${ph})`)) {
+        setOnce(party, `pv::${String(r.id)}`, String(r.payee ?? "").trim());
+        const purpose = ownDescription(String(r.description ?? ""));
+        if (purpose) pvPurpose.set(String(r.id), purpose);
+      }
+      // AP vouchers: the settlement carries the voucher's number.
+      const payNos = [...new Set(ents.filter((e) => e.sourceType.startsWith("supplier_payment") || e.sourceType.startsWith("other_party_payment")).map((e) => e.sourceId))];
+      for (const r of await chunkIds(payNos, (ph) => `SELECT pvNo, description FROM payment_vouchers WHERE pvNo IN (${ph})`)) {
+        const purpose = ownDescription(String(r.description ?? ""));
+        if (purpose) pvPurposeByNo.set(String(r.pvNo ?? r.pv_no ?? ""), purpose);
+      }
+    } catch { /* description stays the ledger text */ }
+    try {
+      const recIds = [...new Set(ents.filter((e) => e.sourceType === "payment" || e.sourceType.startsWith("payment_") && !e.sourceType.startsWith("payment_voucher")).map((e) => e.sourceId))];
+      for (const r of await chunkIds(recIds, (ph) => `SELECT id, customerName FROM payment_records WHERE id IN (${ph})`)) {
+        setOnce(party, `rc::${String(r.id)}`, String(r.customerName ?? r.customer_name ?? "").trim());
+      }
+    } catch { /* Ref. 2 stays empty */ }
+    // An official receipt names its payer and carries its description (its
+    // note, else its lines' text); a JV its description; trade-finance interest the lender (the facility
+    // account on the entry), with whom the draw paid on hover.
+    const ownPurpose = new Map<string, string>(); // "or::id" / "jv::id" → the document's description
+    try {
+      const orIds = [...new Set(ents.filter((e) => e.sourceType.startsWith("official_receipt")).map((e) => e.sourceId))];
+      for (const [id, r] of await officialReceiptTexts(c.var.DB, orIds)) {
+        setOnce(party, `or::${id}`, r.payer);
+        setOnce(ownPurpose, `or::${id}`, r.text);
+      }
+    } catch { /* Ref. 2 stays empty */ }
+    try {
+      const jvIds = [...new Set(ents.filter((e) => e.sourceType === "manual" || e.sourceType.startsWith("manual_")).map((e) => e.sourceId))];
+      for (const r of await chunkIds(jvIds, (ph) => `SELECT id, description FROM journal_entries WHERE id IN (${ph})`)) {
+        setOnce(ownPurpose, `jv::${String(r.id)}`, ownDescription(String(r.description ?? "")) ?? "");
+      }
+    } catch { /* description stays the ledger text */ }
+    try {
+      const tfEnts = ents.filter((e) => tfChargeKind(e.sourceType));
+      const draws = [...new Set(tfEnts.map((e) => tfInterestDrawId(e.sourceId)))];
+      const paidTo = new Map<string, string>();
+      for (const r of await chunkIds(draws, (ph) => `SELECT payment_no, supplier_name FROM supplier_payments WHERE payment_no IN (${ph}) AND org_id = ?`, [orgId])) {
+        setOnce(paidTo, String(r.paymentNo ?? r.payment_no ?? ""), String(r.supplierName ?? r.supplier_name ?? "").trim());
+      }
+      for (const r of await chunkIds(draws.filter((d) => !paidTo.has(d)), (ph) => `SELECT payment_no, party_name FROM other_party_payments WHERE payment_no IN (${ph})`)) {
+        setOnce(paidTo, String(r.paymentNo ?? r.payment_no ?? ""), String(r.partyName ?? r.party_name ?? "").trim());
+      }
+      for (const e of tfEnts) {
+        const lender = (byEntry.get(`${e.sourceType}::${e.sourceId}`) ?? []).map((l) => tfAccounts.get(l.code)?.lenderName ?? "").find(Boolean) ?? "";
+        setOnce(party, `tf::${e.sourceId}`, lender);
+        const paid = paidTo.get(tfInterestDrawId(e.sourceId));
+        if (paid) docs.set(`tf::${e.sourceId}`, `Drawn to pay ${paid}`);
+      }
+    } catch { /* Ref. 2 stays empty */ }
+    const kindOf = (sourceType: string): string =>
+      sourceType.startsWith("supplier_payment") ? "sp"
+        : sourceType.startsWith("other_party_payment") ? "op"
+          : sourceType.startsWith("payment_voucher") ? "pv"
+            : sourceType === "payment" || sourceType.startsWith("payment_") ? "rc"
+              : sourceType.startsWith("official_receipt") ? "or"
+                : tfChargeKind(sourceType) ? "tf"
+                  : sourceType === "manual" || sourceType.startsWith("manual_") ? "jv" : "";
+
+    const items: CfDrillItem[] = ents.map((e) => {
+      const legs = byEntry.get(`${e.sourceType}::${e.sourceId}`) ?? [];
+      // The money side: the bank / cash legs — or, for a facility draw that
+      // never touched a bank, the trade-finance leg.
+      let money = legs.filter((l) => bankCodes.has(l.code));
+      let entryCash = money.reduce((s, l) => s + l.debitSen - l.creditSen, 0);
+      if (!money.length) {
+        money = legs.filter((l) => tfAccounts.has(l.code));
+        entryCash = money.reduce((s, l) => s + l.creditSen - l.debitSen, 0);
+      }
+      const legText = (money[0]?.description || legs[0]?.description || "").trim();
+      const ref1 = docNoFromDescription(legText) ?? e.sourceId;
+      const kind = kindOf(e.sourceType);
+      const who = kind ? party.get(`${kind}::${e.sourceId}`) ?? null : null;
+      const purpose = kind === "pv" ? pvPurpose.get(e.sourceId)
+        : kind === "sp" || kind === "op" ? pvPurposeByNo.get(e.sourceId)
+          : kind === "or" || kind === "jv" ? ownPurpose.get(`${kind}::${e.sourceId}`) : undefined;
+      // A correction says what it is after the document's description.
+      const variant = drillVariant(e.sourceType, e.sourceId);
+      const description = purpose ? (variant ? `${purpose} · ${variant}` : purpose) : tidyDescription(legText, ref1, who);
+      const codes = [...new Set(money.map((l) => l.code))];
+      return {
+        key: `${e.sourceType}::${e.sourceId}`,
+        ym: e.ym,
+        date: legs[0]?.date ?? e.ym,
+        description,
+        otherSide: codes.map((code) => ({ code, name: coa.get(code)?.name ?? "" })),
+        ref1,
+        ref2: who,
+        docs: kind ? docs.get(`${kind}::${e.sourceId}`) ?? null : null,
+        sen: e.sen,
+        ofSen: Math.abs(entryCash) !== Math.abs(e.sen) ? Math.abs(entryCash) : null,
+      };
+    }).sort((a, b) => a.date.localeCompare(b.date) || a.ref1.localeCompare(b.ref1));
+    const sign = SECTION_ORDER_SET.has(section) ? displaySign(section as CfSection) : 1;
+    const perMonth = new Map<string, number>();
+    for (const it of items) perMonth.set(it.ym, (perMonth.get(it.ym) ?? 0) + it.sen);
+    const total = items.reduce((s, it) => s + it.sen, 0);
+    const tied = !!row && statement.columns.every((col, i) => (row.values[i] ?? 0) === sign * (col.accum ? total : (perMonth.get(col.key) ?? 0)));
+    drill = {
+      key, label: row?.label ?? key.slice(section.length + 1), section, found: !!row, tied,
+      items, months: monthCols.map((col) => ({ ym: col.key, label: col.label, sen: sign * (perMonth.get(col.key) ?? 0) })),
+    };
+  }
   // Money IN / OUT straight off the bank legs (DR = in, CR = out). Derived
   // here rather than by summing statement lines: the statement's line values
   // carry a per-SECTION display sign, so a salary payment reads positive under
@@ -8503,7 +9956,7 @@ async function computeCashflowStatement(
     cur.outflow -= Number(l.creditSen) || 0;
     bankByMonth.set(l.ym, cur);
   }
-  return { ...statement, bankByMonth };
+  return { ...statement, bankByMonth, drill };
 }
 
 app.get("/cashflow-statement", async (c) => {
@@ -8511,8 +9964,26 @@ app.get("/cashflow-statement", async (c) => {
   if (denied) return denied;
   const period = c.req.query("period") || new Date().toISOString().slice(0, 7);
   const editable = c.req.query("editable") === "1";
-  const { bankByMonth: _bank, ...statement } = await computeCashflowStatement(c.var.DB, period, editable, getOrgId(c));
+  const { bankByMonth: _bank, drill: _drill, sources: _sources, ...statement } = await computeCashflowStatement(c.var.DB, period, editable, getOrgId(c));
   return c.json({ success: true, data: { period, ...statement } });
+});
+
+// Cash Flow inline drill (owner 2026-09-29 「cash flow 也要这样点开看」): the
+// payments / receipts behind one statement line — date, description, the
+// bank (or facility) the money moved through, Ref. 1 (the document), Ref. 2
+// (the PIs / bills it settled, a voucher's payee) and the share it put on this
+// line (a split payment says "part of" its whole amount). Every FY month the
+// statement shows; the UI filters by month. Same computation as the
+// statement, so per column the rows sum to the line (`tied`). Read-only.
+app.get("/cashflow-drill", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const period = c.req.query("period") || new Date().toISOString().slice(0, 7);
+  const key = (c.req.query("key") || "").trim();
+  if (!key || !key.includes("|")) return c.json({ success: false, error: "key is required (SECTION|label)" }, 400);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return c.json({ success: false, error: "period must be YYYY-MM" }, 400);
+  const { drill } = await computeCashflowStatement(c.var.DB, period, false, getOrgId(c), { traceKey: key });
+  return c.json({ success: true, data: { period, ...drill } });
 });
 
 // GL-truth P&L + Balance Sheet, computed from the immutable
@@ -8944,29 +10415,612 @@ function validateDocLines(
   return { ok: true, lines, totalSen };
 }
 
+// ---------------------------------------------------------------------------
+// PV four-tier approval (owner 2026-09-22, adopted from the Houzs trading
+// ERP): Draft → Prepared → Checked → Approved. A voucher born as a draft
+// carries NO ledger legs until APPROVE; its formal number is minted at CHECK
+// (so the formal sequence = the order money was checked, and a torn-up draft
+// never burns a number). Vouchers created through the legacy immediate path
+// keep posting at birth and are backfilled as APPROVED.
+// ⚠ Migration files 0233/0214 are the record; THIS self-apply is the
+// mechanism.
+let _pendingPvApprovalCols: Promise<void> | null = null;
+function ensurePvApprovalCols(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingPvApprovalCols) {
+    _pendingPvApprovalCols = (async () => {
+      for (const col of [
+        "approval_state TEXT", "prepared_at TEXT", "prepared_by TEXT",
+        "checked_at TEXT", "checked_by TEXT", "approved_at TEXT",
+        "approved_by TEXT", "reject_reason TEXT",
+      ]) {
+        await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
+      }
+      await db.prepare(
+        "UPDATE payment_vouchers SET approval_state = 'APPROVED' WHERE approval_state IS NULL",
+      ).run().catch(() => {});
+      // Migration 0159 created `status CHECK (status IN ('POSTED','VOID'))`;
+      // a draft-road voucher carries status 'DRAFT' and was refused by the
+      // constraint on prod (2026-09-22, same class as BUG-2026-09-18-001 —
+      // the PCN 'CANCELLED' void). Re-create the check with DRAFT allowed.
+      // Postgres names the auto constraint payment_vouchers_status_check.
+      await db.prepare("ALTER TABLE payment_vouchers DROP CONSTRAINT IF EXISTS payment_vouchers_status_check").run().catch(() => {});
+      await db.prepare(
+        "ALTER TABLE payment_vouchers ADD CONSTRAINT payment_vouchers_status_check CHECK (status IN ('POSTED','VOID','DRAFT'))",
+      ).run().catch(() => {});
+    })().catch((e) => {
+      _pendingPvApprovalCols = null;
+      throw e;
+    });
+  }
+  return _pendingPvApprovalCols;
+}
+
+const PV_DRAFT_PREFIX = "DRAFT-";
+
+type PvHeaderForPost = {
+  id: string; pvNo: string; payee: string | null; description: string | null;
+  accrued: number; accrualAccount: string | null; payFrom: string | null; totalSen: number;
+};
+// The ONE place a voucher's ledger legs are built — used by the legacy
+// immediate-post path and by APPROVE, so the two can never drift.
+async function pvPostingStatements(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  actorUserId: string | null,
+  pv: PvHeaderForPost,
+  lines: { accountCode: string; description: string; amountSen: number }[],
+): Promise<D1PreparedStatement[]> {
+  const creditAccount = pv.accrued === 1 ? pv.accrualAccount! : pv.payFrom!;
+  const legs: LedgerEntryInput[] = lines.map((l, idx) => ({
+    id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+    sourceType: "payment_voucher",
+    sourceId: pv.id,
+    legNo: idx + 1,
+    accountCode: l.accountCode,
+    debitSen: l.amountSen,
+    creditSen: 0,
+    description: `${pv.pvNo} · ${l.description || pv.description || "Payment"}${pv.accrued === 1 ? " (accrued)" : ""}`,
+    actorUserId,
+    orgId,
+  }));
+  legs.push({
+    id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+    sourceType: "payment_voucher",
+    sourceId: pv.id,
+    legNo: legs.length + 1,
+    accountCode: creditAccount,
+    debitSen: 0,
+    creditSen: pv.totalSen,
+    description: `${pv.pvNo} · ${pv.payee ? `to ${pv.payee}` : "Payment"}${pv.accrued === 1 ? " (accrued)" : ""}`,
+    actorUserId,
+    orgId,
+  });
+  const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+  return statements;
+}
+
+// Shared header validation for create AND draft-edit (same rules as the
+// legacy create path — accrual target must be a postable 410-x liability,
+// otherwise Paid From must be a bank/cash account).
+function validatePvHeader(
+  coa: Map<string, { type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>,
+  body: { accrued?: unknown; accrualAccount?: unknown; payFrom?: unknown },
+): { ok: true; accrued: boolean; accrualAccount: string | null; payFrom: string | null } | { ok: false; error: string } {
+  const accrued = body.accrued === true || body.accrued === 1;
+  if (accrued) {
+    const accrualAccount = String(body.accrualAccount || "");
+    if (accrualAccount.startsWith("405")) {
+      return { ok: false, error: "Expense accrual must use a 410-x accrued-expense account, not 405 Other Creditors. To owe a creditor, raise an Other Creditor bill." };
+    }
+    const acct = coa.get(accrualAccount);
+    if (!acct || acct.type !== "LIABILITY" || (acct.isPostable ?? 1) !== 1) {
+      return { ok: false, error: "Pick a postable LIABILITY accrual account (410-x)" };
+    }
+    return { ok: true, accrued: true, accrualAccount, payFrom: null };
+  }
+  const payFrom = String(body.payFrom || "");
+  const acct = coa.get(payFrom);
+  if (!acct || (acct.specialAccountType !== "SBK" && acct.specialAccountType !== "SCH")) {
+    return { ok: false, error: "Pay From must be a bank (SBK) or cash (SCH) account" };
+  }
+  return { ok: true, accrued: false, accrualAccount: null, payFrom };
+}
+
+// ---------------------------------------------------------------------------
+// PV "AP Payment" (owner 2026-09-22, Houzs adoption — 「ap payment 和 payment
+// voucher 一起」, screenshot: New AP Payment / New Payment Voucher). A voucher of
+// kind AP pays a creditor's bills instead of expense lines: partyKind SUPPLIER
+// → purchase invoices (+ optional unallocated advance), partyKind OTHER →
+// other-creditor bills. It walks the SAME four-tier ladder; at APPROVE (or Post
+// now) the money is posted by the SAME builders the Supplier Payment / Other
+// Creditor Payments pages use, under the voucher's own formal number — so the
+// settlement document (supplier_payments / other_party_payments rows + GL)
+// carries paymentNo = pvNo, and aging / bank reco / Cash Position see exactly
+// what they always saw. The voucher itself writes NO ledger legs of its own.
+// ⚠ Migration files 0235/0216 are the record; THIS self-apply is the mechanism.
+// ---------------------------------------------------------------------------
+let _pendingPvApCols: Promise<void> | null = null;
+function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingPvApCols) {
+    _pendingPvApCols = (async () => {
+      // notes / bill_no / bill_date (owner 2026-10-01, the voucher form):
+      // internal notes, the supplier's own bill number and date.
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT"]) {
+        await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
+      }
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS payment_voucher_allocs (
+           id TEXT PRIMARY KEY,
+           voucher_id TEXT NOT NULL,
+           doc_kind TEXT NOT NULL,
+           doc_id TEXT NOT NULL,
+           amount_sen INTEGER NOT NULL,
+           line_order INTEGER NOT NULL DEFAULT 0
+         )`,
+      ).run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)").run().catch(() => {});
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)").run().catch(() => {});
+    })().catch((e) => {
+      _pendingPvApCols = null;
+      throw e;
+    });
+  }
+  return _pendingPvApCols;
+}
+
+const PV_KIND_AP = "AP";
+
+// The voucher form's own fields (owner 2026-10-01): internal notes (never
+// printed), the supplier's bill number and date.
+function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null } {
+  const notes = String(body.notes ?? "").trim();
+  const billNo = String(body.billNo ?? "").trim();
+  const billDate = String(body.billDate ?? "").trim();
+  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null };
+}
+type PvPartyKind = "SUPPLIER" | "OTHER";
+type PvAllocDocKind = "PI" | "AP";
+type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number };
+
+async function loadPvAllocs(db: Env["Variables"]["DB"], voucherId: string): Promise<PvAlloc[]> {
+  const res = await db.prepare(
+    "SELECT doc_kind, doc_id, amount_sen FROM payment_voucher_allocs WHERE voucher_id = ? ORDER BY line_order",
+  ).bind(voucherId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  return (res.results ?? []).map((r) => ({
+    docKind: String(r.docKind ?? r.doc_kind) as PvAllocDocKind,
+    docId: String(r.docId ?? r.doc_id),
+    amountSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
+  }));
+}
+
+// Amounts already ticked on OTHER unposted, live AP vouchers (Houzs: 「已被别
+// 的未过账 voucher 勾走的会扣掉」) — a bill cannot be promised twice on the
+// ladder. `exclude` = the voucher being edited (its own ticks don't count).
+async function pvReservedByDoc(
+  db: Env["Variables"]["DB"],
+  exclude: string | null,
+): Promise<Map<string, { sen: number; vouchers: string[] }>> {
+  const res = await db.prepare(
+    `SELECT a.voucher_id, a.doc_kind, a.doc_id, a.amount_sen, v.pvNo
+       FROM payment_voucher_allocs a
+       JOIN payment_vouchers v ON v.id = a.voucher_id
+      WHERE v.status <> 'VOID' AND COALESCE(v.approval_state, 'APPROVED') <> 'APPROVED'`,
+  ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const out = new Map<string, { sen: number; vouchers: string[] }>();
+  for (const r of res.results ?? []) {
+    const no = String(r.pvNo ?? r.pv_no ?? "");
+    if (exclude && (r.voucherId ?? r.voucher_id) === exclude) continue;
+    const key = `${String(r.docKind ?? r.doc_kind)}|${String(r.docId ?? r.doc_id)}`;
+    const cur = out.get(key) ?? { sen: 0, vouchers: [] };
+    cur.sen += Math.round(Number(r.amountSen ?? r.amount_sen) || 0);
+    if (no && !cur.vouchers.includes(no)) cur.vouchers.push(no);
+    out.set(key, cur);
+  }
+  return out;
+}
+
+type PvOpenBill = {
+  docKind: PvAllocDocKind; id: string; no: string; ref: string; date: string; dueDate: string | null;
+  totalSen: number; paidSen: number; outstandingSen: number; reservedSen: number; reservedBy: string[]; availableSen: number;
+  currency: string; foreign: boolean; opening: boolean;
+};
+
+// The creditor's payable documents as the voucher form lists them.
+async function pvOpenBillsFor(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  partyKind: PvPartyKind,
+  partyId: string,
+  exclude: string | null,
+): Promise<{ partyName: string; bills: PvOpenBill[]; advanceOpenSen: number } | null> {
+  const reserved = await pvReservedByDoc(db, exclude);
+  if (partyKind === "SUPPLIER") {
+    const sup = await db.prepare("SELECT id, name FROM suppliers WHERE id = ?").bind(partyId)
+      .first<{ id: string; name: string }>();
+    if (!sup) return null;
+    const res = await db.prepare(
+      `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening
+         FROM purchase_invoices
+        WHERE supplier_id = ? AND status IN ('CONFIRMED','APPROVED','PARTIAL_PAID')
+        ORDER BY invoice_date ASC, pi_no ASC`,
+    ).bind(partyId).all<Record<string, unknown>>();
+    const bills: PvOpenBill[] = [];
+    for (const p of res.results ?? []) {
+      const total = Math.round(Number(p.amountSen ?? p.amount_sen) || 0);
+      const paid = Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
+      const outstanding = total - paid;
+      if (outstanding <= 0) continue;
+      const id = String(p.id);
+      const rsv = reserved.get(`PI|${id}`);
+      const currency = String(p.currency ?? "MYR") || "MYR";
+      bills.push({
+        docKind: "PI", id, no: String(p.piNo ?? p.pi_no ?? ""), ref: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""),
+        date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
+        dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
+        totalSen: total, paidSen: paid, outstandingSen: outstanding,
+        reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen: Math.max(0, outstanding - (rsv?.sen ?? 0)),
+        currency, foreign: currency.toUpperCase() !== "MYR", opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
+      });
+    }
+    // Unapplied advance this supplier already holds (knock-off lives on the
+    // Supplier Payment page) — shown for information on the form.
+    const adv = await db.prepare(
+      `SELECT COALESCE(SUM(sp.amount_sen), 0) AS adv_sen
+         FROM supplier_payments sp
+         LEFT JOIN document_lifecycle dl ON dl.sourceType = 'supplier_payment' AND dl.sourceId = sp.payment_no AND dl.orgId = sp.org_id
+        WHERE sp.supplier_id = ? AND sp.org_id = ? AND sp.purchase_invoice_id IS NULL
+          AND COALESCE(sp.method, '') = 'BANK_TRANSFER' AND (dl.state IS NULL OR dl.state = 'ACTIVE')`,
+    ).bind(partyId, orgId).first<Record<string, unknown>>().catch(() => null);
+    return { partyName: sup.name, bills, advanceOpenSen: Math.round(Number(adv?.advSen ?? adv?.adv_sen) || 0) };
+  }
+  const party = await db.prepare("SELECT * FROM other_parties WHERE id = ? AND orgId = ?").bind(partyId, orgId)
+    .first<OtherPartyRow>();
+  if (!party || party.type !== "CREDITOR") return null;
+  const res = await db.prepare(
+    `SELECT b.id, b.billNo, b.billDate, b.referenceNo, b.totalSen, b.paidAmountSen, b.status, b.is_opening AS is_opening
+       FROM other_party_bills b
+       LEFT JOIN document_lifecycle dl ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
+      WHERE b.orgId = ? AND b.partyId = ? AND b.partyType = 'CREDITOR'
+        AND b.status IN ('OPEN','PARTIAL_PAID') AND (dl.state IS NULL OR dl.state = 'ACTIVE')
+      ORDER BY b.billDate ASC, b.billNo ASC`,
+  ).bind(orgId, partyId).all<Record<string, unknown>>();
+  const bills: PvOpenBill[] = [];
+  for (const b of res.results ?? []) {
+    const total = Math.round(Number(b.totalSen ?? b.total_sen) || 0);
+    const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
+    const outstanding = total - paid;
+    if (outstanding <= 0) continue;
+    const id = String(b.id);
+    const rsv = reserved.get(`AP|${id}`);
+    bills.push({
+      docKind: "AP", id, no: String(b.billNo ?? b.bill_no ?? ""), ref: String(b.referenceNo ?? b.reference_no ?? ""),
+      date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null,
+      totalSen: total, paidSen: paid, outstandingSen: outstanding,
+      reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen: Math.max(0, outstanding - (rsv?.sen ?? 0)),
+      currency: "MYR", foreign: false, opening: !!Number(b.isOpening ?? b.is_opening ?? 0),
+    });
+  }
+  return { partyName: party.name, bills, advanceOpenSen: 0 };
+}
+
+type PvApValidated = {
+  partyKind: PvPartyKind; partyId: string; partyName: string; payFrom: string;
+  allocs: PvAlloc[]; advanceSen: number; totalSen: number;
+};
+// Create/edit validation for an AP voucher: party exists, Pay From is bank/
+// cash, every ticked bill is the party's, open, and within (outstanding −
+// reserved elsewhere); a supplier may add an unallocated advance.
+async function validatePvAp(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  coa: Map<string, { type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>,
+  body: Record<string, unknown>,
+  exclude: string | null,
+): Promise<{ ok: true; v: PvApValidated } | { ok: false; error: string }> {
+  const partyKind = body.partyKind === "OTHER" ? "OTHER" : body.partyKind === "SUPPLIER" ? "SUPPLIER" : null;
+  if (!partyKind) return { ok: false, error: "partyKind must be SUPPLIER or OTHER" };
+  const partyId = String(body.partyId ?? "");
+  if (!partyId) return { ok: false, error: "Pick the creditor to pay" };
+  if (body.accrued === true || body.accrued === 1) return { ok: false, error: "An AP payment cannot be accrued — the bill already carries the liability" };
+  const h = validatePvHeader(coa, { payFrom: body.payFrom });
+  if (!h.ok) return h;
+  const payFrom = h.payFrom!;
+  const open = await pvOpenBillsFor(db, orgId, partyKind, partyId, exclude);
+  if (!open) return { ok: false, error: partyKind === "SUPPLIER" ? "Supplier not found" : "Other creditor not found" };
+  const rawAllocs = Array.isArray(body.allocations) ? (body.allocations as Record<string, unknown>[]) : [];
+  const byId = new Map(open.bills.map((b) => [b.id, b] as const));
+  const allocs: PvAlloc[] = [];
+  const seen = new Set<string>();
+  for (const a of rawAllocs) {
+    const docId = String(a.docId ?? "");
+    const amountSen = Math.round(Number(a.amountSen) || 0);
+    if (!docId || amountSen === 0) continue;
+    if (amountSen < 0) return { ok: false, error: "Allocation amounts must be positive" };
+    if (seen.has(docId)) return { ok: false, error: "The same bill is listed twice" };
+    seen.add(docId);
+    const bill = byId.get(docId);
+    if (!bill) return { ok: false, error: `Bill ${docId} is not an open bill of this creditor` };
+    if (bill.foreign) return { ok: false, error: `${bill.no} is in ${bill.currency} — pay foreign-currency invoices on the Supplier Payment page (payment-day rate needed)` };
+    if (amountSen > bill.availableSen) {
+      const why = bill.reservedSen > 0 ? ` (RM ${(bill.reservedSen / 100).toFixed(2)} already ticked on ${bill.reservedBy.join(", ")})` : "";
+      return { ok: false, error: `${bill.no}: RM ${(amountSen / 100).toFixed(2)} exceeds the RM ${(bill.availableSen / 100).toFixed(2)} still payable${why}` };
+    }
+    allocs.push({ docKind: bill.docKind, docId, amountSen });
+  }
+  const advanceSen = Math.max(0, Math.round(Number(body.advanceSen) || 0));
+  if (advanceSen > 0 && partyKind !== "SUPPLIER") return { ok: false, error: "An advance is only for suppliers — other creditors are paid against their bills" };
+  if (allocs.length === 0 && advanceSen <= 0) return { ok: false, error: "Tick at least one bill (or enter an advance)" };
+  const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
+  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen } };
+}
+
+type PvApHeader = {
+  id: string; pvNo: string; date: string; payFrom: string; partyKind: PvPartyKind; partyId: string;
+  reference: string | null; advanceSen: number;
+};
+// The posting moment of an AP voucher — the settlement document is built by the
+// page-native builders under paymentNo = pvNo. Returns the statements to batch;
+// the caller adds the voucher's own state flip.
+async function pvApSettlementStatements(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  actorUserId: string | null,
+  pv: PvApHeader,
+  allocs: PvAlloc[],
+): Promise<{ ok: true; statements: D1PreparedStatement[]; totalSen: number } | { ok: false; error: string }> {
+  if (pv.partyKind === "SUPPLIER") {
+    const tfSources = await getTfSources(db).catch(() => [] as TfSource[]);
+    if (tfSources.some((s) => s.lenderSupplierId === pv.partyId)) {
+      return { ok: false, error: "This supplier is a trade-finance lender — record the repayment on the Supplier Payment page" };
+    }
+    const built = await buildSupplierPaymentCreate(db, {
+      orgId, actorUserId, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
+      allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ({ piId: a.docId, payMyrSen: a.amountSen })),
+      advanceSen: pv.advanceSen, paymentNo: pv.pvNo,
+    });
+    if (!built.ok) return built;
+    return { ok: true, statements: built.statements, totalSen: built.totalBank };
+  }
+  const party = await db.prepare("SELECT * FROM other_parties WHERE id = ? AND orgId = ?").bind(pv.partyId, orgId)
+    .first<OtherPartyRow>();
+  if (!party) return { ok: false, error: "Other creditor not found" };
+  const allocsIn: PaymentAllocInput[] = allocs.filter((a) => a.docKind === "AP").map((a) => ({ billId: a.docId, amountSen: a.amountSen }));
+  if (allocsIn.length === 0) return { ok: false, error: "This voucher has no bills" };
+  const check = await validateOtherPartyPaymentAllocs(db, orgId, party, allocsIn);
+  if (!check.ok) return check;
+  const statements = await buildOtherPartyPaymentCreate(db, {
+    orgId, actorUserId, party, bankAccount: pv.payFrom, date: pv.date, reference: pv.reference, allocs: allocsIn, paymentNo: pv.pvNo,
+  });
+  return { ok: true, statements, totalSen: computePaymentTotal(allocsIn) };
+}
+
+function pvAllocStatements(db: Env["Variables"]["DB"], voucherId: string, allocs: PvAlloc[]): D1PreparedStatement[] {
+  return allocs.map((a, idx) =>
+    db.prepare(
+      "INSERT INTO payment_voucher_allocs (id, voucher_id, doc_kind, doc_id, amount_sen, line_order) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind(`pva-${crypto.randomUUID().slice(0, 8)}`, voucherId, a.docKind, a.docId, a.amountSen, idx),
+  );
+}
+
+// What the "New AP Payment" form lists once a creditor is picked.
+app.get("/payment-vouchers/open-bills", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const partyKind = c.req.query("partyKind") === "OTHER" ? "OTHER" : "SUPPLIER";
+  const partyId = c.req.query("partyId") || "";
+  const exclude = c.req.query("exclude") || null;
+  if (!partyId) return c.json({ success: false, error: "partyId required" }, 400);
+  await ensurePvApColumns(c.var.DB);
+  const open = await pvOpenBillsFor(c.var.DB, getOrgId(c), partyKind, partyId, exclude);
+  if (!open) return c.json({ success: false, error: "Creditor not found" }, 404);
+  return c.json({ success: true, data: { partyKind, partyId, ...open } });
+});
+
+// ---------------------------------------------------------------------------
+// PV attachments (owner 2026-09-22, Houzs: 「附件：Cancelled 的不收；Checked 之后
+// 不能删（证据锁）」). Files live in the generic store under
+// resourceType 'payment_voucher' / resourceId = voucher id; these routes only
+// add the voucher's rules — a cancelled voucher takes no new evidence, and once
+// CHECKED the evidence is locked (nothing deleted). Scan Bills / Scan Receipt
+// attach the scanned file here automatically. Print bundle = voucher + every
+// attachment, composed client-side from this list.
+// ---------------------------------------------------------------------------
+const PV_ATTACH_RESOURCE = "payment_voucher";
+type PvAttachmentRow = {
+  id: string; filename: string; contentType: string; sizeBytes: number; uploadedAt: string; uploadedBy: string | null;
+};
+async function loadPvAttachments(db: Env["Variables"]["DB"], orgId: string, voucherId: string): Promise<PvAttachmentRow[]> {
+  const res = await db.prepare(
+    "SELECT id, filename, contentType, sizeBytes, uploadedAt, uploadedBy FROM file_assets WHERE orgId = ? AND resourceType = ? AND resourceId = ? ORDER BY uploadedAt ASC",
+  ).bind(orgId, PV_ATTACH_RESOURCE, voucherId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  return (res.results ?? []).map((r) => ({
+    id: String(r.id), filename: String(r.filename ?? ""), contentType: String(r.contentType ?? r.content_type ?? ""),
+    sizeBytes: Math.round(Number(r.sizeBytes ?? r.size_bytes) || 0), uploadedAt: String(r.uploadedAt ?? r.uploaded_at ?? ""),
+    uploadedBy: (r.uploadedBy ?? r.uploaded_by ?? null) as string | null,
+  }));
+}
+
+app.get("/payment-vouchers/:id/attachments", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state FROM payment_vouchers WHERE id = ?").bind(id)
+    .first<{ id: string; pvNo: string; status: string; approval_state?: string | null; approvalState?: string | null }>();
+  if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+  const state = String((pv.approvalState ?? pv.approval_state) ?? "APPROVED");
+  const rows = await loadPvAttachments(c.var.DB, getOrgId(c), id);
+  return c.json({
+    success: true,
+    data: {
+      rows,
+      // What the client may do — the server re-checks on write.
+      canAdd: pv.status !== "VOID",
+      canDelete: pv.status !== "VOID" && (state === "DRAFT" || state === "PREPARED"),
+    },
+  });
+});
+
+app.post("/payment-vouchers/:id/attachments", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const pv = await c.var.DB.prepare("SELECT id, pvNo, status FROM payment_vouchers WHERE id = ?").bind(id)
+    .first<{ id: string; pvNo: string; status: string }>();
+  if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+  if (pv.status === "VOID") return c.json({ success: false, error: "A cancelled voucher takes no attachments" }, 400);
+  let form: FormData;
+  try { form = await c.req.formData(); } catch { return c.json({ success: false, error: "invalid multipart body" }, 400); }
+  const file = form.get("file");
+  if (!(file instanceof File)) return c.json({ success: false, error: "file field required" }, 400);
+  const stored = await storeUploadedFile(c, { file, resourceType: PV_ATTACH_RESOURCE, resourceId: id });
+  if (!stored.ok) return c.json({ success: false, error: stored.error }, stored.status);
+  return c.json({ success: true, data: stored.data }, 201);
+});
+
+app.delete("/payment-vouchers/:id/attachments/:fileId", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const fileId = c.req.param("fileId");
+  await ensurePvApprovalCols(c.var.DB);
+  const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state FROM payment_vouchers WHERE id = ?").bind(id)
+    .first<{ id: string; pvNo: string; status: string; approval_state?: string | null; approvalState?: string | null }>();
+  if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+  const state = String((pv.approvalState ?? pv.approval_state) ?? "APPROVED");
+  if (pv.status === "VOID") return c.json({ success: false, error: "A cancelled voucher's attachments are kept as evidence" }, 400);
+  if (state !== "DRAFT" && state !== "PREPARED") {
+    return c.json({ success: false, error: `Evidence is locked once a voucher is checked (this one is ${state}) — Reject it back to draft to change attachments` }, 400);
+  }
+  // The file must belong to THIS voucher — never delete by id alone.
+  const own = await c.var.DB.prepare(
+    "SELECT id FROM file_assets WHERE id = ? AND orgId = ? AND resourceType = ? AND resourceId = ?",
+  ).bind(fileId, getOrgId(c), PV_ATTACH_RESOURCE, id).first<{ id: string }>();
+  if (!own) return c.json({ success: false, error: "Attachment not found on this voucher" }, 404);
+  const removed = await removeStoredFile(c, fileId);
+  if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);
+  return c.json({ success: true });
+});
+
 app.get("/payment-vouchers", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   try {
-    const [pvRes, lineRes] = await Promise.all([
+    await ensurePvApColumns(c.var.DB).catch(() => {});
+    const orgId = getOrgId(c);
+    // An AP voucher's lifecycle lives on its settlement document (the supplier
+    // / other-party payment that carries paymentNo = pvNo) — that is what a
+    // void from the Supplier Payment page flips, so read it from there.
+    const [pvRes, lineRes, allocRes] = await Promise.all([
       c.var.DB.prepare(
-        `SELECT payment_vouchers.*, dl.state AS lifecycleState
+        `SELECT payment_vouchers.*, dl.state AS lifecycleState, sdl.state AS settlement_state
            FROM payment_vouchers
            LEFT JOIN document_lifecycle dl
              ON dl.sourceType = 'payment_voucher'
             AND dl.sourceId = payment_vouchers.id
+           LEFT JOIN document_lifecycle sdl
+             ON sdl.sourceType IN ('supplier_payment', 'other_party_payment')
+            AND sdl.sourceId = payment_vouchers.pvNo
+            AND payment_vouchers.pv_kind = 'AP'
           WHERE (dl.state IS NULL OR dl.state <> 'DELETED')
+            AND (sdl.state IS NULL OR sdl.state <> 'DELETED')
           ORDER BY date DESC, pvNo DESC LIMIT 500`,
       ).all(),
       c.var.DB.prepare(
         `SELECT * FROM payment_voucher_lines ORDER BY lineOrder`,
       ).all(),
+      c.var.DB.prepare(
+        `SELECT a.voucher_id, a.doc_kind, a.doc_id, a.amount_sen, a.line_order,
+                pi.pi_no AS pi_no, pi.supplier_invoice_no AS pi_ref, b.billNo AS bill_no, b.referenceNo AS bill_ref
+           FROM payment_voucher_allocs a
+           LEFT JOIN purchase_invoices pi ON a.doc_kind = 'PI' AND pi.id = a.doc_id
+           LEFT JOIN other_party_bills b ON a.doc_kind = 'AP' AND b.id = a.doc_id
+          ORDER BY a.line_order`,
+      ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
     ]);
     const lines = (lineRes.results ?? []) as { voucherId: string }[];
-    const data = (pvRes.results ?? []).map((v) => ({
-      ...(v as object),
-      lines: lines.filter((l) => l.voucherId === (v as { id: string }).id),
-    }));
+    type AllocOut = { docKind: string; docId: string; docNo: string; docRef: string; amountSen: number };
+    const allocsByVoucher = new Map<string, AllocOut[]>();
+    for (const a of allocRes.results ?? []) {
+      const vid = String(a.voucherId ?? a.voucher_id ?? "");
+      const kind = String(a.docKind ?? a.doc_kind ?? "");
+      const list = allocsByVoucher.get(vid) ?? [];
+      list.push({
+        docKind: kind, docId: String(a.docId ?? a.doc_id ?? ""),
+        docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : (a.billNo ?? a.bill_no)) ?? ""),
+        docRef: String((kind === "PI" ? (a.piRef ?? a.pi_ref) : (a.billRef ?? a.bill_ref)) ?? ""),
+        amountSen: Math.round(Number(a.amountSen ?? a.amount_sen) || 0),
+      });
+      allocsByVoucher.set(vid, list);
+    }
+    // Open (unapplied) advance per posted supplier AP voucher — the row's
+    // "ADVANCE OPEN" state; knock-off decrements the advance row in place.
+    const apAdvanceNos = (pvRes.results ?? [])
+      .map((v) => v as Record<string, unknown>)
+      .filter((r) => String(r.pvKind ?? r.pv_kind ?? "") === PV_KIND_AP && Math.round(Number(r.advanceSen ?? r.advance_sen) || 0) > 0)
+      .map((r) => String(r.pvNo ?? r.pv_no ?? ""))
+      .filter(Boolean);
+    const advanceOpenByNo = new Map<string, number>();
+    if (apAdvanceNos.length) {
+      const advRes = await c.var.DB.prepare(
+        `SELECT payment_no, COALESCE(SUM(amount_sen), 0) AS adv_sen
+           FROM supplier_payments
+          WHERE org_id = ? AND purchase_invoice_id IS NULL AND COALESCE(method, '') = 'BANK_TRANSFER'
+            AND payment_no IN (${apAdvanceNos.map(() => "?").join(",")})
+          GROUP BY payment_no`,
+      ).bind(orgId, ...apAdvanceNos).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+      for (const r of advRes.results ?? []) advanceOpenByNo.set(String(r.paymentNo ?? r.payment_no), Math.round(Number(r.advSen ?? r.adv_sen) || 0));
+    }
+    // Attachment count per voucher (paperclip on the row; the list itself
+    // loads on expand).
+    const attachCountById = new Map<string, number>();
+    const attRes = await c.var.DB.prepare(
+      "SELECT resourceId, COUNT(*) AS n_files FROM file_assets WHERE orgId = ? AND resourceType = ? GROUP BY resourceId",
+    ).bind(orgId, PV_ATTACH_RESOURCE).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const r of attRes.results ?? []) attachCountById.set(String(r.resourceId ?? r.resource_id ?? ""), Math.round(Number(r.nFiles ?? r.n_files) || 0));
+    // Resolve the ladder actors to display names so the printed voucher can
+    // carry "Prepared by / Checked by / Approved by" with real names.
+    const actorIds = new Set<string>();
+    for (const v of pvRes.results ?? []) {
+      const r = v as Record<string, unknown>;
+      for (const k of ["preparedBy", "prepared_by", "checkedBy", "checked_by", "approvedBy", "approved_by", "createdBy", "created_by"]) {
+        const id = r[k]; if (typeof id === "string" && id) actorIds.add(id);
+      }
+    }
+    const nameById = new Map<string, string>();
+    if (actorIds.size) {
+      const ids = [...actorIds];
+      const uRes = await c.var.DB.prepare(`SELECT id, displayName FROM users WHERE id IN (${ids.map(() => "?").join(",")})`)
+        .bind(...ids).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+      for (const u of uRes.results ?? []) nameById.set(String(u.id), String(u.displayName ?? u.display_name ?? ""));
+    }
+    const nm = (r: Record<string, unknown>, a: string, b: string) => { const id = (r[a] ?? r[b]); return typeof id === "string" ? (nameById.get(id) ?? null) : null; };
+    const data = (pvRes.results ?? []).map((v) => {
+      const r = v as Record<string, unknown>;
+      const id = String(r.id);
+      const isAp = String(r.pvKind ?? r.pv_kind ?? "") === PV_KIND_AP;
+      const pvNo = String(r.pvNo ?? r.pv_no ?? "");
+      const settlementState = (r.settlementState ?? r.settlement_state) as string | null | undefined;
+      // A posted AP voucher voided from its own page (Supplier Payment / Other
+      // Creditor Payments) must read VOID here too — one truth, two doors.
+      const apVoided = isAp && String(r.approvalState ?? r.approval_state ?? "APPROVED") === "APPROVED" && !!settlementState && settlementState !== "ACTIVE";
+      return {
+        ...(v as object),
+        status: apVoided ? "VOID" : r.status,
+        lifecycleState: isAp ? (String(r.approvalState ?? r.approval_state ?? "APPROVED") === "APPROVED" ? (settlementState ?? "ACTIVE") : (r.status === "VOID" ? "VOID" : "ACTIVE")) : (r.lifecycleState ?? r.lifecycle_state ?? null),
+        pvKind: isAp ? PV_KIND_AP : "EXPENSE",
+        partyKind: (r.partyKind ?? r.party_kind ?? null) as string | null,
+        partyId: (r.partyId ?? r.party_id ?? null) as string | null,
+        advanceSen: Math.round(Number(r.advanceSen ?? r.advance_sen) || 0),
+        advanceOpenSen: isAp && !apVoided ? (advanceOpenByNo.get(pvNo) ?? 0) : 0,
+        allocs: allocsByVoucher.get(id) ?? [],
+        attachmentCount: attachCountById.get(id) ?? 0,
+        lines: lines.filter((l) => l.voucherId === id),
+        preparedByName: nm(r, "preparedBy", "prepared_by"),
+        checkedByName: nm(r, "checkedBy", "checked_by"),
+        approvedByName: nm(r, "approvedBy", "approved_by"),
+        createdByName: nm(r, "createdBy", "created_by"),
+      };
+    });
     return c.json({ success: true, data });
   } catch {
     return c.json({ success: true, data: [], migrationMissing: true });
@@ -8982,99 +11036,113 @@ app.post("/payment-vouchers", async (c) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
     }
-    const accrued = body.accrued === true || body.accrued === 1;
     const productLine =
       body.productLine === "SOFA" || body.productLine === "BEDFRAME"
         ? body.productLine
         : null;
     const coaRes = await c.var.DB.prepare(
-      "SELECT code, type, specialAccountType, isPostable FROM chart_of_accounts",
+      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
     ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
     const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
-    const v = validateDocLines(coa, body.lines);
-    if (!v.ok) return c.json({ success: false, error: v.error }, 400);
-
-    let payFrom: string | null = null;
-    let accrualAccount: string | null = null;
-    if (accrued) {
-      accrualAccount = String(body.accrualAccount || "");
-      // 405-x (Other Creditors) is not a valid expense-accrual target — record
-      // creditor liabilities via an Other Creditor bill instead (F4 #5).
-      if (accrualAccount.startsWith("405")) {
-        return c.json(
-          { success: false, error: "Expense accrual must use a 410-x accrued-expense account, not 405 Other Creditors. To owe a creditor, raise an Other Creditor bill." },
-          400,
-        );
-      }
-      const acct = coa.get(accrualAccount);
-      if (!acct || acct.type !== "LIABILITY" || (acct.isPostable ?? 1) !== 1) {
-        return c.json(
-          { success: false, error: "Pick a postable LIABILITY accrual account (410-x)" },
-          400,
-        );
-      }
-    } else {
-      payFrom = String(body.payFrom || "");
-      const acct = coa.get(payFrom);
-      if (!acct || (acct.specialAccountType !== "SBK" && acct.specialAccountType !== "SCH")) {
-        return c.json(
-          { success: false, error: "Pay From must be a bank (SBK) or cash (SCH) account" },
-          400,
-        );
-      }
-    }
+    await ensurePvApprovalCols(c.var.DB);
     const id = `pv-${crypto.randomUUID().slice(0, 8)}`;
-    const pvNo = await issueDocNumber(c.var.DB, {
-      bankAccountCode: payFrom ?? "",
-      direction: "out",
-      dateIso: date,
-    });
     const now = new Date().toISOString();
     const orgId = getOrgId(c);
     const actorUserId =
       (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
-    const creditAccount = accrued ? accrualAccount! : payFrom!;
-    const legs: LedgerEntryInput[] = v.lines.map((l, idx) => ({
-      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "payment_voucher",
-      sourceId: id,
-      legNo: idx + 1,
-      accountCode: l.accountCode,
-      debitSen: l.amountSen,
-      creditSen: 0,
-      description: `${pvNo} · ${l.description || body.description || "Payment"}${accrued ? " (accrued)" : ""}`,
-      actorUserId,
-      orgId,
-    }));
-    legs.push({
-      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "payment_voucher",
-      sourceId: id,
-      legNo: legs.length + 1,
-      accountCode: creditAccount,
-      debitSen: 0,
-      creditSen: v.totalSen,
-      description: `${pvNo} · ${body.payee ? `to ${body.payee}` : "Payment"}${accrued ? " (accrued)" : ""}`,
-      actorUserId,
-      orgId,
-    });
-    const { statements: ledgerStmts } = await buildJournalEntryStatements(
-      c.var.DB,
-      orgId,
-      legs,
-    );
+    // saveAs "draft" = the four-tier road: no number burned, no ledger legs —
+    // the formal number arrives at CHECK, the posting at APPROVE.
+    const asDraft = body.saveAs === "draft";
+
+    // ── AP Payment: pays a creditor's bills, no expense lines ──
+    if (body.kind === PV_KIND_AP) {
+      await ensurePvApColumns(c.var.DB);
+      const ap = await validatePvAp(c.var.DB, orgId, coa, body as Record<string, unknown>, null);
+      if (!ap.ok) return c.json({ success: false, error: ap.error }, 400);
+      const pvNo = asDraft
+        ? `${PV_DRAFT_PREFIX}${id.slice(3)}`
+        : await issueDocNumber(c.var.DB, { bankAccountCode: ap.v.payFrom, direction: "out", dateIso: date });
+      const reference = String(body.description ?? body.reference ?? "");
+      const statements: D1PreparedStatement[] = [
+        c.var.DB.prepare(
+          `INSERT INTO payment_vouchers (
+             id, pvNo, date, payee, description, payFrom, accrued,
+             accrualAccount, settledAt, productLine, totalSen, status,
+             approval_state, approved_at, approved_by,
+             createdBy, created_at, updated_at,
+             pv_kind, party_kind, party_id, advance_sen
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          id, pvNo, date, ap.v.partyName, reference, ap.v.payFrom,
+          ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
+          asDraft ? "DRAFT" : "APPROVED",
+          asDraft ? null : now, asDraft ? null : actorUserId,
+          actorUserId, now, now,
+          PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
+        ),
+        ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
+      ];
+      if (!asDraft) {
+        // Post now = the settlement document is born in the same batch, under
+        // this voucher's number (same builders as the payment pages).
+        const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
+          id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
+          reference: reference || null, advanceSen: ap.v.advanceSen,
+        }, ap.v.allocs);
+        if (!built.ok) return c.json({ success: false, error: built.error }, 400);
+        statements.push(...built.statements);
+      }
+      await c.var.DB.batch(statements);
+      return c.json({ success: true, data: { id, pvNo } }, 201);
+    }
+
+    // A transfer between our own accounts (owner 2026-10-01) is an ordinary
+    // voucher whose one line is the receiving bank / cash account.
+    const isTransfer = body.kind === PV_KIND_TRANSFER;
+    let v: { lines: { accountCode: string; description: string; amountSen: number }[]; totalSen: number };
+    let accrued = false;
+    let accrualAccount: string | null = null;
+    let payFrom: string | null = null;
+    if (isTransfer) {
+      const t = validatePvTransfer(coa, body);
+      if (!t.ok) return c.json({ success: false, error: t.error }, 400);
+      v = { lines: t.v.lines, totalSen: t.v.amountSen };
+      payFrom = t.v.payFrom;
+    } else {
+      const lv = validateDocLines(coa, body.lines);
+      if (!lv.ok) return c.json({ success: false, error: lv.error }, 400);
+      const h = validatePvHeader(coa, body);
+      if (!h.ok) return c.json({ success: false, error: h.error }, 400);
+      v = lv;
+      ({ accrued, accrualAccount, payFrom } = h);
+    }
+    await ensurePvApColumns(c.var.DB);
+    const extra = pvExtraFields(body as Record<string, unknown>);
+    const pvNo = asDraft
+      ? `${PV_DRAFT_PREFIX}${id.slice(3)}`
+      : await issueDocNumber(c.var.DB, {
+          bankAccountCode: payFrom ?? "",
+          direction: "out",
+          dateIso: date,
+        });
     const statements: D1PreparedStatement[] = [
       c.var.DB.prepare(
         `INSERT INTO payment_vouchers (
            id, pvNo, date, payee, description, payFrom, accrued,
            accrualAccount, settledAt, productLine, totalSen, status,
-           createdBy, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'POSTED', ?, ?, ?)`,
+           approval_state, approved_at, approved_by,
+           createdBy, created_at, updated_at,
+           pv_kind, notes, bill_no, bill_date
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id, pvNo, date,
-        String(body.payee ?? ""), String(body.description ?? ""),
-        payFrom, accrued ? 1 : 0, accrualAccount, productLine,
-        v.totalSen, actorUserId, now, now,
+        isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""),
+        payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine,
+        v.totalSen, asDraft ? "DRAFT" : "POSTED",
+        asDraft ? "DRAFT" : "APPROVED",
+        asDraft ? null : now, asDraft ? null : actorUserId,
+        actorUserId, now, now,
+        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -9082,17 +11150,276 @@ app.post("/payment-vouchers", async (c) => {
            VALUES (?, ?, ?, ?, ?, ?)`,
         ).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx),
       ),
-      ...ledgerStmts,
     ];
+    if (!asDraft) {
+      statements.push(...await pvPostingStatements(c.var.DB, orgId, actorUserId, {
+        id, pvNo, payee: isTransfer ? "" : String(body.payee ?? ""), description: String(body.description ?? ""),
+        accrued: accrued ? 1 : 0, accrualAccount, payFrom, totalSen: v.totalSen,
+      }, v.lines));
+    }
     await c.var.DB.batch(statements);
     return c.json({ success: true, data: { id, pvNo } }, 201);
   } catch (e) {
     console.error("[pv] create failed:", e);
+    // Surface the database's own words — a swallowed cause cost a prod
+    // debugging round (2026-09-22, four-tier rollout).
+    const cause = e instanceof Error ? e.message : String(e);
     return c.json(
-      { success: false, error: "Failed to save the payment — is migration 0159 applied?" },
+      { success: false, error: `Failed to save the payment: ${cause.slice(0, 300)}` },
       400,
     );
   }
+});
+
+// Edit a voucher that has NOT been checked yet (Draft / Prepared) — header
+// and lines replaced in place, no GL involved. After CHECK the voucher is
+// locked; after APPROVE corrections go through /restate.
+app.put("/payment-vouchers/:id", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  try {
+    await ensurePvApprovalCols(c.var.DB);
+    await ensurePvApColumns(c.var.DB);
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const pv = await c.var.DB.prepare(
+      "SELECT id, status, approval_state, pv_kind FROM payment_vouchers WHERE id = ?",
+    ).bind(id).first<{ id: string; status: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
+    if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+    const state = (pv.approvalState ?? pv.approval_state) ?? "APPROVED";
+    if (pv.status === "VOID") return c.json({ success: false, error: "This voucher is cancelled" }, 400);
+    if (state !== "DRAFT" && state !== "PREPARED") {
+      return c.json({ success: false, error: state === "CHECKED" ? "Checked vouchers are locked — Reject it back to draft to change anything." : "Already posted — use Edit (restate) on the posted voucher instead." }, 400);
+    }
+    const date = String(body.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
+    const coaRes = await c.var.DB.prepare(
+      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
+    ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
+    const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
+    const now = new Date().toISOString();
+    // ── AP Payment draft: header + ticked bills replaced in place. The kind is
+    // fixed at birth (an AP voucher never turns into an expense one).
+    if (String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
+      const ap = await validatePvAp(c.var.DB, getOrgId(c), coa, body as Record<string, unknown>, id);
+      if (!ap.ok) return c.json({ success: false, error: ap.error }, 400);
+      await c.var.DB.batch([
+        c.var.DB.prepare(
+          `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
+                  party_kind = ?, party_id = ?, advance_sen = ?, updated_at = ? WHERE id = ?`,
+        ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
+          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, now, id),
+        c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
+        ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
+      ]);
+      return c.json({ success: true });
+    }
+    // The kind is fixed at birth — a transfer stays a transfer.
+    const isTransfer = String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_TRANSFER;
+    let v: { lines: { accountCode: string; description: string; amountSen: number }[]; totalSen: number };
+    let h: { accrued: boolean; accrualAccount: string | null; payFrom: string | null };
+    if (isTransfer) {
+      const t = validatePvTransfer(coa, body);
+      if (!t.ok) return c.json({ success: false, error: t.error }, 400);
+      v = { lines: t.v.lines, totalSen: t.v.amountSen };
+      h = { accrued: false, accrualAccount: null, payFrom: t.v.payFrom };
+    } else {
+      const lv = validateDocLines(coa, body.lines);
+      if (!lv.ok) return c.json({ success: false, error: lv.error }, 400);
+      const hv = validatePvHeader(coa, body);
+      if (!hv.ok) return c.json({ success: false, error: hv.error }, 400);
+      v = lv;
+      h = hv;
+    }
+    const extra = pvExtraFields(body as Record<string, unknown>);
+    await c.var.DB.batch([
+      c.var.DB.prepare(
+        `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?,
+                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, updated_at = ? WHERE id = ?`,
+      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id),
+      c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id),
+      ...v.lines.map((l, idx) =>
+        c.var.DB.prepare(
+          `INSERT INTO payment_voucher_lines (id, voucherId, accountCode, description, amountSen, lineOrder)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        ).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx),
+      ),
+    ]);
+    return c.json({ success: true });
+  } catch {
+    return c.json({ success: false, error: "Invalid request body" }, 400);
+  }
+});
+
+// The four-tier ladder. Each rung is its own permission key so the owner can
+// hand Check and Approve to different people later; SUPER_ADMIN passes all.
+//   prepare  DRAFT → PREPARED          (accounting:update)
+//   withdraw PREPARED → DRAFT          (accounting:update)
+//   reject   PREPARED|CHECKED → DRAFT  (accounting:check, reason REQUIRED)
+//   check    PREPARED → CHECKED        (accounting:check, formal No. minted)
+//   approve  CHECKED → APPROVED        (accounting:approve, GL posted HERE)
+const PV_APPROVAL_ACTIONS = ["prepare", "withdraw", "reject", "check", "approve"] as const;
+type PvApprovalAction = (typeof PV_APPROVAL_ACTIONS)[number];
+const PV_APPROVAL_PERM: Record<PvApprovalAction, string> = {
+  prepare: "update", withdraw: "update", reject: "check", check: "check", approve: "approve",
+};
+
+async function pvApprovalCore(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  actorUserId: string | null,
+  id: string,
+  action: PvApprovalAction,
+  reason: string,
+): Promise<{ ok: true; pvNo: string; state: string } | { ok: false; error: string }> {
+  const pv = await db.prepare("SELECT * FROM payment_vouchers WHERE id = ?").bind(id)
+    .first<Record<string, unknown>>();
+  if (!pv) return { ok: false, error: "Voucher not found" };
+  if (String(pv.status) === "VOID") return { ok: false, error: "This voucher is cancelled" };
+  const state = String((pv.approvalState ?? pv.approval_state) ?? "APPROVED");
+  const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
+  const now = new Date().toISOString();
+  const fail = (error: string) => ({ ok: false as const, error });
+
+  if (action === "prepare") {
+    if (state !== "DRAFT") return fail(`Only a draft can be prepared (this one is ${state})`);
+    await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'PREPARED', prepared_at = ?, prepared_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ?",
+    ).bind(now, actorUserId, now, id).run();
+    return { ok: true, pvNo, state: "PREPARED" };
+  }
+  if (action === "withdraw") {
+    if (state !== "PREPARED") return fail(`Only a prepared voucher can be withdrawn (this one is ${state})`);
+    await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'DRAFT', prepared_at = NULL, prepared_by = NULL, updated_at = ? WHERE id = ?",
+    ).bind(now, id).run();
+    return { ok: true, pvNo, state: "DRAFT" };
+  }
+  if (action === "reject") {
+    if (state !== "PREPARED" && state !== "CHECKED") return fail(`Only a prepared or checked voucher can be rejected (this one is ${state})`);
+    if (!reason.trim()) return fail("A reject needs a reason");
+    await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'DRAFT', prepared_at = NULL, prepared_by = NULL, checked_at = NULL, checked_by = NULL, reject_reason = ?, updated_at = ? WHERE id = ?",
+    ).bind(reason.trim(), now, id).run();
+    return { ok: true, pvNo, state: "DRAFT" };
+  }
+  if (action === "check") {
+    if (state !== "PREPARED") return fail(`Only a prepared voucher can be checked (this one is ${state})`);
+    // The formal number is minted HERE — the sequence is the order money was
+    // checked, and a torn-up draft never burnt a number.
+    let formalNo = pvNo;
+    if (formalNo.startsWith(PV_DRAFT_PREFIX)) {
+      formalNo = await issueDocNumber(db, {
+        bankAccountCode: String(pv.payFrom ?? pv.pay_from ?? "") || "",
+        direction: "out",
+        dateIso: String(pv.date ?? "").slice(0, 10),
+      });
+    }
+    await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'CHECKED', pvNo = ?, checked_at = ?, checked_by = ?, updated_at = ? WHERE id = ?",
+    ).bind(formalNo, now, actorUserId, now, id).run();
+    return { ok: true, pvNo: formalNo, state: "CHECKED" };
+  }
+  // approve — the posting moment.
+  if (state !== "CHECKED") return fail(`Only a checked voucher can be approved (this one is ${state})`);
+  if (String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
+    // AP Payment: the settlement document (supplier / other-party payment) is
+    // born HERE under the voucher's formal number — same builders as the
+    // payment pages, so aging, bank reco and the GL see an ordinary payment.
+    await ensurePvApColumns(db);
+    const allocs = await loadPvAllocs(db, id);
+    const partyKind = String(pv.partyKind ?? pv.party_kind ?? "") === "OTHER" ? "OTHER" : "SUPPLIER";
+    const built = await pvApSettlementStatements(db, orgId, actorUserId, {
+      id, pvNo, date: String(pv.date ?? "").slice(0, 10),
+      payFrom: String(pv.payFrom ?? pv.pay_from ?? ""), partyKind,
+      partyId: String(pv.partyId ?? pv.party_id ?? ""),
+      reference: String(pv.description ?? "") || null,
+      advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
+    }, allocs);
+    if (!built.ok) return fail(built.error);
+    await db.batch([
+      db.prepare(
+        "UPDATE payment_vouchers SET approval_state = 'APPROVED', status = 'POSTED', totalSen = ?, approved_at = ?, approved_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ?",
+      ).bind(built.totalSen, now, actorUserId, now, id),
+      ...built.statements,
+    ]);
+    return { ok: true, pvNo, state: "APPROVED" };
+  }
+  const lineRes = await db.prepare(
+    "SELECT accountCode, description, amountSen FROM payment_voucher_lines WHERE voucherId = ? ORDER BY lineOrder",
+  ).bind(id).all<{ accountCode: string; description: string | null; amountSen: number }>();
+  const lines = (lineRes.results ?? []).map((l) => ({
+    accountCode: l.accountCode, description: String(l.description ?? ""), amountSen: Math.round(Number(l.amountSen) || 0),
+  }));
+  if (!lines.length) return fail("This voucher has no lines");
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  const posting = await pvPostingStatements(db, orgId, actorUserId, {
+    id, pvNo, payee: String(pv.payee ?? ""), description: String(pv.description ?? ""),
+    accrued: Number(pv.accrued) === 1 ? 1 : 0,
+    accrualAccount: (pv.accrualAccount ?? pv.accrual_account) as string | null,
+    payFrom: (pv.payFrom ?? pv.pay_from) as string | null,
+    totalSen,
+  }, lines);
+  await db.batch([
+    db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'APPROVED', status = 'POSTED', totalSen = ?, approved_at = ?, approved_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ?",
+    ).bind(totalSen, now, actorUserId, now, id),
+    ...posting,
+  ]);
+  return { ok: true, pvNo, state: "APPROVED" };
+}
+
+app.post("/payment-vouchers/:id/approval", async (c) => {
+  let action: PvApprovalAction, reason = "";
+  try {
+    const body = (await c.req.json()) as { action?: string; reason?: string };
+    if (!PV_APPROVAL_ACTIONS.includes(body.action as PvApprovalAction)) {
+      return c.json({ success: false, error: "action must be prepare|withdraw|reject|check|approve" }, 400);
+    }
+    action = body.action as PvApprovalAction;
+    reason = String(body.reason ?? "");
+  } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
+  const denied = await requirePermission(c, "accounting", PV_APPROVAL_PERM[action]);
+  if (denied) return denied;
+  await ensurePvApprovalCols(c.var.DB);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  const r = await pvApprovalCore(c.var.DB, getOrgId(c), actorUserId, c.req.param("id"), action, reason);
+  if (!r.ok) return c.json({ success: false, error: r.error }, 400);
+  return c.json({ success: true, data: { pvNo: r.pvNo, state: r.state } });
+});
+
+// Batch rungs (owner ticks a stack → Prepare / Check / Approve in one go),
+// executed in voucher-date order like Houzs does. Per-voucher results — one
+// bad voucher never blocks the rest.
+app.post("/payment-vouchers/approval-batch", async (c) => {
+  let action: PvApprovalAction, reason = "", ids: string[] = [];
+  try {
+    const body = (await c.req.json()) as { action?: string; reason?: string; ids?: unknown };
+    if (!PV_APPROVAL_ACTIONS.includes(body.action as PvApprovalAction)) {
+      return c.json({ success: false, error: "action must be prepare|withdraw|reject|check|approve" }, 400);
+    }
+    action = body.action as PvApprovalAction;
+    reason = String(body.reason ?? "");
+    ids = Array.isArray(body.ids) ? [...new Set(body.ids.map((x) => String(x)))] : [];
+    if (ids.length === 0 || ids.length > 100) return c.json({ success: false, error: "Pick 1–100 vouchers" }, 400);
+  } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
+  const denied = await requirePermission(c, "accounting", PV_APPROVAL_PERM[action]);
+  if (denied) return denied;
+  await ensurePvApprovalCols(c.var.DB);
+  const marks = ids.map(() => "?").join(",");
+  const orderRes = await c.var.DB.prepare(
+    `SELECT id FROM payment_vouchers WHERE id IN (${marks}) ORDER BY date ASC, pvNo ASC`,
+  ).bind(...ids).all<{ id: string }>();
+  const ordered = (orderRes.results ?? []).map((r) => r.id);
+  for (const id of ids) if (!ordered.includes(id)) ordered.push(id); // unknown ids still get a per-id error
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  const orgId = getOrgId(c);
+  const results: { id: string; ok: boolean; pvNo?: string; error?: string }[] = [];
+  for (const id of ordered) {
+    const r = await pvApprovalCore(c.var.DB, orgId, actorUserId, id, action, reason);
+    results.push(r.ok ? { id, ok: true, pvNo: r.pvNo } : { id, ok: false, error: r.error });
+  }
+  return c.json({ success: true, data: { results, done: results.filter((r) => r.ok).length } });
 });
 
 // Clear an accrued voucher against the bank: DR accrual, CR bank/cash.
@@ -9181,11 +11508,81 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
   try { action = ((await c.req.json()) as { action: string }).action as typeof action; } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
   if (!["void", "delete", "unvoid"].includes(action)) return c.json({ success: false, error: "action must be void|delete|unvoid" }, 400);
 
-  const pv = await c.var.DB.prepare("SELECT id, pvNo, status FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; status: string }>();
+  await ensurePvApprovalCols(c.var.DB);
+  await ensurePvApColumns(c.var.DB);
+  const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state, pv_kind, party_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; status: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null; party_kind?: string | null; partyKind?: string | null }>();
   if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+
+  // A draft-road voucher that never reached APPROVE has no ledger legs —
+  // void/delete is a plain status flip, nothing to reverse; unvoid restores
+  // it as a draft.
+  const pvApState = String((pv.approvalState ?? pv.approval_state) ?? "APPROVED");
+  if (pvApState !== "APPROVED") {
+    const now = new Date().toISOString();
+    const actor = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    // `delete` on an unposted voucher = hide it from the list (the same
+    // document_lifecycle DELETED row the list already filters on for posted
+    // ones); `unvoid` restores it as a draft and clears that row. Found
+    // 2026-09-22 clearing the smoke-test vouchers: a voided draft answered
+    // "Already cancelled" to delete and could never leave the list.
+    const lifecycleRow = (state: string) => c.var.DB.prepare(
+      `INSERT INTO document_lifecycle (id, sourceType, sourceId, state, actionAt, actorUserId, orgId)
+       VALUES (?, 'payment_voucher', ?, ?, ?, ?, ?)
+       ON CONFLICT (orgId, sourceType, sourceId) DO UPDATE SET state = ?, actionAt = ?, actorUserId = ?`,
+    ).bind(`dl-${crypto.randomUUID().slice(0, 10)}`, id, state, now, actor, orgId, state, now, actor);
+    if (action === "unvoid") {
+      if (pv.status !== "VOID") return c.json({ success: false, error: "This voucher is not cancelled" }, 400);
+      await c.var.DB.batch([
+        c.var.DB.prepare("UPDATE payment_vouchers SET status = 'DRAFT', updated_at = ? WHERE id = ?").bind(now, id),
+        lifecycleRow("ACTIVE"),
+      ]);
+      return c.json({ success: true, data: { state: "ACTIVE" } });
+    }
+    if (action === "delete") {
+      await c.var.DB.batch([
+        c.var.DB.prepare("UPDATE payment_vouchers SET status = 'VOID', updated_at = ? WHERE id = ?").bind(now, id),
+        lifecycleRow("DELETED"),
+      ]);
+      return c.json({ success: true, data: { state: "DELETED" } });
+    }
+    if (pv.status === "VOID") return c.json({ success: false, error: "Already cancelled" }, 400);
+    await c.var.DB.prepare("UPDATE payment_vouchers SET status = 'VOID', updated_at = ? WHERE id = ?").bind(now, id).run();
+    return c.json({ success: true, data: { state: "VOID" } });
+  }
 
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+
+  // A posted AP voucher owns no legs of its own — its money lives on the
+  // settlement document under the same number. Void/delete/unvoid IS that
+  // document's lifecycle (GL reversal + bill paid roll-back), one core, two
+  // doors; the voucher's status column just follows.
+  if (String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
+    const partyKind = String(pv.partyKind ?? pv.party_kind ?? "") === "OTHER" ? "OTHER" : "SUPPLIER";
+    try {
+      const lc = partyKind === "SUPPLIER"
+        ? await buildSupplierPaymentLifecycle(c.var.DB, orgId, pv.pvNo, action, actorUserId)
+        : await buildOtherPartyPaymentLifecycle(c.var.DB, orgId, pv.pvNo, action, actorUserId);
+      await c.var.DB.batch([
+        ...lc.statements,
+        c.var.DB.prepare("UPDATE payment_vouchers SET status = ?, updated_at = ? WHERE id = ?")
+          .bind(lc.newState === "ACTIVE" ? "POSTED" : "VOID", new Date().toISOString(), id),
+      ]);
+      await emitAudit(c, {
+        resource: partyKind === "SUPPLIER" ? "supplier-payments" : "other-party-payments",
+        resourceId: pv.pvNo, action,
+        after: { state: lc.newState, via: "payment-voucher", voucherId: id },
+      });
+      return c.json({ success: true, data: { state: lc.newState } });
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg === "PAYMENT_NOT_FOUND") return c.json({ success: false, error: `No settlement found under ${pv.pvNo} — it was never posted` }, 400);
+      if (msg === "TF_DRAW_HAS_REPAYMENTS") return c.json({ success: false, error: "This payment is a trade-finance draw with repayments — void the repayment first." }, 400);
+      if (msg === "TF_DRAW_HAS_INTEREST") return c.json({ success: false, error: "This draw has interest or bank charges posted — zero them in the aging block first." }, 400);
+      return c.json({ success: false, error: msg || "Lifecycle failed" }, 400);
+    }
+  }
+
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
     lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["payment_voucher", "payment_voucher_settle"], voidSourceType: "payment_voucher_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${pv.pvNo}` });
@@ -9218,28 +11615,49 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
   const orgId = getOrgId(c);
   const id = c.req.param("id");
   try {
-    const pv = await c.var.DB.prepare("SELECT id, pvNo FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string }>();
+    await ensurePvApprovalCols(c.var.DB);
+    await ensurePvApColumns(c.var.DB);
+    const pv = await c.var.DB.prepare("SELECT id, pvNo, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
     if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+    if (String((pv.approvalState ?? pv.approval_state) ?? "APPROVED") !== "APPROVED") {
+      return c.json({ success: false, error: "Not posted yet — edit the draft directly, no restate needed." }, 400);
+    }
+    // A posted AP voucher's money sits on its settlement document (Houzs
+    // semantics for payments: cancel and raise a new one, no in-place edit).
+    if (String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
+      return c.json({ success: false, error: "A posted AP payment cannot be edited — cancel it and raise a new one." }, 400);
+    }
     const body = await c.req.json();
     const date = String(body.date || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
-    const accrued = body.accrued === true || body.accrued === 1;
+    const accrued = (body.accrued === true || body.accrued === 1) && String(pv.pvKind ?? pv.pv_kind ?? "") !== PV_KIND_TRANSFER;
     const productLine = body.productLine === "SOFA" || body.productLine === "BEDFRAME" ? body.productLine : null;
-    const coaRes = await c.var.DB.prepare("SELECT code, type, specialAccountType, isPostable FROM chart_of_accounts").all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
+    const coaRes = await c.var.DB.prepare(`SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
     const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
-    const v = validateDocLines(coa, body.lines);
-    if (!v.ok) return c.json({ success: false, error: v.error }, 400);
+    const isTransfer = String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_TRANSFER;
+    let v: { lines: { accountCode: string; description: string; amountSen: number }[]; totalSen: number };
     let payFrom: string | null = null;
     let accrualAccount: string | null = null;
-    if (accrued) {
-      accrualAccount = String(body.accrualAccount || "");
-      if (accrualAccount.startsWith("405")) return c.json({ success: false, error: "Expense accrual must use a 410-x accrued-expense account, not 405 Other Creditors." }, 400);
-      const acct = coa.get(accrualAccount);
-      if (!acct || acct.type !== "LIABILITY" || (acct.isPostable ?? 1) !== 1) return c.json({ success: false, error: "Pick a postable LIABILITY accrual account (410-x)" }, 400);
+    if (isTransfer) {
+      // A transfer stays a transfer: its one line is the receiving account.
+      const t = validatePvTransfer(coa, body);
+      if (!t.ok) return c.json({ success: false, error: t.error }, 400);
+      v = { lines: t.v.lines, totalSen: t.v.amountSen };
+      payFrom = t.v.payFrom;
     } else {
-      payFrom = String(body.payFrom || "");
-      const acct = coa.get(payFrom);
-      if (!acct || (acct.specialAccountType !== "SBK" && acct.specialAccountType !== "SCH")) return c.json({ success: false, error: "Pay From must be a bank (SBK) or cash (SCH) account" }, 400);
+      const lv = validateDocLines(coa, body.lines);
+      if (!lv.ok) return c.json({ success: false, error: lv.error }, 400);
+      v = lv;
+      if (accrued) {
+        accrualAccount = String(body.accrualAccount || "");
+        if (accrualAccount.startsWith("405")) return c.json({ success: false, error: "Expense accrual must use a 410-x accrued-expense account, not 405 Other Creditors." }, 400);
+        const acct = coa.get(accrualAccount);
+        if (!acct || acct.type !== "LIABILITY" || (acct.isPostable ?? 1) !== 1) return c.json({ success: false, error: "Pick a postable LIABILITY accrual account (410-x)" }, 400);
+      } else {
+        payFrom = String(body.payFrom || "");
+        const acct = coa.get(payFrom);
+        if (!acct || (acct.specialAccountType !== "SBK" && acct.specialAccountType !== "SCH")) return c.json({ success: false, error: "Pay From must be a bank (SBK) or cash (SCH) account" }, 400);
+      }
     }
     const now = new Date().toISOString();
     const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
@@ -9258,7 +11676,8 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     statements.push(...jeStmts);
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
-    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, productLine, v.totalSen, now, id));
+    const extra = pvExtraFields(body as Record<string, unknown>);
+    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id));
     statements.push(c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id));
     v.lines.forEach((l, idx) => {
       statements.push(c.var.DB.prepare(`INSERT INTO payment_voucher_lines (id, voucherId, accountCode, description, amountSen, lineOrder) VALUES (?, ?, ?, ?, ?, ?)`).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));
@@ -9269,6 +11688,89 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     console.error("[pv] restate failed:", e);
     return c.json({ success: false, error: "Failed to update the payment voucher" }, 400);
   }
+});
+
+// One document's ledger lines and whether its bank / cash lines are matched
+// on an imported bank statement — the "Ledger entry" and "Bank" blocks of the
+// voucher popup (owner 2026-10-01). Read-only. A leg counts as matched when a
+// statement line holds it directly or through a split / group match.
+const DOC_TRAIL_FAMILIES = new Set(["payment_voucher", "supplier_payment", "other_party_payment", "fund_transfer"]);
+app.get("/doc-trail", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const family = String(c.req.query("family") ?? "");
+  const sourceId = String(c.req.query("sourceId") ?? "").trim();
+  if (!DOC_TRAIL_FAMILIES.has(family) || !sourceId) {
+    return c.json({ success: false, error: "family and sourceId are required" }, 400);
+  }
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const legRes = await db.prepare(
+    `SELECT id, accountCode, debitSen, creditSen, description FROM ledger_journal_entries
+      WHERE hidden = 0 AND sourceId = ? AND orgId = ? AND sourceType LIKE ?
+      ORDER BY legNo`,
+  ).bind(sourceId, orgId, `${family}%`).all<{ id: string; accountCode: string; debitSen: number; creditSen: number; description: string | null }>();
+  const legs = legRes.results ?? [];
+  const coaRes = await db.prepare("SELECT code, name, specialAccountType FROM chart_of_accounts")
+    .all<{ code: string; name: string; specialAccountType: string | null }>();
+  const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
+  const moneyLegs = legs.filter((l) => {
+    const t = coa.get(l.accountCode)?.specialAccountType;
+    return t === "SBK" || t === "SCH";
+  });
+  const matched = new Map<string, { date: string; text: string }>();
+  const withStatements = new Set<string>();
+  if (moneyLegs.length) {
+    const ids = moneyLegs.map((l) => String(l.id));
+    const ph = ids.map(() => "?").join(",");
+    try {
+      const direct = await db.prepare(
+        `SELECT matchedLegId, txnDate, description FROM bank_statement_lines WHERE matchedLegId IN (${ph})`,
+      ).bind(...ids).all<Record<string, unknown>>();
+      for (const r of direct.results ?? []) {
+        matched.set(String(r.matchedLegId ?? r.matched_leg_id ?? ""), { date: String(r.txnDate ?? r.txn_date ?? "").slice(0, 10), text: String(r.description ?? "") });
+      }
+    } catch { /* no statements imported yet */ }
+    try {
+      const split = await db.prepare(
+        `SELECT s.leg_id, l.txnDate, l.description FROM bank_line_leg_splits s JOIN bank_statement_lines l ON l.id = s.line_id WHERE s.leg_id IN (${ph})`,
+      ).bind(...ids).all<Record<string, unknown>>();
+      for (const r of split.results ?? []) {
+        const legId = String(r.legId ?? r.leg_id ?? "");
+        if (!matched.has(legId)) matched.set(legId, { date: String(r.txnDate ?? r.txn_date ?? "").slice(0, 10), text: String(r.description ?? "") });
+      }
+    } catch { /* split matching not in use */ }
+    for (const code of new Set(moneyLegs.map((l) => l.accountCode))) {
+      try {
+        const any = await db.prepare("SELECT 1 AS x FROM bank_statement_lines WHERE accountCode = ? LIMIT 1").bind(code).first();
+        if (any) withStatements.add(code);
+      } catch { /* none */ }
+    }
+  }
+  return c.json({
+    success: true,
+    data: {
+      legs: legs.map((l) => ({
+        accountCode: l.accountCode,
+        accountName: coa.get(l.accountCode)?.name ?? "",
+        debitSen: Number(l.debitSen) || 0,
+        creditSen: Number(l.creditSen) || 0,
+        description: l.description ?? "",
+      })),
+      bank: moneyLegs.map((l) => {
+        const m = matched.get(String(l.id));
+        return {
+          accountCode: l.accountCode,
+          accountName: coa.get(l.accountCode)?.name ?? "",
+          sen: (Number(l.debitSen) || 0) - (Number(l.creditSen) || 0),
+          hasStatements: withStatements.has(l.accountCode),
+          matched: !!m,
+          statementDate: m?.date ?? null,
+          statementText: m?.text ?? null,
+        };
+      }),
+    },
+  });
 });
 
 app.get("/official-receipts", async (c) => {
@@ -9310,7 +11812,7 @@ app.post("/official-receipts", async (c) => {
       return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
     }
     const coaRes = await c.var.DB.prepare(
-      "SELECT code, type, specialAccountType, isPostable FROM chart_of_accounts",
+      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
     ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
     const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
     const v = validateDocLines(coa, body.lines);
@@ -9455,7 +11957,7 @@ app.post("/fund-transfers", async (c) => {
   }
 
   const coaRes = await c.var.DB.prepare(
-    "SELECT code, type, specialAccountType, isPostable FROM chart_of_accounts",
+    `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
   ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
   const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
 
@@ -9660,6 +12162,35 @@ app.post("/fund-transfers/:no/lifecycle", async (c) => {
   // No status column to sync (ledger-only document): just run the lifecycle statements.
   await c.var.DB.batch(lc.statements);
   return c.json({ success: true, data: { state: lc.newState } });
+});
+
+// Edit a fund transfer's DESCRIPTION (owner 2026-10-02 「我要可以edit, 因为我
+// 发现description 少了」). A transfer lives only in its two ledger legs and its
+// description is their text ("Transfer <no> · <reference>"), so the edit
+// rewrites that text on the live original legs — nothing else: same legs,
+// accounts, amounts and date, so a bank-statement match (held by leg id) and
+// every report stay as they are. Changing the money is still void + post
+// again. A voided or deleted transfer is not edited.
+app.put("/fund-transfers/:no/description", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const no = c.req.param("no");
+  let reference: string;
+  try {
+    reference = String(((await c.req.json()) as { reference?: unknown }).reference ?? "").replace(/\s+/g, " ").trim();
+  } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
+  if (reference.length > 200) return c.json({ success: false, error: "Description is too long (200 characters at most)" }, 400);
+  const ft = await c.var.DB.prepare("SELECT 1 AS ok FROM ledger_journal_entries WHERE sourceType = 'fund_transfer' AND sourceId = ? AND orgId = ? AND hidden = 0 LIMIT 1").bind(no, orgId).first<{ ok: number }>();
+  if (!ft) return c.json({ success: false, error: "Fund transfer not found" }, 404);
+  if ((await getDocState(c.var.DB, orgId, "fund_transfer", no)) !== "ACTIVE") {
+    return c.json({ success: false, error: "A voided transfer cannot be edited" }, 400);
+  }
+  const description = `Transfer ${no}${reference ? ` · ${reference}` : ""}`;
+  await c.var.DB.prepare(
+    "UPDATE ledger_journal_entries SET description = ? WHERE sourceType = 'fund_transfer' AND sourceId = ? AND orgId = ? AND hidden = 0",
+  ).bind(description, no, orgId).run();
+  return c.json({ success: true, data: { no, description } });
 });
 
 // ---------------------------------------------------------------------------
@@ -9942,6 +12473,14 @@ const DEFAULT_LABOUR_MAP = {
   epf: "750-0020", // PRODUCTION - EPF
   socso: "750-0030", // PRODUCTION - SOCSO
   eis: "750-0040", // PRODUCTION - EIS
+  // What each fund is OWED — the employer's share plus what the payslip took
+  // from the employee — accrues to its own liability (owner 2026-10-09 「epf,
+  // socso 那些也要 accrual」→「EIS 单独记 0040」), so the KWSP / PERKESO
+  // payments clear their own accounts; the rest of the gross stays on
+  // 410-0010 for the salary and LHDN payments.
+  epfAccrual: "410-0020", // ACCRUAL - EPF
+  socsoAccrual: "410-0030", // ACCRUAL - SOCSO
+  eisAccrual: "410-0040", // ACCRUAL - EIS
 };
 
 type LabourMap = {
@@ -9950,6 +12489,9 @@ type LabourMap = {
   epf: string;
   socso: string;
   eis: string;
+  epfAccrual: string;
+  socsoAccrual: string;
+  eisAccrual: string;
 };
 
 async function getLabourMap(db: Env["Variables"]["DB"]): Promise<LabourMap> {
@@ -9965,6 +12507,9 @@ async function getLabourMap(db: Env["Variables"]["DB"]): Promise<LabourMap> {
         epf: parsed.epf || DEFAULT_LABOUR_MAP.epf,
         socso: parsed.socso || DEFAULT_LABOUR_MAP.socso,
         eis: parsed.eis || DEFAULT_LABOUR_MAP.eis,
+        epfAccrual: parsed.epfAccrual || DEFAULT_LABOUR_MAP.epfAccrual,
+        socsoAccrual: parsed.socsoAccrual || DEFAULT_LABOUR_MAP.socsoAccrual,
+        eisAccrual: parsed.eisAccrual || DEFAULT_LABOUR_MAP.eisAccrual,
       };
     }
   } catch {
@@ -10090,6 +12635,11 @@ type LabourDeptAgg = {
   epfSen: number;
   socsoSen: number;
   eisSen: number;
+  // The employee's own contributions (inside gross), owed to the same funds
+  // (owner 2026-10-09: they accrue with the employer's share).
+  epfEmployeeSen: number;
+  socsoEmployeeSen: number;
+  eisEmployeeSen: number;
 };
 
 async function aggregateLabour(
@@ -10100,11 +12650,12 @@ async function aggregateLabour(
   const map = await getLabourMap(db);
   const res = await db
     .prepare(
-      `SELECT departmentCode, grossPaySen, epfEmployerSen, socsoEmployerSen, eisEmployerSen
+      `SELECT departmentCode, grossPaySen, epfEmployerSen, socsoEmployerSen, eisEmployerSen,
+              epfEmployeeSen, socsoEmployeeSen, eisEmployeeSen
          FROM payslips WHERE orgId = ? AND period = ? AND status != 'CANCELLED'`,
     )
     .bind(orgId, month)
-    .all<{ departmentCode: string | null; grossPaySen: number; epfEmployerSen: number; socsoEmployerSen: number; eisEmployerSen: number }>();
+    .all<{ departmentCode: string | null; grossPaySen: number; epfEmployerSen: number; socsoEmployerSen: number; eisEmployerSen: number; epfEmployeeSen: number | null; socsoEmployeeSen: number | null; eisEmployeeSen: number | null }>();
   const agg = new Map<string, LabourDeptAgg>();
   for (const p of res.results ?? []) {
     const dept = String(p.departmentCode ?? "").trim() || "(unassigned)";
@@ -10117,6 +12668,7 @@ async function aggregateLabour(
     const cur = agg.get(dept) ?? {
       departmentCode: dept, account, workers: 0,
       grossSen: 0, employerSen: 0, costSen: 0, epfSen: 0, socsoSen: 0, eisSen: 0,
+      epfEmployeeSen: 0, socsoEmployeeSen: 0, eisEmployeeSen: 0,
     };
     cur.workers += 1;
     cur.grossSen += gross;
@@ -10124,6 +12676,9 @@ async function aggregateLabour(
     cur.epfSen += epf;
     cur.socsoSen += socso;
     cur.eisSen += eis;
+    cur.epfEmployeeSen += Number(p.epfEmployeeSen) || 0;
+    cur.socsoEmployeeSen += Number(p.socsoEmployeeSen) || 0;
+    cur.eisEmployeeSen += Number(p.eisEmployeeSen) || 0;
     cur.costSen += gross + employer;
     agg.set(dept, cur);
   }
@@ -10207,6 +12762,18 @@ function labourDebitLines(
     .sort((a, b) => a.account.localeCompare(b.account));
 }
 
+// The CREDIT side: each statutory fund's share — employer plus employee — to
+// its own accrual, the rest of the month's cost to 410-0010. The rule (and why)
+// lives in src/lib/labour-credit.ts.
+function labourCreditLines(byDept: LabourDeptAgg[], map: LabourMap) {
+  return splitLabourCredits(byDept, {
+    salary: LABOUR_ACCRUAL_ACCT,
+    epf: map.epfAccrual,
+    socso: map.socsoAccrual,
+    eis: map.eisAccrual,
+  });
+}
+
 app.get("/labor/preview", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -10217,7 +12784,8 @@ app.get("/labor/preview", async (c) => {
   try {
     const orgId = getOrgId(c);
     const { byDept, totalSen, map: labourMap } = await aggregateLabour(c.var.DB, month, orgId);
-    const posted = labourIsPosted(await labourLedgerNet(c.var.DB, orgId, `labor-${month}`));
+    const postedNet = await labourLedgerNet(c.var.DB, orgId, `labor-${month}`);
+    const posted = labourIsPosted(postedNet);
     // Roll the per-dept rows up to the account level for the GL preview —
     // gross to the department's account, each statutory contribution to its own.
     const byAccount = new Map<string, number>();
@@ -10236,6 +12804,10 @@ app.get("/labor/preview", async (c) => {
           .map(([code, sen]) => ({ code, name: names.get(code) ?? "", costSen: sen }))
           .sort((a, b) => a.code.localeCompare(b.code)),
         accrualAccount: LABOUR_ACCRUAL_ACCT,
+        credits: labourCreditLines(byDept, labourMap).map((l) => ({ code: l.account, name: names.get(l.account) ?? "", sen: l.sen })),
+        // What the ledger holds for the month now, credit side — a month posted
+        // before the statutory accruals were split shows it all on 410-0010.
+        postedCredits: [...postedNet.entries()].filter(([, v]) => v < 0).map(([code, v]) => ({ code, name: names.get(code) ?? "", sen: -v })),
         totalSen,
       },
     });
@@ -10347,18 +12919,20 @@ app.post("/labor/post", async (c) => {
         orgId,
       });
     }
-    legs.push({
-      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "labor_post",
-      sourceId,
-      legNo: legNo++,
-      accountCode: LABOUR_ACCRUAL_ACCT,
-      debitSen: 0,
-      creditSen: totalSen,
-      description: `Labour ${month} · accrued wages payable`,
-      actorUserId,
-      orgId,
-    });
+    for (const { account, sen, label } of labourCreditLines(byDept, labourMapPost)) {
+      legs.push({
+        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+        sourceType: "labor_post",
+        sourceId,
+        legNo: legNo++,
+        accountCode: account,
+        debitSen: 0,
+        creditSen: sen,
+        description: `Labour ${month} · ${label}`,
+        actorUserId,
+        orgId,
+      });
+    }
     const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
     await c.var.DB.batch(statements);
     await emitAudit(c, {
@@ -10462,14 +13036,34 @@ app.put("/labor/map", async (c) => {
         if (typeof v === "string" && v.trim()) byDept[k] = v.trim();
       }
     }
+    // The statutory accounts (2026-10-09: the three accruals are editable too).
+    // Kept from the saved map when the body leaves them out — a save that only
+    // touched a department must never drop them back to the defaults.
+    const saved = await getLabourMap(c.var.DB);
+    const pick = (k: "epf" | "socso" | "eis" | "epfAccrual" | "socsoAccrual" | "eisAccrual") =>
+      typeof body[k] === "string" && body[k].trim() ? String(body[k]).trim() : saved[k];
+    const statutory = {
+      epf: pick("epf"), socso: pick("socso"), eis: pick("eis"),
+      epfAccrual: pick("epfAccrual"), socsoAccrual: pick("socsoAccrual"), eisAccrual: pick("eisAccrual"),
+    };
+    // Each must be a postable account on the chart — a typo would otherwise
+    // only surface as a failed month-end post.
+    const coaRes = await c.var.DB.prepare(
+      `SELECT code, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
+    ).all<{ code: string; isPostable: number | null }>();
+    const postable = new Map((coaRes.results ?? []).map((a) => [a.code, (a.isPostable ?? 1) === 1] as const));
+    const bad = Object.values(statutory).filter((code) => !postable.get(code));
+    if (bad.length) {
+      return c.json({ success: false, error: `Not a postable account on the chart: ${[...new Set(bad)].join(", ")}` }, 400);
+    }
     await c.var.DB.prepare(
       `INSERT INTO kv_config (key, value, updated_at)
        VALUES ('labor_account_map', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     )
-      .bind(JSON.stringify({ fallback, byDept }), new Date().toISOString())
+      .bind(JSON.stringify({ fallback, byDept, ...statutory }), new Date().toISOString())
       .run();
-    return c.json({ success: true, data: { fallback, byDept } });
+    return c.json({ success: true, data: { fallback, byDept, ...statutory } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -10524,12 +13118,14 @@ app.put("/cashflow/map", async (c) => {
     let supCat: Record<string, string> | undefined;
     if (body.supplierCategoryMap !== undefined) {
       supCat = {};
-      // Value must be one of the four template categories, or "" = pin flat
-      // (suppress the guess). Anything else is dropped.
+      // Value must be one of the four template categories, a section the
+      // supplier can be filed under (Capex, overhead, general, labour — owner
+      // 2026-09-29), or "" = pin flat (suppress the guess). Anything else is
+      // dropped.
       for (const [sup, cat] of Object.entries(body.supplierCategoryMap ?? {})) {
         const s = sup.trim();
         if (!s || typeof cat !== "string") continue;
-        if (cat === "" || (RM_LINES as readonly string[]).includes(cat)) supCat[s] = cat;
+        if (cat === "" || (RM_LINES as readonly string[]).includes(cat) || (SUPPLIER_SECTION_TARGETS as readonly string[]).includes(cat)) supCat[s] = cat;
       }
       await c.var.DB.prepare(
         `INSERT INTO kv_config (key, value, updated_at) VALUES ('cashflow_supplier_category_map', ?, ?)
@@ -10744,7 +13340,7 @@ app.get("/trade-finance", async (c) => {
 // Interest on a draw (owner 2026-08-11 「要包括 interest」): the owner keys
 // the bank's charged interest per draw (manual now; OCR-prefill later). The
 // figure is stored NOWHERE — it is posted as `tf_interest` legs under the
-// DRAW's sourceId (DR 900-I001 INTEREST ON TRADE FINANCE / CR the TF
+// DRAW's sourceId (DR TF_INTEREST_ACCT INTEREST ON TRADE FINANCE / CR the TF
 // account), so the draw's ledger-derived amount, outstanding, repayment
 // clamps and the identity line all include it by construction. The endpoint
 // takes the draw's TOTAL interest and delta-posts the difference — send the
@@ -10752,7 +13348,91 @@ app.get("/trade-finance", async (c) => {
 // sourceType `tf_interest` is deliberately NOT in DOC_DATE_FAMILIES: its
 // legs date to the day they are keyed (postedAt fallback), which is when the
 // charge becomes known.
-const TF_INTEREST_ACCT = { code: "900-I001", name: "INTEREST ON TRADE FINANCE" };
+// The account the bank's trade-finance interest is booked to. Created on
+// first use, under FINANCE COSTS (902-0000) beside LOAN INTEREST (900-L002).
+//
+// BUG-2026-09-29-196: this used to be 900-I001 — a code that ALREADY existed
+// in the owner's AutoCount-style chart as "INCORPORATION EXPENSE WRITTEN
+// OFF" (and 900-I002 / I003 are INTERNET CHARGES / INSURANCE EXPENSES). The
+// `ON CONFLICT DO NOTHING` create never looked at the name, so every interest
+// leg landed on the wrong expense: the Sep'26 P&L line "INCORPORATION
+// EXPENSE WRITTEN OFF RM 1,637.08" was the trade-finance interest. Now: a
+// free code, a name-checked create (a foreign account under our code refuses
+// the post instead of absorbing it), and POST /trade-finance/
+// interest-account-repoint to move the legs already posted to the old code.
+const TF_INTEREST_ACCT = { code: "900-I004", name: "INTEREST ON TRADE FINANCE", parentCode: "902-0000" };
+const TF_INTEREST_LEGACY_ACCT = "900-I001";
+
+// Creates the dedicated account once (quietly) and proves the code is ours:
+// returns an error text when the code belongs to some other account.
+async function ensureTfInterestAccount(db: Env["Variables"]["DB"]): Promise<string | null> {
+  await db.prepare(
+    `INSERT INTO chart_of_accounts (code, name, type, parentCode, balanceSen, isActive, cashFlowCategory, specialAccountType, pnlCategory, isPostable)
+     VALUES (?, ?, 'EXPENSE', ?, 0, 1, NULL, NULL, NULL, 1)
+     ON CONFLICT (code) DO NOTHING`,
+  ).bind(TF_INTEREST_ACCT.code, TF_INTEREST_ACCT.name, TF_INTEREST_ACCT.parentCode).run();
+  const row = await db.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
+    .bind(TF_INTEREST_ACCT.code).first<{ name: string | null }>();
+  const name = String(row?.name ?? "").trim().toUpperCase();
+  if (name && name !== TF_INTEREST_ACCT.name) {
+    return `${TF_INTEREST_ACCT.code} is "${row?.name}" in the chart of accounts, not ${TF_INTEREST_ACCT.name} — the interest cannot be posted there`;
+  }
+  return null;
+}
+
+// The account trade-finance bank charges (DEV-63) are booked to: the chart's
+// existing 900-B001 BANK CHARGES, created only if missing and name-checked
+// the same way.
+const TF_BANK_CHARGE_ACCT = { code: "900-B001", name: "BANK CHARGES", parentCode: "900-0000" };
+
+async function ensureTfBankChargeAccount(db: Env["Variables"]["DB"]): Promise<string | null> {
+  await db.prepare(
+    `INSERT INTO chart_of_accounts (code, name, type, parentCode, balanceSen, isActive, cashFlowCategory, specialAccountType, pnlCategory, isPostable)
+     VALUES (?, ?, 'EXPENSE', ?, 0, 1, NULL, NULL, NULL, 1)
+     ON CONFLICT (code) DO NOTHING`,
+  ).bind(TF_BANK_CHARGE_ACCT.code, TF_BANK_CHARGE_ACCT.name, TF_BANK_CHARGE_ACCT.parentCode).run();
+  const row = await db.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
+    .bind(TF_BANK_CHARGE_ACCT.code).first<{ name: string | null }>();
+  const name = String(row?.name ?? "").trim().toUpperCase();
+  if (name && name !== TF_BANK_CHARGE_ACCT.name) {
+    return `${TF_BANK_CHARGE_ACCT.code} is "${row?.name}" in the chart of accounts, not ${TF_BANK_CHARGE_ACCT.name} — the bank charge cannot be posted there`;
+  }
+  return null;
+}
+
+// POST /trade-finance/interest-account-repoint?dry=1 — one-shot repair for
+// BUG-2026-09-29-196: every tf_interest leg still sitting on the legacy code
+// moves to the dedicated account (the legs keep their ids, dates, sources and
+// amounts — only the account changes, so every draw's derived figures are
+// untouched). Idempotent: a second run moves nothing. dry=1 only counts.
+app.post("/trade-finance/interest-account-repoint", async (c) => {
+  const denied = requireFinance(c);
+  if (denied) return denied;
+  const dry = c.req.query("dry") === "1" || c.req.query("dry") === "true";
+  const orgId = getOrgId(c);
+  const acctErr = await ensureTfInterestAccount(c.var.DB);
+  if (acctErr) return c.json({ success: false, error: acctErr }, 409);
+  const legs = (await c.var.DB.prepare(
+    `SELECT id, debitSen, creditSen FROM ledger_journal_entries
+      WHERE orgId = ? AND accountCode = ? AND sourceType LIKE 'tf_interest%'`,
+  ).bind(orgId, TF_INTEREST_LEGACY_ACCT).all<Record<string, unknown>>()).results ?? [];
+  const debitSen = legs.reduce((s, l) => s + (Number(l.debitSen ?? l.debit_sen) || 0), 0);
+  const creditSen = legs.reduce((s, l) => s + (Number(l.creditSen ?? l.credit_sen) || 0), 0);
+  if (!dry && legs.length) {
+    await c.var.DB.prepare(
+      `UPDATE ledger_journal_entries SET accountCode = ?
+        WHERE orgId = ? AND accountCode = ? AND sourceType LIKE 'tf_interest%'`,
+    ).bind(TF_INTEREST_ACCT.code, orgId, TF_INTEREST_LEGACY_ACCT).run();
+    await emitAudit(c, {
+      resource: "trade-finance",
+      resourceId: TF_INTEREST_ACCT.code,
+      action: "interest-account-repoint",
+      before: { account: TF_INTEREST_LEGACY_ACCT, legs: legs.length, debitSen, creditSen },
+      after: { account: TF_INTEREST_ACCT.code },
+    });
+  }
+  return c.json({ success: true, data: { dry, from: TF_INTEREST_LEGACY_ACCT, to: TF_INTEREST_ACCT.code, legs: legs.length, debitSen, creditSen, netSen: debitSen - creditSen } });
+});
 
 app.put("/trade-finance/draw-interest", async (c) => {
   const denied = requireFinance(c);
@@ -10785,12 +13465,11 @@ app.put("/trade-finance/draw-interest", async (c) => {
     if (draw.amountSen + deltaSen < draw.repaidSen) {
       return c.json({ success: false, error: "Lowering interest below what is already repaid would overdraw the draw — void the repayment first" }, 400);
     }
-    // Make sure the dedicated expense account exists (created once, quietly).
-    await c.var.DB.prepare(
-      `INSERT INTO chart_of_accounts (code, name, type, parentCode, balanceSen, isActive, cashFlowCategory, specialAccountType, pnlCategory, isPostable)
-       VALUES (?, ?, 'EXPENSE', NULL, 0, 1, NULL, NULL, NULL, 1)
-       ON CONFLICT (code) DO NOTHING`,
-    ).bind(TF_INTEREST_ACCT.code, TF_INTEREST_ACCT.name).run();
+    // Make sure the dedicated expense account exists (created once, quietly)
+    // and is OURS — a foreign account under the code refuses the post
+    // (BUG-2026-09-29-196: 900-I001 was somebody else's account).
+    const acctErr = await ensureTfInterestAccount(c.var.DB);
+    if (acctErr) return c.json({ success: false, error: acctErr }, 409);
     const orgId = getOrgId(c);
     const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
     // sourceId carries the charge date (self-dated leg, see doc-date.ts);
@@ -10820,6 +13499,74 @@ app.put("/trade-finance/draw-interest", async (c) => {
   } catch (err) {
     console.error("[PUT /trade-finance/draw-interest] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Interest update failed" }, 400);
+  }
+});
+
+// Bank charges on a draw (DEV-63, Ain 2026-10-09: "include another column of
+// bank charges"): same mechanics as draw-interest — the lender recharges the
+// bank's fee on the draw, so it posts `tf_bank_charge` legs under
+// `tfbc-<date>-<draw>` (DR BANK CHARGES / CR the TF account), folds into the
+// draw's outstanding, and the endpoint delta-posts toward the keyed TOTAL.
+// Booked to the chart's existing 900-B001 BANK CHARGES; name-checked like the
+// interest account (BUG-2026-09-29-196) so a foreign account refuses the post.
+app.put("/trade-finance/draw-bank-charge", async (c) => {
+  const denied = requireFinance(c);
+  if (denied) return denied;
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as { drawSourceId?: string; bankChargeSen?: number; date?: string };
+    const drawSourceId = String(body.drawSourceId ?? "").trim();
+    const targetSen = Math.round(Number(body.bankChargeSen) || 0);
+    const chargeDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date ?? ""))
+      ? String(body.date)
+      : new Date().toISOString().slice(0, 10);
+    if (!drawSourceId || targetSen < 0) {
+      return c.json({ success: false, error: "drawSourceId and a non-negative bankChargeSen are required" }, 400);
+    }
+    await ensureTfTables(c.var.DB);
+    const drawRow = await c.var.DB.prepare(
+      "SELECT draw_source_id, account_code FROM trade_finance_draws WHERE draw_source_id = ?",
+    ).bind(drawSourceId).first<Record<string, unknown>>();
+    if (!drawRow) return c.json({ success: false, error: "Draw not found — open the aging block once to backfill it" }, 404);
+    const accountCode = String(drawRow.accountCode ?? drawRow.account_code ?? "");
+    const source = (await getTfSources(c.var.DB)).find((s) => s.accountCode === accountCode);
+    if (!source) return c.json({ success: false, error: "This draw's account is not a configured trade-finance source" }, 400);
+    const { draws } = await loadTfDraws(c.var.DB, source);
+    const draw = draws.find((d) => d.drawSourceId === drawSourceId);
+    if (!draw) return c.json({ success: false, error: "Draw is not open (voided or fully derived away)" }, 404);
+    const deltaSen = targetSen - draw.bankChargeSen;
+    if (deltaSen === 0) return c.json({ success: true, data: { drawSourceId, bankChargeSen: targetSen, unchanged: true } });
+    if (draw.amountSen + deltaSen < draw.repaidSen) {
+      return c.json({ success: false, error: "Lowering bank charges below what is already repaid would overdraw the draw — void the repayment first" }, 400);
+    }
+    const acctErr = await ensureTfBankChargeAccount(c.var.DB);
+    if (acctErr) return c.json({ success: false, error: acctErr }, 409);
+    const orgId = getOrgId(c);
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const chargeSourceId = `tfbc-${chargeDate}-${drawSourceId}`;
+    const legNoBase = await nextLegNo(c.var.DB, orgId, "tf_bank_charge", chargeSourceId);
+    const abs = Math.abs(deltaSen);
+    const legs: LedgerEntryInput[] = deltaSen > 0
+      ? [
+          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase, accountCode: TF_BANK_CHARGE_ACCT.code, debitSen: abs, creditSen: 0, description: `TF bank charges · ${drawSourceId}`, actorUserId, orgId },
+          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase + 1, accountCode: accountCode, debitSen: 0, creditSen: abs, description: `TF bank charges · ${drawSourceId}`, actorUserId, orgId },
+        ]
+      : [
+          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase, accountCode: accountCode, debitSen: abs, creditSen: 0, description: `TF bank charges adjust · ${drawSourceId}`, actorUserId, orgId },
+          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase + 1, accountCode: TF_BANK_CHARGE_ACCT.code, debitSen: 0, creditSen: abs, description: `TF bank charges adjust · ${drawSourceId}`, actorUserId, orgId },
+        ];
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    await c.var.DB.batch(statements);
+    await emitAudit(c, {
+      resource: "trade-finance",
+      resourceId: drawSourceId,
+      action: "draw-bank-charge",
+      before: { bankChargeSen: draw.bankChargeSen },
+      after: { bankChargeSen: targetSen, deltaSen, expenseAccount: TF_BANK_CHARGE_ACCT.code },
+    });
+    return c.json({ success: true, data: { drawSourceId, bankChargeSen: targetSen } });
+  } catch (err) {
+    console.error("[PUT /trade-finance/draw-bank-charge] failed:", err instanceof Error ? err.message : err);
+    return c.json({ success: false, error: "Bank charge update failed" }, 400);
   }
 });
 
@@ -10899,7 +13646,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v14"; // v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v17"; // v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -10932,6 +13679,23 @@ app.get("/dashboard", async (c) => {
         "working_hour_entries",
         "payroll_hour_deductions",
         "worker_salary_history",
+        // Production Revenue (2026-10-12) books a PO when its last upholstery
+        // card completes, priced from its SO / CO line or the product master.
+        "job_cards",
+        "sales_order_items",
+        "consignment_order_items",
+        "products",
+        // The running month's labour to date (2026-10-12) also reads the
+        // department master (which departments log factory hours) and the
+        // effective-dated pay rules.
+        "departments",
+        "pay_rule_versions",
+        // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
+        // delivery order or consignment note.
+        "delivery_order_items",
+        "consignment_notes",
+        "consignment_items",
+        "stock_take",
       ],
     },
     dashOrgId,
@@ -11104,6 +13868,14 @@ app.get("/dashboard", async (c) => {
   // ---- Salary by department (owner 2026-08-11) ----------------------------
   // The dept dimension lives only in payslips; one query for the whole window,
   // grouped by the shared pure rule so Σdepts always equals the Labour tab.
+  // The month still running (owner 2026-10-12): its salary stacks are labour
+  // TO DATE, the same figure the P&L now carries for it — per home department
+  // for the Production card, per worker for the hours-share below.
+  const runYmDash = runningMonthYm();
+  let toDateRun: Awaited<ReturnType<typeof loadLabourToDate>> = null;
+  if (allMonths.includes(runYmDash)) {
+    try { toDateRun = await loadLabourToDate(db, orgIdDash, runYmDash); } catch { /* keep the payslips */ }
+  }
   let salByMonth = new Map<string, { dept: string; costSen: number }[]>();
   try {
     const psRes = await db
@@ -11116,6 +13888,14 @@ app.get("/dashboard", async (c) => {
     salByMonth = groupPayslipsByMonthDept((psRes.results ?? []) as never[]);
   } catch {
     /* payslips table absent → card simply shows no dept split */
+  }
+  if (toDateRun) {
+    salByMonth.set(
+      runYmDash,
+      toDateRun.byDept
+        .map((d) => ({ dept: d.departmentCode, costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen }))
+        .filter((d) => d.costSen !== 0),
+    );
   }
   // Non-production ACTUALS (owner 2026-08-31 「actual资料不是能从payroll 提取
   // 出来吗」): a payslip files the worker's whole month under his MASTER
@@ -11157,6 +13937,10 @@ app.get("/dashboard", async (c) => {
           (Number(r.eisEmployerSen ?? r.eis_employer_sen) || 0);
         const k = `${ym}::${wid}`;
         costByYmWorker.set(k, (costByYmWorker.get(k) ?? 0) + cost);
+      }
+      if (toDateRun) {
+        for (const k of [...costByYmWorker.keys()]) if (k.startsWith(`${runYmDash}::`)) costByYmWorker.delete(k);
+        for (const [wid, sen] of toDateRun.byWorker) costByYmWorker.set(`${runYmDash}::${wid}`, sen);
       }
       const earliestIso = allMonths.length ? `${allMonths[0]}-01` : "2000-01-01";
       const wheRes = await db
@@ -11439,6 +14223,24 @@ app.get("/dashboard", async (c) => {
     fcByMonth.set(ym, slice);
   }
 
+  // Production Revenue (owner 2026-10-12 「把这个 total revenue 放在 revenue
+  // 下面，显示 production revenue」): the Employees › Labor Cost vs Revenue
+  // page's Total Revenue, from the same loader. One window over every month
+  // that has happened, bucketed by recognition month. null when it cannot be
+  // read, so every period shows "-" rather than a zero that looks measured.
+  let prodRevByMonth: Map<string, ProductionRevenueSplit> | null = null;
+  const prodRevMonths = allMonths.filter((ym) => ym <= nowYm);
+  if (prodRevMonths.length) {
+    const lastYm = prodRevMonths[prodRevMonths.length - 1];
+    const [ly, lm] = lastYm.split("-").map((n) => parseInt(n, 10));
+    const lastDay = String(new Date(Date.UTC(ly, lm, 0)).getUTCDate()).padStart(2, "0");
+    try {
+      prodRevByMonth = productionRevenueByMonth(await loadProductionRevenue(db, `${prodRevMonths[0]}-01`, `${lastYm}-${lastDay}`));
+    } catch {
+      /* job cards unreadable → Production Revenue reads "-" */
+    }
+  }
+
   // --- assemble per bucket -------------------------------------------------
   const sumSlices = (src: Map<string, PnlSlice>, months: string[]): PnlSlice | null => {
     let any = false;
@@ -11534,6 +14336,8 @@ app.get("/dashboard", async (c) => {
         .map((dept) => ({ dept, costSen: salDept.get(dept) ?? 0, forecastSen: salDeptFc.get(dept) ?? 0, nonProd: nonProdDash.has(dept) || undefined }))
         .filter((d) => d.costSen !== 0 || d.forecastSen !== 0)
         .sort((a, b2) => a.dept.localeCompare(b2.dept)),
+      // Same months as the bucket; null for a period wholly ahead.
+      productionRevenue: prodRevByMonth ? sumProductionRevenue(prodRevByMonth, b.months, nowYm) : null,
       costStructure: {
         salesSplit: { bedframe: bedSales, sofa: sofaSales },
         // Target spend per category from the Forecast P&L (blank when the
@@ -12399,6 +15203,15 @@ app.get("/bank-reco", async (c) => {
     for (const r of allMatched.results ?? []) {
       if (!obDateBr || r.txnDate >= obDateBr) matchedLegIds.add(r.matchedLegId);
     }
+    // Legs consumed by a reverse-combo (SPLIT) line are matched too.
+    await ensureBankLineSplits(c.var.DB);
+    const splitLegs = await c.var.DB.prepare(
+      "SELECT s.leg_id, l.txnDate FROM bank_line_leg_splits s JOIN bank_statement_lines l ON l.id = s.line_id WHERE l.accountCode = ?",
+    ).bind(account).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const s of splitLegs.results ?? []) {
+      const d = String(s.txnDate ?? s.txn_date ?? "");
+      if (!obDateBr || d >= obDateBr) matchedLegIds.add(String(s.legId ?? s.leg_id ?? ""));
+    }
   } catch {
     migrationMissing = true;
   }
@@ -12522,7 +15335,9 @@ app.post("/bank-reco/match", async (c) => {
     )
       .bind(legId)
       .first();
-    if (taken) return c.json({ success: false, error: "This ledger leg is already matched to another statement line" }, 400);
+    await ensureBankLineSplits(c.var.DB);
+    const takenBySplit = await c.var.DB.prepare("SELECT leg_id FROM bank_line_leg_splits WHERE leg_id = ? LIMIT 1").bind(legId).first().catch(() => null);
+    if (taken || takenBySplit) return c.json({ success: false, error: "This ledger leg is already matched to another statement line" }, 400);
     await c.var.DB.prepare(
       "UPDATE bank_statement_lines SET matchedLegId = ?, matchedAt = ? WHERE id = ?",
     )
@@ -12546,6 +15361,15 @@ app.post("/bank-reco/unmatch", async (c) => {
     if (!umLine) return c.json({ success: false, error: "Statement line not found" }, 404);
     if (await bankRecoMonthFinalized(c.var.DB, umLine.accountCode, umLine.txnDate)) {
       return c.json({ success: false, error: BANK_RECO_FINALIZED_ERR }, 400);
+    }
+    // A reverse-combo (SPLIT) line releases every leg it was divided across.
+    if (umLine.matchedLegId === BANK_LINE_SPLIT_SENTINEL) {
+      await ensureBankLineSplits(c.var.DB);
+      await c.var.DB.batch([
+        c.var.DB.prepare("DELETE FROM bank_line_leg_splits WHERE line_id = ?").bind(lineId),
+        c.var.DB.prepare("UPDATE bank_statement_lines SET matchedLegId = NULL, matchedAt = NULL WHERE id = ?").bind(lineId),
+      ]);
+      return c.json({ success: true, data: { released: "split" } });
     }
     // Unmatching one piece of a combo group dissolves the WHOLE group — a
     // half-matched payment is never left behind (its remaining pieces would
@@ -12633,12 +15457,106 @@ app.post("/bank-reco/match-group", async (c) => {
     const takenG = await c.var.DB.prepare(
       "SELECT id FROM bank_statement_lines WHERE matchedLegId = ? LIMIT 1",
     ).bind(legId).first();
-    if (takenG) return c.json({ success: false, error: "This ledger leg is already matched to another statement line" }, 400);
+    await ensureBankLineSplits(c.var.DB);
+    const takenGSplit = await c.var.DB.prepare("SELECT leg_id FROM bank_line_leg_splits WHERE leg_id = ? LIMIT 1").bind(legId).first().catch(() => null);
+    if (takenG || takenGSplit) return c.json({ success: false, error: "This ledger leg is already matched to another statement line" }, 400);
     const nowG = new Date().toISOString();
     await c.var.DB.prepare(
       `UPDATE bank_statement_lines SET matchedLegId = ?, matchedAt = ? WHERE id IN (${marks})`,
     ).bind(legId, nowG, ...lineIds).run();
     return c.json({ success: true, data: { matched: lineIds.length } });
+  } catch {
+    return c.json({ success: false, error: "Invalid request body" }, 400);
+  }
+});
+
+// Reverse combo (Houzs adoption Phase 3, 2026-09-22): ONE statement line paid
+// SEVERAL book entries — the bank bundled two vouchers into one transfer. The
+// line's matchedLegId becomes the sentinel and one split row per leg records
+// the pieces (Σ pieces = line amount = Σ leg amounts, exact). The shared
+// loader treats each split row as a virtual claiming line for its leg.
+// ⚠ Migration 0234/0215 = record; THIS self-apply = mechanism.
+const BANK_LINE_SPLIT_SENTINEL = "SPLIT";
+let _pendingBankLineSplits: Promise<void> | null = null;
+function ensureBankLineSplits(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingBankLineSplits) {
+    _pendingBankLineSplits = db.prepare(
+      `CREATE TABLE IF NOT EXISTS bank_line_leg_splits (
+         line_id    TEXT NOT NULL,
+         leg_id     TEXT NOT NULL,
+         amount_sen INTEGER NOT NULL,
+         created_at TEXT NOT NULL,
+         PRIMARY KEY (line_id, leg_id)
+       )`,
+    ).run().then(() => undefined).catch((e) => {
+      _pendingBankLineSplits = null;
+      throw e;
+    });
+  }
+  return _pendingBankLineSplits;
+}
+
+app.post("/bank-reco/match-split", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  try {
+    await ensureBankRecoCols(c.var.DB);
+    await ensureBankLineSplits(c.var.DB);
+    const body = await c.req.json();
+    const lineId = String(body.statementLineId || "");
+    const legIds: string[] = Array.isArray(body.legIds) ? [...new Set((body.legIds as unknown[]).map((x) => String(x)))] : [];
+    if (legIds.length < 2 || legIds.length > 20) {
+      return c.json({ success: false, error: "Pick 2–20 book entries that this one bank line paid" }, 400);
+    }
+    const line = await c.var.DB.prepare(
+      "SELECT id, accountCode, txnDate, amountSen, matchedLegId, ignored_at FROM bank_statement_lines WHERE id = ?",
+    ).bind(lineId).first<{ id: string; accountCode: string; txnDate: string; amountSen: number; matchedLegId: string | null; ignored_at?: string | null; ignoredAt?: string | null }>();
+    if (!line) return c.json({ success: false, error: "Statement line not found" }, 404);
+    if (line.matchedLegId) return c.json({ success: false, error: "Line already matched" }, 400);
+    if (line.ignoredAt ?? line.ignored_at) return c.json({ success: false, error: "Line is ignored — restore it first" }, 400);
+    const obDateS = await getOpeningDate(c.var.DB);
+    if (obDateS && line.txnDate < obDateS) {
+      return c.json({ success: false, error: `Dated before the opening date (${obDateS}) — inside the opening balance.` }, 400);
+    }
+    if (await bankRecoMonthFinalized(c.var.DB, line.accountCode, line.txnDate)) {
+      return c.json({ success: false, error: BANK_RECO_FINALIZED_ERR }, 400);
+    }
+    const marks = legIds.map(() => "?").join(",");
+    const legRes = await c.var.DB.prepare(
+      `SELECT id, accountCode, sourceType, debitSen, creditSen FROM ledger_journal_entries WHERE id IN (${marks}) AND hidden = 0`,
+    ).bind(...legIds).all<{ id: string; accountCode: string; sourceType: string; debitSen: number; creditSen: number }>();
+    const legs = legRes.results ?? [];
+    if (legs.length !== legIds.length) return c.json({ success: false, error: "Ledger leg not found" }, 404);
+    const resolveS = await loadAccountResolver(c.var.DB);
+    let sumSen = 0;
+    for (const g of legs) {
+      if (resolveS(g.accountCode) !== line.accountCode) return c.json({ success: false, error: "A leg belongs to a different account" }, 400);
+      if (isOpeningSource(g.sourceType)) return c.json({ success: false, error: "Opening-balance legs are never matched" }, 400);
+      sumSen += (Number(g.debitSen) || 0) - (Number(g.creditSen) || 0);
+    }
+    const lineAmt = Math.round(Number(line.amountSen) || 0);
+    if (sumSen !== lineAmt) {
+      return c.json({ success: false, error: `Amounts differ — selected book entries total ${sumSen} sen vs bank line ${lineAmt} sen. A split match must be exact.` }, 400);
+    }
+    // Sweep void pre-opening claims, then no leg may already be taken (by a
+    // plain match OR by another split).
+    if (obDateS) {
+      await c.var.DB.prepare(
+        "UPDATE bank_statement_lines SET matchedLegId = NULL, matchedAt = NULL WHERE accountCode = ? AND matchedLegId IS NOT NULL AND txnDate < ?",
+      ).bind(line.accountCode, obDateS).run();
+    }
+    const takenPlain = await c.var.DB.prepare(`SELECT matchedLegId FROM bank_statement_lines WHERE matchedLegId IN (${marks}) LIMIT 1`).bind(...legIds).first();
+    const takenSplit = await c.var.DB.prepare(`SELECT leg_id FROM bank_line_leg_splits WHERE leg_id IN (${marks}) LIMIT 1`).bind(...legIds).first();
+    if (takenPlain || takenSplit) return c.json({ success: false, error: "One of these book entries is already matched" }, 400);
+    const now = new Date().toISOString();
+    await c.var.DB.batch([
+      c.var.DB.prepare("UPDATE bank_statement_lines SET matchedLegId = ?, matchedAt = ? WHERE id = ?").bind(BANK_LINE_SPLIT_SENTINEL, now, lineId),
+      ...legs.map((g) =>
+        c.var.DB.prepare("INSERT INTO bank_line_leg_splits (line_id, leg_id, amount_sen, created_at) VALUES (?, ?, ?, ?)")
+          .bind(lineId, g.id, (Number(g.debitSen) || 0) - (Number(g.creditSen) || 0), now),
+      ),
+    ]);
+    return c.json({ success: true, data: { legs: legs.length } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -12921,6 +15839,107 @@ app.post("/bank-reco/ignore", async (c) => {
   }
 });
 
+// Book a bank movement the books don't have — right on the reconciliation page
+// (owner 2026-09-22, Houzs adoption Phase 3 「Book as receipt/expense」). Money
+// OUT → a Payment Voucher (immediate post, legacy road); money IN → an Official
+// Receipt. Amount is LOCKED to the statement line; the new document's bank leg
+// is matched to the line in the same batch, so the row leaves the unbooked
+// list the moment it is booked. Never for pre-opening or finalised months.
+app.post("/bank-reco/book-line", async (c) => {
+  const denied = await requirePermission(c, "accounting", "create");
+  if (denied) return denied;
+  try {
+    await ensureBankRecoCols(c.var.DB);
+    await ensurePvApprovalCols(c.var.DB);
+    const body = await c.req.json() as {
+      statementLineId?: string; accountCode?: string; party?: string; description?: string;
+    };
+    const id = String(body.statementLineId || "");
+    const line = await c.var.DB.prepare(
+      "SELECT id, accountCode, txnDate, amountSen, description, matchedLegId, ignored_at FROM bank_statement_lines WHERE id = ?",
+    ).bind(id).first<{ id: string; accountCode: string; txnDate: string; amountSen: number; description: string | null; matchedLegId: string | null; ignored_at?: string | null; ignoredAt?: string | null }>();
+    if (!line) return c.json({ success: false, error: "Statement line not found" }, 404);
+    if (line.matchedLegId) return c.json({ success: false, error: "This line is already matched" }, 400);
+    if (line.ignoredAt ?? line.ignored_at) return c.json({ success: false, error: "This line is ignored — restore it first" }, 400);
+    const obDateBk = await getOpeningDate(c.var.DB);
+    if (obDateBk && line.txnDate < obDateBk) {
+      return c.json({ success: false, error: `Dated before the opening date (${obDateBk}) — this money is already inside the opening balance.` }, 400);
+    }
+    if (await bankRecoMonthFinalized(c.var.DB, line.accountCode, line.txnDate)) {
+      return c.json({ success: false, error: BANK_RECO_FINALIZED_ERR }, 400);
+    }
+    const amountSen = Math.round(Number(line.amountSen) || 0);
+    if (amountSen === 0) return c.json({ success: false, error: "Zero-amount line" }, 400);
+    const coaRes = await c.var.DB.prepare(
+      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
+    ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
+    const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
+    const bank = coa.get(line.accountCode);
+    if (!bank || (bank.specialAccountType !== "SBK" && bank.specialAccountType !== "SCH")) {
+      return c.json({ success: false, error: "Statement line's account is not a bank/cash account" }, 400);
+    }
+    const v = validateDocLines(coa, [{ accountCode: String(body.accountCode || ""), description: String(body.description ?? ""), amountSen: Math.abs(amountSen) }]);
+    if (!v.ok) return c.json({ success: false, error: v.error }, 400);
+    const party = String(body.party ?? "").trim();
+    const desc = String(body.description ?? "").trim() || String(line.description ?? "").slice(0, 120);
+    const orgId = getOrgId(c);
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const now = new Date().toISOString();
+    const isOut = amountSen < 0;
+    const docId = isOut ? `pv-${crypto.randomUUID().slice(0, 8)}` : `or-${crypto.randomUUID().slice(0, 8)}`;
+    const docNo = await issueDocNumber(c.var.DB, { bankAccountCode: line.accountCode, direction: isOut ? "out" : "in", dateIso: line.txnDate });
+    const statements: D1PreparedStatement[] = [];
+    let bankLegId = "";
+    if (isOut) {
+      statements.push(
+        c.var.DB.prepare(
+          `INSERT INTO payment_vouchers (id, pvNo, date, payee, description, payFrom, accrued, accrualAccount, settledAt, productLine, totalSen, status,
+             approval_state, approved_at, approved_by, createdBy, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, 'POSTED', 'APPROVED', ?, ?, ?, ?, ?)`,
+        ).bind(docId, docNo, line.txnDate, party, desc, line.accountCode, v.totalSen, now, actorUserId, actorUserId, now, now),
+        c.var.DB.prepare(
+          "INSERT INTO payment_voucher_lines (id, voucherId, accountCode, description, amountSen, lineOrder) VALUES (?, ?, ?, ?, ?, 0)",
+        ).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, docId, v.lines[0].accountCode, v.lines[0].description, v.totalSen),
+      );
+      // Build the legs by hand so we know the bank leg's id for the match.
+      bankLegId = `lje-${crypto.randomUUID().slice(0, 12)}`;
+      const legs: LedgerEntryInput[] = [
+        { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "payment_voucher", sourceId: docId, legNo: 1, accountCode: v.lines[0].accountCode, debitSen: v.totalSen, creditSen: 0, description: `${docNo} · ${desc || "Payment"}`, actorUserId, orgId },
+        { id: bankLegId, sourceType: "payment_voucher", sourceId: docId, legNo: 2, accountCode: line.accountCode, debitSen: 0, creditSen: v.totalSen, description: `${docNo} · ${party ? `to ${party}` : "Payment"} · booked from bank line`, actorUserId, orgId },
+      ];
+      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      statements.push(...ledger);
+    } else {
+      statements.push(
+        c.var.DB.prepare(
+          `INSERT INTO official_receipts (id, orNo, date, receivedFrom, description, payTo, totalSen, status, createdBy, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?)`,
+        ).bind(docId, docNo, line.txnDate, party, desc, line.accountCode, v.totalSen, actorUserId, now, now),
+        c.var.DB.prepare(
+          "INSERT INTO official_receipt_lines (id, receiptId, accountCode, description, amountSen, lineOrder) VALUES (?, ?, ?, ?, ?, 0)",
+        ).bind(`orl-${crypto.randomUUID().slice(0, 8)}`, docId, v.lines[0].accountCode, v.lines[0].description, v.totalSen),
+      );
+      bankLegId = `lje-${crypto.randomUUID().slice(0, 12)}`;
+      const legs: LedgerEntryInput[] = [
+        { id: bankLegId, sourceType: "official_receipt", sourceId: docId, legNo: 1, accountCode: line.accountCode, debitSen: v.totalSen, creditSen: 0, description: `${docNo} · ${party ? `from ${party}` : "Receipt"} · booked from bank line`, actorUserId, orgId },
+        { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "official_receipt", sourceId: docId, legNo: 2, accountCode: v.lines[0].accountCode, debitSen: 0, creditSen: v.totalSen, description: `${docNo} · ${desc || "Receipt"}`, actorUserId, orgId },
+      ];
+      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      statements.push(...ledger);
+    }
+    // Match the new bank leg to the line in the same batch.
+    statements.push(
+      c.var.DB.prepare("UPDATE bank_statement_lines SET matchedLegId = ?, matchedAt = ? WHERE id = ? AND matchedLegId IS NULL")
+        .bind(bankLegId, now, id),
+    );
+    await c.var.DB.batch(statements);
+    return c.json({ success: true, data: { docId, docNo, kind: isOut ? "PV" : "OR" } }, 201);
+  } catch (e) {
+    console.error("[bank-reco] book-line failed:", e);
+    return c.json({ success: false, error: "Could not book this line" }, 400);
+  }
+});
+
 // Finalising a month freezes its reconciliation: the figures AND the
 // outstanding-item lists are snapshotted to kv, the month's statement lines
 // refuse further match/unmatch/ignore/delete/import, and the report shows the
@@ -13021,7 +16040,8 @@ async function loadBankRecoState(
     for (const a of aliasRows.results ?? []) if (resolveRp(a.oldCode) === account) equivalents.push(a.oldCode);
   } catch { equivalents = [account]; }
   const marks = equivalents.map(() => "?").join(",");
-  const [legRes, matchedRes] = await Promise.all([
+  await ensureBankLineSplits(db);
+  const [legRes, matchedRes, splitRes] = await Promise.all([
     db.prepare(
       `SELECT id, sourceType, sourceId, debitSen, creditSen, description, postedAt FROM ledger_journal_entries
         WHERE accountCode IN (${marks}) AND hidden = 0`,
@@ -13029,6 +16049,13 @@ async function loadBankRecoState(
     db.prepare(
       "SELECT matchedLegId, txnDate, amountSen FROM bank_statement_lines WHERE accountCode = ? AND matchedLegId IS NOT NULL",
     ).bind(account).all<{ matchedLegId: string; txnDate: string; amountSen: number }>(),
+    // Reverse combo (one bank line → several legs): each split row is a
+    // virtual claiming line for ITS leg, dated on the bank line's day.
+    db.prepare(
+      `SELECT s.leg_id, s.amount_sen, l.txnDate FROM bank_line_leg_splits s
+         JOIN bank_statement_lines l ON l.id = s.line_id
+        WHERE l.accountCode = ?`,
+    ).bind(account).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
   ]);
   const { docDate, openingDate } = await loadDocDateResolver(db);
   const legs = (legRes.results ?? [])
@@ -13048,12 +16075,19 @@ async function loadBankRecoState(
   // only when they add EXACTLY to its amount, on the LAST piece's date.
   const legAmtById = new Map(legs.map((l) => [l.id, l.amountSen] as const));
   const grouped = new Map<string, { sumSen: number; lastDate: string }>();
+  const claim = (legId: string, txnDate: string, amountSen: number) => {
+    if (openingDate && txnDate < openingDate) return;
+    const g = grouped.get(legId) ?? { sumSen: 0, lastDate: "" };
+    g.sumSen += Math.round(amountSen || 0);
+    if (txnDate > g.lastDate) g.lastDate = txnDate;
+    grouped.set(legId, g);
+  };
   for (const r of matchedRes.results ?? []) {
-    if (openingDate && r.txnDate < openingDate) continue;
-    const g = grouped.get(r.matchedLegId) ?? { sumSen: 0, lastDate: "" };
-    g.sumSen += Math.round(Number(r.amountSen) || 0);
-    if (r.txnDate > g.lastDate) g.lastDate = r.txnDate;
-    grouped.set(r.matchedLegId, g);
+    if (r.matchedLegId === BANK_LINE_SPLIT_SENTINEL) continue; // its pieces come from the split table
+    claim(r.matchedLegId, r.txnDate, Number(r.amountSen));
+  }
+  for (const s of splitRes.results ?? []) {
+    claim(String(s.legId ?? s.leg_id ?? ""), String(s.txnDate ?? s.txn_date ?? ""), Number(s.amountSen ?? s.amount_sen));
   }
   const clearedOn = new Map<string, string>();
   for (const [legId, g] of grouped) {
@@ -13078,9 +16112,18 @@ async function computeBankRecoReport(
   try { meta = metaRow?.value ? JSON.parse(metaRow.value) : null; } catch { meta = null; }
   const { legs: stateLegs, clearedOn, openingDate: obDateRp } = await loadBankRecoState(db, account);
   const stmtRes = await db.prepare(
-    `SELECT amountSen, txnDate, description, matchedLegId FROM bank_statement_lines
+    `SELECT id, amountSen, txnDate, description, matchedLegId FROM bank_statement_lines
       WHERE accountCode = ? AND ignored_at IS NULL AND txnDate <= ?`,
-  ).bind(account, monthEnd).all<{ amountSen: number; txnDate: string; description: string | null; matchedLegId: string | null }>();
+  ).bind(account, monthEnd).all<{ id: string; amountSen: number; txnDate: string; description: string | null; matchedLegId: string | null }>();
+  // Reverse-combo lines: which legs each SPLIT line was divided across.
+  const splitLegsByLine = new Map<string, string[]>();
+  const splitRowsRp = await db.prepare(
+    `SELECT s.line_id, s.leg_id FROM bank_line_leg_splits s JOIN bank_statement_lines l ON l.id = s.line_id WHERE l.accountCode = ?`,
+  ).bind(account).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  for (const s of splitRowsRp.results ?? []) {
+    const lid = String(s.lineId ?? s.line_id ?? ""), gid = String(s.legId ?? s.leg_id ?? "");
+    splitLegsByLine.set(lid, [...(splitLegsByLine.get(lid) ?? []), gid]);
+  }
   // A match clears an item only WITHIN the report's month. A June voucher the
   // bank processed on 2 July is matched — correctly — yet as of 30 June it is
   // still in transit, so June must list it as uncleared (and, mirrored, a
@@ -13118,7 +16161,18 @@ async function computeBankRecoReport(
   const unbookedStmt: BankRecoOutstanding[] = [];
   for (const r of stmtRes.results ?? []) {
     if (obDateRp && r.txnDate < obDateRp) continue; // pre-opening: inside the opening balance
-    if (r.matchedLegId) {
+    if (r.matchedLegId === BANK_LINE_SPLIT_SENTINEL) {
+      // Booked when EVERY leg it was split across is dated within the month
+      // and cleared by month end (each leg's clearing date is this line's
+      // day, via the loader's virtual claims). Otherwise still unbooked.
+      const legIds = splitLegsByLine.get(r.id) ?? [];
+      const allIn = legIds.length > 0 && legIds.every((g) => {
+        const d = legDayById.get(g);
+        const cd = clearedOn.get(g);
+        return d !== undefined && d <= monthEnd && cd !== undefined && cd <= monthEnd;
+      });
+      if (allIn) continue;
+    } else if (r.matchedLegId) {
       const legDay = legDayById.get(r.matchedLegId);
       // A missing leg (match target outside the walk) keeps the old
       // semantics: treated as booked, not resurfaced.
@@ -13546,9 +16600,31 @@ app.get("/cash-position", async (c) => {
     amountSen: Math.round(Number(p.amountSen ?? p.amount_sen) || 0),
   }));
   const openingMonth = (obDateCp ?? "").slice(0, 7) || null;
+  // Vouchers on the approval ladder that are not posted yet (owner 2026-09-03:
+  // 「我开pv了，银行还么付款或老板还没有approve」) — the formal "committed but
+  // not yet in the books" queue. Checked ones are the firm commitments;
+  // Draft/Prepared ride along flagged so the board can show them softer.
+  await ensurePvApprovalCols(c.var.DB);
+  const awaitingRes = await c.var.DB.prepare(
+    `SELECT id, pvNo, date, payee, description, payFrom, totalSen, approval_state
+       FROM payment_vouchers
+      WHERE status <> 'VOID' AND approval_state IN ('DRAFT','PREPARED','CHECKED') AND accrued = 0
+      ORDER BY date ASC, pvNo ASC`,
+  ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const awaitingApproval = (awaitingRes.results ?? []).map((v) => ({
+    id: String(v.id),
+    pvNo: String(v.pvNo ?? v.pv_no ?? ""),
+    date: String(v.date ?? "").slice(0, 10),
+    payee: String(v.payee ?? ""),
+    description: String(v.description ?? ""),
+    payFrom: String(v.payFrom ?? v.pay_from ?? ""),
+    amountSen: Math.round(Number(v.totalSen ?? v.total_sen) || 0),
+    state: String(v.approvalState ?? v.approval_state ?? "DRAFT") as "DRAFT" | "PREPARED" | "CHECKED",
+  }));
+  const awaitingCheckedSen = awaitingApproval.filter((v) => v.state === "CHECKED").reduce((s, v) => s + v.amountSen, 0);
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen },
   });
 });
 
@@ -13567,16 +16643,43 @@ app.post("/bank-reco/finalize", async (c) => {
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ success: false, error: "month must be YYYY-MM" }, 400);
     await ensureBankRecoCols(c.var.DB);
     const key = `bank_reco_final:${account}:${month}`;
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const now = new Date().toISOString();
+    // Strict-lock mode (Houzs adoption Phase 3, owner 2026-09-22 「月锁可以做，
+    // 但是别启动先」): kv bank_reco_strict_lock = "1" turns it ON. Default OFF
+    // keeps today's behaviour exactly. When ON: finalise only when the month
+    // tallies AND has no unbooked statement lines; re-open needs a reason.
+    // Every re-open — strict or not — is journaled to kv so the trail exists.
+    const strictRow = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = 'bank_reco_strict_lock'")
+      .first<{ value: string | null }>().catch(() => null);
+    const strict = strictRow?.value === "1";
     if (body.reopen) {
-      await c.var.DB.prepare("DELETE FROM kv_config WHERE key = ?").bind(key).run();
+      const reason = String((body as { reason?: string }).reason ?? "").trim();
+      if (strict && !reason) {
+        return c.json({ success: false, error: "Re-opening a finalised month needs a reason (strict lock is on)." }, 400);
+      }
+      const prior = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = ?").bind(key).first<{ value: string | null }>().catch(() => null);
+      await c.var.DB.batch([
+        c.var.DB.prepare("DELETE FROM kv_config WHERE key = ?").bind(key),
+        c.var.DB.prepare(
+          `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        ).bind(`bank_reco_reopen:${account}:${month}:${now}`, JSON.stringify({ actorUserId, reason, priorSnapshot: prior?.value ? JSON.parse(prior.value) : null }), now),
+      ]);
       return c.json({ success: true, data: { reopened: true } });
     }
     const snap = await computeBankRecoReport(c.var.DB, account, month);
     if (!snap.importedAt) {
       return c.json({ success: false, error: "Import this month's bank statement before finalising" }, 400);
     }
-    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
-    const now = new Date().toISOString();
+    if (strict) {
+      if (!snap.balanced) {
+        return c.json({ success: false, error: `Strict lock: the month does not tally (out by ${(((snap.computedGlSen ?? 0) - snap.glSen) / 100).toFixed(2)}). Fix the reconciliation first.` }, 400);
+      }
+      if (snap.unbookedStmtCount > 0) {
+        return c.json({ success: false, error: `Strict lock: ${snap.unbookedStmtCount} bank line${snap.unbookedStmtCount === 1 ? "" : "s"} still not in the book. Book, match or ignore them first.` }, 400);
+      }
+    }
     const { bookPreSen: _pre, bookByDay: _byDay, ...snapStored } = snap;
     void _pre; void _byDay; // daily view recomputes live — keep the snapshot lean
     await c.var.DB.prepare(
@@ -13589,6 +16692,67 @@ app.post("/bank-reco/finalize", async (c) => {
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
+});
+
+// Strict-lock switch (default OFF — owner flips it when ready).
+app.get("/bank-reco/strict-lock", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const row = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = 'bank_reco_strict_lock'")
+    .first<{ value: string | null }>().catch(() => null);
+  return c.json({ success: true, data: { strict: row?.value === "1" } });
+});
+app.put("/bank-reco/strict-lock", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  try {
+    const body = await c.req.json() as { strict?: boolean };
+    await c.var.DB.prepare(
+      `INSERT INTO kv_config (key, value, updated_at) VALUES ('bank_reco_strict_lock', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).bind(body.strict ? "1" : "0", new Date().toISOString()).run();
+    return c.json({ success: true, data: { strict: !!body.strict } });
+  } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
+});
+
+// Statement chain check (Houzs adoption Phase 3 「串链」): consecutive months'
+// statements must hand over — this month's opening = last month's closing —
+// and every month between the first import and the latest must be present.
+// A gap or a mismatch is named, so a skipped mid-year upload can't hide.
+app.get("/bank-reco/chain", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const account = c.req.query("account") || "";
+  const err = await bankAccountOrError(c.var.DB, account);
+  if (err) return c.json({ success: false, error: err }, 400);
+  const rows = await c.var.DB.prepare("SELECT key, value FROM kv_config WHERE key LIKE ?")
+    .bind(`bank_reco_meta:${account}:%`).all<{ key: string; value: string | null }>();
+  const months: { month: string; openingSen: number | null; closingSen: number | null }[] = [];
+  for (const r of rows.results ?? []) {
+    const m = String(r.key).slice(`bank_reco_meta:${account}:`.length);
+    if (!/^\d{4}-\d{2}$/.test(m)) continue;
+    let meta: { openingSen?: number; closingSen?: number } | null = null;
+    try { meta = r.value ? JSON.parse(r.value) : null; } catch { meta = null; }
+    months.push({ month: m, openingSen: meta?.openingSen ?? null, closingSen: meta?.closingSen ?? null });
+  }
+  months.sort((a, b) => a.month.localeCompare(b.month));
+  const nextMonth = (ym: string) => {
+    const [y, m] = ym.split("-").map(Number);
+    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  };
+  const issues: { kind: "gap" | "mismatch"; month: string; detail: string }[] = [];
+  for (let i = 1; i < months.length; i++) {
+    const prev = months[i - 1], cur = months[i];
+    let expect = nextMonth(prev.month);
+    while (expect < cur.month) {
+      issues.push({ kind: "gap", month: expect, detail: `No statement imported for ${expect} — between ${prev.month} and ${cur.month}.` });
+      expect = nextMonth(expect);
+    }
+    if (expect === cur.month && prev.closingSen !== null && cur.openingSen !== null && prev.closingSen !== cur.openingSen) {
+      issues.push({ kind: "mismatch", month: cur.month, detail: `${cur.month} opens at ${(cur.openingSen / 100).toFixed(2)} but ${prev.month} closed at ${(prev.closingSen / 100).toFixed(2)} — the statements don't hand over.` });
+    }
+  }
+  return c.json({ success: true, data: { account, months, issues, ok: issues.length === 0 } });
 });
 
 // ---------------------------------------------------------------------------
@@ -13788,10 +16952,12 @@ async function openingControlSums(db: Env["Variables"]["DB"]): Promise<{
       arByControl.set(ctl, (arByControl.get(ctl) ?? 0) + amt);
       arTotalSen += amt;
     }
+    // A cancelled seed is not an opening bill — the customer seeds above and
+    // the pre-opening PIs below leave it out too (BUG-2026-09-30-230).
     const pi = await db
       .prepare(
         `SELECT COALESCE(SUM(amountSen),0) AS s FROM purchase_invoices
-          WHERE isOpening = 1 AND status != 'DRAFT'`,
+          WHERE isOpening = 1 AND status NOT IN ('DRAFT','CANCELLED')`,
       )
       .first<{ s: number }>();
     apTotalSen = Number(pi?.s) || 0;
@@ -13914,7 +17080,7 @@ app.get("/opening-balance", async (c) => {
         `SELECT id, piNo, supplierId, supplierName, invoiceDate, dueDate,
                 amountSen, status
            FROM purchase_invoices
-          WHERE isOpening = 1 AND status != 'DRAFT'
+          WHERE isOpening = 1 AND status NOT IN ('DRAFT','CANCELLED')
           ORDER BY supplierName, invoiceDate, piNo`,
       )
       .all();
@@ -14667,9 +17833,104 @@ app.get("/stock-take-item-aliases", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// GET /api/accounting/stock-take/purchase-prices?asOf=YYYY-MM-DD — the latest
+// purchase price of every item code on or before asOf, to value a
+// quantity-only stock count (owner 2026-10-09 「用最近一次进货价」). A price is a
+// purchase-invoice STOCKED line's own total ÷ its qty (net of the line
+// discount, before SST); the newest line wins (invoice date, then PI no.).
+// min/max over every line of the code show when its units differ (a roll on
+// one invoice, a metre on another). A code never bought since the system
+// started gets hints only — the supplier price list (main supplier first) and
+// the last FIFO batch cost — never a price: their units are not the count's.
+app.get("/stock-take/purchase-prices", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const asOf = String(c.req.query("asOf") ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return c.json({ success: false, error: "asOf must be YYYY-MM-DD" }, 400);
+  const lines = (await c.var.DB.prepare(
+    `SELECT pi.invoiceDate AS invoiceDate, pi.piNo AS piNo, pi.supplierName AS supplierName,
+            pii.materialCode AS materialCode, pii.qty AS qty, pii.lineTotalSen AS lineTotalSen
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pi.id = pii.piId
+      WHERE pi.orgId = ? AND pi.status NOT IN ('DRAFT','CANCELLED') AND pii.lineType = 'STOCKED'
+        AND pii.materialCode IS NOT NULL`,
+  ).bind(orgId).all<{ invoiceDate: string | null; piNo: string | null; supplierName: string | null; materialCode: string | null; qty: number | null; lineTotalSen: number | null }>()).results ?? [];
+  type LastPrice = { unitSen: number; piNo: string; date: string; supplier: string; qty: number; minUnitSen: number; maxUnitSen: number; lines: number };
+  const prices: Record<string, LastPrice> = {};
+  for (const l of lines) {
+    const date = String(l.invoiceDate ?? "").slice(0, 10);
+    const qty = Number(l.qty) || 0;
+    const total = Number(l.lineTotalSen) || 0;
+    const key = itemCodeKey(l.materialCode);
+    if (!key || !date || date > asOf || qty <= 0 || total <= 0) continue;
+    const unitSen = Math.round((total / qty) * 10000) / 10000;
+    const piNo = String(l.piNo ?? "");
+    const supplier = String(l.supplierName ?? "");
+    const cur = prices[key];
+    if (!cur) { prices[key] = { unitSen, piNo, date, supplier, qty, minUnitSen: unitSen, maxUnitSen: unitSen, lines: 1 }; continue; }
+    cur.lines++;
+    cur.minUnitSen = Math.min(cur.minUnitSen, unitSen);
+    cur.maxUnitSen = Math.max(cur.maxUnitSen, unitSen);
+    if (date > cur.date || (date === cur.date && piNo > cur.piNo)) Object.assign(cur, { unitSen, piNo, date, supplier, qty });
+  }
+  const priceList: Record<string, { unitSen: number; supplier: string }> = {};
+  try {
+    const rows = (await c.var.DB.prepare(
+      `SELECT b.materialCode AS materialCode, b.unitPrice AS unitPrice, b.isMainSupplier AS isMainSupplier, s.name AS supplierName
+         FROM supplier_material_bindings b LEFT JOIN suppliers s ON s.id = b.supplierId
+        WHERE b.orgId = ?`,
+    ).bind(orgId).all<{ materialCode: string | null; unitPrice: number | string | null; isMainSupplier: number | boolean | null; supplierName: string | null }>()).results ?? [];
+    for (const r of rows) {
+      const key = itemCodeKey(r.materialCode);
+      // The price list keeps sen — the purchase-order screen takes it as its
+      // unitPriceSen — so no ×100 (BUG-2026-10-09-273: hints read 100× high).
+      const unitSen = Math.round(Number(r.unitPrice) * 10000) / 10000;
+      if (!key || !(unitSen > 0)) continue;
+      const main = r.isMainSupplier === true || Number(r.isMainSupplier) === 1;
+      if (!priceList[key] || main) priceList[key] = { unitSen, supplier: String(r.supplierName ?? "") };
+    }
+  } catch { /* no price list → no hint */ }
+  const batchCost: Record<string, { unitSen: number; date: string }> = {};
+  try {
+    const rows = (await c.var.DB.prepare("SELECT rmId, unitCostSen, receivedDate FROM rm_batches")
+      .all<{ rmId: string | null; unitCostSen: number | null; receivedDate: string | null }>()).results ?? [];
+    for (const r of rows) {
+      const id = String(r.rmId ?? "");
+      const date = String(r.receivedDate ?? "").slice(0, 10);
+      const unitSen = Number(r.unitCostSen) || 0;
+      if (!id || unitSen <= 0 || !date || date > asOf) continue;
+      if (!batchCost[id] || date > batchCost[id].date) batchCost[id] = { unitSen, date };
+    }
+  } catch { /* no batches → no hint */ }
+  return c.json({ success: true, data: { asOf, prices, priceList, batchCost } });
+});
+
+// The priced count behind a month (owner 2026-10-09): every counted item with
+// the price that valued it — "how was this month's figure built?" — one
+// kv_config record per org + month, written by PUT /stock-take with `lines`.
+const stockTakeLinesKey = (orgId: string, ym: string) => `stock_take_lines:${orgId}:${ym}`;
+
+// GET /api/accounting/stock-take/lines?ym=YYYY-MM — that record, or null.
+app.get("/stock-take/lines", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const ym = String(c.req.query("ym") ?? "").slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ success: false, error: "ym must be 'YYYY-MM'" }, 400);
+  const row = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = ?")
+    .bind(stockTakeLinesKey(getOrgId(c), ym))
+    .first<{ value: string | null }>()
+    .catch(() => null);
+  let data: unknown = null;
+  try { data = row?.value ? JSON.parse(row.value) : null; } catch { data = null; }
+  return c.json({ success: true, data });
+});
+
 // PUT /api/accounting/stock-take
 // Body: { ym: 'YYYY-MM', rows: [{ itemGroup, valueSen }], newAliases?: [{ itemKey,
-// itemGroup }] } — upserts one month's per-group closing values (ON CONFLICT
+// itemGroup }], lines?: [priced count items], linesFile?, linesAsOf? } — the
+// lines (owner 2026-10-09) are kept as the month's priced-count record.
+// Upserts one month's per-group closing values (ON CONFLICT
 // (org_id, item_group, ym)) AND any newly-resolved raw-import item aliases, in
 // one atomic write (design doc 2026-07-01-stock-take-item-alias-import-design.md).
 //
@@ -14689,6 +17950,9 @@ app.put("/stock-take", async (c) => {
       ym?: unknown;
       rows?: { itemGroup?: unknown; valueSen?: unknown }[];
       newAliases?: { itemKey?: unknown; itemGroup?: unknown }[];
+      lines?: Record<string, unknown>[];
+      linesFile?: unknown;
+      linesAsOf?: unknown;
     };
     const ym = String(body.ym ?? "").slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ success: false, error: "ym must be 'YYYY-MM'" }, 400);
@@ -14741,8 +18005,28 @@ app.put("/stock-take", async (c) => {
         aliasesSaved++;
       }
     }
+    const groupsSaved = stmts.length - cleared - aliasesSaved;
+    // The priced count behind the figures (owner 2026-10-09), replaced whole.
+    let linesSaved = 0;
+    if (Array.isArray(body.lines)) {
+      const str = (v: unknown, max: number) => String(v ?? "").slice(0, max);
+      const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+      const lines = body.lines.slice(0, 5000).map((l) => ({
+        id: str(l?.id, 64), code: str(l?.code, 120), description: str(l?.description, 200),
+        group: str(l?.group, 40), qty: num(l?.qty), uom: str(l?.uom, 20),
+        unitSen: l?.unitSen == null ? null : num(l?.unitSen), valueSen: Math.round(num(l?.valueSen)),
+        source: str(l?.source, 200), counted: l?.counted === true,
+      }));
+      stmts.push(
+        c.var.DB.prepare(
+          `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        ).bind(stockTakeLinesKey(orgId, ym), JSON.stringify({ file: str(body.linesFile, 200), asOf: str(body.linesAsOf, 10), savedAt: now, lines }), now),
+      );
+      linesSaved = lines.length;
+    }
     if (stmts.length) await c.var.DB.batch(stmts);
-    return c.json({ success: true, saved: stmts.length - cleared - aliasesSaved, cleared, aliasesSaved, ym });
+    return c.json({ success: true, saved: groupsSaved, cleared, aliasesSaved, linesSaved, ym });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }

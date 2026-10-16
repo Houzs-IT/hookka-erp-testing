@@ -15,10 +15,11 @@ import {
 } from "@/lib/so-original";
 import { Upload, FileText, CheckCircle, AlertTriangle, X, ChevronDown, ChevronRight, Loader2, Sparkles, Star, Plus, Trash2 } from "lucide-react";
 import { ReusedScanBadge, CachedScanNotice } from "@/components/scan-cached-hint";
-import { postScanQueueConsume } from "@/lib/scan-queue-client";
+import { postScanQueueConsume, createScanQueueDriver } from "@/lib/scan-queue-client";
 import { resolveScanParty } from "@/lib/scan-party-resolve";
 import { usePartyAliases, teachPartyAlias } from "@/lib/party-alias-client";
 import { moneyFieldToSen } from "@/lib/money-field";
+import { toConsignmentOrderBody, hasCustomSpecials, type ScanTarget } from "@/lib/scan-po-target";
 
 // Background scan queue dispatch — shared with scan-supplier-modal. >2-file
 // drops POST to /api/scan-queue/upload + navigate to /scan-queue/<batchId>
@@ -173,6 +174,9 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onCreated: (soIds: string[]) => void;
+  // "CO" when opened from the Consignment Orders page: creates Consignment
+  // Orders instead of Sales Orders (BUG-2026-10-09-271).
+  target?: ScanTarget;
 };
 
 type StepState = "upload" | "preview" | "creating" | "done";
@@ -307,7 +311,12 @@ type ScanCatalog = {
 type CreateSOResponse = {
   success?: boolean;
   error?: string;
-  data?: { companySOId?: string; id?: string };
+  // companyCOId when the modal posted to /api/consignment-orders.
+  data?: { companySOId?: string; companyCOId?: string; id?: string };
+  // Set when the customer PO/SO ref is already on another active SO — the SO
+  // is still created (as DRAFT); the operator is told to check it (DEV-12).
+  duplicateOf?: string | null;
+  warning?: string;
 };
 
 // Customer + delivery hub resolution lives in @/lib/scan-party-resolve — see
@@ -334,7 +343,9 @@ function makeUploadId(): string {
   return `upload-${Date.now().toString(36)}-${uploadSeq}`;
 }
 
-export function ScanPOModal({ open, onClose, onCreated }: Props) {
+export function ScanPOModal({ open, onClose, onCreated, target = "SO" }: Props) {
+  const isCO = target === "CO";
+  const docLabel = isCO ? "Consignment Order" : "Sales Order";
   const [step, setStep] = useState<StepState>("upload");
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [parsing, setParsing] = useState(false);
@@ -887,6 +898,22 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
     );
     if (selectedClaude.length + selectedFallback.length === 0) return;
 
+    // A Consignment Order has no custom specials: the CO save would drop the
+    // line's surcharge and under-price it. Refuse the whole batch before
+    // anything is created, so no scan is consumed half-way.
+    if (isCO) {
+      const withCustom = selectedClaude
+        .filter((row) => hasCustomSpecials(row.extracted.items))
+        .map((row) => row.extracted.customerPO || "(no PO no.)");
+      if (withCustom.length > 0) {
+        window.alert(
+          `Custom specials are not supported on Consignment Orders:\n\n${withCustom.join(", ")}\n\n` +
+            `Remove the "+ Custom" specials from these POs (or untick them) before creating.`,
+        );
+        return;
+      }
+    }
+
     // Hub gate (BUG-2026-07-27-002): a PO that resolves NO delivery hub
     // creates a hub-less SO whose State silently falls back to the raw PDF
     // text — the whole SO-2607-19x Houzs batch shipped that way unnoticed.
@@ -908,7 +935,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
     if (hubless.length > 0) {
       const ok = window.confirm(
         `${hubless.length} PO(s) matched NO delivery hub:\n\n${hubless.join(", ")}\n\n` +
-          `Their SOs would be created WITHOUT a hub — State falls back to the raw PDF text, ` +
+          `Their ${isCO ? "COs" : "SOs"} would be created WITHOUT a hub — State falls back to the raw PDF text, ` +
           `and DO grouping / 3PL rates won't resolve it. Pick a hub in the Delivery Hub ` +
           `dropdown (or add the hub under Customers, then re-open this scan) before creating.\n\n` +
           `Create WITHOUT hub anyway?`,
@@ -926,6 +953,10 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
     // One download per scanned PDF for this whole create pass. Several POs can
     // come off one scan, and each used to pull the same file down again.
     const originalBytes = newQueueBytesCache();
+    // Rows whose SO was actually created. Only these are consumed below — a
+    // failed create must leave its scan in the queue, not silently drop it
+    // (DEV-12: a rejected duplicate used to vanish with the scan).
+    const createdRows = new Set<(typeof selectedClaude)[number]>();
 
     // --- Claude-extracted rows ----------------------------------------
     for (const row of selectedClaude) {
@@ -1132,21 +1163,32 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
 
         // Sprint 3 #4 — idempotency. Bulk PO-scan create can retry mid-loop;
         // a UUID per PO ensures duplicate retries don't fan out duplicate SOs.
-        const res = await fetch("/api/sales-orders", {
+        const res = await fetch(isCO ? "/api/consignment-orders" : "/api/sales-orders", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Idempotency-Key": crypto.randomUUID(),
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(
+            isCO
+              ? toConsignmentOrderBody(
+                  body,
+                  catalogCust?.hubs.find((h) => h.id === resolvedHubId)?.shortName ??
+                    (resolvedHubId && hub.hubId === resolvedHubId ? hub.hubName : null),
+                )
+              : body,
+          ),
         });
         const data = (await res.json()) as CreateSOResponse;
-        if (data.success && data.data?.companySOId) {
+        const docNo = data.data?.companySOId ?? data.data?.companyCOId;
+        if (data.success && docNo) {
           created.push({
-            soNo: data.data.companySOId,
+            soNo: docNo,
             poNo: po.customerPO,
             itemCount: po.items.length,
           });
+          createdRows.add(row);
+          if (data.warning) errs.push(`⚠ ${po.customerPO}: ${data.warning}`);
           // TEACH: this letterhead (`po.customerName`, exactly as OCR read it)
           // belongs to `resolvedCustomerId` — whether the matcher got it right
           // or the operator corrected it in the picker. Remembering it here is
@@ -1159,8 +1201,9 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
             knownMap: customerAliases,
           });
           // Copy the source scan → durable SO attachment BEFORE the queue row is
-          // consumed (below), which nulls the bytes. Best-effort.
-          if (data.data.id) {
+          // consumed (below), which nulls the bytes. Best-effort. A CO has no
+          // files section, so there is nowhere to keep it.
+          if (data.data?.id && !isCO) {
             originalUploads.push(
               persistSoOriginal(
                 data.data.id,
@@ -1171,7 +1214,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
             );
           }
         } else {
-          errs.push(`${po.customerPO}: ${data.error || "Failed to create SO"}`);
+          errs.push(`${po.customerPO}: ${data.error || `Failed to create ${isCO ? "CO" : "SO"}`}`);
         }
       } catch (err) {
         errs.push(`${po.customerPO}: ${err instanceof Error ? err.message : "Network error"}`);
@@ -1216,26 +1259,28 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
           source: "PO_SCAN",
         };
 
-        const res = await fetch("/api/sales-orders", {
+        const res = await fetch(isCO ? "/api/consignment-orders" : "/api/sales-orders", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Idempotency-Key": crypto.randomUUID(),
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(isCO ? toConsignmentOrderBody(body, hub.hubId ? hub.hubName : null) : body),
         });
 
         const data = (await res.json()) as CreateSOResponse;
-        if (data.success && data.data?.companySOId) {
+        const docNo = data.data?.companySOId ?? data.data?.companyCOId;
+        if (data.success && docNo) {
           created.push({
-            soNo: data.data.companySOId,
+            soNo: docNo,
             poNo: po.poNo,
             itemCount: po.items.length,
           });
+          if (data.warning) errs.push(`⚠ ${po.poNo}: ${data.warning}`);
           // Same rule as the Claude branch above: every SO-creation path keeps
           // its original. This branch had no call at all, so a template-matched
           // PO silently produced an SO with nothing on record.
-          if (data.data.id) {
+          if (data.data?.id && !isCO) {
             const src = fallbackSourceFiles.current.get(po);
             originalUploads.push(
               persistSoOriginal(
@@ -1246,13 +1291,18 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
             );
           }
         } else {
-          errs.push(`${po.poNo}: ${data.error || "Failed to create SO"}`);
+          errs.push(`${po.poNo}: ${data.error || `Failed to create ${isCO ? "CO" : "SO"}`}`);
         }
       } catch (err) {
         errs.push(`${po.poNo}: ${err instanceof Error ? err.message : "Network error"}`);
       }
     }
 
+    if (isCO && created.length > 0) {
+      errs.push(
+        "⚠ A Consignment Order does not keep the original scanned PO or the customer's S/O No. Keep the PO file yourself if you need it.",
+      );
+    }
     setCreatedSOs(created);
     setErrors(errs);
     setCreating(false);
@@ -1281,7 +1331,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
     }
     const seenPairs = new Set<string>();
     for (const row of selectedClaude) {
-      if (!row.scanQueueRowId) continue;
+      if (!row.scanQueueRowId || !createdRows.has(row)) continue;
       const key = `${row.scanQueueRowId}#${row.scanQueueDocIdx}`;
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
@@ -1319,15 +1369,21 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
   useEffect(() => {
     if (!open || !activeBatchId) return;
     let cancelled = false;
+    // The browser drives the OCR (see createScanQueueDriver). Poked on
+    // every poll that still shows a 'queued' row; re-polls after each row.
+    const driver = createScanQueueDriver(activeBatchId, {
+      onProcessed: () => void tick(),
+    });
     const tick = async () => {
       const r = await fetchScanQueueBatch(activeBatchId);
       if (cancelled) return;
       if (!r.ok) {
-         
+
         setErrors([`Queue poll failed: ${r.error}`]);
         return;
       }
-       
+      if (r.data.items.some((it) => it.status === "queued")) driver.poke();
+
       setQueueItems(r.data.items);
       // NOTE the absence of a `!it.consumedAt` test. It used to be here, and it
       // is why POs disappeared: consumed means "a draft was made from this
@@ -1450,6 +1506,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
     }, QUEUE_POLL_MS);
     return () => {
       cancelled = true;
+      driver.stop();
       window.clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1478,8 +1535,10 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
   }, [claudeRows.length, parseResult?.purchaseOrders.length]);
 
   // Ask the server which of the scanned customer POs are ALREADY orders. Purely
-  // informational — nothing is hidden or blocked by the answer.
+  // informational — nothing is hidden or blocked by the answer. Sales Orders
+  // only, so it is skipped on the Consignment page.
   useEffect(() => {
+    if (isCO) return;
     const nums = [
       ...new Set(
         claudeRows
@@ -1515,7 +1574,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [claudeRows]);
+  }, [claudeRows, isCO]);
 
   if (!open) return null;
 
@@ -1533,7 +1592,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
             </div>
             <div>
               <h2 className="text-lg font-bold text-[#1F1D1B]">Scan Customer PO</h2>
-              <p className="text-sm text-[#6B7280]">Upload customer PO PDFs to auto-create Sales Orders</p>
+              <p className="text-sm text-[#6B7280]">Upload customer PO PDFs to auto-create {docLabel}s</p>
             </div>
           </div>
           <Button variant="ghost" size="sm" onClick={requestClose}>
@@ -1564,6 +1623,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
               fileInputRef={fileInputRef}
               onFiles={handleFiles}
               onDrop={handleDrop}
+              docLabel={docLabel}
             />
           )}
 
@@ -1591,13 +1651,14 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
               }}
               onConfirm={handleCreateSOs}
               catalog={catalog}
+              docLabel={docLabel}
             />
           )}
 
           {step === "creating" && (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <Loader2 className="h-12 w-12 text-[#6B5C32] animate-spin" />
-              <p className="text-lg font-medium text-[#1F1D1B]">Creating Sales Orders...</p>
+              <p className="text-lg font-medium text-[#1F1D1B]">Creating {docLabel}s...</p>
               <p className="text-sm text-[#6B7280]">Processing {selectedPOs.size} purchase orders</p>
             </div>
           )}
@@ -1605,6 +1666,7 @@ export function ScanPOModal({ open, onClose, onCreated }: Props) {
           {step === "done" && (
             <DoneStep
               created={createdSOs}
+              docLabel={docLabel}
               errors={errors}
               onClose={handleClose}
               onScanMore={() => reset()}
@@ -1632,8 +1694,9 @@ function StepDot({ active, done, label }: { active: boolean; done: boolean; labe
 }
 
 function UploadStep({
-  files, parsing, fileProgress, pageProgress, errors, fileInputRef, onFiles, onDrop,
+  files, parsing, fileProgress, pageProgress, errors, fileInputRef, onFiles, onDrop, docLabel,
 }: {
+  docLabel: string;
   files: UploadedFile[];
   parsing: boolean;
   fileProgress: Record<string, "queued" | "scanning" | "done" | "failed">;
@@ -1732,7 +1795,7 @@ function UploadStep({
       <div className="grid grid-cols-3 gap-3">
         <InfoCard icon="📄" title="Upload PO PDF" desc="Customer purchase order files" />
         <InfoCard icon="🔍" title="Auto-Parse" desc="Extract items, fabric, config" />
-        <InfoCard icon="📋" title="Create SO" desc="Review then create as DRAFT" />
+        <InfoCard icon="📋" title={`Create ${docLabel === "Sales Order" ? "SO" : "CO"}`} desc="Review then create as DRAFT" />
       </div>
     </div>
   );
@@ -1783,7 +1846,7 @@ function InfoCard({ icon, title, desc }: { icon: string; title: string; desc: st
 }
 
 function PreviewStep({
-  claudeRows, setClaudeRows, usedClaude, result, selectedPOs, expandedPO, queueItems, customerAliases, existingByPO, onTogglePO, onExpandPO, onRemoveClaudeRow, onClearAll, onBack, onConfirm, catalog,
+  claudeRows, setClaudeRows, usedClaude, result, selectedPOs, expandedPO, queueItems, customerAliases, existingByPO, onTogglePO, onExpandPO, onRemoveClaudeRow, onClearAll, onBack, onConfirm, catalog, docLabel,
 }: {
   claudeRows: ClaudeScanRow[];
   setClaudeRows: React.Dispatch<React.SetStateAction<ClaudeScanRow[]>>;
@@ -1802,6 +1865,7 @@ function PreviewStep({
   onBack: () => void;
   onConfirm: () => void;
   catalog: ScanCatalog | null;
+  docLabel: string;
 }) {
   const fallbackPOs = result?.purchaseOrders ?? [];
   const totalCount = claudeRows.length + fallbackPOs.length;
@@ -2086,7 +2150,7 @@ function PreviewStep({
           disabled={selectedPOs.size === 0}
         >
           <CheckCircle className="h-4 w-4" />
-          Create {selectedPOs.size} Sales Order{selectedPOs.size !== 1 ? "s" : ""} as DRAFT
+          Create {selectedPOs.size} {docLabel}{selectedPOs.size !== 1 ? "s" : ""} as DRAFT
         </Button>
       </div>
     </div>
@@ -2915,9 +2979,10 @@ function POCard({
 }
 
 function DoneStep({
-  created, errors, onClose, onScanMore,
+  created, docLabel, errors, onClose, onScanMore,
 }: {
   created: { soNo: string; poNo: string; itemCount: number }[];
+  docLabel: string;
   errors: string[];
   onClose: () => void;
   onScanMore: () => void;
@@ -2930,7 +2995,7 @@ function DoneStep({
             <CheckCircle className="h-8 w-8 text-green-600" />
           </div>
           <h3 className="text-xl font-bold text-[#1F1D1B]">
-            {created.length} Sales Order{created.length !== 1 ? "s" : ""} Created!
+            {created.length} {docLabel}{created.length !== 1 ? "s" : ""} Created!
           </h3>
           <p className="text-sm text-[#6B7280] mt-1">All created as DRAFT — review and confirm when ready</p>
         </div>
@@ -2951,11 +3016,19 @@ function DoneStep({
         </div>
       )}
 
-      {/* Errors */}
-      {errors.length > 0 && (
+      {/* Warnings ("⚠ …" lines — the SO WAS created) vs real failures */}
+      {errors.some((e) => e.startsWith("⚠")) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
+          <p className="font-medium text-amber-800">Check before confirming:</p>
+          {errors.filter((e) => e.startsWith("⚠")).map((err, i) => (
+            <p key={i} className="text-sm text-amber-700">{err}</p>
+          ))}
+        </div>
+      )}
+      {errors.some((e) => !e.startsWith("⚠")) && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2">
           <p className="font-medium text-red-800">Some POs failed to create:</p>
-          {errors.map((err, i) => (
+          {errors.filter((e) => !e.startsWith("⚠")).map((err, i) => (
             <p key={i} className="text-sm text-red-700">{err}</p>
           ))}
         </div>

@@ -15,10 +15,10 @@
 // `invalidateCachePrefix` so the next read doesn't serve the stale entry
 // indefinitely. The TTL is a safety net, not the primary freshness guarantee.
 //
-// Storage limits: localStorage is 5–10 MB per origin. The whole ERP payload
-// runs ~2–3 MB so we're fine. If a write fails (quota / disabled storage),
-// we swallow the error and fall through to a plain fetch — cache is an
-// optimisation, not load-bearing.
+// Storage limits: localStorage is 5–10 MB per origin. A body that does not fit
+// (the /production sheets are 6-12 MB) is kept in memory instead (memCache),
+// so it survives a tab switch but not a page reload. Cache is an optimisation,
+// not load-bearing.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildTraceparent } from "./trace";
@@ -72,8 +72,23 @@ export function peekCache<T>(url: string): T | null {
   return readCache<T>(url)?.data ?? null;
 }
 
+// Bodies too big for localStorage. The /production dept sheets are 6-7 MB
+// decoded and the Overview ~12 MB (measured on staging 2026-10-07), over the
+// ~5 MB quota, so their writes always failed and every tab switch downloaded
+// them again. They are kept here instead, for the life of this browser tab.
+// Up to MEM_CACHE_MAX bodies are held as parsed objects, ~6 MB of heap per
+// dept sheet (measured), so ~60 MB at most. Lower it if tablets run short.
+const memCache = new Map<string, CacheEntry<unknown>>();
+const MEM_CACHE_MAX = 9;
+
+function dropMemPrefix(prefix: string): void {
+  for (const k of [...memCache.keys()]) if (k.startsWith(prefix)) memCache.delete(k);
+}
+
 function readCache<T>(url: string): CacheEntry<T> | null {
   if (typeof window === "undefined") return null;
+  const mem = memCache.get(url);
+  if (mem) return mem as CacheEntry<T>;
   try {
     const raw = window.localStorage.getItem(storageKey(url));
     if (!raw) return null;
@@ -87,12 +102,18 @@ function readCache<T>(url: string): CacheEntry<T> | null {
 
 function writeCache<T>(url: string, data: T): void {
   if (typeof window === "undefined") return;
+  const entry: CacheEntry<T> = { data, fetchedAt: Date.now() };
+  memCache.delete(url);
   try {
-    const entry: CacheEntry<T> = { data, fetchedAt: Date.now() };
     window.localStorage.setItem(storageKey(url), JSON.stringify(entry));
   } catch {
-    // Quota exceeded, storage disabled, or data not serialisable. Cache is
-    // best-effort — drop silently so the component still renders fresh data.
+    // Quota exceeded, storage disabled, or data not serialisable. Keep it in
+    // memory instead (see memCache) so a revisit still paints instantly.
+    try { window.localStorage.removeItem(storageKey(url)); } catch { /* ignore */ }
+    memCache.set(url, entry);
+    if (memCache.size > MEM_CACHE_MAX) {
+      memCache.delete(memCache.keys().next().value as string);
+    }
   }
 }
 
@@ -162,9 +183,11 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
       // Drop the localStorage entry on this tab too — sender already did it
       // on theirs. Then notify any mounted hooks on this tab to refetch.
       if (msg.kind === "url") {
+        memCache.delete(msg.url);
         try { window.localStorage.removeItem(storageKey(msg.url)); } catch { /* ignore */ }
         notifyInvalidation(msg.url);
       } else if (msg.kind === "prefix") {
+        dropMemPrefix(msg.prefix);
         try {
           const full = storageKey(msg.prefix);
           const toRemove: string[] = [];
@@ -190,6 +213,7 @@ function broadcast(msg: InvalidateMessage): void {
 
 export function invalidateCache(url: string): void {
   if (typeof window === "undefined") return;
+  memCache.delete(url);
   try {
     window.localStorage.removeItem(storageKey(url));
   } catch {
@@ -201,6 +225,7 @@ export function invalidateCache(url: string): void {
 
 export function invalidateCachePrefix(prefix: string): void {
   if (typeof window === "undefined") return;
+  dropMemPrefix(prefix);
   try {
     const full = storageKey(prefix);
     const toRemove: string[] = [];
@@ -218,6 +243,7 @@ export function invalidateCachePrefix(prefix: string): void {
 
 export function clearAllCache(): void {
   if (typeof window === "undefined") return;
+  memCache.clear();
   try {
     const toRemove: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
@@ -284,7 +310,38 @@ function retryDelay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function joinInflight<T>(url: string): Promise<T> {
+// Last response body per URL, for callers that opt in with `reuseUnchanged`.
+// A poll whose body is byte-identical to the previous one hands back the SAME
+// parsed object, so React bails out of the re-render and every effect keyed on
+// the data stays quiet. Measured on /production 2026-09-23: its 8 s poll
+// re-downloaded an identical 11.8 MB body and then blocked the main thread for
+// ~350 ms rebuilding rows from a "new" object that held nothing new.
+// ponytail: keeps up to LAST_BODIES_MAX body strings in memory; opt-in only.
+const lastBodies = new Map<string, { text: string; data: unknown }>();
+const LAST_BODIES_MAX = 4;
+// Objects handed back unchanged — the hook skips re-writing them to
+// localStorage (a full JSON.stringify for nothing; and bodies over the storage
+// quota, like /production's, fail that write every time anyway).
+const reusedBodies = new WeakSet<object>();
+
+export async function readJsonBody<T>(r: Response, url: string, reuseUnchanged: boolean): Promise<T> {
+  if (!reuseUnchanged) return (await r.json()) as T;
+  const text = await r.text();
+  const prev = lastBodies.get(url);
+  if (prev && prev.text === text) {
+    if (prev.data && typeof prev.data === "object") reusedBodies.add(prev.data);
+    return prev.data as T;
+  }
+  const data = JSON.parse(text) as T;
+  lastBodies.delete(url);
+  lastBodies.set(url, { text, data });
+  if (lastBodies.size > LAST_BODIES_MAX) {
+    lastBodies.delete(lastBodies.keys().next().value as string);
+  }
+  return data;
+}
+
+function joinInflight<T>(url: string, reuseUnchanged = false): Promise<T> {
   const existing = inflight.get(url);
   if (existing) {
     existing.refs++;
@@ -335,7 +392,7 @@ function joinInflight<T>(url: string): Promise<T> {
         // existing caller behave exactly as before.
         throw new HttpError(r.status, url);
       }
-      const j = (await r.json()) as T;
+      const j = await readJsonBody<T>(r, url, reuseUnchanged);
       // Catch-all stub guard (2026-04-26): the backend's /api/* fallback in
       // worker.ts returns `{success:true, data:[], _stub:true, path}` for
       // any unrouted endpoint. Without surfacing this, a typo'd or
@@ -509,6 +566,14 @@ export type UseCachedJsonOptions = {
    * dropdown entries. Off by default — most pages don't need it.
    */
   revalidateOnFocus?: boolean;
+  /**
+   * When a refetch returns a body byte-identical to the last one, hand back the
+   * SAME object (no new state, no re-render, no localStorage re-write). For
+   * large polled payloads. Opt-in because a caller that copies `data` into
+   * local editable state on change would no longer be reset by a refresh that
+   * returns unchanged data.
+   */
+  reuseUnchanged?: boolean;
 };
 
 /**
@@ -547,6 +612,7 @@ export function useCachedJson<T = unknown>(
   const [failure, setFailure] = useState<CachedFetchFailure | null>(null);
   const [tick, setTick] = useState(0);
   const lastUrl = useRef<string | null>(null);
+  const reuseUnchanged = options.reuseUnchanged === true;
 
   useEffect(() => {
     if (!url) {
@@ -591,7 +657,7 @@ export function useCachedJson<T = unknown>(
     let cancelled = false;
     const t0 = performance.now();
     const joinedUrl = url;
-    joinInflight<T>(joinedUrl)
+    joinInflight<T>(joinedUrl, reuseUnchanged)
       .then((raw) => {
         if (cancelled) return;
         // Client-side timing — anything over 500ms gets a warn so slow
@@ -624,7 +690,9 @@ export function useCachedJson<T = unknown>(
         // when we're confident that's what the caller wants. We DO NOT strip
         // the envelope here — callers decide how to interpret the response —
         // but we do cache the whole body so future reads match the server.
-        writeCache<T>(joinedUrl, raw);
+        if (!(raw && typeof raw === "object" && reusedBodies.has(raw))) {
+          writeCache<T>(joinedUrl, raw);
+        }
         setData(raw);
         setError(null);
         setFailure(null);
@@ -650,7 +718,7 @@ export function useCachedJson<T = unknown>(
       cancelled = true;
       releaseInflight(joinedUrl);
     };
-  }, [url, ttlSec, tick]);
+  }, [url, ttlSec, tick, reuseUnchanged]);
 
   const refresh = useCallback(() => {
     setTick((t) => t + 1);

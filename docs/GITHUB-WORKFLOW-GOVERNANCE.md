@@ -1,7 +1,26 @@
 # GitHub Workflow Governance
 
-> **Last verified: 2026-09-21** (branch `feat/t012-mail-center`) — `mail-sync.yml` and the
-> `mail-sync/` IMAP poller were deleted (PRD T-012 R13); the workflow count below is 25.
+> **Last verified: 2026-10-16** (branch `feat/t012-mail-center`, after merging staging) —
+> `mail-sync.yml` and the `mail-sync/` IMAP poller are deleted (PRD T-012 R13). The
+> completeness list below was re-counted against `.github/workflows/` on the merged tree:
+> **29**, and four workflows that had never been listed were added to it.
+
+> **Last verified: 2026-09-29** (branch `chore/sync-main-into-staging`, staging<-main merge): kept staging's `deploy.yml` row (staging-only patch-notes step) and main's `sync-staging.yml` row. Nothing else re-checked.
+
+> **Last verified: 2026-09-29** (branch `ci/label-prs`) — added the `label-prs.yml` row, read from the workflow and the
+> GitHub `pull_request_target` docs (it always runs the default branch's copy). Only that row was touched.
+
+> **Last verified: 2026-09-29** (branch `fix/staging-no-nightly-wipe`) — the `sync-staging.yml` row only, read from the workflow:
+> the nightly cron is gone (manual `workflow_dispatch` only), with a `merge` (default) and a `reset` mode.
+
+> **Last verified: 2026-09-29** (branch `feat/staging-patch-notes`, STAGING ONLY) — the `deploy.yml` row only:
+> added the staging-only full-history checkout and "Staging patch notes" step, read from `deploy.yml`.
+
+> **Last verified: 2026-09-23** (branch `ci/github-deployments-status`) — the `deploy.yml` row only:
+> added its Deployments-environment behaviour, read from the `environment:` block in `deploy.yml`.
+
+> **Last verified: 2026-09-22** (branch `ci/auto-merge-main-into-staging`) — added the
+> `merge-main-into-staging.yml` row below; 27 workflows now. Only that row was touched.
 
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
@@ -14,14 +33,18 @@
 > all exist as named, there is no `ISSUE_TEMPLATE/` (correct — this doc says it is optional
 > and not needed), and `docs/BUG-HISTORY.md` is still the live bug log.
 >
-> For completeness, the **25** workflows present on 2026-09-21 are (mail-sync, the Hostinger IMAP poller, was retired on 2026-09-21 under PRD T-012 R13 — Cloudflare Email Routing → mail-inbound-worker is the one inbound channel): agent-heartbeat,
-> analyze-staging, auto-clockout, backup, daily-reports, delivery-agent,
-> deploy-cron-worker, deploy, distill-ocr-rules, **docs-freshness**, ios-build,
-> keep-warm, nightly-counter-rebuild, nightly-pi-gl-backfill,
+> For completeness, the **29** workflows on the merged tree (measured 2026-10-16,
+> `ls .github/workflows/*.yml`) are: agent-heartbeat, analyze-staging, auto-clockout,
+> backfill-skipped-completions, backup, daily-reports, delivery-agent, deploy-cron-worker,
+> deploy, distill-ocr-rules, **docs-freshness**, ios-build, keep-warm, label-prs,
+> label-staging-prs, nightly-counter-rebuild, nightly-pi-gl-backfill,
 > process-email-outbox, push-clock-reminder, qc-cron, rebuild-dashboard-snapshot,
 > refresh-bundle-baseline, replay-audit-dlq, scan-queue-sweep, **secret-hygiene**,
-> sync-staging, trim-staging, warm-lists. *(The list said 24 and omitted exactly the
-> two gates this repo relies on for doc freshness and secret hygiene.)*
+> sync-staging, trim-staging, warm-lists, wip-reset. *(An earlier revision said 24 and
+> omitted exactly the two gates this repo relies on for doc freshness and secret hygiene;
+> `backfill-skipped-completions`, `label-prs`, `label-staging-prs` and `wip-reset` had
+> never been listed at all. `mail-sync` is gone — retired under PRD T-012 R13, since
+> Cloudflare Email Routing → mail-inbound-worker is the one inbound channel.)*
 > Note `ios-build.yml` (Capacitor iOS, `workflow_dispatch` only, unsigned archive) predates
 > this doc's "canary deploys on pull requests" framing and is not covered by it.
 
@@ -40,8 +63,10 @@ The next improvement is not to move files around for neatness. The next improvem
 | `.github/PULL_REQUEST_TEMPLATE.md` | Standard PR checklist for development mode, impact check, staging/rollout, and tests. |
 | `docs/BUG-HISTORY.md` | Existing living bug report/history log. Use this as the source of truth for identified, in-progress, and fixed bugs. |
 | `.github/ISSUE_TEMPLATE/*.md` | Optional later only if GitHub Issues becomes the main intake channel; not needed while `docs/BUG-HISTORY.md` is the working system. |
-| `.github/workflows/deploy.yml` | CI/build/deploy/canary pipeline. |
-| `.github/workflows/sync-staging.yml` | Controlled prod-to-staging refresh. |
+| `.github/workflows/sync-staging.yml` | Manual prod-to-staging refresh, NO cron (the nightly run dropped staging's schema and wiped test data). `mode=merge` (default) inserts prod rows staging lacks via `scripts/merge-prod-into-staging.mjs` and keeps all staging data; `mode=reset` (needs `confirm=SYNC`) drops and reloads staging from a prod dump. Both then run `scripts/sanitize-staging.mjs` and the shared worker-PIN step. |
+| `.github/workflows/deploy.yml` | CI/build/deploy/canary pipeline. Runs on `main` / `staging` are recorded in the repo's Deployments sidebar as the `production` / `staging` environment (no URL shown); PR canary and other branch runs are not recorded (2026-09-23). On `staging` only: checkout with full history and a non-blocking "Staging patch notes" step that writes `public/staging-notes.json` for the `/staging-notes` page (2026-09-29; this change lives on `staging` only and is never PR'd into main). |
+| `.github/workflows/merge-main-into-staging.yml` | On every push to `main`, merges `main` into the `staging` branch and dispatches the staging deploy; on conflict opens a PR from `chore/sync-staging-from-main` into `staging` and fails (added 2026-09-22). |
+| `.github/workflows/label-prs.yml` | Labels every PR into `main` or `staging`, from anyone: base `staging` gets `staging`, and the title type (`fix:`, `feat(x):` ...) gets `bug` / `enhancement` / `documentation` / `security` / `performance` / `ci` / `chore`. Must stay on `main`: `pull_request_target` always runs the default branch's copy, which is why the staging-only `label-staging-prs.yml` never ran. |
 | `.github/workflows/*.yml` | One workflow per scheduled/ops job, with header comments explaining purpose, secrets, timing, and safety. |
 
 ## Direct production / canary / staging rule

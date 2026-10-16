@@ -15,6 +15,9 @@ import { formatCurrency } from "@/lib/utils";
 import { Skeleton, SkeletonDashboard } from "@/components/ui/skeleton";
 import { useCachedJson, isUnknownOutcome } from "@/lib/cached-fetch";
 import { OcrAccuracyCard } from "./OcrAccuracyCard";
+import { DeptRevenueCard, CatToggle } from "./DeptRevenueCard";
+import { pickCat, type RevCat, type RevenueSplitResp } from "./revenue-split";
+import { stateKpiTile, type StateKpis } from "@/pages/dashboards/dashboard-widgets-lib";
 // recharts (~357 KB) is loaded lazily so the KPI numbers paint first; the
 // chart code streams in behind a placeholder. See ./charts.tsx.
 const RevenueChart = lazy(() =>
@@ -215,6 +218,9 @@ type Overview = {
     isHistorical: boolean; // true → past-month value (snapshot-less): live or reconstructed
     asOf: string | null; // snap_date (snapshot) or month-end (reconstructed)
   };
+  // A finished month's saved Pending Delivery / Outstanding (null for the
+  // current month and All-time, which stay live).
+  stateKpis?: StateKpis | null;
 };
 // Σ valueSen of every PO that is made-but-not-yet-on-a-DO, computed server-side
 // by GET /api/delivery-orders/pending-value off the SAME buildReadyPlanning rows
@@ -230,13 +236,12 @@ type JcSummaryResp = {
 type WheSummaryResp = {
   data?: {
     workerId: string;
+    name?: string | null;
+    departmentCode?: string | null;
     totalHours: number;
     byDept: Record<string, number>;
     daysWithEntries: number;
   }[];
-};
-type WorkersResp = {
-  data?: { id: string; name: string; departmentCode?: string; status?: string }[];
 };
 // Daily Report (process / SOP exceptions) summary — independent fetch, shown
 // as its own card. Mirrors src/api/lib/compliance-report.ts counts.
@@ -718,6 +723,13 @@ export default function DashboardBPage() {
   const { data: ovRaw, loading: ovL } = useCachedJson<Overview>(
     `/api/dashboard/overview?period=${period}`,
   );
+  // Bedframe / Sofa split of the Revenue chart + Department Revenue (owner
+  // 2026-10-15). Separate, fresh endpoint: the overview payload above is
+  // snapshotted / frozen per month and has no split.
+  const { data: splitRaw, loading: splitL } = useCachedJson<RevenueSplitResp>(
+    `/api/dashboard/overview/revenue-split?period=${period}`,
+  );
+  const [revCat, setRevCat] = useState<RevCat>("all");
   // Pending Delivery money — ONE small server-computed number.
   //
   // This tile used to assemble the figure in the browser from four whole-org
@@ -751,8 +763,6 @@ export default function DashboardBPage() {
   const { data: wheSumRaw, loading: wheSumL } = useCachedJson<WheSummaryResp>(
     `/api/working-hour-entries/summary?from=${effWin.from}&to=${effWin.to}`,
   );
-  const { data: workersRaw, loading: workersL } =
-    useCachedJson<WorkersResp>("/api/workers");
   // Daily Report summary — independent fetch (own loading state), so it paints
   // the instant its data lands without blocking the rest of the dashboard.
   const {
@@ -789,9 +799,9 @@ export default function DashboardBPage() {
   //                  Purchasing). Snapshot-backed — resolves quickly.
   //   • soL        → Order Pipeline + the "Outstanding" KPI tile.
   //   • pendingL   → the "Pending Delivery" KPI tile (ONE small live fetch).
-  //   • effL       → Worker Efficiency (3 live fetches).
+  //   • effL       → Worker Efficiency (2 live fetches).
   const overviewLoading = ovL;
-  const effL = jcSumL || wheSumL || workersL;
+  const effL = jcSumL || wheSumL;
 
   // Pending Delivery — server-computed (see the fetch above). Integer sen.
   const pendingDeliveryValueSen = pendingRaw?.pendingDeliveryValueSen ?? 0;
@@ -815,12 +825,6 @@ export default function DashboardBPage() {
     const prodMin = new Map<string, number>();
     for (const r of jcSumRaw?.data ?? [])
       prodMin.set(r.workerId, Number(r.productionMinutes) || 0);
-    const name = new Map<string, string>();
-    const dept = new Map<string, string>();
-    for (const w of workersRaw?.data ?? []) {
-      name.set(w.id, w.name || w.id);
-      dept.set(w.id, DEPT_LABEL[w.departmentCode || ""] ?? w.departmentCode ?? "");
-    }
     const rows: { name: string; dept: string; pct: number }[] = [];
     for (const e of wheSumRaw?.data ?? []) {
       if ((e.daysWithEntries ?? 0) === 0) continue;
@@ -829,14 +833,14 @@ export default function DashboardBPage() {
         if (PROD_DEPTS.has(d)) prodHours += Number(h) || 0;
       if (prodHours <= 0) continue;
       rows.push({
-        name: name.get(e.workerId) ?? e.workerId,
-        dept: dept.get(e.workerId) ?? "",
+        name: e.name || e.workerId,
+        dept: DEPT_LABEL[e.departmentCode || ""] ?? e.departmentCode ?? "",
         pct: ((prodMin.get(e.workerId) ?? 0) / (prodHours * 60)) * 100,
       });
     }
     rows.sort((a, b) => b.pct - a.pct);
     return { top: rows.slice(0, 5), bottom: rows.slice(-5).reverse() };
-  }, [jcSumRaw, wheSumRaw, workersRaw]);
+  }, [jcSumRaw, wheSumRaw]);
 
   const so = soRaw ?? {};
   const ov = ovRaw ?? {};
@@ -854,14 +858,23 @@ export default function DashboardBPage() {
   const weekRev = useMemo(() => ov.weeklyRevenue ?? [], [ov.weeklyRevenue]);
   const revChart = useMemo(
     () =>
-      weekRev.map((r) => ({
-        // All-time → "MM-DD" of the week-start; month → "MM-DD" of the day.
-        m: r.week.slice(5),
-        "Sales Orders": Math.round(r.salesOrderSen / 100),
-        Invoices: Math.round(r.invoiceSen / 100),
-        Production: Math.round(r.productionSen / 100),
-      })),
-    [weekRev],
+      // All keeps the overview's own lines (frozen months stay as frozen);
+      // Bedframe / Sofa come from the split endpoint on the same buckets.
+      revCat === "all"
+        ? weekRev.map((r) => ({
+            // All-time → "MM-DD" of the week-start; month → "MM-DD" of the day.
+            m: r.week.slice(5),
+            "Sales Orders": Math.round(r.salesOrderSen / 100),
+            Invoices: Math.round(r.invoiceSen / 100),
+            Production: Math.round(r.productionSen / 100),
+          }))
+        : (splitRaw?.revenue ?? []).map((r) => ({
+            m: r.bucket.slice(5),
+            "Sales Orders": Math.round(pickCat(r.salesOrder, revCat) / 100),
+            Invoices: Math.round(pickCat(r.invoice, revCat) / 100),
+            Production: Math.round(pickCat(r.production, revCat) / 100),
+          })),
+    [weekRev, revCat, splitRaw],
   );
   // Sparkline for the Sales card — the monthly confirmed-SO trend.
   const soSpark = useMemo(() => rev.map((r) => r.salesOrderSen), [rev]);
@@ -1025,6 +1038,17 @@ export default function DashboardBPage() {
   // (Outstanding / Pending Delivery) are point-in-time and carry a "live" tag.
   const isAllTime = period === "all";
   const isCurrentMonth = period === CUR_YM;
+  // A finished month keeps its saved month-end figure, or "no record"; never
+  // today's live one (owner 2026-10-09). Same rule on the mobile home and the
+  // experimental dashboard (stateKpiTile).
+  const pdTile = stateKpiTile(
+    period,
+    ov.stateKpis?.pendingDeliverySen,
+    ov.stateKpis?.asOf,
+    pendingDeliveryValueSen + dispatchChain.pendingDispatchSen + dispatchChain.inTransitSen,
+    CUR_YM,
+  );
+  const outTile = stateKpiTile(period, ov.stateKpis?.outstandingSen, ov.stateKpis?.asOf, outstanding, CUR_YM);
   // This Month Sales — confirmed-SO value for the selected month (all-time =
   // cumulative). Owner 2026-06-12 kept this card alongside Invoices.
   const salesLabel = isAllTime
@@ -1056,9 +1080,12 @@ export default function DashboardBPage() {
   // Completed, Worker Efficiency). All-time keeps each widget's original
   // rolling phrase; a selected month shows the month string.
   const revTitle = isAllTime ? "Revenue — last 12 weeks" : `Revenue — ${period}`;
-  const capacityWindowLabel = isAllTime ? "7-day avg" : `${period} avg`;
-  const capacityDrillTitle = isAllTime
-    ? "Daily Capacity — Past 7 Working Days"
+  // All-time and the current month average the last 14 working days; a past
+  // month averages its own working days (owner 2026-10-08).
+  const capacityRolling = isAllTime || isCurrentMonth;
+  const capacityWindowLabel = capacityRolling ? "14-day avg" : `${period} avg`;
+  const capacityDrillTitle = capacityRolling
+    ? "Daily Capacity — Past 14 Working Days"
     : `Daily Capacity — ${period}`;
   const completedDrillTitle = isAllTime
     ? "Completed — last 7 days"
@@ -1160,25 +1187,21 @@ export default function DashboardBPage() {
             Owner 2026-06-12. */}
         <KTile
           label="Pending Delivery"
-          value={rm(
-            pendingDeliveryValueSen +
-              dispatchChain.pendingDispatchSen +
-              dispatchChain.inTransitSen,
-          )}
-          sub="made / on DO, not yet delivered"
+          value={pdTile.sen == null ? "—" : rm(pdTile.sen)}
+          sub={pdTile.past && pdTile.sen == null ? "nothing saved for that month" : "made / on DO, not yet delivered"}
           icon={Package}
           accent={C_GREEN}
-          loading={pendingL}
-          tag="live"
+          loading={pdTile.past ? overviewLoading : pendingL}
+          tag={pdTile.tag}
         />
         <KTile
           label="Outstanding"
-          value={rm(outstanding)}
-          sub="confirmed · not yet delivered"
+          value={outTile.sen == null ? "—" : rm(outTile.sen)}
+          sub={outTile.past && outTile.sen == null ? "nothing saved for that month" : "confirmed · not yet delivered"}
           icon={Clock}
           accent={C_INV}
-          loading={soL}
-          tag="live"
+          loading={outTile.past ? overviewLoading : soL}
+          tag={outTile.tag}
         />
       </div>
 
@@ -1308,9 +1331,10 @@ export default function DashboardBPage() {
           <CardContent className="p-5">
             <SectionTitle
               title={revTitle}
-              sub="Sales Orders · Invoices · Production · click a legend to toggle"
+              sub={`Sales Orders · Invoices · Production${revCat === "all" ? "" : ` · ${revCat === "sofa" ? "Sofa" : "Bedframe"} only`} · click a legend to toggle`}
               right={
-                <div className="flex flex-wrap gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <CatToggle value={revCat} onChange={setRevCat} />
                   {(
                     [
                       ["Sales Orders", C_SO],
@@ -1341,7 +1365,7 @@ export default function DashboardBPage() {
             <div className="min-w-0" style={{ width: "100%", height: 260 }}>
               {revChart.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-xs text-[#9CA3AF]">
-                  No revenue data.
+                  {revCat !== "all" && splitL ? "Loading…" : "No revenue data."}
                 </div>
               ) : (
                 <Suspense
@@ -1428,7 +1452,7 @@ export default function DashboardBPage() {
                 onClick={() => {
                   if (!prod?.capacityDays) return;
                   const days = prod.capacityDays;
-                  // 7-day average capacity per worker — avg daily capacity
+                  // Average capacity per worker — avg daily capacity
                   // ÷ avg workers/day. Days with zero credited workers are
                   // left out so they don't distort the average.
                   const wDays = days.filter((d) => (d.workers ?? 0) > 0);
@@ -1600,6 +1624,13 @@ export default function DashboardBPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Department Revenue (owner 2026-10-15) */}
+      <DeptRevenueCard
+        data={splitRaw}
+        loading={splitL}
+        periodLabel={isAllTime ? "last 12 weeks" : period}
+      />
 
       {/* Pipeline + Worker efficiency */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -2562,7 +2593,7 @@ export default function DashboardBPage() {
                       />
                     )}
                   </div>
-                  <span className="w-12 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 7 working days — queue can't be sized in days" : undefined}>
+                  <span className="w-12 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 14 working days — queue can't be sized in days" : undefined}>
                     {showDays == null ? "stalled" : `${showDays.toFixed(1)}d`}
                   </span>
                 </div>

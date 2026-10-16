@@ -5,6 +5,15 @@
 export type CfSection =
   | "REVENUE_COLLECTION"
   | "RAW_MATERIALS"
+  // Owner 2026-09-28/29, final ruling 「raw material 加, drawdown 减, 一加一减 …
+  // 放在 after operation surplus」: a supplier paid from the trade-finance
+  // facility is grossed up — the purchase splits by material under Raw
+  // Materials (spend, in the month of the draw) and the facility side sits in
+  // this block BELOW the operating result, outflow-signed: a drawdown reads
+  // negative (the lender lent), interest charged negative, a repayment
+  // positive (real cash out). The block nets to the change in what is owed;
+  // the bank surplus stays bank-true because the two sides of a draw cancel.
+  | "TRADE_FINANCE"
   | "DIRECT_LABOUR"
   | "FACTORY_OVERHEAD"
   | "GENERAL_EXPENSE"
@@ -25,12 +34,14 @@ export type CoaLite = {
   parentCode?: string | null;
 };
 
-// Sections presented as cash OUT (payments shown positive, subtracted).
-// REVENUE_COLLECTION, LOAN, UNALLOCATED present cash IN (inflow positive).
-export const OUTFLOW_SECTIONS: ReadonlySet<CfSection> = new Set<CfSection>([
-  "RAW_MATERIALS", "DIRECT_LABOUR", "FACTORY_OVERHEAD", "GENERAL_EXPENSE",
-  "TAXATION", "FINANCE_COST", "CAPEX", "DEPOSIT",
-]);
+// Sections whose amounts would be shown with the sign flipped (money out
+// positive). NONE any more — owner 2026-09-29 「这个 cash flow 我想要更改，全部
+// 进钱 positive，出钱 negative」: every line reads the bank's way, amount =
+// money in, (amount) = money out, in every block. (History: until then the
+// cost blocks and everything below the operating result showed money out
+// positive, which made the same bracket mean opposite things across blocks.)
+// Kept as an (empty) set so the one sign rule stays in one place.
+export const OUTFLOW_SECTIONS: ReadonlySet<CfSection> = new Set<CfSection>([]);
 
 // Operating sections feed "Net operation surplus / (deficit)".
 export const OPERATING_SECTIONS: ReadonlySet<CfSection> = new Set<CfSection>([
@@ -38,24 +49,26 @@ export const OPERATING_SECTIONS: ReadonlySet<CfSection> = new Set<CfSection>([
   "GENERAL_EXPENSE", "TAXATION",
 ]);
 
-// Display order of sections in the statement.
+// Display order of sections in the statement. Trade Finance is the first
+// block after the operating result (owner 2026-09-29).
 export const SECTION_ORDER: CfSection[] = [
   "REVENUE_COLLECTION", "RAW_MATERIALS", "DIRECT_LABOUR", "FACTORY_OVERHEAD",
-  "GENERAL_EXPENSE", "TAXATION", "FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN",
+  "GENERAL_EXPENSE", "TAXATION", "TRADE_FINANCE", "FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN",
   "UNALLOCATED",
 ];
 
 export const SECTION_LABELS: Record<CfSection, string> = {
   REVENUE_COLLECTION: "REVENUE COLLECTION",
   RAW_MATERIALS: "Raw Materials",
+  TRADE_FINANCE: "Trade Finance",
   DIRECT_LABOUR: "Direct Labour",
   FACTORY_OVERHEAD: "Factory Overhead",
   GENERAL_EXPENSE: "General Expense",
   TAXATION: "Taxation",
   FINANCE_COST: "Finance Cost",
   CAPEX: "Capital Expenditure (CAPEX)",
-  DEPOSIT: "Deposit Incurred / (Repay)",
-  LOAN: "Loan / (Repayment)",
+  DEPOSIT: "Deposit refunded / (paid)",
+  LOAN: "Loan received / (repaid · lent)",
   UNALLOCATED: "Unallocated",
 };
 
@@ -134,6 +147,91 @@ export function rmLineOrder(line: string): number {
   return 10;
 }
 
+// Sections a supplier can be filed under INSTEAD of a raw-material category
+// (owner 2026-09-29 「我无法选其他的 categories, 类似 capex 等等」): the
+// supplier's uncoded / opening-creditor money (the "Unallocated — X" and
+// "Opening creditors — X" rows, i.e. payments with no material line behind
+// them) moves there whole, as a row named after the supplier. A payment that
+// settled a PI with real material lines still splits by material.
+export const SUPPLIER_SECTION_TARGETS: readonly CfSection[] = ["CAPEX", "FACTORY_OVERHEAD", "GENERAL_EXPENSE", "DIRECT_LABOUR"];
+export function supplierSectionFor(
+  line: string,
+  supplierCategory: Record<string, string>,
+): { section: CfSection; supplier: string } | null {
+  const m = /^(?:Opening creditors|Unallocated) — (.+)$/.exec(line);
+  if (!m) return null;
+  const cat = supplierCategory[m[1]];
+  return cat && (SUPPLIER_SECTION_TARGETS as readonly string[]).includes(cat)
+    ? { section: cat as CfSection, supplier: m[1] }
+    : null;
+}
+
+// Default sections for the payroll accruals, found from the chart — the
+// parent of the salary accrual (410-0000 ACCRUALS on this chart), never a
+// hard-coded code. The salary accrual and that parent carry the production
+// wages → Direct Labour (the caller splits them by department). Every other
+// accrual under the same parent — EPF / SOCSO / EIS — is the ordinary staff's
+// statutory contribution → General Expense (owner 2026-09-29 「这个是普通
+// staff，不是 direct 的」; the P&L books that EPF as STAFFS' EPF, not
+// PRODUCTION - EPF). No parent → no defaults. The owner's own drags win (the
+// caller only fills accounts he has not mapped).
+export function payrollAccrualSections(
+  coa: ReadonlyMap<string, CoaLite>,
+  salaryAccrualCode: string,
+): Map<string, CfSection> {
+  const out = new Map<string, CfSection>();
+  const parent = coa.get(salaryAccrualCode)?.parentCode ?? null;
+  if (!parent) return out;
+  for (const a of coa.values()) {
+    if (a.code === parent || a.code === salaryAccrualCode) out.set(a.code, "DIRECT_LABOUR");
+    else if (a.parentCode === parent) out.set(a.code, "GENERAL_EXPENSE");
+  }
+  return out;
+}
+
+// The payroll month a salary voucher's description names — whose payslip
+// department mix splits the cash. Owner 2026-09-29 「月份一起修」: the old
+// pattern only knew "May'26", so "PAYMENT FOR SALARIES - MAY'26" and
+// "… - JULY'26" fell back to the PAYMENT month's mix. Now any case, short or
+// full names ("Sept" too), and a month with no year ("LATE SALARY JUNE") is
+// the latest such month not after the payment month. Nothing named → fallback.
+const MONTH_WORD = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b(?:\s*'\s*(\d{2})\b)?/gi;
+const MONTH_NO: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+export function payrollMonthFrom(description: string | null | undefined, fallbackYm: string): string {
+  const text = description ?? "";
+  let noYear: number | null = null;
+  for (const m of text.matchAll(MONTH_WORD)) {
+    const mon = MONTH_NO[m[1].slice(0, 3).toLowerCase()];
+    if (!mon) continue;
+    if (m[2]) return `20${m[2]}-${String(mon).padStart(2, "0")}`;
+    noYear ??= mon;
+  }
+  if (noYear !== null) {
+    const fm = /^(\d{4})-(\d{2})$/.exec(fallbackYm);
+    if (fm) {
+      const y = Number(fm[1]), pm = Number(fm[2]);
+      return `${noYear <= pm ? y : y - 1}-${String(noYear).padStart(2, "0")}`;
+    }
+  }
+  return fallbackYm;
+}
+
+// Raw-material stock accounts (special type SBS: "STOCK - FABRIC M",
+// "STOCK - WOODEN", "STOCK - B.FILLER" …) default to Raw Materials. A payment
+// booked straight to one is buying material (owner 2026-09-30: the
+// pre-opening fabric repaid to Houzs, 「不要动到 P&L」 — so the bill stays on
+// the stock account and only the cash flow files it). Work-in-progress and
+// finished-goods stock are not raw material. The owner's drags still win.
+export function rawStockAccountSections(coa: ReadonlyMap<string, CoaLite>): Map<string, CfSection> {
+  const out = new Map<string, CfSection>();
+  for (const a of coa.values()) {
+    if (a.sat !== "SBS") continue;
+    if (/WORK[\s-]*IN[\s-]*PROGRESS|FINISHED\s+GOODS|\bWIP\b/i.test(a.name)) continue;
+    out.set(a.code, "RAW_MATERIALS");
+  }
+  return out;
+}
+
 // Distribute an integer total (sen) across weighted buckets so the parts sum
 // EXACTLY to total (largest-remainder method). Used to split one supplier
 // payment across the material lines of the PI it settled.
@@ -174,7 +272,17 @@ export type ClassifiedLeg = {
   ym: string; // YYYY-MM (opening-adjusted by caller)
   sourceType: string;
   sourceId: string;
+  // Row label instead of the account's name (the trade-finance rows: one per
+  // supplier "(via TF)", "Repaid to <lender>"); the account still decides the
+  // section and the group the row nests under.
+  lineLabel?: string;
 };
+
+// Inside the Trade Finance block: the drawdowns (negative — the lender lent)
+// first, the lender's interest next, the repayments (positive — cash out) last.
+export function tfLineOrder(label: string): number {
+  return label.startsWith("Repaid to ") ? 20 : label.startsWith("Interest charged by ") ? 15 : 10;
+}
 export type BankLeg = {
   accountCode: string;
   debitSen: number;
@@ -196,8 +304,16 @@ export type CfRow = {
   groupId?: string;
   values: (number | null)[];
   accountCode?: string;
+  // A line's own key ("<SECTION>|<label>") — what the inline drill asks for.
+  lineKey?: string;
 };
-export type CfStatement = { columns: CfColumn[]; rows: CfRow[] };
+// Where a line's money came from (the inline drill, owner 2026-09-29 「cash
+// flow 也要这样点开看」): one entry per ledger leg that fed the line — its
+// entry, month and the cash it put on THIS line (+ in, − out). `of` is the
+// leg's whole cash when the line only got a share of it (a payment split
+// across the materials of the PIs it settled, a salary split by department).
+export type CfSource = { sourceType: string; sourceId: string; ym: string; sen: number; legAccount: string; of?: number };
+export type CfStatement = { columns: CfColumn[]; rows: CfRow[]; sources?: Record<string, CfSource[]> };
 
 // Months of the current FY from period back to FY start (inclusive),
 // newest first, e.g. fye=8, period=2026-03 → [2026-03,...,2025-09,2025-08].
@@ -250,8 +366,10 @@ export function buildStatement(opts: {
   fyeMonth: number;
   period: string;
   editable?: boolean;
+  // Record every line's sources (CfSource) for the inline drill.
+  trace?: boolean;
 }): CfStatement {
-  const { classified, bankLegs, coa, map, rmSplit, deptSplit = {}, stockGroupOverride, supplierCategory = {}, fyeMonth, period, editable } = opts;
+  const { classified, bankLegs, coa, map, rmSplit, deptSplit = {}, stockGroupOverride, supplierCategory = {}, fyeMonth, period, editable, trace } = opts;
   const months = fyMonths(period, fyeMonth);        // newest first
   const fyStart = months[months.length - 1];        // FY start ym
   const columns: CfColumn[] = [
@@ -269,11 +387,14 @@ export function buildStatement(opts: {
     if (!a) { a = { section, label, order, vals: columns.map(() => 0), accountCode }; lines.set(k, a); }
     return a;
   };
-  const addToLine = (section: CfSection, label: string, order: number, ym: string, deltaSen: number, accountCode?: string) => {
+  const sources: Record<string, CfSource[]> = {};
+  type Src = { sourceType: string; sourceId: string; legAccount: string; of?: number };
+  const addToLine = (section: CfSection, label: string, order: number, ym: string, deltaSen: number, accountCode?: string, src?: Src) => {
     const a = ensure(section, label, order, accountCode);
     if (inFy(ym)) { a.vals[colIndex.get("__accum__")!] += deltaSen; }
     const ci = colIndex.get(ym);
     if (ci !== undefined) a.vals[ci] += deltaSen;
+    if (trace && src) (sources[`${section}|${label}`] ??= []).push({ ...src, ym, sen: deltaSen });
   };
 
   const placement = (code: string, fallback: CoaLite | undefined): { section: CfSection; order: number; name: string } => {
@@ -287,6 +408,8 @@ export function buildStatement(opts: {
     const a = coa.get(leg.accountCode);
     const place = placement(leg.accountCode, a);
     const delta = cashDelta(leg); // signed; + = cash in
+    const src: Src = { sourceType: leg.sourceType, sourceId: leg.sourceId, legAccount: leg.accountCode };
+    const share: Src = { ...src, of: delta };
     if (place.section === "RAW_MATERIALS") {
       // A split registered for this leg's exact account wins over the
       // payment-wide one (an other-party payment can put SOME of its money on
@@ -298,14 +421,19 @@ export function buildStatement(opts: {
           split.map((s) => ({ key: s.line, weight: s.weight })),
         );
         const sign = delta < 0 ? -1 : 1;
-        for (const [line, sen] of Object.entries(parts))
-          addToLine("RAW_MATERIALS", line, rmLineOrder(line), leg.ym, sign * sen);
+        for (const [line, sen] of Object.entries(parts)) {
+          // A supplier the owner filed under a section (Capex, overhead …)
+          // takes its uncoded / opening money there, as a row of its own.
+          const via = supplierSectionFor(line, supplierCategory);
+          if (via) addToLine(via.section, via.supplier, 50, leg.ym, sign * sen, undefined, share);
+          else addToLine("RAW_MATERIALS", line, rmLineOrder(line), leg.ym, sign * sen, undefined, share);
+        }
       } else if (a && !(a.sat === "SCC" || band(leg.accountCode) === 400 || band(leg.accountCode) === 405)) {
         // A non-control account routed here (a PURCHASE - … account, or one
         // the owner dragged in) keeps its own name as the line.
-        addToLine("RAW_MATERIALS", place.name, rmLineOrder(place.name), leg.ym, delta, leg.accountCode);
+        addToLine("RAW_MATERIALS", place.name, rmLineOrder(place.name), leg.ym, delta, leg.accountCode, src);
       } else {
-        addToLine("RAW_MATERIALS", "Unallocated raw material", 99, leg.ym, delta);
+        addToLine("RAW_MATERIALS", "Unallocated raw material", 99, leg.ym, delta, undefined, src);
       }
     } else if (place.section === "DIRECT_LABOUR" && deptSplit[leg.sourceId]?.length) {
       // Salary settlement split across departments (weights = that payroll
@@ -318,9 +446,12 @@ export function buildStatement(opts: {
       );
       const sign = delta < 0 ? -1 : 1;
       for (const [line, sen] of Object.entries(parts))
-        addToLine("DIRECT_LABOUR", line, 10, leg.ym, sign * sen);
+        addToLine("DIRECT_LABOUR", line, 10, leg.ym, sign * sen, undefined, share);
+    } else if (place.section === "TRADE_FINANCE") {
+      const label = leg.lineLabel ?? place.name;
+      addToLine("TRADE_FINANCE", label, tfLineOrder(label), leg.ym, delta, leg.accountCode, src);
     } else {
-      addToLine(place.section, place.name, place.order, leg.ym, delta, leg.accountCode);
+      addToLine(place.section, leg.lineLabel ?? place.name, place.order, leg.ym, delta, leg.accountCode, src);
     }
   }
 
@@ -372,7 +503,17 @@ export function buildStatement(opts: {
     const flat: Agg[] = [];
     for (const a of aggs) {
       let pCode: string | undefined;
-      if (a.accountCode) {
+      if (sec === "TRADE_FINANCE" && a.accountCode && coa.has(a.accountCode)) {
+        // The facility account itself is the group ("TRADE FINANCE - HOUZS
+        // CENTURY SDN BHD"), its supplier / repayment rows sit under it.
+        pCode = a.accountCode;
+      } else if (sec === "RAW_MATERIALS" && a.accountCode && coa.get(a.accountCode)?.sat === "SBS") {
+        // A raw-material stock account files under the purchase parent its
+        // name belongs to ("STOCK - FABRIC M" → PURCHASE - FABRIC), not under
+        // the balance-sheet STOCK parent.
+        const p = RM_LINE_PARENT[rawMaterialLineFor(a.label, stockGroupOverride)];
+        if (p && coa.has(p)) pCode = p;
+      } else if (a.accountCode) {
         const p = coa.get(a.accountCode)?.parentCode ?? undefined;
         if (p && p !== a.accountCode && coa.has(p)) pCode = p;
       } else if (sec === "RAW_MATERIALS") {
@@ -398,11 +539,11 @@ export function buildStatement(opts: {
     // A lone child under a COA parent stays flat (the nest would add a row
     // saying nothing); Raw-Material template categories keep single members.
     for (const [k, cl] of [...clusters]) {
-      if (cl.members.length < 2 && sec !== "RAW_MATERIALS") { flat.push(...cl.members); clusters.delete(k); }
+      if (cl.members.length < 2 && sec !== "RAW_MATERIALS" && sec !== "TRADE_FINANCE") { flat.push(...cl.members); clusters.delete(k); }
     }
     flat.sort((x, y) => x.order - y.order || x.label.localeCompare(y.label));
     const line = (a: Agg, depth: number, gid?: string) =>
-      push({ kind: "line", label: a.label, section: sec, depth, groupId: gid, values: a.vals.map((v) => sign * v), accountCode: a.accountCode });
+      push({ kind: "line", label: a.label, section: sec, depth, groupId: gid, values: a.vals.map((v) => sign * v), accountCode: a.accountCode, lineKey: `${sec}|${a.label}` });
     const body = () => {
       for (const cl of [...clusters.values()].sort((x, y) => x.code.localeCompare(y.code))) {
         const gid = `${sec}>${cl.code}`;
@@ -434,7 +575,7 @@ export function buildStatement(opts: {
   push({ kind: "result", label: "Net operation surplus / (deficit)", depth: 0, values: sumCols(opAggs) });
 
   push({ kind: "gap", label: "", depth: 0, values: columns.map(() => null) });
-  for (const sec of ["FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN", "UNALLOCATED"] as CfSection[])
+  for (const sec of ["TRADE_FINANCE", "FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN", "UNALLOCATED"] as CfSection[])
     emitSection(sec, true);
 
   push({ kind: "gap", label: "", depth: 0, values: columns.map(() => null) });
@@ -442,5 +583,5 @@ export function buildStatement(opts: {
   push({ kind: "bf", label: "Bank balance b/f", depth: 0, values: bfVals });
   push({ kind: "cf", label: "Bank balance c/f", depth: 0, values: cfVals });
 
-  return { columns, rows };
+  return trace ? { columns, rows, sources } : { columns, rows };
 }

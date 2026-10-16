@@ -15,8 +15,9 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { StatusPill } from "../components";
+import { MobileHeader, StatusPill } from "../components";
 import { M } from "../theme";
+import { useResponsiveLayout } from "../lib/responsive-layout";
 import { resolveStatus, STATUS_MAPS, str, num, dateOnly } from "../config/helpers";
 
 type RawRow = Record<string, unknown>;
@@ -29,6 +30,7 @@ const DEPTS: { code: string; label: string }[] = [
   { code: "FAB_SEW", label: "Fab Sew" },
   { code: "FOAM_CUTTING", label: "Foam Cutting" },
   { code: "FOAM", label: "Foam Bonding" },
+  { code: "FIBRE", label: "Fibre" },
   { code: "WOOD_CUT", label: "Wood Cut" },
   { code: "FRAMING", label: "Framing" },
   { code: "WEBBING", label: "Webbing" },
@@ -41,6 +43,8 @@ function arr(v: unknown): RawRow[] {
 }
 
 export function ProductionDetailScreen() {
+  const { mode, railWidth } = useResponsiveLayout();
+  const phone = mode === "phone";
   const navigate = useNavigate();
   const { id = "" } = useParams();
   const url = `/api/production-orders/${encodeURIComponent(id)}`;
@@ -51,9 +55,20 @@ export function ProductionDetailScreen() {
   const [showDesk, setShowDesk] = useState(false);
 
   const doc = data?.data ?? null;
-  if (loading && !doc) return <Center text="Loading…" />;
-  if (error && !doc) return <Center text="Couldn’t load this production order." />;
-  if (!doc) return <Center text="Production order not found." />;
+  // Phones: the shared header (with back) shows on the loading / error states
+  // too, so the header does not jump once the document arrives.
+  const withHeader = (node: ReactNode) =>
+    phone ? (
+      <>
+        <MobileHeader title="Production Order" onBack={() => navigate(-1)} />
+        {node}
+      </>
+    ) : (
+      node
+    );
+  if (loading && !doc) return withHeader(<Center text="Loading…" />);
+  if (error && !doc) return withHeader(<Center text="Couldn’t load this production order." />);
+  if (!doc) return withHeader(<Center text="Production order not found." />);
 
   const status = str(doc, "status");
   const pill = resolveStatus(status, STATUS_MAPS.production);
@@ -85,27 +100,36 @@ export function ProductionDetailScreen() {
 
   return (
     <div style={{ paddingBottom: 92 }}>
-      {/* Header */}
+      {/* Header — phones: the shared MobileHeader (back arrow + status pill),
+          and the ID / name block below scrolls with the page. Tablets keep
+          the original sticky block with its text back link. */}
+      {phone ? (
+        <MobileHeader
+          title="Production Order"
+          onBack={() => navigate(-1)}
+          trailing={<StatusPill style={pill.style} label={pill.label} size="sm" />}
+        />
+      ) : null}
       <div
         style={{
           background: M.card,
           padding: "14px 16px 12px",
           borderBottom: `1px solid ${M.divider}`,
-          position: "sticky",
-          top: 0,
-          zIndex: 5,
+          ...(phone ? null : { position: "sticky", top: 0, zIndex: 5 }),
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <button
-            onClick={() => navigate(-1)}
-            style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}
-          >
-            ‹ Production
-          </button>
-          <StatusPill style={pill.style} label={pill.label} size="sm" />
-        </div>
-        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".13em", textTransform: "uppercase", color: M.taupe, marginTop: 7 }}>
+        {phone ? null : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <button
+              onClick={() => navigate(-1)}
+              style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}
+            >
+              ‹ Production
+            </button>
+            <StatusPill style={pill.style} label={pill.label} size="sm" />
+          </div>
+        )}
+        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".13em", textTransform: "uppercase", color: M.taupe, marginTop: phone ? 0 : 7 }}>
           {str(doc, "poNo")}
         </div>
         <div style={{ fontSize: 18, fontWeight: 700, color: M.ink, letterSpacing: "-0.3px", marginTop: 1 }}>
@@ -292,9 +316,30 @@ export function ProductionDetailScreen() {
       {showDesk ? (
         <div
           onClick={() => setShowDesk(false)}
-          style={{ position: "fixed", inset: 0, background: "rgba(31,29,27,.4)", zIndex: 60, display: "flex", alignItems: "flex-end" }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(31,29,27,.4)",
+            zIndex: 60,
+            display: "flex",
+            alignItems: mode === "phone" ? "flex-end" : "center",
+            justifyContent: "center",
+            padding: mode === "phone" ? 0 : `24px 24px 24px ${railWidth + 24}px`,
+          }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", background: M.paper, borderRadius: "26px 26px 0 0", padding: "18px 18px 26px" }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Change production stage"
+            style={{
+              width: "100%",
+              maxWidth: mode === "phone" ? "none" : 560,
+              background: M.paper,
+              borderRadius: mode === "phone" ? "26px 26px 0 0" : 20,
+              padding: "18px 18px max(26px, env(safe-area-inset-bottom))",
+            }}
+          >
             <div style={{ width: 36, height: 4, borderRadius: 2, background: "#D8D0C2", margin: "0 auto 14px" }} />
             <div style={{ fontSize: 15, fontWeight: 800, color: M.ink }}>Change production stage</div>
             <div style={{ fontSize: 12.5, color: M.muted, marginTop: 8, lineHeight: 1.5 }}>

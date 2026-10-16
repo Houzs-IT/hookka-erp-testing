@@ -3,16 +3,18 @@ import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
 import { useSessionState } from "@/lib/use-session-state";
+import { usePermissions } from "@/lib/use-permission";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Plus, Lock, ExternalLink, Filter } from "lucide-react";
+import { Plus, Lock, ExternalLink, Filter, ChevronDown } from "lucide-react";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
-import { getQRCodeDataURL, generateStickerData, generateCompartmentStickerData } from "@/lib/qr-utils";
+import { getQRCodeSvgDataURL, whenQrsReady, generateStickerData, generateCompartmentStickerData } from "@/lib/qr-utils";
 import { appOrigin } from "@/lib/app-origin";
 import { todayYmdMY } from "@/lib/utils";
+import { todayYmdMYForReads } from "@/lib/staging-today";
 import { deriveBarcodeToken } from "@/lib/job-card-id";
 import { packingRackScanUrl } from "@/api/lib/jobcard-qr-token";
 // Static import (not dynamic) so the schedule code is generated SYNCHRONOUSLY
@@ -29,6 +31,9 @@ import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { readCsrfCookie, CSRF_HEADER_NAME } from "@/lib/csrf";
 import { workerCoversDept } from "@/lib/worker";
+import { sequenceBlockers, type SequenceCard, type SequenceBlocker } from "@/api/lib/sequence-lock";
+import { asSequenceLockRefusal, type SequenceLockRefusal } from "@/lib/sequence-unlock";
+import { SequenceUnlockDialog } from "@/components/sequence-unlock-dialog";
 import { fetchVariantsConfig } from "@/lib/kv-config";
 import { legPacksSeparately, type LegHeightOption } from "@/lib/leg-packing";
 import { jcMinutesTotal } from "@/lib/job-card-minutes";
@@ -55,15 +60,23 @@ import {
   DEPARTMENTS,
   cellFor,
   fmtShortDate,
+  overviewStages as buildOverviewStages,
   todayISO,
+  CARD_HEIGHT,
+  overviewRowLook,
+  stageTint,
+  type LiveDepartment,
+  type StageClick,
 } from "./utils";
 import type { BaseRowsResponse } from "./baserows.worker";
 // Pure row-builder shared with baserows.worker.ts. The FAB_SEW sticker
 // loader (Fab Cut tab) runs this synchronously on a freshly-fetched,
 // all-dept order set so its DeptRow output is byte-identical to the grid's
 // — see loadFabSewStickers.
-import { buildOnePickerEntry, buildBaseRows, type PickerByDept } from "./baserows-core";
+import { buildOnePickerEntry, buildBaseRows, travelsWithBaseSticker, type PickerByDept } from "./baserows-core";
 import { CellBox } from "./components/CellBox";
+import { WorkOrderCard } from "./components/OverviewCards";
+import { CheckboxMultiSelect } from "@/components/checkbox-multi-select";
 import { ProductDetailLine } from "./components/ProductDetailLine";
 import { CreateStockPODialog } from "./components/CreateStockPODialog";
 import {
@@ -92,11 +105,9 @@ type OverdueSORow = {
 };
 
 // ----- Overview sort / filter shared types (used by header sub-components) -----
-type OverviewSortKey =
-  | "soId" | "product" | "customer" | "customerPO" | "specialOrder"
-  | "qty" | "customerDD" | "ourExpectedDD"
-  | "FAB_CUT" | "FAB_SEW" | "FOAM_CUTTING" | "FOAM" | "WOOD_CUT"
-  | "FRAMING" | "WEBBING" | "UPHOLSTERY" | "PACKING";
+// Fixed metadata columns, or a stage code from overviewStages (the stage list
+// is data-driven, so stage keys are plain strings).
+type OverviewSortKey = (typeof OVERVIEW_FIXED_COLS)[number] | (string & {});
 type OverviewSort = { key: OverviewSortKey; dir: "asc" | "desc" } | null;
 
 // ----- Overview matrix: user-resizable column widths -----
@@ -115,7 +126,7 @@ type OverviewSort = { key: OverviewSortKey; dir: "asc" | "desc" } | null;
 // too-wide complaint was a long id). The ENCODED VALUE is unchanged
 // (deriveBarcodeToken), so the scanner's parseJobCardBarcode + the worker.ts /
 // public-rack-qr.ts dept-scoped re-derivation resolve it with zero change, and
-// the sticker QR flows (getQRCodeDataURL) are untouched — only the schedule's 1D
+// the sticker QR flows (qr-utils) are untouched — only the schedule's 1D
 // column reverts.
 //
 // JsBarcode draws synchronously to the canvas, so there is no await before
@@ -146,20 +157,129 @@ function jobCardBarcodeDataUrl(token: string): string {
 }
 
 const OVERVIEW_FIXED_COLS = ["soId", "product", "customer", "customerPO", "specialOrder", "qty", "customerDD", "ourExpectedDD"] as const;
-const OVERVIEW_COL_KEYS: string[] = [...OVERVIEW_FIXED_COLS, ...DEPARTMENTS.map((d) => d.code)];
 const OVERVIEW_DEFAULT_WIDTHS: Record<string, number> = {
   soId: 120, product: 220, customer: 110, customerPO: 120, specialOrder: 130, qty: 50, customerDD: 104, ourExpectedDD: 118,
-  FAB_CUT: 108, FAB_SEW: 108, FOAM_CUTTING: 108, FOAM: 108, WOOD_CUT: 108, FRAMING: 108, WEBBING: 108, UPHOLSTERY: 108, PACKING: 108,
+  FAB_CUT: 108, FAB_SEW: 108, FOAM_CUTTING: 108, FOAM: 108, FIBRE: 108, WOOD_CUT: 108, FRAMING: 108, WEBBING: 108, UPHOLSTERY: 108, PACKING: 108,
 };
 const OVERVIEW_COLW_STORAGE = "prod-overview-colwidths-v1";
 // Width (px) of the leading multi-select checkbox gutter prepended to the
-// Overview matrix grid. Kept OUT of OVERVIEW_COL_KEYS so it isn't sortable,
+// Overview matrix grid. Kept OUT of overviewColKeys so it isn't sortable,
 // filterable, or resizable — it's a fixed gutter, not a data column. The
 // header + every body row prepend a `${OVERVIEW_SELECT_COL_W}px` track to
 // the shared grid template so they stay column-aligned. (Wei Siang 2026-06-03:
 // batch set-due-date on the Overview, mirroring the dept sheet + tracker.)
 const OVERVIEW_SELECT_COL_W = 36;
+// Category filter options. ACCESSORY is singular on the API; "Accessories" is
+// only the label. NO_VALUES is the stable empty default useUrlState needs for
+// the multi-select filters (category / customer / state).
+const CATEGORY_OPTIONS = [
+  { value: "BEDFRAME", label: "Bedframe" },
+  { value: "SOFA", label: "Sofa" },
+  { value: "ACCESSORY", label: "Accessories" },
+];
+const NO_VALUES: string[] = [];
+const asOptions = (vals: string[]) => vals.map((v) => ({ value: v, label: v }));
+const categoryLabel = (v: string) => CATEGORY_OPTIONS.find((o) => o.value === v)?.label ?? v;
 const OverviewResizeCtx = createContext<{ start: (e: React.MouseEvent, key: string) => void; reset: (key: string) => void } | null>(null);
+
+// ----- Filter popover anchored under a trigger button -----
+// Portaled to <body> with fixed positioning so no scroll/overflow container
+// (the Grid's horizontal scroll box) can clip it; re-anchors on scroll/resize.
+// Mount it only while open. `panelWidth` keeps a wide panel on screen.
+function AnchoredPopover({
+  anchorRef,
+  onClose,
+  panelWidth = 200,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>;
+  onClose: () => void;
+  panelWidth?: number;
+  children: React.ReactNode;
+}) {
+  const [popPos, setPopPos] = useState<{ top: number; left: number } | null>(null);
+  // Measure-then-position before paint, so the panel never flashes at 0,0.
+  useLayoutEffect(() => {
+    const place = () => {
+      const r = anchorRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const left = Math.max(8, Math.min(r.right - panelWidth, window.innerWidth - panelWidth - 8));
+      setPopPos({ top: r.bottom + 4, left });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [anchorRef, panelWidth]);
+  if (!popPos) return null;
+  return createPortal(
+    <>
+      {/* Outside-click capture overlay so the popover dismisses cleanly. */}
+      <div className="fixed inset-0 z-[60]" onClick={onClose} />
+      <div
+        className="fixed z-[61] bg-white border border-[#E6E0D9] rounded-md shadow-lg p-3 min-w-[180px] normal-case tracking-normal text-[12px] font-normal text-[#1F1D1B]"
+        style={{ top: popPos.top, left: popPos.left }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+// ----- Cards view filter pill — label + chevron, opens a filter popover -----
+// Highlighted with a count badge while any of its filters is active.
+function FilterPill({
+  label,
+  count,
+  open,
+  onToggle,
+  onClose,
+  panelWidth,
+  children,
+}: {
+  label: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  panelWidth?: number;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className={`h-7 inline-flex items-center gap-1 rounded-full border px-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+          count > 0
+            ? "border-[#6B5C32] bg-[#F5EFE0] text-[#6B5C32]"
+            : "border-[#E6E0D9] bg-white text-[#6B7280] hover:bg-[#FAF8F4]"
+        }`}
+      >
+        {label}
+        {count > 0 && (
+          <span className="h-4 min-w-4 rounded-full bg-[#6B5C32] px-1 text-[10px] leading-4 text-white text-center normal-case tracking-normal">
+            {count}
+          </span>
+        )}
+        <ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <AnchoredPopover anchorRef={ref} onClose={onClose} panelWidth={panelWidth}>
+          {children}
+        </AnchoredPopover>
+      )}
+    </>
+  );
+}
 
 // ----- Overview header cell — sort indicator + filter popover trigger -----
 //
@@ -201,28 +321,6 @@ function OverviewHeader({
   // scroll container — an in-flow absolute popover would be clipped by that
   // overflow box. Re-anchors on scroll/resize so it tracks the button.
   const filterBtnRef = useRef<HTMLButtonElement>(null);
-  const [popPos, setPopPos] = useState<{ top: number; left: number } | null>(null);
-  /* eslint-disable react-hooks/set-state-in-effect -- measure-then-position a
-     portaled popover before paint; synchronous setState inside useLayoutEffect
-     is the intended pattern for anchoring an element to a measured DOM rect. */
-  useLayoutEffect(() => {
-    if (!open) { setPopPos(null); return; }
-    const place = () => {
-      const r = filterBtnRef.current?.getBoundingClientRect();
-      if (!r) return;
-      const PANEL_W = 200;
-      const left = Math.max(8, Math.min(r.right - PANEL_W, window.innerWidth - PANEL_W - 8));
-      setPopPos({ top: r.bottom + 4, left });
-    };
-    place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open]);
-  /* eslint-enable react-hooks/set-state-in-effect */
   return (
     <div
       data-ovh
@@ -259,24 +357,10 @@ function OverviewHeader({
           )}
         </button>
       </div>
-      {open && popPos && createPortal(
-        <>
-          {/* Outside-click capture overlay so the popover dismisses cleanly.
-              Portaled to <body> (with the panel) so the horizontal-scroll
-              container around the matrix can't clip it. */}
-          <div
-            className="fixed inset-0 z-[60]"
-            onClick={() => setOpenFilterCol(null)}
-          />
-          <div
-            className="fixed z-[61] bg-white border border-[#E6E0D9] rounded-md shadow-lg p-3 min-w-[180px] normal-case tracking-normal text-[12px] font-normal text-[#1F1D1B]"
-            style={{ top: popPos.top, left: popPos.left }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {renderFilter()}
-          </div>
-        </>,
-        document.body,
+      {open && (
+        <AnchoredPopover anchorRef={filterBtnRef} onClose={() => setOpenFilterCol(null)}>
+          {renderFilter()}
+        </AnchoredPopover>
       )}
       {overviewResize && (
         <span
@@ -569,12 +653,8 @@ export default function ProductionPage({
   // size (minimal ~1.5MB → ~200KB for FAB_CUT, less for depts with fewer
   // JCs like FOAM / WEBBING).
   //
-  // LAZY LOAD: the bare URL is `null` until the user touches a filter (or
-  // explicitly hits "Load all"). useCachedJson skips the fetch when URL is
-  // null, so the initial /production render is instant and the 533-PO
-  // payload is only pulled when the operator actually wants to look at
-  // something. Per-dept routes (mode="dept") still auto-fetch since landing
-  // there means the user already wants the dept's queue.
+  // No lazy load (removed 2026-09-23): every mode fetches on mount — see the
+  // note above `ordersUrl`'s inputs below.
   // No PO-status pre-filter at the API layer (2026-04-27 user request) —
   // load ALL POs (PENDING / IN_PROGRESS / ON_HOLD / COMPLETED /
   // CANCELLED) and let the per-column Status filter on the grid handle
@@ -582,10 +662,12 @@ export default function ProductionPage({
   // payload size penalty is negligible vs the dropped Lifecycle dropdown
   // it replaces (which was redundant with the column filter the user
   // already had at hand).
-  // shouldFetch needs to live up here because some downstream effects
-  // depend on it. baseUrl / dueQueryFrag are deferred to AFTER
-  // fltDueFrom/fltDueTo are declared (~line 791) to dodge a TDZ error.
-  const [shouldFetch, setShouldFetch] = useState<boolean>(mode === "dept");
+  // The orders grid ALWAYS fetches on mount (owner 2026-09-23: having to click
+  // "Load all" after every refresh was annoying). The old lazy gate
+  // (`shouldFetch`, armed by a filter or the Load-all button) is gone; repeat
+  // loads are served from the client cache + server snapshot. baseUrl /
+  // dueQueryFrag are deferred to AFTER fltDueFrom/fltDueTo are declared to
+  // dodge a TDZ error.
   // Date-seed gate for the orders fetch.
   //
   // Before F1 (2026-05-11): this returned false on cold dept-mount when
@@ -594,12 +676,8 @@ export default function ProductionPage({
   // render waterfall (~280ms cold-start cost) before the main fetch
   // could fire.
   //
-  // After F1: we ALWAYS return true for dept mode. The cold-start today
-  // fallback (effectiveDueFrom/effectiveDueTo below) ensures the fetch
-  // URL has from/to on the very first render, so we no longer need to
-  // gate. The first-mount seed useEffect still runs (writes today to
-  // the URL for shareable / refresh-safe deep links) but it's a
-  // background concern now, not on the fetch critical path.
+  // After F1: we ALWAYS return true. The today seed itself was removed on
+  // 2026-10-07 (see the "No today date seed" note below).
   // Always true now — see comment above. Kept as state-shaped for minimal
   // diff with surrounding code that reads `datesSeeded` directly.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- setDatesSeeded retained for future flip if needed; intentionally unused after F1
@@ -901,8 +979,9 @@ export default function ProductionPage({
     const t = setTimeout(() => setFltSearch(fltSearchInput), 200);
     return () => clearTimeout(t);
   }, [fltSearchInput, setFltSearch]);
-  const [fltState, setFltState] = useUrlState<string>("state", "");
-  const [fltCustomer, setFltCustomer] = useUrlState<string>("customer", "");
+  // Multi-select since 2026-09-29 (`?state=A&state=B`); empty = all.
+  const [fltState, setFltState] = useUrlState<string[]>("state", NO_VALUES);
+  const [fltCustomer, setFltCustomer] = useUrlState<string[]>("customer", NO_VALUES);
   // Date filters: URL is source of truth. Default value here is "" so
   // useUrlState NEVER falls back to today() on the round-trip — that
   // fallback caused Clear all + native picker Clear to silently snap
@@ -932,62 +1011,21 @@ export default function ProductionPage({
   // Re-sync local mirror when URL state changes externally (Clear all,
   // first-mount seed, deep link, back-button). Skip when the input
   // already matches to dodge a self-loop.
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional mirror of URL state into the typed input */
   useEffect(() => {
     setFltDueFromInput((prev) => (prev === fltDueFrom ? prev : fltDueFrom));
   }, [fltDueFrom]);
   useEffect(() => {
     setFltDueToInput((prev) => (prev === fltDueTo ? prev : fltDueTo));
   }, [fltDueTo]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  // F1 cold-start today fallback (2026-05-11).
-  //
-  // Problem: on a cold cold dept-page mount with no from/to in the URL,
-  // the legacy flow was:
-  //   render 1 → seed useEffect fires setUrlBatch(today, today) → state
-  //   update → render 2 → datesSeeded-flip useEffect fires → render 3
-  //   → useCachedJson sees the new URL → orders fetch fires.
-  //
-  // Net result: ~280ms of React work between bundle ready and the first
-  // orders fetch firing — pure waterfall, no useful concurrency.
-  //
-  // Fix: before the seed useEffect lands, the fetch URL uses today as the
-  // EFFECTIVE date filter. The URL state (fltDueFrom/fltDueTo) is still
-  // empty on render 1 — we only inject today into the fetch URL string.
-  // The seed useEffect later updates the URL state to match, which is a
-  // no-op as far as the fetch is concerned (same URL string, useCachedJson
-  // skips the duplicate). isColdStartRef gates this to ONLY render 1 of
-  // each mount so that a user CLEARING the date filter post-mount still
-  // gets the "show all history" semantic (open-ended fetch URL) — matches
-  // the pre-F1 behavior the L591-596 doc-block was guarding.
-  // F1.1 (2026-05-12) — atomic ref-flip + URL-seed (single layoutEffect).
-  //
-  // Background: the original F1 used two separate effects — a
-  // useLayoutEffect to flip isColdStartRef and a regular useEffect to
-  // call setUrlBatch. Between the two, there's a render window where
-  // ref.current === false but fltDueFrom/fltDueTo are still '' (URL
-  // hasn't been re-read by useUrlState yet). useColdStartTodayFallback
-  // evaluates false in that window, effectiveDueFrom/To collapse to '',
-  // and useCachedJson fires a SECOND fetch against the bare URL
-  // (`?fields=minimal&dept=X` — no date filter). On Foam / Fab Cut this
-  // showed up as 3 production-orders network calls per cold mount
-  // (todayed → unbounded → todayed), the middle one wasting ~280ms.
-  //
-  // Fix: combine the ref-flip and the URL-seed into ONE useLayoutEffect
-  // so React processes them atomically before the next render commits.
-  // The old standalone seed useEffect below has been removed too.
-  const isColdStartRef = useRef(true);
-  useLayoutEffect(() => {
-    isColdStartRef.current = false;
-    if (mode === "dept" && !fltDueFrom && !fltDueTo) {
-      const today = todayISO();
-      setUrlBatch({ from: today, to: today });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot first-mount cold-start handler; deps frozen on purpose
-  }, []);
-  const useColdStartTodayFallback =
-    mode === "dept" && isColdStartRef.current && !fltDueFrom && !fltDueTo;
-  const effectiveDueFrom = useColdStartTodayFallback ? todayISO() : fltDueFrom;
-  const effectiveDueTo = useColdStartTodayFallback ? todayISO() : fltDueTo;
+  // No today date seed on dept pages (removed 2026-10-07). The F1/F1.1 seed
+  // (2026-05-11/12) wrote today into the URL from a layout effect that ran
+  // before the router's navigate() was live, so it was a silent no-op: dept
+  // pages have always shown every open order, and the seed only fired one
+  // dated request per open that was aborted a moment later. The owner chose
+  // to keep "everything" as the default (2026-10-07).
 
   // dueQueryFrag/baseUrl/ordersResp moved here from earlier in the file
   // to satisfy the TDZ for fltDueFrom/fltDueTo (declared just above).
@@ -995,10 +1033,17 @@ export default function ProductionPage({
   // now baked into the server-side fetch URL via `&cat=…` so the API
   // returns only the rows for the active category instead of shipping
   // everything for a client-side .filter() pass.
-  const [fltCategory, setFltCategory] = useUrlState<string>("cat", "");
+  // Multi-select since 2026-09-29: `?cat=A&cat=B` (an old `?cat=SOFA` link
+  // still reads as ["SOFA"]). Empty = all categories.
+  const [fltCategory, setFltCategory] = useUrlState<string[]>("cat", NO_VALUES);
+  // ponytail: the API's ?cat= takes one value, so only a single pick is
+  // narrowed server-side; 2+ fetch every category and the client filter
+  // below trims. Teach the API a list if that payload ever matters.
+  const serverCatFrag =
+    fltCategory.length === 1 ? `&cat=${encodeURIComponent(fltCategory[0])}` : "";
   const dueQueryFrag =
-    (effectiveDueFrom ? `&dueFrom=${encodeURIComponent(effectiveDueFrom)}` : "") +
-    (effectiveDueTo ? `&dueTo=${encodeURIComponent(effectiveDueTo)}` : "");
+    (fltDueFrom ? `&dueFrom=${encodeURIComponent(fltDueFrom)}` : "") +
+    (fltDueTo ? `&dueTo=${encodeURIComponent(fltDueTo)}` : "");
   // Wei Siang 2026-05-14: Clear All v2 — first version wiped sessionStorage
   // but the DataGrid's defaultExcludedValues useEffect re-applied the
   // "hide COMPLETED/TRANSFERRED" Status filter on remount, so the user
@@ -1035,24 +1080,27 @@ export default function ProductionPage({
   const dueFrag = searchActive ? "" : dueQueryFrag;
   const baseUrl =
     mode === "dept" && deptCode
-      ? `/api/production-orders?fields=minimal&dept=${encodeURIComponent(deptCode)}${excludeCompletedFrag}${dueFrag}${fltCategory ? `&cat=${encodeURIComponent(fltCategory)}` : ""}`
-      : `/api/production-orders?fields=minimal${excludeCompletedFrag}${dueFrag}${fltCategory ? `&cat=${encodeURIComponent(fltCategory)}` : ""}`;
-  const ordersUrl: string | null = shouldFetch && datesSeeded ? baseUrl : null;
+      ? `/api/production-orders?fields=minimal&dept=${encodeURIComponent(deptCode)}${excludeCompletedFrag}${dueFrag}${serverCatFrag}`
+      : `/api/production-orders?fields=minimal${excludeCompletedFrag}${dueFrag}${serverCatFrag}`;
+  const ordersUrl: string | null = datesSeeded ? baseUrl : null;
   // Phase 5 was reverted on 2026-05-24: the worker-parse path added
   // structured-clone overhead that ate the JSON.parse savings on desktop
   // (no measurable iPad win to justify the complexity either). Replaced
   // by Phase 6 — server-side KV snapshot cache — which gives every
   // repeat fetch a <200ms response instead of trying to optimise the
   // first-fetch parse cost.
-  const { data: ordersResp, loading, failure: ordersFailure, refresh: refreshOrders } = useCachedJson<{ success?: boolean; data?: ProductionOrder[] }>(ordersUrl);
+  const { data: ordersResp, loading, failure: ordersFailure, refresh: refreshOrders } = useCachedJson<{ success?: boolean; data?: ProductionOrder[] }>(
+    ordersUrl,
+    300,
+    // The 8 s poll below usually returns a byte-identical body — reuse the
+    // same object so an unchanged poll costs no re-render (see cached-fetch.ts).
+    { reuseUnchanged: true },
+  );
   // Date-filter-INDEPENDENT fetch used solely by the "Total Overdue SO"
   // header chip + drill-down panel. Pulls ALL POs (no dueFrom/dueTo, no
   // dept narrowing) so the count reflects the system-wide overdue state,
   // not just the slice the operator has windowed into via the date inputs
-  // above. Gated on `shouldFetch` so it doesn't fire on a cold landing —
-  // the existing first-mount seed (from/to → today) flips shouldFetch on
-  // anyway, so in practice this fetches once per session alongside the
-  // main orders fetch.
+  // above. Fetches once per session alongside the main orders fetch.
   //
   // 2026-05-08: replaced the bare `/api/production-orders?fields=minimal`
   // fetch with a thin aggregate endpoint. The page used to pull ~800 POs +
@@ -1063,16 +1111,14 @@ export default function ProductionPage({
   // dept tabs use that dept's JC.dueDate rule (mirrors isOverduePO in
   // src/pages/production/utils.ts).
   const overdueDept: string | null = activeTab === "ALL" ? null : activeTab;
-  // NOT gated on `shouldFetch` (2026-06-23). The overdue chips are the
+  // Fetched on every mount (2026-06-23). The overdue chips are the
   // Overview's primary KPI and now ALSO drive the grid filter (clicking
   // "Bedframe ⚠ N" filters the grid to those N), so they must populate on a
   // cold landing — otherwise the chips read 0, look wrong, and clicking them
-  // filters to nothing (the bug verify-live caught: cold Overview never flips
-  // shouldFetch, so the counts never loaded). This endpoint is a cheap
+  // filters to nothing (the bug verify-live caught: the cold Overview used to
+  // skip the fetch, so the counts never loaded). This endpoint is a cheap
   // ~5 KB / ~50 ms aggregate, snapshot-cached server-side (withSnapshot) and
-  // client-side (useCachedJson), so firing it on every Overview mount is fine;
-  // the heavy orders grid below stays lazy (still gated on shouldFetch), and a
-  // chip click arms that fetch via anyFilterActive.
+  // client-side (useCachedJson), so firing it on every Overview mount is fine.
   const overdueCountsUrl: string | null = datesSeeded
     ? `/api/production-orders/overdue-counts${overdueDept ? `?dept=${encodeURIComponent(overdueDept)}` : ""}`
     : null;
@@ -1169,18 +1215,8 @@ export default function ProductionPage({
   // setters race under React 18 batching — see useUrlBatch jsdoc.
   const setUrlBatch = useUrlBatch();
 
-  // First-mount seed: MOVED into the F1.1 ref-flip useLayoutEffect above
-  // (search for "isColdStartRef"). Splitting them produced an intermediate
-  // render where ref=false but URL state empty → a spurious unbounded
-  // fetch. See the comment block at the consolidated layoutEffect for the
-  // full diagnosis.
-
-  // Datesseeded-flip useEffect removed in F1 (2026-05-11). `datesSeeded`
-  // now initialises to `true` unconditionally — see the cold-start today
-  // fallback (`effectiveDueFrom` / `effectiveDueTo`) just below the
-  // useUrlState calls above. The seed useEffect above still writes today
-  // to the URL state for shareable / refresh-safe deep links; it just no
-  // longer gates the fetch.
+  // Datesseeded-flip useEffect removed in F1 (2026-05-11); `datesSeeded` is
+  // always `true`. The today seed is gone too (2026-10-07).
 
   // Overview-matrix-only sort + filter state. Persisted to localStorage so
   // the operator's column preferences (e.g. "sort by Customer asc, hide
@@ -1254,6 +1290,20 @@ export default function ProductionPage({
   const [overviewBatchDept, setOverviewBatchDept] = useState<string>("ALL");
   const [overviewBatchDueDateOpen, setOverviewBatchDueDateOpen] = useState(false);
 
+  // ── Overview stages + layout ──
+  // Stage columns = today's DEPARTMENTS (fixed order + labels) plus any other
+  // isProduction dept from /api/departments — see overviewStages() in utils.
+  // Overview only; the dept tabs / print keep the DEPARTMENTS constant.
+  const { data: deptsResp } = useCachedJson<{ data?: LiveDepartment[] }>("/api/departments");
+  const overviewStages = useMemo(() => buildOverviewStages(deptsResp?.data), [deptsResp]);
+  const overviewColKeys = useMemo(
+    () => [...OVERVIEW_FIXED_COLS, ...overviewStages.map((s) => s.code)],
+    [overviewStages],
+  );
+  // Cards (header bar + stage pipeline per order, no sideways scroll) or the
+  // original Grid matrix. Always opens on Cards; the choice isn't persisted.
+  const [overviewView, setOverviewView] = useState<"cards" | "grid">("cards");
+
   // ── Overview matrix: user-resizable column widths ──
   // colKey -> px. Empty = use OVERVIEW_DEFAULT_WIDTHS. Persisted per-browser.
   const [overviewColWidths, setOverviewColWidths] = useState<Record<string, number>>(() => {
@@ -1264,19 +1314,21 @@ export default function ProductionPage({
     return {};
   });
   const overviewColW = useCallback(
-    (key: string) => overviewColWidths[key] ?? OVERVIEW_DEFAULT_WIDTHS[key] ?? 100,
+    // 108 = the stage-column default, so a stage added via /api/departments
+    // gets the same width as the built-in ones.
+    (key: string) => overviewColWidths[key] ?? OVERVIEW_DEFAULT_WIDTHS[key] ?? 108,
     [overviewColWidths],
   );
   // Leading `OVERVIEW_SELECT_COL_W`px track = the multi-select checkbox
   // gutter. The header row + every body row reuse this same template, so the
   // gutter keeps them aligned without touching the resizable data columns.
   const overviewTemplate = useMemo(
-    () => `${OVERVIEW_SELECT_COL_W}px ${OVERVIEW_COL_KEYS.map((k) => `${overviewColW(k)}px`).join(" ")}`,
-    [overviewColW],
+    () => `${OVERVIEW_SELECT_COL_W}px ${overviewColKeys.map((k) => `${overviewColW(k)}px`).join(" ")}`,
+    [overviewColW, overviewColKeys],
   );
   const overviewMinWidth = useMemo(
-    () => OVERVIEW_SELECT_COL_W + OVERVIEW_COL_KEYS.reduce((s, k) => s + overviewColW(k), 0),
-    [overviewColW],
+    () => OVERVIEW_SELECT_COL_W + overviewColKeys.reduce((s, k) => s + overviewColW(k), 0),
+    [overviewColW, overviewColKeys],
   );
   const resetOverviewWidth = useCallback((key: string) => {
     setOverviewColWidths((prev) => {
@@ -1421,27 +1473,6 @@ export default function ProductionPage({
     [overduePanelMode, setUrlBatch, clearAllOverviewFilters],
   );
 
-  // Lazy-load trigger: any filter being non-default flips shouldFetch=true,
-  // which arms ordersUrl in the useCachedJson call above. Once fetched the
-  // data is cached in localStorage, so subsequent filter changes filter
-  // client-side without re-fetching. The "Refresh" button forces a refetch.
-  // Lifecycle defaults to "active", DateAxis defaults to "dueDate" — both
-  // are excluded from the trigger because they're the user's baseline view.
-  const anyFilterActive =
-    !!fltSearch ||
-    !!fltState ||
-    !!fltCustomer ||
-    !!fltDueFrom ||
-    !!fltDueTo ||
-    !!fltCategory ||
-    // An active overdue chip filters the grid too — arm the fetch so clicking
-    // a chip on a cold (un-fetched) Overview loads the rows it selects.
-    !!overduePanelMode;
-  /* eslint-disable react-hooks/set-state-in-effect -- gate fetch on first filter activation */
-  useEffect(() => {
-    if (anyFilterActive && !shouldFetch) setShouldFetch(true);
-  }, [anyFilterActive, shouldFetch]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Scroll position restoration — keyed per active dept tab so each dept
   // remembers its own scroll independently. sessionStorage so the value
@@ -1802,6 +1833,9 @@ export default function ProductionPage({
   // by product+size+fabric for FG), so the picker only shows SKUs the
   // factory has actually built before — no need to prefill a catalog.
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
+  // R7 — same (resource, action) POST /production-orders/stock enforces.
+  const { hasPermission } = usePermissions();
+  const canCreateStockPO = hasPermission("production-orders", "create");
   // Print Schedule mode toggle. "detailed" → handlePrintSchedule (one row
   // per PO/JC). "total" → handlePrintTotalListing (rows merged on
   // model+spec so the floor sees "make N of X").
@@ -1815,10 +1849,17 @@ export default function ProductionPage({
     { count: number; which: "schedule" | "total" } | null
   >(null);
 
+  // Refetch the sheet and the overdue chips. It used to also call
+  // invalidateCachePrefix("/api/production-orders"), and the 8 s poll and the
+  // come-back-to-the-window refresh both run through here, so every dept's
+  // saved copy was wiped every 8 s (other browser tabs too, via the broadcast)
+  // and each tab switch downloaded the whole sheet again (owner 2026-10-07).
+  // The server's KV version already makes each refetch fresh. After a real
+  // edit, invalidate first, as the write paths in this file do.
   const fetchOrders = useCallback(() => {
-    invalidateCachePrefix("/api/production-orders");
     refreshOrders();
-  }, [refreshOrders]);
+    refreshOverdueCounts();
+  }, [refreshOrders, refreshOverdueCounts]);
 
   // Pending JC PATCHes (optimistic). Any JC ID in this set has an in-flight
   // server write that hasn't confirmed yet — the cache merger below skips
@@ -2133,6 +2174,15 @@ export default function ProductionPage({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [unsavedCount, setUnsavedCount] = useState(0);
   const [savingNow, setSavingNow] = useState(false);
+  // A save the sequence lock refused. Held so the operator gets the three
+  // choices instead of a toast that only says no — cancel, release this one,
+  // or complete the earlier step too. The drafts are kept verbatim so the
+  // retry re-sends exactly what was typed.
+  const [lockPrompt, setLockPrompt] = useState<{
+    refusal: SequenceLockRefusal;
+    drafts: Array<{ poId: string; jcId: string; patch: Record<string, unknown> }>;
+  } | null>(null);
+  const [lockBusy, setLockBusy] = useState(false);
   // True while network/5xx failures are kept + auto-retrying (BUG-2026-06-09).
   // Drives the red "retrying" banner so the operator sees it's working, not stuck.
   const [retryPending, setRetryPending] = useState(false);
@@ -2367,19 +2417,72 @@ export default function ProductionPage({
       });
       if (res.ok) {
         const body = (await res.json()) as {
-          results?: Array<{ poId: string; jobCardId: string; success: boolean; error?: string }>;
+          results?: Array<{
+            poId: string;
+            jobCardId: string;
+            success: boolean;
+            error?: string;
+            // Upstream sequence lock. Carried so the reverted cell can say
+            // WHICH department it is waiting for instead of a bare failure —
+            // the operator needs to know where to go, not that something broke.
+            code?: string;
+            blockedBy?: unknown;
+            canSelfUnlock?: boolean;
+          }>;
         };
-        const perJc = new Map<string, { success: boolean; error?: string }>();
+        const perJc = new Map<
+          string,
+          { success: boolean; error?: string; code?: string; blockedBy?: unknown; canSelfUnlock?: boolean }
+        >();
         for (const r of body.results ?? []) perJc.set(r.jobCardId, r);
         results = drafts.map((d) => {
           const r = perJc.get(d.jcId);
           return {
             draft: d,
             result: r
-              ? { success: r.success, error: r.error, attemptsUsed: 1 }
+              ? {
+                  success: r.success,
+                  // A locked cell is not a fault to retry — it is a step whose
+                  // turn has not come. Marking it permanent stops the retry
+                  // loop from hammering a gate that will not open until someone
+                  // finishes the upstream work.
+                  error:
+                    r.code === "UPSTREAM_INCOMPLETE"
+                      ? `Locked — ${r.error ?? "an earlier step is not finished"}`
+                      : r.error,
+                  attemptsUsed: 1,
+                }
               : { success: false, error: "no result in bulk response", attemptsUsed: 1 },
           };
         });
+        // Offer the way out, not just the refusal. Everything the lock stopped
+        // in THIS save is gathered into one dialog: the departments to finish
+        // are merged (two cards waiting on the same FRAMING must not ask
+        // twice), and `canSelfUnlock` is only true when the server said so for
+        // every one of them — a dialog offering a release the server will
+        // refuse is worse than no dialog.
+        const locked = drafts
+          .map((d) => ({ draft: d, r: perJc.get(d.jcId) }))
+          .filter((x) => x.r?.code === "UPSTREAM_INCOMPLETE");
+        if (locked.length > 0) {
+          const parsed = locked.map((x) => asSequenceLockRefusal(x.r)).filter(Boolean) as SequenceLockRefusal[];
+          const byId = new Map(parsed.flatMap((p) => p.blockedBy).map((b) => [b.id, b]));
+          if (byId.size > 0) {
+            setLockPrompt({
+              refusal: {
+                blockedBy: [...byId.values()],
+                blockedCards: locked.map((x) => x.draft.jcId),
+                canSelfUnlock: parsed.every((p) => p.canSelfUnlock),
+                message: parsed[0]?.message ?? "An earlier step must be completed first.",
+              },
+              drafts: locked.map((x) => ({
+                poId: x.draft.poId,
+                jcId: x.draft.jcId,
+                patch: x.draft.patch as unknown as Record<string, unknown>,
+              })),
+            });
+          }
+        }
         bulkOK = true;
       }
     } catch {
@@ -2706,8 +2809,8 @@ export default function ProductionPage({
   // complete" and the tab bar's per-dept fractions — printed a confident `0`
   // in all of them:
   //
-  //   1. COLD LANDING. `shouldFetch` starts `false` in overview/full mode
-  //      (:588), so `ordersUrl` is null and NO REQUEST IS EVER MADE. The page
+  //   1. COLD LANDING (historical — the lazy `shouldFetch` gate that caused it
+  //      was removed 2026-09-23). `ordersUrl` was null so NO REQUEST WAS MADE. The page
   //      rendered "No orders loaded yet." and, in the same viewport, the
   //      footer asserted "0 of 0 work orders · 0/0 cells complete". The matrix
   //      block is gated on `activeTab === "ALL"` alone, which is why the two
@@ -2728,7 +2831,7 @@ export default function ProductionPage({
   // "—" is only a prettier lie than "0".
   const ordersUnobservedReason = !ordersObserved
     ? ordersUrl == null
-      ? "not loaded yet — pick a filter or Load all"
+      ? "not loaded yet"
       : ordersLoadFailed
         ? "couldn't load — this is unknown, not empty"
         : "loading…"
@@ -2872,10 +2975,10 @@ export default function ProductionPage({
         const hay = haystackByPo.get(o.id) || "";
         if (!hay.includes(q)) return false;
       }
-      if (deferredFltState && o.customerState !== deferredFltState) return false;
-      if (deferredFltCustomer && o.customerName !== deferredFltCustomer) return false;
+      if (deferredFltState.length > 0 && !deferredFltState.includes(o.customerState ?? "")) return false;
+      if (deferredFltCustomer.length > 0 && !deferredFltCustomer.includes(o.customerName ?? "")) return false;
       // Category — itemCategory column on the PO.
-      if (deferredFltCategory && o.itemCategory !== deferredFltCategory) return false;
+      if (deferredFltCategory.length > 0 && !deferredFltCategory.includes(o.itemCategory ?? "")) return false;
       // (Item type + Model filters removed 2026-05-08 — data shows all
       //  item types + models by default; operators narrow via search /
       //  category / state / date instead.)
@@ -3194,7 +3297,7 @@ export default function ProductionPage({
       toast.error(
         overviewBatchDept === "ALL"
           ? "Selected orders have no job cards to update."
-          : `No ${DEPARTMENTS.find((d) => d.code === overviewBatchDept)?.name ?? overviewBatchDept} job cards on the selected orders.`,
+          : `No ${overviewStages.find((d) => d.code === overviewBatchDept)?.name ?? overviewBatchDept} job cards on the selected orders.`,
       );
       return;
     }
@@ -3220,7 +3323,7 @@ export default function ProductionPage({
       } else {
         const scope = overviewBatchDept === "ALL"
           ? "all departments"
-          : (DEPARTMENTS.find((d) => d.code === overviewBatchDept)?.name ?? overviewBatchDept);
+          : (overviewStages.find((d) => d.code === overviewBatchDept)?.name ?? overviewBatchDept);
         const verb = date ? "Set due date" : "Cleared due date";
         toast.success(`${verb} (${scope}) on ${selectedOverviewOrders.length} order${selectedOverviewOrders.length === 1 ? "" : "s"}.`);
       }
@@ -3245,7 +3348,56 @@ export default function ProductionPage({
     } catch (err) {
       toast.error(`Batch save failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [selectedOverviewOrders, overviewBatchDept, toast, refreshOrders]);
+  }, [selectedOverviewOrders, overviewBatchDept, overviewStages, toast, refreshOrders]);
+
+  // Click a stage cell (Grid or Cards) → date picker → PATCH every JC of that
+  // dept on the order. Fans out one PATCH per JC, each with its own flash key
+  // so the green tint paints exactly the cell that landed; per-JC toasts are
+  // silenced and one "Date updated" (or the first failure) is shown.
+  const overviewStageClickImpl = useCallback<StageClick>((order, deptCode, c, anchor) => {
+    if (c.state === "empty") return;
+    const deptCards = order.jobCards.filter((j) => j.departmentCode === deptCode);
+    const seed =
+      c.state === "done"
+        ? c.latestCompleted || c.earliestDue || ""
+        : c.earliestDue || "";
+    openDatePicker(
+      seed,
+      (v) => {
+        if (!v) return;
+        let okCount = 0;
+        let errMsg: string | null = null;
+        const promises = deptCards.map((jc) =>
+          patchJobCard(order.id, jc.id, { dueDate: v }, {
+            flashKey: `${jc.id}|${deptCode}`,
+            silent: true,
+          }).then(() => { okCount++; })
+            .catch((err) => {
+              errMsg = err instanceof Error ? err.message : "network error";
+            }),
+        );
+        Promise.allSettled(promises).then(() => {
+          if (errMsg) toast.error(`Save failed (${errMsg})`);
+          else if (okCount > 0) toast.success("Date updated");
+        });
+      },
+      anchor,
+    );
+  }, [openDatePicker, patchJobCard, toast]);
+  // Stable identity for the memoized cards (WorkOrderCard / StageCell): the
+  // wrapper never changes, the ref always points at the latest impl.
+  const overviewStageClickRef = useRef(overviewStageClickImpl);
+  useEffect(() => {
+    overviewStageClickRef.current = overviewStageClickImpl;
+  }, [overviewStageClickImpl]);
+  const onOverviewStageClick = useCallback<StageClick>(
+    (...args) => overviewStageClickRef.current(...args),
+    [],
+  );
+  const openOverviewOrder = useCallback((order: ProductionOrder) => {
+    if (order.salesOrderId) navigate(`/sales/${order.salesOrderId}`);
+    else if (order.consignmentOrderId) navigate(`/consignment/${order.consignmentOrderId}`);
+  }, [navigate]);
 
   // Overview matrix row virtualization. Pre-fix: every order in
   // visibleOrders was rendered to a hand-rolled CSS-grid <div>, so a
@@ -3258,33 +3410,24 @@ export default function ProductionPage({
   // stay on their existing DataGrid path. estimateSize=36 matches the
   // typical row height (single-line product); rows that wrap (long
   // model + spec line) are auto-measured via `measureElement`.
-  const overviewBodyRef = useRef<HTMLDivElement>(null);
-  const overviewRowVirtualizer = useVirtualizer({
-    count: activeTab === "ALL" ? visibleOrders.length : 0,
-    getScrollElement: () => overviewBodyRef.current,
-    estimateSize: () => 36,
-    overscan: 8,
-  });
-  // When a column filter narrows the matrix, reset the body scroll to the top
-  // so the row virtualizer re-anchors. Without this it can hold a stale scroll
-  // offset whose row indices no longer exist after the filter, leaving the
-  // visible area blank (Wei Siang's "整列变空白" — and different users saw
-  // different empty-row counts depending on their prior scroll position).
-  useEffect(() => {
-    if (overviewBodyRef.current) overviewBodyRef.current.scrollTop = 0;
-  }, [overviewFilters]);
+  // The row virtualizer itself lives in <OverviewVirtualRows> (bottom of this
+  // file), NOT here: a virtualizer re-renders the component that hosts it on
+  // every scroll frame, and hosting it in this ~9.7k-line page re-rendered the
+  // whole page per frame (measured on prod 2026-09-23: 30–60 ms per scroll
+  // step, ~30 fps with only ~20 rows mounted). The scroll-to-top-on-filter
+  // reset moved with it (resetKey={overviewFilters}).
 
   // Unique customer + state options for the filter dropdowns, derived
   // live from the order set so they auto-update when data changes.
   // (modelOptions removed 2026-05-08 with the Model filter.)
   const customerOptions = useMemo(
     () =>
-      Array.from(new Set(orders.map((o) => o.customerName).filter(Boolean))).sort(),
+      asOptions(Array.from(new Set(orders.map((o) => o.customerName).filter(Boolean))).sort()),
     [orders],
   );
   const stateOptions = useMemo(
     () =>
-      Array.from(new Set(orders.map((o) => o.customerState).filter(Boolean))).sort(),
+      asOptions(Array.from(new Set(orders.map((o) => o.customerState).filter(Boolean))).sort()),
     [orders],
   );
 
@@ -3318,6 +3461,30 @@ export default function ProductionPage({
     return set;
   }, [filteredOrders, activeTab]);
 
+
+  // Which cards of the ACTIVE dept are still waiting on an earlier step.
+  //
+  // The same `sequenceBlockers` the server refuses with — imported, not
+  // re-implemented, so the padlock on screen and the 409 from the API can
+  // never disagree. It reads the BOM's own shape off the job cards (wipKey +
+  // branchKey + sequence); there is no table of departments to maintain, which
+  // is what the owner asked for: 「不可以写死的，应该是根据我的 BOM 的变化的」.
+  //
+  // Only the active dept's cards are evaluated — that is what the grid draws —
+  // and each is compared against its own PO's cards only.
+  const blockersByJc = useMemo<Map<string, SequenceBlocker[]>>(() => {
+    const out = new Map<string, SequenceBlocker[]>();
+    if (!activeTab || activeTab === "ALL") return out;
+    for (const o of filteredOrders) {
+      const cards = o.jobCards as unknown as SequenceCard[];
+      for (const jc of cards) {
+        if (jc.departmentCode !== activeTab) continue;
+        const blockers = sequenceBlockers(jc, cards);
+        if (blockers.length > 0) out.set(jc.id, blockers);
+      }
+    }
+    return out;
+  }, [filteredOrders, activeTab]);
 
   // Dept-view rows: one row per JobCard in the selected dept, flattened
   // across all production orders. Matches the "Production Sheet" columns
@@ -3385,7 +3552,7 @@ export default function ProductionPage({
   useEffect(() => {
     const worker = baserowsWorkerRef.current;
     if (!worker) return;
-    const today = todayYmdMY();
+    const today = todayYmdMYForReads(); // staging-only today override (reads only)
     const reqId = ++baserowsReqRef.current;
     setBaserowsPending(true);
     // Drain the accumulated dirty-PO set — this post takes ownership of
@@ -3655,6 +3822,15 @@ export default function ProductionPage({
   const renderStatusCell = (row: DeptRow) => {
     const s = row.status;
     const cls = statusStyle[s] || "bg-[#F5F2EE] text-[#8A7F73]";
+    // A padlock BEFORE the click, not only a refusal after it. The operator
+    // who can see which cell is not ready never starts the edit, and the ones
+    // who do get the dialog. Finished cards never show it — the lock is about
+    // what may move next, not a permanent label.
+    const isDoneRow = s === "COMPLETED" || s === "TRANSFERRED";
+    const blockers = isDoneRow ? undefined : blockersByJc.get(row.jobCardId);
+    const waitingFor = blockers
+      ? [...new Set(blockers.map((b) => b.departmentCode))]
+      : [];
     return (
       <div className="relative w-full h-full min-h-[28px] group">
         <div
@@ -3662,6 +3838,14 @@ export default function ProductionPage({
         >
           {s || "—"}
         </div>
+        {waitingFor.length > 0 && (
+          <div
+            className="absolute top-0.5 right-0.5 rounded bg-[#FAEFCB] p-[1px] pointer-events-none"
+            title={`Waiting for ${waitingFor.join(", ")} to finish first.`}
+          >
+            <Lock className="h-2.5 w-2.5 text-[#9C6F1E]" />
+          </div>
+        )}
         <select
           value={s || ""}
           onChange={(e) => {
@@ -4252,11 +4436,10 @@ export default function ProductionPage({
   // Job Card sticker flow, so their cards must NEVER appear in the Job Card
   // tile grid (one dept never carries both sticker types).
   //
-  // The preview uses the external qrserver.com URL (only a handful of tiles
-  // are visible at once, so rate-limits are not a concern). The batch-print
-  // path in `handlePrintJobCardStickers` regenerates every QR locally via
-  // `getQRCodeDataURL` so the print preview does NOT depend on hundreds of
-  // external HTTP calls completing in time.
+  // The preview tiles render through <QRImg> (local SVG, lazy per tile). The
+  // batch-print path in `handlePrintJobCardStickers` builds every QR up front
+  // via `getQRCodeSvgDataURL` (memoised, so a QR already shown is free) before
+  // the print timer fires.
   // When a dept sub-tab is active, the Production Sheet DataGrid does its
   // own in-component filtering (search + per-column value/text filters).
   // Mirror that set of visible row ids so the on-screen QR tile row and the
@@ -4343,9 +4526,7 @@ export default function ProductionPage({
       // The BASE sticker is the one that travels with the assembly.
       if (
         (activeTab === "FAB_SEW" || activeTab === "FAB_CUT") &&
-        (row.wipType === "CUSHION" ||
-          row.wipType === "ARMREST" ||
-          row.wipType === "HEADREST")
+        travelsWithBaseSticker(row)
       ) {
         continue;
       }
@@ -4636,13 +4817,7 @@ export default function ProductionPage({
         // upholstery assembly in one pass — skip the Back Cushion / Armrest /
         // Headrest sub-component JCs; the BASE sticker travels with the
         // assembly.
-        if (
-          row.wipType === "CUSHION" ||
-          row.wipType === "ARMREST" ||
-          row.wipType === "HEADREST"
-        ) {
-          continue;
-        }
+        if (travelsWithBaseSticker(row)) continue;
         // FAB_SEW shared sticker — sentinel opId (one sticker serves both
         // Sewing and Upholstery; completing dept decided by who scans). Fans
         // out PER PIECE (Wei Siang 2026-06-06), mirroring the FAB_SEW branch of
@@ -4746,7 +4921,7 @@ export default function ProductionPage({
       const batch: JobCardSticker[] = await Promise.all(
         onScreenStickers.map(async (s) => ({
           ...s,
-          qrDataUrl: await getQRCodeDataURL(s.qrPayload, 600),
+          qrDataUrl: await getQRCodeSvgDataURL(s.qrPayload),
         })),
       );
       setFgStickers([]); // never mix modes in one print job
@@ -4803,7 +4978,7 @@ export default function ProductionPage({
       const batch: JobCardSticker[] = await Promise.all(
         source.map(async (s) => ({
           ...s,
-          qrDataUrl: await getQRCodeDataURL(s.qrPayload, 600),
+          qrDataUrl: await getQRCodeSvgDataURL(s.qrPayload),
         })),
       );
       setFgStickers([]); // never mix modes in one print job
@@ -5907,8 +6082,8 @@ export default function ProductionPage({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Once the batch container is rendered, fire the print dialog. Small
-  // timeout lets React paint the hidden container first; QR images are
-  // external URLs but that's OK — the dialog waits for them to load.
+  // timeout lets React paint the hidden container first; the job-card QRs
+  // are already built as data URLs by handlePrintJobCardStickers.
   // P4.3 final: replaced raw setTimeout-in-effect with useTimeout, which
   // pauses on document.hidden and auto-clears on unmount. The inner
   // post-print cleanup is intentionally still raw — it fires from inside
@@ -5934,26 +6109,25 @@ export default function ProductionPage({
         setFgPrintRequested(false);
         return;
       }
-      window.print();
-      // Don't clear fgStickers here anymore — the on-screen preview on UPH/
-      // PACK tabs depends on that state. Reset just the print-requested flag.
-      // eslint-disable-next-line no-restricted-syntax -- one-shot post-print state cleanup, fires from print callback
-      setTimeout(() => setFgPrintRequested(false), 500);
+      whenQrsReady(document.getElementById("batch-fg-print"), () => {
+        window.print();
+        // Don't clear fgStickers here anymore — the on-screen preview on UPH/
+        // PACK tabs depends on that state. Reset just the print-requested flag.
+        // eslint-disable-next-line no-restricted-syntax -- one-shot post-print state cleanup, fires from print callback
+        setTimeout(() => setFgPrintRequested(false), 500);
+      });
     },
-    // 1500ms — gives the eager <QRImg> tree time to generate all QR data
-    // URLs before window.print() fires. Pre-2026-05-12 this was 300ms
-    // under the (incorrect) assumption that mounting the tree inside the
-    // hidden print container would let IntersectionObserver kick off QR
-    // generation. The observer never fires for `display: none` parents,
-    // so the QRs would stay as gray placeholders → operator-reported
-    // blank/broken FG sticker prints. The `eager` flag on the print-only
-    // <QRImg> instances below skips the observer; this bumped delay
-    // accommodates ~100 sequential 500px QR generations (~10-30ms each).
-    fgPrintRequested ? 1500 : null,
+    // The print-only <QRImg> instances are `eager` (an IntersectionObserver
+    // never fires inside a `display: none` parent, BUG 2026-05-12 blank FG
+    // prints). This used to be a fixed 1500 ms guess at how long ~100 PNG
+    // QRs took; a bigger batch printed grey placeholders and a small one sat
+    // idle. Now 300 ms for React to mount the tree, then whenQrsReady waits
+    // until the last QR is drawn (SVG, ~1 ms each).
+    fgPrintRequested ? 300 : null,
   );
 
   // Foam-tab print timer — mirror of the PACKING-tab timer above. Same
-  // 1500ms QR-settle delay; clears `foamPrintStickers` after the dialog
+  // mount delay + QR-ready wait; clears `foamPrintStickers` after the dialog
   // closes (the foam state is single-use per click, unlike `fgStickers`
   // which keeps the PACKING preview tiles alive between prints).
   useTimeout(
@@ -5962,14 +6136,16 @@ export default function ProductionPage({
         setFoamPrintRequested(false);
         return;
       }
-      window.print();
-      // eslint-disable-next-line no-restricted-syntax -- one-shot post-print cleanup, fires from print callback
-      setTimeout(() => {
-        setFoamPrintRequested(false);
-        setFoamPrintStickers([]);
-      }, 500);
+      whenQrsReady(document.getElementById("batch-fg-print"), () => {
+        window.print();
+        // eslint-disable-next-line no-restricted-syntax -- one-shot post-print cleanup, fires from print callback
+        setTimeout(() => {
+          setFoamPrintRequested(false);
+          setFoamPrintStickers([]);
+        }, 500);
+      });
     },
-    foamPrintRequested ? 1500 : null,
+    foamPrintRequested ? 300 : null,
   );
 
   // Print the current filtered schedule as an A4 landscape listing. Opens
@@ -6066,15 +6242,10 @@ export default function ProductionPage({
     // "filter status waiting的 product code啊等等 全部都要 show 出来").
     const filterBits: string[] = [];
     if (fltSearch) filterBits.push(`Search: "${fltSearch}"`);
-    if (fltCustomer) filterBits.push(`Customer: ${fltCustomer}`);
-    if (fltState) filterBits.push(`State: ${fltState}`);
-    if (fltCategory) {
-      const catLabel =
-        fltCategory === "ACCESSORY" ? "Accessories" :
-        fltCategory === "BEDFRAME" ? "Bedframe" :
-        fltCategory === "SOFA" ? "Sofa" :
-        fltCategory;
-      filterBits.push(`Category: ${catLabel}`);
+    if (fltCustomer.length > 0) filterBits.push(`Customer: ${fltCustomer.join(", ")}`);
+    if (fltState.length > 0) filterBits.push(`State: ${fltState.join(", ")}`);
+    if (fltCategory.length > 0) {
+      filterBits.push(`Category: ${fltCategory.map(categoryLabel).join(", ")}`);
     }
     if (fltDueFrom || fltDueTo) {
       filterBits.push(`Due: ${fltDueFrom || "…"} → ${fltDueTo || "…"}`);
@@ -6606,15 +6777,10 @@ export default function ProductionPage({
     // handlePrintSchedule for consistency.
     const filterBits: string[] = [];
     if (fltSearch) filterBits.push(`Search: "${fltSearch}"`);
-    if (fltCustomer) filterBits.push(`Customer: ${fltCustomer}`);
-    if (fltState) filterBits.push(`State: ${fltState}`);
-    if (fltCategory) {
-      const catLabel =
-        fltCategory === "ACCESSORY" ? "Accessories" :
-        fltCategory === "BEDFRAME" ? "Bedframe" :
-        fltCategory === "SOFA" ? "Sofa" :
-        fltCategory;
-      filterBits.push(`Category: ${catLabel}`);
+    if (fltCustomer.length > 0) filterBits.push(`Customer: ${fltCustomer.join(", ")}`);
+    if (fltState.length > 0) filterBits.push(`State: ${fltState.join(", ")}`);
+    if (fltCategory.length > 0) {
+      filterBits.push(`Category: ${fltCategory.map(categoryLabel).join(", ")}`);
     }
     if (fltDueFrom || fltDueTo) {
       filterBits.push(`Due: ${fltDueFrom || "…"} → ${fltDueTo || "…"}`);
@@ -6988,6 +7154,310 @@ export default function ProductionPage({
   // forced the user to start over. Instead the spinner renders as a small
   // fixed badge so the filter UI remains live during refetch.
 
+  // Overview filter controls. Grid shows them as column headers (sort +
+  // filter popover per column); Cards shows the SAME filters as a strip of
+  // pills under the page filter bar. Both read/write overviewFilters +
+  // overviewSort, so switching views keeps every filter.
+  const overviewSelectAll = (
+    <input
+      type="checkbox"
+      aria-label="Select all visible orders"
+      checked={allOverviewVisibleSelected}
+      ref={(el) => {
+        if (el) el.indeterminate = someOverviewVisibleSelected;
+      }}
+      onChange={toggleOverviewSelectAll}
+      disabled={visibleOrders.length === 0}
+      className="cursor-pointer align-middle"
+    />
+  );
+  const overviewFieldFilters: {
+    key: (typeof OVERVIEW_FIXED_COLS)[number];
+    label: string;
+    align?: "center";
+    render: () => React.ReactNode;
+  }[] = [
+    {
+      key: "soId",
+      label: "SO ID",
+      render: () => (
+        <TextContainsFilter
+          value={overviewFilters.soId}
+          onChange={(v) => setOverviewFilters((p) => ({ ...p, soId: v }))}
+          placeholder="Contains…"
+        />
+      ),
+    },
+    {
+      key: "product",
+      label: "Product",
+      render: () => (
+        <TextContainsFilter
+          value={overviewFilters.product}
+          onChange={(v) => setOverviewFilters((p) => ({ ...p, product: v }))}
+          placeholder="Contains…"
+        />
+      ),
+    },
+    {
+      key: "customer",
+      label: "Customer",
+      render: () => (
+        <MultiSelectFilter
+          options={Array.from(new Set(visibleOrders.concat(orders).map((o) => o.customerName).filter(Boolean))).sort()}
+          selected={overviewFilters.customers}
+          onChange={(next) => setOverviewFilters((p) => ({ ...p, customers: next }))}
+        />
+      ),
+    },
+    {
+      key: "customerPO",
+      label: "Customer PO",
+      render: () => (
+        <TextContainsFilter
+          value={overviewFilters.customerPO}
+          onChange={(v) => setOverviewFilters((p) => ({ ...p, customerPO: v }))}
+          placeholder="Contains…"
+        />
+      ),
+    },
+    {
+      key: "specialOrder",
+      label: "Special Order",
+      render: () => (
+        <TextContainsFilter
+          value={overviewFilters.specialOrder}
+          onChange={(v) => setOverviewFilters((p) => ({ ...p, specialOrder: v }))}
+          placeholder="Contains…"
+        />
+      ),
+    },
+    {
+      key: "qty",
+      label: "Qty",
+      align: "center",
+      render: () => (
+        <NumericRangeFilter
+          min={overviewFilters.qtyMin}
+          max={overviewFilters.qtyMax}
+          onChange={(min, max) => setOverviewFilters((p) => ({ ...p, qtyMin: min, qtyMax: max }))}
+        />
+      ),
+    },
+    {
+      key: "customerDD",
+      label: "Customer DD",
+      align: "center",
+      render: () => (
+        <DateRangeFilter
+          from={overviewFilters.customerDDFrom}
+          to={overviewFilters.customerDDTo}
+          onChange={(from, to) => setOverviewFilters((p) => ({ ...p, customerDDFrom: from, customerDDTo: to }))}
+        />
+      ),
+    },
+    {
+      key: "ourExpectedDD",
+      label: "Our Expected DD",
+      align: "center",
+      render: () => (
+        <DateRangeFilter
+          from={overviewFilters.ourExpectedDDFrom}
+          to={overviewFilters.ourExpectedDDTo}
+          onChange={(from, to) => setOverviewFilters((p) => ({ ...p, ourExpectedDDFrom: from, ourExpectedDDTo: to }))}
+        />
+      ),
+    },
+  ];
+  const renderStageFilter = (code: string) => (
+    <DeptStatusFilter
+      selected={overviewFilters.deptStatuses[code] || []}
+      onChange={(next) =>
+        setOverviewFilters((p) => ({
+          ...p,
+          deptStatuses: { ...p.deptStatuses, [code]: next },
+        }))
+      }
+      dateRange={overviewFilters.deptDates[code] || { from: "", to: "" }}
+      onDateRangeChange={(next) =>
+        setOverviewFilters((p) => ({
+          ...p,
+          deptDates: { ...p.deptDates, [code]: next },
+        }))
+      }
+    />
+  );
+  // Active-filter count for a stage pill: one per ticked status, +1 for a
+  // date range.
+  const stageFilterCount = (code: string) => {
+    const range = overviewFilters.deptDates[code];
+    return (overviewFilters.deptStatuses[code] || []).length + (range && (range.from || range.to) ? 1 : 0);
+  };
+  const overviewFieldHeaders = overviewFieldFilters.map((f) => (
+    <OverviewHeader
+      key={f.key}
+      label={f.label}
+      align={f.align}
+      sortKey={f.key}
+      sort={overviewSort}
+      cycle={cycleOverviewSort}
+      filterCol={f.key}
+      filterActive={isFilterActive(f.key)}
+      openFilterCol={openFilterCol}
+      setOpenFilterCol={setOpenFilterCol}
+      renderFilter={f.render}
+    />
+  ));
+  const overviewStageHeaders = overviewStages.map((d) => (
+    <OverviewHeader
+      key={d.code}
+      label={d.name}
+      align="center"
+      border
+      sortKey={d.code}
+      sort={overviewSort}
+      cycle={cycleOverviewSort}
+      filterCol={d.code}
+      filterActive={isFilterActive(d.code)}
+      openFilterCol={openFilterCol}
+      setOpenFilterCol={setOpenFilterCol}
+      renderFilter={() => renderStageFilter(d.code)}
+    />
+  ));
+  // Grid header row. Sticky so it stays on top while the body scrolls.
+  const overviewHeaderRow = (
+    <div
+      className="grid text-[10px] font-semibold uppercase tracking-wider text-[#6B7280] bg-[#FAF8F4] border-b border-[#E6E0D9] sticky top-0 z-20"
+      style={{ gridTemplateColumns: overviewTemplate, minWidth: overviewMinWidth }}
+    >
+      {/* Select-all checkbox gutter. Scopes to the currently-visible
+          (filtered + sorted) rows = visibleOrders. */}
+      <div className="flex items-center justify-center px-1.5 py-2.5">
+        {overviewSelectAll}
+      </div>
+      {overviewFieldHeaders}
+      {overviewStageHeaders}
+    </div>
+  );
+  const togglePill = (col: string) => setOpenFilterCol(openFilterCol === col ? null : col);
+  const closePill = () => setOpenFilterCol(null);
+  const moreFiltersCount = overviewFieldFilters.filter((f) => isFilterActive(f.key)).length;
+  // Cards view control strip (second line of the page filter bar): one pill
+  // per stage (status + date popover), "More filters" for the order-level
+  // column filters, then sort, select-all and a clear for these filters.
+  const overviewStageStrip = (
+    <div className="basis-full flex flex-wrap items-center gap-1.5 border-t border-[#EFEAE2] pt-2">
+      {overviewStages.map((d) => (
+        <FilterPill
+          key={d.code}
+          label={d.name}
+          count={stageFilterCount(d.code)}
+          open={openFilterCol === d.code}
+          onToggle={() => togglePill(d.code)}
+          onClose={closePill}
+        >
+          {renderStageFilter(d.code)}
+        </FilterPill>
+      ))}
+      <FilterPill
+        label="More filters"
+        count={moreFiltersCount}
+        open={openFilterCol === "more"}
+        onToggle={() => togglePill("more")}
+        onClose={closePill}
+        panelWidth={280}
+      >
+        <div className="flex flex-col gap-3 w-[256px] max-h-[60vh] overflow-y-auto pr-1">
+          {overviewFieldFilters.map((f) => (
+            <div key={f.key}>
+              <div className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${isFilterActive(f.key) ? "text-[#6B5C32]" : "text-[#6B7280]"}`}>
+                {f.label}
+              </div>
+              {f.render()}
+            </div>
+          ))}
+        </div>
+      </FilterPill>
+      <div className="ml-auto flex items-center gap-2 text-[11px] text-[#6B7280]">
+        <label className="flex items-center gap-1">
+          Sort
+          <select
+            value={overviewSort?.key ?? ""}
+            onChange={(e) =>
+              setOverviewSort(e.target.value ? { key: e.target.value, dir: overviewSort?.dir ?? "asc" } : null)
+            }
+            className="h-7 rounded border border-[#E6E0D9] bg-white px-1.5 text-[11px] text-[#3A2E22] focus:outline-none focus:ring-1 focus:ring-[#6B5C32]/30"
+          >
+            <option value="">None</option>
+            <optgroup label="Order">
+              {overviewFieldFilters.map((f) => (
+                <option key={f.key} value={f.key}>{f.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Stage due date">
+              {overviewStages.map((d) => (
+                <option key={d.code} value={d.code}>{d.name}</option>
+              ))}
+            </optgroup>
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={!overviewSort}
+          onClick={() => setOverviewSort((s) => (s ? { ...s, dir: s.dir === "asc" ? "desc" : "asc" } : s))}
+          className="h-7 w-7 rounded border border-[#E6E0D9] bg-white text-[#6B5C32] disabled:text-[#D1CCC4] hover:bg-[#FAF8F4]"
+          title={overviewSort?.dir === "desc" ? "Descending: click for ascending" : "Ascending: click for descending"}
+          aria-label="Sort direction"
+        >
+          {overviewSort?.dir === "desc" ? "▼" : "▲"}
+        </button>
+        <label className="flex items-center gap-1.5 border-l border-[#E6E0D9] pl-2 cursor-pointer">
+          {overviewSelectAll}
+          Select all ({visibleOrders.length})
+        </label>
+        {(anyOverviewFilterActive || overviewSort) && (
+          <button
+            type="button"
+            onClick={clearAllOverviewFilters}
+            className="font-semibold text-[#6B5C32] hover:underline"
+            title="Clear the stage / order filters and the sort"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+    </div>
+  );
+  // Cards / Grid switch — sits at the right end of the page filter bar.
+  const overviewViewToggle = (
+    <div className="inline-flex rounded border border-[#D4CFC7] overflow-hidden" role="group" aria-label="Overview layout">
+      {(["cards", "grid"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={overviewView === v}
+          onClick={() => setOverviewView(v)}
+          className={`px-2.5 py-1 text-[11px] font-semibold ${
+            overviewView === v ? "bg-[#6B5C32] text-white" : "bg-white text-[#5A5550] hover:bg-[#F5F2ED]"
+          }`}
+        >
+          {v === "cards" ? "Cards" : "Grid"}
+        </button>
+      ))}
+    </div>
+  );
+  // Same BUG-2026-08-13-146 gate as the footer: "No production orders
+  // found." is a statement about the factory, and only an observed 2xx
+  // body licenses it. A cold landing, an in-flight fetch and a dead
+  // read all produced this sentence too.
+  const overviewEmpty = (
+    <div className="px-4 py-12 text-center text-sm text-[#9A918A]">
+      {ordersObserved
+        ? "No production orders found."
+        : `Orders not shown — ${ordersUnobservedReason}.`}
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       {loading && (
@@ -7040,13 +7510,18 @@ export default function ProductionPage({
           <p className="text-xs text-[#6B7280]">Real-time production status across all 8 departments</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            onClick={() => setStockDialogOpen(true)}
-            className="bg-[#6B5C32] hover:bg-[#574A28] text-white gap-1.5"
-          >
-            <Plus className="w-4 h-4" />
-            Create Stock PO
-          </Button>
+          {/* R7 — the button carries the permission its endpoint does
+              (production-orders:create). Offering a button that can only 403
+              is how an operator learns to distrust the screen. */}
+          {canCreateStockPO && (
+            <Button
+              onClick={() => setStockDialogOpen(true)}
+              className="bg-[#6B5C32] hover:bg-[#574A28] text-white gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              Create Stock PO
+            </Button>
+          )}
           <Button variant="outline" onClick={() => navigate("/planning?tab=tracker")}>Master Tracker</Button>
           {/* Print Schedule mode picker. Detailed = one row per PO/JC
               (handlePrintSchedule). Total Listing = rows merged by
@@ -7094,10 +7569,8 @@ export default function ProductionPage({
       </div>
 
       {/* Filter bar — applies to Overview matrix AND all dept sub-tabs.
-          Setting any filter (or clicking Load all) arms the lazy-load fetch
-          via shouldFetch. While the response is in-flight the page shows a
-          spinner below. The "Refresh" button forces a re-fetch even when
-          shouldFetch is already on. */}
+          While the response is in-flight the page shows a spinner below.
+          The "Refresh" button forces a re-fetch. */}
       <div className="rounded-lg border border-[#E6E0D9] bg-white p-3 flex flex-wrap gap-2 items-center">
         <input
           type="text"
@@ -7106,36 +7579,32 @@ export default function ProductionPage({
           onChange={(e) => setFltSearchInput(e.target.value)}
           className="flex-1 min-w-[240px] text-xs px-3 py-1.5 border border-[#E6E0D9] rounded focus:outline-none focus:border-[#6B5C32]"
         />
-        <select
-          value={fltCustomer}
-          onChange={(e) => setFltCustomer(e.target.value)}
-          className="text-xs px-2 py-1.5 border border-[#E6E0D9] rounded bg-white"
-        >
-          <option value="">All customers</option>
-          {customerOptions.map((c) => (<option key={c} value={c}>{c}</option>))}
-        </select>
-        <select
-          value={fltState}
-          onChange={(e) => setFltState(e.target.value)}
-          className="text-xs px-2 py-1.5 border border-[#E6E0D9] rounded bg-white"
-        >
-          <option value="">All states</option>
-          {stateOptions.map((s) => (<option key={s} value={s}>{s}</option>))}
-        </select>
-        {/* Category — itemCategory column. Note the canonical value is
-            ACCESSORY (singular) on the API; we surface "Accessories" as
-            the human label for the option. */}
-        <select
-          value={fltCategory}
-          onChange={(e) => setFltCategory(e.target.value)}
-          className="text-xs px-2 py-1.5 border border-[#E6E0D9] rounded bg-white"
+        <CheckboxMultiSelect
+          options={customerOptions}
+          selected={fltCustomer}
+          onChange={setFltCustomer}
+          allLabel="All customers"
+          noun="customers"
+          title="Customer"
+          className="min-w-[180px]"
+        />
+        <CheckboxMultiSelect
+          options={stateOptions}
+          selected={fltState}
+          onChange={setFltState}
+          allLabel="All states"
+          noun="states"
+          title="Customer state"
+        />
+        {/* Category — itemCategory column, tick any number (empty = all). */}
+        <CheckboxMultiSelect
+          options={CATEGORY_OPTIONS}
+          selected={fltCategory}
+          onChange={setFltCategory}
+          allLabel="All categories"
+          noun="categories"
           title="Product category"
-        >
-          <option value="">All categories</option>
-          <option value="BEDFRAME">Bedframe</option>
-          <option value="SOFA">Sofa</option>
-          <option value="ACCESSORY">Accessories</option>
-        </select>
+        />
         {/* Item-type + Model dropdowns removed 2026-05-08 per operator
             request — they didn't help narrow the view in practice and just
             added clutter beside the more useful state/category filters.
@@ -7241,15 +7710,6 @@ export default function ProductionPage({
             departments" button for cross-dept assignment; inline cells
             stay smart-filtered by active dept. picShowAll state kept
             (false forever) to avoid touching deptWorkers / Clear-all wiring. */}
-        {!shouldFetch && (
-          <button
-            onClick={() => setShouldFetch(true)}
-            className="text-[10px] px-2 py-1 rounded border border-[#6B5C32] text-[#6B5C32] hover:bg-[#FAF8F4]"
-            title="Skip filtering and load every active production order"
-          >
-            Load all
-          </button>
-        )}
         {/* Clear all — restored 2026-05-12. The 2026-05-05 removal was
             because clearing from/to caused a 1-2s main-thread freeze
             (~9k JC refetch + grid re-render); commit 1fdb903 fixed that
@@ -7310,9 +7770,7 @@ export default function ProductionPage({
           Clear all
         </button>
         <span className="ml-auto text-[10px] text-[#8A7F73]">
-          {!shouldFetch ? (
-            "Pick a filter (or Load all) to fetch orders"
-          ) : updatingHint ? (
+          {updatingHint ? (
             <span className="text-[#9C6F1E] font-semibold">Updating…</span>
           ) : ordersObserved ? (
             `${filteredOrders.length} of ${orders.length} orders`
@@ -7323,6 +7781,8 @@ export default function ProductionPage({
             </span>
           )}
         </span>
+        {activeTab === "ALL" && overviewViewToggle}
+        {activeTab === "ALL" && overviewView === "cards" && overviewStageStrip}
       </div>
 
       {/* Active overdue-filter banner. Owner request 2026-06-23: clicking an
@@ -7330,7 +7790,7 @@ export default function ProductionPage({
           SO list). This thin banner just confirms the active filter + restates
           the chip's metric, and offers a one-click clear. The actual rows are
           the grid below, narrowed via `overduePoIdSet` in `filteredOrders`. */}
-      {overduePanelMode && shouldFetch && (
+      {overduePanelMode && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-[#F1B5B0] bg-[#FFF7F6] px-3 py-2">
           <span className="text-xs text-[#A12C28]">
             <span className="font-semibold">
@@ -7359,23 +7819,6 @@ export default function ProductionPage({
           >
             Clear overdue filter
           </button>
-        </div>
-      )}
-
-      {/* Lazy-load placeholder: before any filter is set we don't fetch
-          the payload at all — the user sees the filter bar above plus this
-          callout. Clicking any filter (handled by the useEffect that flips
-          shouldFetch) or "Load all" arms the request. */}
-      {!shouldFetch && (
-        <div className="rounded-lg border border-dashed border-[#E6E0D9] bg-[#FAF8F4] px-4 py-12 text-center">
-          <p className="text-sm text-[#6B5C32] font-medium">
-            No orders loaded yet.
-          </p>
-          <p className="mt-1 text-xs text-[#8A7F73]">
-            Pick any filter above (or click <em>Load all</em>) to fetch the
-            production payload. Skipping the fetch keeps the page snappy when
-            you only need to navigate to a specific order.
-          </p>
         </div>
       )}
 
@@ -7425,8 +7868,19 @@ export default function ProductionPage({
       </div>
       )}
 
-      {/* Legend — only for Overview matrix */}
-      {activeTab === "ALL" && (
+      {/* Legend — only for Overview. Cards use their own pill colours (plus
+          In progress / N/A); Grid keeps the original CellBox colours. */}
+      {activeTab === "ALL" && overviewView === "cards" && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-[#6B7280] px-1">
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm bg-[#2D5A54]" /> Completed</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm bg-[#2563EB]" /> In progress</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm bg-[#B0892A]" /> Pending</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm bg-[#991B1B]" /> Overdue</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-dashed border-[#D1CCC4]" /> N/A</span>
+          <span className="flex items-center gap-1.5 whitespace-nowrap"><span className="inline-block h-1.5 w-1.5 rounded-full bg-[#22D3EE]" /> Date moved off plan</span>
+        </div>
+      )}
+      {activeTab === "ALL" && overviewView === "grid" && (
         <div className="flex items-center gap-4 text-[10px] text-[#6B7280] px-1">
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm bg-[#3E6570]" /> Completed</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm bg-[#9C6F1E]" /> Pending</span>
@@ -7925,7 +8379,11 @@ export default function ProductionPage({
         {/* Clear-all-filters bar — shown only when at least one column
             filter or sort is active so the operator has a one-click
             reset without scrubbing each column individually. */}
-        {(anyOverviewFilterActive || overviewSort) && (
+        {/* Clear-all-filters bar (Grid) — shown only when at least one column
+            filter or sort is active so the operator has a one-click reset
+            without scrubbing each column individually. Cards has the same
+            Clear at the end of its filter strip. */}
+        {overviewView === "grid" && (anyOverviewFilterActive || overviewSort) && (
           <div className="px-4 py-2 bg-[#FFFBEC] border-b border-[#F0E6BC] text-[11px] text-[#6B5C32] flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <Filter className="h-3 w-3" />
@@ -7940,205 +8398,41 @@ export default function ProductionPage({
             </button>
           </div>
         )}
-        {/* Widen dept columns + scroll the whole matrix left/right as one unit.
-            Header and body share minWidth:1684 so they scroll together; the
-            column filter popovers are portaled to <body> so this overflow box
-            can't clip them. — Wei Siang 2026-05-29 */}
-        <OverviewResizeCtx.Provider value={overviewResizeValue}>
-        <div className="overflow-x-auto">
-        {/* Header row */}
-        <div
-          className="grid text-[10px] font-semibold uppercase tracking-wider text-[#6B7280] bg-[#FAF8F4] border-b border-[#E6E0D9] relative z-20"
-          style={{ gridTemplateColumns: overviewTemplate, minWidth: overviewMinWidth }}
-        >
-          {/* Select-all checkbox gutter. Scopes to the currently-visible
-              (filtered + sorted) rows = visibleOrders. */}
-          <div className="flex items-center justify-center px-1.5 py-2.5">
-            <input
-              type="checkbox"
-              aria-label="Select all visible orders"
-              checked={allOverviewVisibleSelected}
-              ref={(el) => {
-                if (el) el.indeterminate = someOverviewVisibleSelected;
+        {overviewView === "cards" ? (
+          visibleOrders.length === 0 ? (
+            overviewEmpty
+          ) : (
+            <OverviewVirtualRows
+              key="cards"
+              count={visibleOrders.length}
+              resetKey={overviewFilters}
+              estimateSize={CARD_HEIGHT}
+              className="@container overflow-y-auto overflow-x-hidden bg-[#F7F5F1]"
+              style={{ maxHeight: "calc(100vh - 320px)" }}
+              renderRow={(rowIndex, rowStart, measureRef) => {
+                const order = visibleOrders[rowIndex];
+                if (!order) return null;
+                return (
+                  <WorkOrderCard
+                    key={order.id}
+                    index={rowIndex}
+                    start={rowStart}
+                    measureRef={measureRef}
+                    order={order}
+                    orders={orders}
+                    stages={overviewStages}
+                    selected={selectedOverviewIds.has(order.id)}
+                    cellFlash={cellFlash}
+                    onToggle={toggleOverviewRow}
+                    onOpen={openOverviewOrder}
+                    onStageClick={onOverviewStageClick}
+                  />
+                );
               }}
-              onChange={toggleOverviewSelectAll}
-              disabled={visibleOrders.length === 0}
-              className="cursor-pointer align-middle"
             />
-          </div>
-          <OverviewHeader
-            label="SO ID"
-            sortKey="soId"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="soId"
-            filterActive={isFilterActive("soId")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <TextContainsFilter
-                value={overviewFilters.soId}
-                onChange={(v) => setOverviewFilters((p) => ({ ...p, soId: v }))}
-                placeholder="Contains…"
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Product"
-            sortKey="product"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="product"
-            filterActive={isFilterActive("product")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <TextContainsFilter
-                value={overviewFilters.product}
-                onChange={(v) => setOverviewFilters((p) => ({ ...p, product: v }))}
-                placeholder="Contains…"
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Customer"
-            sortKey="customer"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="customer"
-            filterActive={isFilterActive("customer")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <MultiSelectFilter
-                options={Array.from(new Set(visibleOrders.concat(orders).map((o) => o.customerName).filter(Boolean))).sort()}
-                selected={overviewFilters.customers}
-                onChange={(next) => setOverviewFilters((p) => ({ ...p, customers: next }))}
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Customer PO"
-            sortKey="customerPO"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="customerPO"
-            filterActive={isFilterActive("customerPO")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <TextContainsFilter
-                value={overviewFilters.customerPO}
-                onChange={(v) => setOverviewFilters((p) => ({ ...p, customerPO: v }))}
-                placeholder="Contains…"
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Special Order"
-            sortKey="specialOrder"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="specialOrder"
-            filterActive={isFilterActive("specialOrder")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <TextContainsFilter
-                value={overviewFilters.specialOrder}
-                onChange={(v) => setOverviewFilters((p) => ({ ...p, specialOrder: v }))}
-                placeholder="Contains…"
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Qty"
-            align="center"
-            sortKey="qty"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="qty"
-            filterActive={isFilterActive("qty")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <NumericRangeFilter
-                min={overviewFilters.qtyMin}
-                max={overviewFilters.qtyMax}
-                onChange={(min, max) => setOverviewFilters((p) => ({ ...p, qtyMin: min, qtyMax: max }))}
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Customer DD"
-            align="center"
-            sortKey="customerDD"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="customerDD"
-            filterActive={isFilterActive("customerDD")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <DateRangeFilter
-                from={overviewFilters.customerDDFrom}
-                to={overviewFilters.customerDDTo}
-                onChange={(from, to) => setOverviewFilters((p) => ({ ...p, customerDDFrom: from, customerDDTo: to }))}
-              />
-            )}
-          />
-          <OverviewHeader
-            label="Our Expected DD"
-            align="center"
-            sortKey="ourExpectedDD"
-            sort={overviewSort}
-            cycle={cycleOverviewSort}
-            filterCol="ourExpectedDD"
-            filterActive={isFilterActive("ourExpectedDD")}
-            openFilterCol={openFilterCol}
-            setOpenFilterCol={setOpenFilterCol}
-            renderFilter={() => (
-              <DateRangeFilter
-                from={overviewFilters.ourExpectedDDFrom}
-                to={overviewFilters.ourExpectedDDTo}
-                onChange={(from, to) => setOverviewFilters((p) => ({ ...p, ourExpectedDDFrom: from, ourExpectedDDTo: to }))}
-              />
-            )}
-          />
-          {DEPARTMENTS.map((d) => (
-            <OverviewHeader
-              key={d.code}
-              label={d.name}
-              align="center"
-              border
-              sortKey={d.code as OverviewSortKey}
-              sort={overviewSort}
-              cycle={cycleOverviewSort}
-              filterCol={d.code}
-              filterActive={isFilterActive(d.code)}
-              openFilterCol={openFilterCol}
-              setOpenFilterCol={setOpenFilterCol}
-              renderFilter={() => (
-                <DeptStatusFilter
-                  selected={overviewFilters.deptStatuses[d.code] || []}
-                  onChange={(next) =>
-                    setOverviewFilters((p) => ({
-                      ...p,
-                      deptStatuses: { ...p.deptStatuses, [d.code]: next },
-                    }))
-                  }
-                  dateRange={overviewFilters.deptDates[d.code] || { from: "", to: "" }}
-                  onDateRangeChange={(next) =>
-                    setOverviewFilters((p) => ({
-                      ...p,
-                      deptDates: { ...p.deptDates, [d.code]: next },
-                    }))
-                  }
-                />
-              )}
-            />
-          ))}
-        </div>
+          )
+        ) : (
+        <OverviewResizeCtx.Provider value={overviewResizeValue}>
 
         {/* Body rows. Wrapped in a scroll container + virtualizer so we
             only mount the ~30 rows currently in viewport. See the
@@ -8149,77 +8443,32 @@ export default function ProductionPage({
             rows that wrap (long product line) get their real height
             measured. */}
         {visibleOrders.length === 0 ? (
-          // Same BUG-2026-08-13-146 gate as the footer: "No production orders
-          // found." is a statement about the factory, and only an observed 2xx
-          // body licenses it. A cold landing, an in-flight fetch and a dead
-          // read all produced this sentence too.
-          <div className="px-4 py-12 text-center text-sm text-[#9A918A]">
-            {ordersObserved
-              ? "No production orders found."
-              : `Orders not shown — ${ordersUnobservedReason}.`}
-          </div>
+          <div className="overflow-x-auto">{overviewHeaderRow}{overviewEmpty}</div>
         ) : (
-          <div
-            ref={overviewBodyRef}
-            // overflow-x-hidden: the body only scrolls VERTICALLY. Horizontal
-            // scrolling is owned by the outer wrapper (which keeps header +
-            // rows aligned). Without this the body grew its own, unsynced
-            // horizontal scrollbar from the vertical scrollbar's gutter —
-            // two left/right scrollbars. — Wei Siang 2026-05-29
-            className="overflow-y-auto overflow-x-hidden"
-            style={{ maxHeight: "calc(100vh - 320px)", minWidth: overviewMinWidth }}
-          >
-          <div
-            style={{
-              height: `${overviewRowVirtualizer.getTotalSize()}px`,
-              position: "relative",
-              width: "100%",
-            }}
-          >
-          {overviewRowVirtualizer
-            .getVirtualItems()
-            .filter((virtualRow) => virtualRow.index < visibleOrders.length)
-            .map((virtualRow) => {
-            const order = visibleOrders[virtualRow.index];
+          <OverviewVirtualRows
+            key="grid"
+            count={visibleOrders.length}
+            resetKey={overviewFilters}
+            header={overviewHeaderRow}
+            // ONE box scrolls both ways, so both scrollbars sit on its visible
+            // edges. It used to be a full-table-width vertical box inside a
+            // horizontal one, which put the vertical scrollbar at the table's
+            // far right: hidden until you scrolled all the way across.
+            className="overflow-auto"
+            style={{ maxHeight: "calc(100vh - 320px)" }}
+            renderRow={(rowIndex, rowStart, measureRef) => {
+            const order = visibleOrders[rowIndex];
             if (!order) return null;
             const isSelected = selectedOverviewIds.has(order.id);
-            // Lifecycle row styling — amber background for ON_HOLD, grey +
-            // strikethrough for CANCELLED. Matches the dept DataGrid rule.
-            // A ticked row gets the same warm highlight the dept sheet / tracker
-            // use, overriding the lifecycle tint so the selection reads clearly.
-            const rowCls = isSelected
-              ? "bg-[#FFF8E6] hover:bg-[#FBEFC9]"
-              : order.status === "ON_HOLD"
-                ? "bg-[#FEF6D8] hover:bg-[#FBEBAE]"
-                : order.status === "CANCELLED"
-                  ? "bg-[#F3F4F6] text-[#9CA3AF] line-through hover:bg-[#E5E7EB]"
-                  : "hover:bg-[#FDFBF7]";
-            const pillLabel =
-              order.status === "ON_HOLD"
-                ? "ON HOLD"
-                : order.status === "CANCELLED"
-                  ? "CANCELLED"
-                  : "";
-            const pillCls =
-              order.status === "ON_HOLD"
-                ? "bg-[#FAEFCB] text-[#9C6F1E]"
-                : order.status === "CANCELLED"
-                  ? "bg-[#E5E7EB] text-[#4B5563]"
-                  : "";
-            // ON HOLD reason (0185) — full reason + who + when in the chip
-            // tooltip; faint truncated one-liner under the product code.
-            const ovHoldReason =
-              order.status === "ON_HOLD" ? (order.holdReason || "").trim() : "";
-            const ovHoldTooltip = ovHoldReason
-              ? `On hold: ${ovHoldReason}${
-                  order.heldBy ? ` — ${order.heldBy}` : ""
-                }${order.heldAt ? ` (${order.heldAt})` : ""}`
-              : "";
+            // Lifecycle row styling (ON_HOLD / CANCELLED / selected) — shared
+            // with the Cards header bar.
+            const { rowCls, pillLabel, pillCls, holdReason: ovHoldReason, holdTooltip: ovHoldTooltip } =
+              overviewRowLook(order, isSelected);
             return (
             <div
               key={order.id}
-              ref={overviewRowVirtualizer.measureElement}
-              data-index={virtualRow.index}
+              ref={measureRef}
+              data-index={rowIndex}
               className={`grid items-stretch border-b border-[#F0EBE3] cursor-pointer ${rowCls}`}
               style={{
                 gridTemplateColumns: overviewTemplate,
@@ -8228,17 +8477,13 @@ export default function ProductionPage({
                 top: 0,
                 left: 0,
                 right: 0,
-                transform: `translateY(${virtualRow.start}px)`,
+                transform: `translateY(${rowStart}px)`,
               }}
               // Single-click anywhere on the row toggles its selection (the
               // operator asked to tick by clicking the row, not just the small
               // checkbox). Double-click still opens the order.
               onClick={() => toggleOverviewRow(order.id)}
-              onDoubleClick={() => {
-                if (order.salesOrderId) navigate(`/sales/${order.salesOrderId}`);
-                else if (order.consignmentOrderId)
-                  navigate(`/consignment/${order.consignmentOrderId}`);
-              }}
+              onDoubleClick={() => openOverviewOrder(order)}
             >
               {/* Multi-select checkbox gutter. stopPropagation keeps the tick
                   from triggering the row's double-click navigation. */}
@@ -8278,7 +8523,17 @@ export default function ProductionPage({
                   </div>
                 )}
               </div>
-              <div className="px-3 py-1.5 text-xs text-[#6B7280] truncate flex items-center">{order.customerName}</div>
+              <div className="px-3 py-1.5 text-xs text-[#6B7280] truncate flex items-center gap-1.5">
+                {/* R16 — a stock PO has no customer behind it until it is
+                    allocated. Marked here so the floor never reads "Factory
+                    Stock" as just another customer name. */}
+                {order.isStock && (
+                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[#6B5C32]/10 text-[#6B5C32]">
+                    Stock
+                  </span>
+                )}
+                <span className="truncate">{order.customerName}</span>
+              </div>
               <div
                 className="px-3 py-1.5 text-xs text-[#1F1D1B] doc-number truncate flex items-center"
                 title={order.customerPOId || ""}
@@ -8303,7 +8558,7 @@ export default function ProductionPage({
               <div className="px-2 py-1.5 text-[11px] text-[#6B7280] flex items-center justify-center tabular-nums">
                 {order.hookkaExpectedDD ? fmtShortDate(order.hookkaExpectedDD) : "—"}
               </div>
-              {DEPARTMENTS.map((d) => {
+              {overviewStages.map((d) => {
                 // FAB_CUT sibling-walk (cellFor "Option C") must search the
                 // FULL order list, not visibleOrders. A column filter (e.g.
                 // FAB SEW = Overdue) can hide the ONE sibling that actually
@@ -8312,58 +8567,16 @@ export default function ProductionPage({
                 // piece in the set. Wei Siang 2026-06-05: "no filter → Fab Cut
                 // is there; filter → same row's Fab Cut disappears."
                 const c = cellFor(order, d.code, orders);
-                const isActiveCol = false; // inside ALL view, no column highlighted
-                // Flash state for this dept cell. The cell may contain
-                // multiple JCs (a sofa with multiple WIPs in one dept) — we
-                // key per-JC for green-tint accuracy, but for the cell tint
-                // we OR them: any "err" wins, then any "ok".
-                const deptCards = order.jobCards.filter((j) => j.departmentCode === d.code);
-                let cellTint: "ok" | "err" | "" = "";
-                for (const jc of deptCards) {
-                  const k = cellFlash[`${jc.id}|${d.code}`];
-                  if (k === "err") { cellTint = "err"; break; }
-                  if (k === "ok") cellTint = "ok";
-                }
+                const cellTint = stageTint(order, d.code, cellFlash);
                 const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
                   if (c.state === "empty") return;
                   e.stopPropagation();
-                  const seed =
-                    c.state === "done"
-                      ? c.latestCompleted || c.earliestDue || ""
-                      : c.earliestDue || "";
-                  const anchor = e.currentTarget;
-                  openDatePicker(
-                    seed,
-                    (v) => {
-                      if (!v) return;
-                      // Fan out PATCH per dept JC. Each one carries its own
-                      // flash key so the green tint paints exactly the cell
-                      // that landed. Suppress per-JC toasts (silent) and
-                      // emit a single "Date updated" once we know all of
-                      // them landed (or surface the first failure).
-                      let okCount = 0;
-                      let errMsg: string | null = null;
-                      const promises = deptCards.map((jc) =>
-                        patchJobCard(order.id, jc.id, { dueDate: v }, {
-                          flashKey: `${jc.id}|${d.code}`,
-                          silent: true,
-                        }).then(() => { okCount++; })
-                          .catch((err) => {
-                            errMsg = err instanceof Error ? err.message : "network error";
-                          }),
-                      );
-                      Promise.allSettled(promises).then(() => {
-                        if (errMsg) toast.error(`Save failed (${errMsg})`);
-                        else if (okCount > 0) toast.success("Date updated");
-                      });
-                    },
-                    anchor,
-                  );
+                  onOverviewStageClick(order, d.code, c, e.currentTarget);
                 };
                 return (
                   <div
                     key={d.code}
-                    className={`relative border-l border-[#F0EBE3] min-h-[34px] transition-colors ${isActiveCol ? "bg-[#FAF8F4]" : ""} ${c.state !== "empty" ? "cursor-pointer" : ""} ${
+                    className={`relative border-l border-[#F0EBE3] min-h-[34px] transition-colors ${c.state !== "empty" ? "cursor-pointer" : ""} ${
                       cellTint === "ok" ? "bg-green-100" : cellTint === "err" ? "bg-red-100" : ""
                     }`}
                     onClick={handleClick}
@@ -8376,12 +8589,11 @@ export default function ProductionPage({
               })}
             </div>
             );
-          })}
-          </div>
-          </div>
+          }}
+          />
         )}
-        </div>{/* /overflow-x-auto matrix scroll wrapper */}
         </OverviewResizeCtx.Provider>
+        )}
 
         {/* Footer */}
         {/* BUG-2026-08-13-146 — see `ordersObserved`. This footer used to
@@ -8425,7 +8637,7 @@ export default function ProductionPage({
               className="h-8 rounded border border-[#D4CFC7] bg-white px-2 text-[12px] text-[#3A2E22] focus:outline-none focus:ring-1 focus:ring-[#6B5C32]/20"
             >
               <option value="ALL">All departments</option>
-              {DEPARTMENTS.map((d) => (
+              {overviewStages.map((d) => (
                 <option key={d.code} value={d.code}>{d.name}</option>
               ))}
             </select>
@@ -8452,7 +8664,7 @@ export default function ProductionPage({
             <span className="ml-auto text-[11px] text-[#9C7A1E]">
               {overviewBatchDept === "ALL"
                 ? "Sets the date on every department job card of the selected orders."
-                : `Sets the date on the ${DEPARTMENTS.find((d) => d.code === overviewBatchDept)?.name} job card of the selected orders.`}
+                : `Sets the date on the ${overviewStages.find((d) => d.code === overviewBatchDept)?.name} job card of the selected orders.`}
             </span>
           </div>
         )}
@@ -9457,10 +9669,9 @@ export default function ProductionPage({
               the React reconciliation of ~1000 siblings made tab entry
               feel like the QR grid was opening (Wei Siang 2026-05-10:
               "一打开就直接 show 出来会很卡"). The handlePrintFgStickers
-              path flips fgPrintRequested true, the useTimeout below
-              fires window.print() at ~1500ms — enough time for the
-              `eager` <QRImg> instances inside this hidden container to
-              generate all their data URLs synchronously on mount. The
+              path flips fgPrintRequested true, and the useTimeout above
+              fires window.print() once whenQrsReady sees every `eager`
+              <QRImg> inside this hidden container drawn. The
               eager flag is required: IntersectionObserver never fires
               inside a `display: none` parent (operator-reported blank
               FG sticker bug 2026-05-12), so the on-screen lazy gate
@@ -9470,7 +9681,7 @@ export default function ProductionPage({
             {(() => {
               // Pick the active source. Mutually exclusive — both print
               // paths flip their flag and the useTimeout fires
-              // window.print() within 1500ms; the operator can't click
+              // window.print() once the QRs are drawn; the operator can't click
               // the second button in between because the first click
               // grabs focus into the OS print dialog.
               if (!fgPrintRequested && !foamPrintRequested) return null;
@@ -9653,7 +9864,10 @@ export default function ProductionPage({
       <CreateStockPODialog
         open={stockDialogOpen}
         onClose={() => setStockDialogOpen(false)}
-        onCreated={fetchOrders}
+        onCreated={() => {
+          invalidateCachePrefix("/api/production-orders");
+          fetchOrders();
+        }}
       />
 
       {/* Mark-as-Sent prompt shown at print time — a system-styled replacement
@@ -9711,7 +9925,145 @@ export default function ProductionPage({
 
       {/* PatchFailureModal removed 2026-05-12 — failures now surface as
           toast.error from flushDrafts. Cell auto-reverts on failure, so the
-          operator sees the value disappear + the toast at the same time. */}
+          operator sees the value disappear + the toast at the same time.
+
+          The sequence lock is the one refusal that gets a dialog instead: it is
+          not a fault, it is a step whose turn has not come, and there is
+          something the operator can do about it. */}
+      <SequenceUnlockDialog
+        refusal={lockPrompt?.refusal ?? null}
+        subject={
+          lockPrompt
+            ? `${lockPrompt.drafts.length} ${activeTab.replace(/_/g, " ")} card${lockPrompt.drafts.length === 1 ? "" : "s"}`
+            : undefined
+        }
+        busy={lockBusy}
+        onCancel={() => setLockPrompt(null)}
+        onChoose={async (choice) => {
+          if (!lockPrompt) return;
+          setLockBusy(true);
+          try {
+            // The blocking card can be in any department, so its PO is looked
+            // up across the loaded orders rather than in the current dept grid.
+            const poIdOfJc = new Map<string, string>();
+            for (const o of orders) {
+              for (const jc of o.jobCards) poIdOfJc.set(jc.id, o.id);
+            }
+            // "Complete the earlier step too" sends the BLOCKING cards FIRST.
+            // The order is the whole point: upstream completes before this one
+            // consumes, so the WIP produce lands before the consume and no
+            // negative row is created — the thing the lock exists to prevent,
+            // not one it should cause.
+            const upstream =
+              choice.action === "completeUpstream"
+                ? lockPrompt.refusal.blockedBy
+                    .filter((b) => poIdOfJc.has(b.id))
+                    .map((b) => ({
+                      poId: poIdOfJc.get(b.id) as string,
+                      jobCardId: b.id,
+                      status: "COMPLETED",
+                      completedDate: todayYmdMY(),
+                      unlock: { reason: choice.reason },
+                    }))
+                : [];
+            const targets = lockPrompt.drafts.map((d) => ({
+              poId: d.poId,
+              jobCardId: d.jcId,
+              ...d.patch,
+              unlock: { reason: choice.reason },
+            }));
+            const res = await fetch("/api/production-orders/bulk-patch", {
+              method: "POST",
+              headers: csrfHeaders(),
+              body: JSON.stringify({ patches: [...upstream, ...targets] }),
+              credentials: "include",
+            });
+            const j = (await res.json()) as {
+              results?: Array<{ success: boolean; error?: string }>;
+              error?: string;
+            };
+            const bad = (j.results || []).filter((x) => !x.success);
+            if (!res.ok) {
+              toast.error(`Unlock failed — ${j.error ?? `error ${res.status}`}.`);
+            } else if (bad.length > 0) {
+              toast.error(`${bad.length} still failed: ${bad[0].error ?? "unknown"}`);
+            } else {
+              toast.success(
+                choice.action === "completeUpstream"
+                  ? `Completed ${upstream.length} earlier step${upstream.length === 1 ? "" : "s"} and ${targets.length} card${targets.length === 1 ? "" : "s"}.`
+                  : `Unlocked and saved ${targets.length} card${targets.length === 1 ? "" : "s"}.`,
+              );
+            }
+            setLockPrompt(null);
+            // The upstream cards belong to other departments and other rows,
+            // so an optimistic patch here would leave half the grid stale.
+            // Refetch — it is one request and it is the only honest picture.
+            invalidateCachePrefix("/api/production-orders");
+            fetchOrders();
+          } catch (err) {
+            toast.error(`Unlock failed: ${err instanceof Error ? err.message : String(err)}`);
+          } finally {
+            setLockBusy(false);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+// Hosts the Overview matrix's row virtualizer so a scroll re-renders only this
+// component and the ~20 mounted rows — never the whole ProductionPage (see the
+// note where `visibleOrders` is built). estimateSize=36 is the typical
+// single-line row; wrapped rows are measured via measureRef. `resetKey`
+// changing (the column filters) scrolls back to the top so the virtualizer
+// never holds an offset whose rows no longer exist (the "整列变空白" bug).
+function OverviewVirtualRows({
+  count,
+  resetKey,
+  estimateSize = 36,
+  className,
+  style,
+  header,
+  renderRow,
+}: {
+  count: number;
+  resetKey: unknown;
+  estimateSize?: number;
+  className?: string;
+  style?: React.CSSProperties;
+  // Rendered inside the scroll box above the rows (e.g. a sticky header).
+  header?: React.ReactNode;
+  renderRow: (
+    index: number,
+    start: number,
+    measureRef: (el: Element | null) => void,
+  ) => React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => estimateSize,
+    overscan: 8,
+  });
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [resetKey]);
+  return (
+    <div ref={scrollRef} className={className} style={style}>
+      {header}
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          position: "relative",
+          width: "100%",
+        }}
+      >
+        {virtualizer
+          .getVirtualItems()
+          .filter((row) => row.index < count)
+          .map((row) => renderRow(row.index, row.start, virtualizer.measureElement))}
+      </div>
     </div>
   );
 }

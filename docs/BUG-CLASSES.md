@@ -1,5 +1,34 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages`: C30 row 2 closed (a status column exports with spaces, as on screen). Nothing else re-checked.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` **adds C31 — a list that shows one server page, read as if it were the whole list** (BUG-2026-10-12-281). Nothing else re-checked.
+> **Last verified: 2026-10-12**: branch `fix/bug87-auto-grn-read` adds C23 row 2 (purchase-invoices auto receipt id read snake_case only).
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` **adds C30 — a list column whose screen value exists only in `render`, exported raw** (BUG-2026-10-12-278). Nothing else re-checked.
+> **Last verified: 2026-10-01**: restamped on branch `fix/grn-number-collision` (staging only): C27 row 2 marked verified on staging (2026-09-30), row 5 added for read-max-then-insert document numbers (BUG-2026-10-01-232).
+> **Last verified: 2026-09-30**: restamped on branch `fix/t006-r2-grn-receipt-race` (staging only): adds C27, a ceiling checked before the write with nothing in the write to back it (BUG-2026-09-30-226); C10 row 4 renamed to the functions that now exist. Nothing else re-checked.
+> **Last verified: 2026-09-30**: restamped on branch `fix/staging-so-detail-live-do` (staging): C21 gains row 18, the SO detail page that showed a cancelled DO as a production order's delivery (BUG-2026-09-30-225). Nothing else re-checked.
+> **Last verified: 2026-09-30**: restamped on branch `fix/t006-r7-return-qty` (staging only): adds C26, a guard and the write it guards reading one input two ways (BUG-2026-09-30-224). Nothing else re-checked.
+
+> **Last verified: 2026-09-29**: restamped on branch `fix/staging-notes-history` (staging only): C15 gains row 6, the staging patch notes that read a depth-1 clone and printed "0 PRs" (BUG-2026-09-29-215). Nothing else re-checked.
+
+> **Last verified: 2026-10-01**: branch `fix/worker-history-snapshot-stale` **adds C29 — a read right after a write, served from Hyperdrive's cache** (BUG-2026-10-01-245). Nothing else re-checked.
+> **Last verified: 2026-10-01**: branch `fix/dev08-accessory-so-ready` **adds C28 — UPHOLSTERY cards as the proxy for "made"** (BUG-2026-10-01-241, DEV-08). Nothing else re-checked.
+> **Last verified: 2026-09-25**: restamped on branch `feat/dashboard-kpi-no-icons` (PR #524): C15 gains row 5, the Worker Efficiency card that printed worker ids after a refused `/api/workers` read (BUG-2026-09-25-194). Nothing else re-checked.
+> **Last verified: 2026-09-25** — restamped on branch `feat/ocr-dashboard-tab`: C23 gains the OCR-tab row (BUG-2026-09-25-192, `readQueueRow` dual-key fix); no other class re-checked.
+> **Last verified: 2026-09-23** — branch `fix/invoice-line-so-ref` adds **C16 row 8** (invoice PDF read the DO field names for per-line SO/REF/CO SO). Nothing else re-checked.
+>
+> **Last verified: 2026-09-23** — restamped on branch `fix/so-duplicate-ref-saves-draft`: only C21 row 11
+> (the SO duplicate-reference guard is now a warning, anchor re-derived to `sales-orders.ts:1795`).
+>
+> **Last verified: 2026-09-24 (later)** — restamped on branch `fix/staging-legacy-convert-bugs`:
+> C21 gains rows 16 (GRN stock by shared description — fixed) and 17 (BOM consumption, same
+> shape — open).
+> **Last verified: 2026-09-24** — restamped on branch `fix/t006-live-findings`: C23 gains
+> instances 8-9 (BUG-2026-09-24-199), both found by running T-006's routes against the real
+> staging DB after their snake-keyed mocks had passed.
+> **Last verified: 2026-09-22** — restamped on branch `fix/scan-queue-client-driven`, which
+> **adds C25 — long work handed to `ctx.waitUntil`** (BUG-2026-09-22-178). Previously:
+>
 > **Last verified: 2026-09-11** — restamped on branch `fix/po-list-cache-key-collision`,
 > which **adds C22 — a cache key coarser than the handler it names** (BUG-2026-09-11-180:
 > the Production Overview served another page's job-card-less payload and rendered its
@@ -360,6 +389,7 @@ the fallback is (postedAt dating, "no legs to reverse", "nothing to hide").
 | 3 | `loadDocDateResolver` (dates every leg for /gl, P&L windows, **the opening floor**) | raw sourceId → postedAt fallback | ✅ fixed 2026-07-24 (BUG-2026-07-24-001: two May PI tax-edits dated as July, escaped the floor, +407.04 drift) |
 | 4 | `applyLifecycle` reversal SELECT + hidden UPDATEs | raw sourceId | ⬜ latent — unreachable today (PIs don't use lifecycle; PI delete is DRAFT-only = no legs). Warning comment in place; widen the matches if a `:<tag>`-legged doc type is ever wired in |
 | 5 | supplier-payment UNVOID leg un-hiding | exact `supplier_payment` sourceType | ✅ fixed 2026-07-24 (BUG-2026-07-24-002: an edited payment's live legs are `restate_post:<stamp>` — unvoid resurrected the stale pre-edit base legs; now picks `latestRestatePostType`) |
+| 6 | P&L "salary already recorded" (`glWindowSigned` + cost & expense classes) | exact `sourceType::sourceId`, credit legs only | ✅ fixed 2026-10-09 (BUG-2026-10-09-275: an unposted Labour post / voided JV still marked the month recorded, hiding the payslip labour; now `recordedSalaryAccounts` nets the document's legs) |
 
 **Enforced by** the `stripSourceIdSuffix` cases in `tests/doc-date.test.mjs`. When adding a NEW
 suffixed identity (a second `:<tag>` writer), grep every `sourceId = ?` / `.get(sourceId)`
@@ -565,7 +595,7 @@ happens to read is caught, so the pair looks guarded under half the test orders 
 | 1 | PO line, invoiced | PI create off a PO / PI create off a GRN | ✅ fixed 2026-08-07 (BUG-2026-08-07-003 — 100 billed off the PO then 100 more off its GRN = 200 payable on a 100 PO. GRN→PO order was already caught, because the PO ceiling reads GRN-sourced lines through `COALESCE(pii.po_id, pi.purchaseOrderId)`) |
 | 2 | PO line, invoiced | PI **re-line** (PUT items) | ✅ fixed 2026-08-07 — same hole with one more step: raise the invoice for 1, edit it to 100. Now shares the helper, with the edited PI excluded from its own already-invoiced total |
 | 3 | GRN line, invoiced (`grn_items.invoiced_qty`) | PI create / PI re-line / PI delete / PI cancel / GRN un-post | ✅ one counter, incremented and restored through the shared `convert-chain.ts` helpers |
-| 4 | PO line, received (`purchase_order_items.receivedQty`) | GRN post-on-create / GRN post-on-PUT | ✅ both go through `cascadePOStatusAfterGRNPost`; reversal through `restorePOReceivedQtyForGRN` |
+| 4 | PO line, received (`purchase_order_items.receivedQty`) | GRN post-on-create / GRN post-on-PUT | ✅ both go through `buildPOCounterStatements` (guarded increase, C27 row 2); reversal through `restorePOReceivedQtyForGRN` |
 
 **The rule.** One quantity gets ONE ceiling function, called by every route that spends it —
 not one guard per route. When you add a second way to draw something down, the question is not
@@ -859,6 +889,8 @@ class must not use it.
 | 2 | **detail pages / edit forms / one embedded panel / the public QR page** — 11 printed a false absence, 4 hung on `Loading…`, 1 asserted an empty child set | ✅ 2026-08-13 (BUG-2026-08-13-016) — `useCachedJson().failure` + `isUnknownOutcome` + `<RecordLoadError>`; 19 files changed, 6 more repaired by the primitive alone |
 | 3 | **list pages** — ~25 grids whose empty caption (*"No draft orders."*, `DataGrid`'s default *"No data found."*) renders over a failed fetch | ⬜ **open, enumerated.** Each page owns its own caption and its own fetch shape, so this is a separate PR with its own before/after — not a blind sweep. Start from the files that import `useCachedJson` and pass an `emptyMessage`, and give `DataGrid` a `loadFailure` prop rather than editing 25 captions by hand |
 | 4 | **`cachedFetchJson` callers outside this class** | ⬜ unswept. The function returns `null` on every failure; any caller that renders that null as a factual empty state is row 1/2/3 wearing a different hat. `products/bom.tsx` and `products/documents.tsx` were two, found by this pass |
+| 5 | **Worker Efficiency card** (/m Home and /dashboard): `/api/workers` refused with 403 for PRODUCTION, and every row printed the raw worker id as if it were the name | ✅ 2026-09-25 (BUG-2026-09-25-194): the name now travels with the hours in `/api/working-hour-entries/summary`, so there is no second request left to fail. Test `tests/working-hours-summary-names.test.mjs` |
+| 6 | **Staging patch notes** (`/staging-notes`, staging only): `deploy.yml` asked for `fetch-depth` with `&& 0 \|\| 1`, a bare 0 is falsy in Actions, so the clone was depth 1, the git log had no merge parents, and the page printed *"Latest 0 PRs"* as fact | ✅ 2026-09-29 (BUG-2026-09-29-215): quoted `'0'`, and `scripts/gen-staging-notes.mjs` now exits 1 on a shallow repo so the page says "no notes in this build" instead of a false zero. Test `tests/staging-notes.test.mjs` |
 
 Rows 3 and 4 are why this section exists rather than a note in the bug entry.
 Row 2's pass fixed **19 files across 11 modules**; every one would have been
@@ -1148,6 +1180,7 @@ narrowing has to state what it is dropping.
 | 5 | `createdAt` | `rowToMinimalPO` | `production/index.tsx:2862` | ⬜ open — `?axis=created_at` is a silent no-op; URL-only since the dropdown was removed 2026-05-07 |
 | 6 | `finishedGoods` / `finishedProducts` | `/api/inventory` | `suppliers/detail.tsx:214` | ✅ 2026-08-13 (-024) — and note the fix was to DELETE the read, not rename it; the two payload halves are different entities |
 | 7 | `regNo` / `tin` / `address` | the PERMISSION projection on `GET /api/organisations` | `letterheadForPurchaseOrg` → the PO / GRN / PI letterhead | ✅ 2026-08-13 (-100) — caught **before** merge, by looking for this class rather than by an incident |
+| 8 | `customerSOLine` / `customerRefLine` / `companySO` (read as the DO names `customerSO` / `customerRef` / `salesOrderNo`) | `computeInvoicePrintExtras` | `buildUnifiedInvoiceData` → invoice download + customer e-mail PDF | ✅ 2026-09-23 (-186) — a RENAMED field, not a dropped one: the invoice and DO extras share the `DocLineExtra` type, so `tsc` saw every name as optional-and-valid. Every line printed the invoice-level SO/REF and a blank CO SO. Enforced by `tests/invoice-pdf-line-refs.test.mjs` |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same
@@ -1243,8 +1276,11 @@ parties in a single pass"* — which is true of the maths and false of the queri
 | 1 | `/customer-statement` vs `/debtor-ledger` | lifecycle VOID/DELETED receipts | ✅ 2026-08-13 (-080) |
 | 2 | `/supplier-statement` vs `/creditor-ledger` | lifecycle VOID/DELETED payments | ✅ 2026-08-13 (-080) |
 | 3 | `/ap-control` vs `rebuildApCounterSen` | the PI status set each one sums over (`CONFIRMED/APPROVED/PARTIAL_PAID` vs *everything but DRAFT/CANCELLED*) — legitimate, but it is what turned BUG-2026-08-13-081 into a permanent drift on one card and not the other | ✅ by fixing the writer, not the readers |
-| 4 | `/ar-control` vs `/ap-control` · `/ar-reconciliation` vs `/ap-reconciliation` | — | ✅ checked 2026-08-13, no divergence found |
+| 4 | `/ar-control` vs `/ap-control` · `/ar-reconciliation` vs `/ap-reconciliation` | — | ✅ checked 2026-08-13, no divergence found (it grew later — rows 6–7) |
 | 5 | `/payment-vouchers` vs `/official-receipts` | OR has no `/restate` endpoint, PV does | ⬜ owner decision, not a defect |
+| 6 | `/ap-control` (`loadUnappliedSupplierAdvances`) vs `/ap-reconciliation` (`ap-recon.ts`) | trade-finance repayments (`TF_REPAYMENT`) left out of the advances | ✅ 2026-09-30 (-229) |
+| 7 | `/ar-control` (`loadUnappliedCustomerAdvances`) vs `/ar-reconciliation` | receipts held on account netted off as advances | ✅ 2026-09-30 (-229) |
+| 8 | customer vs supplier opening seeds (`openingControlSums`, `/opening-balance` lists) | CANCELLED seeds left out | ✅ 2026-09-30 (-230) |
 
 **The rule.** When you add a predicate to one subsidiary-ledger surface, open its twin in
 the same commit and diff the query — not the file. And when the two must agree on a
@@ -1452,11 +1488,14 @@ IDENTITY or MONEY.
 | 8 | `admin.ts:1229`, `delivery-orders/_helpers.ts:1419` — `inv.salesOrderId ?? soIds[0]` as `priceForItem`'s `fallbackSoId` | a price, but only for lines with **no production-order link** | ⬜ **deliberate, do not "fix" in isolation** — this is `priceForItem`'s documented first-one-wins, whose last resort is `byAnyCode` anyway. Closed as the price half of BUG-2026-07-17-001 (2026-08-07) |
 | 9 | `delivery-orders/_helpers.ts:1741`, `delivery-orders.ts:1651` — `doRow.salesOrderId \|\| soIds[0]` | the **header** SO id on a combined invoice | ✅ benign, and labelled in place: the authoritative link is `deliveryOrderId`, and identity is per-line via `invoice_items.so_item_id` |
 | 10 | `worker/scan.tsx:1107` — `?? wkCards[0]` | which card of a compartment is DISPLAYED | ✅ benign: `wkCards` is already filtered to ONE production order **and** ONE `wipKey`, so every candidate is the same physical compartment, and the server decides the completion from the worker's token |
-| 11 | `purchase-invoices.ts:1178`, `sales-orders.ts:1653` — `?? dupNums[0]` | which reference is **named** in a duplicate-rejection message | ✅ benign: the `.find` covers the real case and the authoritative `duplicateOf` is exact. (Sub-note: their `LIMIT 1` has no `ORDER BY`, so with two duplicates it names an arbitrary one — still a rejection either way) |
+| 11 | `purchase-invoices.ts:1178`, `sales-orders.ts:1795` — `?? dupNums[0]` / `?? soRefs[0]` | which reference is **named** in a duplicate-rejection message (SO: a duplicate-reference *warning* since BUG-2026-09-23-185 — the SO is saved as DRAFT) | ✅ benign: the `.find` covers the real case and the authoritative `duplicateOf` is exact. (Sub-note: their `LIMIT 1` has no `ORDER BY`, so with two duplicates it names an arbitrary one — still a rejection either way) |
 | 12 | `mail-center.ts:401` — `recipients.find(/@hookka\.com/) \|\| recipients[0]` | which mailbox an inbound email is filed under | ✅ low-risk: a stated preference rule, no configured mailbox matched, and the message is stored intact |
 | 13 | UI selection defaults — `default-bank.ts:12`, `bom.tsx` ×6, `procurement/{create,detail,index}.tsx` + `pi/create.tsx` (`bindings.find(isMainSupplier) ?? bindings[0]`), `employees.tsx:5376`, `finance-dashboard.tsx:549`, `leads/index.tsx:402`, `m/FormSheet.tsx:527`, `m/ModuleListScreen.tsx:220-221`, `mail-center/index.tsx:3301`, `maintenance/sofa-combos.tsx:1212`, `inventory/index.tsx:2607`, `scan-supplier-modal.tsx` ×4 (`activeOrgs[0]?.code ?? "HOOKKA"`) | a **pre-filled** value the user sees and can change before saving | ✅ benign — see "Not every `[0]` is this class" above |
 | 14 | `accounting.ts:11043` (`others[0]` + `"+N"`), `delivery-orders.ts:2274` (error text) | display only, and the truncation is visible | ✅ benign |
 | 15 | grep false positives — `web-push.ts:107` (`pub[0] !== 0x04`, a byte), `do-component-breakdown.ts:102` (`a[0]`/`b[0]`, Map-entry tuples in a comparator), `sales/index.tsx:250-251` (`_flStatus[0]`, "any filter active?") | nothing | ✅ not this class |
+| 16 | `grn.ts` `resolveRmForGRNItem` — `raw_materials WHERE description = ? LIMIT 1` for a blank-code (PO-sourced) GRN line; 37 descriptions are shared on staging, e.g. five "WHITE SPONGE" | receiving NLY-D12-6MM posted stock onto D12-0.5 | ✅ 2026-09-24 (BUG-2026-09-24-202) — PO line's code first; a shared name resolves to nothing and is reported unresolved. Staging: 0 posted lines hit it (measured). Prod UNMEASURED |
+| 17 | `po-cost-cascade.ts` `resolveRmFromBom` — same `description = ? LIMIT 1` for a BOM line with no code | FIFO consumption could draw the wrong raw material | ⬜ open — refusing an ambiguous name there silently stops consumption for that line, so it needs its own decision |
+| 18 | `sales-orders.ts` `GET /:id` `poDeliveryMap` — first DO seen per production order over unordered `delivery_order_items` | which DO (and status) the SO detail page **shows** for a linked PO; a cancelled DO could hide its live replacement | ✅ 2026-09-30 (BUG-2026-09-30-225) — `buildPoDeliveryMap`: live DO beats cancelled. Two live DOs (split delivery) still keep the first seen, display only |
 
 **Enforced by** `tests/first-one-wins-refusal.test.mjs` — 8 behavioural assertions driving
 the pure resolver with adversarial fixtures (two orders with the SAME line count, so a
@@ -1549,6 +1588,29 @@ the two builders that existed, and nothing stops the third.
 
 ---
 
+## C23 — a row read by its SQL (snake_case) name after the driver camelCased it
+
+**Shape.** `getSql` (`src/api/lib/db-pg.ts`, `columnFrom`) returns every column camelCased.
+Code that reads `r.created_at` gets `undefined` — no error, just blank figures, until a `!`
+or a date parse turns it into a crash. Most likely in code written against PostgREST or
+psql output, where the names come back as written.
+
+**The rule.** Read `r.camelCase ?? r.snake_case` (CLAUDE.md), or, for a file that reads
+by SQL name throughout, route its rows through `withSnakeKeys` at the ONE place they enter.
+
+**Instances**
+
+| # | file | reads | state |
+|---|---|---|---|
+| 1 | `src/api/routes/dashboard-prototype.ts` | 105 snake reads across 17 queries | ✅ 2026-09-21 (-181) — `section()` mapped rows through `withSnakeKeys`. **Superseded 2026-09-22** by the staging↔main sync (PR #463): the route is now `main`'s rewrite, which reads every row camelCased (0 snake reads), so the wrap is gone; `withSnakeKeys` stays in `db-pg.ts` for the next file that needs it |
+| 2 | `src/api/routes/purchase-invoices.ts` (BUG-87 auto receipt, BUG-2026-10-12-279) | `auto_grn_id` (PUT, void, unvoid) and `grn_id` (confirm hook), read off `SELECT *` | ✅ 2026-10-12 — caught on the staging check of #803 (qty edit saved, void left the stock in); now `autoGrnIdOf` / dual-keyed. `tests/purchasing-convert-flow.test.mjs` mock returns camelCased PI rows so a snake-only read fails there too |
+
+**Enforced by** `tests/dashboard-prototype-snake-reads.test.mjs` (row 1 only — since 2026-09-22 it asserts the route has NO `r.snake_case` read and every `prepare` sits inside `section()`, plus the `withSnakeKeys` unit test). **Not swept
+repo-wide yet** — the next fixer should grep `\br\.[a-z]+_[a-z_]+` in `src/api` and check each
+hit is dual-keyed.
+
+---
+
 ## When you fix something here
 
 1. Find its class above. If there isn't one, add it.
@@ -1586,6 +1648,7 @@ snake_case throughout — 260 reads across 74 identifiers. Live effect:
 | `r.total_sen` | `undefined` | Revenue **RM 0** |
 | `r.is_service_order` | `undefined` → `!!` → `false` | no service order ever filtered; **1804 orders** where the house page shows 1713 |
 | `r.created_at` | `undefined` → `dayKey()` → `null` | revenue trend **empty**, and a `TypeError` at `:754` on a non-null-asserted map lookup |
+| `r.created_at` / `r.sample_id` / `r.ocr_model` (BUG-2026-09-25-192, OCR tab) | `undefined` | When **"undefined"**, Accuracy **—** on every row, Model **"Not recorded"** |
 
 The crash was read as "a delivery order with a NULL `created_at`" and patched
 with a null guard. The guard was correct but the diagnosis was not — there was
@@ -1632,5 +1695,199 @@ in both, a read that cannot succeed returns a value that looks like data.
 | 3 | P&L historical, read side | ✅ 2026-06-30 (BUG-2026-06-30-001) |
 | 4 | supplier payments list + PI outstanding | ✅ 2026-07-01 (BUG-2026-07-01-003) |
 | 5 | `dashboard-prototype.ts` — 260 reads, whole route | ✅ 2026-09-15 (BUG-2026-09-15-181) — converted from the rename map |
+| 8 | `createPurchaseReturn` — `accepted_qty` / `po_item_id` read snake-only: every GRN-linked return refused | ✅ 2026-09-24 (BUG-2026-09-24-199) |
+| 9 | `buildInvoiceDeathCnReleaseStatements` — `status_before_conversion` snake-only: every CN void restored `PARTIALLY_SOLD` | ✅ 2026-09-24 (BUG-2026-09-24-199) — both passed tests whose mock returned snake keys; `tests/t006-live-findings.test.mjs` uses a camelCase fake DB instead |
 | 6 | **every other route reading rows from `getSql`** | ⬜ unswept. No test forbids a sixth. The cheap sweep is `grep -oE "\br\.[a-z]+_[a-z_]+" src/api/routes/*.ts` — a hit is not automatically a bug (some are bound params or SQL fragments) but every hit deserves a look |
 | 7 | **no test asserts a payload's money field is non-zero** | ⬜ open. This class has now recurred five times and every instance was found by a human noticing a wrong number on a screen. One assertion per money-bearing endpoint — "this field is not 0 for a book with sales" — would have caught all five |
+
+## C24 — the parent feeds the grid's own output back into the grid's inputs
+
+**Shape.** A shared list component (`DataGrid`) reports something to its parent through a
+callback (`onSelectionChange`, `onFilteredDataChange`, …). The parent stores it as a FRESH
+object (`new Set(rows)`, `[...rows]`, `{…}`), and something the parent passes BACK to the grid
+(`columns`, `data`, a filter) is memoised on that state. Inside the grid the reported value is
+derived from an array that is rebuilt on every recompute (`sortedData = [...filteredData]`),
+so the new input recomputes the output, the output becomes new input, and the page re-renders
+forever. Nothing throws in prod. With React Router 7 every navigation is a transition, so the
+loop's urgent updates starve navigation: the page "freezes" and tab clicks "stick".
+
+**Why it keeps happening.** Each half is locally reasonable. The grid re-emits on
+`sortedData` so a filter cannot leave stale rows in the parent's selection (2026-07-03).
+The parent stores a Set because that is the natural shape. The memo dep is there because
+someone once used the value in a column and later stopped. eslint's `react-hooks/exhaustive-
+deps` DID warn ("unnecessary dependency: selectedReadyPOs") — the warning sat for months
+because warnings do not fail the build.
+
+**The rule.** A callback the grid fires must be idempotent for an unchanged value — the grid
+compares before it emits (identity guard in `data-grid.tsx`). And a parent never lists
+selection state in the deps of anything it hands back to the same grid; if a column must
+know the selection, read it through a ref or the row itself.
+
+**Instances**
+
+| # | grid callback | parent state fed back | state |
+|---|---|---|---|
+| 1 | `onSelectionChange` on `/delivery` Pending Delivery | `selectedReadyPOs` in `pendingDeliveryColumns` deps | ✅ 2026-09-22 (BUG-2026-09-22-005) — both halves fixed |
+| 2 | `onFilteredDataChange` on `/employees` Department Labor | `printRows` state + un-memoised `columns` | ✅ 2026-09-29 (BUG-12) — the old callback-identity scoping did NOT cover it: fresh `columns` → fresh `sortedData` → emit → `setPrintRows` → re-render → fresh `columns`. Grid now identity-guards this emit too; tab memoises its columns |
+| 3 | the other 16 `onSelectionChange=` pages | none rebuilds `columns` from selection (checked 2026-09-22) | ⬜ no test forbids the next one; the grid-side guard now makes it inert |
+
+Test: `tests/datagrid-selection-emit.test.mjs`.
+
+## C25 — long work handed to `ctx.waitUntil`, which is cancelled 30 s after the response
+
+**Shape.** A handler returns fast and hands the real work to `c.executionCtx.waitUntil(...)`,
+with a comment saying the runtime "keeps the worker alive until the promise settles". It
+keeps it alive for **30 seconds** (Cloudflare docs, shared across all waitUntil calls of the
+request), then cancels. Anything that takes longer — an AI call, a big import, a fan-out of
+fetches — dies mid-flight with no exception in our code, so nothing marks the row failed. Any
+"stuck row" recovery then defines the user-visible delay (STUCK_MS = 5 min for the scan
+queue), and if the recovery re-kicks under waitUntil, the cycle repeats until an attempt cap.
+
+**Why it keeps happening.** The doc line is easy to misremember as "no limit", the failure
+leaves no stack trace (the warning is only in Workers Logs), and a page that happens to finish
+under 30 s makes the design look like it works.
+
+**The rule.** `waitUntil` is for work that finishes in seconds (cache write, an email, a
+version bump). Work that can take longer than that is driven by a request the client holds
+open, or by Cloudflare Queues / a cron with its own 15-min budget. Any recovery sweeper only
+re-queues; it never re-kicks under waitUntil.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | `scan-queue.ts` `processBatch` under waitUntil (upload, retry, both sweepers) | ✅ 2026-09-22 (BUG-2026-09-22-178) — browser-driven `/work`, all kicks removed, guarded |
+| 2 | `fireCustomerNoticeBestEffort` (delivery-orders.ts) — one email under waitUntil | ⬜ fits in 30 s; fine as long as it stays one call |
+| 3 | every other `waitUntil(` in `src/api` | ⬜ not audited for duration; grep and check the slowest |
+
+Test: `tests/scan-queue-client-driven.test.mjs` (no `waitUntil(` in scan-queue.ts).
+
+## C26 — a guard and the write it guards read the same input two ways
+
+**Shape.** A check parses a request field one way (`Number(x) || 0`) and the INSERT a few lines
+later parses it another (`Number(x ?? 1)`). Each looks reasonable alone. The request that
+lands in the gap (missing, negative) passes the check as one value and is stored as another.
+
+**The rule.** Parse and validate the field ONCE at the top, reject what is not valid with a
+400, and hand the one parsed value to both the guard and the write.
+
+| # | site | state |
+|---|---|---|
+| 1 | `delivery-return-create.ts` T-006 R7 cap vs item insert (quantity: missing counted 0, stored 1; negative accepted) | ✅ fixed 2026-09-30 (BUG-2026-09-30-224) |
+| 2 | same function: a line with no `productionOrderId` skipped the cap | ✅ fixed 2026-09-30, refused when the DO has production-order lines |
+| 3 | other capped create paths (purchase return, GRN, PI) | ⬜ unswept |
+
+Test: `tests/t006-r7-delivery-return.test.mjs` (real create function, fake DB).
+
+## C27 — a ceiling checked before the write, with nothing in the write to back it
+
+**Shape.** A handler SELECTs a counter, compares it with a limit in JavaScript, and later runs
+an unconditional `counter = counter + ?`. The check is right for the value it read. Anything
+that commits between the read and the write is invisible to it, so two requests at the same
+moment both pass. Sequential tests never see it. A longer wait is the same bug: a DRAFT checked
+at create and posted days later.
+
+**The rule.** Keep the friendly pre-check, and put the limit in the write as well, so the
+database decides on the value that is actually there:
+
+- a CHECK constraint when the limit is a fixed fact about the row (R5,
+  `chk_grn_items_invoiced_qty`), or
+- a guarded UPDATE that RAISES when the limit is a business tolerance (R2's 110%).
+
+It must raise, not match zero rows: a 0-row update lets the rest of the batch commit. The
+counter statement must ride in the same `db.batch()` as the document it belongs to, or the
+raise has nothing to roll back. Map the error to a 409.
+
+| # | site | state |
+|---|---|---|
+| 1 | `purchase-invoices.ts` PI create vs `grn_items.invoiced_qty` | ✅ CHECK constraint + 23514 mapped to 409 (T-006 R5) |
+| 2 | `grn.ts` GRN create / DRAFT → POSTED / qty edit vs `purchase_order_items.receivedQty` | ✅ fixed 2026-09-30 (BUG-2026-09-30-226), guarded UPDATE. Verified on staging 2026-09-30: two DRAFT receipts posted at the same instant, one posted and the other got the 409 and rolled back |
+| 3 | `purchase-invoices.ts` `checkPoRemaining` (PO invoiced ceiling) | ⬜ unswept: read-then-write, no backstop known |
+| 4 | delivery return cap (T-006 R7), DO invoiceable qty, stock allocation | ⬜ unswept |
+| 5 | Document numbers read as last+1 then inserted (`generateGrnNumber`). The unique index is the backstop; the gap was the collision surfacing as a raw 500 | ✅ GRN 2026-10-01 (BUG-2026-10-01-232): retry with the next number, 409 after 5, same as the PO number (`purchase-orders.ts` 5.3). ⬜ other document numbers (PI, DO, SO, invoice) not swept for the same 500 |
+
+Test: `tests/purchasing-convert-flow.test.mjs` ("R2 race"), `tests/purchase-edit-cascade.test.mjs`.
+A fake DB cannot show locking. It can show that a stale read ends with nothing written.
+## C28 — UPHOLSTERY cards as the proxy for "made", and an accessory has none
+
+**Shape.** A gate decides "this PO / order is finished" by checking that every UPHOLSTERY job
+card is COMPLETED/TRANSFERRED. Accessories (pillow, cushion: FAB_CUT → FAB_SEW → PACKING, mig
+0032) have no UPHOLSTERY card at all, so the gate sees an empty set and either reads it as
+done (vacuous true: the order ships early) or as never-done (the item is stuck forever).
+
+**Why it keeps happening.** Sofas and bedframes, the bulk of the volume, always have
+UPHOLSTERY cards, so the proxy is right for almost every row a tester looks at. Each gate was
+written separately and each fix repaired only the gate in front of its author.
+
+**The rule.** An empty UPHOLSTERY set never decides on its own. Fall back to the PO's own
+status (`COMPLETED`, which the backend only sets once every relevant dept is done). For the
+order-level cascades use `siblingUphGateDone` in `production-orders/_helpers.ts`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | `poReadyForDelivery` (`src/lib/delivery-pipeline.ts`) — completed pillows never reached Pending Delivery | ✅ 2026-06-20 (BUG-2026-06-20-001) |
+| 2 | Consignment "ready to ship" list — completed pillows missing | ✅ 2026-07-01 (BUG-2026-07-01-004) |
+| 3 | `cascadeUpholsteryToSO` / `ToCO` / `cascadeUpholsteryRollbackToSO` — SO flipped to READY_TO_SHIP on the sofa's upholstery while its pillows were on Fab Sew | ✅ 2026-10-01 on branch `fix/dev08-accessory-so-ready` (BUG-2026-10-01-241), not deployed |
+| 4 | `poInPlanning` (`src/lib/delivery-pipeline.ts`) — an in-production pillow does not preview in the Delivery Planning tab | ⬜ left by BUG-2026-06-20-001 as lower impact; changes what the Delivery page lists, so it needs the owner's call |
+
+Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return true` left in
+`_helpers.ts`; every cascade goes through `siblingUphGateDone`).
+
+---
+
+## C29 — a read right after a write, served from Hyperdrive's cache
+
+**Shape.** A plain SELECT that runs soon after a write returns the pre-write rows. Hyperdrive caches non-mutating queries at the proxy (60 s by default) and never invalidates them on a write. Reads inside a transaction, or that call `NOW()`, are not cached.
+
+**Why it keeps happening.** Local dev and tests have no Hyperdrive, so the code is right everywhere it is tested. On prod a busy table hides it, because the next write moves things along. On staging, with few writes, it sticks.
+
+**The rule.** A read that decides money, a state change, or what a cache stores reads through a transaction: `freshAll` / `freshFirst` (`worker-penalties.ts`) or `freshReads` (`worker-perf.ts`). For a snapshot, the probe AND the rebuild must both be fresh: a fresh probe with cached rebuild reads stores old rows under a new signature. The cheaper fix for everything at once is `--caching-disabled` on the Hyperdrive configs, which is the owner's decision.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | `/bulk-patch` PIC readback (`production-orders.ts`) | ✅ 2026-06-26 (BUG-2026-06-26-001), batch re-read |
+| 2 | BOM list after a save (`bom.ts`) | ✅ `NOW()` CTE |
+| 3 | worker penalties + payroll status reads | ✅ on `staging` (BUG-2026-10-01-236), `freshAll` |
+| 4 | worker `/history` + `/payslips` snapshot (`withWorkerSnapshot`) | ✅ 2026-10-01 on branch `fix/worker-history-snapshot-stale` (BUG-2026-10-01-245), not deployed |
+| 5 | `lib/snapshot.ts`, dashboard / delivery / invoice snapshots: probe and rebuild are plain reads | ⬜ open; needs `freshReads` on both, or the infra switch |
+
+Test: `tests/worker-history-snapshot-fresh.test.mjs` (row 4).
+
+## C30 — a list column whose screen value exists only in `render`, exported raw
+
+**Shape.** A DataGrid column computes what it shows inside `render` (a count of an array, a sum, an id looked up to a name, sen formatted as RM). The grid Export (`cellExportValue`, `src/lib/grid-export.ts`) never calls `render`; it reads `exportValue`, else `filterAccessor`, else the raw value at the key. So the file gets `[object Object]`, a blank, an id or a sen integer.
+
+**Why it keeps happening.** The screen is right, so nobody looks at the file until an operator opens it. `exportName` is switched on per page, and the columns were written long before export existed.
+
+**The rule.** When a page has `exportName`, every column whose render shows something other than the raw key value carries an `exportValue` that returns the same thing as text or a number (money as RM). Add the column to `RENDER_ONLY_COLUMNS` in `tests/grid-export-coverage.test.mjs`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | Sales/Service Orders, Purchase Orders, GRN, Purchase Invoices, Delivery Orders, Consignment, Customers (list in BUG-2026-10-12-278) | ✅ on branch `fix/grid-export-computed-columns` (BUG-2026-10-12-278), not deployed |
+| 2 | status columns export the raw code (`IN_PRODUCTION`) where the screen swaps `_` for a space | ✅ on branch `fix/export-all-pages`, `cellExportValue` does the same swap for `type: "status"` |
+
+Test: `tests/grid-export-coverage.test.mjs` "render-only columns carry an exportValue".
+
+## C31 — a list that shows one server page, read as if it were the whole list
+
+**Shape.** A list page loads one server page (`?page=&limit=`) and a feature built on the grid's rows (the Export, a total, a "select all") treats those rows as the whole list. Or a request carries a `limit` the route clamps lower, so the "whole" list is silently cut.
+
+**Why it keeps happening.** Paging was added to these pages for speed long after the grid features that read its rows. Staging and local data are small, so one page often IS everything.
+
+**The rule.** A grid feature that means "every row" on a paged page takes its rows from `exportAllRows` (or the page's own all-rows path), never from the grid's `data`. A request that means "all" sends no `limit`, or walks pages with `fetchAllPages`.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | grid Export on Sales Orders, Purchase Orders, GRN, Invoices, Delivery Orders (unfiltered) | ✅ on branch `fix/export-all-pages` (BUG-2026-10-12-281), not deployed |
+| 2 | Invoices search and filter sent `limit=2000`, clamped to 500 | ✅ on branch `fix/export-all-pages` (BUG-2026-10-12-281), not deployed |
+| 3 | Purchase Orders and GRN Draft tab: not in the "load everything" switch, so the tab shows only the drafts on the current 200-row page | ⬜ open, screen only (the Export is complete) |
+
+Test: `tests/export-all-pages.test.mjs`.

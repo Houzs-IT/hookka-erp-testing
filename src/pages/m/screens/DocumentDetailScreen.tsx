@@ -39,8 +39,9 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { MobileHeader, MobileCard, StatusPill, Sheet, FormSheet, QrModal } from "../components";
+import { MobileHeader, MobileCard, StatusPill, Sheet, FormSheet, QrModal, ResponsiveActionDock } from "../components";
 import { M, M_ACCENT } from "../theme";
+import { useResponsiveLayout } from "../lib/responsive-layout";
 import {
   type ModuleConfig,
   type DetailConfig,
@@ -54,6 +55,7 @@ import { PodSheet } from "../components/PodSheet";
 import { GrnReceiveSheet } from "../components/GrnReceiveSheet";
 import type { ProofOfDelivery } from "@/types";
 import { mutateJson, refreshOne, refreshList } from "../config/mutate";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { str } from "../config/helpers";
 
 /** Leading-glyph map for the "Convert document" action buttons. */
@@ -131,6 +133,9 @@ function Inner({
   const [podOpen, setPodOpen] = useState(false);
   // Goods-receipt sheet (procurement PO "Receive (GRN)").
   const [grnOpen, setGrnOpen] = useState(false);
+  // T-006 R10 — same receipt route as the desktop form, same protection: a
+  // retry on a flaky phone connection must not post the goods twice.
+  const grnIdem = useIdempotencyKey();
   // CTA action state (acknowledge / sign / mark-read) — inline busy + toast.
   const [ctaBusy, setCtaBusy] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(
@@ -1162,7 +1167,9 @@ function Inner({
         poId={id}
         onClose={() => setGrnOpen(false)}
         onSubmit={async (body) => {
-          const res = await mutateJson("/api/grn", "POST", body);
+          const res = await grnIdem.withKey((key) =>
+            mutateJson("/api/grn", "POST", body, { "Idempotency-Key": key }),
+          );
           if (!res.ok) return { ok: false, error: res.error };
           refreshOne(`/api/purchase-orders/${encodeURIComponent(id)}`);
           refreshList("/api/grn");
@@ -1577,26 +1584,18 @@ function ActionBar({
   onEdit: () => void;
   onCta: () => void;
 }) {
+  const { mode } = useResponsiveLayout();
   return (
-    <div
-      style={{
-        position: "fixed",
-        left: 0,
-        right: 0,
-        bottom: "calc(56px + env(safe-area-inset-bottom))",
-        display: "flex",
-        justifyContent: "center",
-        pointerEvents: "none",
-        zIndex: 30,
-      }}
-    >
+    <ResponsiveActionDock scope="detail">
       <div
         style={{
           width: "100%",
-          maxWidth: 414,
+          maxWidth: mode === "phone" ? 414 : "none",
           display: "flex",
           gap: 8,
-          padding: "10px 12px",
+          padding: mode === "phone"
+            ? "10px 12px"
+            : "10px 12px max(10px, env(safe-area-inset-bottom))",
           backgroundColor: M.paper,
           borderTop: `1px solid ${M.border}`,
           pointerEvents: "auto",
@@ -1646,7 +1645,7 @@ function ActionBar({
           </button>
         ) : null}
       </div>
-    </div>
+    </ResponsiveActionDock>
   );
 }
 

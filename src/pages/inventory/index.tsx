@@ -32,9 +32,12 @@ import {
   type VariantsConfig,
 } from "@/lib/kv-config";
 import {
+  ALL_RM_UOMS,
   DEFAULT_MATERIAL_VARIANTS,
   materialVariantCode,
   materialVariantDescription,
+  rmUnitsFrom,
+  wholeUomsFrom,
 } from "@/lib/material-variants";
 // Stock Breakdown — the per-item right-hand drawer (lots, movements with a
 // derived running balance, and FIFO COGS). One component for FG / WIP / RM.
@@ -703,7 +706,13 @@ const fgColumns: Column<FGItem>[] = [
   },
   {
     key: "reservedQty",
-    label: "Reserved",
+    // R17 — this column never meant "reserved". It counts pieces named on a
+    // DRAFT delivery note, which is downstream of production and says nothing
+    // about an order commitment; the word sent people looking for a
+    // reservation mechanism that did not exist anywhere in the system. An
+    // order commitment is a stock_allocations row, and it is a different
+    // number. Named for what it actually counts.
+    label: "On draft DO",
     align: "right",
     render: (_v, row) => (
       <span
@@ -712,7 +721,7 @@ const fgColumns: Column<FGItem>[] = [
             ? "font-medium text-[#A86A1A]"
             : "text-[#9CA3AF]"
         }
-        title="In a DRAFT delivery order — still our stock, not yet dispatched/invoiced"
+        title="Named on a DRAFT delivery order — still our stock, not yet dispatched or invoiced. This is NOT an order allocation."
       >
         {row.reservedQty}
       </span>
@@ -1258,6 +1267,7 @@ export default function InventoryPage() {
   const [showMaterialCats, setShowMaterialCats] = useState(false);
   const [matCatSel, setMatCatSel] = useState<string>("");
   const [matCatNewVar, setMatCatNewVar] = useState("");
+  const [matCatNewUom, setMatCatNewUom] = useState("");
   const rmVariantsAll: Record<string, string[]> =
     (variantsCfg?.materialVariants as Record<string, string[]> | undefined) ?? DEFAULT_MATERIAL_VARIANTS;
   const rmCatVariants: string[] =
@@ -1301,6 +1311,34 @@ export default function InventoryPage() {
   function catVariants(cat: string): string[] {
     return rmVariantsAll[cat] ?? DEFAULT_MATERIAL_VARIANTS[cat] ?? [];
   }
+  // RM units (DEV-20) — built-ins plus the ones added in RM Settings, the same
+  // for every category; read by every RM form below, enforced again by the
+  // raw-materials route. Memoized: the React Compiler otherwise treats the
+  // call as a possible mutation and skips the page's other memos.
+  const rmUnits = useMemo(() => rmUnitsFrom(variantsCfg), [variantsCfg]);
+  const rmFormUomChoices = rmUnits;
+  const rmFormUom = rmFormUomChoices.includes(rmForm.baseUOM) ? rmForm.baseUOM : rmFormUomChoices[0];
+  // Units whose balance cannot be typed as a fraction here (all categories).
+  const rmWholeUoms = useMemo(() => wholeUomsFrom(variantsCfg?.wholeUoms), [variantsCfg]);
+  function toggleWholeUom(uom: string) {
+    const next = rmWholeUoms.includes(uom) ? rmWholeUoms.filter((x) => x !== uom) : [...rmWholeUoms, uom];
+    setVariantsCfg((prev) => ({ ...(prev ?? {}), wholeUoms: next }) as VariantsConfig);
+    patchVariantsConfig({ wholeUoms: next });
+  }
+  // Saves the added units (built-ins are never stored) and clears the retired
+  // per-category lists, whose units rmUnitsFrom has already carried over. A
+  // deleted unit also leaves the whole-number list.
+  function saveRmUnits(units: string[]) {
+    const extraUoms = units.filter((u) => !ALL_RM_UOMS.includes(u));
+    const wholeUoms = rmWholeUoms.filter((u) => ALL_RM_UOMS.includes(u) || extraUoms.includes(u));
+    setVariantsCfg((prev) => ({ ...(prev ?? {}), extraUoms, uomOptions: {}, wholeUoms }) as VariantsConfig);
+    patchVariantsConfig({ extraUoms, uomOptions: {}, wholeUoms });
+  }
+  function addRmUnit() {
+    const u = matCatNewUom.trim().toUpperCase();
+    if (u && !rmUnits.includes(u)) saveRmUnits([...rmUnits, u]);
+    setMatCatNewUom("");
+  }
   function addVariantToCat(cat: string, val: string) {
     const v = val.trim();
     const cur = catVariants(cat);
@@ -1333,7 +1371,7 @@ export default function InventoryPage() {
           body: JSON.stringify({
             itemCode: v.code,
             description: v.description,
-            baseUOM: rmForm.baseUOM,
+            baseUOM: rmFormUom,
             itemGroup: rmForm.itemGroup,
             balanceQty: 0,
           }),
@@ -1984,7 +2022,7 @@ export default function InventoryPage() {
     { key: "id", label: "ID", hidden: true },
     { key: "itemCode", label: "Item Code", required: true, example: "PC151-01", help: "Unique item code" },
     { key: "description", label: "Description", required: true, example: "Fabric PC151-01 Grey" },
-    { key: "baseUOM", label: "Base UOM", required: true, example: "M", help: "M / PCS / KG / ROLL etc." },
+    { key: "baseUOM", label: "Base UOM", required: true, example: "MTR", help: "One of the units in RM Settings → Units." },
     { key: "itemGroup", label: "Item Group", required: true, example: "FABRIC", help: "FABRIC / PLYWOOD / FOAM etc." },
     { key: "balanceQty", label: "Balance Qty", type: "number", example: 0 },
     { key: "isActive", label: "Active", type: "boolean", example: "TRUE" },
@@ -2097,7 +2135,9 @@ export default function InventoryPage() {
               <p className="text-xl font-bold text-[#1F1D1B]">{fgItems.length}</p>
             </CardContent></Card>
             <Card><CardContent className="p-2.5">
-              <p className="text-xs text-[#6B7280]">Available · Reserved</p>
+              {/* R17 — the second figure counts pieces on a DRAFT delivery
+                  note, not pieces promised to an order. */}
+              <p className="text-xs text-[#6B7280]">Available · On draft DO</p>
               <p className="text-xl font-bold text-[#1F1D1B] tabular-nums">
                 {fgTotalStock.toLocaleString()}
                 <span className="text-[#A86A1A]"> · {fgTotalReserved.toLocaleString()}</span>
@@ -2627,7 +2667,7 @@ export default function InventoryPage() {
               <Download className="h-4 w-4" /> Export ({visibleRMRows.length})
             </Button>
             <Button variant="outline" size="sm" onClick={() => { setMatCatSel(matCatSel || RM_ITEM_GROUPS[0]); setShowMaterialCats(true); }}>
-              <Layers className="h-4 w-4" /> Categories
+              <Layers className="h-4 w-4" /> RM Settings
             </Button>
             <Button variant="primary" size="sm" onClick={() => setShowCreateRM(true)}>
               <Plus className="h-4 w-4" /> Add RM
@@ -2666,8 +2706,8 @@ export default function InventoryPage() {
                       </div>
                       <div>
                         <label className="block text-xs text-[#6B7280] mb-1">Base UOM</label>
-                        <select value={rmForm.baseUOM} onChange={e => setRmForm(f => ({ ...f, baseUOM: e.target.value }))} className="w-full border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none">
-                          {["PCS", "MTR", "ROLL", "BOX", "CTN", "SET", "KG", "PAIR"].map(u => <option key={u} value={u}>{u}</option>)}
+                        <select value={rmFormUom} onChange={e => setRmForm(f => ({ ...f, baseUOM: e.target.value }))} className="w-full border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none">
+                          {rmFormUomChoices.map(u => <option key={u} value={u}>{u}</option>)}
                         </select>
                       </div>
                       <div className="sm:col-span-3">
@@ -2689,9 +2729,9 @@ export default function InventoryPage() {
                           </span>
                         );
                       })}
-                      {rmCatVariants.length === 0 && <span className="text-sm text-gray-400">No variants for {rmForm.itemGroup} yet — add them in the Categories manager (toolbar), then come back here.</span>}
+                      {rmCatVariants.length === 0 && <span className="text-sm text-gray-400">No variants for {rmForm.itemGroup} yet — add them in RM Settings (toolbar), then come back here.</span>}
                     </div>
-                    <div className="text-xs text-gray-400 mb-4">Tick which variants to generate. To add or remove the variants themselves, use the <b>Categories</b> button — the preset is locked here so it can't be changed by accident.</div>
+                    <div className="text-xs text-gray-400 mb-4">Tick which variants to generate. To add or remove the variants themselves, use the <b>RM Settings</b> button — the preset is locked here so it can't be changed by accident.</div>
 
                     <div className="bg-[#FAF6EF] border border-[#E2DDD8] rounded-md p-3">
                       <div className="text-xs text-gray-500 mb-2">Will create <b className="text-[#6B5C32]">{rmBulkPreview.length}</b> material{rmBulkPreview.length === 1 ? "" : "s"} — Balance Qty starts 0</div>
@@ -2718,8 +2758,8 @@ export default function InventoryPage() {
                   </div>
                   <div>
                     <label className="block text-xs text-[#6B7280] mb-1">Base UOM</label>
-                    <select value={rmForm.baseUOM} onChange={e => setRmForm(f => ({ ...f, baseUOM: e.target.value }))} className="w-full border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none">
-                      {["PCS", "MTR", "ROLL", "BOX", "CTN", "SET", "KG", "PAIR"].map(u => <option key={u} value={u}>{u}</option>)}
+                    <select value={rmFormUom} onChange={e => setRmForm(f => ({ ...f, baseUOM: e.target.value }))} className="w-full border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none">
+                      {rmFormUomChoices.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
                   </div>
                   <div>
@@ -2758,7 +2798,7 @@ export default function InventoryPage() {
                           body: JSON.stringify({
                             itemCode: rmForm.itemCode,
                             description: rmForm.description,
-                            baseUOM: rmForm.baseUOM,
+                            baseUOM: rmFormUom,
                             itemGroup: rmForm.itemGroup,
                             balanceQty: rmForm.balanceQty,
                           }),
@@ -2793,15 +2833,16 @@ export default function InventoryPage() {
             </Card>
           )}
 
-          {/* Material Categories maintenance modal (owner 2026-07-11) — set up
-              each category's variant list up front; Add RM → Bulk reads them. */}
+          {/* RM Settings modal (was "Material Categories", owner 2026-07-11;
+              renamed for DEV-20) — per-category variants, allowed UOMs and
+              default sheet size, all on kv variants-config. */}
           {showMaterialCats && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowMaterialCats(false)}>
               <div className="bg-white rounded-xl shadow-xl w-[560px] max-w-[92vw] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2DDD8]">
                   <div>
-                    <h2 className="text-lg font-bold text-[#111827]">Material Categories</h2>
-                    <p className="text-xs text-gray-500">Each category's variant list — used by Add RM → Bulk generate. Changes save automatically.</p>
+                    <h2 className="text-lg font-bold text-[#111827]">RM Settings</h2>
+                    <p className="text-xs text-gray-500">Per-category settings for raw materials. Changes save automatically.</p>
                   </div>
                   <button onClick={() => setShowMaterialCats(false)} className="p-1 hover:bg-gray-100 rounded"><X className="w-5 h-5 text-gray-400" /></button>
                 </div>
@@ -2813,7 +2854,7 @@ export default function InventoryPage() {
                     </select>
                   </div>
                   <div>
-                    <div className="text-xs text-[#6B7280] mb-1.5">Variants for <span className="font-mono text-[#1F1D1B]">{matCatSel}</span></div>
+                    <div className="text-xs text-[#6B7280] mb-1.5">Variants for <span className="font-mono text-[#1F1D1B]">{matCatSel}</span> <span className="text-[#9CA3AF]">(used by Add RM → Bulk generate)</span></div>
                     <div className="flex flex-wrap gap-2 mb-2">
                       {catVariants(matCatSel).map((v) => (
                         <span key={v} className="inline-flex items-center gap-1.5 border border-[#E2DDD8] rounded px-2.5 py-1 text-sm bg-[#FAF9F7]">
@@ -2826,6 +2867,47 @@ export default function InventoryPage() {
                     <div className="flex gap-2">
                       <input value={matCatNewVar} onChange={(e) => setMatCatNewVar(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addVariantToCat(matCatSel, matCatNewVar); setMatCatNewVar(""); } }} className="flex-1 border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none" placeholder={`Add a ${matCatSel} variant (e.g. 6mm)`} />
                       <Button variant="outline" size="sm" onClick={() => { addVariantToCat(matCatSel, matCatNewVar); setMatCatNewVar(""); }} disabled={!matCatNewVar.trim()}><Plus className="h-4 w-4" /> Add</Button>
+                    </div>
+                  </div>
+
+                  {/* Units (DEV-20) — GLOBAL, not per category. Every unit
+                      here is offered on Add / Edit / Batch Edit for every
+                      category; the API rejects any other. Built-ins stay. */}
+                  <div className="pt-3 border-t border-[#E2DDD8]">
+                    <div className="text-xs text-[#6B7280] mb-1.5">
+                      Units <span className="text-[#1F1D1B] font-medium">(all categories)</span>{" "}
+                      <span className="text-[#9CA3AF]">(add a unit the list is missing, e.g. BOTTLE; × deletes one added by mistake)</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {rmUnits.map((u) => (
+                        <span key={u} className="inline-flex items-center gap-1.5 border border-[#E2DDD8] rounded px-2.5 py-1 text-sm bg-[#FAF9F7]">
+                          <span className="font-mono">{u}</span>
+                          {!ALL_RM_UOMS.includes(u) && (
+                            <button type="button" onClick={() => saveRmUnits(rmUnits.filter((x) => x !== u))} className="text-[#9A3A2D]/50 hover:text-[#9A3A2D]" title={`Delete ${u}`} aria-label={`Delete ${u}`}><X className="w-3 h-3" /></button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={matCatNewUom}
+                        onChange={(e) => setMatCatNewUom(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          addRmUnit();
+                        }}
+                        className="flex-1 min-w-0 border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none"
+                        placeholder="New unit (e.g. BOTTLE)"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!matCatNewUom.trim()}
+                        onClick={addRmUnit}
+                      >
+                        <Plus className="h-4 w-4" /> Add
+                      </Button>
                     </div>
                   </div>
 
@@ -2842,6 +2924,34 @@ export default function InventoryPage() {
                       <Input type="number" placeholder="Length" onFocus={(e) => e.currentTarget.select()} value={catSheetDefault(matCatSel).length ?? ""} onChange={(e) => saveSheetDefault(matCatSel, { length: e.target.value === "" ? undefined : Number(e.target.value) })} className="w-28" />
                       <span className="text-[#9CA3AF]">×</span>
                       <Input type="number" placeholder="Width" onFocus={(e) => e.currentTarget.select()} value={catSheetDefault(matCatSel).width ?? ""} onChange={(e) => saveSheetDefault(matCatSel, { width: e.target.value === "" ? undefined : Number(e.target.value) })} className="w-28" />
+                    </div>
+                  </div>
+
+                  {/* Whole-number units (DEV-20) — GLOBAL, not per category.
+                      A stock qty typed on this page (Add RM / Edit RM) in one
+                      of these units must be whole; the API enforces it. Stock
+                      Adjustments, PO, GRN and production are not checked. */}
+                  <div className="pt-3 border-t border-[#E2DDD8]">
+                    <div className="text-xs text-[#6B7280] mb-1.5">
+                      Whole-number units <span className="text-[#1F1D1B] font-medium">(all categories)</span>{" "}
+                      <span className="text-[#9CA3AF]">(stock qty typed on this page cannot be a fraction, e.g. no 2.5 BOX)</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {[...new Set([...rmUnits, ...rmWholeUoms])].map((u) => {
+                        const on = rmWholeUoms.includes(u);
+                        return (
+                          <button
+                            key={u}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() => toggleWholeUom(u)}
+                            className={`inline-flex items-center gap-1.5 border rounded px-2.5 py-1 text-sm font-mono ${on ? "border-[#6B5C32] bg-[#F4EFE3] text-[#1F1D1B]" : "border-[#E2DDD8] bg-white text-gray-500 hover:bg-[#FAF9F7]"}`}
+                          >
+                            <span className={`w-4 h-4 flex-shrink-0 rounded-sm border flex items-center justify-center ${on ? "bg-[#6B5C32] border-[#6B5C32] text-white" : "border-gray-300"}`}>{on ? <Check className="w-3 h-3" /> : null}</span>
+                            {u}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -3195,13 +3305,26 @@ export default function InventoryPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs text-[#6B7280] mb-1">Unit</label>
-                  <select value={editRMForm.baseUOM} onChange={(e) => setEditRMForm(f => ({ ...f, baseUOM: e.target.value }))} className="w-full h-[34px] rounded border border-[#E2DDD8] px-3 text-sm">
-                    {["MTR","PCS","SET","BOX","ROLL","CTN","KG","LITER","PAIR","UNIT"].map(u => <option key={u} value={u}>{u}</option>)}
+                  {/* DEV-20: the category's allowed units. A legacy off-list
+                      value stays visible so opening the dialog never changes it.
+                      Locked while the material holds stock; the API also refuses
+                      it for open batches / PO lines. */}
+                  <select
+                    value={editRMForm.baseUOM}
+                    onChange={(e) => setEditRMForm(f => ({ ...f, baseUOM: e.target.value }))}
+                    disabled={Number(editRM.balanceQty) !== 0}
+                    title={Number(editRM.balanceQty) !== 0 ? "Locked: this material has stock counted in its current unit" : undefined}
+                    className="w-full h-[34px] rounded border border-[#E2DDD8] px-3 text-sm disabled:bg-[#FAF9F7] disabled:text-[#6B7280]"
+                  >
+                    {!rmUnits.includes(editRMForm.baseUOM) && editRMForm.baseUOM && (
+                      <option value={editRMForm.baseUOM}>{editRMForm.baseUOM}</option>
+                    )}
+                    {rmUnits.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs text-[#6B7280] mb-1">Stock Qty</label>
-                  <Input type="number" onFocus={(e) => e.currentTarget.select()} value={editRMForm.balanceQty} onChange={(e) => setEditRMForm(f => ({ ...f, balanceQty: parseInt(e.target.value) || 0 }))} />
+                  <Input type="number" onFocus={(e) => e.currentTarget.select()} value={editRMForm.balanceQty} onChange={(e) => setEditRMForm(f => ({ ...f, balanceQty: Number(e.target.value) || 0 }))} />
                 </div>
               </div>
               <div>
@@ -3479,6 +3602,7 @@ export default function InventoryPage() {
         onClose={() => setShowBatchEditRM(false)}
         rawMaterials={liveRawMaterials}
         itemGroups={RM_ITEM_GROUPS}
+        units={rmUnits}
         onSaved={(updated) => {
           setLiveRawMaterials(updated);
           invalidateCachePrefix("/api/raw-materials");
@@ -3521,8 +3645,6 @@ export default function InventoryPage() {
 // request per dirty row; the page's RawMaterials state is patched
 // in-place on success so a refetch isn't required.
 
-const RM_UOM_OPTIONS = ["PCS", "MTR", "ROLL", "BOX", "CTN", "SET", "KG", "PAIR"];
-
 type RMEdit = {
   itemCode?: string;
   description?: string;
@@ -3536,12 +3658,14 @@ function BatchEditRMDialog({
   onClose,
   rawMaterials,
   itemGroups,
+  units,
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   rawMaterials: RawMaterial[];
   itemGroups: string[];
+  units: string[];
   onSaved: (next: RawMaterial[]) => void;
 }) {
   const { toast } = useToast();
@@ -3695,6 +3819,7 @@ function BatchEditRMDialog({
     }
     setSaving(true);
     const failures: string[] = [];
+    let firstError = "";
     const successes = new Map<string, RawMaterial>();
     try {
       for (const [id, edit] of pendingByRm.entries()) {
@@ -3719,6 +3844,8 @@ function BatchEditRMDialog({
             | null;
           if (!res.ok || !json?.success) {
             failures.push(r.itemCode);
+            // e.g. the DEV-20 UOM guards — say WHY, not just which row.
+            if (!firstError && json?.error) firstError = json.error;
             continue;
           }
           successes.set(id, json.data ?? { ...r, ...body });
@@ -3732,7 +3859,8 @@ function BatchEditRMDialog({
       }
       if (failures.length > 0) {
         toast.warning(
-          `Saved ${successes.size}; ${failures.length} failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "..." : ""}`,
+          `Saved ${successes.size}; ${failures.length} failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "..." : ""}` +
+            (firstError ? ` (${firstError})` : ""),
         );
       } else {
         toast.success(`Saved ${successes.size} raw material${successes.size !== 1 ? "s" : ""}.`);
@@ -3829,7 +3957,7 @@ function BatchEditRMDialog({
                     className="flex-1 border border-[#E2DDD8] rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:border-[#6B5C32]"
                   >
                     <option value="">Pick UOM...</option>
-                    {RM_UOM_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    {units.map((u) => <option key={u} value={u}>{u}</option>)}
                   </select>
                 )}
                 {bulkField === "isActive" && (
@@ -3965,10 +4093,10 @@ function BatchEditRMDialog({
                               pendingByRm.get(r.id)?.baseUOM !== undefined ? "border-[#4F7C3A] font-semibold text-[#4F7C3A]" : "border-[#E2DDD8]"
                             }`}
                           >
-                            {!RM_UOM_OPTIONS.includes(eff.baseUOM) && eff.baseUOM && (
+                            {!units.includes(eff.baseUOM) && eff.baseUOM && (
                               <option value={eff.baseUOM}>{eff.baseUOM}</option>
                             )}
-                            {RM_UOM_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
+                            {units.map((u) => <option key={u} value={u}>{u}</option>)}
                           </select>
                         </td>
                         <td className="px-3 py-2 text-center">

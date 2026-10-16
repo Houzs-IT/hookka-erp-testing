@@ -24,6 +24,7 @@ import {
   updateConsignmentNoteById,
   validatePOMutex,
   CN_VALID_TRANSITIONS,
+  ensureCnStatusBeforeConversionColumn,
 } from "../lib/consignment-note-shared";
 import { cascadeCNCompletionToCO, cascadeCNReversalToCO } from "./production-orders";
 import {
@@ -44,6 +45,7 @@ import { getOrgId, withOrgScope } from "../lib/tenant";
 import { loadCnValueMap, loadCnCustomerRefMap } from "../lib/cn-value";
 import { emitAudit } from "../lib/audit";
 import { requirePermission } from "../lib/rbac";
+import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
 import { customerScopeSql } from "../lib/customer-scope";
 import { enqueueEmail } from "../lib/email-outbox";
 import {
@@ -621,12 +623,13 @@ app.get("/:id/print-extras", async (c) => {
     divanHeightInches: number | null;
     legHeightInches: number | null;
     specialOrder: string | null;
+    sizeLabel: string | null;
   };
   const coSpecByCode = new Map<string, CoSpec>();
   if (cnRow.consignmentOrderId) {
     const coiRes = await c.var.DB.prepare(
       `SELECT productCode, itemCategory, gapInches, divanHeightInches,
-              legHeightInches, specialOrder
+              legHeightInches, specialOrder, sizeLabel
          FROM consignment_order_items
         WHERE consignmentOrderId = ?`,
     )
@@ -638,6 +641,7 @@ app.get("/:id/print-extras", async (c) => {
         divanHeightInches: number | null;
         legHeightInches: number | null;
         specialOrder: string | null;
+        sizeLabel: string | null;
       }>();
     for (const s of coiRes.results ?? []) {
       const pc = (s.productCode || "").trim();
@@ -650,6 +654,7 @@ app.get("/:id/print-extras", async (c) => {
         divanHeightInches: prev?.divanHeightInches ?? s.divanHeightInches ?? null,
         legHeightInches: prev?.legHeightInches ?? s.legHeightInches ?? null,
         specialOrder: prev?.specialOrder ?? s.specialOrder ?? null,
+        sizeLabel: prev?.sizeLabel || s.sizeLabel || null,
       });
     }
   }
@@ -722,6 +727,9 @@ app.get("/:id/print-extras", async (c) => {
       divanHeightInches: number | null;
       legHeightInches: number | null;
       totalHeightInches: number | null;
+      // The CO line's size (a sofa's seat size, e.g. "28"), for the PDF's
+      // Size column. Not products.sizeLabel, which is the module code.
+      sizeLabel: string | null;
       packedDate: string | null;
       componentRacks: { label: string; racks: string[] }[];
     }
@@ -768,6 +776,8 @@ app.get("/:id/print-extras", async (c) => {
       divanHeightInches: d,
       legHeightInches: l,
       totalHeightInches: total,
+      // PO copies it from the CO line but stores "" when blank, hence ||.
+      sizeLabel: r.sizeLabel || fb?.sizeLabel || null,
       packedDate,
       componentRacks,
     };
@@ -848,7 +858,7 @@ app.post("/", async (c) => {
         return c.json(
           {
             success: false,
-            error: `Cannot create consignment note — ${mutex.conflicts.length} PO${mutex.conflicts.length === 1 ? "" : "s"} already on an active delivery order: ${mutex.conflicts.join(", ")}`,
+            error: mutex.message,
             conflicts: mutex.conflicts,
             reason: mutex.reason,
           },
@@ -867,7 +877,7 @@ app.post("/", async (c) => {
           return c.json(
             {
               success: false,
-              error: `Cannot create consignment note — ${mutex.conflicts.length} PO${mutex.conflicts.length === 1 ? "" : "s"} already on an active delivery order: ${mutex.conflicts.join(", ")}`,
+              error: mutex.message,
               conflicts: mutex.conflicts,
               reason: mutex.reason,
             },
@@ -1326,11 +1336,12 @@ app.post("/:id/return", async (c) => {
       const refundSen = cn.totalValue - nextTotalValue;
       statements.push(
         c.var.DB.prepare(
+          // No updated_at: `customers` has no such column (the write made
+          // this whole batch fail — see convert-to-invoice below).
           `UPDATE customers
-              SET outstandingSen = GREATEST(0, COALESCE(outstandingSen, 0) - ?),
-                  updated_at = ?
+              SET outstandingSen = GREATEST(0, COALESCE(outstandingSen, 0) - ?)
             WHERE id = ?`,
-        ).bind(refundSen, now, cn.customerId),
+        ).bind(refundSen, cn.customerId),
       );
     }
 
@@ -1419,6 +1430,11 @@ app.post("/:id/return", async (c) => {
 app.post("/:id/convert-to-invoice", async (c) => {
   const denied = await requirePermission(c, "consignment-notes", "create");
   if (denied) return denied;
+  // T-006 R10 — a retried convert (network blip on the round-trip) must not
+  // mint a second invoice off the same CN. No-op when the client sends no
+  // Idempotency-Key.
+  const idemKey = readIdempotencyKey(c);
+  return withIdempotency(c, "consignment-notes", idemKey, async () => {
   try {
     const id = c.req.param("id");
     const body = (await c.req.json().catch(() => ({}))) as {
@@ -1558,6 +1574,7 @@ app.post("/:id/convert-to-invoice", async (c) => {
     // FG stock ledger — read the FROM side with the SAME predicate the flip
     // below uses, before anything is written.
     await ensureFgStockEventsSchema(c.var.DB);
+    await ensureCnStatusBeforeConversionColumn(c.var.DB);
     const soldUnits = await loadFgUnitsForEvent(
       c.var.DB,
       "cnId = ? AND status = 'LOADED'",
@@ -1619,14 +1636,17 @@ app.post("/:id/convert-to-invoice", async (c) => {
       ),
       // Flip CN to FULLY_SOLD + link the new invoice id back. Stamp
       // deliveredAt if not already (a sale-conversion implies the goods
-      // reached the customer's hands).
+      // reached the customer's hands). status_before_conversion (T-006 R4)
+      // records what to restore if the invoice is later voided — there is no
+      // single fixed prior status since this route has no status gate.
       c.var.DB.prepare(
         `UPDATE consignment_notes
             SET status = 'FULLY_SOLD',
+                status_before_conversion = ?,
                 deliveredAt = COALESCE(deliveredAt, ?),
                 convertedInvoiceId = ?
           WHERE id = ?`,
-      ).bind(now, invoiceId, id),
+      ).bind(cn.status ?? "ACTIVE", now, invoiceId, id),
       // Mark every CN item SOLD with soldDate=now. The legacy enum allows
       // AT_BRANCH / SOLD / RETURNED / DAMAGED — SOLD is the right tag for
       // the convert-to-invoice action.
@@ -1666,12 +1686,14 @@ app.post("/:id/convert-to-invoice", async (c) => {
       // invoice total, mirroring DO's DELIVERED → invoice flow
       // (delivery-orders.ts:1857-1861). Without this, every CN-origin
       // invoice was off-ledger from the customer's A/R balance.
+      // No updated_at: `customers` has no such column, and writing it failed
+      // the whole convert batch — no CN on staging had ever converted
+      // (measured 2026-09-24). Same shape as the DO-side bump.
       c.var.DB.prepare(
         `UPDATE customers
-            SET outstandingSen = COALESCE(outstandingSen, 0) + ?,
-                updated_at = ?
+            SET outstandingSen = COALESCE(outstandingSen, 0) + ?
           WHERE id = ?`,
-      ).bind(totalSen, now, cn.customerId),
+      ).bind(totalSen, cn.customerId),
     ];
 
     await c.var.DB.batch(statements);
@@ -1719,6 +1741,7 @@ app.post("/:id/convert-to-invoice", async (c) => {
     console.error("[POST /api/consignment-notes/:id/convert-to-invoice] failed:", msg);
     return c.json({ success: false, error: msg || "Invalid request body" }, 400);
   }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1995,13 +2018,14 @@ app.post("/:id/notify-customer", async (c) => {
 //   - not_found            → 404
 //   - invalid_transition   → 400 with descriptive message (gap 5)
 //   - items_locked         → 403 with descriptive message (latent gap 3)
+//   - po_conflict          → 409, PO already on a DO or another CN (BUG-2026-10-01-238)
 // ----------------------------------------------------------------------------
 function mapUpdateCNError(
   res: Extract<
     Awaited<ReturnType<typeof updateConsignmentNoteById>>,
     { ok: false }
   >,
-): { status: 400 | 403 | 404; body: Record<string, unknown> } {
+): { status: 400 | 403 | 404 | 409; body: Record<string, unknown> } {
   if (res.reason === "not_found") {
     return {
       status: 404,
@@ -2030,6 +2054,12 @@ function mapUpdateCNError(
         reason: "items_locked",
         currentStatus: res.currentStatus,
       },
+    };
+  }
+  if (res.reason === "po_conflict") {
+    return {
+      status: 409,
+      body: { success: false, error: res.message, reason: "po_conflict" },
     };
   }
   // Exhaustiveness guard.

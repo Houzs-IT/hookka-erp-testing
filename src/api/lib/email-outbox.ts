@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
 import type { Env } from "../worker";
-import { sendMail, type EmailAttachment } from "./email";
+import { hasMailProvider, sendMail, type EmailAttachment, type MailEnv } from "./email";
 import { tryGetOrgId } from "./tenant";
 import { DEFAULT_BUCKET, getFile, putFile } from "./supabase-storage";
 
@@ -463,11 +463,10 @@ export interface ProcessOutboxResult {
 
 export async function processOutbox(
   db: D1Database,
-  env: {
-    RESEND_API_KEY?: string;
-    BREVO_API_KEY?: string;
-    RESEND_FROM_EMAIL?: string;
-  } & OutboxStorageEnv,
+  // MailEnv covers every provider (Brevo / Resend / the MailSlurp staging
+  // fallback); OutboxStorageEnv is what resolveStoredAttachments needs to
+  // fetch a stored attachment back at send time.
+  env: MailEnv & { RESEND_FROM_EMAIL?: string } & OutboxStorageEnv,
 ): Promise<ProcessOutboxResult> {
   const result: ProcessOutboxResult = {
     picked: 0,
@@ -477,7 +476,7 @@ export async function processOutbox(
     skippedBackoff: 0,
   };
 
-  if (!env.RESEND_API_KEY && !env.BREVO_API_KEY) {
+  if (!hasMailProvider(env)) {
     // No API key configured — log and skip. The endpoint should still
     // return ok so the cron job doesn't keep retrying nothing.
     console.warn("[email-outbox] no email provider configured; skipping drain");

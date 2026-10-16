@@ -333,8 +333,6 @@ test('every unit-price INPUT accepts the keystroke', () => {
   // even type it, which is what Siti was reporting.
   const cases = [
     ['src/components/ui/money-input.tsx', /step="0\.0001"/],
-    ['src/pages/procurement/create.tsx', /step="0\.0001"/],
-    ['src/pages/procurement/detail.tsx', /step="0\.0001"/],
     ['src/components/scan-supplier-modal.tsx', /step="0\.0001"/],
   ];
   for (const [f, re] of cases) {
@@ -343,16 +341,44 @@ test('every unit-price INPUT accepts the keystroke', () => {
 });
 
 test('the shared MoneyInput is where the step lives for the rest', () => {
-  // The PI create page, the PI edit grid, the PO modal and the GRN grid all use
-  // MoneyInput, so they inherit the step. Pin that they still do — swapping one
-  // back to a raw <Input> is how this reappears.
+  // The PI create page, the PI edit grid, the PO modal, the PO create page,
+  // the PO detail page and the GRN grid all use MoneyInput, so they inherit
+  // the step. Pin that they still do — swapping one back to a raw <Input> is
+  // how this reappears.
   for (const f of [
     'src/pages/procurement/pi/create.tsx',
     'src/pages/procurement/PurchaseInvoiceDetail.tsx',
     'src/pages/procurement/index.tsx',
+    'src/pages/procurement/create.tsx',
+    'src/pages/procurement/detail.tsx',
     'src/pages/procurement/grn/create.tsx',
   ]) {
     assert.match(read(f), /MoneyInput/, `${f} must use the shared money field`);
+  }
+});
+
+test('no PO form binds a FORMATTED unit price to a raw <Input> value (BUG-2026-09-22-179)', () => {
+  // A controlled `value={formatUnitPriceInput(sen)}` re-renders "1" as "1.00"
+  // after the first keystroke, so typing "18" produced "1.008". The PO create
+  // and PO detail pages did exactly this until 2026-09-22. MoneyInput keeps
+  // the raw draft while focused and formats only on blur — the price field
+  // must go through it, never through a raw Input fed a formatted string.
+  for (const f of [
+    'src/pages/procurement/create.tsx',
+    'src/pages/procurement/detail.tsx',
+    'src/pages/procurement/index.tsx',
+  ]) {
+    const src = read(f);
+    assert.equal(
+      /value=\{[^}]*formatUnitPriceInput\(/.test(src),
+      false,
+      `${f}: a unit-price input is fed a formatted string on every keystroke`,
+    );
+    assert.equal(
+      /value=\{[^}]*unitPriceSen[^}]*\.toFixed\(/.test(src),
+      false,
+      `${f}: a unit-price input is fed toFixed() on every keystroke`,
+    );
   }
 });
 
@@ -399,7 +425,8 @@ test('tax, discount and payment fields stay whole sen', () => {
 test('the API stores the rate and derives the amount, not the reverse', () => {
   const src = read('src/api/routes/purchase-invoices.ts');
   assert.match(src, /const unitPriceSen = roundUnitPriceSen\(Number\(it\.unitPriceSen\)\);/);
-  assert.match(src, /lineTotalSen: computeLineTotalSen\(qty, unitPriceSen\)/);
+  // DEV-14: the amount is derived net of the per-line discount, still from the rate.
+  assert.match(src, /discountedLineSen\(qty, unitPriceSen, Number\(it\.discountSen\)\)/);
 });
 
 // --- 7. the SOURCE of the price, and the cost chain below it --------------

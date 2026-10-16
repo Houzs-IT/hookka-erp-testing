@@ -20,6 +20,8 @@ import { Plus, ShoppingCart, Download, Filter, X, Eye, Pencil, Printer, Truck, F
 // Note: generateSOPdf is dynamic-imported at the click handler so the
 // 1MB jspdf vendor chunk only ships when the user actually prints a SO.
 import { ScanPOModal } from "@/components/scan-po-modal";
+import { StagingTestOrderFactory } from "@/components/staging-test-order-factory";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   OUTSTANDING_STATUSES,
@@ -30,7 +32,9 @@ import {
 } from "@/lib/so-status";
 import type { SalesOrder } from "@/types";
 import type { Customer, DeliveryOrder } from "@/types";
-import { fetchJson } from "@/lib/fetch-json";
+import { fetchJson, FetchJsonError } from "@/lib/fetch-json";
+import { askCreditOverride, isCreditBlock } from "@/pages/delivery/credit-override";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { mutationWithData } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
@@ -44,6 +48,29 @@ const DOListSchema = z
   })
   .passthrough();
 const DOMutationSchema = mutationWithData(DeliveryOrderSchema);
+// T-006 R1 — Transfer to Delivery Order must send productionOrderIds so the
+// once-only-delivery guard (validateDoComposition) actually runs; it only
+// runs when productionOrderIds is non-empty. Reuses the same
+// /api/delivery-orders/ready-planning "ready" list the Delivery page's own
+// (working) Create DO flow already sources productionOrderIds from.
+const ReadyPORowSchema = z
+  .object({
+    id: z.string(),
+    salesOrderId: z.string(),
+    productCode: z.string().optional().default(""),
+    productName: z.string().optional().default(""),
+    sizeLabel: z.string().optional().default(""),
+    fabricCode: z.string().optional().default(""),
+    quantity: z.number().optional().default(0),
+  })
+  .passthrough();
+const ReadyPlanningSchema = z
+  .object({
+    success: z.boolean().optional(),
+    ready: z.array(ReadyPORowSchema).optional(),
+  })
+  .passthrough();
+type ReadyPORowForTransfer = z.infer<typeof ReadyPORowSchema>;
 const InvoiceMutationSchema = mutationWithData(InvoiceSchema);
 
 type LinkedPOSummary = {
@@ -423,11 +450,21 @@ export default function SalesPage() {
   const [transferDORow, setTransferDORow] = useState<SalesOrder | null>(null);
   const [transferInvRow, setTransferInvRow] = useState<SalesOrder | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
+  // T-006 R10 — this is the entry point that shipped 13 duplicate DOs. The
+  // server-side guard now refuses a second delivery of the same production
+  // order, but a retry after a lost response should replay the first answer
+  // rather than surface that refusal as a failure.
+  const transferDoIdem = useIdempotencyKey();
   const [doDeliveryDate, setDoDeliveryDate] = useState("");
   const [doDriverName, setDoDriverName] = useState("");
   const [doVehicleNo, setDoVehicleNo] = useState("");
   const [transferSuccess, setTransferSuccess] = useState<{ type: "do" | "inv"; docNo: string } | null>(null);
   const [matchedDO, setMatchedDO] = useState<DeliveryOrder | null>(null);
+  // T-006 R1 — production orders for transferDORow's SO that are actually
+  // ready to deliver (not yet on a DO). Drives both the preview table and
+  // the productionOrderIds sent on submit — see ReadyPlanningSchema above.
+  const [transferReadyPOs, setTransferReadyPOs] = useState<ReadyPORowForTransfer[]>([]);
+  const [transferPOsLoading, setTransferPOsLoading] = useState(false);
 
   // Filters — already wired via the early _flXXX bindings above so the
   // fetch URL can drop pagination when any filter is active. Re-bind here
@@ -763,6 +800,10 @@ export default function SalesPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: SalesOrder) => {
+        const code = row.salesOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: SalesOrder) => {
         const code = row.salesOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -790,6 +831,7 @@ export default function SalesPage() {
       type: "number",
       width: "50px",
       sortable: true,
+      exportValue: (row: SalesOrder) => row.items.length,
       render: (_value, row) => <span>{row.items.length}</span>,
     },
     {
@@ -799,6 +841,7 @@ export default function SalesPage() {
       width: "55px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: SalesOrder) => row.items.reduce((s, i) => s + i.quantity, 0),
       render: (_value: unknown, row: SalesOrder) => {
         const totalQty = row.items.reduce((s, i) => s + i.quantity, 0);
         return <span>{totalQty}</span>;
@@ -912,6 +955,8 @@ export default function SalesPage() {
             label: "Current Dept",
             type: "text" as const,
             width: "120px",
+            exportValue: (row: SalesOrder) =>
+              aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []).dept ?? "",
             render: (_value: unknown, row: SalesOrder) => {
               const agg = aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []);
               return agg.dept ? (
@@ -926,6 +971,8 @@ export default function SalesPage() {
             label: "Progress",
             type: "number" as const,
             width: "130px",
+            exportValue: (row: SalesOrder) =>
+              aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []).progress ?? null,
             render: (_value: unknown, row: SalesOrder) => {
               const agg = aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []);
               if (agg.progress == null)
@@ -1040,12 +1087,28 @@ export default function SalesPage() {
     {
       label: "Transfer to Delivery Order",
       icon: <Truck className="h-3.5 w-3.5" />,
-      action: () => {
+      action: async () => {
         setDoDeliveryDate("");
         setDoDriverName("");
         setDoVehicleNo("");
         setTransferSuccess(null);
+        setTransferReadyPOs([]);
         setTransferDORow(row);
+        setTransferPOsLoading(true);
+        try {
+          // fresh=1: the shared list is served stale for a moment after a
+          // change, which showed a just-finished order as "Nothing ready".
+          const rp = await fetchJson("/api/delivery-orders/ready-planning?fresh=1", ReadyPlanningSchema);
+          const forThisSO = (rp.ready ?? []).filter((po) => po.salesOrderId === row.id);
+          setTransferReadyPOs(forThisSO);
+          if (forThisSO.length === 0) {
+            toast.warning("No production orders are ready to deliver for this SO yet.");
+          }
+        } catch {
+          toast.error("Couldn't load production orders for this SO. Try again.");
+        } finally {
+          setTransferPOsLoading(false);
+        }
       },
     },
     {
@@ -1211,6 +1274,7 @@ export default function SalesPage() {
           </Button>
         </div>
       </div>
+      {!isServiceOrderMode && <StagingTestOrderFactory basePath={basePath} />}
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-5 max-[360px]:grid-cols-1">
         {isServiceOrderMode ? (
@@ -1676,6 +1740,13 @@ export default function SalesPage() {
             onSearchChange={setGridSearch}
             gridId="sales-orders-list"
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
+            // Unfiltered, the grid holds one 200-row page; Export walks them
+            // all with the same tab rule as filteredOrders. Any filter already
+            // loads the whole set. The Draft tab counts as a filter
+            // (_filtersActive), so this only ever runs on Confirmed.
+            exportAllRows={_filtersActive ? undefined : () =>
+              fetchAllPages<SalesOrder>((p, l) => `/api/sales-orders?page=${p}&limit=${l}&${soFilterQs}`)
+                .then((rows) => rows.filter((o) => o.status !== "DRAFT"))}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}
             // Give each Status-dropdown selection its own filter session
@@ -1796,8 +1867,10 @@ export default function SalesPage() {
                       <p className="font-semibold text-[#1F1D1B]">{transferDORow.customerName}</p>
                     </div>
                     <div>
-                      <span className="text-[#9CA3AF]">Items</span>
-                      <p className="font-semibold text-[#1F1D1B]">{transferDORow.items.length} item(s)</p>
+                      <span className="text-[#9CA3AF]">Ready to deliver</span>
+                      <p className="font-semibold text-[#1F1D1B]">
+                        {transferPOsLoading ? "…" : `${transferReadyPOs.length} item(s)`}
+                      </p>
                     </div>
                     <div>
                       <span className="text-[#9CA3AF]">Total</span>
@@ -1837,11 +1910,21 @@ export default function SalesPage() {
                     </div>
                   </div>
 
-                  {/* Items table */}
+                  {/* Items table — production orders actually ready to
+                      deliver, not just every line on the SO (T-006 R1: a
+                      line not yet produced, or already on another DO,
+                      cannot be transferred). */}
                   <div>
                     <h3 className="text-sm font-medium text-[#1F1D1B] mb-2 flex items-center gap-2">
                       <Package className="h-4 w-4 text-[#6B5C32]" /> Items to Transfer
                     </h3>
+                    {transferPOsLoading ? (
+                      <p className="text-sm text-[#9CA3AF] py-4 text-center">Loading production orders…</p>
+                    ) : transferReadyPOs.length === 0 ? (
+                      <p className="text-sm text-[#9CA3AF] py-4 text-center">
+                        Nothing ready to deliver for this SO yet.
+                      </p>
+                    ) : (
                     <div className="border border-[#E2DDD8] rounded-lg overflow-hidden">
                       <table className="w-full text-sm">
                         <thead>
@@ -1854,8 +1937,8 @@ export default function SalesPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {transferDORow.items.map((item, idx) => (
-                            <tr key={idx} className="border-b border-[#E2DDD8] last:border-b-0">
+                          {transferReadyPOs.map((item) => (
+                            <tr key={item.id} className="border-b border-[#E2DDD8] last:border-b-0">
                               <td className="px-3 py-2 font-mono text-xs">{item.productCode}</td>
                               <td className="px-3 py-2">{item.productName}</td>
                               <td className="px-3 py-2">{item.sizeLabel}</td>
@@ -1866,6 +1949,7 @@ export default function SalesPage() {
                         </tbody>
                       </table>
                     </div>
+                    )}
                   </div>
                 </div>
 
@@ -1874,30 +1958,41 @@ export default function SalesPage() {
                   <Button variant="outline" onClick={() => setTransferDORow(null)} disabled={transferLoading}>Cancel</Button>
                   <Button
                     variant="primary"
-                    disabled={transferLoading}
+                    disabled={transferLoading || transferPOsLoading || transferReadyPOs.length === 0}
                     onClick={async () => {
                       setTransferLoading(true);
                       try {
-                        const mappedItems = transferDORow.items.map(item => ({
-                          productCode: item.productCode,
-                          productName: item.productName,
-                          sizeLabel: item.sizeLabel,
-                          fabricCode: item.fabricCode,
-                          quantity: item.quantity,
-                          itemM3: 0,
-                          rackingNumber: "",
-                          packingStatus: "PENDING",
-                        }));
-                        const d = await fetchJson("/api/delivery-orders", DOMutationSchema, {
-                          method: "POST",
-                          body: {
-                            salesOrderId: transferDORow.id,
-                            items: mappedItems,
-                            ...(doDeliveryDate && { deliveryDate: doDeliveryDate }),
-                            ...(doDriverName && { driverName: doDriverName }),
-                            ...(doVehicleNo && { vehicleNo: doVehicleNo }),
-                          },
-                        });
+                        // T-006 R1 — productionOrderIds, not hand-built items.
+                        // This is what makes validateDoComposition's
+                        // once-only-delivery guard actually run; the old
+                        // items-only body skipped it entirely.
+                        const body = {
+                          productionOrderIds: transferReadyPOs.map((po) => po.id),
+                          ...(doDeliveryDate && { deliveryDate: doDeliveryDate }),
+                          ...(doDriverName && { driverName: doDriverName }),
+                          ...(doVehicleNo && { vehicleNo: doVehicleNo }),
+                        };
+                        const postDo = (b: Record<string, unknown>) =>
+                          transferDoIdem.withKey((key) =>
+                            fetchJson("/api/delivery-orders", DOMutationSchema, {
+                              method: "POST",
+                              headers: { "Idempotency-Key": key },
+                              body: b,
+                            }),
+                          );
+                        let d: Awaited<ReturnType<typeof postDo>>;
+                        try {
+                          d = await postDo(body);
+                        } catch (e) {
+                          // Customer credit block (BUG-34): same dialog as the
+                          // Delivery page, re-sent with the override reason when
+                          // the server allows one.
+                          const eb = e instanceof FetchJsonError ? e.body : null;
+                          if (!isCreditBlock(eb)) throw e;
+                          const reason = await askCreditOverride(confirm, toast, eb);
+                          if (!reason) return;
+                          d = await postDo({ ...body, creditOverride: { reason } });
+                        }
                         if (d.success) {
                           invalidateCachePrefix("/api/delivery-orders");
                           invalidateCachePrefix("/api/sales-orders");
@@ -1906,8 +2001,10 @@ export default function SalesPage() {
                         } else {
                           toast.error(d.error || "Failed to create Delivery Order.");
                         }
-                      } catch {
-                        toast.error("Failed to create Delivery Order. Please try again.");
+                      } catch (e) {
+                        // Show the server's reason when there is one, not a fixed line.
+                        const msg = e instanceof FetchJsonError ? (e.body as { error?: string } | null)?.error || e.message : null;
+                        toast.error(msg || "Failed to create Delivery Order. Please try again.");
                       } finally {
                         setTransferLoading(false);
                       }

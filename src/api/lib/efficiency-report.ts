@@ -76,6 +76,13 @@ export interface EfficiencyData {
   };
   departments: DepartmentSummary[];
   workers: WorkerSummary[]; // sorted by department code, then by name
+  /**
+   * Production revenue for the day (lib/production-revenue.ts), attached by
+   * the EMAIL path only (BUG-36). undefined = not part of this render (the
+   * in-app page is readable by HR, who must not see revenue); null = the
+   * query failed, shown as "unavailable", never as RM 0.
+   */
+  revenue?: { revenueSen: number; orders: number; unpricedOrders: number } | null;
 }
 
 const LOW_EFFICIENCY_THRESHOLD = 60; // <60% flagged as red on the report
@@ -436,7 +443,10 @@ function effColor(pct: number): string {
   return "#B91C1C"; // red
 }
 
-export function renderEfficiencyHtml(data: EfficiencyData): string {
+export function renderEfficiencyHtml(
+  data: EfficiencyData,
+  opts: { email?: boolean } = {},
+): string {
   const { date, totals, departments, workers } = data;
   const longDate = formatDateLong(date);
   const overallColor = effColor(totals.efficiencyPct);
@@ -464,7 +474,7 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
   const flushDept = () => {
     if (buf.length === 0) return;
     workerSections.push(
-      `<tr><td colspan="7" style="padding:8px 8px 4px;font-size:9pt;font-weight:700;color:#6B5C32;letter-spacing:1px;text-transform:uppercase;background:#F4EFE3;">${escapeHtml(curDept || "Unassigned")}</td></tr>${buf.join("\n")}`,
+      `<tr class="grp"><td colspan="7" style="padding:8px 8px 4px;font-size:9pt;font-weight:700;color:#6B5C32;letter-spacing:1px;text-transform:uppercase;background:#F4EFE3;">${escapeHtml(curDept || "Unassigned")}</td></tr>${buf.join("\n")}`,
     );
     buf = [];
   };
@@ -483,17 +493,17 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
           ? `${w.clockIn} – …`
           : "—";
     buf.push(`<tr>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;">${escapeHtml(w.empNo)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;">${escapeHtml(w.name)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;color:${statusColor};">${escapeHtml(w.status)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:center;">${escapeHtml(clockStr)}${
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;">${escapeHtml(w.empNo)}</td>
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;"><strong>${escapeHtml(w.name)}</strong></td>
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;color:${statusColor};">${escapeHtml(w.status)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:center;"><span class="m-lbl">Clock </span>${escapeHtml(clockStr)}${
         w.punchOutOfArea
           ? `<span style="display:inline-block;margin-left:6px;padding:1px 5px;font-size:8pt;font-weight:700;color:#B91C1C;background:#FEE2E2;border-radius:3px;">OFF-SITE</span>`
           : ""
       }</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;">${formatHours(w.workingMinutes)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;">${formatHours(w.productionMinutes)}</td>
-      <td style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;font-weight:700;color:${effC};">${present ? w.efficiencyPct + "%" : "—"}</td>
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;"><span class="m-lbl">Work </span>${formatHours(w.workingMinutes)}</td>
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;"><span class="m-lbl">Prod </span>${formatHours(w.productionMinutes)}</td>
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;font-weight:700;color:${effC};"><span class="m-lbl">Efficiency </span>${present ? w.efficiencyPct + "%" : "—"}</td>
     </tr>`);
   }
   flushDept();
@@ -502,6 +512,7 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Daily Efficiency Report — ${escapeHtml(longDate)}</title>
 <style>
   @page { size: A4 portrait; margin: 14mm 12mm; }
@@ -545,12 +556,33 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
   }
   .print-bar { position: sticky; top: 0; background: #F4EFE3; padding: 8px 12px; border-bottom: 1px solid #E5E1DC; text-align: right; }
   .print-bar button { padding: 6px 14px; font-size: 10pt; border: 1px solid #1F1D1B; background: #1F1D1B; color: #fff; cursor: pointer; border-radius: 4px; }
+  /* Phone layout (BUG-36): summary boxes two per row, each employee row a
+     card. screen only, so the A4 print is unchanged. */
+  .m-lbl { display: none; }
+  @media screen and (max-width: 640px) {
+    .page { padding: 10px 12px; }
+    h1 { font-size: 16pt; }
+    .summary { display: block; overflow: hidden; }
+    .summary .cell { display: block; float: left; width: 50%; }
+    .summary .val { font-size: 15pt; }
+    table.data td, table.data th { padding: 5px 6px !important; white-space: nowrap; }
+    /* Department table: let the name wrap so the Efficiency column is not pushed off the screen. */
+    table.data:not(.emp) td, table.data:not(.emp) th { font-size: 9pt !important; }
+    table.data:not(.emp) td:first-child { white-space: normal; }
+    table.emp, table.emp tbody, table.emp tr, table.emp td { display: block; }
+    table.emp thead { display: none; }
+    table.emp tbody tr { border: 1px solid #E5E1DC; border-radius: 6px; margin-bottom: 6px; padding: 6px 10px; }
+    table.emp tbody tr.grp { border: 0; padding: 0; margin: 12px 0 6px; }
+    table.emp tbody td { white-space: normal; border: 0 !important; padding: 1px 0 !important; text-align: left !important; font-size: 10.5pt !important; }
+    table.emp tbody td.m-inline { display: inline-block; margin-right: 12px; }
+    .m-lbl { display: inline; color: #6B7280; font-weight: 400; font-size: 9pt; }
+  }
 </style>
 </head>
 <body>
-<div class="print-bar no-print">
+${opts.email ? "" : `<div class="print-bar no-print">
   <button onclick="window.print()">Print / Save as PDF</button>
-</div>
+</div>`}
 <div class="page">
   <h1>Daily Efficiency Report</h1>
   <div class="meta">
@@ -577,7 +609,7 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
       <div class="lbl">Overall Efficiency</div>
       <div class="val" style="color:${overallColor};">${totals.efficiencyPct}%</div>
       <div class="sub">production / work</div>
-    </div>
+    </div>${revenueCell(data.revenue)}
   </div>
 
   <h2>Department Efficiency</h2>
@@ -595,7 +627,7 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
   </table>
 
   <h2>Employee Detail</h2>
-  <table class="data">
+  <table class="data emp">
     <thead><tr>
       <th>Emp No.</th>
       <th>Name</th>
@@ -619,6 +651,24 @@ export function renderEfficiencyHtml(data: EfficiencyData): string {
 </html>`;
 }
 
+function formatRM(sen: number): string {
+  return "RM " + (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function revenueSub(r: NonNullable<EfficiencyData["revenue"]>): string {
+  return `${r.orders} orders upholstered` + (r.unpricedOrders > 0 ? ` · ${r.unpricedOrders} with no price (RM 0)` : "");
+}
+
+function revenueCell(r: EfficiencyData["revenue"]): string {
+  if (r === undefined) return "";
+  return `
+    <div class="cell">
+      <div class="lbl">Production Revenue</div>
+      <div class="val">${r ? formatRM(r.revenueSen) : "—"}</div>
+      <div class="sub">${r ? escapeHtml(revenueSub(r)) : "unavailable (could not be loaded)"}</div>
+    </div>`;
+}
+
 export function renderEfficiencyEmailText(data: EfficiencyData): string {
   const lines: string[] = [];
   lines.push(`Daily Efficiency Report — ${formatDateLong(data.date)}`);
@@ -628,6 +678,13 @@ export function renderEfficiencyEmailText(data: EfficiencyData): string {
   lines.push(`Production hours: ${formatHours(data.totals.productionMinutes)}`);
   lines.push(`Overall efficiency: ${data.totals.efficiencyPct}%`);
   lines.push(`Job cards completed: ${data.totals.jobsCompleted}`);
+  if (data.revenue !== undefined) {
+    lines.push(
+      data.revenue
+        ? `Production revenue: ${formatRM(data.revenue.revenueSen)} (${revenueSub(data.revenue)})`
+        : "Production revenue: unavailable (could not be loaded)",
+    );
+  }
   lines.push("");
   lines.push("Department efficiency:");
   for (const d of data.departments) {

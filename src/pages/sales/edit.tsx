@@ -26,6 +26,7 @@ import {
   legHeightOptions,
   specialOrderOptions,
 } from "@/lib/pricing-options";
+import { calcSpecialsSurchargeSen, specialCodeForName, specialNameForCode } from "@/lib/special-order-surcharge";
 import { fetchVariantsConfig, getVariantsConfigSync, subscribeKvConfig, VARIANTS_CONFIG_KEY } from "@/lib/kv-config";
 import { useCachedJson, invalidateCache, invalidateCachePrefix, isUnknownOutcome } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
@@ -104,19 +105,6 @@ function parseInches(h: string): number | null {
   return m ? parseFloat(m[1]) : null;
 }
 
-function calcSpecialOrderSurcharge(codes: string[]): number {
-  const hasHB = codes.includes("HB_FULL_COVER");
-  const hasBtm = codes.includes("DIVAN_BTM_COVER");
-  let total = 0;
-  for (const code of codes) {
-    const opt = specialOrderOptions.find(o => o.code === code);
-    if (!opt) continue;
-    if (hasHB && hasBtm && (code === "HB_FULL_COVER" || code === "DIVAN_BTM_COVER")) continue;
-    total += opt.surcharge;
-  }
-  if (hasHB && hasBtm) total += 10000;
-  return total;
-}
 
 /** Extract FT portion from sizeLabel, e.g. "Queen 5FT" → "5FT" */
 function extractSizeSuffix(sizeLabel: string): string {
@@ -392,6 +380,17 @@ export default function EditSalesOrderPage() {
     return () => { cancelled = true; };
   }, [customerId, variantsTick]);
 
+  // Customer price list (Customers → company → Products). The PUT stores the
+  // customer price whenever one exists (BUG-35), so the screen seeds from it
+  // too; the master product is only the fallback for unassigned SKUs.
+  const { data: customerProductsResp } = useCachedJson<{
+    data?: { productId: string; basePriceSen: number | null; seatHeightPrices: { height: string; priceSen: number }[] | null }[];
+  }>(customerId ? `/api/customer-products?customerId=${encodeURIComponent(customerId)}` : null);
+  const customerPriceByProduct = useMemo(
+    () => new Map((customerProductsResp?.data ?? []).map((cp) => [cp.productId, cp])),
+    [customerProductsResp],
+  );
+
   // Surcharge lookup from maintenance config
   const getConfigSurcharge = (key: string, value: string, fallback: number): number => {
     if (!maintenanceConfig) return fallback;
@@ -459,9 +458,11 @@ export default function EditSalesOrderPage() {
   const buildSpecialOrderText = (
     codes: string[],
     customs: CustomSpecial[],
+    isSofa: boolean,
   ): string => {
+    const cfg = maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"];
     const predefinedTokens = codes
-      .map((c) => specialOrderOptions.find((o) => o.code === c)?.name || c);
+      .map((c) => specialNameForCode(c, cfg) || c);
     const customTokens = customs
       .map((c) => c.description.trim())
       .filter(Boolean)
@@ -472,16 +473,10 @@ export default function EditSalesOrderPage() {
   const calcPredefinedSurcharge = (
     codes: string[],
     isSofa: boolean,
-  ): number => {
-    const available = getAvailableSpecials(isSofa);
-    const sumSurcharge = codes.reduce((s, c) => {
-      const opt = available.find((o) => o.code === c);
-      if (!opt) return s;
-      return s + getConfigSurcharge(isSofa ? "sofaSpecials" : "specials", opt.name, opt.surcharge);
-    }, 0);
-    const combinedSurcharge = calcSpecialOrderSurcharge(codes);
-    return isSofa ? sumSurcharge : combinedSurcharge;
-  };
+  ): number =>
+    // Same shared rule as sales/create.tsx — config-only options included,
+    // owner's combo discount, no stale hardcoded RM 100 (BUG-2026-09-23).
+    calcSpecialsSurchargeSen(codes, maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"]);
 
   const toggleSpecialOrder = (idx: number, code: string) => {
     const item = items[idx];
@@ -494,7 +489,7 @@ export default function EditSalesOrderPage() {
     const surcharge = isServiceOrderMode
       ? 0
       : calcPredefinedSurcharge(next, isSofa) + sumCustomSpecials(item.customSpecials);
-    const label = buildSpecialOrderText(next, item.customSpecials);
+    const label = buildSpecialOrderText(next, item.customSpecials, isSofa);
     updateItem(idx, {
       specialOrders: next,
       specialOrder: label,
@@ -511,7 +506,7 @@ export default function EditSalesOrderPage() {
     const surcharge = isServiceOrderMode
       ? 0
       : calcPredefinedSurcharge(item.specialOrders, isSofa) + sumCustomSpecials(customs);
-    const label = buildSpecialOrderText(item.specialOrders, customs);
+    const label = buildSpecialOrderText(item.specialOrders, customs, isSofa);
     updateItem(idx, {
       customSpecials: customs,
       specialOrder: label,
@@ -651,11 +646,7 @@ export default function EditSalesOrderPage() {
                 return tokens
                   // Skip "OTHER: <desc>" tokens — they belong to customSpecials.
                   .filter((tok) => !tok.toUpperCase().startsWith("OTHER:"))
-                  .map((tok) => {
-                    const matched = specialOrderOptions.find((o) => o.name === tok);
-                    if (matched) return matched.code;
-                    return tok.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
-                  })
+                  .map((tok) => specialCodeForName(tok))
                   .filter((c): c is string => Boolean(c));
               })(),
               specialOrder: (item.specialOrder as string) || "",
@@ -763,7 +754,9 @@ export default function EditSalesOrderPage() {
       // would already be 0 in SO mode (set by the write paths), but reset
       // them here too in case the line is being re-pointed at a different
       // product after a price was carried in via clone / draft restore.
-      basePriceSen: isServiceOrderMode ? 0 : (prod.costPriceSen || 0),
+      basePriceSen: isServiceOrderMode
+        ? 0
+        : (customerPriceByProduct.get(prod.id)?.basePriceSen || prod.costPriceSen || 0),
       seatHeight: "",
       gapInches: isSofa ? null : items[idx].gapInches,
       divanHeightInches: isSofa ? null : items[idx].divanHeightInches,
@@ -795,18 +788,20 @@ export default function EditSalesOrderPage() {
   const selectSeatHeight = (idx: number, value: string) => {
     const item = items[idx];
     const prod = products.find(p => p.id === item.productId);
+    const cpSeats = customerPriceByProduct.get(item.productId)?.seatHeightPrices;
+    const seats = cpSeats && cpSeats.length > 0 ? cpSeats : prod?.seatHeightPrices;
     if (!value) {
       updateItem(idx, { seatHeight: "", basePriceSen: 0 });
       return;
     }
-    if (!prod?.seatHeightPrices) {
+    if (!seats) {
       // No seat-price matrix on this product — keep the operator's pick and
       // leave Base Price manual (RM0 allowed; BUG-2026-07-27-001).
       const sizeCode = value.replace(/"/g, "").trim();
       updateItem(idx, { seatHeight: value, sizeLabel: value, sizeCode });
       return;
     }
-    const tier = prod.seatHeightPrices.find(t => t.height === value);
+    const tier = seats.find(t => t.height === value);
     const sizeCode = value.replace(/"/g, "").trim();
     updateItem(idx, {
       seatHeight: value,
@@ -1429,7 +1424,7 @@ export default function EditSalesOrderPage() {
                       {item.specialOrders.length > 0 && !isOpen && (
                         <div className="flex flex-wrap gap-1 mt-1.5">
                           {item.specialOrders.map(code => {
-                            const opt = specialOrderOptions.find(o => o.code === code);
+                            const opt = available.find(o => o.code === code);
                             if (!opt) return null;
                             const sc = getConfigSurcharge(isSofa ? "sofaSpecials" : "specials", opt.name, opt.surcharge);
                             return (

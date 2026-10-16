@@ -32,6 +32,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { pushEscape } from "@/lib/escape-stack";
 
 export type ConfirmOptions = {
   // Optional heading. Defaults to "Please confirm" when omitted.
@@ -40,6 +41,8 @@ export type ConfirmOptions = {
   message?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  // Info-only dialog: one button.
+  hideCancel?: boolean;
   // Paint the confirm button red (delete / void / discard / cancel actions).
   // `tone: "danger"` is the legacy alias for `danger: true` — either works.
   danger?: boolean;
@@ -85,17 +88,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     r?.(value);
   }, []);
 
-  // Esc cancels the dialog (same as backdrop / Cancel button).
+  // Esc cancels the dialog (same as backdrop / Cancel button) — through the
+  // shared Esc stack, so a popup under the dialog stays open (2026-10-02).
   useEffect(() => {
     if (!opts) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        settle(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return pushEscape(() => settle(false));
   }, [opts, settle]);
 
   const isDanger = opts?.danger === true || opts?.tone === "danger";
@@ -126,13 +123,15 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-[#E2DDD8] bg-[#FAF9F7] p-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => settle(false)}
-              >
-                {opts.cancelLabel ?? "Cancel"}
-              </Button>
+              {!opts.hideCancel && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => settle(false)}
+                >
+                  {opts.cancelLabel ?? "Cancel"}
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={() => settle(true)}
