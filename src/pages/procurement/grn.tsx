@@ -15,6 +15,7 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState } from "@/lib/use-url-state";
 import { buildGrnDetailListingAoa } from "@/lib/doc-detail-listings";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import type { GoodsReceiptNote, PurchaseOrder, ArrivalState } from "@/types";
 import { Ship } from "lucide-react";
 import {
@@ -33,6 +34,7 @@ import {
   ScanLine,
   FolderInput,
   Ban,
+  Upload,
 } from "lucide-react";
 import {
   ScanSupplierModal,
@@ -388,6 +390,7 @@ export default function GRNPage() {
   const [selectedGrns, setSelectedGrns] = useState<GoodsReceiptNote[]>([]);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [bulkArrivalBusy, setBulkArrivalBusy] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const { data: grnResp, loading: grnLoading, refresh: refreshGrns } = useCachedJson<{ success?: boolean; data?: GoodsReceiptNote[]; total?: number } | GoodsReceiptNote[]>(
     grnFiltersActive
@@ -947,8 +950,24 @@ export default function GRNPage() {
           >
             <ScanLine className="h-4 w-4" /> Scan GRN
           </Button>
+          <Button variant="outline" onClick={() => setShowImport(true)}>
+            <Upload className="h-4 w-4" /> Import
+          </Button>
         </div>
       </div>
+
+      <DocImportDialog
+        docType="grn"
+        title="Import GRNs from a Detail Listing"
+        hint="Edit: Qty (accepted) on existing lines. Create: leave Doc No. blank, Ref Doc No. = the PO, one row per PO line with Item Code + Qty (Rejected Qty / Rejection Reason optional)."
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onApplied={() => {
+          invalidateCachePrefix("/api/grn");
+          invalidateCachePrefix("/api/purchase-orders");
+          fetchData();
+        }}
+      />
 
       {/* Summary Cards */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
