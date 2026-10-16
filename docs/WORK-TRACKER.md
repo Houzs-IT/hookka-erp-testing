@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-daily` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 1 (#918) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-foundation` (to `main`) added below (its entry is the newest).
 
@@ -181,6 +182,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+
+
+## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 2a: Daily part 1 — Payment Vouchers list (owner「继续做」; Receipts expand dropped and Daily Cash Position banks kept open, as recommended)(branch `feat/finance-v2-daily` → `main`)
+
+1. ✅ Shared pieces: status pills, segmented chips, title-row button slot, ink primary buttons on finance pages, v2 look on row menus that open on `<body>`.
+2. ✅ DataGrid `checkboxSelectOnly` (the finance lists' rule: only the checkbox ticks) and `searchPlaceholder`.
+3. ✅ Payment Vouchers list on DataGrid: v2 columns and pills, funnels in place of the date / bank / door inputs, header menu, total over active payments; title-row buttons; the explanation behind the (i) with its two page links. Ladder batch, batch print / export, popups and row menus unchanged.
+4. ⚪ Prod check after deploy (read-only).
+5. ⚪ Plan 2b: popups, Receipts, Daily Cash Position, Fund Transfer.
 
 ## 2026-10-16 — ✅ Finance & Forecasting v2, plan 1: foundation (owner「照 README 把这些设计做进现有的 Hookka repo，接真正的 API」→ decisions in chat →「自己核对完直接上线」)(#918 e6288c0d, prod-verified)
 
