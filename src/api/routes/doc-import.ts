@@ -21,11 +21,13 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { runDocImport, type DocImportAdapter } from "../lib/doc-import";
 import { invoiceImportAdapter } from "../lib/doc-import-invoice";
+import { soImportAdapter } from "../lib/doc-import-so";
 
 /** docType (lower-case, as in the URL) → adapter. */
 export const ADAPTERS: Record<string, DocImportAdapter> = {
   di: invoiceImportAdapter,
   si: invoiceImportAdapter,
+  so: soImportAdapter,
 };
 
 const MAX_ROWS = 5000;
