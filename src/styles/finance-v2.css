@@ -334,3 +334,10 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   position: relative;
   z-index: 2;
 }
+
+/* A dense report (the General Ledger): rows are pinned to 29px so the windowed
+   listings and the off-screen placeholders stay in step. */
+[data-fin-ui] table[data-fin-report][data-fin-dense] > tbody > tr > td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}

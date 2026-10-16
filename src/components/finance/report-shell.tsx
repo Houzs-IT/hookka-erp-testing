@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Download } from "lucide-react";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { todayYmdMY } from "@/lib/utils";
-import { periodKind, periodLabel, stepPeriod, type PeriodKind } from "@/lib/finance-reports";
+import { codesInRange, periodKind, periodLabel, stepPeriod, type PeriodKind } from "@/lib/finance-reports";
 
 // A popover that closes on Esc and on a click outside its box.
 function usePopover() {
@@ -300,5 +300,87 @@ export function EditLayoutBanner({ children }: { children: ReactNode }) {
       <span className="font-bold text-[#1F1D1B]">Edit layout</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+/** The General Ledger's Accounts picker: tick accounts one by one (search by
+ *  code or name), or tick a run of codes with By Code Range (each end a code
+ *  prefix; blank = open). Nothing ticked = every account in scope. */
+export function AccountMultiPicker({
+  options,
+  picked,
+  onChange,
+}: {
+  options: { code: string; name: string }[];
+  picked: string[];
+  onChange: (codes: string[]) => void;
+}) {
+  const { open, setOpen, boxRef } = usePopover();
+  const [q, setQ] = useState("");
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+  const nameOf = (code: string) => options.find((o) => o.code === code)?.name ?? "";
+  const text =
+    picked.length === 0 ? "All accounts in scope"
+    : picked.length === 1 ? `${picked[0]} · ${nameOf(picked[0])}`
+    : `${picked.length} accounts picked`;
+  const needle = q.trim().toLowerCase();
+  const shown = needle ? options.filter((o) => `${o.code} ${o.name}`.toLowerCase().includes(needle)) : options;
+  const toggle = (code: string) => onChange(picked.includes(code) ? picked.filter((c) => c !== code) : [...picked, code]);
+  const tickRange = () => {
+    const codes = codesInRange(options.map((o) => o.code), rangeFrom, rangeTo);
+    onChange([...new Set([...picked, ...codes])]);
+  };
+  return (
+    <span ref={boxRef} className="relative inline-flex">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => { setQ(""); setOpen((v) => !v); }}
+        className="inline-flex h-[34px] w-[260px] items-center justify-between gap-2 rounded-lg border border-[#D9D3CA] bg-white px-3 text-left text-[13px] text-[#1F1D1B] hover:bg-[#F4F6F8]"
+      >
+        <span className="truncate">{text}</span>
+        <span aria-hidden="true" className="text-[10px] text-[#6B7280]">▼</span>
+      </button>
+      {open && (
+        <span
+          role="dialog"
+          aria-label="Pick accounts"
+          className="absolute left-0 top-[40px] z-[61] flex w-[340px] flex-col gap-2 rounded-xl border border-[#DCD6CC] bg-white p-3 shadow-[0_16px_36px_rgba(31,29,27,.18)]"
+        >
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search code or name…"
+            className="h-[32px] rounded-lg border border-[#D9D3CA] px-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+          />
+          <span className="flex items-center gap-1.5 text-[12px] text-[#4B5563]">
+            <span className="whitespace-nowrap font-semibold">By Code Range</span>
+            <input aria-label="Range from" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} placeholder="From" className="h-[30px] w-[72px] rounded-md border border-[#D9D3CA] px-2 text-[12.5px] tabular-nums" />
+            <span>–</span>
+            <input aria-label="Range to" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} placeholder="To" className="h-[30px] w-[72px] rounded-md border border-[#D9D3CA] px-2 text-[12.5px] tabular-nums" />
+            <button type="button" onClick={tickRange} className="h-[30px] rounded-md border border-[#1F1D1B] bg-[#1F1D1B] px-2.5 text-[12px] font-semibold text-white hover:bg-black">Tick</button>
+          </span>
+          <span className="flex max-h-[260px] flex-col overflow-y-auto border-y border-[#EEE9E1] py-1">
+            {shown.map((o) => (
+              <label key={o.code} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[12.5px] hover:bg-[#F4F6F8]">
+                <input type="checkbox" checked={picked.includes(o.code)} onChange={() => toggle(o.code)} className="accent-[#1F1D1B]" />
+                <span className="tabular-nums text-[#6B5C32]">{o.code}</span>
+                <span className="truncate text-[#1F1D1B]">{o.name}</span>
+              </label>
+            ))}
+            {shown.length === 0 && <span className="px-1.5 py-2 text-[12px] text-[#9CA3AF]">No account matches</span>}
+          </span>
+          <span className="flex items-center justify-between text-[12px] text-[#6B7280]">
+            <span>{picked.length ? `${picked.length} ticked` : "None ticked = every account in scope"}</span>
+            {picked.length > 0 && (
+              <button type="button" onClick={() => onChange([])} className="font-semibold text-[#6B5C32] hover:text-[#574A28]">Clear</button>
+            )}
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
