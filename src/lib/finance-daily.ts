@@ -57,6 +57,31 @@ export function pvStatus(v: {
   return { label: "Approved · paid", tone: "ok" };
 }
 
+/** A receipt's status pill. A bounced cheque says so first; money still on
+ *  account (not knocked off) is info-blue; a customer receipt that cleared
+ *  the bank says so. Other debtor / official receipts read "Posted". */
+export function receiptStatus(v: { state: string; custStatus?: string | null; unallocated?: boolean }): FinStatus {
+  if (v.state !== "ACTIVE") return { label: v.state, tone: "faint" };
+  if (v.custStatus === "BOUNCED") return { label: "Bounced", tone: "err" };
+  if (v.unallocated) return { label: "Posted · unallocated", tone: "info", title: "Money still on account — not knocked off yet" };
+  if (v.custStatus === "CLEARED") return { label: "Posted · cleared", tone: "ok" };
+  return { label: "Posted", tone: "ok" };
+}
+
+/** Daily Cash Position pending lines (one signed amount: + in, − out):
+ *  receipts first, then payments, each by day; ties keep their order. The
+ *  screen, Get image and Print all use it (finance v2). */
+export function pendingReceiptsFirst<T extends { day: string; amountSen: number }>(lines: T[]): T[] {
+  return lines
+    .map((l, i) => ({ l, i }))
+    .sort((a, b) => {
+      const ga = a.l.amountSen > 0 ? 0 : 1;
+      const gb = b.l.amountSen > 0 ? 0 : 1;
+      return ga - gb || a.l.day.localeCompare(b.l.day) || a.i - b.i;
+    })
+    .map((x) => x.l);
+}
+
 /** A payment recorded on another page (supplier payment, other-creditor
  *  payment, old fund transfer): it posted when it was saved. */
 export function foreignPayStatus(state: string, advanceOpenSen: number, hint: string): FinStatus {

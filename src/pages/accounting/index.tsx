@@ -95,7 +95,7 @@ import { FinanceTitleActions } from "@/components/finance/title-actions";
 import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
 import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
-import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, type FinStatus } from "@/lib/finance-daily";
+import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
@@ -11855,6 +11855,25 @@ const RECEIPT_CHIPS: { key: ReceiptChip; label: string }[] = [
   { key: "ALL", label: "All" }, { key: "CUSTOMER", label: "Customer" }, { key: "OTHER", label: "Other debtor" },
   { key: "OFFICIAL", label: "Official" }, { key: "CANCELLED", label: "Cancelled" },
 ];
+// The Receipts list rows (finance v2): the text the columns show, the state
+// the total and the pill read, and whether money is still on account (blue).
+type ReceiptGridRow = ReceiptHubRow & { state: string; viaLabel: string; unallocated: boolean; statusLabel: string; status: FinStatus };
+function receiptGridRow(r: ReceiptHubRow, accounts: ChartOfAccount[]): ReceiptGridRow {
+  const state = r.lifecycleState;
+  const unallocated = !!r.cust && hasUnallocated(r.cust);
+  // A customer receipt names its method; the others name the bank they went to.
+  const short = r.cust ? "" : shortBankName(accounts.find((a) => a.code === r.via)?.name);
+  const viaLabel = r.cust ? r.via : short ? `${r.via} ${short}` : r.via;
+  const status = receiptStatus({ state, custStatus: r.cust?.status, unallocated });
+  return { ...r, state, viaLabel, unallocated, statusLabel: status.label, status };
+}
+const RECEIPT_KIND_LABEL: Record<ReceiptKind, string> = {
+  CUSTOMER: "Customer Receipt", OTHER: "Other Debtor Receipt", OFFICIAL: "Official Receipt",
+};
+const receiptKindChip = (k: ReceiptKind) =>
+  k === "CUSTOMER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title="Customer receipt — settles sales invoices">CUST</span>
+  : k === "OTHER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EEF2FB] text-[#2C4170]" title="Other debtor receipt — settles other-debtor bills">OD</span>
+  : <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#F6F1E7] text-[#6B5C32]" title="Official receipt — sundry income">OR</span>;
 
 function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
@@ -11889,7 +11908,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setDoor(door === k ? null : k); };
   const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); };
 
-  const rows: ReceiptHubRow[] = [
+  const rows = useMemo<ReceiptHubRow[]>(() => [
     ...(cust ?? []).map((p): ReceiptHubRow => ({
       kind: "CUSTOMER", key: `c:${p.id}`, no: p.receiptNumber, date: String(p.date ?? "").slice(0, 10), from: p.customerName ?? "",
       via: String(p.method ?? "").replace(/_/g, " "), totalSen: Number(p.amount) || 0, lifecycleState: p.lifecycleState ?? "ACTIVE",
@@ -11905,29 +11924,30 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       via: r.payTo ?? "", totalSen: r.totalSen, lifecycleState: r.status === "VOID" ? "VOID" : (r.lifecycleState ?? "ACTIVE"),
       note: r.description ?? "", or: r,
     })),
-  ].sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
+  ].sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no)), [cust, od, ors]);
   const loading = cust === null || od === null || ors === null;
 
   const [chip, setChip] = useState<ReceiptChip>("ALL");
-  const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const matches = (r: ReceiptHubRow, c: ReceiptChip) => c === "ALL" ? true : c === "CANCELLED" ? r.lifecycleState !== "ACTIVE" : r.kind === c;
   const chipCount = (c: ReceiptChip) => rows.filter((r) => matches(r, c)).length;
-  const visible = rows.filter((r) => {
-    if (!matches(r, chip)) return false;
-    if (q.trim()) { const kw = q.toLowerCase(); if (![r.no, r.from, r.note, r.via].some((s) => s.toLowerCase().includes(kw))) return false; }
-    if (dateFrom && r.date < dateFrom) return false;
-    if (dateTo && r.date > dateTo) return false;
-    return true;
-  });
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // The list (finance v2): the chip narrows it; the grid's search and column
+  // funnels do the rest (dates are the Date funnel). Memoised — the grid's
+  // selection emission compares row identity (BUG-CLASSES C24).
+  const gridRows = useMemo(
+    () => rows.filter((r) => matches(r, chip)).map((r) => receiptGridRow(r, accounts)),
+    // matches reads only the row and the chip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, chip, accounts],
+  );
   // Double-click → detail popup (resolved from `rows` by key so it refreshes).
   const [detailKey, setDetailKey] = useState<string | null>(null);
-  const sel = useRowSelection(visible, (r) => r.key);
+  // The ticked rows — the grid owns the ticks (only the checkbox changes them).
+  const [picked, setPicked] = useState<ReceiptGridRow[]>([]);
+  const [clearPickedToken, setClearPickedToken] = useState(0);
+  const clearPicked = () => setClearPickedToken((t) => t + 1);
 
-  // The lines / allocations of one receipt — shown inline on expand and in
-  // the detail popup.
+  // The lines / allocations of one receipt — shown in the detail popup (the
+  // click-to-expand row went with finance v2: double-click shows the same).
   const detailTable = (r: ReceiptHubRow) => (
     <table className="w-full text-xs">
       <thead>
@@ -11996,14 +12016,34 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else if (r.od) { setCustEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  const kindChip = (k: ReceiptKind) =>
-    k === "CUSTOMER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title="Customer receipt — settles sales invoices">CUST</span>
-    : k === "OTHER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EEF2FB] text-[#2C4170]" title="Other debtor receipt — settles other-debtor bills">OD</span>
-    : <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#F6F1E7] text-[#6B5C32]" title="Official receipt — sundry income">OR</span>;
+  const kindChip = receiptKindChip;
+  // The design's Receipts columns. Stable (BUG-CLASSES C24); every cell reads
+  // only its row.
+  const receiptColumns = useMemo<Column<ReceiptGridRow>[]>(() => [
+    { key: "no", label: "No", width: "180px", filterAccessor: (r) => RECEIPT_KIND_LABEL[r.kind], exportValue: (r) => r.no, sortAccessor: (r) => r.no,
+      render: (_v, r) => (
+        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+          <span className="font-semibold tabular-nums text-[#1F1D1B]">{r.no}</span>
+          {receiptKindChip(r.kind)}
+        </span>
+      ) },
+    { key: "date", label: "Date", type: "date", width: "120px",
+      render: (_v, r) => <span className="text-[#6B7280]">{fmtDocDate(r.date)}</span> },
+    { key: "from", label: "From", width: "260px",
+      render: (_v, r) => <span className={r.unallocated ? "font-medium text-[#2C4170]" : "font-medium text-[#1F2937]"} title={r.from}>{r.from}</span> },
+    { key: "viaLabel", label: "Via / Deposit To", width: "180px",
+      render: (_v, r) => <span className="text-[12px]">{r.viaLabel || "—"}</span> },
+    { key: "note", label: "Note", width: "200px",
+      render: (_v, r) => <span className="text-[12px] text-[#6B7280]" title={r.note || undefined}>{r.note}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px", total: (rows) => activeTotalSen(rows),
+      render: (v) => <span className="font-semibold tabular-nums">{formatCurrency(Number(v) || 0)}</span> },
+    { key: "statusLabel", label: "Status", width: "190px", noClip: true,
+      render: (_v, r) => <FinPill tone={r.status.tone} title={r.status.title}>{r.status.label}</FinPill> },
+  ], []);
 
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
-  // links in the rows; double-click still opens the popup.
-  const rowMenu = useRowMenu();
+  // links in the rows; double-click still opens the popup. Shown by the grid's
+  // own context menu through rowMenuItems (finance v2).
   const receiptRowMenu = (r: ReceiptHubRow): RowMenuGroups => [
     [{ label: "Open", action: () => setDetailKey(r.key) }],
     [
@@ -12019,17 +12059,14 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      {rowMenu.element}
-      <div className="flex justify-between items-center flex-wrap gap-2">
-        <div>
-          <p className="text-[11px] text-[#9CA3AF]">Every payment in, one door. <b>Customer Receipt</b> settles sales invoices; <b>Other Debtor Receipt</b> settles other-debtor bills; <b>Official Receipt</b> books sundry income. Each posts on save.</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Button variant="primary" size="sm" onClick={() => openDoor("CUSTOMER")}><Plus className="h-4 w-4" /> New Customer Receipt</Button>
-          <Button variant="outline" size="sm" onClick={() => openDoor("OTHER")}><Plus className="h-4 w-4" /> New Other Debtor Receipt</Button>
-          <Button variant="outline" size="sm" onClick={() => openDoor("OFFICIAL")}><Plus className="h-4 w-4" /> New Official Receipt</Button>
-        </div>
-      </div>
+      {/* On the page's title row (finance v2): New Official Receipt · New Other
+          Debtor Receipt · New Customer Receipt (the main action, last). The
+          explanation sits behind the (i) next to the title. */}
+      <FinanceTitleActions>
+        <Button variant="outline" size="sm" onClick={() => openDoor("OFFICIAL")}><Plus className="h-4 w-4" /> New Official Receipt</Button>
+        <Button variant="outline" size="sm" onClick={() => openDoor("OTHER")}><Plus className="h-4 w-4" /> New Other Debtor Receipt</Button>
+        <Button variant="primary" size="sm" onClick={() => openDoor("CUSTOMER")}><Plus className="h-4 w-4" /> New Customer Receipt</Button>
+      </FinanceTitleActions>
 
       {door === "CUSTOMER" && (
         <CustomerReceiptForm key={custEditing?.id ?? "new"} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} />
@@ -12041,34 +12078,14 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
         <OfficialReceiptForm accounts={accounts} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
       )}
 
-      {!loading && <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">{rows.length} receipt{rows.length === 1 ? "" : "s"}</div>}
-      <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
-        {RECEIPT_CHIPS.map((ch) => {
-          const n = chipCount(ch.key);
-          const on = chip === ch.key;
-          return (
-            <button key={ch.key} type="button" onClick={() => setChip(ch.key)}
-              className={`px-3 py-1.5 font-semibold uppercase tracking-wide cursor-pointer ${on ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${ch.key !== "ALL" ? "border-l border-[#F0ECE9]" : ""}`}>
-              {ch.label}{ch.key !== "ALL" && n > 0 && <span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search no / from / reference" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64" />
-        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-        <span className="text-xs text-[#9CA3AF]">→</span>
-        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-      </div>
-
       <BatchActionsBar
-        count={sel.count}
-        onClear={sel.clear}
-        onPrint={() => printVouchers(sel.selectedRows.map(voucherOf))}
+        count={picked.length}
+        onClear={clearPicked}
+        onPrint={() => printVouchers(picked.map(voucherOf))}
         exportName="receipts"
         exportAoa={() => [
           ["Kind", "No", "Date", "From", "Via / Deposit To", "Status", "Note", "Total (RM)", "Detail", "Amount (RM)"],
-          ...sel.selectedRows.flatMap((r) => {
+          ...picked.flatMap((r) => {
             const head = [r.kind, r.no, r.date, r.from, r.via, r.lifecycleState, r.note, (r.totalSen / 100).toFixed(2)];
             if (r.cust) return r.cust.allocations.length ? r.cust.allocations.map((a) => [...head, a.invoiceNumber, (a.amount / 100).toFixed(2)]) : [[...head, "unallocated", (r.totalSen / 100).toFixed(2)]];
             if (r.od) return r.od.lines.map((l) => [...head, l.billNo, (l.amountSen / 100).toFixed(2)]);
@@ -12078,59 +12095,38 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       />
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {loading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={sel.allSelected} onChange={sel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32]" /></th>
-                  <th className="px-3 py-2 text-left">No</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">From</th>
-                  <th className="px-3 py-2 text-left">Via / Deposit to</th>
-                  <th className="px-3 py-2 text-left">Note</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((r) => (
-                  <React.Fragment key={r.key}>
-                    <tr
-                      className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === r.key ? "bg-[#F0ECE9]" : ""} ${r.lifecycleState !== "ACTIVE" ? "opacity-50" : r.cust && hasUnallocated(r.cust) ? "text-blue-600" : ""}`}
-                      onClick={() => setExpanded((m) => ({ ...m, [r.key]: !m[r.key] }))}
-                      onDoubleClick={() => setDetailKey(r.key)}
-                      onContextMenu={rowMenu.onContextMenu(r.key, () => receiptRowMenu(r))}
-                      title="Click to expand · double-click to open · right-click for actions"
-                    >
-                      <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={sel.isSelected(r.key)} onChange={() => sel.toggle(r.key)} className="h-3.5 w-3.5 accent-[#6B5C32]" />
-                      </td>
-                      <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap"><span className="inline-block w-3 text-[#9CA3AF]">{expanded[r.key] ? "▾" : "▸"}</span> {r.no} <span className="ml-1.5">{kindChip(r.kind)}</span></td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1.5">{r.from}</td>
-                      <td className="px-3 py-1.5 text-xs">{r.via}</td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.note}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
-                      <td className="px-3 py-1.5 text-xs"><LifecycleBadge state={r.lifecycleState} />{r.lifecycleState === "ACTIVE" && (r.cust ? r.cust.status : "POSTED")}</td>
-                      <td className="px-1 py-1 text-right w-8" onClick={(e) => e.stopPropagation()}>{rowMenu.button(r.key, () => receiptRowMenu(r))}</td>
-                    </tr>
-                    {expanded[r.key] && (
-                      <tr className="bg-[#FAF8F5] border-b border-[#F0ECE9]">
-                        <td colSpan={9} className="px-8 py-2">{detailTable(r)}</td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-                {visible.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No receipts match</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={receiptColumns}
+            data={gridRows}
+            keyField="key"
+            gridId="accounting-receipts"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setPicked}
+            clearSelectionToken={clearPickedToken}
+            onDoubleClick={(r) => setDetailKey(r.key)}
+            contextMenuItems={(r) => rowMenuItems(receiptRowMenu(r))}
+            rowClassName={(r) => (r.state !== "ACTIVE" ? "opacity-50" : r.unallocated ? "text-blue-600" : "")}
+            toolbarStart={
+              <SegmentedChips
+                options={RECEIPT_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: ch.key === "ALL" ? undefined : chipCount(ch.key) }))}
+                value={chip}
+                onChange={setChip}
+              />
+            }
+            searchPlaceholder="Search no / from / reference"
+            alwaysSearchKeys={["no", "from", "note", "viaLabel"]}
+            headerMenu
+            reorderableHeaders
+            exportName="Receipts"
+            footerLabel={(shown) => (
+              <span>Total · {shown} shown <span className="text-[11px] font-normal">of {rows.length}</span></span>
+            )}
+            emptyMessage="No receipts match"
+            loading={loading}
+            maxHeight="calc(100vh - 260px)"
+          />
         </CardContent>
       </Card>
 

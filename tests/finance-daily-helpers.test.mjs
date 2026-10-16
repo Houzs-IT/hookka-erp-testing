@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus } from "../src/lib/finance-daily.ts";
+import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst } from "../src/lib/finance-daily.ts";
 
 test("document dates read like the design: two-digit day, short month, year", () => {
   assert.equal(fmtDocDate("2026-10-15"), "15 Oct 2026");
@@ -55,4 +55,32 @@ test("a payment from another door: posted on save, advance open, or its void sta
   assert.match(adv.label, /^Approved · advance open RM\s50\.00$/);
   assert.deepEqual(foreignPayStatus("ACTIVE", 0, "Supplier Payment — posts on save"),
     { label: "Approved · paid", tone: "ok", title: "Posted on save — Supplier Payment — posts on save" });
+});
+
+test("receipt pills: posted, cleared, money still on account, bounced, voided", () => {
+  assert.deepEqual(receiptStatus({ state: "ACTIVE" }), { label: "Posted", tone: "ok" });
+  assert.deepEqual(receiptStatus({ state: "ACTIVE", custStatus: "RECEIVED" }), { label: "Posted", tone: "ok" });
+  assert.deepEqual(receiptStatus({ state: "ACTIVE", custStatus: "CLEARED" }), { label: "Posted · cleared", tone: "ok" });
+  assert.deepEqual(receiptStatus({ state: "ACTIVE", custStatus: "CLEARED", unallocated: true }),
+    { label: "Posted · unallocated", tone: "info", title: "Money still on account — not knocked off yet" });
+  assert.deepEqual(receiptStatus({ state: "ACTIVE", custStatus: "BOUNCED", unallocated: true }), { label: "Bounced", tone: "err" },
+    "a bounced cheque says so first");
+  assert.deepEqual(receiptStatus({ state: "VOID", custStatus: "CLEARED" }), { label: "VOID", tone: "faint" });
+  assert.deepEqual(receiptStatus({ state: "DELETED" }), { label: "DELETED", tone: "faint" });
+});
+
+test("cash position pending lines: receipts first, then payments, each by day, ties keep their order", () => {
+  // The cash-position API's pending line: one signed amount (+ in, − out).
+  const lines = [
+    { id: "p1", day: "2026-10-03", amountSen: -100 },
+    { id: "r2", day: "2026-10-05", amountSen: 50 },
+    { id: "p0", day: "2026-10-01", amountSen: -70 },
+    { id: "r1", day: "2026-10-02", amountSen: 20 },
+    { id: "p2", day: "2026-10-03", amountSen: -10 },
+    { id: "z", day: "2026-10-01", amountSen: 0 },
+  ];
+  assert.deepEqual(pendingReceiptsFirst(lines).map((l) => l.id), ["r1", "r2", "p0", "z", "p1", "p2"],
+    "a zero line sits with the payments");
+  assert.notEqual(pendingReceiptsFirst(lines), lines, "a new array");
+  assert.deepEqual(lines.map((l) => l.id), ["p1", "r2", "p0", "r1", "p2", "z"], "the input is left alone");
 });

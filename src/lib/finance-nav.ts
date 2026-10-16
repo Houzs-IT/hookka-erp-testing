@@ -31,7 +31,7 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
       { label: "Other Creditor Payments", to: "/accounting?tab=ocreditorpay" },
     ],
   },
-  receipts: { title: "Receipts", explain: "Every payment in, in one list: customer receipts, other debtor receipts and official receipts." },
+  receipts: { title: "Receipts", explain: "Every payment in, in one list. Customer Receipt settles sales invoices; Other Debtor Receipt settles other debtor bills; Official Receipt books sundry income. Each posts on save." },
   transfer: { title: "Fund Transfer", explain: "Money moved between your own bank and cash accounts." },
   dailycash: { title: "Daily Cash Position", explain: "Each bank today, and what is still to come in or go out. Tick a row when your banking app shows it went through." },
   journals: { title: "Journal Entries", explain: "Journals keyed by hand, and the postings the system makes (read-only)." },
