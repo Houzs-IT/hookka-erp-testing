@@ -90,6 +90,8 @@ import {
 } from "@/lib/party-alias-client";
 import { OverviewTab } from "./overview-tab";
 import { FinancePageTitle } from "@/components/finance/page-title";
+import { FinanceTitleActions } from "@/components/finance/title-actions";
+import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
 import { financePage } from "@/lib/finance-nav";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
@@ -606,6 +608,10 @@ export default function AccountingPage() {
     if (tab === "ar" || tab === "ap") refreshAging();
   }, [tab, refreshAging]);
 
+  // The title row's button slot (finance v2): a tab portals its buttons into
+  // it through <FinanceTitleActions>.
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
+
   // Finance tables (owner 2026-10-01 「我不想要 wrap text」+「letterhead 可以
   // 左右拉」): no wrapping, and any column edge in a header can be dragged —
   // only that column changes, the rest move with it; widths remembered per
@@ -614,9 +620,11 @@ export default function AccountingPage() {
 
   return (
     <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
-      {/* The page's name with its (i) explanation (finance v2) */}
-      <FinancePageTitle {...financePage(tab)} />
+      {/* The page's name with its (i) explanation, and the tab's buttons on the
+          same line (finance v2) */}
+      <FinancePageTitle {...financePage(tab)} actions={<div ref={setTitleSlot} className="flex flex-wrap items-center gap-2" />} />
 
+      <FinanceTitleSlotContext.Provider value={titleSlot}>
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-[#6B7280]">Loading accounting data...</div>
@@ -686,6 +694,7 @@ export default function AccountingPage() {
           )}
         </>
       )}
+      </FinanceTitleSlotContext.Provider>
     </div>
   );
 }
@@ -3552,12 +3561,12 @@ function JournalsTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <span aria-hidden="true" />
+      {/* On the page's title row (finance v2) */}
+      <FinanceTitleActions>
         <Button variant="primary" size="sm" onClick={() => { setEditingJv(null); setShowForm(!showForm); }}>
           <FileText className="h-4 w-4" /> New Journal Entry
         </Button>
-      </div>
+      </FinanceTitleActions>
 
       {showForm && <JournalEntryForm accounts={accounts} onSave={() => { setShowForm(false); onRefresh(); }} onCancel={() => setShowForm(false)} />}
       {editingJv && (
