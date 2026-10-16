@@ -121,11 +121,18 @@ body:has([data-fin-ui]) {
   border-bottom: 1.5px solid #7A6E5E;
 }
 
+/* No colour on the cells: an unlayered colour here would beat a row's own
+   Tailwind colour (a blue advance-open row, a red accrual). The table sets it
+   and rows inherit or override. */
+[data-fin-ui] table[data-dg="table"],
+[data-fin-ui] table[data-fin-list] {
+  color: #1F2937;
+}
+
 [data-fin-ui] table[data-dg="table"] > tbody > tr > td,
 [data-fin-ui] table[data-fin-list] > tbody > tr > td {
   border-bottom: 1px solid #E7E1D8;
   font-size: 13px;
-  color: #1F2937;
 }
 
 /* Hover lift: the row rises 2px (no scale, so nothing reflows) with a shadow

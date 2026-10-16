@@ -121,8 +121,12 @@ test("row menus: right-click or ⋮, the grid's own menu, in a portal; Shift kee
 test("the finance lists carry no action links — each row opens its menu", () => {
   assert.doesNotMatch(ui, /<LifecycleActions/, "no inline void / delete links left on the accounting page");
   assert.doesNotMatch(sp, /<LifecycleActions/);
+  // Payment Vouchers is a DataGrid since finance v2: the grid's own context
+  // menu (right-click and its ⋮) shows the same two menus.
+  const pv = slice(ui, "function PaymentsTab(", "// =============== TAB: OFFICIAL RECEIPT");
+  assert.match(pv, /contextMenuItems=\{\(r\) => rowMenuItems\(r\.pv \? pvRowMenu\(r\.pv\) : payRowMenu\(r\)\)\}/);
+  assert.doesNotMatch(pv, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, "PV: no inline print link");
   const lists = [
-    ["function PaymentsTab(", "// =============== TAB: OFFICIAL RECEIPT", ["payRowMenu(g)", "pvRowMenu(r)"]],
     ["function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER", ["receiptRowMenu(r)"]],
     ["function FundTransferTab(", "// =============== TAB: STOCK SUMMARY", ["ftRowMenu(r)"]],
     ["function OtherPartyBillsManager(", "function OtherPartyPaymentForm(", ["billRowMenu(b)"]],

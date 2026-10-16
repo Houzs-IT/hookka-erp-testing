@@ -83,6 +83,8 @@ test("the retired jobs live inside the pages that stayed", () => {
   assert.doesNotMatch(ap, /<OtherPartiesTab /, "the names list moved to Creditors › Other Creditors");
   assert.match(ui, /\{tab === "ocreditor" && <OtherPartiesTab side="CREDITOR" \/>\}/);
   assert.doesNotMatch(ap, /tab=ocreditorbills/, "AP Invoices no longer sends the user to the retired page");
-  // Payment Vouchers points at the one thing only the Supplier Payment page does.
-  assert.match(ui, /<Link to="\/invoices\/supplier-payments" className="underline decoration-dotted text-\[#6B5C32\]">Supplier Payment page<\/Link>/);
+  // Payment Vouchers points at the one thing only the Supplier Payment page
+  // does — since finance v2 from the (i) next to the page title.
+  const nav = readFileSync("src/lib/finance-nav.ts", "utf8").replace(/\r\n/g, "\n");
+  assert.match(nav, /\{ label: "Supplier Payment page", to: "\/invoices\/supplier-payments" \}/);
 });

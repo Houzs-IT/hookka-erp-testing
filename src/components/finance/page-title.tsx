@@ -4,17 +4,21 @@
 // place of a grey sub-line), and the page's buttons on the same line.
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { Info } from "lucide-react";
 import { useEscapeClose } from "@/lib/escape-stack";
 
 export function FinancePageTitle({
   title,
   explain,
+  links,
   icon,
   actions,
 }: {
   title: string;
   explain?: string;
+  /** Pages the explanation points to, listed under it. */
+  links?: { label: string; to: string }[];
   icon?: ReactNode;
   actions?: ReactNode;
 }) {
@@ -52,6 +56,11 @@ export function FinancePageTitle({
                 className="absolute left-0 top-7 z-40 w-72 rounded-[10px] border border-[#E2DDD8] bg-white px-3 py-2 text-[12.5px] font-normal leading-snug text-[#374151] shadow-[0_14px_34px_rgba(31,29,27,.18)]"
               >
                 {explain}
+                {links?.map((l) => (
+                  <Link key={l.to} to={l.to} onClick={() => setOpen(false)} className="mt-1.5 block text-[#6B5C32] underline decoration-dotted hover:text-[#574A28]">
+                    {l.label} ↗
+                  </Link>
+                ))}
               </span>
             )}
           </span>
