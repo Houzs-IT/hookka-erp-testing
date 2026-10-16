@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: finance v2 plan 5 part A (#935) prod-verified; part B (Tasks 2–3) added to its entry, branch `feat/finance-v2-debtors-creditors-b`.
 > **Last verified: 2026-10-17**: the owner's three answers (#934) prod-verified; plan 4 closed; branch `feat/finance-v2-debtors-creditors` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: finance v2 plan 4 part C (#933) prod-verified; the owner's three answers added as a new entry.
 > **Last verified: 2026-10-17**: finance v2 plan 4 part B (#932) prod-verified; part C (Stock Take, Cash Book) added to its entry.
@@ -203,10 +204,10 @@ design/mobile-home-dashboard
 
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-debtors-creditors.md`. Waiting on the owner (asked 2026-10-16), not built here: other-debtor aging inside Debtor Aging; a Next Due column; one Trade Finance row per drawdown; TIN / SST / Currency / Bank on parties; a Credit Note from a Delivery Return.
 
-1. 🔵 Part A — Debtor / Creditor Aging: the control figures and Total outstanding as KPI cards, Recalculate counter and one download (Excel / PDF) on the title row as in the design, the aging / statement / contra / Trade Finance lists in the v2 list look (open rows and rows with inputs not lifted); on Creditor Aging the list comes first, then Trade Finance, Contra and the statement.
-2. ⚪ AP Invoices, Supplier Discount, Other Debtors / Creditors — buttons on the title row, existing cards as KPI cards, lists in the v2 look.
-3. ⚪ Bills / payments managers and the other-party aging in the v2 list look (row menus unchanged); Credit / Debit Note grids with the v2 header menu.
-4. ⚪ Ship and prod check (read-only: each list's rows and totals equal the API; no write pressed).
+1. ✅ Part A (#935 0752a29a) — Debtor / Creditor Aging: the control figures and Total outstanding as KPI cards, Recalculate counter and one download (Excel / PDF) on the title row as in the design, the aging / statement / contra / Trade Finance lists in the v2 list look (open rows and rows with inputs not lifted); on Creditor Aging the list comes first, then Trade Finance, Contra and the statement. Prod check (read-only, nothing pressed): Debtor Aging's four cards equal `/ar-control` and the aging total, its rows and every bucket total equal `/aging`, an opened debtor's document rows stay put; Creditor Aging's three cards equal `/ap-control` and the aging total, its rows and totals equal `/aging`, the blocks run list → Trade Finance → Contra → statement, and the Trade Finance table's rows and TOTAL equal `/trade-finance`; both downloads offer Excel and Print / PDF only.
+2. 🔵 Part B — AP Invoices (both buttons on the title row, the three open totals as KPI cards, the shared chips with counts, the list in the v2 look), Supplier Discount (both lists in the v2 look, rows holding inputs stay put, a note count), Other Debtors / Creditors (Add Party on the title row, the control balance and the names count as cards, status chips with counts instead of the select, the list in the v2 look; nested on the Bills page its buttons stay in the fold).
+3. 🔵 Part B — the other-party aging, bills and payments lists in the v2 list look (row menus and double-clicks unchanged; the aging total in `<tfoot>`); Credit / Debit Notes: the three summary figures as KPI cards, a caption with the count, the grid with the v2 header menu and draggable headers (columns memoised).
+4. ⚪ Part B ship and prod check (read-only: each list's rows and totals equal the API; no write pressed).
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2: the owner's three answers (「1. Hookka industries sdn Bhd 2. 可以 3. 可以」)(branch `feat/finance-v2-owner-answers` → `main`)
 

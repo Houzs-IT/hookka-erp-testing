@@ -20,8 +20,9 @@ test("kind and status are chips, not dropdowns", () => {
   assert.match(ui, /const AP_STATUS_CHIPS: \{ key: "ALL" \| "OPEN" \| "PAID" \| "CANCELLED"; label: string \}\[\] = \[/);
   assert.doesNotMatch(ap, /<select value=\{kind\}/, "the kind dropdown is back");
   assert.doesNotMatch(ap, /<select value=\{status\}/, "the status dropdown is back");
-  assert.match(ap, /AP_KIND_CHIPS\.map\(\(ch, i\) => \{/);
-  assert.match(ap, /AP_STATUS_CHIPS\.map\(\(ch, i\) => \{/);
+  // Finance v2 (2026-10-17): the shared joined chips, each with its count.
+  assert.match(ap, /<SegmentedChips\n\s*options=\{AP_KIND_CHIPS\.map\(\(ch\) => \(\{ key: ch\.key, label: ch\.label, count: kindCount\(ch\.key\) \}\)\)\}\n\s*value=\{kind\}\n\s*onChange=\{setKind\}/);
+  assert.match(ap, /<SegmentedChips\n\s*options=\{AP_STATUS_CHIPS\.map\(\(ch\) => \(\{ key: ch\.key, label: ch\.label, count: statusCount\(ch\.key\) \}\)\)\}\n\s*value=\{status\}\n\s*onChange=\{setStatus\}/);
   // The default stays ALL (owner 2026-09-22) and the row type is untouched.
   assert.match(ap, /useState<"OPEN" \| "PAID" \| "CANCELLED" \| "ALL">\("ALL"\)/);
 });

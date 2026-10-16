@@ -29,10 +29,10 @@
 ### Task 1: Debtor Aging + Creditor Aging (part A — shipped first)
 Title row: the company picker (renders nothing with one company), Debtor Aging's Recalculate counter (moved off its card; label gains "counter" now that it sits outside the card), one `DownloadMenu` from the existing aging export builders (Excel / Print-PDF). KPI cards from the control panels' figures (`useArControl` / `useApControl`, split out of the old panels with the statement as its own card) plus the list's Total outstanding. The aging lists, statement lists, contra list and Trade Finance tables `data-fin-list` (open rows, document rows and rows with inputs `data-fin-nolift`). Creditor Aging order: cards, list, Trade Finance, Contra, statement. Test `tests/finance-v2-aging.test.mjs`.
 
-### Task 2: AP Invoices + Supplier Discount + Other parties
+### Task 2: AP Invoices + Supplier Discount + Other parties (part B)
 AP Invoices: its two buttons on the title row, its three cards as `KpiCards`, its list `data-fin-list`. Supplier Discount: its lists `data-fin-list` (inline-edit rows `data-fin-nolift`). Other Debtor / Creditor lists: Add Party on the title row, list `data-fin-list`. Test `tests/finance-v2-ap-parties.test.mjs`.
 
-### Task 3: Bills / payments managers + Credit / Debit Notes
+### Task 3: Bills / payments managers + Credit / Debit Notes (part B)
 Bills and payments lists, the other-party aging list: `data-fin-list` (row menus unchanged). CN / DN grids: `headerMenu` + `reorderableHeaders`. Test `tests/finance-v2-bills-notes.test.mjs`.
 
 ### Ship
