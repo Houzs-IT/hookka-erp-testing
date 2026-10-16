@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
+import { KpiCards } from "@/components/finance/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
@@ -10,7 +11,6 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Plus,
-  FileX,
   X,
   Trash2,
 } from "lucide-react";
@@ -255,7 +255,7 @@ export default function CreditNotesPage() {
     setCreating(false);
   };
 
-  const columns: Column<CreditNote>[] = [
+  const columns = useMemo<Column<CreditNote>[]>(() => [
     {
       key: "noteNumber",
       label: "CN Number",
@@ -309,7 +309,7 @@ export default function CreditNotesPage() {
         </Badge>
       ),
     },
-  ];
+  ], []);
 
   const contextMenuItems: ContextMenuItem[] = [
     {
@@ -358,84 +358,62 @@ export default function CreditNotesPage() {
         }
       />
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Summary (finance v2: KPI cards, same figures) */}
+      <KpiCards
+        items={[
+          { label: "Total CN value", value: `-${formatCurrency(totalCNValue)}`, tone: "err", note: `${creditNotes.length} note${creditNotes.length === 1 ? "" : "s"}` },
+          { label: "Draft", value: String(draftCount) },
+          { label: "Posted", value: String(postedCount) },
+        ]}
+      />
+
+      {/* Data Grid */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h3 className="text-[14px] font-semibold text-[#1F1D1B]">All Credit Notes</h3>
+          <span className="text-[12px] text-[#6B7280]">{creditNotes.length} note{creditNotes.length === 1 ? "" : "s"}</span>
+        </div>
+        <BatchActionsBar
+          count={selectedCreditNotes.length}
+          onPrint={() => printVouchers(selectedCreditNotes.map(buildCreditNoteVoucher))}
+          exportName="credit-notes"
+          exportAoa={() => [
+            ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
+            ...selectedCreditNotes.flatMap((cn) =>
+              cn.items.map((item) => [
+                cn.noteNumber,
+                formatDateDMY(cn.date),
+                cn.customerName ?? "",
+                cn.status ?? "ACTIVE",
+                cn.invoiceNumber ?? "",
+                cn.reason ?? "",
+                (Number(cn.totalAmount ?? 0) / 100).toFixed(2),
+                item.description ?? "",
+                String(item.quantity ?? ""),
+                (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
+                (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
+              ]),
+            ),
+          ]}
+        />
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500">Total CN Value</p>
-                <p className="text-xl font-bold text-[#9A3A2D] truncate">-{formatCurrency(totalCNValue)}</p>
-              </div>
-              <FileX className="h-8 w-8 text-[#9A3A2D] shrink-0" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Draft</p>
-                <p className="text-2xl font-bold">{draftCount}</p>
-              </div>
-              <Badge variant="status" status="DRAFT">DRAFT</Badge>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Posted</p>
-                <p className="text-2xl font-bold">{postedCount}</p>
-              </div>
-              <Badge variant="status" status="POSTED">POSTED</Badge>
-            </div>
+          <CardContent className="p-0">
+            <DataGrid
+              columns={columns}
+              data={creditNotes}
+              keyField="id"
+              virtualize
+              gridId="credit-notes"
+              selectable
+              onSelectionChange={setSelectedCreditNotes}
+              contextMenuItems={contextMenuItems}
+              headerMenu
+              reorderableHeaders
+              exportName="Credit Notes"
+            />
           </CardContent>
         </Card>
       </div>
-
-      {/* Data Grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle>All Credit Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <BatchActionsBar
-            count={selectedCreditNotes.length}
-            onPrint={() => printVouchers(selectedCreditNotes.map(buildCreditNoteVoucher))}
-            exportName="credit-notes"
-            exportAoa={() => [
-              ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
-              ...selectedCreditNotes.flatMap((cn) =>
-                cn.items.map((item) => [
-                  cn.noteNumber,
-                  formatDateDMY(cn.date),
-                  cn.customerName ?? "",
-                  cn.status ?? "ACTIVE",
-                  cn.invoiceNumber ?? "",
-                  cn.reason ?? "",
-                  (Number(cn.totalAmount ?? 0) / 100).toFixed(2),
-                  item.description ?? "",
-                  String(item.quantity ?? ""),
-                  (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
-                  (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
-                ]),
-              ),
-            ]}
-          />
-          <DataGrid
-            columns={columns}
-            data={creditNotes}
-            keyField="id"
-            virtualize
-            gridId="credit-notes"
-            selectable
-            onSelectionChange={setSelectedCreditNotes}
-            contextMenuItems={contextMenuItems}
-          />
-        </CardContent>
-      </Card>
 
       {/* Create Modal */}
       {showCreateModal && (

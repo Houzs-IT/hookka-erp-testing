@@ -4873,7 +4873,7 @@ function SupplierDiscountTab() {
                 <div className="py-6 text-center text-[#9CA3AF] text-sm">No unpaid bills for this supplier.</div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table data-fin-list className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                         <th className="px-3 py-2 text-left w-10" />
@@ -4889,7 +4889,7 @@ function SupplierDiscountTab() {
                       {openPIs.map((pi) => {
                         const row = allocRows[pi.id] ?? { checked: false, amountStr: "" };
                         return (
-                          <tr key={pi.id} className="border-b border-[#F0ECE9]">
+                          <tr key={pi.id} data-fin-nolift="" className="border-b border-[#F0ECE9]">
                             <td className="px-3 py-1.5">
                               <input
                                 type="checkbox"
@@ -4949,7 +4949,10 @@ function SupplierDiscountTab() {
       {/* History */}
       <Card>
         <CardContent className="p-4 space-y-3">
-          <h3 className="font-semibold text-[#1F1D1B]">History</h3>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <h3 className="font-semibold text-[#1F1D1B]">History</h3>
+            <span className="text-[12px] text-[#6B7280]">{visibleHistory.length} note{visibleHistory.length === 1 ? "" : "s"}</span>
+          </div>
           <BatchActionsBar
             count={sdSel.count}
             onClear={sdSel.clear}
@@ -4972,7 +4975,7 @@ function SupplierDiscountTab() {
             <div className="py-8 text-center text-[#9CA3AF] text-sm">No supplier discounts yet.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 w-8"><input type="checkbox" checked={sdSel.allSelected} onChange={sdSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
@@ -4991,7 +4994,7 @@ function SupplierDiscountTab() {
                     const inputCls = "rounded-md border border-[#E2DDD8] px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#6B5C32]";
                     return (
                     <Fragment key={n.id}>
-                    <tr className="border-b border-[#F0ECE9]">
+                    <tr data-fin-nolift={editing ? "" : undefined} className="border-b border-[#F0ECE9]">
                       <td className="px-3 py-1.5 w-8">
                         <input type="checkbox" checked={sdSel.isSelected(n.noteNumber ?? n.id)} onChange={() => sdSel.toggle(n.noteNumber ?? n.id)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
                       </td>
@@ -5033,7 +5036,7 @@ function SupplierDiscountTab() {
                       </td>
                     </tr>
                     {editing && (
-                      <tr className="border-b border-[#F0ECE9] bg-[#FAF9F7]">
+                      <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#FAF9F7]">
                         <td />
                         <td colSpan={7} className="px-3 py-1.5">
                           <input type="text" value={editReason} onChange={(e) => setEditReason(e.target.value)} placeholder="Reason" className={`${inputCls} w-full`} />
@@ -6440,6 +6443,11 @@ type OtherParty = {
   isActive: boolean;
 };
 
+// The names list's status filter (finance v2: chips with counts, was a select).
+const PARTY_STATUS_CHIPS: { key: "ALL" | "ACTIVE" | "INACTIVE"; label: string }[] = [
+  { key: "ALL", label: "All" }, { key: "ACTIVE", label: "Active" }, { key: "INACTIVE", label: "Inactive" },
+];
+
 function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
@@ -6520,46 +6528,45 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   };
 
   const kw = q.trim().toLowerCase();
-  const visible = (parties ?? []).filter((p) => {
+  const passes = (p: OtherParty, st: typeof statusFilter) => {
     if (p.type !== side) return false;
-    if (statusFilter === "ACTIVE" && !p.isActive) return false;
-    if (statusFilter === "INACTIVE" && p.isActive) return false;
+    if (st === "ACTIVE" && !p.isActive) return false;
+    if (st === "INACTIVE" && p.isActive) return false;
     if (kw && ![p.name, p.email, p.contactPerson, p.phone].some((s) => (s ?? "").toLowerCase().includes(kw))) return false;
     return true;
-  });
+  };
+  const visible = (parties ?? []).filter((p) => passes(p, statusFilter));
+  // Each chip counts what it would show with the search as typed.
+  const statusCount = (st: typeof statusFilter) => (parties ?? []).filter((p) => passes(p, st)).length;
+  const mine = (parties ?? []).filter((p) => p.type === side);
+  const newParty = () => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" }); setShowForm(!showForm); };
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 grid-cols-1">
-        {side === "DEBTOR" ? (
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">305-0000 OTHER DEBTOR — control balance</p>
-              <p className="text-xl font-bold text-[#3E6570]">{controls ? formatCurrency(controls.od) : "—"}</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">405-0000 OTHER CREDITORS — control balance</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{controls ? formatCurrency(controls.oc) : "—"}</p>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={newParty}>
+            <Plus className="h-4 w-4" /> Add Party
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <KpiCards
+        items={[
+          side === "DEBTOR"
+            ? { label: "Other debtor control · 305-0000", value: controls ? formatCurrency(controls.od) : "—", tone: "info" as const, note: "per ledger" }
+            : { label: "Other creditor control · 405-0000", value: controls ? formatCurrency(controls.oc) : "—", tone: "err" as const, note: "per ledger" },
+          { label: side === "DEBTOR" ? "Other debtors" : "Other creditors", value: parties === null ? "—" : String(mine.length), note: `${mine.filter((p) => p.isActive).length} active` },
+        ]}
+      />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / email / contact" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm">
-            <option value="ALL">All status</option>
-            <option value="ACTIVE">Active</option>
-            <option value="INACTIVE">Inactive</option>
-          </select>
-        </div>
-        <Button variant="primary" size="sm" onClick={() => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" }); setShowForm(!showForm); }}>
-          <Plus className="h-4 w-4" /> Add Party
-        </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <SegmentedChips
+          options={PARTY_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+          value={statusFilter}
+          onChange={setStatusFilter}
+        />
+        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / email / contact" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
+        <span className="ml-auto text-xs text-[#6B7280]">{visible.length} shown</span>
       </div>
 
       {showForm && (
@@ -6612,7 +6619,7 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
           ) : visible.length === 0 ? (
             <div className="py-12 text-center text-[#6B7280] text-sm">No parties yet — add transporters, deposit holders, staff advances…</div>
           ) : (
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-4 py-2 text-left">Type</th>
@@ -6693,7 +6700,7 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   return (
     <Card><CardContent className="p-0 overflow-x-auto">
       <div className="px-4 pt-3 pb-1 text-sm font-semibold text-[#3E6570]">Outstanding by {side === "DEBTOR" ? "debtor" : "creditor"} — aging</div>
-      <table className="w-full text-sm">
+      <table data-fin-list className="w-full text-sm">
         <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
           <th className="px-4 py-2 text-left">Party</th>
           <th className="px-4 py-2 text-right">Current</th>
@@ -6706,13 +6713,13 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
         <tbody>
           {data.aging.map((r) => (
             <React.Fragment key={r.partyId}>
-              <tr className="border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5]" onClick={() => setOpenParty(openParty === r.partyId ? null : r.partyId)}>
+              <tr data-fin-nolift={openParty === r.partyId ? "" : undefined} className="border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5]" onClick={() => setOpenParty(openParty === r.partyId ? null : r.partyId)}>
                 <td className="px-4 py-1.5 font-medium">{openParty === r.partyId ? "▾ " : "▸ "}{r.partyName}</td>
                 {cell(r.current)}{cell(r.d31_60)}{cell(r.d61_90)}{cell(r.d91_120)}{cell(r.d120plus, true)}
                 <td className="px-4 py-1.5 text-right tabular-nums font-semibold">{formatCurrency(r.totalSen)}</td>
               </tr>
               {openParty === r.partyId && data.bills.filter((b) => b.partyId === r.partyId).map((b) => (
-                <tr key={b.billNo} className="border-b border-[#F0ECE9] bg-[#FAF8F5] text-xs text-[#6B7280]">
+                <tr key={b.billNo} data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#FAF8F5] text-xs text-[#6B7280]">
                   <td className="px-4 py-1 pl-8">{b.billNo} · {b.billDate}</td>
                   <td colSpan={5} />
                   <td className="px-4 py-1 text-right tabular-nums">{formatCurrency(b.outstandingSen)}</td>
@@ -6720,12 +6727,14 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
               ))}
             </React.Fragment>
           ))}
+        </tbody>
+        <tfoot>
           <tr className="border-t border-[#C9C2BA] bg-[#F7F5F2] font-semibold">
             <td className="px-4 py-1.5">Total outstanding</td>
             <td colSpan={5} />
             <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(grand)}</td>
           </tr>
-        </tbody>
+        </tfoot>
       </table>
     </CardContent></Card>
   );
@@ -7661,62 +7670,50 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const kindCount = (k: typeof kind) => all.filter((r) => passes(r, "kind") && (k === "ALL" || r.kind === k)).length;
   const statusCount = (s: typeof status) => all.filter((r) => passes(r, "status") && (s === "ALL" || r.status === s)).length;
   const supplierOpts = [...new Set(all.map((r) => r.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((s) => ({ value: s, label: s }));
-  const chipBtn = (on: boolean, first: boolean) =>
-    `px-3 py-1.5 font-semibold uppercase tracking-wide cursor-pointer ${on ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${first ? "" : "border-l border-[#F0ECE9]"}`;
   const shownSen = rows.reduce((s, r) => s + r.outstandingSen, 0);
   const chip = (r: ApInvRow) =>
     r.status === "PAID" ? "bg-[#EAF3DE] text-[#27500A]" : r.status === "CANCELLED" ? "bg-[#F0ECE9] text-[#9CA3AF]" : "bg-[#FBF3E4] text-[#7A5B12]";
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <div>
-          <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
-        </div>
-        <div className="flex gap-2">
+      <FinanceTitleActions>
+        <ReportToolbar>
           <Button variant="outline" size="sm" onClick={() => setBillPopup({ mode: "new" })}>New AP bill</Button>
           <Link to="/accounting?tab=payments"><Button variant="primary" size="sm">New AP Payment</Button></Link>
-        </div>
-      </div>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
       {data && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · all</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.openSen)}</div><div className="text-[11px] text-[#9CA3AF]">{data.totals.openCount} invoice{data.totals.openCount === 1 ? "" : "s"}</div></CardContent></Card>
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · AP bills</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.apOpenSen)}</div></CardContent></Card>
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · purchase invoices</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.piOpenSen)}</div></CardContent></Card>
-        </div>
+        <KpiCards
+          items={[
+            { label: "Open · all", value: formatCurrency(data.totals.openSen), note: `${data.totals.openCount} invoice${data.totals.openCount === 1 ? "" : "s"}` },
+            { label: "Open · AP bills", value: formatCurrency(data.totals.apOpenSen) },
+            { label: "Open · purchase invoices", value: formatCurrency(data.totals.piOpenSen) },
+          ]}
+        />
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs" title="Which kind of invoice">
-          {AP_KIND_CHIPS.map((ch, i) => {
-            const n = kindCount(ch.key); const on = kind === ch.key;
-            return (
-              <button key={ch.key} type="button" onClick={() => setKind(ch.key)} className={chipBtn(on, i === 0)}>
-                {ch.label}<span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs" title="Status">
-          {AP_STATUS_CHIPS.map((ch, i) => {
-            const n = statusCount(ch.key); const on = status === ch.key;
-            return (
-              <button key={ch.key} type="button" onClick={() => setStatus(ch.key)} className={chipBtn(on, i === 0)}>
-                {ch.label}<span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>
-              </button>
-            );
-          })}
-        </div>
+        <SegmentedChips
+          options={AP_KIND_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: kindCount(ch.key) }))}
+          value={kind}
+          onChange={setKind}
+        />
+        <SegmentedChips
+          options={AP_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+          value={status}
+          onChange={setStatus}
+        />
         <div className="w-64">
           <SearchableSelect value={supplier} onChange={setSupplier} options={supplierOpts} placeholder="All suppliers" allowClear />
         </div>
         <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search no / supplier / ref" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-56" />
-        <span className="ml-auto text-xs text-[#6B7280]">Shown outstanding <span className="font-semibold tabular-nums text-[#1F1D1B]">{formatCurrency(shownSen)}</span></span>
+        <span className="ml-auto text-xs text-[#6B7280]">{rows.length} shown · outstanding <span className="font-semibold tabular-nums text-[#1F1D1B]">{formatCurrency(shownSen)}</span></span>
       </div>
       <Card>
         <CardContent className="p-0 overflow-x-auto">
           {data === null ? (
             <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
           ) : (
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-3 py-2 text-left">Kind</th>
@@ -7758,7 +7755,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">Nothing matches</td></tr>}
+                {rows.length === 0 && <tr data-fin-nolift=""><td colSpan={10} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">Nothing matches</td></tr>}
               </tbody>
             </table>
           )}
@@ -7971,7 +7968,11 @@ function OtherPartyBillsTab({ accounts, side }: { accounts: ChartOfAccount[]; si
       <OtherPartyAging side={side} />
       <OtherPartyBillsManager parties={parties} accounts={accounts} side={side} />
       <FoldSection title={side === "DEBTOR" ? "Other debtors — names & contacts" : "Other creditors — names & contacts"} hint="add / edit the parties these bills belong to">
-        <OtherPartiesTab side={side} />
+        {/* Inside this fold the names list keeps its buttons with it, not on
+            the Bills page's title row. */}
+        <FinanceTitleSlotContext.Provider value={null}>
+          <OtherPartiesTab side={side} />
+        </FinanceTitleSlotContext.Provider>
       </FoldSection>
       <FoldSection title={side === "DEBTOR" ? "Receipts against these bills" : "Payments against these bills"} hint={side === "DEBTOR" ? "also on Daily › Receipts › New Other Debtor Receipt" : "also on Daily › Payment Vouchers › New AP Payment"}>
         <OtherPartyPaymentsManager parties={parties} accounts={accounts} side={side} />
@@ -8552,7 +8553,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
         ) : bills.length === 0 ? (
           <div className="py-10 text-center text-[#6B7280] text-sm">No bills yet.</div>
         ) : (
-          <table className="w-full text-sm">
+          <table data-fin-list className="w-full text-sm">
             <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
               <th className="px-3 py-2 w-8"><input type="checkbox" checked={billSel.allSelected} onChange={billSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
               <th className="px-4 py-2 text-left">Bill No</th><th className="px-4 py-2 text-left">Party</th>
@@ -8564,7 +8565,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
             <tbody>
               {visibleBills.map((b) => (
                 <React.Fragment key={b.id}>
-                  <tr className={`border-b border-[#F0ECE9] ${rowMenu.openKey === b.id ? "bg-[#F0ECE9]" : ""}`} onDoubleClick={() => setOpenBill(openBill === b.id ? null : b.id)} onContextMenu={rowMenu.onContextMenu(b.id, () => billRowMenu(b))} title="Double-click to open the full bill · right-click for actions">
+                  <tr data-fin-nolift={openBill === b.id ? "" : undefined} className={`border-b border-[#F0ECE9] ${rowMenu.openKey === b.id ? "bg-[#F0ECE9]" : ""}`} onDoubleClick={() => setOpenBill(openBill === b.id ? null : b.id)} onContextMenu={rowMenu.onContextMenu(b.id, () => billRowMenu(b))} title="Double-click to open the full bill · right-click for actions">
                     <td className="px-3 py-1.5 w-8" onDoubleClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={billSel.isSelected(b.billNo ?? b.id)} onChange={() => billSel.toggle(b.billNo ?? b.id)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
                     </td>
@@ -8589,7 +8590,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
                        detail」+「做好看一点」) — a voucher-style card: header
                        strip with status pill, airy lines table with account
                        NAMES, and a summary column for the money. */
-                    <tr className="border-b border-[#F0ECE9] bg-[#FAF8F5]">
+                    <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#FAF8F5]">
                       <td colSpan={10} className="px-6 py-4">
                         <div className="max-w-4xl rounded-lg border border-[#E2DDD8] bg-white shadow-sm overflow-hidden">
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 bg-[#F7F4EF] border-b border-[#E2DDD8]">
@@ -8673,7 +8674,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
                 </React.Fragment>
               ))}
               {visibleBills.length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-[#9CA3AF]">No bills match</td></tr>
+                <tr data-fin-nolift=""><td colSpan={10} className="px-4 py-8 text-center text-sm text-[#9CA3AF]">No bills match</td></tr>
               )}
             </tbody>
           </table>
@@ -8988,7 +8989,7 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
         ) : history.length === 0 ? (
           <div className="py-8 text-center text-[#6B7280] text-sm">No {verb.toLowerCase()}s yet.</div>
         ) : (
-          <table className="w-full text-sm">
+          <table data-fin-list className="w-full text-sm">
             <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280] text-left">
               <th className="px-3 py-2 w-8"><input type="checkbox" checked={opaySel.allSelected} onChange={opaySel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
               <th className="px-4 py-2">No</th><th className="px-4 py-2">Party</th><th className="px-4 py-2">Date</th>

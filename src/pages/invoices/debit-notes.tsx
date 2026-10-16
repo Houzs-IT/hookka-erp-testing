@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
+import { KpiCards } from "@/components/finance/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
@@ -9,7 +10,6 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Plus,
-  FileText,
   X,
   Trash2,
 } from "lucide-react";
@@ -176,7 +176,7 @@ export default function DebitNotesPage() {
     setCreating(false);
   };
 
-  const columns: Column<DebitNote>[] = [
+  const columns = useMemo<Column<DebitNote>[]>(() => [
     {
       key: "noteNumber",
       label: "DN Number",
@@ -230,7 +230,7 @@ export default function DebitNotesPage() {
         </Badge>
       ),
     },
-  ];
+  ], []);
 
   const contextMenuItems: ContextMenuItem[] = [
     {
@@ -279,84 +279,62 @@ export default function DebitNotesPage() {
         }
       />
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Summary (finance v2: KPI cards, same figures) */}
+      <KpiCards
+        items={[
+          { label: "Total DN value", value: `+${formatCurrency(totalDNValue)}`, tone: "info", note: `${debitNotes.length} note${debitNotes.length === 1 ? "" : "s"}` },
+          { label: "Draft", value: String(draftCount) },
+          { label: "Posted", value: String(postedCount) },
+        ]}
+      />
+
+      {/* Data Grid */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h3 className="text-[14px] font-semibold text-[#1F1D1B]">All Debit Notes</h3>
+          <span className="text-[12px] text-[#6B7280]">{debitNotes.length} note{debitNotes.length === 1 ? "" : "s"}</span>
+        </div>
+        <BatchActionsBar
+          count={selected.length}
+          onPrint={() => printVouchers(selected.map(buildDebitNoteVoucher))}
+          exportName="debit-notes"
+          exportAoa={() => [
+            ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
+            ...selected.flatMap((dn) =>
+              dn.items.map((item) => [
+                dn.noteNumber,
+                formatDateDMY(dn.date),
+                dn.customerName ?? "",
+                dn.status ?? "ACTIVE",
+                dn.invoiceNumber ?? "",
+                dn.reason ?? "",
+                (Number(dn.totalAmount ?? 0) / 100).toFixed(2),
+                item.description ?? "",
+                String(item.quantity ?? ""),
+                (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
+                (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
+              ]),
+            ),
+          ]}
+        />
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500">Total DN Value</p>
-                <p className="text-xl font-bold text-[#3E6570] truncate">+{formatCurrency(totalDNValue)}</p>
-              </div>
-              <FileText className="h-8 w-8 text-[#3E6570] shrink-0" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Draft</p>
-                <p className="text-2xl font-bold">{draftCount}</p>
-              </div>
-              <Badge variant="status" status="DRAFT">DRAFT</Badge>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Posted</p>
-                <p className="text-2xl font-bold">{postedCount}</p>
-              </div>
-              <Badge variant="status" status="POSTED">POSTED</Badge>
-            </div>
+          <CardContent className="p-0">
+            <DataGrid
+              columns={columns}
+              data={debitNotes}
+              keyField="id"
+              virtualize
+              gridId="debit-notes"
+              selectable
+              onSelectionChange={setSelected}
+              contextMenuItems={contextMenuItems}
+              headerMenu
+              reorderableHeaders
+              exportName="Debit Notes"
+            />
           </CardContent>
         </Card>
       </div>
-
-      {/* Data Grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle>All Debit Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <BatchActionsBar
-            count={selected.length}
-            onPrint={() => printVouchers(selected.map(buildDebitNoteVoucher))}
-            exportName="debit-notes"
-            exportAoa={() => [
-              ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
-              ...selected.flatMap((dn) =>
-                dn.items.map((item) => [
-                  dn.noteNumber,
-                  formatDateDMY(dn.date),
-                  dn.customerName ?? "",
-                  dn.status ?? "ACTIVE",
-                  dn.invoiceNumber ?? "",
-                  dn.reason ?? "",
-                  (Number(dn.totalAmount ?? 0) / 100).toFixed(2),
-                  item.description ?? "",
-                  String(item.quantity ?? ""),
-                  (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
-                  (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
-                ]),
-              ),
-            ]}
-          />
-          <DataGrid
-            columns={columns}
-            data={debitNotes}
-            keyField="id"
-            virtualize
-            gridId="debit-notes"
-            selectable
-            onSelectionChange={setSelected}
-            contextMenuItems={contextMenuItems}
-          />
-        </CardContent>
-      </Card>
 
       {/* Create Modal */}
       {showCreateModal && (
