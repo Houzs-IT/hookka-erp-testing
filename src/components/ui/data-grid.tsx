@@ -24,7 +24,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-export";
 import { exportReportCsv, exportReportPdf, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
-import { columnTotals, decodeRange, headerMenuItems, inRange, parseAmount, rangeTerm, RANGE_MODE } from "@/lib/grid-layout";
+import {
+  columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
+} from "@/lib/grid-layout";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -61,7 +63,12 @@ type ServerLayoutPreset = {
 
 async function fetchOrgLayouts(
   gridId: string,
-): Promise<{ orgDefault: ServerLayoutPreset | null; print: ServerLayoutPreset | null } | null> {
+): Promise<{
+  orgDefault: ServerLayoutPreset | null;
+  print: ServerLayoutPreset | null;
+  // The caller's own "Save Layout" default (finance v2), with when it was saved.
+  mine?: (ServerLayoutPreset & { updatedAt: string | null }) | null;
+} | null> {
   try {
     const res = (await fetchJson(
       `/api/datagrid-layouts?gridId=${encodeURIComponent(gridId)}`,
@@ -70,10 +77,12 @@ async function fetchOrgLayouts(
       success?: boolean;
       orgDefault?: ServerLayoutPreset | null;
       print?: ServerLayoutPreset | null;
+      mine?: (ServerLayoutPreset & { updatedAt: string | null }) | null;
     };
     return {
       orgDefault: res?.orgDefault ?? null,
       print: res?.print ?? null,
+      mine: res?.mine ?? null,
     };
   } catch {
     return null;
@@ -82,7 +91,7 @@ async function fetchOrgLayouts(
 
 async function putOrgLayout(
   gridId: string,
-  kind: "org-default" | "print",
+  kind: "org-default" | "print" | "user",
   visibleCols: string[],
   colOrder: string[],
   colWidths?: Record<string, string> | null,
@@ -100,7 +109,7 @@ async function putOrgLayout(
 
 async function deleteOrgLayout(
   gridId: string,
-  kind: "org-default" | "print",
+  kind: "org-default" | "print" | "user",
 ): Promise<boolean> {
   try {
     await fetchJson(
@@ -330,6 +339,9 @@ export type DataGridProps<T> = {
   // Export to Excel / PDF / Print of the current view. Off by default, so other
   // grids keep the browser's own menu on their headers.
   headerMenu?: boolean;
+  // Drag a header onto another to move the column there (finance v2). The new
+  // order saves like a Columns-popover reorder. Off by default.
+  reorderableHeaders?: boolean;
 };
 
 type SavedView = {
@@ -1754,6 +1766,7 @@ export function DataGrid<T extends Record<string, any>>({
   defaultRowCap,
   footerLabel,
   headerMenu,
+  reorderableHeaders,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -1841,9 +1854,17 @@ export function DataGrid<T extends Record<string, any>>({
     }
     return {};
   });
+  // When the user last changed this grid's layout by hand in this browser
+  // (finance v2): their server-saved default ("Save Layout") only replaces the
+  // browser's layout on load when it is newer than this stamp.
+  const markLocalLayout = useCallback(() => {
+    if (!gridId) return;
+    try { localStorage.setItem(`datagrid-layout-ts-${gridId}-${userKey()}`, new Date().toISOString()); } catch { /* ignore */ }
+  }, [gridId]);
   const persistColWidths = useCallback((w: Record<string, string>) => {
     try { localStorage.setItem(`datagrid-colw-${widthStoreId}-${userKey()}`, JSON.stringify(w)); } catch { /* ignore */ }
-  }, [widthStoreId]);
+    markLocalLayout();
+  }, [widthStoreId, markLocalLayout]);
   // Double-click the handle → drop the override (back to the column's default).
   const resetColumnWidth = useCallback((key: string) => {
     setColWidths(prev => {
@@ -1891,14 +1912,16 @@ export function DataGrid<T extends Record<string, any>>({
       }
       return next;
     });
-  }, [gridId]);
+    markLocalLayout();
+  }, [gridId, markLocalLayout]);
 
   const reorderColumns = useCallback((order: string[]) => {
     setColumnOrder(order);
+    markLocalLayout();
     if (gridId) {
       try { localStorage.setItem(`datagrid-colorder-${gridId}-${userKey()}`, JSON.stringify(order)); } catch { /* ignore */ }
     }
-  }, [gridId]);
+  }, [gridId, markLocalLayout]);
 
   // Admin-only: snapshot the current Personal layout (visible columns + order +
   // widths) as the ORG-WIDE default. Persisted to the backend so EVERY user on
@@ -2064,6 +2087,26 @@ export function DataGrid<T extends Record<string, any>>({
           setVisibleKeys(new Set(remote.orgDefault.visibleCols));
           setColumnOrder(remote.orgDefault.colOrder);
           if (remote.orgDefault.colWidths) setColWidths(remote.orgDefault.colWidths);
+        }
+      }
+
+      // The user's own "Save Layout" default (finance v2) follows them to any
+      // PC: it replaces this browser's layout only when it was saved after the
+      // browser's last hand-made change (pickLayoutSource), and is then cached
+      // here as the personal layout so the next load compares equal.
+      if (remote.mine) {
+        let localTs: string | null = null;
+        try { localTs = localStorage.getItem(`datagrid-layout-ts-${gridId}-${userKeyForHydrate}`); } catch { /* ignore */ }
+        if (pickLayoutSource(localTs, remote.mine.updatedAt) === "server") {
+          setVisibleKeys(new Set(remote.mine.visibleCols));
+          setColumnOrder(remote.mine.colOrder);
+          setColWidths(remote.mine.colWidths ?? {});
+          try {
+            localStorage.setItem(`datagrid-cols-${gridId}-${userKeyForHydrate}`, JSON.stringify(remote.mine.visibleCols));
+            localStorage.setItem(`datagrid-colorder-${gridId}-${userKeyForHydrate}`, JSON.stringify(remote.mine.colOrder));
+            localStorage.setItem(`datagrid-colw-${widthStoreId}-${userKeyForHydrate}`, JSON.stringify(remote.mine.colWidths ?? {}));
+            if (remote.mine.updatedAt) localStorage.setItem(`datagrid-layout-ts-${gridId}-${userKeyForHydrate}`, remote.mine.updatedAt);
+          } catch { /* ignore */ }
         }
       }
 
@@ -2886,8 +2929,32 @@ export function DataGrid<T extends Record<string, any>>({
       print: kind === "print",
     });
   };
-  // Personal layout changes already save in this browser as they happen.
-  const saveLayout = () => toast.success("Layout saved on this computer");
+  // "Save Layout": the user's own default on the server, so it follows them to
+  // any PC (finance v2). This browser keeps saving its own copy as before.
+  const saveUserDefault = async () => {
+    if (!gridId) { toast.info("This table cannot save a layout"); return; }
+    const ok = await putOrgLayout(gridId, "user", [...visibleKeys], columnOrder, colWidths);
+    if (!ok) { toast.error("Could not save the layout"); return; }
+    markLocalLayout();
+    toast.success("Layout saved as your default");
+  };
+  // ── Drag a header onto another (finance v2; opt-in via `reorderableHeaders`) ──
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const startHeaderDrag = (e: React.DragEvent, key: string) => {
+    setDragKey(key);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", key);
+  };
+  const dropHeader = (key: string) => {
+    if (dragKey && dragKey !== key) {
+      // The order as shown: the saved order, then any column it does not list yet.
+      const effective = [...columnOrder, ...columns.map((c) => c.key).filter((k) => !columnOrder.includes(k))];
+      reorderColumns(moveColumn(effective, dragKey, key));
+    }
+    setDragKey(null);
+    setDropKey(null);
+  };
   const hdrMenuActions = (key: string, at: { x: number; y: number }): Record<string, () => void> => ({
     "Sort Ascending": () => { setSortKey(key); setSortDir("asc"); },
     "Sort Descending": () => { setSortKey(key); setSortDir("desc"); },
@@ -2901,8 +2968,16 @@ export function DataGrid<T extends Record<string, any>>({
     "Column Chooser…": () => setShowCustomizer(true),
     "Best Fit": () => resetColumnWidth(key),
     "Best Fit (All Columns)": () => { setColWidths({}); persistColWidths({}); },
-    "Save Layout": () => saveLayout(),
-    "Reset Layout": () => { setSortKey(null); setSortDir("asc"); void resetToOrgDefault(); },
+    "Save Layout": () => { void saveUserDefault(); },
+    "Reset Layout": () => {
+      setSortKey(null);
+      setSortDir("asc");
+      if (gridId) {
+        void deleteOrgLayout(gridId, "user");
+        try { localStorage.removeItem(`datagrid-layout-ts-${gridId}-${userKey()}`); } catch { /* ignore */ }
+      }
+      void resetToOrgDefault();
+    },
     "Export to Excel": () => runExport("xlsx"),
     "Export to PDF": () => runExport("pdf"),
     "Print": () => runExport("print"),
@@ -3350,9 +3425,17 @@ export function DataGrid<T extends Record<string, any>>({
                       // above stickyHeader's z-10, keeping the corner cell on
                       // top during simultaneous H+V scroll.
                       isSticky && "sticky bg-[#F0ECE9] z-20",
+                      // Where a dragged header will land (finance v2 reorder).
+                      dropKey === col.key && "shadow-[inset_2px_0_0_#6B5C32]",
                     )}
                     style={isSticky ? { left: `${stickyLeft}px` } : undefined}
                     onContextMenu={headerMenu ? (e) => openHeaderMenu(e, col.key) : undefined}
+                    draggable={reorderableHeaders || undefined}
+                    onDragStart={reorderableHeaders ? (e) => startHeaderDrag(e, col.key) : undefined}
+                    onDragOver={reorderableHeaders ? (e) => { if (dragKey && dragKey !== col.key) { e.preventDefault(); setDropKey(col.key); } } : undefined}
+                    onDragLeave={reorderableHeaders ? () => setDropKey((k) => (k === col.key ? null : k)) : undefined}
+                    onDrop={reorderableHeaders ? (e) => { e.preventDefault(); dropHeader(col.key); } : undefined}
+                    onDragEnd={reorderableHeaders ? () => { setDragKey(null); setDropKey(null); } : undefined}
                   >
                     <span
                       className={cn(
