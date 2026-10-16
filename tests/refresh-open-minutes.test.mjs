@@ -1,5 +1,5 @@
 // Saving a WIP time on WIP Production Times also updates the unfinished job
-// cards of the changed products in that department (syncOpenCardsToBom), but
+// cards of the changed products in that department (saveBomAndSyncCards), but
 // only cards still at the time the BOM had before the save.
 // Finished cards are never selected, a blank BOM step never zeroes a card,
 // every write is guarded on still-open + still-at-the-old-minutes, and only
@@ -81,7 +81,8 @@ const card = (jcId, over = {}) => ({
 
 // A small in-memory database. Reads made through batch() are counted, because
 // the sync must read around Hyperdrive's cache (batch = transaction = uncached).
-function makeDb(cards, { raceIds = [], failCardRead = false } = {}) {
+function makeDb(cards, { raceIds = [], failCardRead = false, lockTimeouts = 0 } = {}) {
+  let locksLeft = lockTimeouts;
   const bom = { id: "bt-1", productCode: "SQUARE PILLOW", baseModel: "SQUARE PILLOW", wipComponents: JSON.stringify(TREE) };
   const log = { cardReads: [], bomReadsViaBatch: 0, updates: [], audits: [], batches: [] };
   function rowsFor(s, bound) {
@@ -114,10 +115,30 @@ function makeDb(cards, { raceIds = [], failCardRead = false } = {}) {
     };
     return stmt;
   }
+  // batch() is a transaction: if any statement throws, every write in it is undone.
   async function batch(stmts) {
     log.batches.push(stmts.map((st) => st.sql));
-    return stmts.map((st) => {
+    const saved = { wip: bom.wipComponents, mins: cards.map((c) => c.oldMinutes), audits: log.audits.length };
+    try {
+      return stmts.map(runInTx);
+    } catch (e) {
+      bom.wipComponents = saved.wip;
+      cards.forEach((c, i) => (c.oldMinutes = saved.mins[i]));
+      log.audits.length = saved.audits;
+      throw e;
+    }
+  }
+  function runInTx(st) {
+      if (/^SET LOCAL lock_timeout/.test(st.sql)) return { results: [], success: true, meta: { changes: 0 } };
+      if (/^UPDATE bom_templates/.test(st.sql)) {
+        bom.wipComponents = st.bound[0];
+        return { results: [], success: true, meta: { changes: 1 } };
+      }
       if (/^UPDATE job_cards/.test(st.sql)) {
+        if (locksLeft > 0) {
+          locksLeft--;
+          throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+        }
         const [m, , id, old] = st.bound;
         const c = cards.find((x) => x.jcId === id);
         const ok = c && OPEN.includes(c.status) && c.oldMinutes === old && !raceIds.includes(id);
@@ -137,7 +158,6 @@ function makeDb(cards, { raceIds = [], failCardRead = false } = {}) {
       if (/FROM job_cards jc JOIN production_orders/.test(st.sql)) log.cardReads.push(st.sql);
       if (/FROM bom_templates WHERE productCode/.test(st.sql)) log.bomReadsViaBatch++;
       return { results: rowsFor(st.sql, st.bound), success: true, meta: { changes: 0 } };
-    });
   }
   return { log, bom, db: { prepare, batch } };
 }
@@ -157,7 +177,10 @@ async function call(db, method, path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return { status: res.status, body: await res.json() };
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* a thrown error comes back as plain text */ }
+  return { status: res.status, body: json, text };
 }
 
 const SAVE = { wipLabel: "SQUARE PILLOW", deptCode: "FAB_SEW", minutes: 12 };
@@ -201,14 +224,13 @@ test("TC-09 a card finished between the read and the write is left alone and not
   }
 });
 
-test("TC-10 a sync failure is reported and the BOM save still stands", async () => {
-  const f = makeDb([card("waiting")], { failCardRead: true });
-  const { status, body } = await call(f.db, "PUT", "/", SAVE);
-  assert.equal(status, 200);
-  assert.equal(body.success, true);
-  assert.equal(body.updatedBomCount, 1);
-  assert.match(body.jobCardsError, /connection reset/);
-  assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 12);
+test("TC-10 a failure before the write saves nothing at all", async () => {
+  const cards = [card("waiting")];
+  const f = makeDb(cards, { failCardRead: true });
+  const { status } = await call(f.db, "PUT", "/", SAVE);
+  assert.equal(status, 500);
+  assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 10, "the BOM is not saved on its own");
+  assert.equal(cards[0].oldMinutes, 10);
 });
 
 test("TC-11 Excel import: a dry run leaves cards alone, a real import updates them", async () => {
@@ -245,14 +267,40 @@ test("TC-13 Excel import also leaves out-of-date cards alone", async () => {
   assert.equal(cards[1].oldMinutes, 8);
 });
 
-test("TC-14 each card update and its audit row go out in the same transaction", async () => {
+test("TC-14 the BOM, each card update and its audit row go out in one transaction", async () => {
   const cards = [card("a"), card("b"), card("raced")];
   const f = makeDb(cards, { raceIds: ["raced"] });
   await call(f.db, "PUT", "/", SAVE);
   const writeBatches = f.log.batches.filter((b) => b.some((q) => /^UPDATE job_cards/.test(q)));
   assert.equal(writeBatches.length, 1);
-  const kinds = writeBatches[0].map((q) => (/^UPDATE job_cards/.test(q) ? "U" : /INSERT INTO audit_events/.test(q) ? "A" : "?"));
-  assert.deepEqual(kinds, ["U", "A", "U", "A", "U", "A"], "every UPDATE is followed by its audit in one batch");
+  const kindsAll = writeBatches[0].map((q) => (/^SET LOCAL lock_timeout = '5s'/.test(q) ? "S" : /^UPDATE bom_templates/.test(q) ? "B" : /^UPDATE job_cards/.test(q) ? "U" : /INSERT INTO audit_events/.test(q) ? "A" : "?"));
+  assert.deepEqual(kindsAll, ["S", "B", "U", "A", "U", "A", "U", "A"], "lock limit, BOM, then each UPDATE with its audit, all in one batch");
   assert.ok(writeBatches[0].filter((q) => /INSERT INTO audit_events/.test(q)).every((q) => q.includes(") SELECT ") && q.includes("WHERE EXISTS")));
   assert.equal(f.log.audits.length, 2, "the raced card's audit row is not written");
+});
+
+test("TC-15 busy job cards: nothing is saved, the page is told, and a retry works", async () => {
+  const cards = [card("waiting")];
+  const f = makeDb(cards, { lockTimeouts: 1 });
+  const busy = await call(f.db, "PUT", "/", SAVE);
+  assert.equal(busy.status, 503);
+  assert.equal(busy.body.success, false);
+  assert.match(busy.body.error, /busy right now, so nothing was saved/);
+  assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 10, "BOM rolled back with the cards");
+  assert.equal(cards[0].oldMinutes, 10);
+  assert.equal(f.log.audits.length, 0);
+  const again = await call(f.db, "PUT", "/", SAVE);
+  assert.equal(again.status, 200);
+  assert.deepEqual(again.body.jobCards, { updated: 1, leftAlone: 0, skipped: 0, outOfDate: 0 });
+  assert.equal(cards[0].oldMinutes, 12, "the same save, retried, moves the card");
+});
+
+test("TC-16 busy job cards during an Excel import: the whole import is undone", async () => {
+  const cards = [card("waiting")];
+  const f = makeDb(cards, { lockTimeouts: 1 });
+  const items = [{ wipLabel: "SQUARE PILLOW", deptCode: "FAB_SEW", minutes: 12 }];
+  const res = await call(f.db, "POST", "/bulk-import", { items, dryRun: false });
+  assert.equal(res.status, 503);
+  assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 10);
+  assert.equal(cards[0].oldMinutes, 10);
 });

@@ -62,16 +62,11 @@ type WipTimeResponse = {
 // what each save response says about them.
 type CardSync = {
   jobCards?: { updated: number; leftAlone: number; skipped: number; outOfDate?: number };
-  jobCardsError?: string;
 };
 const OPEN_CARDS_NOTE =
   "Unfinished job cards (waiting, in progress, paused or blocked) still at the old time also get the new time. Finished cards, and cards that already had a different time, keep theirs.";
 
-function cardsNoticeFrom(results: CardSync[]): { text: string; error?: boolean } | null {
-  const err = results.find((r) => r.jobCardsError)?.jobCardsError;
-  if (err) {
-    return { error: true, text: `The BOM time was saved, but the unfinished job cards could not be updated: ${err}` };
-  }
+function cardsNoticeFrom(results: CardSync[]): string | null {
   if (!results.some((r) => r.jobCards)) return null;
   const updated = results.reduce((s, r) => s + (r.jobCards?.updated ?? 0), 0);
   const skipped = results.reduce((s, r) => s + (r.jobCards?.skipped ?? 0), 0);
@@ -86,7 +81,7 @@ function cardsNoticeFrom(results: CardSync[]): { text: string; error?: boolean }
   if (skipped > 0) {
     text += ` ${skipped} card${skipped === 1 ? " keeps its" : "s keep their"} old time because ${skipped === 1 ? "it" : "they"} can't be recalculated automatically (a blank BOM step, sofa fabric cutting shared by several lines, or a step no longer in the BOM).`;
   }
-  return { text };
+  return text;
 }
 
 function rowKey(r: WipTimeRow): string {
@@ -201,7 +196,7 @@ export default function WipTimesPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   // What saving did to the unfinished job cards (the server updates them).
-  const [cardsNotice, setCardsNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const [cardsNotice, setCardsNotice] = useState<string | null>(null);
 
   // Multi-select batch edit. The grid's tick boxes feed `selectedRows`;
   // when one or more rows are ticked a toolbar appears that opens a batch
@@ -920,18 +915,10 @@ export default function WipTimesPage() {
       </div>
 
       {cardsNotice && (
-        <div
-          className={`flex items-start justify-between gap-2 rounded-md p-3 text-sm ${
-            cardsNotice.error ? "bg-[#F9E1DA] text-[#9A3A2D]" : "bg-[#EEF3E4] text-[#4F7C3A]"
-          }`}
-        >
+        <div className="flex items-start justify-between gap-2 rounded-md p-3 text-sm bg-[#EEF3E4] text-[#4F7C3A]">
           <span className="flex items-start gap-2 min-w-0">
-            {cardsNotice.error ? (
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            ) : (
-              <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            )}
-            {cardsNotice.text}
+            <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            {cardsNotice}
           </span>
           <button type="button" onClick={() => setCardsNotice(null)} aria-label="Dismiss" className="shrink-0">
             <X className="h-4 w-4" />
@@ -1559,14 +1546,8 @@ export default function WipTimesPage() {
                     {importResult.appliedBomCount} BOM template(s).
                   </p>
                   {cardsNoticeFrom([importResult]) && (
-                    <p
-                      className={`p-3 rounded ${
-                        cardsNoticeFrom([importResult])?.error
-                          ? "text-[#9A3A2D] bg-[#F9E1DA]"
-                          : "text-[#374151] bg-[#FAF8F5]"
-                      }`}
-                    >
-                      {cardsNoticeFrom([importResult])?.text}
+                    <p className="p-3 rounded text-[#374151] bg-[#FAF8F5]">
+                      {cardsNoticeFrom([importResult])}
                     </p>
                   )}
                   {importResult.itemErrors.length > 0 && (
