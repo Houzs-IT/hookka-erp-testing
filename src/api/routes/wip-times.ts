@@ -26,6 +26,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { syncOpenCardsToBom, type CardSyncResult } from "./jobcard-sync";
 import {
   resolveWipTokens,
   type BomVariantContext,
@@ -249,6 +250,21 @@ function mutateMatchingNodes(
   return count;
 }
 
+// The BOM is already saved when this runs, so a failure here is reported next
+// to the saved result instead of failing the whole save.
+async function syncCardsAfterSave(
+  c: Parameters<typeof syncOpenCardsToBom>[0],
+  pairs: string[],
+  before: ReadonlyMap<string, string | null>,
+): Promise<{ jobCards: CardSyncResult } | { jobCardsError: string }> {
+  try {
+    return { jobCards: await syncOpenCardsToBom(c, new Set(pairs), before) };
+  } catch (e) {
+    console.error("[wip-times] job card sync failed:", e);
+    return { jobCardsError: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 app.put("/", async (c) => {
   const denied = await requirePermission(c, "bom", "update");
   if (denied) return denied;
@@ -309,6 +325,9 @@ app.put("/", async (c) => {
 
   let updatedBomCount = 0;
   let updatedNodeCount = 0;
+  const changedProducts = new Set<string>();
+  // Each product's BOM as it was before this save: only cards still at that time move.
+  const beforeWip = new Map<string, string | null>();
 
   for (const row of result.results ?? []) {
     if (!row.wipComponents) continue;
@@ -352,9 +371,12 @@ app.put("/", async (c) => {
         .run();
       updatedBomCount++;
       updatedNodeCount += nodesUpdated;
+      changedProducts.add(row.productCode);
+      if (!beforeWip.has(row.productCode)) beforeWip.set(row.productCode, row.wipComponents);
     }
   }
 
+  const cards = await syncCardsAfterSave(c, [...changedProducts].map((p) => `${p}::${deptCode}`), beforeWip);
   return c.json({
     success: true,
     updatedBomCount,
@@ -362,6 +384,7 @@ app.put("/", async (c) => {
     wipLabel,
     deptCode,
     minutes,
+    ...cards,
   });
 });
 
@@ -511,9 +534,12 @@ app.post("/bulk-import", async (c) => {
   // pass then walks the cached parsed structures in memory.
   type BomCache = {
     id: string;
+    productCode: string;
     tree: BomWipNode[];
     ctx: BomVariantContext;
     dirty: boolean;
+    depts: Set<string>;
+    before: string;
   };
   const bomCache: BomCache[] = [];
   for (const row of bomRows) {
@@ -540,7 +566,7 @@ app.post("/bulk-import", async (c) => {
       row.sizeLabel,
       defaults,
     );
-    bomCache.push({ id: row.id, tree: tree as BomWipNode[], ctx, dirty: false });
+    bomCache.push({ id: row.id, productCode: row.productCode, tree: tree as BomWipNode[], ctx, dirty: false, depts: new Set(), before: row.wipComponents });
   }
 
   // Per-item update pass over the cache. We DON'T write until after the
@@ -566,6 +592,7 @@ app.post("/bulk-import", async (c) => {
       );
       if (nodesUpdated > 0) {
         bom.dirty = true;
+        bom.depts.add(item.deptCode);
         updatedBomCount++;
         updatedNodeCount += nodesUpdated;
       }
@@ -582,6 +609,8 @@ app.post("/bulk-import", async (c) => {
   // Write the dirty BOMs back, one row per UPDATE. Sequential to keep
   // error reporting per-row simple and to avoid pile-up under load.
   let appliedBomCount = 0;
+  const savedPairs: string[] = [];
+  const beforeWip = new Map<string, string | null>();
   if (!dryRun) {
     for (const bom of bomCache) {
       if (!bom.dirty) continue;
@@ -593,6 +622,8 @@ app.post("/bulk-import", async (c) => {
           .bind(JSON.stringify(bom.tree), bom.id, orgId)
           .run();
         appliedBomCount++;
+        for (const d of bom.depts) savedPairs.push(`${bom.productCode}::${d}`);
+        if (!beforeWip.has(bom.productCode)) beforeWip.set(bom.productCode, bom.before);
       } catch (e) {
         // Don't abort the rest — record the write failure but keep going
         // so an isolated row corruption doesn't lose every other update.
@@ -604,6 +635,7 @@ app.post("/bulk-import", async (c) => {
     }
   }
 
+  const cards = dryRun ? {} : await syncCardsAfterSave(c, savedPairs, beforeWip);
   const totalItems = rawItems.length;
   const applied = perItem.filter((p) => p.updatedNodeCount > 0).length;
   const skipped = perItem.length - applied;
@@ -618,6 +650,7 @@ app.post("/bulk-import", async (c) => {
     appliedBomCount,
     itemErrors,
     perItem,
+    ...cards,
   });
 });
 

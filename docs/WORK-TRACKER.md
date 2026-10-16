@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `feat/wip-times-auto-sync-jobcards`, to `staging` (WIP time save updates open job cards, button removed) added below (its entry is the newest).
 HEAD
  HEAD
 > **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone nav drawer reskin, local only) added below (its entry is the newest).
@@ -7335,3 +7336,27 @@ checked locally with stubbed data at desktop and 320px. **Not yet verified on st
 Known gap: a sofa Fab Cut card is shared by several lines of the order, so it is listed as
 skipped rather than recalculated.
 upstream/staging
+
+## 2026-10-16 — WIP Production Times: saving a time updates open job cards (no button)
+
+Asked (owner, 2026-10-16, after #903 was tested on staging): drop the "Sync open job cards"
+button and its preview. Saving a WIP time should update the unfinished job cards by itself,
+and the screen should say so.
+
+1. [x] Single edit, multi-row "Set BOM Time" and Excel import all update the job cards of
+   the products whose BOM they changed, in that department. Unfinished means WAITING /
+   IN_PROGRESS / PAUSED / BLOCKED (owner's choice: all unfinished, not only waiting).
+2. [x] Remove the button, the preview dialog and the preview endpoint.
+3. [x] The edit windows say unfinished cards will follow; after saving, the page says how
+   many cards were updated.
+4. [x] Same rules as #903: finished cards and due dates untouched, a blank BOM step never
+   zeroes a card, every change audited.
+
+Built on branch `feat/wip-times-auto-sync-jobcards` (to `staging`): `syncOpenCardsToBom` in
+`jobcard-sync.ts`, called from `PUT /api/wip-times` and `POST /api/wip-times/bulk-import`. The
+button, `sync-open-jobcards-dialog.tsx` and `/refresh-open-minutes` are gone. Tests:
+`tests/refresh-open-minutes.test.mjs`. **Not yet verified on staging.**
+
+**Changed the same day (owner):** only cards still at the time the BOM had before the save
+move. Cards that were already out of date (1,095 on staging) stay as they are; the banner
+counts them.

@@ -21,10 +21,11 @@
 // JC-row shape are imported from the shared helpers so this endpoint stays in
 // lockstep with the SO-confirm path in sales-orders.ts.
 // ---------------------------------------------------------------------------
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { buildAuditStatement } from "../lib/audit";
+import { freshReads } from "../lib/worker-perf";
 import {
   breakBomIntoJobCardWips,
   deriveJobCardId,
@@ -545,14 +546,19 @@ app.post("/fill-zero-minutes", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/production/sync-jobcards-from-bom/refresh-open-minutes
-//   preview: { dryRun: true, scope: [{ deptCode, productCodes: [...] }] }
-//   apply:   { dryRun: false, jcIds: [...] }  (the cards left ticked)
+// syncOpenCardsToBom: after a WIP time is saved (WIP Production Times single
+// edit, multi-row edit, Excel import), give the unfinished job cards of the
+// changed products in that department the BOM's current minutes.
 //
-// Used by the WIP Production Times page after a time is changed. Unfinished
-// cards only (WAITING / IN_PROGRESS / PAUSED / BLOCKED): a finished card keeps
-// the minutes it was paid and costed on. Apply recomputes on the server and
-// never takes minutes from the client. Due dates are not touched.
+// Only a card still at the time the BOM had BEFORE the save moves (owner,
+// 2026-10-16): a card that was already out of date stays as it is, and is
+// counted in `outOfDate`. `before` maps productCode to its wipComponents as
+// they were before the save; a product missing from it moves nothing.
+//
+// `pairs` holds `${productCode}::${deptCode}`. Unfinished = WAITING /
+// IN_PROGRESS / PAUSED / BLOCKED; a finished card keeps the minutes it was paid
+// and costed on. Due dates are not touched. Reads skip Hyperdrive's cache, since
+// the BOM was written a moment ago.
 // ---------------------------------------------------------------------------
 const OPEN_STATUSES = "('WAITING','IN_PROGRESS','PAUSED','BLOCKED')";
 
@@ -560,17 +566,7 @@ type OpenCard = ProductionOrderRow & {
   jcId: string;
   wipKey: string | null;
   deptCode: string | null;
-  deptName: string | null;
-  wipLabel: string | null;
-  wipQty: number | null;
-  status: string;
-  dueDate: string | null;
-  pic1Name: string | null;
-  pic2Name: string | null;
   oldMinutes: number | null;
-  poNo: string | null;
-  companySOId: string | null;
-  customerName: string | null;
   specialOrder: string | null;
   repairScope: string | null;
 };
@@ -601,114 +597,51 @@ export function refreshDecision(
   return res;
 }
 
-const OPEN_CARD_COLUMNS = `jc.id AS "jcId", jc.wipKey AS "wipKey", jc.departmentCode AS "deptCode",
-       jc.departmentName AS "deptName", jc.wipLabel AS "wipLabel", jc.wipQty AS "wipQty",
-       jc.status AS "status", jc.dueDate AS "dueDate", jc.pic1Name AS "pic1Name",
-       jc.pic2Name AS "pic2Name", jc.productionTimeMinutes AS "oldMinutes",
-       po.poNo AS "poNo", po.companySOId AS "companySOId", po.customerName AS "customerName",
-       po.specialOrder AS "specialOrder", po.repairScope AS "repairScope",
-       po.id, po.salesOrderId, po.productCode, po.itemCategory, po.quantity,
-       po.currentDepartment, po.targetEndDate, po.startDate, po.sizeCode, po.sizeLabel,
-       po.fabricCode, po.gapInches, po.divanHeightInches, po.legHeightInches`;
+export type CardSyncResult = { updated: number; leftAlone: number; skipped: number; outOfDate: number };
 
-app.post("/refresh-open-minutes", async (c) => {
-  const denied = await requirePermission(c, "production-orders", "update");
-  if (denied) return denied;
-  const db = c.var.DB;
-  let body: {
-    dryRun?: unknown;
-    scope?: Array<{ deptCode?: unknown; productCodes?: unknown }>;
-    jcIds?: unknown;
-  };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ success: false, error: "invalid json" }, 400);
-  }
-  const dryRun = body.dryRun !== false;
+export async function syncOpenCardsToBom(
+  c: Context<Env>,
+  pairs: ReadonlySet<string>,
+  before: ReadonlyMap<string, string | null>,
+): Promise<CardSyncResult> {
+  const result: CardSyncResult = { updated: 0, leftAlone: 0, skipped: 0, outOfDate: 0 };
+  if (pairs.size === 0) return result;
+  const raw = c.var.DB;
+  // freshReads wraps reads only; its statements cannot go into raw.batch.
+  const db = freshReads(raw);
+  const codes = [...new Set([...pairs].map((p) => p.slice(0, p.lastIndexOf("::"))))];
 
   const cards: OpenCard[] = [];
-  // product::dept pairs in scope; null on apply, where the ticked ids decide.
-  let pairs: Set<string> | null = null;
-  if (dryRun) {
-    if (!Array.isArray(body.scope) || body.scope.length === 0) {
-      return c.json({ success: false, error: "scope required" }, 400);
-    }
-    pairs = new Set();
-    const codes = new Set<string>();
-    for (const s of body.scope) {
-      const dept = typeof s?.deptCode === "string" ? s.deptCode : "";
-      if (!dept || !Array.isArray(s.productCodes)) continue;
-      for (const p of s.productCodes) {
-        if (typeof p !== "string" || !p) continue;
-        pairs.add(`${p}::${dept}`);
-        codes.add(p);
-      }
-    }
-    for (const part of chunk([...codes], 300)) {
-      const res = await db
-        .prepare(
-          `SELECT ${OPEN_CARD_COLUMNS}
-             FROM job_cards jc
-             JOIN production_orders po ON po.id = jc.productionOrderId
-            WHERE jc.status IN ${OPEN_STATUSES}
-              AND po.productCode IN (${part.map(() => "?").join(",")})
-            ORDER BY jc.id`,
-        )
-        .bind(...part)
-        .all<OpenCard>();
-      cards.push(...(res.results ?? []));
-    }
-  } else {
-    const ids = Array.isArray(body.jcIds)
-      ? body.jcIds.filter((x): x is string => typeof x === "string" && x.length > 0)
-      : [];
-    if (ids.length === 0) {
-      return c.json({ success: false, error: "jcIds required" }, 400);
-    }
-    for (const part of chunk([...new Set(ids)], 300)) {
-      const res = await db
-        .prepare(
-          `SELECT ${OPEN_CARD_COLUMNS}
-             FROM job_cards jc
-             JOIN production_orders po ON po.id = jc.productionOrderId
-            WHERE jc.status IN ${OPEN_STATUSES}
-              AND jc.id IN (${part.map(() => "?").join(",")})
-            ORDER BY jc.id`,
-        )
-        .bind(...part)
-        .all<OpenCard>();
-      cards.push(...(res.results ?? []));
-    }
+  for (const part of chunk(codes, 300)) {
+    const res = await db
+      .prepare(
+        `SELECT jc.id AS "jcId", jc.wipKey AS "wipKey", jc.departmentCode AS "deptCode",
+                jc.productionTimeMinutes AS "oldMinutes",
+                po.specialOrder AS "specialOrder", po.repairScope AS "repairScope",
+                po.id, po.salesOrderId, po.productCode, po.itemCategory, po.quantity,
+                po.currentDepartment, po.targetEndDate, po.startDate, po.sizeCode, po.sizeLabel,
+                po.fabricCode, po.gapInches, po.divanHeightInches, po.legHeightInches
+           FROM job_cards jc
+           JOIN production_orders po ON po.id = jc.productionOrderId
+          WHERE jc.status IN ${OPEN_STATUSES}
+            AND po.productCode IN (${part.map(() => "?").join(",")})
+          ORDER BY jc.id`,
+      )
+      .bind(...part)
+      .all<OpenCard>();
+    cards.push(...(res.results ?? []));
   }
 
   const bomCache = new Map<string, Awaited<ReturnType<typeof loadBomTemplate>>>();
   const expectedByPo = new Map<string, ExpectedJc[]>();
+  const beforeByPo = new Map<string, ExpectedJc[]>();
   const deptKeysByPo = new Map<string, Map<string, string[]>>();
-  type Row = {
-    jcId: string;
-    soNo: string;
-    poNo: string;
-    customerName: string;
-    productCode: string;
-    deptCode: string;
-    deptName: string;
-    wipLabel: string;
-    wipQty: number;
-    status: string;
-    dueDate: string;
-    workers: string;
-    oldMinutes: number;
-    newMinutes: number;
-  };
-  const changes: Row[] = [];
-  const skipped: Array<Omit<Row, "newMinutes"> & { reason: RefreshSkip }> = [];
-  let unchanged = 0;
+  const changes: Array<{ jcId: string; deptCode: string; oldMinutes: number; newMinutes: number }> = [];
 
   for (const r of cards) {
     const productCode = r.productCode ?? "";
     const deptCode = r.deptCode ?? "";
-    if (pairs && !pairs.has(`${productCode}::${deptCode}`)) continue;
+    if (!pairs.has(`${productCode}::${deptCode}`)) continue;
     let expected = expectedByPo.get(r.id);
     if (!expected) {
       if (!bomCache.has(productCode)) bomCache.set(productCode, await loadBomTemplate(db, productCode));
@@ -747,39 +680,32 @@ app.post("/refresh-open-minutes", async (c) => {
       expected,
       otherCardInDept,
     );
-    if ("unchanged" in res) {
-      unchanged++;
+    if ("unchanged" in res) continue;
+    if ("skip" in res) {
+      result.skipped++;
       continue;
     }
-    const row = {
-      jcId: r.jcId,
-      soNo: r.companySOId ?? "",
-      poNo: r.poNo ?? "",
-      customerName: r.customerName ?? "",
-      productCode,
-      deptCode,
-      deptName: r.deptName ?? deptCode,
-      wipLabel: r.wipLabel ?? "",
-      wipQty: Number(r.wipQty) || 1,
-      status: r.status,
-      dueDate: r.dueDate ?? "",
-      workers: [r.pic1Name, r.pic2Name].filter(Boolean).join(", "),
-      oldMinutes,
-    };
-    if ("skip" in res) skipped.push({ ...row, reason: res.skip });
-    else changes.push({ ...row, newMinutes: res.minutes });
+    let was = beforeByPo.get(r.id);
+    if (!was) {
+      const cur = bomCache.get(productCode) ?? null;
+      was = before.has(productCode)
+        ? computeExpectedJcs(r, cur ? { ...cur, wipComponents: before.get(productCode) ?? null } : null)
+        : expected;
+      beforeByPo.set(r.id, was);
+    }
+    const prev = bomMinutesForCard({ wipKey, deptCode, poId: r.id }, was, otherCardInDept);
+    if ("skip" in prev || prev.minutes !== oldMinutes) {
+      result.outOfDate++;
+      continue;
+    }
+    changes.push({ jcId: r.jcId, deptCode, oldMinutes, newMinutes: res.minutes });
   }
 
-  if (dryRun) {
-    return c.json({ success: true, dryRun: true, scanned: cards.length, unchanged, changes, skipped });
-  }
-
-  let updated = 0;
   for (const part of chunk(changes, 50)) {
     // Still open and still at the minutes just read, or left alone.
-    const results = await db.batch(
+    const results = await raw.batch(
       part.map((f) =>
-        db
+        raw
           .prepare(
             `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?
               WHERE id = ? AND status IN ${OPEN_STATUSES}
@@ -790,9 +716,12 @@ app.post("/refresh-open-minutes", async (c) => {
     );
     const stmts: D1PreparedStatement[] = [];
     for (let i = 0; i < part.length; i++) {
-      if ((results[i]?.meta?.changes ?? 0) === 0) continue;
+      if ((results[i]?.meta?.changes ?? 0) === 0) {
+        result.leftAlone++;
+        continue;
+      }
       const f = part[i];
-      updated++;
+      result.updated++;
       const audit = await buildAuditStatement(c, {
         resource: "job-cards",
         resourceId: f.jcId,
@@ -803,17 +732,9 @@ app.post("/refresh-open-minutes", async (c) => {
       });
       if (audit) stmts.push(audit);
     }
-    if (stmts.length > 0) await db.batch(stmts);
+    if (stmts.length > 0) await raw.batch(stmts);
   }
-
-  return c.json({
-    success: true,
-    dryRun: false,
-    scanned: cards.length,
-    updated,
-    leftAlone: changes.length - updated,
-    skipped: skipped.length,
-  });
-});
+  return result;
+}
 
 export default app;
