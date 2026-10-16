@@ -98,7 +98,7 @@ import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus, type FinTone } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
 import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
-import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards } from "@/components/finance/report-shell";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -13078,7 +13078,8 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
 function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [month, setMonth] = useState(() => today.slice(0, 7));
   const [data, setData] = useState<{
     posted: boolean;
     totalSen: number;
@@ -13179,13 +13180,35 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
   };
 
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
+  const monthOpts = monthOptions(today.slice(0, 7), 18);
+  const mLabel = periodLabel(month, "");
+  const workers = (data?.byDept ?? []).reduce((s, d) => s + d.workers, 0);
+  const deptCost = (data?.byDept ?? []).reduce((s, d) => s + d.costSen, 0);
+  const creditCodes = (data?.postedCredits ?? []).map((c) => c.code).join(", ") || data?.accrualAccount || "";
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <span aria-hidden="true" />
-        <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>Department → Account map</Button>
-      </div>
+      {/* Finance v2: the month and the month-end actions on the title row —
+          the same Post / Unpost as before (owner presses them). */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={month} options={monthOpts} onChange={(m) => { setData(null); setMonth(m); }} today={today} />
+          <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>Department → Account map</Button>
+          <Link to="/employees" title="Opens HR › Employees — check the month on its Payroll tab">
+            <Button variant="outline" size="sm">Check in Payroll ↗</Button>
+          </Link>
+          {data && (data.posted ? (
+            <Button variant="outline" size="sm" disabled={posting} onClick={handleUnpost}
+              className="text-[#9A3A2D] hover:bg-[#9A3A2D]/5">
+              {posting ? "Unposting…" : "Unpost"}
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" disabled={posting || data.totalSen <= 0} onClick={handlePost}>
+              {posting ? "Posting…" : `Post ${formatCurrency(data.totalSen)} to GL`}
+            </Button>
+          ))}
+        </ReportToolbar>
+      </FinanceTitleActions>
 
       {showMap && (
         <Card>
@@ -13231,47 +13254,36 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
         </Card>
       )}
 
-      <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Month</label>
-            <input type="month" value={month} onChange={(e) => { setData(null); setMonth(e.target.value); }} className={selCls} />
-          </div>
-          {data && (
-            <>
-              <span className="text-sm text-[#6B7280] pb-1">Total labour cost <span className="font-semibold text-[#1F1D1B] tabular-nums">{formatCurrency(data.totalSen)}</span></span>
-              {data.posted ? (
-                <>
-                  <span className="text-xs text-[#27500A] pb-2">Already posted ✓ (CR {(data.postedCredits ?? []).map((c) => c.code).join(", ") || data.accrualAccount})</span>
-                  {/* Posted before the statutory accruals were split out (2026-10-09):
-                      the ledger has fewer credit accounts than the posting now makes. */}
-                  {(data.postedCredits?.length ?? 0) > 0 && (data.credits?.length ?? 0) > (data.postedCredits?.length ?? 0) && (
-                    <span className="text-xs text-[#7A5B12] pb-2">Posted before EPF / SOCSO / EIS had their own accruals — Unpost, then Post again to split it.</span>
-                  )}
-                  {/* Without this the month is frozen in whatever shape it was
-                      first posted — the only way back was a hand-written JE. */}
-                  <Button variant="outline" size="sm" disabled={posting} onClick={handleUnpost}
-                    className="text-[#9A3A2D] hover:bg-[#9A3A2D]/5">
-                    {posting ? "Unposting…" : "Unpost"}
-                  </Button>
-                </>
-              ) : (
-                <Button variant="primary" size="sm" disabled={posting || data.totalSen <= 0} onClick={handlePost}>
-                  {posting ? "Posting…" : `Post ${formatCurrency(data.totalSen)} to GL`}
-                </Button>
-              )}
-            </>
+      {data && (
+        <>
+          <StatusBanner
+            done={data.posted}
+            title={data.posted ? "Posted" : "Not posted"}
+            sub={data.posted
+              ? `Production labour for ${mLabel} is in the ledger (CR ${creditCodes}) · read-only. Unpost to change it.`
+              : `Check ${mLabel} in Payroll, then post.`}
+          />
+          {/* Posted before the statutory accruals were split out (2026-10-09):
+              the ledger has fewer credit accounts than the posting now makes. */}
+          {data.posted && (data.postedCredits?.length ?? 0) > 0 && (data.credits?.length ?? 0) > (data.postedCredits?.length ?? 0) && (
+            <p className="text-xs text-[#7A5B12]">Posted before EPF / SOCSO / EIS had their own accruals — Unpost, then Post again to split it.</p>
           )}
-        </CardContent>
-      </Card>
+          <KpiCards
+            items={[
+              { label: `Production labour · ${mLabel}`, value: formatCurrency(data.totalSen), note: `${workers} worker${workers === 1 ? "" : "s"}` },
+              { label: "Status", value: data.posted ? "Posted" : "Not posted", tone: data.posted ? "ok" : "warn", note: data.posted ? `CR ${creditCodes}` : "post before closing the month" },
+            ]}
+          />
+        </>
+      )}
 
       {data && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <Card>
             <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <tr>
                     <th className="px-3 py-2 text-left">Department</th>
                     <th className="px-3 py-2 text-left">→ Account</th>
                     <th className="px-3 py-2 text-right">Workers</th>
@@ -13280,7 +13292,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 </thead>
                 <tbody>
                   {data.byDept.map((d) => (
-                    <tr key={d.departmentCode} className="border-b border-[#F0ECE9]">
+                    <tr key={d.departmentCode}>
                       <td className="px-3 py-1.5">{d.departmentCode}</td>
                       <td className="px-3 py-1.5 text-xs"><span className="tabular-nums text-[#6B7280] mr-1">{d.account}</span>{d.accountName}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{d.workers}</td>
@@ -13288,17 +13300,26 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     </tr>
                   ))}
                   {data.byDept.length === 0 && (
-                    <tr><td colSpan={4} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No payslips for {month}</td></tr>
+                    <tr data-fin-nolift=""><td colSpan={4} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No payslips for {month}</td></tr>
                   )}
                 </tbody>
+                {data.byDept.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td className="px-3 py-2" colSpan={2}>Total</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{workers}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(deptCost)}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <tr>
                     <th className="px-3 py-2 text-left">GL posting preview</th>
                     <th className="px-3 py-2 text-right">Debit</th>
                     <th className="px-3 py-2 text-right">Credit</th>
@@ -13306,25 +13327,27 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 </thead>
                 <tbody>
                   {data.accounts.map((a) => (
-                    <tr key={a.code} className="border-b border-[#F0ECE9]">
+                    <tr key={a.code}>
                       <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{a.code}</span>{a.name}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.costSen)}</td>
                       <td className="px-3 py-1.5 text-right" />
                     </tr>
                   ))}
                   {(data.credits ?? [{ code: data.accrualAccount, name: "ACCRUAL - SALARY", sen: data.totalSen }]).map((cr) => (
-                    <tr key={cr.code} className="border-b border-[#F0ECE9]">
+                    <tr key={cr.code}>
                       <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{cr.code}</span>{cr.name}</td>
                       <td className="px-3 py-1.5 text-right" />
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(cr.sen)}</td>
                     </tr>
                   ))}
-                  <tr className="bg-[#F0ECE9]/60 font-semibold">
+                </tbody>
+                <tfoot>
+                  <tr>
                     <td className="px-3 py-2">TOTAL</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totalSen)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totalSen)}</td>
                   </tr>
-                </tbody>
+                </tfoot>
               </table>
             </CardContent>
           </Card>
@@ -13382,7 +13405,11 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     name: "", assetAccount: "", accumAccount: "", expenseAccount: "",
     purchaseDate: "", cost: "", residual: "", lifeMonths: "", openingAccum: "",
   });
-  const [runMonth, setRunMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [runMonth, setRunMonth] = useState(() => today.slice(0, 7));
+  // Re-read the month's preview after a run (finance v2: the preview loads
+  // with the month — a read; Post stays the owner's click).
+  const [previewKey, setPreviewKey] = useState(0);
   const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
   const [posting, setPosting] = useState(false);
 
@@ -13465,13 +13492,14 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else toast.error(j?.error || "Delete failed");
   };
 
-  const handlePreview = async () => {
-    setPreview(null);
-    const res = await fetch(`/api/accounting/fixed-assets/depreciation-preview?month=${runMonth}`);
-    const j = await res.json() as { success?: boolean; data?: NonNullable<typeof preview>; error?: string };
-    if (j?.success && j.data) setPreview(j.data);
-    else toast.error(j?.error || "Preview failed");
-  };
+  useEffect(() => {
+    let dead = false;
+    fetch(`/api/accounting/fixed-assets/depreciation-preview?month=${runMonth}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: NonNullable<typeof preview>; error?: string }>)
+      .then((j) => { if (!dead && j?.success && j.data) setPreview(j.data); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [runMonth, previewKey]);
 
   const handleRun = async () => {
     setPosting(true);
@@ -13486,6 +13514,7 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         toast.success(`Depreciation ${runMonth} posted — ${j.data.assets} assets, ${formatCurrency(j.data.totalSen)}`);
         setPreview(null);
         load();
+        setPreviewKey((k) => k + 1);
       } else toast.error(j?.error || "Run failed");
     } finally {
       setPosting(false);
@@ -13495,14 +13524,67 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
   const nbv = (r: FaRow) => r.costSen - r.accumSen;
 
+  // Finance v2: the register and this month's run grouped by the asset (cost)
+  // account, a subtotal per group; disposed assets stay listed (faded) but are
+  // left out of the totals.
+  const acctName = (code: string) => accounts.find((a) => a.code === code)?.name ?? "";
+  const live = (rows ?? []).filter((r) => !r.disposedAt);
+  const groupCodes = [...new Set((rows ?? []).map((r) => r.assetAccount))].sort();
+  const sumOf = (xs: FaRow[], f: (r: FaRow) => number) => xs.filter((r) => !r.disposedAt).reduce((s, r) => s + f(r), 0);
+  const assetOf = new Map((rows ?? []).map((r) => [r.id, r] as const));
+  const previewGroups = preview
+    ? [...new Set(preview.rows.map((p) => assetOf.get(p.assetId)?.assetAccount ?? ""))].sort()
+    : [];
+  const monthOpts = monthOptions(today.slice(0, 7), 18);
+  const mLabel = periodLabel(runMonth, "");
+  const runState: "loading" | "none" | "todo" | "done" =
+    rows === null || preview === null ? "loading" : live.length === 0 ? "none" : preview.rows.length > 0 ? "todo" : "done";
+
+  // The download carries the register as shown.
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Asset", "Accounts (cost / accum / expense)", "Purchased", "Cost (RM)", "Accum. depn (RM)", "NBV (RM)", "Life (months)"]];
+    const kinds: PdfRowKind[] = [];
+    for (const g of groupCodes) {
+      const xs = (rows ?? []).filter((r) => r.assetAccount === g);
+      aoa.push([`${g} ${acctName(g)}`, "", "", "", "", "", ""]); kinds.push("section");
+      for (const r of xs) {
+        aoa.push([`${r.name}${r.disposedAt ? " (disposed)" : ""}`, `${r.assetAccount} / ${r.accumAccount} / ${r.expenseAccount}`, r.purchaseDate, r.costSen / 100, r.accumSen / 100, nbv(r) / 100, r.usefulLifeMonths]);
+        kinds.push(undefined);
+      }
+      aoa.push([`Total ${acctName(g) || g}`, "", "", sumOf(xs, (r) => r.costSen) / 100, sumOf(xs, (r) => r.accumSen) / 100, sumOf(xs, nbv) / 100, ""]); kinds.push("subtotal");
+    }
+    aoa.push(["TOTAL (in use)", "", "", sumOf(rows ?? [], (r) => r.costSen) / 100, sumOf(rows ?? [], (r) => r.accumSen) / 100, sumOf(rows ?? [], nbv) / 100, ""]); kinds.push("grand");
+    return { aoa, kinds };
+  };
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx("fixed-assets.xlsx", "Fixed Assets", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf("fixed-assets.pdf", "Fixed Asset Register", `As at ${fmtDocDate(today)}`, aoa, { rowKind: (_r, i) => kinds[i], leftCols: [1, 2], company: COMPANY.HOOKKA.name, print: true });
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <span aria-hidden="true" />
-        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
-          <Plus className="h-4 w-4" /> Add Asset
-        </Button>
-      </div>
+      {/* Finance v2: the month and the month-end actions on the title row —
+          the same Add Asset form and the same Post (owner presses it). */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={runMonth} options={monthOpts} onChange={(m) => { setPreview(null); setRunMonth(m); }} today={today} />
+          <Button variant="outline" size="sm" onClick={() => setShowForm(!showForm)}>
+            <Plus className="h-4 w-4" /> Add Asset
+          </Button>
+          {preview && preview.rows.length > 0 && (
+            <Button variant="primary" size="sm" disabled={posting} onClick={handleRun}>
+              {posting ? "Posting…" : `Post ${formatCurrency(preview.totalSen)} (${preview.rows.length} assets)`}
+            </Button>
+          )}
+          {rows && rows.length > 0 && <DownloadMenu items={downloads} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
       {migrationMissing && (
         <Card><CardContent className="p-4 text-sm text-[#9A3A2D]">Migration 0161 not applied yet — run the paste-version SQL first.</CardContent></Card>
       )}
@@ -13557,101 +13639,151 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         </Card>
       )}
 
-      {/* Monthly run */}
-      <Card>
-        <CardContent className="p-4 space-y-3 bg-[#F7F4EF] rounded-lg">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Depreciation month</label>
-              <input type="month" value={runMonth} onChange={(e) => { setRunMonth(e.target.value); setPreview(null); }} className={selCls} />
-            </div>
-            <Button variant="outline" size="sm" onClick={handlePreview}>Preview</Button>
-            {preview && preview.rows.length > 0 && (
-              <Button variant="primary" size="sm" disabled={posting} onClick={handleRun}>
-                {posting ? "Posting…" : `Post ${formatCurrency(preview.totalSen)} (${preview.rows.length} assets)`}
-              </Button>
-            )}
-          </div>
-          {preview && (
-            preview.rows.length === 0 ? (
-              <p className="text-sm text-[#6B7280]">Nothing to depreciate for {runMonth} — already run, disposed, or fully depreciated.</p>
-            ) : (
-              <div className="overflow-x-auto">
-              <table className="w-full text-sm bg-white rounded">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                    <th className="px-3 py-2 text-left">Asset</th>
-                    <th className="px-3 py-2 text-left">DR expense</th>
-                    <th className="px-3 py-2 text-left">CR accum.</th>
-                    <th className="px-3 py-2 text-right">This month</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.rows.map((r) => (
-                    <tr key={r.assetId} className="border-b border-[#F0ECE9]">
-                      <td className="px-3 py-1.5">{r.name}</td>
-                      <td className="px-3 py-1.5 text-xs tabular-nums">{r.expenseAccount}</td>
-                      <td className="px-3 py-1.5 text-xs tabular-nums">{r.accumAccount}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-[#F0ECE9]/60 font-semibold">
-                    <td className="px-3 py-2" colSpan={3}>TOTAL</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(preview.totalSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-              </div>
-            )
-          )}
-        </CardContent>
-      </Card>
+      {runState !== "loading" && runState !== "none" && (
+        <StatusBanner
+          done={runState === "done"}
+          title={runState === "done" ? "Nothing left to run" : "Not run"}
+          sub={runState === "done"
+            ? `Depreciation for ${mLabel} is already posted, or every asset is disposed or fully depreciated.`
+            : `Check the list below, then post ${mLabel}'s depreciation.`}
+        />
+      )}
+      {runState !== "loading" && (
+        <KpiCards
+          items={[
+            { label: `Depreciation · ${mLabel}`, value: formatCurrency(preview?.totalSen ?? 0), note: `${preview?.rows.length ?? 0} asset${preview?.rows.length === 1 ? "" : "s"} still to run` },
+            { label: "Net book value", value: formatCurrency(sumOf(rows ?? [], nbv)), note: `${live.length} asset${live.length === 1 ? "" : "s"} in use` },
+            {
+              label: "Status",
+              value: runState === "done" ? "Done" : runState === "todo" ? "Not run" : "No assets",
+              tone: runState === "done" ? "ok" : runState === "todo" ? "warn" : "ink",
+              note: runState === "todo" ? "post before closing the month" : runState === "done" ? `nothing left for ${mLabel}` : "add the register first",
+            },
+          ]}
+        />
+      )}
 
-      {/* Register */}
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {rows === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
+      {/* This month's run, grouped like the register. */}
+      {preview && preview.rows.length > 0 && (
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+          <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+            <span className="text-[15px] font-bold text-[#1F1D1B]">This month&apos;s depreciation</span>
+            <span className="text-[12px] text-[#9CA3AF]">{mLabel} · by asset account · not posted yet</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table data-fin-report className="min-w-[640px]">
               <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Asset</th>
-                  <th className="px-3 py-2 text-left">Accounts (cost / accum / expense)</th>
-                  <th className="px-3 py-2 text-left">Purchased</th>
-                  <th className="px-3 py-2 text-right">Cost</th>
-                  <th className="px-3 py-2 text-right">Accum. depn</th>
-                  <th className="px-3 py-2 text-right">NBV</th>
-                  <th className="px-3 py-2 text-left">Life</th>
-                  <th className="px-3 py-2" />
+                <tr>
+                  <th>Asset</th>
+                  <th>DR expense</th>
+                  <th>CR accum. depn</th>
+                  <th data-cell="num split" className="w-[160px]">This month</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className={`border-b border-[#F0ECE9] ${r.disposedAt ? "opacity-50" : ""}`}>
-                    <td className="px-3 py-1.5">{r.name}{r.disposedAt ? " (disposed)" : ""}</td>
-                    <td className="px-3 py-1.5 text-xs tabular-nums text-[#6B7280]">{r.assetAccount} / {r.accumAccount} / {r.expenseAccount}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.purchaseDate}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.costSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.accumSen)}{r.lastMonth ? <span className="text-[11px] text-[#9CA3AF]"> (to {r.lastMonth})</span> : null}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(nbv(r))}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
-                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                      {!r.disposedAt && (
-                        <button onClick={() => handleDispose(r)} className="text-[#6B7280] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer mr-3">dispose</button>
-                      )}
-                      <button onClick={() => handleDelete(r)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer">del</button>
-                    </td>
+                {previewGroups.map((g) => {
+                  const ps = preview.rows.filter((p) => (assetOf.get(p.assetId)?.assetAccount ?? "") === g);
+                  return (
+                    <Fragment key={g || "—"}>
+                      <tr data-row="grp"><td colSpan={4}>{g ? `${g} ${acctName(g)}` : "Other"}</td></tr>
+                      {ps.map((p) => (
+                        <tr key={p.assetId} data-row="line">
+                          <td style={{ paddingLeft: 28 }}>{p.name}</td>
+                          <td><span data-cell="code" className="mr-1.5">{p.expenseAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.expenseAccount)}</span></td>
+                          <td><span data-cell="code" className="mr-1.5">{p.accumAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.accumAccount)}</span></td>
+                          <td data-cell="num split">{formatCurrency(p.amountSen)}</td>
+                        </tr>
+                      ))}
+                      <tr data-row="sub">
+                        <td colSpan={3} style={{ paddingLeft: 28 }}>Total {g ? acctName(g) || g : "Other"}</td>
+                        <td data-cell="num split">{formatCurrency(ps.reduce((s, p) => s + p.amountSen, 0))}</td>
+                      </tr>
+                    </Fragment>
+                  );
+                })}
+                <tr data-row="fin">
+                  <td colSpan={3}>TOTAL</td>
+                  <td data-cell="num split">{formatCurrency(preview.totalSen)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Register */}
+      <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+        <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+          <span className="text-[15px] font-bold text-[#1F1D1B]">Asset register</span>
+          <span className="text-[12px] text-[#9CA3AF]">by asset account · totals leave out disposed assets</span>
+        </div>
+        <div className="overflow-x-auto">
+          {rows === null ? (
+            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
+          ) : (
+            <table data-fin-report className="min-w-[860px]">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Accounts (accum / expense)</th>
+                  <th>Purchased</th>
+                  <th data-cell="num split">Cost</th>
+                  <th data-cell="num">Accum. depn</th>
+                  <th data-cell="num">NBV</th>
+                  <th>Life</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {groupCodes.map((g) => {
+                  const xs = rows.filter((r) => r.assetAccount === g);
+                  return (
+                    <Fragment key={g}>
+                      <tr data-row="grp"><td colSpan={8}><span data-cell="code" className="mr-1.5">{g}</span>{acctName(g)}</td></tr>
+                      {xs.map((r) => (
+                        <tr key={r.id} data-row="line" className={r.disposedAt ? "opacity-50" : undefined}>
+                          <td style={{ paddingLeft: 28 }}>{r.name}{r.disposedAt ? " (disposed)" : ""}</td>
+                          <td className="text-xs tabular-nums text-[#6B7280]">{r.accumAccount} / {r.expenseAccount}</td>
+                          <td className="text-xs text-[#6B7280]">{fmtDocDate(r.purchaseDate) || r.purchaseDate}</td>
+                          <td data-cell="num split">{formatCurrency(r.costSen)}</td>
+                          <td data-cell="num">{formatCurrency(r.accumSen)}{r.lastMonth ? <span className="text-[11px] text-[#9CA3AF]"> (to {r.lastMonth})</span> : null}</td>
+                          <td data-cell="num">{formatCurrency(nbv(r))}</td>
+                          <td className="text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
+                          <td className="text-right">
+                            {!r.disposedAt && (
+                              <button onClick={() => handleDispose(r)} className="text-[#6B7280] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer mr-3">dispose</button>
+                            )}
+                            <button onClick={() => handleDelete(r)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer">del</button>
+                          </td>
+                        </tr>
+                      ))}
+                      <tr data-row="sub">
+                        <td colSpan={3} style={{ paddingLeft: 28 }}>Total {acctName(g) || g}</td>
+                        <td data-cell="num split">{formatCurrency(sumOf(xs, (r) => r.costSen))}</td>
+                        <td data-cell="num">{formatCurrency(sumOf(xs, (r) => r.accumSen))}</td>
+                        <td data-cell="num">{formatCurrency(sumOf(xs, nbv))}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    </Fragment>
+                  );
+                })}
+                {rows.length > 0 && (
+                  <tr data-row="fin">
+                    <td colSpan={3}>TOTAL (in use)</td>
+                    <td data-cell="num split">{formatCurrency(sumOf(rows, (r) => r.costSen))}</td>
+                    <td data-cell="num">{formatCurrency(sumOf(rows, (r) => r.accumSen))}</td>
+                    <td data-cell="num">{formatCurrency(sumOf(rows, nbv))}</td>
+                    <td colSpan={2} />
                   </tr>
-                ))}
+                )}
                 {rows.length === 0 && (
                   <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No assets yet — add the register here (or hand me the list and I will seed it)</td></tr>
                 )}
               </tbody>
             </table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
