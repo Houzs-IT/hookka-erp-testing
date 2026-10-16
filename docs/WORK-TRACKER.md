@@ -1,5 +1,9 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
+> re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
+> BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
+> staging measurement are in the entry below, dated 2026-09-29.
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -7118,3 +7122,40 @@ for prod and staging carry the SAME Supabase project ref.
 Sales row + gotcha; `modules/sales.md` + `modules/inventory.md` restamped with
 re-derived anchors; BUG-181/182/183 logged.
 
+## 2026-09-29 — DEV-05 A9: the order that lost the race is now told
+
+Branch `fix/dev-05-allocation-loser-note` (→ `staging`). Closing the second half
+of acceptance criterion A9, found while verifying A7/A9 on staging.
+
+**The ask** (one, from the acceptance run): A9 says *"two orders want the same
+piece; one gets it, **the other is told**."* Contention itself was already
+right and measured on staging — X took the four finished pieces and queued none,
+Y queued four fresh ones, nothing oversold. But Y's confirm said **nothing**,
+and from the customer's side "somebody beat you to it" and "we have never
+stocked this" looked identical.
+
+**Built** (`src/api/lib/stock-allocations.ts:510`, `:534`): `loadAvailability`
+is read once beside the pool and consulted **only** when a line takes nothing.
+Stock on hand with zero available → *"all N on hand are already committed to
+other orders"*. Only-stock-is-an-oversized-set → its own sentence. No stock at
+all → still silent, because a note on every unstocked product is noise. The
+availability read is for the notes and nothing else; the pool stays the single
+authority on what moves, so a stale aggregate can only produce a wrong sentence,
+never a wrong allocation. Logged BUG-2026-10-16-291.
+
+**Why it hid**: an emptied pool is byte-for-byte identical to a product nobody
+stocks — `loadAllocatablePOs` stops returning pieces the moment another order
+owns them. The old tests asserted `notes.length === 0` on the zero-allocation
+paths, i.e. they pinned the silence as correct. The suite now separates the two:
+a contention case that must speak, a no-stock case that must not.
+
+**Verified**: `tests/stock-allocations.test.mjs` 29/29; full suite 5,161 pass /
+0 fail / 3 skipped; `tsc -p tsconfig.app.json` exit 0; docs-freshness,
+gen-api-docs `--check`, check-codebase-map and check-secrets all OK.
+**UNMEASURED**: not yet re-run against staging with two live orders — the
+behaviour change is in note text only, no allocation decision moved.
+
+**Still open on DEV-05**: A7 (invoice for an allocated piece must show the
+customer's order and the customer's price, not the placeholder at zero) is not
+verified. And A9's design gap stands: the owner's rule is *earliest sales order
+date wins*; the implementation is *first to confirm wins*. Not yet raised.

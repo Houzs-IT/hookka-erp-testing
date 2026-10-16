@@ -1,5 +1,11 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: entry BUG-2026-10-16-291 (branch
+> `fix/dev-05-allocation-loser-note`, DEV-05 A9 + A7 pins, to `staging`). Renumbered
+> twice while this branch sat open: -223 was taken by the DO duplicate-guard bug, then
+> -273 by the stock-take price-list bug. Highest on staging at the merge was -290.
+> A log, so "verified" means this entry matches the code on its branch, not that every
+> older entry was re-checked.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-290 (branch `design/mobile-home-dashboard`, to staging; open, logged only). Logged on that branch as 289, renumbered to 290 in the staging merge because staging's BOM DRAFT entry took 289 first; 290 unused on `upstream/staging` and `upstream/main`; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-15**: newest entry BUG-2026-10-15-289 (branch `feat/bom-draft-activate`, to staging; no open PR holds 289); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-14**: BUG-2026-10-14-286 and -287 flipped to 🟢 with the measured staging check after #852 deployed (branch `docs/bug286-287-staging-verified`); 286 also goes to `main` on branch `fix/pi-revoid-legno-main`.
@@ -147,6 +153,42 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-16-291 — the order that lost the race was told nothing `sales` `inventory` 🟢
+
+🟢 Fixed. DEV-05 acceptance criterion **A9** is *"two orders want the same
+piece; one gets it, the other is told."* The first half worked — contention was
+measured on staging and there was no overselling: order X took all four finished
+pieces and queued none, order Y queued four fresh ones. The second half did not.
+Y's confirm was **silent**: no note, no mention of stock, nothing separating
+"somebody beat you to it" from "we have never stocked this product".
+
+Root cause is that losing a race is **invisible from the allocation pool**.
+`loadAllocatablePOs` only ever returns production orders still owned by Factory
+Stock, so the moment X claims them they stop being returned — and an emptied
+pool is byte-for-byte identical to a product nobody stocks. `planAutoAllocation`
+did `if (taken.length === 0) continue;`, which is the correct decision and the
+wrong silence.
+
+**Fix** (`src/api/lib/stock-allocations.ts:510`, `:534`): `loadAvailability` is
+now read once alongside the pool and consulted **only** when a line takes
+nothing. On hand > 0 with available = 0 is contention, and says so by number:
+*"all 4 on hand are already committed to other orders."* The oversized-set case
+(the only stock is a set of 3 and the line wants 1 — sets go out whole, owner
+2026-09-17) gets its own sentence. Everything else stays quiet: a note on every
+product the factory does not stock is noise, not information.
+
+**The availability read cannot change what is taken.** It is loaded for the
+notes and nothing else — the pool stays the single authority on what moves, so
+a stale aggregate can only produce a wrong sentence, never a wrong allocation.
+
+**Why the tests missed it**: every auto-allocation test asserted on
+`plan.statements`, and the two zero-allocation tests asserted
+`notes.length === 0` — they pinned the silence as correct. The suite now has a
+contention case (stock on hand, none available → the loser is told) and keeps a
+no-stock case asserting silence, so the two are no longer the same test.
 
 ---
 
