@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 1 (#924) prod-verified; part 2 (General Ledger) added to its entry.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-reports` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 2b (#923) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-daily-b` (to `main`) added below (its entry is the newest); plan 2a (#922) prod-verified.
@@ -191,9 +192,10 @@ design/mobile-home-dashboard
 ## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 3: Reports (branch `feat/finance-v2-reports` → `main`; shipped in parts)
 
 1. ✅ Popup and cash-position dates read "15 Oct 2026" (carried over from plan 2b).
-2. 🔵 Part 1 — report shell (title-row toolbar: period stepper, DETAIL levels, one download icon; check strip; framed report with centred head; report table look) + Trial Balance pilot (month stepper, sections by the chart's rules with fold and subtotal, L1 / L2, double-click an account to open its ledger on the same as-at date, Excel / Print-PDF). Figures and the balanced check unchanged (server's).
-3. ⚪ General Ledger, P&L (statement / monthly / cost structure), Cash Flow, Stock Summary, Balance Sheet look, Overview.
-4. 🟡 Waiting on the owner: the legal company name on report heads (screen + PDF), the Balance Sheet layout, dropping CSV.
+2. ✅ Part 1 (#924 6605a7bf) — report shell (title-row toolbar: period stepper, DETAIL levels, one download icon; check strip; framed report with centred head; report table look) + Trial Balance pilot (month stepper, sections by the chart's rules with fold and subtotal, L1 / L2, double-click an account to open its ledger on the same as-at date, Excel / Print-PDF). Figures and the balanced check unchanged (server's). Prod check (read-only, owner's session): rows shown = API rows, line sums = section subtotals = TOTAL = server totals, verdict from the server flag; previous month reads as at its last day and matches that day's API; L1 folds to section totals (they add to the total), a heading click opens one section; double-click opened the ledger on the same dates and its closing balance matched, plus 16 sampled accounts (4 credit-normal) TB = GL; download menu and period picker open and close on Esc / outside click; no console errors.
+3. 🔵 Part 2 — General Ledger: v2 filter row with the Accounts multi-picker (By Code Range + Tick), summary bar with Expand / Collapse all, account blocks in the v2 frame, credit balances in brackets, double-click a line to open its source, Excel / Print-PDF; same data calls; rows pinned to 29px for the windowed listings; Sales / Purchase scope unchanged.
+4. ⚪ P&L (statement / monthly / cost structure), Cash Flow, Stock Summary, Balance Sheet look, Overview.
+5. 🟡 Waiting on the owner: the legal company name on report heads (screen + PDF), the Balance Sheet layout, dropping CSV.
 
 ## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2b: Daily part 2 — Receipts, Daily Cash Position, Fund Transfer, popups (#923 fe84208e, prod-verified)
 

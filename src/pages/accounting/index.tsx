@@ -1,5 +1,5 @@
 ﻿import * as React from "react";
-import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { humanizeError } from "@/lib/humanize-error";
@@ -97,8 +97,8 @@ import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
-import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, checkLabel, type TbSectionKey } from "@/lib/finance-reports";
-import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame } from "@/components/finance/report-shell";
+import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, checkLabel, type TbSectionKey } from "@/lib/finance-reports";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -9337,15 +9337,30 @@ function BackToTopButton() {
   );
 }
 
-// Grouped-ledger geometry, measured on prod. GL_ROW_PX is one leg row;
+// Grouped-ledger geometry. GL_ROW_PX is one leg row (every GL row is pinned to
+// it, so the windowed listings and the off-screen placeholders agree);
 // GL_CARD_CHROME_PX is everything else in an account card (the clickable
-// account header, the table header, the BALANCE B/F row and the per-account
+// account header, the table header, the Balance B/F row and the per-account
 // totals row). Together they size the placeholder that holds a card's space
-// while it is off-screen.
+// while it is off-screen — a few pixels out costs a small jump, nothing more.
 const GL_ROW_PX = 29;
-const GL_CARD_CHROME_PX = 128;
+const GL_CARD_CHROME_PX = 142;
+const GL_CARD_HEAD_PX = 44;
+
+const GL_CTRL = "h-[34px] rounded-lg border border-[#D9D3CA] bg-white px-3 text-[13px] text-[#1F1D1B] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]";
+
+// A labelled control in the ledger's filter row.
+function GlField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[12px] font-semibold text-[#374151]">{label}</span>
+      {children}
+    </div>
+  );
+}
 
 function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
+  const navigate = useNavigate();
   // Multi-account review (owner): 0 picked = full ledger; 1 picked =
   // inquiry mode with running balance; 2+ picked = listing filtered to
   // the picked set. A report drill's "open in GL" lands here with
@@ -9361,6 +9376,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   } | null>(null);
   const [gl, setGl] = useState<{
     account: { code: string; name: string; type: string };
+    debitNormal?: boolean;
     openingSen: number;
     closingSen: number;
     totalDebitSen?: number;
@@ -9395,7 +9411,6 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const inquiryScrollRef = useRef<HTMLDivElement>(null);
   const account = picked.length === 1 ? picked[0] : "";
   const loading = account ? gl === null : view === "grouped" ? report === null : all === null;
-  const nameOf = (code: string) => accounts.find((a) => a.code === code)?.name ?? "";
   const flatVirt = useVirtualRows({
     count: all?.rows.length ?? 0,
     rowHeight: GL_ROW_PX,
@@ -9421,6 +9436,10 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
         return true;
     }
   };
+  const scopeOptions = accounts
+    .filter(inLedgerScope)
+    .map((a) => ({ code: a.code, name: a.name }))
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   useEffect(() => {
     let stale = false;
@@ -9455,15 +9474,41 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setGl(null);
     setReport(null);
   };
-  const addAccount = (code: string) => {
-    if (!code || picked.includes(code)) return;
-    setPicked([...picked, code]);
-    reset();
-  };
-  const removeAccount = (code: string) => {
-    setPicked(picked.filter((c) => c !== code));
-    reset();
-  };
+
+  // Finance v2: a balance reads debit plain, credit in brackets. The grouped
+  // report already runs debit minus credit; the one-account inquiry runs in
+  // the account's natural direction, so a credit-normal account turns round.
+  const inquiryDebitNormal = gl ? (gl.debitNormal ?? ["ASSET", "EXPENSE", "COST"].includes(gl.account.type)) : true;
+  const drCr = (natural: number) => (inquiryDebitNormal ? natural : -natural);
+  const openSource = (href: string | null) => (href ? () => navigate(href) : undefined);
+  const sourceCell = (sourceType: string, sourceId: string, href: string | null) =>
+    href ? (
+      <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={sourceId}>{sourceType}</a>
+    ) : (
+      <span className="text-[#6B7280]" title={sourceId}>{sourceType}</span>
+    );
+
+  const scopeSelect = (
+    <GlField label="Scope">
+      <select
+        aria-label="Scope"
+        value={ledger}
+        onChange={(e) => {
+          setLedger(e.target.value as typeof ledger);
+          // Scope change clears the picked set — keeping accounts
+          // outside the new scope would just intersect to nothing.
+          setPicked([]);
+          reset();
+        }}
+        className={GL_CTRL}
+      >
+        <option value="all">All</option>
+        <option value="general">General</option>
+        <option value="sales">Sales (Debtors)</option>
+        <option value="purchase">Purchase (Creditors)</option>
+      </select>
+    </GlField>
+  );
 
   // Sales / Purchase Ledger scope shows the per-customer / per-supplier ledger
   // (one section each) — the "subsidiary" ledger — instead of the flat
@@ -9471,114 +9516,117 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   if (ledger === "sales" || ledger === "purchase") {
     return (
       <div className="space-y-4">
-        <Card>
-          <CardContent className="p-4 bg-[#F7F4EF] rounded-lg">
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Ledger</label>
-            <select
-              value={ledger}
-              onChange={(e) => { setLedger(e.target.value as typeof ledger); setPicked([]); reset(); }}
-              className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">All Ledgers</option>
-              <option value="general">General Ledger</option>
-              <option value="sales">Sales Ledger (Debtors)</option>
-              <option value="purchase">Purchase Ledger (Creditors)</option>
-            </select>
-          </CardContent>
-        </Card>
+        <div className="flex flex-wrap items-end gap-3">{scopeSelect}</div>
         <PartyLedgerTab side={ledger === "sales" ? "DEBTOR" : "CREDITOR"} />
         <BackToTopButton />
       </div>
     );
   }
 
+  // The download carries the view on screen.
+  const period = `${from ? fmtDocDate(from) : "From the start"} – ${to ? fmtDocDate(to) : "today"}${ledger !== "all" ? ` · ${ledger === "general" ? "General" : ledger}` : ""}`;
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } | null => {
+    const n = (sen: number) => (sen ? sen / 100 : "");
+    const kinds: PdfRowKind[] = [];
+    if (account && gl) {
+      const aoa: Aoa = [["Date", "Description", "Source", "Debit (RM)", "Credit (RM)", "Balance (RM)"]];
+      aoa.push(["", "Balance B/F", "", "", "", drCr(gl.openingSen) / 100]); kinds.push("section");
+      for (const r of gl.rows) { aoa.push([String(r.postedAt).slice(0, 10), r.description, `${r.sourceType} ${r.sourceId}`, n(r.debitSen), n(r.creditSen), drCr(r.runningSen) / 100]); kinds.push(undefined); }
+      aoa.push(["", "Total", "", (gl.totalDebitSen ?? 0) / 100, (gl.totalCreditSen ?? 0) / 100, drCr(gl.closingSen) / 100]); kinds.push("grand");
+      return { aoa, kinds };
+    }
+    if (view === "grouped" && report) {
+      const aoa: Aoa = [["Account", "Date", "Description", "DE Account", "Source", "Debit (RM)", "Credit (RM)", "Balance (RM)"]];
+      for (const a of report.accounts) {
+        aoa.push([`${a.code} ${a.name}`, "", "Balance B/F", "", "", "", "", a.openingSen / 100]); kinds.push("section");
+        for (const r of a.rows) { aoa.push(["", r.day, r.description, r.deDesc, `${r.sourceType} ${r.sourceId}`, n(r.debitSen), n(r.creditSen), r.runningSen / 100]); kinds.push(undefined); }
+        aoa.push([`${a.code} total`, "", "", "", "", a.totalDr / 100, a.totalCr / 100, a.closingSen / 100]); kinds.push("subtotal");
+      }
+      aoa.push(["TOTAL", "", "", "", "", report.grandDr / 100, report.grandCr / 100, ""]); kinds.push("grand");
+      return { aoa, kinds };
+    }
+    if (view === "flat" && all) {
+      const aoa: Aoa = [["Date", "Account", "Description", "Source", "Debit (RM)", "Credit (RM)"]];
+      for (const r of all.rows) { aoa.push([String(r.postedAt).slice(0, 10), `${r.accountCode} ${r.accountName}`, r.description, `${r.sourceType} ${r.sourceId}`, n(r.debitSen), n(r.creditSen)]); kinds.push(undefined); }
+      return { aoa, kinds };
+    }
+    return null;
+  };
+  const fileBase = `general-ledger${account ? `-${account}` : ""}${from ? `-${from}` : ""}${to ? `-${to}` : ""}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { const x = buildExport(); if (x) void exportReportXlsx(`${fileBase}.xlsx`, "General Ledger", x.aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const x = buildExport();
+        if (!x) return;
+        void exportReportPdf(`${fileBase}.pdf`, "General Ledger", period, x.aoa, {
+          rowKind: (_r, i) => x.kinds[i],
+          leftCols: account ? [1, 2] : view === "grouped" ? [1, 2, 3, 4] : [1, 2, 3],
+          company: COMPANY.HOOKKA.name,
+          print: true,
+        });
+      },
+    },
+  ];
+  const shownData = account ? gl : view === "grouped" ? report : all;
+
+  const anyShut = Object.values(collapsedAccts).some(Boolean);
+  const grandDiff = report ? report.grandDr - report.grandCr : 0;
+  const summaryBar = report && report.accounts.length > 0 && (
+    <div data-fin-gl-summary className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[10px] border border-[#E2DDD8] bg-white px-4 py-3">
+      <span className="text-[12.5px] text-[#6B7280]">{report.accounts.length} account{report.accounts.length === 1 ? "" : "s"}</span>
+      <button
+        type="button"
+        onClick={() => setCollapsedAccts(anyShut ? {} : Object.fromEntries(report.accounts.map((a) => [a.code, true])))}
+        className="text-[12.5px] font-semibold text-[#6B5C32] hover:text-[#574A28]"
+      >
+        {anyShut ? "Expand all" : "Collapse all"}
+      </button>
+      <span className="ml-auto text-[14px] font-bold tabular-nums text-[#1F1D1B]">TOTAL DR {formatCurrency(report.grandDr)}</span>
+      <span className="text-[14px] font-bold tabular-nums text-[#1F1D1B]">TOTAL CR {formatCurrency(report.grandCr)}</span>
+      <span className={`text-[13px] font-bold tabular-nums ${grandDiff === 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>
+        {grandDiff === 0 ? "Diff RM 0.00 ✓" : `Diff ${formatCurrency(grandDiff)}`}
+      </span>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
-
-      {/* Filter bar — deliberately loud (owner: "不够明显") */}
-      <Card>
-        <CardContent className="p-4 space-y-3 bg-[#F7F4EF] rounded-lg">
-          <div className="flex flex-wrap items-end gap-4">
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Ledger</label>
-              <select
-                value={ledger}
-                onChange={(e) => {
-                  setLedger(e.target.value as typeof ledger);
-                  // Scope change clears the picked set — keeping accounts
-                  // outside the new scope would just intersect to nothing.
-                  setPicked([]);
-                  reset();
-                }}
-                className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm"
-              >
-                <option value="all">All Ledgers</option>
-                <option value="general">General Ledger</option>
-                <option value="sales">Sales Ledger (Debtors)</option>
-                <option value="purchase">Purchase Ledger (Creditors)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">View</label>
-              <select
-                value={view}
-                onChange={(e) => { setView(e.target.value as typeof view); reset(); }}
-                className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm"
-              >
-                <option value="grouped">By Account (AutoCount style)</option>
-                <option value="flat">Flat listing</option>
-              </select>
-            </div>
-            <div className="w-80">
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">
-                Account filter <span className="font-normal text-[#6B7280]">(type keyword, pick one or MORE)</span>
-              </label>
-              <AccountPicker
-                accounts={accounts.filter((a) => !picked.includes(a.code) && inLedgerScope(a))}
-                value=""
-                onChange={addAccount}
-                placeholder="Type code or name to add an account…"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">From</label>
-              <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">To</label>
-              <input type="date" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
-            </div>
-            {(picked.length > 0 || ledger !== "all" || from || to) && (
-              <Button variant="outline" size="sm" onClick={() => { setPicked([]); setLedger("all"); setFrom(""); setTo(""); reset(); }}>
-                Clear all
-              </Button>
-            )}
-          </div>
-          {picked.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {picked.map((code) => (
-                <span key={code} className="inline-flex items-center gap-1.5 rounded-full border border-[#6B5C32] bg-white px-3 py-1 text-xs font-medium text-[#6B5C32]">
-                  <span className="tabular-nums">{code}</span> {nameOf(code)}
-                  <button onClick={() => removeAccount(code)} className="ml-1 text-[#9A3A2D] hover:text-[#791F1F] cursor-pointer" title="Remove">✕</button>
-                </span>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-[#9CA3AF]">
-            Ledger scope first (AutoCount-style: Sales = debtor controls, Purchase = creditor controls, General = the rest) · no account picked = whole scope · pick ONE for running balances · pick SEVERAL to review together
-          </p>
-        </CardContent>
-      </Card>
-
-      {account && gl && (
-        <p className="text-sm text-[#6B7280]">
-          <span className="tabular-nums text-xs mr-1">{gl.account.code}</span>
-          <span className="font-medium text-[#1F1D1B]">{gl.account.name}</span>
-          {" · "}Opening {formatCurrency(gl.openingSen)} · Total DR {formatCurrency(gl.totalDebitSen ?? 0)} · Total CR {formatCurrency(gl.totalCreditSen ?? 0)} · Closing {formatCurrency(gl.closingSen)} ({gl.account.type})
-        </p>
+      {shownData && (
+        <FinanceTitleActions>
+          <ReportToolbar>
+            <DownloadMenu items={downloads} />
+          </ReportToolbar>
+        </FinanceTitleActions>
       )}
+
+      <div className="flex flex-wrap items-end gap-3">
+        {scopeSelect}
+        <GlField label="View">
+          <select aria-label="View" value={view} onChange={(e) => { setView(e.target.value as typeof view); reset(); }} className={GL_CTRL}>
+            <option value="grouped">By Account</option>
+            <option value="flat">Flat listing</option>
+          </select>
+        </GlField>
+        <GlField label="Accounts">
+          <AccountMultiPicker options={scopeOptions} picked={picked} onChange={(codes) => { setPicked(codes); reset(); }} />
+        </GlField>
+        <GlField label="From">
+          <input type="date" aria-label="From" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className={GL_CTRL} />
+        </GlField>
+        <GlField label="To">
+          <input type="date" aria-label="To" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className={GL_CTRL} />
+        </GlField>
+        {(picked.length > 0 || ledger !== "all" || from || to) && (
+          <Button variant="outline" size="sm" onClick={() => { setPicked([]); setLedger("all"); setFrom(""); setTo(""); reset(); }}>
+            Clear all
+          </Button>
+        )}
+      </div>
+
       {!account && view === "flat" && all && (
-        <p className="text-sm text-[#6B7280]">
+        <p className="text-[12.5px] text-[#6B7280]">
           {all.totalRows} entries{picked.length > 1 ? ` across ${picked.length} accounts` : ""}{all.capped ? ` — showing latest ${all.rows.length}, narrow the date range to see older ones` : ""}
         </p>
       )}
@@ -9596,100 +9644,85 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
             )}
             {/* Owner 2026-07-24: the grand DR/CR totals also live UP HERE —
                 the bottom card alone meant scrolling past the whole report. */}
-            {report.accounts.length > 0 && (
-              <Card>
-                <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-                  <span>TOTAL DR {formatCurrency(report.grandDr)}</span>
-                  <span>TOTAL CR {formatCurrency(report.grandCr)}</span>
-                  <span className={report.grandDr - report.grandCr !== 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}>
-                    {report.grandDr - report.grandCr === 0 ? "Balanced ✓" : `Diff ${formatCurrency(report.grandDr - report.grandCr)}`}
-                  </span>
-                </CardContent>
-              </Card>
-            )}
+            {summaryBar}
             {report.accounts.map((a) => {
               const open = !collapsedAccts[a.code];
               // Height to hold while the card is off-screen: the account
               // header + the table's own header, B/F and totals rows, plus one
-              // GL_ROW_PX per leg. Only used to keep the scrollbar steady —
-              // being a few pixels out costs a small jump, nothing more.
-              const estimated = open ? GL_CARD_CHROME_PX + a.rows.length * GL_ROW_PX : GL_CARD_CHROME_PX;
+              // GL_ROW_PX per leg.
+              const estimated = open ? GL_CARD_CHROME_PX + a.rows.length * GL_ROW_PX : GL_CARD_HEAD_PX;
               return (
                 <DeferredBlock key={a.code} estimatedHeight={estimated}>
-                <Card>
-                  <CardContent className="p-0 overflow-x-auto">
+                  <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
                     <button
+                      type="button"
+                      aria-expanded={open}
                       onClick={() => setCollapsedAccts({ ...collapsedAccts, [a.code]: open })}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-[#F0ECE9]/60 text-left cursor-pointer"
+                      className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5 text-left hover:bg-[#FBFAF7]"
                     >
-                      <span className="text-sm font-semibold text-[#1F1D1B]">
-                        {open ? "▾" : "▸"} Acc. No.: <span className="tabular-nums">{a.code}</span> {a.name}
+                      <span className="text-[14px] font-bold text-[#1F1D1B]">
+                        <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[#6B7280]">{open ? "▾" : "▸"}</span>
+                        Acc. No.: <span className="tabular-nums">{a.code}</span> {a.name.toUpperCase()}
                       </span>
-                      <span className="text-xs text-[#6B7280] tabular-nums">
-                        DR = {formatCurrency(a.totalDr)} · CR = {formatCurrency(a.totalCr)} · Balance = <span className={a.closingSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}>{formatCurrency(a.closingSen)}</span>
+                      <span className="text-[12.5px] tabular-nums text-[#6B7280]">
+                        DR = {formatCurrency(a.totalDr)} · CR = {formatCurrency(a.totalCr)} · Balance = <span className="text-[#1F1D1B]">{fmtLedgerBal(a.closingSen)}</span>
                       </span>
                     </button>
                     {open && (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                            <th className="px-3 py-1.5 text-left">Date</th>
-                            <th className="px-3 py-1.5 text-left">Description</th>
-                            <th className="px-3 py-1.5 text-left">DE Account</th>
-                            <th className="px-3 py-1.5 text-left">Source</th>
-                            <th className="px-3 py-1.5 text-right">Debit</th>
-                            <th className="px-3 py-1.5 text-right">Credit</th>
-                            <th className="px-3 py-1.5 text-right">Balance</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                            <td className="px-3 py-1" colSpan={6}>BALANCE B/F</td>
-                            <td className={`px-3 py-1 text-right tabular-nums ${a.openingSen < 0 ? "text-[#9A3A2D]" : ""}`}>{formatCurrency(a.openingSen)}</td>
-                          </tr>
-                          {a.rows.map((r) => {
-                            const href = sourceHref(r.sourceType, r.sourceId);
-                            return (
-                              <tr key={r.id} className="border-b border-[#F0ECE9]">
-                                <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{r.day}</td>
-                                <td className="px-3 py-1 text-[#1F1D1B]">{r.description}</td>
-                                <td className="px-3 py-1 text-xs text-[#6B7280]">{r.deDesc}</td>
-                                <td className="px-3 py-1 text-xs">
-                                  {href ? (
-                                    <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={r.sourceId}>{r.sourceType}</a>
-                                  ) : (
-                                    <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-1 text-right tabular-nums">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                                <td className={`px-3 py-1 text-right tabular-nums ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(r.runningSen)}</td>
-                              </tr>
-                            );
-                          })}
-                          <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
-                            <td className="px-3 py-1.5" colSpan={4} />
-                            <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.totalDr)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.totalCr)}</td>
-                            <td className={`px-3 py-1.5 text-right tabular-nums ${a.closingSen < 0 ? "text-[#9A3A2D]" : ""} bg-[#EAF3DE]`}>{formatCurrency(a.closingSen)}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                      <div className="overflow-x-auto border-t-[1.5px] border-[#7A6E5E]">
+                        <table data-fin-report data-fin-dense>
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Description</th>
+                              <th>DE Account</th>
+                              <th>Source</th>
+                              <th data-cell="num split">Debit</th>
+                              <th data-cell="num">Credit</th>
+                              <th data-cell="num">Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr data-row="bf" style={{ height: GL_ROW_PX }}>
+                              <td colSpan={6}>Balance B/F</td>
+                              <td data-cell="num">{fmtLedgerBal(a.openingSen)}</td>
+                            </tr>
+                            {a.rows.map((r) => {
+                              const href = sourceHref(r.sourceType, r.sourceId);
+                              return (
+                                <tr
+                                  key={r.id}
+                                  data-row="line"
+                                  style={{ height: GL_ROW_PX }}
+                                  onDoubleClick={openSource(href)}
+                                  title={href ? "Double-click to open the source" : undefined}
+                                  className={href ? "cursor-pointer" : undefined}
+                                >
+                                  <td className="text-[12px] text-[#6B7280]">{fmtDocDate(r.day)}</td>
+                                  <td className="text-[#1F1D1B]">{r.description}</td>
+                                  <td className="text-[12px] text-[#6B7280]">{r.deDesc}</td>
+                                  <td className="text-[12px]">{sourceCell(r.sourceType, r.sourceId, href)}</td>
+                                  <td data-cell="num split">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                                  <td data-cell="num">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                                  <td data-cell="num">{fmtLedgerBal(r.runningSen)}</td>
+                                </tr>
+                              );
+                            })}
+                            <tr data-row="sub" style={{ height: GL_ROW_PX }}>
+                              <td colSpan={4}>Total</td>
+                              <td data-cell="num split">{formatCurrency(a.totalDr)}</td>
+                              <td data-cell="num">{formatCurrency(a.totalCr)}</td>
+                              <td data-cell="num">{fmtLedgerBal(a.closingSen)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
                 </DeferredBlock>
               );
             })}
-            <Card>
-              <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-                <span>TOTAL DR {formatCurrency(report.grandDr)}</span>
-                <span>TOTAL CR {formatCurrency(report.grandCr)}</span>
-                <span className={report.grandDr - report.grandCr !== 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}>
-                  {report.grandDr - report.grandCr === 0 ? "Balanced ✓" : `Diff ${formatCurrency(report.grandDr - report.grandCr)}`}
-                </span>
-              </CardContent>
-            </Card>
+            {summaryBar}
             {report.accounts.length === 0 && (
               <Card><CardContent className="py-12 text-center text-[#9CA3AF] text-sm">No activity in this window</CardContent></Card>
             )}
@@ -9701,164 +9734,168 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
           server-side over EVERY matching leg, so it stays right even when
           the listing below is capped at 1000 rows. */}
       {!account && view === "flat" && all && (all.accountTotals?.length ?? 0) > 0 && (
-        <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+          <div className="overflow-x-auto">
+            <table data-fin-report data-fin-dense>
               <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Account totals{from || to ? " (filtered period)" : ""}</th>
-                  <th className="px-3 py-2 text-right">Total Debit</th>
-                  <th className="px-3 py-2 text-right">Total Credit</th>
-                  <th className="px-3 py-2 text-right">Net (DR−CR)</th>
+                <tr>
+                  <th>Account totals{from || to ? " (filtered period)" : ""}</th>
+                  <th data-cell="num split">Total Debit</th>
+                  <th data-cell="num">Total Credit</th>
+                  <th data-cell="num">Net (DR−CR)</th>
                 </tr>
               </thead>
               <tbody>
                 {all.accountTotals!.map((t) => (
-                  <tr key={t.accountCode} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5">
+                  <tr key={t.accountCode} data-row="line" style={{ height: GL_ROW_PX }}>
+                    <td>
                       <button
                         onClick={() => { setPicked([t.accountCode]); reset(); }}
                         className="text-left cursor-pointer hover:underline"
                         title="Open this account's running-balance inquiry"
                       >
-                        <span className="tabular-nums text-xs text-[#6B7280] mr-1">{t.accountCode}</span>
+                        <span className="tabular-nums text-xs text-[#6B5C32] mr-1">{t.accountCode}</span>
                         <span className="text-[#1F1D1B]">{t.accountName}</span>
                       </button>
                     </td>
-                    <td className="px-3 py-1.5 text-right">{t.debitSen ? formatCurrency(t.debitSen) : "-"}</td>
-                    <td className="px-3 py-1.5 text-right">{t.creditSen ? formatCurrency(t.creditSen) : "-"}</td>
-                    <td className={`px-3 py-1.5 text-right font-medium ${t.debitSen - t.creditSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                      {formatCurrency(t.debitSen - t.creditSen)}
-                    </td>
+                    <td data-cell="num split">{t.debitSen ? formatCurrency(t.debitSen) : "-"}</td>
+                    <td data-cell="num">{t.creditSen ? formatCurrency(t.creditSen) : "-"}</td>
+                    <td data-cell="num">{fmtLedgerBal(t.debitSen - t.creditSen)}</td>
                   </tr>
                 ))}
-                <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen, 0))}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.creditSen, 0))}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen - t.creditSen, 0))}</td>
+                <tr data-row="fin">
+                  <td>TOTAL</td>
+                  <td data-cell="num split">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen, 0))}</td>
+                  <td data-cell="num">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.creditSen, 0))}</td>
+                  <td data-cell="num">{fmtLedgerBal(all.accountTotals!.reduce((s, t) => s + t.debitSen - t.creditSen, 0))}</td>
                 </tr>
               </tbody>
             </table>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {(account || view === "flat") && (
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {loading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading ledger…</div>
-          ) : account && gl ? (
-            <div ref={inquiryScrollRef} className="overflow-auto max-h-[75vh]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-white">
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Description</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                  <th className="px-3 py-2 text-right">Debit</th>
-                  <th className="px-3 py-2 text-right">Credit</th>
-                  <th className="px-3 py-2 text-right">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* The B/F line stays mounted above the window rather than
-                    becoming item 0 — an opening balance that scrolls away is
-                    worse than the one-row coordinate offset it introduces,
-                    which the 10-row overscan absorbs. */}
-                <tr className="border-b border-[#F0ECE9] text-[#6B7280]" style={{ height: GL_ROW_PX }}>
-                  <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(gl.openingSen)}</td>
-                </tr>
-                {inquiryVirt.topSpacer}
-                {(inquiryVirt.active ? inquiryVirt.indices.map((i) => gl.rows[i]) : gl.rows).map((r) => {
-                  if (!r) return null;
-                  const href = sourceHref(r.sourceType, r.sourceId);
-                  return (
-                    <tr key={r.id} className="border-b border-[#F0ECE9]" style={{ height: GL_ROW_PX }}>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{String(r.postedAt).slice(0, 10)}</td>
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.description}</td>
-                      <td className="px-3 py-1.5 text-xs">
-                        {href ? (
-                          <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={r.sourceId}>
-                            {r.sourceType}
-                          </a>
-                        ) : (
-                          <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className={`px-3 py-1.5 text-right font-medium ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(r.runningSen)}</td>
-                    </tr>
-                  );
-                })}
-                {inquiryVirt.bottomSpacer}
-                {/* Owner: window totals — total DR / total CR within the
-                    picked date range, with the closing balance alongside. */}
-                <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
-                  <td className="px-3 py-2" colSpan={3}>TOTAL{from || to ? " (filtered period)" : ""}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.totalDebitSen ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.totalCreditSen ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.closingSen)}</td>
-                </tr>
-              </tbody>
-            </table>
+        loading ? (
+          <Card><CardContent className="py-12 text-center text-[#6B7280] text-sm">Loading ledger…</CardContent></Card>
+        ) : account && gl ? (
+          <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5">
+              <span className="text-[14px] font-bold text-[#1F1D1B]">
+                Acc. No.: <span className="tabular-nums">{gl.account.code}</span> {gl.account.name.toUpperCase()}
+              </span>
+              <span className="text-[12.5px] tabular-nums text-[#6B7280]">
+                DR = {formatCurrency(gl.totalDebitSen ?? 0)} · CR = {formatCurrency(gl.totalCreditSen ?? 0)} · Balance = <span className="text-[#1F1D1B]">{fmtLedgerBal(drCr(gl.closingSen))}</span>
+              </span>
             </div>
-          ) : all ? (
-            <div ref={flatScrollRef} className="overflow-auto max-h-[75vh]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-white">
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Account</th>
-                  <th className="px-3 py-2 text-left">Description</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                  <th className="px-3 py-2 text-right">Debit</th>
-                  <th className="px-3 py-2 text-right">Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {flatVirt.topSpacer}
-                {(flatVirt.active ? flatVirt.indices.map((i) => all.rows[i]) : all.rows).map((r) => {
-                  if (!r) return null;
-                  const href = sourceHref(r.sourceType, r.sourceId);
-                  return (
-                    <tr key={r.id} className="border-b border-[#F0ECE9]" style={{ height: GL_ROW_PX }}>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{String(r.postedAt).slice(0, 10)}</td>
-                      <td className="px-3 py-1.5">
-                        <button
-                          onClick={() => { setPicked([r.accountCode]); reset(); }}
-                          className="text-left cursor-pointer hover:underline"
-                          title="Filter to this account"
-                        >
-                          <span className="tabular-nums text-xs text-[#6B7280] mr-1">{r.accountCode}</span>
-                          <span className="text-[#1F1D1B]">{r.accountName}</span>
-                        </button>
-                      </td>
-                      <td className="px-3 py-1.5 text-[#4B5563]">{r.description}</td>
-                      <td className="px-3 py-1.5 text-xs">
-                        {href ? (
-                          <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={r.sourceId}>
-                            {r.sourceType}
-                          </a>
-                        ) : (
-                          <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                    </tr>
-                  );
-                })}
-                {flatVirt.bottomSpacer}
-              </tbody>
-            </table>
+            <div ref={inquiryScrollRef} className="max-h-[75vh] overflow-auto border-t-[1.5px] border-[#7A6E5E]">
+              <table data-fin-report data-fin-dense>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Source</th>
+                    <th data-cell="num split">Debit</th>
+                    <th data-cell="num">Credit</th>
+                    <th data-cell="num">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* The B/F line stays mounted above the window rather than
+                      becoming item 0 — an opening balance that scrolls away is
+                      worse than the one-row coordinate offset it introduces,
+                      which the 10-row overscan absorbs. */}
+                  <tr data-row="bf" style={{ height: GL_ROW_PX }}>
+                    <td colSpan={5}>Balance B/F</td>
+                    <td data-cell="num">{fmtLedgerBal(drCr(gl.openingSen))}</td>
+                  </tr>
+                  {inquiryVirt.topSpacer}
+                  {(inquiryVirt.active ? inquiryVirt.indices.map((i) => gl.rows[i]) : gl.rows).map((r) => {
+                    if (!r) return null;
+                    const href = sourceHref(r.sourceType, r.sourceId);
+                    return (
+                      <tr
+                        key={r.id}
+                        data-row="line"
+                        style={{ height: GL_ROW_PX }}
+                        onDoubleClick={openSource(href)}
+                        title={href ? "Double-click to open the source" : undefined}
+                        className={href ? "cursor-pointer" : undefined}
+                      >
+                        <td className="text-[12px] text-[#6B7280]">{fmtDocDate(r.postedAt)}</td>
+                        <td className="text-[#1F1D1B]">{r.description}</td>
+                        <td className="text-[12px]">{sourceCell(r.sourceType, r.sourceId, href)}</td>
+                        <td data-cell="num split">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                        <td data-cell="num">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                        <td data-cell="num">{fmtLedgerBal(drCr(r.runningSen))}</td>
+                      </tr>
+                    );
+                  })}
+                  {inquiryVirt.bottomSpacer}
+                  {/* Owner: window totals — total DR / total CR within the
+                      picked date range, with the closing balance alongside. */}
+                  <tr data-row="sub" style={{ height: GL_ROW_PX }}>
+                    <td colSpan={3}>TOTAL{from || to ? " (filtered period)" : ""}</td>
+                    <td data-cell="num split">{formatCurrency(gl.totalDebitSen ?? 0)}</td>
+                    <td data-cell="num">{formatCurrency(gl.totalCreditSen ?? 0)}</td>
+                    <td data-cell="num">{fmtLedgerBal(drCr(gl.closingSen))}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : all ? (
+          <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+            <div ref={flatScrollRef} className="max-h-[75vh] overflow-auto">
+              <table data-fin-report data-fin-dense>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Account</th>
+                    <th>Description</th>
+                    <th>Source</th>
+                    <th data-cell="num split">Debit</th>
+                    <th data-cell="num">Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {flatVirt.topSpacer}
+                  {(flatVirt.active ? flatVirt.indices.map((i) => all.rows[i]) : all.rows).map((r) => {
+                    if (!r) return null;
+                    const href = sourceHref(r.sourceType, r.sourceId);
+                    return (
+                      <tr
+                        key={r.id}
+                        data-row="line"
+                        style={{ height: GL_ROW_PX }}
+                        onDoubleClick={openSource(href)}
+                        title={href ? "Double-click to open the source" : undefined}
+                        className={href ? "cursor-pointer" : undefined}
+                      >
+                        <td className="text-[12px] text-[#6B7280]">{fmtDocDate(r.postedAt)}</td>
+                        <td>
+                          <button
+                            onClick={() => { setPicked([r.accountCode]); reset(); }}
+                            className="text-left cursor-pointer hover:underline"
+                            title="Filter to this account"
+                          >
+                            <span className="tabular-nums text-xs text-[#6B5C32] mr-1">{r.accountCode}</span>
+                            <span className="text-[#1F1D1B]">{r.accountName}</span>
+                          </button>
+                        </td>
+                        <td className="text-[#4B5563]">{r.description}</td>
+                        <td className="text-[12px]">{sourceCell(r.sourceType, r.sourceId, href)}</td>
+                        <td data-cell="num split">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                        <td data-cell="num">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                      </tr>
+                    );
+                  })}
+                  {flatVirt.bottomSpacer}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null
       )}
       <BackToTopButton />
     </div>
