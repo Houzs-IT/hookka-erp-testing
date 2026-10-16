@@ -14,6 +14,7 @@ import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
 import { roundUnitPriceSen, lineTotalSen } from "@/lib/unit-price";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import type { Supplier, PurchaseOrder, SupplierMaterialBinding, RawMaterial } from "@/types";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
 import { useSessionState } from "@/lib/use-session-state";
@@ -2138,7 +2139,15 @@ export default function ProcurementPage() {
             gridId="purchase-orders-list"
             exportName="purchase-orders"
             exportSheetLabel="Purchase Orders"
-            detailExport={{ label: "Detail Listing", build: (rows) => buildPoDetailListingAoa(rows) }}
+            detailExport={{
+              label: "Detail Listing",
+              build: (rows) => buildPoDetailListingAoa(rows, new Map(allSuppliers.map((x) => [x.id, x.code]))),
+            }}
+            // Unfiltered = one server page; export every PO on the current tab.
+            fetchAllRows={poFiltersActive ? undefined : async () =>
+              (await fetchAllPages<PurchaseOrder>("/api/purchase-orders"))
+                .filter((po) => (tab === "DRAFT") === (po.status === "DRAFT"))
+                .map((po) => ({ ...po, itemsSearchText: poItemsSearchText(po.items) }))}
           />
           {/* Server-side page controls — only in the default (unfiltered) view.
               When a filter/search is active the whole dataset is loaded and the

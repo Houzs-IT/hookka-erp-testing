@@ -31,6 +31,7 @@ import {
 import type { SalesOrder } from "@/types";
 import type { Customer, DeliveryOrder } from "@/types";
 import { fetchJson } from "@/lib/fetch-json";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { mutationWithData } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
@@ -1721,6 +1722,10 @@ export default function SalesPage() {
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}
+            // Unfiltered = server-paged CONFIRMED view: export every non-draft
+            // order, not just this page. Under a filter the whole set is loaded.
+            fetchAllRows={_filtersActive ? undefined : async () =>
+              (await fetchAllPages<SalesOrder>(`/api/sales-orders?${soFilterQs}`)).filter((o) => o.status !== "DRAFT")}
             // Give each Status-dropdown selection its own filter session
             // so a sticky column-filter from a previous selection can't
             // blank the grid. BUG (Wei Siang 2026-05-16): picking
