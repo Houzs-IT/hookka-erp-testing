@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-16**: BUG-2026-10-16-305 flipped to 🟢 after the #927 prod check (branch `feat/finance-v2-reports-5`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-305 (branch `feat/finance-v2-reports-4`, to main; 304 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-303 flipped to 🟢 after the #910 prod check (branch `feat/finance-v2-foundation`).
 
@@ -126,9 +127,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-16-305 — The P&L statement's year-to-date % was of one month's sales `accounting` `reports` 🟡
+## BUG-2026-10-16-305 — The P&L statement's year-to-date % was of one month's sales `accounting` `reports` 🟢
 
-🟡 **Fixed on the branch, not yet verified on prod.**
+🟢 **Shipped and verified** (#927, fe598096). Prod check 2026-10-16 (read-only): Net Sales YTD reads 100.0% (was 241.8%) and Net Profit YTD equals its figure ÷ the API's year-to-date net sales; the month column unchanged.
 
 **Symptom.** Found 2026-10-16 in the finance v2 prod check of the P&L statement (#926): in the FY YTD column, Net Sales read 241.8% and every other % was inflated in the same proportion — the year to date divided by the running month's sales. The month column was right. It predates finance v2: the old statement computed the same.
 

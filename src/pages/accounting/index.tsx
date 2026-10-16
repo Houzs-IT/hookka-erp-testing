@@ -16574,13 +16574,12 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
       .catch(() => { if (!dead) setErr("Could not load the payments"); });
     return () => { dead = true; };
   }, [period, lineKey]);
-  const pad = { paddingLeft: `${24 + depth * 16}px` };
-  const bg = "bg-[#FAF8F5]";
+  const pad = { paddingLeft: `${34 + depth * 18}px` };
+  const acc = (c: { accum?: boolean }) => (c.accum ? " acc" : "");
   if (!data || !data.found) {
     const msg = err ?? (data ? "This line is not on the statement any more — reload the page." : "Loading the payments…");
-    return <tr className={bg}><td className={`py-1 text-[12px] ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
+    return <tr data-row="det"><td data-cell="stick" className={err ? "text-[#9A3412]" : "text-[#9CA3AF]"} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
   }
-  const amtCls = (sen: number) => `text-right px-2 tabular-nums whitespace-nowrap ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
   const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
   const perMonth = new Map<string, number>();
   for (const it of data.items) perMonth.set(it.ym, (perMonth.get(it.ym) ?? 0) + it.sen);
@@ -16597,26 +16596,26 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
         ].filter(Boolean).join("\n");
         const text = `${it.date.slice(8, 10)}/${it.date.slice(5, 7)} · ${it.description || "—"}${it.ref2 ? ` · ${it.ref2}` : ""} — ${it.ref1}`;
         return (
-          <tr key={it.key} className={`${bg} text-[12px] text-[#4B5563]`} title={hover || undefined}>
-            <td className="py-1" style={pad}>
+          <tr key={it.key} data-row="det" title={hover || undefined}>
+            <td data-cell="stick" style={pad}>
               <div className="truncate max-w-[34rem]">{text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
             </td>
             {cols.map((c) => {
               const on = c.accum || c.key === it.ym;
-              return <td key={c.key} className={`${on ? amtCls(it.sen) : ""} ${c.accum ? "bg-[#F6F1E7]" : ""}`}>{on ? amt(it.sen) : ""}</td>;
+              return <td key={c.key} data-cell={`num split${acc(c)}`} data-neg={on && it.sen < 0 ? "" : undefined}>{on ? amt(it.sen) : ""}</td>;
             })}
           </tr>
         );
       })}
-      <tr className="bg-[#F7F4EF] text-[12px] font-semibold text-[#4B5563] border-t border-[#E2DDD8]">
-        <td className="py-1" style={pad}>
+      <tr data-row="detsum">
+        <td data-cell="stick" style={pad}>
           {data.items.length} entr{data.items.length === 1 ? "y" : "ies"}
-          {accountCode && months.length > 0 && <> · <Link to={glHref(accountCode, months[0], months[months.length - 1])} className="underline decoration-dotted text-[#6B5C32]">open in GL</Link></>}
+          {accountCode && months.length > 0 && <> · <Link to={glHref(accountCode, months[0], months[months.length - 1])} className="text-[#6B5C32] hover:text-[#574A28]">Open In GL →</Link></>}
           {!data.tied && <span className="font-normal text-[#9A3412]"> · these payments do not add up to the line — please report it</span>}
         </td>
         {cols.map((c) => {
           const sen = c.accum ? total : (perMonth.get(c.key) ?? 0);
-          return <td key={c.key} className={`${amtCls(sen)} ${c.accum ? "bg-[#F6F1E7]" : ""}`}>{amt(sen)}</td>;
+          return <td key={c.key} data-cell={`num split${acc(c)}`} data-neg={sen < 0 ? "" : undefined}>{amt(sen)}</td>;
         })}
       </tr>
     </>
@@ -16637,7 +16636,8 @@ const SECTION_CATEGORIES: { value: string; label: string }[] = [
 
 function CashFlowTab() {
   const { toast } = useToast();
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [period, setPeriod] = useState(() => today.slice(0, 7));
   const [level, setLevel] = useState(3);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState(false);
@@ -17195,8 +17195,8 @@ function CashFlowTab() {
     const a = Math.abs(v / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return v < 0 ? `(${a})` : a;
   };
-  const months: string[] = [];
-  { const now = new Date(); for (let i = 0; i < 18; i++) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); months.push(d.toISOString().slice(0, 7)); } }
+  // Months only (BUG-2026-08-13-092): the engine reads YYYY-MM.
+  const periodOpts = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
 
   // Owner 2026-09-04: accounts with no amount anywhere in the window stay out
   // of the statement and its exports. Edit mode still shows every row — you
@@ -17245,40 +17245,40 @@ function CashFlowTab() {
 
   const isDropTarget = (r: CfApiRow) => edit && (r.kind === "group" || r.kind === "section") && !!r.section;
 
+  const fileBase = `CashFlow-${period}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Statement of Cash Flow", buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}`, buildExport(), { print: true }); } },
+    // CSV stays in the menu until the owner decides (2026-10-16).
+    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
+  ];
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span aria-hidden="true" />
-        <span className="text-xs text-[#9CA3AF]">cash basis · full detail</span>
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }}
-            className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
-            {edit ? "Done" : "Edit"}
-          </button>
-          {[1, 2, 3].map((L) => (
-            <button key={L} onClick={() => applyLevel(L)}
-              className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${level === L ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-          ))}
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-            {/* BUG-2026-08-13-092 — the Quarter ("2026-Q1") and Full-year
-                ("2026") options used to sit here. `fyMonths` (cashflow-engine)
-                parses the period as `YYYY-MM`, so those values produced 13
-                columns all keyed "2026-NaN" and labelled "undefined'26": no
-                real month matched a column and `inFy` was false for every leg,
-                so EVERY income and expense line — and Cash Surplus — rendered
-                "-", while `balBefore("2026-NaN")` string-compared TRUE against
-                every real month and printed a large, real Bank b/f and c/f
-                identically in all 14 columns. A statement reading "no income,
-                no expenses, bank RM X" is the most dangerous shape there is.
-                Whether cash flow should support quarter / full-year windows is
-                an owner decision; the fix here is to stop offering a period
-                the engine cannot compute. */}
-            <optgroup label="Monthly">{months.map((m) => <option key={m} value={m}>{m}</option>)}</optgroup>
-          </select>
-          <ExportButtons build={buildExport} filenameBase={`CashFlow-${period}`} title="Statement of Cash Flow" subtitle={`Period: ${period}`} />
-        </div>
-      </div>
-      {edit && <p className="text-[11px] text-[#6B5C32]">Drag an account row onto a target section heading to reclassify it · this changes the rule, so all months recompute under it · Bank c/f total unchanged · drag back to undo</p>}
+    <div className="space-y-3">
+      <ReportToolbar>
+        {/* BUG-2026-08-13-092 — months only. Quarter ("2026-Q1") and Full-year
+            ("2026") periods used to be offered here. `fyMonths` (cashflow-engine)
+            parses the period as `YYYY-MM`, so those values produced 13
+            columns all keyed "2026-NaN" and labelled "undefined'26": no
+            real month matched a column and `inFy` was false for every leg,
+            so EVERY income and expense line — and Cash Surplus — rendered
+            "-", while `balBefore("2026-NaN")` string-compared TRUE against
+            every real month and printed a large, real Bank b/f and c/f
+            identically in all 14 columns. A statement reading "no income,
+            no expenses, bank RM X" is the most dangerous shape there is.
+            Whether cash flow should support quarter / full-year windows is
+            an owner decision; the fix here is to stop offering a period
+            the engine cannot compute. */}
+        <PeriodStepper value={period} options={periodOpts} onChange={setPeriod} today={today} />
+        <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }} />
+        {!edit && <DetailLevels levels={[1, 2, 3]} value={level} onChange={applyLevel} />}
+        {data && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
+      {edit && (
+        <EditLayoutBanner>
+          Drag an account row (⠿) onto a target section heading to reclassify it · this changes the rule, so all months recompute under it · Bank c/f total unchanged · drag back to undo
+        </EditLayoutBanner>
+      )}
       {edit && supRows.length > 0 && (
         <Card>
           <CardContent className="p-4">
@@ -17313,97 +17313,96 @@ function CashFlowTab() {
           </CardContent>
         </Card>
       )}
-      <Card>
-        <CardContent className="p-4 overflow-x-auto">
-          {!data ? (
-            <div className="py-8 text-center text-[#6B7280] text-sm">No cash-flow data for {period}.</div>
-          ) : (
-            <>
-            {/* Statement letterhead (owner 2026-08-27 排版 pass) — the report
-                reads as a REPORT, not a grid: company on the left, statement
-                title on the right, ruled off before the figures start. */}
-            <div className="flex flex-wrap justify-between items-start border-b-2 border-[#1F1D1B] pb-2 mb-3 gap-2">
-              <div>
-                <div className="text-[15px] font-extrabold tracking-wide text-[#1F1D1B]">HOOKKA INDUSTRIES SDN. BHD.</div>
-                <div className="text-[11px] text-[#6B7280]">Prepared on cash basis · all figures in RM</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[14px] font-extrabold tracking-[0.15em] text-[#6B5C32]">STATEMENT OF CASH FLOW</div>
-                <div className="text-[11px] text-[#6B7280]">Accumulated + trailing 12 months · view {period}</div>
-              </div>
-            </div>
-            <table data-col-resize="first" className="text-[13px]">
-              <thead>
-                {/* PERIOD row bold on top (house rule), Accumulated tinted so
-                    the cumulative column never reads as a 13th month. */}
-                <tr className="text-[12px] font-bold text-[#1F1D1B] border-b-2 border-[#1F1D1B] bg-[#F7F4EF]">
-                  <td className="px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-[#6B5C32]">PERIOD</td>
-                  {cols.map((c) => (
-                    <td key={c.key} className={`text-right px-2 py-1.5 whitespace-nowrap ${c.accum ? "bg-[#F6F1E7] text-[#6B5C32]" : ""}`}>{c.label}</td>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((r, i) => {
-                  if (r.kind === "gap") return <tr key={i}><td colSpan={cols.length + 1} className="py-1.5" /></tr>;
-                  const pad = { paddingLeft: `${8 + r.depth * 16}px` };
-                  const isGroup = r.kind === "group";
-                  const isOpen = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
-                  const strong = r.kind === "subtotal" || r.kind === "result" || r.kind === "total" || r.kind === "cf" || r.kind === "section" || isGroup;
-                  const draggable = edit && r.kind === "line" && !!r.accountCode;
-                  const dropHere = isDropTarget(r);
-                  const rowCls =
-                    r.kind === "result" ? "bg-[#F0ECE9] font-bold border-t border-[#1F1D1B]" :
-                    r.kind === "total" ? "bg-[#EAF3DE] font-bold border-t-2 border-[#1F1D1B]" :
-                    r.kind === "cf" ? "font-bold border-t border-[#1F1D1B] [border-bottom:3px_double_#1F1D1B]" :
-                    r.kind === "bf" ? "text-[#6B7280] italic" :
-                    r.kind === "subtotal" ? "font-semibold border-t border-[#E2DDD8]" :
-                    r.kind === "section" ? "font-extrabold tracking-wide text-[#6B5C32] text-[12px]" : "";
-                  const canDrill = !edit && r.kind === "line" && !!r.lineKey;
-                  const drillKey = canDrill ? `${period}|${r.lineKey}` : "";
-                  const drilled = canDrill && cfDrillOpen.has(drillKey);
-                  return (
-                    <Fragment key={i}>
-                    <tr
-                      className={`${rowCls} ${isGroup ? "cursor-pointer hover:bg-[#F7F4EF] bg-[#F0ECE9]/30 font-semibold" : ""} ${draggable ? "cursor-move" : ""} ${dragCode === r.accountCode ? "opacity-40" : ""} ${dropHere && dragOverSec === r.section ? "ring-2 ring-inset ring-[#6B5C32]" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
-                      draggable={draggable}
-                      onDragStart={draggable ? (e) => { setDragCode(r.accountCode!); e.dataTransfer.setData("text/plain", r.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
-                      onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}
-                      onDragOver={(dropHere || (edit && r.kind === "line" && !!r.accountCode)) && dragCode ? (e) => { e.preventDefault(); if (r.section) setDragOverSec(r.section); } : undefined}
-                      onDragLeave={dropHere ? () => { if (dragOverSec === r.section) setDragOverSec(null); } : undefined}
-                      onDrop={(edit && dragCode) ? (e) => {
-                        e.preventDefault();
-                        const src = e.dataTransfer.getData("text/plain");
-                        setDragOverSec(null); setDragCode(null);
-                        if (!src || !r.section) return;
-                        if (r.kind === "line" && r.accountCode && r.accountCode !== src) void moveTo(src, r.section, r.accountCode);
-                        else void moveTo(src, r.section);
-                      } : undefined}
-                      onClick={isGroup && !edit ? () => { const n = new Set(collapsed); if (n.has(r.groupId!)) n.delete(r.groupId!); else n.add(r.groupId!); setCollapsed(n); } : undefined}>
-                      <td className="py-1 whitespace-nowrap" style={pad}>
-                        {canDrill ? (
-                          <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the payments behind this line"
-                            onClick={() => setCfDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{r.label}
-                          </button>
-                        ) : <>{isGroup ? (isOpen ? "▾ " : "▸ ") : ""}{draggable ? "⠿ " : ""}{r.label}</>}
-                      </td>
-                      {r.values.map((v, j) => (
-                        <td key={j} className={`text-right px-2 tabular-nums whitespace-nowrap ${typeof v === "number" && v < 0 ? "text-[#9A3A2D]" : ""} ${v === 0 ? "text-[#C7C1BA]" : ""} ${strong ? "font-semibold" : ""} ${cols[j]?.accum ? "bg-[#F6F1E7]" : ""}`}>{fmt(v)}</td>
-                      ))}
-                    </tr>
-                    {drilled && r.lineKey && <CfMonthlyDrillRows period={period} lineKey={r.lineKey} cols={cols} depth={r.depth} accountCode={r.accountCode} />}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-            </>
-          )}
-          <p className="text-[11px] text-[#9CA3AF] mt-3">Cash basis · classified from bank/cash ledger movements · Raw Materials traced to PI stock groups · Bank c/f = b/f + Cash Surplus.</p>
-          <p className="text-[11px] text-[#9CA3AF]">Signs: every line reads the bank's way — amount = money in, (amount) = money out.</p>
-        </CardContent>
-      </Card>
+      {/* The statement's letterhead (owner 2026-08-27 排版 pass), now the v2
+          frame; the company line is what the statement has printed so far. */}
+      <ReportFrame
+        company="HOOKKA INDUSTRIES SDN. BHD."
+        title="Statement Of Cash Flow"
+        note={`Prepared on cash basis · all figures RM · Accumulated + trailing 12 months · view ${periodLabel(period, "")}`}
+        maxHeight="calc(100vh - 280px)"
+      >
+        {!data ? (
+          <div className="py-8 text-center text-[#6B7280] text-sm">No cash-flow data for {period}.</div>
+        ) : (
+          <table data-col-resize="first" data-fin-report data-fin-fit>
+            <thead>
+              {/* Accumulated shaded so the cumulative column never reads as a
+                  13th month. */}
+              <tr>
+                <th data-cell="stick" className="min-w-[280px]">Item</th>
+                {cols.map((c) => (
+                  <th key={c.key} data-cell={`num split${c.accum ? " acc" : ""}`}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((r, i) => {
+                if (r.kind === "gap") return <tr key={i} aria-hidden="true"><td colSpan={cols.length + 1} style={{ padding: 0, height: 10, border: 0 }} /></tr>;
+                const pad = { paddingLeft: `${14 + r.depth * 18}px` };
+                const isGroup = r.kind === "group";
+                const isOpen = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
+                const draggable = edit && r.kind === "line" && !!r.accountCode;
+                const dropHere = isDropTarget(r);
+                // The engine's row kinds in the v2 report look.
+                const look =
+                  r.kind === "result" || r.kind === "total" ? "res" :
+                  r.kind === "cf" ? "fin" :
+                  r.kind === "bf" ? "bf" :
+                  r.kind === "subtotal" ? "sub" :
+                  r.kind === "section" ? "sec" :
+                  isGroup ? "grp" : "line";
+                const canDrill = !edit && r.kind === "line" && !!r.lineKey;
+                const drillKey = canDrill ? `${period}|${r.lineKey}` : "";
+                const drilled = canDrill && cfDrillOpen.has(drillKey);
+                return (
+                  <Fragment key={i}>
+                  <tr
+                    data-row={look}
+                    data-fin-drop={dropHere && dragOverSec === r.section ? "" : undefined}
+                    className={`${isGroup && !edit ? "cursor-pointer select-none" : ""} ${draggable ? "cursor-move" : ""} ${dragCode === r.accountCode ? "opacity-40" : ""}`}
+                    title={isGroup && !edit ? (isOpen ? "Click to fold" : "Click to open") : undefined}
+                    draggable={draggable}
+                    onDragStart={draggable ? (e) => { setDragCode(r.accountCode!); e.dataTransfer.setData("text/plain", r.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                    onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}
+                    onDragOver={(dropHere || (edit && r.kind === "line" && !!r.accountCode)) && dragCode ? (e) => { e.preventDefault(); if (r.section) setDragOverSec(r.section); } : undefined}
+                    onDragLeave={dropHere ? () => { if (dragOverSec === r.section) setDragOverSec(null); } : undefined}
+                    onDrop={(edit && dragCode) ? (e) => {
+                      e.preventDefault();
+                      const src = e.dataTransfer.getData("text/plain");
+                      setDragOverSec(null); setDragCode(null);
+                      if (!src || !r.section) return;
+                      if (r.kind === "line" && r.accountCode && r.accountCode !== src) void moveTo(src, r.section, r.accountCode);
+                      else void moveTo(src, r.section);
+                    } : undefined}
+                    onClick={isGroup && !edit ? () => { const n = new Set(collapsed); if (n.has(r.groupId!)) n.delete(r.groupId!); else n.add(r.groupId!); setCollapsed(n); } : undefined}>
+                    <td data-cell="stick" style={pad}>
+                      {canDrill ? (
+                        <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the payments behind this line"
+                          onClick={() => setCfDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                          <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{r.label}
+                        </button>
+                      ) : (
+                        <>
+                          {isGroup ? <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{isOpen ? "▾" : "▸"}</span> : null}
+                          {draggable ? <span className="mr-1.5 text-[12px] text-[#9CA3AF]">⠿</span> : null}
+                          {r.label}
+                        </>
+                      )}
+                    </td>
+                    {r.values.map((v, j) => (
+                      <td key={j} data-cell={`num split${cols[j]?.accum ? " acc" : ""}`} data-neg={typeof v === "number" && v < 0 ? "" : undefined} data-zero={v === 0 ? "" : undefined}>{fmt(v)}</td>
+                    ))}
+                  </tr>
+                  {drilled && r.lineKey && <CfMonthlyDrillRows period={period} lineKey={r.lineKey} cols={cols} depth={r.depth} accountCode={r.accountCode} />}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
+      <p className="text-[11px] text-[#9CA3AF]">Cash basis · classified from bank/cash ledger movements · Raw Materials traced to PI stock groups · Bank c/f = b/f + Cash Surplus.</p>
+      <p className="text-[11px] text-[#9CA3AF]">Signs: every line reads the bank's way — amount = money in, (amount) = money out.</p>
     </div>
   );
 }
