@@ -14,6 +14,7 @@ import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { buildPiDetailRows } from "@/lib/invoice-detail-export";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import { useUrlState } from "@/lib/use-url-state";
 import type { Supplier } from "@/types";
 import {
@@ -32,6 +33,7 @@ import {
   ScanLine,
   FolderInput,
   List,
+  Upload,
 } from "lucide-react";
 import {
   FromSourceModal,
@@ -159,6 +161,7 @@ export default function PurchaseInvoicesPage() {
 
   // From PO / GRN picker
   const [fromSourceOpen, setFromSourceOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const handleFromSource = (sel: SourceSelection) => {
     const param =
       sel.type === "po" ? `poId=${sel.id}` : `grnId=${sel.id}`;
@@ -620,6 +623,10 @@ export default function PurchaseInvoicesPage() {
           >
             <FolderInput className="h-4 w-4" /> From PO / GRN
           </Button>
+          {/* The Detail Listing export IS the import template. */}
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload className="h-4 w-4" /> Import
+          </Button>
           <Button variant="primary" onClick={() => navigate("/procurement/pi/create")}>
             <Plus className="h-4 w-4" /> Create Invoice
           </Button>
@@ -905,6 +912,18 @@ export default function PurchaseInvoicesPage() {
         open={fromSourceOpen}
         onClose={() => setFromSourceOpen(false)}
         onSelect={handleFromSource}
+      />
+
+      <DocImportDialog
+        docType="pi"
+        title="Import purchase invoices from a Detail Listing"
+        hint="Edit: Doc Date, Supplier Invoice No. and the line cells (DRAFT / CONFIRMED, MYR). Create: blank Doc No. or NEW-1, Party Code = supplier code, Ref Doc No. = the PO (optional), one row per line with Description + Qty + Unit Price."
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onApplied={() => {
+          invalidateCachePrefix("/api/purchase-invoices");
+          fetchData();
+        }}
       />
     </div>
   );

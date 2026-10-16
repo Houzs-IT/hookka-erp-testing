@@ -23,6 +23,7 @@ import { runDocImport, type DocImportAdapter } from "../lib/doc-import";
 import { invoiceImportAdapter } from "../lib/doc-import-invoice";
 import { soImportAdapter } from "../lib/doc-import-so";
 import { poImportAdapter } from "../lib/doc-import-po";
+import { piImportAdapter } from "../lib/doc-import-pi";
 
 /** docType (lower-case, as in the URL) → adapter. */
 export const ADAPTERS: Record<string, DocImportAdapter> = {
@@ -30,6 +31,7 @@ export const ADAPTERS: Record<string, DocImportAdapter> = {
   si: invoiceImportAdapter,
   so: soImportAdapter,
   po: poImportAdapter,
+  pi: piImportAdapter,
 };
 
 const MAX_ROWS = 5000;
