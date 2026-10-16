@@ -422,6 +422,7 @@ const KPI_TONE = {
   ok: "text-[#27500A]",
   warn: "text-[#7A5B12]",
   err: "text-[#9A3A2D]",
+  info: "text-[#3E6570]",
 } as const;
 
 /** The Monthly pages' figure cards: a small uppercase label, the value, an

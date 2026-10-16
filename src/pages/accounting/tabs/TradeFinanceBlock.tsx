@@ -140,7 +140,7 @@ export function TradeFinanceBlock() {
               {" = account balance "}{rm(s.accountNetSen)}
             </p>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50 text-[#6B7280]">
                     <th className="py-2 px-3 text-left font-medium">Draw</th>
@@ -156,10 +156,12 @@ export function TradeFinanceBlock() {
                 </thead>
                 <tbody>
                   {s.draws.length === 0 && (
-                    <tr><td colSpan={9} className="py-4 px-3 text-center text-[#9CA3AF]">No open draws.</td></tr>
+                    <tr data-fin-nolift=""><td colSpan={9} className="py-4 px-3 text-center text-[#9CA3AF]">No open draws.</td></tr>
                   )}
                   {s.draws.map((d) => (
-                    <tr key={d.drawSourceId} className="border-b border-[#F0ECE9]">
+                    // The due date, interest and bank charges are typed in place:
+                    // the row stays put under the cursor.
+                    <tr key={d.drawSourceId} data-fin-nolift="" className="border-b border-[#F0ECE9]">
                       <td className="py-1.5 px-3 tabular-nums">{d.drawSourceId}</td>
                       <td className="py-1.5 px-3">{d.paidSupplier || "-"}</td>
                       <td className="py-1.5 px-3 tabular-nums">{d.drawDate}</td>
@@ -212,7 +214,9 @@ export function TradeFinanceBlock() {
                       <td className="py-1.5 px-3 text-right tabular-nums font-semibold">{rm(d.outstandingSen)}</td>
                     </tr>
                   ))}
-                  {s.draws.length > 0 && (
+                </tbody>
+                {s.draws.length > 0 && (
+                  <tfoot>
                     <tr className="border-t-2 border-[#E2DDD8] bg-[#F6F1E7] font-semibold">
                       <td className="py-2 px-3" colSpan={4}>TOTAL</td>
                       <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.amountSen - d.interestSen - d.bankChargeSen, 0))}</td>
@@ -221,8 +225,8 @@ export function TradeFinanceBlock() {
                       <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.repaidSen, 0))}</td>
                       <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.outstandingSen, 0))}</td>
                     </tr>
-                  )}
-                </tbody>
+                  </tfoot>
+                )}
               </table>
             </div>
           </CardContent>
