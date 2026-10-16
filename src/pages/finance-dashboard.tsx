@@ -27,6 +27,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
+import { FinancePageTitle } from "@/components/finance/page-title";
 import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
 
 type Slice = {
@@ -957,9 +958,11 @@ export default function FinanceDashboardPage() {
   return (
     <div className="space-y-4 p-1" data-fin-ui>
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold text-[#1F1D1B] flex items-center gap-2">
-          <BarChart3 className="h-5 w-5 text-[#6B5C32]" /> Financial Dashboard
-        </h2>
+        <FinancePageTitle
+          title="Financial Dashboard"
+          icon={<BarChart3 className="h-5 w-5 text-[#6B5C32]" />}
+          explain="The books' figures against the Forecast P&L, month by month or by quarter."
+        />
         <span className="text-xs text-[#9CA3AF]">* = period still running / not a full quarter</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-[#6B7280]">Period</span>

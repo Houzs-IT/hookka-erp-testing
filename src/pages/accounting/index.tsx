@@ -89,6 +89,8 @@ import {
   teachPartyAlias,
 } from "@/lib/party-alias-client";
 import { OverviewTab } from "./overview-tab";
+import { FinancePageTitle } from "@/components/finance/page-title";
+import { financePage } from "@/lib/finance-nav";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -612,13 +614,8 @@ export default function AccountingPage() {
 
   return (
     <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-[#1F1D1B]">Accounting</h1>
-          <p className="text-xs text-[#6B7280]">General ledger, accounts receivable, and accounts payable</p>
-        </div>
-      </div>
+      {/* The page's name with its (i) explanation (finance v2) */}
+      <FinancePageTitle {...financePage(tab)} />
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -673,7 +670,6 @@ export default function AccountingPage() {
           {tab === "opening" && <OpeningBalanceTab accounts={accounts} onRefresh={fetchAll} />}
           {tab === "stockmap" && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-[#1F1D1B]">Stock Group Mapping</h2>
               <StockMapCard accounts={accounts} />
             </div>
           )}
@@ -681,7 +677,6 @@ export default function AccountingPage() {
           {tab === "stocktake" && <StockTakeTab />}
           {tab === "maint" && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-[#1F1D1B]">Account Maintenance</h2>
               <GstRateCard />
               <FyeCard />
               <CleanupReportCard />
@@ -1985,7 +1980,6 @@ function StockTakeTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Month-End Stock Take</h2>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Enter the closing stock value per material group at each month-end. The P&amp;L
             uses it as that month&apos;s closing (and the next month&apos;s opening), so material
@@ -2587,7 +2581,6 @@ function OpeningStockTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Opening Stock</h2>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Per-material cutover layer for the FIFO material-cost report: the
             quantity on hand and its unit cost as of the switch date. Fill once
@@ -2959,7 +2952,7 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
     <div className="space-y-4">
       {confirmDialog}
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Chart of Accounts</h2>
+        <span aria-hidden="true" />
         <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
           <Plus className="h-4 w-4" /> Add Account
         </Button>
@@ -3552,7 +3545,7 @@ function JournalsTab({
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Journal Entries</h2>
+        <span aria-hidden="true" />
         <Button variant="primary" size="sm" onClick={() => { setEditingJv(null); setShowForm(!showForm); }}>
           <FileText className="h-4 w-4" /> New Journal Entry
         </Button>
@@ -4245,7 +4238,6 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
       <ARControlPanel company={company} />
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Accounts Receivable</h2>
           <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#9C6F1E]">{formatCurrency(totalOutstanding)}</span></p>
           <p className="text-xs text-[#9CA3AF]">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>.</p>
         </div>
@@ -4797,7 +4789,6 @@ function SupplierDiscountTab() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Supplier Discount</h2>
         <p className="text-xs text-[#6B7280]">Record a discount/credit from a supplier. Optionally knock it off specific unpaid bills.</p>
       </div>
 
@@ -5100,7 +5091,6 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       <TradeFinanceBlock />
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Accounts Payable</h2>
           <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#3E6570]">{formatCurrency(totalOutstanding)}</span></p>
           <p className="text-xs text-[#9CA3AF]">Read-only. Pay a supplier bill on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>.</p>
         </div>
@@ -5699,7 +5689,6 @@ function MonthlyPlTab() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-[#3E6570]">Monthly P&amp;L</h2>
           <p className="text-xs text-[#9CA3AF]">{data ? `${data.fyLabel} · read-only · all amounts RM` : "Loading…"}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -6466,7 +6455,6 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#3E6570]">{side === "DEBTOR" ? "Other Debtor" : "Other Creditor"}</h2>
       <div className="grid gap-4 grid-cols-1">
         {side === "DEBTOR" ? (
           <Card>
@@ -7318,7 +7306,6 @@ function SelfCheckTab() {
     <div className="space-y-4">
       <div className="flex justify-between items-start flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Self-check</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every consistency probe on one page. Green = ties to the sen · Red = something to fix · Amber = needs a look. Read-only; each card links to where the fix lives.</p>
         </div>
         <div className="flex items-center gap-3">
@@ -7389,7 +7376,6 @@ function CorrectionsTab() {
     <div className="space-y-4">
       <div className="flex justify-between items-start flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Corrections</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every posted document that was later edited or cancelled, and every reconciliation month re-opened — who, when, how much reversed and re-posted. Read from the ledger itself.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -7531,7 +7517,6 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
     <div className="space-y-4">
       <div className="flex justify-between items-start flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">AP Invoices</h2>
           <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
         </div>
         <div className="flex gap-2">
@@ -8992,7 +8977,7 @@ function TrialBalanceTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Trial Balance</h2>
+        <span aria-hidden="true" />
         <div className="flex items-end gap-3">
           <div className="pb-0.5">
             <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
@@ -9389,7 +9374,6 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   if (ledger === "sales" || ledger === "purchase") {
     return (
       <div className="space-y-4">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">General Ledger</h2>
         <Card>
           <CardContent className="p-4 bg-[#F7F4EF] rounded-lg">
             <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Ledger</label>
@@ -9413,7 +9397,6 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">General Ledger</h2>
 
       {/* Filter bar — deliberately loud (owner: "不够明显") */}
       <Card>
@@ -10896,7 +10879,6 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       {rowMenu.element}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Payment Vouchers</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every payment out, one door. <b>AP Payment</b> pays a creditor's bills (purchase invoices / other-creditor bills); <b>Payment Voucher</b> pays an expense. Draft → Prepared → Checked → Approved (posted), or Post now. Foreign-currency PIs, advance knock-off and trade-finance repayment: <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payment page</Link>. Payments recorded there and on <Link to="/accounting?tab=ocreditorpay" className="underline decoration-dotted text-[#6B5C32]">Other Creditor Payments</Link> are listed below too (badges <b>SP</b> / <b>OCP</b>) — same HPV number series, one list.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -12040,7 +12022,6 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       {rowMenu.element}
       <div className="flex justify-between items-center flex-wrap gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Receipts</h2>
           <p className="text-[11px] text-[#9CA3AF]">Every payment in, one door. <b>Customer Receipt</b> settles sales invoices; <b>Other Debtor Receipt</b> settles other-debtor bills; <b>Official Receipt</b> books sundry income. Each posts on save.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -12397,7 +12378,6 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       {rowMenu.element}
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Fund Transfer</h2>
 
       <Card>
         <CardContent className="p-4 space-y-3">
@@ -12626,7 +12606,6 @@ function StockSummaryTab() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Stock Summary</h2>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
           <div>
@@ -12909,7 +12888,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Labour — Month-end Posting</h2>
+        <span aria-hidden="true" />
         <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>Department → Account map</Button>
       </div>
 
@@ -13224,7 +13203,7 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Fixed Assets · Depreciation</h2>
+        <span aria-hidden="true" />
         <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
           <Plus className="h-4 w-4" /> Add Asset
         </Button>
@@ -13804,7 +13783,7 @@ function DailyCashTab() {
         </div>
       )}
       <div className="flex justify-between items-center flex-wrap gap-2">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Daily Cash Position</h2>
+        <span aria-hidden="true" />
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => { const v = !showPlanned; setShowPlanned(v); try { localStorage.setItem("cashpos-planned", v ? "1" : "0"); } catch { /* ignore */ } }}>
             {showPlanned ? "Hide planned" : "Show planned"}
@@ -14556,7 +14535,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Cash Book · Bank Reconciliation</h2>
+        <span aria-hidden="true" />
         <div className="flex gap-2">
           <input
             ref={pdfInputRef}
@@ -15470,7 +15449,6 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Opening Balance</h2>
 
       {data?.migrationMissing && (
         <Card>
@@ -17105,7 +17083,7 @@ function CashFlowTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Statement of Cash Flow</h2>
+        <span aria-hidden="true" />
         <span className="text-xs text-[#9CA3AF]">cash basis · full detail</span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }}
