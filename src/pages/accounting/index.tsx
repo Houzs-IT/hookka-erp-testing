@@ -30,7 +30,7 @@ import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
-import { useRowMenu, lifecycleMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
+import { useRowMenu, lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { amountInWords } from "@/lib/amount-in-words";
 import { COMPANY } from "@/lib/constants";
@@ -57,6 +57,7 @@ import {
   Printer,
   Upload,
   Download,
+  Settings,
 } from "lucide-react";
 import type {
   ChartOfAccount,
@@ -90,6 +91,11 @@ import {
 } from "@/lib/party-alias-client";
 import { OverviewTab } from "./overview-tab";
 import { FinancePageTitle } from "@/components/finance/page-title";
+import { FinanceTitleActions } from "@/components/finance/title-actions";
+import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
+import { FinPill } from "@/components/finance/pill";
+import { SegmentedChips } from "@/components/finance/segmented-chips";
+import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, type FinStatus } from "@/lib/finance-daily";
 import { financePage } from "@/lib/finance-nav";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
@@ -606,6 +612,10 @@ export default function AccountingPage() {
     if (tab === "ar" || tab === "ap") refreshAging();
   }, [tab, refreshAging]);
 
+  // The title row's button slot (finance v2): a tab portals its buttons into
+  // it through <FinanceTitleActions>.
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
+
   // Finance tables (owner 2026-10-01 「我不想要 wrap text」+「letterhead 可以
   // 左右拉」): no wrapping, and any column edge in a header can be dragged —
   // only that column changes, the rest move with it; widths remembered per
@@ -614,9 +624,11 @@ export default function AccountingPage() {
 
   return (
     <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
-      {/* The page's name with its (i) explanation (finance v2) */}
-      <FinancePageTitle {...financePage(tab)} />
+      {/* The page's name with its (i) explanation, and the tab's buttons on the
+          same line (finance v2) */}
+      <FinancePageTitle {...financePage(tab)} actions={<div ref={setTitleSlot} className="flex flex-wrap items-center gap-2" />} />
 
+      <FinanceTitleSlotContext.Provider value={titleSlot}>
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-[#6B7280]">Loading accounting data...</div>
@@ -686,6 +698,7 @@ export default function AccountingPage() {
           )}
         </>
       )}
+      </FinanceTitleSlotContext.Provider>
     </div>
   );
 }
@@ -3552,12 +3565,12 @@ function JournalsTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <span aria-hidden="true" />
+      {/* On the page's title row (finance v2) */}
+      <FinanceTitleActions>
         <Button variant="primary" size="sm" onClick={() => { setEditingJv(null); setShowForm(!showForm); }}>
           <FileText className="h-4 w-4" /> New Journal Entry
         </Button>
-      </div>
+      </FinanceTitleActions>
 
       {showForm && <JournalEntryForm accounts={accounts} onSave={() => { setShowForm(false); onRefresh(); }} onCancel={() => setShowForm(false)} />}
       {editingJv && (
@@ -10014,6 +10027,70 @@ function buildPayRows(pv: PvRow[] | null, sp: SupplierPaymentGroup[] | null, ocp
   return rows.sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
 }
 
+// The Payment Vouchers list rows (finance v2, owner 2026-10-16): each payment
+// with the text its columns show, so the grid sorts, filters, searches and
+// exports what the eye reads. Built once per load (stable rows — BUG-CLASSES
+// C24: an unstable list re-emits the selection forever).
+type PayGridRow = PayRow & {
+  payeeText: string; descText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
+  statusLabel: string; status: FinStatus;
+};
+function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
+  const bank = (code: string | null | undefined) => {
+    if (!code) return "";
+    const short = shortBankName(accounts.find((a) => a.code === code)?.name);
+    return short ? `${code} ${short}` : code;
+  };
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const r = row.pv;
+  let payeeText = row.payee;
+  let descText = "";
+  let viaLabel = bank(row.via);
+  let lineText = "";
+  let lineTitle = "";
+  let billNos = "";
+  let status: FinStatus;
+  if (r) {
+    const toAcct = r.lines[0]?.accountCode ?? "";
+    const toName = shortBankName(accounts.find((a) => a.code === toAcct)?.name) || toAcct;
+    payeeText = r.pvKind === "TRANSFER" ? `Transfer to ${toName}` : (r.payee ?? "");
+    descText = r.description ?? "";
+    viaLabel = r.accrued === 1 && !r.settledAt ? `accrued → ${r.accrualAccount ?? ""}` : bank(r.payFrom);
+    if (r.pvKind === "AP") {
+      const allocs = r.allocs ?? [];
+      lineText = `${plural(allocs.length, "bill")}${(r.advanceSen ?? 0) > 0 ? " + advance" : ""}`;
+      lineTitle = allocs.map((a) => `${a.docNo} ${formatCurrency(a.amountSen)}`).join("\n");
+      billNos = allocs.map((a) => a.docNo).join(" ");
+    } else if (r.pvKind === "TRANSFER") {
+      lineText = `→ ${toName}`;
+    } else {
+      lineText = plural(r.lines.length, "line");
+    }
+    status = pvStatus({
+      status: r.status, approvalState: r.approvalState ?? r.approval_state, advanceOpenSen: r.advanceOpenSen,
+      accrued: r.accrued, settledAt: r.settledAt, rejectReason: r.rejectReason ?? r.reject_reason, pvNo: r.pvNo,
+    });
+  } else if (row.sp) {
+    const invoices = row.sp.lines.filter((l) => l.purchaseInvoiceId).length;
+    const advance = spAdvanceOpenSen(row.sp);
+    lineText = `${plural(invoices, "invoice")}${advance > 0 ? " + advance" : ""}`;
+    lineTitle = row.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n");
+    billNos = row.sp.lines.map((l) => l.piNo ?? "").join(" ");
+    status = foreignPayStatus(row.state, advance, PAY_DOOR_HINT[row.door]);
+  } else if (row.ocp) {
+    descText = row.ocp.reference ?? "";
+    lineText = plural(row.ocp.lines.length, "bill");
+    lineTitle = row.ocp.lines.map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n");
+    billNos = row.ocp.lines.map((l) => l.billNo).join(" ");
+    status = foreignPayStatus(row.state, 0, PAY_DOOR_HINT[row.door]);
+  } else {
+    descText = row.ft?.description ?? "";
+    lineText = `→ ${row.ft?.toName || row.ft?.toAccount || ""}`;
+    status = foreignPayStatus(row.state, 0, PAY_DOOR_HINT[row.door]);
+  }
+  return { ...row, payeeText, descText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
+}
+
 // The settled-bills detail block for a voucher's print: an AP voucher carries
 // its ticks (draft or posted), so no round-trip is needed.
 function pvApPrintDetail(pv: PvRow): { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[] | undefined {
@@ -10164,13 +10241,14 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     { accountCode: "", description: "", amount: "" },
   ]);
 
-  const [q, setQ] = useState("");
+  // The status chip; search, dates, bank and door are the grid's own search
+  // box and column funnels (finance v2).
   const [statusFilter, setStatusFilter] = useState<PvStatusChip>("ALL");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [bankFilter, setBankFilter] = useState("");
-  // Which door the row came in by (all four by default).
-  const [doorFilter, setDoorFilter] = useState<"" | PayDoor>("");
+  // The ticked rows — the grid owns the ticks (only the checkbox changes
+  // them); a batch clears them by bumping the token.
+  const [picked, setPicked] = useState<PayGridRow[]>([]);
+  const [clearPickedToken, setClearPickedToken] = useState(0);
+  const clearPicked = () => setClearPickedToken((t) => t + 1);
   // Ladder actions in flight (single or batch) — buttons disable meanwhile.
   const [ladderBusy, setLadderBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -10338,29 +10416,63 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   };
   const chipCount = (chip: PvStatusChip) => payRows.filter((r) => matchesChip(r, chip)).length;
   const doorCount = (d: PayDoor) => payRows.filter((r) => r.door === d).length;
-  const visibleRows = payRows.filter((row) => {
-    if (doorFilter && row.door !== doorFilter) return false;
-    if (q.trim()) {
-      const kw = q.toLowerCase();
-      const hay = [
-        row.no, row.payee, row.note,
-        ...(row.pv?.allocs ?? []).map((a) => a.docNo),
-        ...(row.sp?.lines ?? []).map((l) => l.piNo ?? ""),
-        ...(row.ocp?.lines ?? []).map((l) => l.billNo),
-      ];
-      if (!hay.some((s) => s.toLowerCase().includes(kw))) return false;
-    }
-    if (!matchesChip(row, statusFilter)) return false;
-    if (dateFrom && row.date < dateFrom) return false;
-    if (dateTo && row.date > dateTo) return false;
-    if (bankFilter && row.via !== bankFilter) return false;
-    return true;
-  });
-  // A supplier payment with no bank leg on the ledger (contra) has no bank to
-  // match, so picking a bank hides it — say so instead of letting it vanish.
-  const bankHiddenSp = bankFilter ? payRows.filter((r) => r.door === "SP" && !r.via).length : 0;
-
-  const pvSel = useRowSelection(visibleRows, (r) => r.key);
+  // The list (finance v2): the chip narrows it here; the grid's search (with
+  // the settled bill numbers) and its funnels do the rest. A supplier payment
+  // with no bank leg (contra) reads "(no bank leg)" in the Paid From funnel,
+  // so it is never hidden without a word. Memoised: the grid's selection
+  // emission compares row identity (BUG-CLASSES C24).
+  const gridRows = useMemo(
+    () => payRows.filter((row) => matchesChip(row, statusFilter)).map((row) => payGridRow(row, accounts)),
+    // matchesChip reads only the row and the chip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [payRows, statusFilter, accounts],
+  );
+  // The design's PV table columns. Stable (BUG-CLASSES C24); every cell reads
+  // only its row.
+  const payColumns = useMemo<Column<PayGridRow>[]>(() => [
+    { key: "no", label: "PV No", width: "190px", filterAccessor: (r) => PAY_DOOR_LABEL[r.door], exportValue: (r) => r.no, sortAccessor: (r) => r.no,
+      render: (_v, r) => (
+        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+          <span className="font-semibold tabular-nums text-[#1F1D1B]">{r.no}</span>
+          {payDoorChip(r.door)}
+          {(r.pv?.attachmentCount ?? 0) > 0 && (
+            <span className="text-[11px] text-[#6B7280]" title={`${r.pv?.attachmentCount} attachment${r.pv?.attachmentCount === 1 ? "" : "s"} — double-click to see`}>📎{r.pv?.attachmentCount}</span>
+          )}
+        </span>
+      ) },
+    { key: "date", label: "Date", type: "date", width: "120px",
+      render: (_v, r) => <span className="text-[#6B7280]">{fmtDocDate(r.date)}</span> },
+    { key: "payeeText", label: "Payee / Description", width: "300px", noClip: true,
+      exportValue: (r) => [r.payeeText, r.descText].filter(Boolean).join(" · "),
+      render: (_v, r) => (
+        <div className="min-w-0 py-0.5">
+          <div className="truncate font-medium text-[#1F2937]" title={r.payeeText}>{r.payeeText}</div>
+          {r.descText && <div className="truncate text-[12px] text-[#6B7280]" title={r.descText}>{r.descText}</div>}
+        </div>
+      ) },
+    { key: "viaLabel", label: "Paid From", width: "190px", filterAccessor: (r) => r.viaLabel || (r.door === "SP" ? "(no bank leg)" : "—"),
+      render: (_v, r) => (r.pv && r.pv.accrued === 1 && !r.pv.settledAt
+        ? <span className="text-[12px] text-[#9A3A2D]">{r.viaLabel}</span>
+        : r.viaLabel
+          ? <span className="text-[12px]">{r.viaLabel}</span>
+          : <span className="text-[#9CA3AF]" title="No bank leg on this payment's ledger posting (contra settlement)">—</span>) },
+    { key: "lineText", label: "Line", width: "150px",
+      render: (_v, r) => <span className="text-[12px] text-[#6B7280]" title={r.lineTitle || undefined}>{r.lineText}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px", total: (rows) => activeTotalSen(rows),
+      render: (v) => <span className="font-semibold tabular-nums">{formatCurrency(Number(v) || 0)}</span> },
+    { key: "statusLabel", label: "Status", width: "250px", noClip: true,
+      render: (_v, r) => {
+        const reason = r.pv ? (r.pv.rejectReason ?? r.pv.reject_reason) : null;
+        return (
+          <div className="py-0.5">
+            <FinPill tone={r.status.tone} title={r.status.title}>{r.status.label}</FinPill>
+            {reason && r.pv && r.pv.status !== "VOID" && (r.pv.approvalState ?? r.pv.approval_state) === "DRAFT" && (
+              <div className="mt-0.5 max-w-[16rem] truncate text-[11px] text-[#9A3A2D]" title={reason}>↩ {reason}</div>
+            )}
+          </div>
+        );
+      } },
+  ], []);
 
   const resetForm = () => {
     setShowForm(false);
@@ -10517,7 +10629,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Batch rung over the ticked vouchers (date order on the server).
   const handleLadderBatch = async (action: "prepare" | "check" | "approve") => {
     // Only this page's own vouchers ride the ladder; a ticked foreign row is skipped.
-    const ids = pvSel.selectedRows.map((r) => r.pv?.id).filter((id): id is string => !!id);
+    const ids = picked.map((r) => r.pv?.id).filter((id): id is string => !!id);
     if (!ids.length) return;
     if (action === "approve" && !(await confirm({ title: "Approve & post all?", message: `${ids.length} voucher${ids.length === 1 ? "" : "s"} will be posted to the ledger.` }))) return;
     setLadderBusy(true);
@@ -10531,7 +10643,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         const failed = j.data.results.filter((x) => !x.ok);
         if (failed.length === 0) toast.success(`${j.data.done} voucher${j.data.done === 1 ? "" : "s"} ${action === "approve" ? "approved & posted" : action === "check" ? "checked" : "prepared"}`);
         else toast.error(`${j.data.done} done · ${failed.length} skipped — ${failed[0].error ?? ""}`);
-        pvSel.clear();
+        clearPicked();
         load();
       } else toast.error(j?.error || "Batch failed");
     } finally { setLadderBusy(false); }
@@ -10835,9 +10947,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02 「这个显示太多了，
   // 能不能 right click 才选我的东西」) — the same actions as the popup's buttons;
-  // the rows carry no action links.
+  // the rows carry no action links. The list is a DataGrid (finance v2): its
+  // own context menu shows these groups through rowMenuItems.
   const navigate = useNavigate();
-  const rowMenu = useRowMenu();
   const pvRowMenu = (r: PvRow): RowMenuGroups => {
     const st = apState(r);
     const live = r.status !== "VOID";
@@ -10887,28 +10999,28 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      {rowMenu.element}
-      <div className="flex justify-between items-center">
-        <div>
-          <p className="text-[11px] text-[#9CA3AF]">Every payment out, one door. <b>AP Payment</b> pays a creditor's bills (purchase invoices / other-creditor bills); <b>Payment Voucher</b> pays an expense. Draft → Prepared → Checked → Approved (posted), or Post now. Foreign-currency PIs, advance knock-off and trade-finance repayment: <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payment page</Link>. Payments recorded there and on <Link to="/accounting?tab=ocreditorpay" className="underline decoration-dotted text-[#6B5C32]">Other Creditor Payments</Link> are listed below too (badges <b>SP</b> / <b>OCP</b>) — same HPV number series, one list.</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <ScanVouchers accounts={accounts} bankCash={bankCash} onDone={load} onOpenInForm={openScanInForm} />
-          <Button variant="primary" size="sm" onClick={() => (showForm && formKind === "AP" && !editingId ? resetForm() : openNew("AP"))} title="Pay a supplier's purchase invoices or an other creditor's bills">
-            <Plus className="h-4 w-4" /> New AP Payment
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => (showForm && formKind === "EXPENSE" && !editingId ? resetForm() : openNew("EXPENSE"))} title="Pay an expense straight to its account">
-            <Plus className="h-4 w-4" /> New Payment Voucher
-          </Button>
-        </div>
-      </div>
+      {/* On the page's title row (finance v2): ⚙ print footer · Scan · New
+          Payment Voucher · New AP Payment (the main action, last). The page's
+          explanation sits behind the (i) next to the title. */}
+      <FinanceTitleActions>
+        <Button
+          variant="outline" size="sm" aria-label="Print footer"
+          title={`Print footer${printFooter ? `: ${printFooter.split(/\r?\n/)[0].slice(0, 60)}${printFooter.length > 60 || /\n/.test(printFooter) ? "…" : ""}` : " — none, nothing extra printed"} · click to edit`}
+          onClick={() => { setFooterDraft(printFooter); setFooterOpen(true); }}
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+        <ScanVouchers accounts={accounts} bankCash={bankCash} onDone={load} onOpenInForm={openScanInForm} />
+        <Button variant="outline" size="sm" onClick={() => (showForm && formKind === "EXPENSE" && !editingId ? resetForm() : openNew("EXPENSE"))} title="Pay an expense straight to its account">
+          <Plus className="h-4 w-4" /> New Payment Voucher
+        </Button>
+        <Button variant="primary" size="sm" onClick={() => (showForm && formKind === "AP" && !editingId ? resetForm() : openNew("AP"))} title="Pay a supplier's purchase invoices or an other creditor's bills">
+          <Plus className="h-4 w-4" /> New AP Payment
+        </Button>
+      </FinanceTitleActions>
       {migrationMissing && (
         <Card><CardContent className="p-4 text-sm text-[#9A3A2D]">Migration 0159 not applied yet — run the paste-version SQL first.</CardContent></Card>
       )}
-      <div className="text-[11px] text-[#9CA3AF] flex items-center gap-2">
-        <span>Print footer{printFooter ? `: ${printFooter.split(/\r?\n/)[0].slice(0, 60)}${printFooter.length > 60 || /\n/.test(printFooter) ? "…" : ""}` : ": (none — nothing extra printed)"}</span>
-        <button onClick={() => { setFooterDraft(printFooter); setFooterOpen(true); }} className="underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B] cursor-pointer">edit</button>
-      </div>
       {footerOpen && (
         <Card>
           <CardContent className="p-4 space-y-2">
@@ -11282,51 +11394,16 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         );
       })()}
 
-      {!payLoading && (
-        <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]" title="Every payment out, whichever page it was recorded on — all four share one HPV number series">
-          {payRows.length} payment{payRows.length === 1 ? "" : "s"} · {doorCount("PV")} voucher · {doorCount("AP")} AP · {doorCount("TR")} transfer · {doorCount("SP")} supplier · {doorCount("OCP")} other creditor · {doorCount("FT")} old fund transfer
-        </div>
-      )}
-      <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
-        {PV_STATUS_CHIPS.map((ch) => {
-          const n = chipCount(ch.key);
-          const on = statusFilter === ch.key;
-          return (
-            <button key={ch.key} type="button" onClick={() => setStatusFilter(ch.key)}
-              className={`px-3 py-1.5 font-semibold uppercase tracking-wide cursor-pointer ${on ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${ch.key !== "ALL" ? "border-l border-[#F0ECE9]" : ""}`}>
-              {ch.label}{ch.key !== "ALL" && n > 0 && <span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search PV no / payee / bill no / description" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64" />
-        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-        <span className="text-xs text-[#9CA3AF]">→</span>
-        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-        <select value={bankFilter} onChange={(e) => setBankFilter(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm">
-          <option value="">All banks</option>
-          {bankCash.map((b) => <option key={b.code} value={b.code}>{b.code} {b.name}</option>)}
-        </select>
-        <select value={doorFilter} onChange={(e) => setDoorFilter(e.target.value as "" | PayDoor)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" title="Which page the payment was recorded on">
-          <option value="">All doors</option>
-          {(["PV", "AP", "TR", "SP", "OCP", "FT"] as PayDoor[]).map((d) => <option key={d} value={d}>{PAY_DOOR_LABEL[d]}</option>)}
-        </select>
-        {bankHiddenSp > 0 && (
-          <span className="text-[11px] text-[#9A3A2D]">{bankHiddenSp} supplier payment{bankHiddenSp === 1 ? "" : "s"} hidden — no bank leg on their ledger posting (contra settlement); pick All banks to see them</span>
-        )}
-      </div>
-
-      {pvSel.count > 0 && (() => {
+      {picked.length > 0 && (() => {
         // Ladder batch: offer each rung only when at least one ticked voucher
         // can take it (the server still re-checks every one).
-        const sel = pvSel.selectedRows.map((x) => x.pv).filter((x): x is PvRow => !!x);
+        const sel = picked.map((x) => x.pv).filter((x): x is PvRow => !!x);
         const n = (s: PvApprovalState) => sel.filter((r) => r.status !== "VOID" && apState(r) === s).length;
         const drafts = n("DRAFT"), prepared = n("PREPARED"), checked = n("CHECKED");
         if (!drafts && !prepared && !checked) return null;
         return (
           <div className="flex flex-wrap items-center gap-2 rounded-md bg-[#FBF3E4] border border-[#E0C989] px-3 py-2 text-xs">
-            <span className="font-semibold text-[#7A5B12]">Approval ladder for the {pvSel.count} ticked:</span>
+            <span className="font-semibold text-[#7A5B12]">Approval ladder for the {picked.length} ticked:</span>
             {drafts > 0 && <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => handleLadderBatch("prepare")}>Prepare {drafts}</Button>}
             {prepared > 0 && <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => handleLadderBatch("check")}>Check {prepared}</Button>}
             {checked > 0 && <Button variant="primary" size="sm" disabled={ladderBusy} onClick={() => handleLadderBatch("approve")}>Approve &amp; post {checked}</Button>}
@@ -11335,13 +11412,13 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       })()}
 
       <BatchActionsBar
-        count={pvSel.count}
-        onClear={pvSel.clear}
-        onPrint={() => printVouchers(pvSel.selectedRows.map(payVoucherOf))}
+        count={picked.length}
+        onClear={clearPicked}
+        onPrint={() => printVouchers(picked.map(payVoucherOf))}
         exportName="payment-vouchers"
         exportAoa={() => [
           ["Door", "PV No", "Date", "Pay To", "Paid From", "Status", "Remarks", "Product Line", "Voucher Total (RM)", "Account Code", "Account Name", "Line Description", "Amount (RM)"],
-          ...pvSel.selectedRows.flatMap((row) => {
+          ...picked.flatMap((row) => {
             // A foreign row exports one line per invoice / bill it settled —
             // the control account it relieves, the document number as the line.
             if (row.sp) {
@@ -11389,128 +11466,40 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       />
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {payLoading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={pvSel.allSelected} onChange={pvSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32]" /></th>
-                  <th className="px-3 py-2 text-left">PV No</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Payee / Description</th>
-                  <th className="px-3 py-2 text-left">Paid From / Accrual</th>
-                  <th className="px-3 py-2 text-left">Line</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row) => {
-                  // A row from another door: read-only here apart from print /
-                  // void (its own endpoint) — double-click opens the popup with
-                  // everything, right-click (or ⋮) has print / its page / void.
-                  // Single click does nothing (owner 2026-10-01 「我不要点一次打开」).
-                  if (!row.pv) {
-                    const g = row;
-                    return (
-                      <React.Fragment key={g.key}>
-                        <tr
-                          className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === g.key ? "bg-[#F0ECE9]" : ""} ${g.state !== "ACTIVE" ? "opacity-50" : g.advanceOpen ? "text-blue-600" : ""}`}
-                          onDoubleClick={() => setDetailPayKey(g.key)}
-                          onContextMenu={rowMenu.onContextMenu(g.key, () => payRowMenu(g))}
-                          title="Double-click to open · right-click for actions"
-                        >
-                          <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                            <input type="checkbox" checked={pvSel.isSelected(g.key)} onChange={() => pvSel.toggle(g.key)} className="h-3.5 w-3.5 accent-[#6B5C32]" />
-                          </td>
-                          <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap">
-                            {g.no}
-                            <span className="ml-2">{payDoorChip(g.door)}</span>
-                          </td>
-                          <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{g.date}</td>
-                          <td className="px-3 py-1.5">{[g.payee, g.ocp?.reference, g.ft?.description].filter(Boolean).join(" · ")}</td>
-                          <td className="px-3 py-1.5 text-xs">{g.via || <span className="text-[#9CA3AF]" title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</td>
-                          <td className="px-3 py-1.5 text-xs text-[#6B7280]">
-                            {g.ft
-                              ? <span>→ {g.ft.toName || g.ft.toAccount}</span>
-                              : g.sp
-                              ? <span title={g.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n")}>{g.sp.lines.filter((l) => l.purchaseInvoiceId).length} invoice{g.sp.lines.filter((l) => l.purchaseInvoiceId).length === 1 ? "" : "s"}{spAdvanceOpenSen(g.sp) > 0 ? " + advance" : ""}</span>
-                              : <span title={(g.ocp?.lines ?? []).map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n")}>{g.ocp?.lines.length ?? 0} bill{(g.ocp?.lines.length ?? 0) === 1 ? "" : "s"}</span>}
-                          </td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(g.totalSen)}</td>
-                          <td className="px-3 py-1.5 text-xs">
-                            {g.state !== "ACTIVE"
-                              ? <span className="text-[#9CA3AF]">{g.state}</span>
-                              : g.sp && spAdvanceOpenSen(g.sp) > 0
-                                ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#FBF3E4] text-[#7A5B12]" title="Unapplied supplier advance — knock it off on the Supplier Payment page">Approved · advance open {formatCurrency(spAdvanceOpenSen(g.sp))}</span>
-                                : <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title={`Posted on save — ${PAY_DOOR_HINT[g.door]}`}>Approved · paid</span>}
-                          </td>
-                          <td className="px-1 py-1 text-right w-8">{rowMenu.button(g.key, () => payRowMenu(g))}</td>
-                        </tr>
-                      </React.Fragment>
-                    );
-                  }
-                  const r = row.pv;
-                  return (
-                  <React.Fragment key={r.id}>
-                  <tr
-                    className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === row.key ? "bg-[#F0ECE9]" : ""} ${r.status === "VOID" ? "opacity-50" : ""}`}
-                    onDoubleClick={() => setDetailPvId(r.id)}
-                    onContextMenu={rowMenu.onContextMenu(row.key, () => pvRowMenu(r))}
-                    title="Double-click to open · right-click for actions"
-                  >
-                    <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={pvSel.isSelected(row.key)} onChange={() => pvSel.toggle(row.key)} className="h-3.5 w-3.5 accent-[#6B5C32]" />
-                    </td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap">
-                      {r.pvNo}
-                      <span className="ml-2">{payDoorChip(row.door)}</span>
-                      {(r.attachmentCount ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-[#6B7280]" title={`${r.attachmentCount} attachment${r.attachmentCount === 1 ? "" : "s"} — double-click to see`}>📎{r.attachmentCount}</span>}
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                    <td className="px-3 py-1.5">{r.pvKind === "TRANSFER" ? [`Transfer to ${shortBankName(accounts.find((a) => a.code === r.lines[0]?.accountCode)?.name) || (r.lines[0]?.accountCode ?? "")}`, r.description].filter(Boolean).join(" · ") : [r.payee, r.description].filter(Boolean).join(" · ")}</td>
-                    <td className="px-3 py-1.5 text-xs">
-                      {r.accrued === 1 && !r.settledAt
-                        ? <span className="text-[#9A3A2D]">accrued → {r.accrualAccount}</span>
-                        : (r.payFrom ?? "")}
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">
-                      {r.pvKind === "AP"
-                        ? <span title={(r.allocs ?? []).map((a) => `${a.docNo} ${formatCurrency(a.amountSen)}`).join("\n")}>{(r.allocs ?? []).length} bill{(r.allocs ?? []).length === 1 ? "" : "s"}{(r.advanceSen ?? 0) > 0 ? " + advance" : ""}</span>
-                        : r.pvKind === "TRANSFER"
-                          ? <span>→ {shortBankName(accounts.find((a) => a.code === r.lines[0]?.accountCode)?.name) || r.lines[0]?.accountCode}</span>
-                          : `${r.lines.length} line${r.lines.length === 1 ? "" : "s"}`}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
-                    <td className="px-3 py-1.5 text-xs">
-                      {(() => {
-                        if (r.status === "VOID") return <span className="text-[#9CA3AF]">VOID</span>;
-                        const st = apState(r);
-                        const chip = (label: string, cls: string, title?: string) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`} title={title}>{label}</span>;
-                        if (st === "DRAFT") return chip("Draft", "bg-[#F0ECE9] text-[#6B7280]", (r.rejectReason ?? r.reject_reason) ? `Rejected: ${r.rejectReason ?? r.reject_reason}` : undefined);
-                        if (st === "PREPARED") return chip("Prepared", "bg-[#EEF2FB] text-[#2C4170]");
-                        if (st === "CHECKED") return chip("Checked · awaiting approval", "bg-[#FBF3E4] text-[#7A5B12]", `Formal No. ${r.pvNo} — pending in Cash Position`);
-                        if ((r.advanceOpenSen ?? 0) > 0) return chip(`Approved · advance open ${formatCurrency(r.advanceOpenSen ?? 0)}`, "bg-[#FBF3E4] text-[#7A5B12]", "Unapplied supplier advance — knock it off on the Supplier Payment page");
-                        return r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", "bg-[#F7E5E1] text-[#9A3A2D]") : chip("Approved · paid", "bg-[#EAF3DE] text-[#27500A]");
-                      })()}
-                      {(r.rejectReason ?? r.reject_reason) && apState(r) === "DRAFT" && r.status !== "VOID" && (
-                        <div className="text-[10px] text-[#9A3A2D] mt-0.5 max-w-[16rem] truncate" title={r.rejectReason ?? r.reject_reason ?? ""}>↩ {r.rejectReason ?? r.reject_reason}</div>
-                      )}
-                    </td>
-                    <td className="px-1 py-1 text-right w-8">{rowMenu.button(row.key, () => pvRowMenu(r))}</td>
-                  </tr>
-                  </React.Fragment>
-                  );
-                })}
-                {visibleRows.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No payments match</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={payColumns}
+            data={gridRows}
+            keyField="key"
+            gridId="accounting-payments"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setPicked}
+            clearSelectionToken={clearPickedToken}
+            onDoubleClick={(r) => (r.pv ? setDetailPvId(r.pv.id) : setDetailPayKey(r.key))}
+            contextMenuItems={(r) => rowMenuItems(r.pv ? pvRowMenu(r.pv) : payRowMenu(r))}
+            rowClassName={(r) => (r.state !== "ACTIVE" ? "opacity-50" : r.advanceOpen ? "text-blue-600" : "")}
+            toolbarStart={
+              <SegmentedChips
+                options={PV_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: ch.key === "ALL" ? undefined : chipCount(ch.key) }))}
+                value={statusFilter}
+                onChange={setStatusFilter}
+              />
+            }
+            searchPlaceholder="Search PV no / payee / bill no"
+            alwaysSearchKeys={["no", "payeeText", "descText", "billNos"]}
+            headerMenu
+            reorderableHeaders
+            exportName="Payment Vouchers"
+            footerLabel={(shown) => (
+              <span title={`Every payment out, whichever page it was recorded on: ${doorCount("PV")} voucher · ${doorCount("AP")} AP · ${doorCount("TR")} transfer · ${doorCount("SP")} supplier · ${doorCount("OCP")} other creditor · ${doorCount("FT")} old fund transfer`}>
+                Total · {shown} shown <span className="text-[11px] font-normal">of {payRows.length}</span>
+              </span>
+            )}
+            emptyMessage="No payments match"
+            loading={payLoading}
+            maxHeight="calc(100vh - 260px)"
+          />
         </CardContent>
       </Card>
 

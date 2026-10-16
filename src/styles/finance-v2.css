@@ -46,6 +46,9 @@
   --fin-err-bg: #F3E8E5;
   --fin-neutral-fg: #4B5563;
   --fin-neutral-bg: #EEF1F4;
+  --fin-info-fg: #2C4170;
+  --fin-info-bg: #EEF2FB;
+  --fin-faint-bg: #F4F4F2;
   --fin-lift-shadow: 0 8px 18px rgba(31,29,27,.16), 0 0 0 1.5px #7A6E5E;
   --fin-menu-shadow: 0 14px 34px rgba(31,29,27,.18);
   --fin-modal-shadow: 0 24px 60px rgba(31,29,27,.28);
@@ -78,6 +81,17 @@ body:has([data-fin-ui]) {
   color: #FFFFFF;
 }
 
+/* The finance pages' main action ("primary", gold elsewhere) is ink in v2. */
+[data-fin-ui] button[data-variant="primary"] {
+  background-color: #1F1D1B;
+  color: #FFFFFF;
+}
+
+[data-fin-ui] button[data-variant="default"]:hover,
+[data-fin-ui] button[data-variant="primary"]:hover {
+  background-color: #000000;
+}
+
 [data-fin-ui] button[data-variant="outline"] {
   background-color: #FFFFFF;
   border-color: #E2DDD8;
@@ -107,11 +121,18 @@ body:has([data-fin-ui]) {
   border-bottom: 1.5px solid #7A6E5E;
 }
 
+/* No colour on the cells: an unlayered colour here would beat a row's own
+   Tailwind colour (a blue advance-open row, a red accrual). The table sets it
+   and rows inherit or override. */
+[data-fin-ui] table[data-dg="table"],
+[data-fin-ui] table[data-fin-list] {
+  color: #1F2937;
+}
+
 [data-fin-ui] table[data-dg="table"] > tbody > tr > td,
 [data-fin-ui] table[data-fin-list] > tbody > tr > td {
   border-bottom: 1px solid #E7E1D8;
   font-size: 13px;
-  color: #1F2937;
 }
 
 /* Hover lift: the row rises 2px (no scale, so nothing reflows) with a shadow
@@ -123,7 +144,7 @@ body:has([data-fin-ui]) {
 }
 
 [data-fin-ui] table[data-dg="table"] > tbody > tr[data-dg="row"]:hover,
-[data-fin-ui] table[data-fin-list] > tbody > tr:hover {
+[data-fin-ui] table[data-fin-list] > tbody > tr:not([data-fin-nolift]):hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 18px rgba(31,29,27,.16), 0 0 0 1.5px #7A6E5E;
   position: relative;
@@ -140,7 +161,9 @@ body:has([data-fin-ui]) {
 }
 
 /* ── Menus (row / header right-click) ──────────────────────────────────────── */
-[data-fin-ui] [data-dg="menu"] {
+/* Row menus open on <body> (outside the page root), so they are matched by
+   "a finance page is open" rather than by being inside it. */
+body:has([data-fin-ui]) [data-dg="menu"] {
   border-radius: 12px;
   border-color: #E2DDD8;
   box-shadow: 0 14px 34px rgba(31,29,27,.18);

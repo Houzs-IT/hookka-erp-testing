@@ -35,5 +35,7 @@ test("the detail shows every line with DR / CR totals and flags an unbalanced en
 test("AP Invoices opens on ALL; a voided voucher hides its stale reject reason", () => {
   const ap = ui.slice(ui.indexOf("function ApInvoicesTab("), ui.indexOf("function FoldSection("));
   assert.match(ap, /useState<"OPEN" \| "PAID" \| "CANCELLED" \| "ALL">\("ALL"\)/);
-  assert.match(ui, /\(r\.rejectReason \?\? r\.reject_reason\) && apState\(r\) === "DRAFT" && r\.status !== "VOID" && \(/);
+  // The PV list's status cell (finance v2 DataGrid): the reason shows only on a
+  // live Draft; pvStatus (src/lib/finance-daily.ts) gives a VOID no reason either.
+  assert.match(ui, /reason && r\.pv && r\.pv\.status !== "VOID" && \(r\.pv\.approvalState \?\? r\.pv\.approval_state\) === "DRAFT" && \(/);
 });

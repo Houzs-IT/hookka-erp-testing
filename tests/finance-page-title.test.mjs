@@ -44,7 +44,7 @@ test("the title component: 22px bold, an (i) that opens the explanation, Esc clo
 });
 
 test("the finance pages use it, and the old grey header line is gone", () => {
-  assert.match(ui, /<FinancePageTitle \{\.\.\.financePage\(tab\)\} \/>/);
+  assert.match(ui, /<FinancePageTitle \{\.\.\.financePage\(tab\)\} actions=\{<div ref=\{setTitleSlot\}/, "the title, with the tab's button slot");
   assert.doesNotMatch(ui, /General ledger, accounts receivable, and accounts payable/);
   for (const p of [
     "src/pages/invoices/credit-notes.tsx", "src/pages/invoices/debit-notes.tsx", "src/pages/invoices/e-invoice.tsx",

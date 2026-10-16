@@ -9,6 +9,8 @@ export type FinancePageInfo = {
   title: string;
   /** What the page is for — shown when the (i) next to the title is opened. */
   explain: string;
+  /** Pages the explanation points to, shown as links under it. */
+  links?: { label: string; to: string }[];
 };
 
 export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
@@ -21,7 +23,14 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   tb: { title: "Trial Balance", explain: "Every account's balance at a date; total debits equal total credits." },
   gl: { title: "General Ledger", explain: "Every entry posted to an account, with the balance brought forward and carried forward." },
   stock: { title: "Stock Summary", explain: "Opening, purchases, consumption and closing stock by material group, plus work in progress and finished goods." },
-  payments: { title: "Payment Vouchers", explain: "Every payment out, in one list. A voucher goes Draft → Prepared → Checked → Approved, and only Approved posts to the books." },
+  payments: {
+    title: "Payment Vouchers",
+    explain: "Every payment out, in one list. AP Payment pays a creditor's bills (purchase invoices or other creditor bills); Payment Voucher pays an expense. A voucher goes Draft → Prepared → Checked → Approved, and only Approved posts to the books (or Post now). Foreign-currency invoices, advance knock-off and trade-finance repayment are done on the Supplier Payment page. Payments recorded there and on Other Creditor Payments are listed here too (SP / OCP), in the same HPV number series.",
+    links: [
+      { label: "Supplier Payment page", to: "/invoices/supplier-payments" },
+      { label: "Other Creditor Payments", to: "/accounting?tab=ocreditorpay" },
+    ],
+  },
   receipts: { title: "Receipts", explain: "Every payment in, in one list: customer receipts, other debtor receipts and official receipts." },
   transfer: { title: "Fund Transfer", explain: "Money moved between your own bank and cash accounts." },
   dailycash: { title: "Daily Cash Position", explain: "Each bank today, and what is still to come in or go out. Tick a row when your banking app shows it went through." },
@@ -55,5 +64,5 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
  *  be spread onto FinancePageTitle. */
 export function financePage(tab: string | null | undefined): FinancePageInfo {
   const p = (tab && FINANCE_PAGES[tab]) || FINANCE_PAGES.overview;
-  return { title: p.title, explain: p.explain };
+  return p.links ? { title: p.title, explain: p.explain, links: p.links } : { title: p.title, explain: p.explain };
 }
