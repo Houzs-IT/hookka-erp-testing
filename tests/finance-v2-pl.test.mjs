@@ -91,7 +91,8 @@ test("the amber negative-stock warning opens with View and closes with Hide", ()
 });
 
 test("the frame and the two-row header (period over RM | %), first column frozen", () => {
-  assert.match(st, /company="HOOKKA MANUFACTURING SDN BHD"/, "the printed name stays until the owner confirms the legal name");
+  assert.match(st, /company=\{PL_COMPANY\}/);
+  assert.match(ui, /const PL_COMPANY = "HOOKKA MANUFACTURING SDN BHD";/, "the printed name stays until the owner confirms the legal name");
   assert.match(st, /maxHeight="calc\(100vh - 300px\)"/);
   assert.match(st, /<th rowSpan=\{2\} data-cell="stick" className="min-w-\[280px\]">Item<\/th>/);
   assert.match(st, /<tr data-row="h2">/);

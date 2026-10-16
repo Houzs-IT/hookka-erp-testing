@@ -5219,10 +5219,13 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 // ITEM | FY YTD | YTD % | <period> | %  (% = of net sales).
 // A running-month estimate for a recurring cost nothing has been recorded for
 // yet (owner 2026-10-13 「不是真实的数据…字体颜色和 row 的 background colour
-// 不一样」): warning amber text on a pale amber row, italic, with an "est." tag.
-const EST_ROW = "bg-[#FAEFCB] text-[#9C6F1E] italic";
+// 不一样」): warning amber text on a pale amber row with an "est." tag — the
+// finance sheet paints it (tr[data-est], td[data-cell~="est"]; finance v2).
 const estTitle = (fromYm?: string) => `Estimated from ${fromYm ? drillMonthLabel(fromYm) : "last month"} — nothing recorded yet this month`;
 type PlLine = "all" | "sofa" | "bedframe";
+// The company line the P&L family prints (statement head and PDF default) —
+// kept until the owner confirms the legal name (finance v2, 2026-10-16).
+const PL_COMPANY = "HOOKKA MANUFACTURING SDN BHD";
 type PnlStmtRow = {
   kind: "group" | "line" | "total" | "grandtotal" | "gap";
   depth: number;
@@ -5321,66 +5324,95 @@ function CostStructureTab({ line }: { line: PlLine }) {
   const bedView = [...bedGroups, ...sharedGroups.map(allocateShared)];
   const sofaView = [...sofaGroups, ...sharedGroups.map(allocateShared)];
 
-  // One Cost-Structure table for a set of groups + that line's sales.
+  // One Cost-Structure table for a set of groups + that line's sales (finance
+  // v2: a framed section, months as rows, then a Total row for the months to
+  // date — opening = the first month's, closing = the latest month's, the rest
+  // added up from the rows above).
+  const thisMonth = todayYmdMY().slice(0, 7);
+  const toDate = data ? data.cols.map((m, i) => (m <= thisMonth ? i : -1)).filter((i) => i >= 0) : [];
   const renderCsTable = (title: string, grps: CsGroup[], salesArr: number[]) => {
     if (!data || grps.length === 0) return null;
+    const sumOf = (f: (i: number) => number) => toDate.reduce((t, i) => t + f(i), 0);
+    const first = toDate[0];
+    const last = toDate[toDate.length - 1];
+    const totSales = sumOf((i) => salesArr[i] || 0);
+    const gPct = (spend: number, s: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
+    const totSpend = sumOf((i) => grps.reduce((s, g) => s + g.months[i].spend, 0));
     return (
-      <Card key={title}>
-        <CardContent className="p-0 overflow-x-auto">
-          <div className="px-3 py-2 bg-[#6B5C32] text-white text-sm font-semibold">{title} · {data.fyLabel} · all amounts RM</div>
-          <table data-col-resize="first" className="text-[13px] whitespace-nowrap">
+      <div key={title} data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+        <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+          <span className="text-[15px] font-bold text-[#1F1D1B]">{title}</span>
+          <span className="text-[12px] text-[#9CA3AF]">{data.fyLabel} · {grps.length} material group{grps.length === 1 ? "" : "s"} · all amounts RM</span>
+        </div>
+        <div className="overflow-auto">
+          <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
-              <tr className="border-b border-[#E2DDD8] text-[11px] text-[#6B7280]">
-                <th className="px-3 py-2 text-left sticky left-0 bg-white">MONTH</th>
-                <th className="px-3 py-2 text-right">SALES</th>
+              <tr data-row="h1">
+                <th rowSpan={2} data-cell="stick">Month</th>
+                <th rowSpan={2} data-cell="num split">Sales</th>
                 {grps.map((g) => (
-                  <th key={g.group} colSpan={5} className="px-3 py-2 text-center border-l border-[#E2DDD8]">{g.description}</th>
+                  <th key={g.group} colSpan={5} data-cell="split center">{g.description}</th>
                 ))}
-                <th className="px-3 py-2 text-right border-l border-[#E2DDD8]">SPEND % SALES</th>
+                <th rowSpan={2} data-cell="num split">Spend % Sales</th>
               </tr>
-              <tr className="border-b border-[#E2DDD8] text-[10px] text-[#9CA3AF]">
-                <th className="sticky left-0 bg-white" /><th />
+              <tr data-row="h2">
                 {grps.map((g) => (
                   <React.Fragment key={g.group}>
-                    <th className="px-2.5 py-1.5 text-right border-l border-[#E2DDD8]">O/P</th>
-                    <th className="px-2.5 py-1.5 text-right">PUR</th>
-                    <th className="px-2.5 py-1.5 text-right">C/L</th>
-                    <th className="px-2.5 py-1.5 text-right">SPEND</th>
-                    <th className="px-2.5 py-1.5 text-right">%</th>
+                    <th data-cell="num split">O/P</th>
+                    <th data-cell="num">PUR</th>
+                    <th data-cell="num">C/L</th>
+                    <th data-cell="num">Spend</th>
+                    <th data-cell="num pct">%</th>
                   </React.Fragment>
                 ))}
-                <th className="border-l border-[#E2DDD8]" />
               </tr>
             </thead>
             <tbody>
               {data.cols.map((m, i) => {
                 const monthSpend = grps.reduce((s, g) => s + g.months[i].spend, 0);
                 const s = salesArr[i] || 0;
-                const pctTxt = s > 0 ? `${((monthSpend / s) * 100).toFixed(1)}%` : "-";
                 // Per-group spend as % of the SAME section's sales (owner
                 // 2026-07-28: 「spend 旁边放 percentage,就是 spend / sales」).
-                const gPct = (spend: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
                 return (
-                  <tr key={m} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5 text-left sticky left-0 bg-white">{m}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{n(s)}</td>
+                  <tr key={m} data-row="line">
+                    <td data-cell="stick">{periodLabel(m, "")}</td>
+                    <td data-cell="num split">{n(s)}</td>
                     {grps.map((g) => (
                       <React.Fragment key={g.group}>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums border-l border-[#F0ECE9]">{n(g.months[i].opening)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums">{n(g.months[i].purchase)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums">{n(g.months[i].closing)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums font-medium">{n(g.months[i].spend)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums text-[#9A3A2D]">{gPct(g.months[i].spend)}</td>
+                        <td data-cell="num split">{n(g.months[i].opening)}</td>
+                        <td data-cell="num">{n(g.months[i].purchase)}</td>
+                        <td data-cell="num">{n(g.months[i].closing)}</td>
+                        <td data-cell="num">{n(g.months[i].spend)}</td>
+                        <td data-cell="num pct">{gPct(g.months[i].spend, s)}</td>
                       </React.Fragment>
                     ))}
-                    <td className="px-3 py-1.5 text-right tabular-nums text-[#9A3A2D] border-l border-[#F0ECE9]">{pctTxt}</td>
+                    <td data-cell="num split">{gPct(monthSpend, s)}</td>
                   </tr>
                 );
               })}
+              {toDate.length > 0 && (
+                <tr data-row="sub">
+                  <td data-cell="stick">Total to date</td>
+                  <td data-cell="num split">{n(totSales)}</td>
+                  {grps.map((g) => {
+                    const spend = sumOf((i) => g.months[i].spend);
+                    return (
+                      <React.Fragment key={g.group}>
+                        <td data-cell="num split">{n(g.months[first].opening)}</td>
+                        <td data-cell="num">{n(sumOf((i) => g.months[i].purchase))}</td>
+                        <td data-cell="num">{n(g.months[last].closing)}</td>
+                        <td data-cell="num">{n(spend)}</td>
+                        <td data-cell="num pct">{gPct(spend, totSales)}</td>
+                      </React.Fragment>
+                    );
+                  })}
+                  <td data-cell="num split">{gPct(totSpend, totSales)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   };
 
@@ -5388,50 +5420,51 @@ function CostStructureTab({ line }: { line: PlLine }) {
   // including the apportioned shared materials.
   const exportGroups = line === "sofa" ? sofaView : line === "bedframe" ? bedView : data?.groups ?? [];
   const exportSales = data ? (line === "sofa" ? data.salesSofa : line === "bedframe" ? data.salesBed : data.salesAll) : [];
+  const buildExport = (): Aoa => {
+    if (!data) return [];
+    const head = ["MONTH", "SALES", ...exportGroups.flatMap((g) => [`${g.description} O/P`, "PUR", "C/L", "SPEND", "%"]), "SPEND % SALES"];
+    const body: Aoa = data.cols.map((m, i) => {
+      const monthSpend = exportGroups.reduce((s, g) => s + g.months[i].spend, 0);
+      const s = exportSales[i] || 0;
+      const gp = (spend: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
+      return [m, (s / 100).toFixed(2), ...exportGroups.flatMap((g) => [(g.months[i].opening / 100).toFixed(2), (g.months[i].purchase / 100).toFixed(2), (g.months[i].closing / 100).toFixed(2), (g.months[i].spend / 100).toFixed(2), gp(g.months[i].spend)]), s > 0 ? `${((monthSpend / s) * 100).toFixed(1)}%` : "-"];
+    });
+    return [head, ...body];
+  };
+  const fileBase = `CostStructure-${line}-FY${fyShown}`;
+  const exportTitle = `Cost Structure (${line})`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, data?.fyLabel ?? "", buildExport(), { print: true }); } },
+    // CSV stays in the menu until the owner decides (2026-10-16).
+    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="ml-auto flex items-center gap-2">
-          {data && (
-            <ExportButtons
-              build={() => {
-                const head = ["MONTH", "SALES", ...exportGroups.flatMap((g) => [`${g.description} O/P`, "PUR", "C/L", "SPEND", "%"]), "SPEND % SALES"];
-                const body: Aoa = data.cols.map((m, i) => {
-                  const monthSpend = exportGroups.reduce((s, g) => s + g.months[i].spend, 0);
-                  const s = exportSales[i] || 0;
-                  const gp = (spend: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
-                  return [m, (s / 100).toFixed(2), ...exportGroups.flatMap((g) => [(g.months[i].opening / 100).toFixed(2), (g.months[i].purchase / 100).toFixed(2), (g.months[i].closing / 100).toFixed(2), (g.months[i].spend / 100).toFixed(2), gp(g.months[i].spend)]), s > 0 ? `${((monthSpend / s) * 100).toFixed(1)}%` : "-"];
-                });
-                return [head, ...body];
-              }}
-              filenameBase={`CostStructure-${line}-FY${fyShown}`}
-              title={`Cost Structure (${line})`}
-              subtitle={data.fyLabel}
-            />
-          )}
-          <select value={fyShown} onChange={(e) => setFy(parseInt(e.target.value, 10))} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-            {[...new Set([yrNow, yrNow - 1, yrNow - 2, fyShown])].sort((a, b) => b - a).map((y) => <option key={y} value={y}>FY {y}</option>)}
-          </select>
-        </div>
-      </div>
+      <ReportToolbar>
+        <select aria-label="Financial year" value={fyShown} onChange={(e) => setFy(parseInt(e.target.value, 10))} className="h-8 rounded-lg border border-[#D9D3CA] bg-white px-3 text-[12.5px] font-semibold text-[#1F1D1B]">
+          {[...new Set([yrNow, yrNow - 1, yrNow - 2, fyShown])].sort((a, b) => b - a).map((y) => <option key={y} value={y}>FY {y}</option>)}
+        </select>
+        {data && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
       {loading ? (
         <Card><CardContent className="py-12 text-center text-[#6B7280] text-sm">Loading…</CardContent></Card>
       ) : line === "sofa" ? (
-        renderCsTable("SOFA COST STRUCTURE", sofaView, data!.salesSofa)
+        renderCsTable("Sofa Cost Structure", sofaView, data!.salesSofa)
       ) : line === "bedframe" ? (
-        renderCsTable("BEDFRAME COST STRUCTURE", bedView, data!.salesBed)
+        renderCsTable("Bedframe Cost Structure", bedView, data!.salesBed)
       ) : (
         // Overall — stacked: Bedframe on top, Sofa below, then shared.
         <>
-          {renderCsTable("BEDFRAME COST STRUCTURE", bedGroups, data!.salesBed)}
-          {renderCsTable("SOFA COST STRUCTURE", sofaGroups, data!.salesSofa)}
-          {renderCsTable("SHARED / COMMON MATERIALS", sharedGroups, data!.salesAll)}
+          {renderCsTable("Bedframe Cost Structure", bedGroups, data!.salesBed)}
+          {renderCsTable("Sofa Cost Structure", sofaGroups, data!.salesSofa)}
+          {renderCsTable("Shared / Common Materials", sharedGroups, data!.salesAll)}
         </>
       )}
       <p className="text-[11px] text-[#9CA3AF]">
         O/P = opening stock, PUR = purchases, C/L = closing stock, SPEND = consumed (O/P + PUR − C/L). % = month spend ÷ that
-        line's sales.{" "}
+        line's sales. Total to date runs to this month: opening from the first month, closing from the latest.{" "}
         {line === "all"
           ? "Shared materials (no B./S. prefix) are listed as their own section here — pick Sofa or Bedframe to see them apportioned."
           : "Rows marked (shared) are common materials apportioned into this line by its share of that month's sales — the same rule the Sofa / Bedframe P&L uses."}
@@ -5653,11 +5686,12 @@ function MonthlyTrendTab() {
   );
 }
 
-type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
+type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; totalLabel?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
 type PlMonthlyData = { fyLabel: string; line: string; anchor: string; columns: { key: string; label: string; accum: boolean }[]; rows: PlMatrixRow[] };
 
 function MonthlyPlTab({ line }: { line: PlLine }) {
-  const thisMonth = new Date().toISOString().slice(0, 7);
+  const today = todayYmdMY();
+  const thisMonth = today.slice(0, 7);
   const [anchor, setAnchor] = useState(thisMonth);
   const [data, setData] = useState<PlMonthlyData | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -5675,7 +5709,9 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
   }, [line, anchor]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const fmt = (sen: number) => { const v = sen / 100; const s = Math.abs(v).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+  const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
+  // The server's % of net sales (one decimal), a negative in brackets.
+  const pctTxt = (p: number) => (p === 0 ? "-" : p < 0 ? `(${Math.abs(p).toFixed(1)}%)` : `${p.toFixed(1)}%`);
 
   const cols = data?.columns ?? [];
   const rows = data?.rows ?? [];
@@ -5687,16 +5723,10 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
     setLevel(L);
     setCollapsed(new Set(rows.filter((r) => r.kind === "group" && r.groupId && r.depth >= L - 1).map((r) => r.groupId!)));
   };
-  const visible: PlMatrixRow[] = [];
-  {
-    let hideDepth = Infinity;
-    for (const r of rows) {
-      if (r.depth > hideDepth) continue;
-      hideDepth = Infinity;
-      visible.push(r);
-      if (r.kind === "group" && r.groupId && collapsed.has(r.groupId)) hideDepth = r.depth;
-    }
-  }
+  // Finance v2, as the statement: a folded group carries its figures, an open
+  // one shows them on its total line (the server's own values).
+  const shown = foldStatementRows(rows, collapsed);
+  const lastGrand = rows.filter((r) => r.kind === "grandtotal").pop();
   const toggle = (gid: string) => { setLevel(null); setCollapsed((s) => { const n = new Set(s); if (n.has(gid)) n.delete(gid); else n.add(gid); return n; }); };
 
   const buildExport = (): (string | number)[][] => {
@@ -5712,85 +5742,113 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
     }
     return aoa;
   };
+  const fileBase = `monthly-pl-${data?.anchor ?? anchor}-${line}`;
+  const exportSub = `${data?.fyLabel ?? ""} · ${line}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Monthly P&L", buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Monthly P&L", exportSub, buildExport(), { print: true }); } },
+    // CSV stays in the menu until the owner decides (2026-10-16).
+    { label: "Export to CSV", onSelect: () => exportReportCsv(`${fileBase}.csv`, buildExport()) },
+  ];
+  const anchorOptions = useMemo(() => monthOptions(thisMonth, 18), [thisMonth]);
+  const span = cols.length * 2 + 1;
+  // A row's month cells and their % — Accumulated shaded, an estimate amber
+  // (only lines carry estimates). `show` false = an open group's heading.
+  const cells = (r: PlMatrixRow, show: boolean) =>
+    cols.map((c, j) => {
+      const v = r.values[j] ?? 0;
+      const est = (r.estValues?.[j] ?? 0) !== 0;
+      const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}`;
+      return (
+        <React.Fragment key={c.key}>
+          <td data-cell={`num split${tag}`} data-neg={show && v < 0 ? "" : undefined} title={est ? estTitle(r.estFrom) : undefined}>
+            {show ? amt(v) : ""}{show && est && <span className="ml-1 text-[9px] font-semibold">est.</span>}
+          </td>
+          <td data-cell={`num pct${tag}`}>{show ? pctTxt(r.pctValues[j] ?? 0) : ""}</td>
+        </React.Fragment>
+      );
+    });
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs text-[#9CA3AF]">{data ? `${data.fyLabel} · read-only · all amounts RM` : "Loading…"}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input type="month" value={anchor} onChange={(e) => setAnchor(e.target.value || thisMonth)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-          {data && maxLevel > 1 && (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-[#9CA3AF] mr-0.5">DETAIL</span>
-              {Array.from({ length: maxLevel }, (_, i) => i + 1).map((L) => (
-                <button key={L} onClick={() => applyLevel(L)} title={`Expand to level ${L}`} className={`rounded-md border px-2.5 py-1.5 text-xs cursor-pointer ${level === L ? "border-[#3E6570] bg-[#3E6570] text-white" : "border-[#E2DDD8] bg-white text-[#4B5563] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-              ))}
-            </div>
-          )}
-          {data && <ExportButtons build={buildExport} filenameBase={`monthly-pl-${data.anchor}-${line}`} title="Monthly P&L" subtitle={`${data.fyLabel} · ${line}`} />}
-        </div>
-      </div>
+      <ReportToolbar>
+        <PeriodStepper value={anchor} options={anchorOptions} onChange={setAnchor} today={today} />
+        {data && maxLevel > 1 && (
+          <DetailLevels levels={Array.from({ length: maxLevel }, (_, i) => i + 1)} value={level ?? -1} onChange={applyLevel} />
+        )}
+        {data && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
 
-      <Card><CardContent className="p-0 overflow-x-auto">
+      <ReportFrame
+        company={PL_COMPANY}
+        title={line === "all" ? "Monthly Profit-and-Loss (Overall)" : line === "sofa" ? "Monthly Profit-and-Loss — SOFA" : "Monthly Profit-and-Loss — BEDFRAME"}
+        note={data ? `${data.fyLabel} · read-only · all amounts RM · % = of net sales` : "Loading…"}
+        maxHeight="calc(100vh - 300px)"
+      >
         {!data ? (
           <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
         ) : (
-          <table data-col-resize="first" className="text-[13px]">
+          <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
-              <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                <th rowSpan={2} className="px-3 py-2 text-left sticky left-0 bg-white align-bottom">Item</th>
-                {cols.map((c) => <th key={c.key} colSpan={2} className={`px-3 py-2 text-center whitespace-nowrap border-l border-[#F0ECE9] ${c.accum ? "font-semibold text-[#3E6570]" : ""}`}>{c.label}</th>)}
+              <tr data-row="h1">
+                <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
+                {cols.map((c) => <th key={c.key} colSpan={2} data-cell={`split center${c.accum ? " acc" : ""}`}>{c.label}</th>)}
               </tr>
-              <tr className="border-b border-[#E2DDD8] text-[10px] text-[#9CA3AF]">
+              <tr data-row="h2">
                 {cols.map((c) => (
                   <React.Fragment key={c.key}>
-                    <th className="px-3 py-1 text-right border-l border-[#F0ECE9]">RM</th>
-                    <th className="px-2 py-1 text-right">%</th>
+                    <th data-cell={`num split${c.accum ? " acc" : ""}`}>RM</th>
+                    <th data-cell={`num pct${c.accum ? " acc" : ""}`}>%</th>
                   </React.Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {visible.map((r, i) => {
-                if (r.kind === "gap") return <tr key={`gap${i}`}><td colSpan={cols.length * 2 + 1} className="py-1"></td></tr>;
-                const isGroup = r.kind === "group";
-                const isTot = r.kind === "total" || r.kind === "grandtotal";
-                const open = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
-                // Visual hierarchy: section heads (depth-0 groups) tinted +
-                // semibold; totals bordered; deep detail lines recede. The
-                // sticky Item cell carries the SAME background as its row so
-                // horizontal scrolling never shows a white notch.
-                const rowBg = r.kind === "grandtotal" ? "bg-[#F7F5F2]" : r.kind === "total" ? "bg-[#FBFAF8]" : isGroup && r.depth === 0 ? "bg-[#F3F0EC]" : "bg-white";
-                const rowCls = r.kind === "grandtotal" ? "font-semibold border-t-2 border-[#C9C2BA]" : r.kind === "total" ? "font-medium border-t border-[#E2DDD8]" : isGroup && r.depth === 0 ? "font-semibold border-t border-[#E2DDD8]" : isGroup ? "font-medium" : "";
-                const deepLine = !isGroup && !isTot && r.depth >= 3;
+              {shown.map(({ row: r, close }, i) => {
+                const pad = { paddingLeft: `${14 + r.depth * 18}px` };
+                if (close) {
+                  return (
+                    <tr key={`c${i}`} data-row="sub">
+                      <td data-cell="stick" className="uppercase" style={pad}>{r.totalLabel ?? `TOTAL ${r.label}`}</td>
+                      {cells(r, true)}
+                    </tr>
+                  );
+                }
+                if (r.kind === "gap") return <tr key={`gap${i}`} aria-hidden="true"><td colSpan={span} style={{ padding: 0, height: 10, border: 0 }} /></tr>;
+                if (r.kind === "grandtotal" || r.kind === "total") {
+                  const grand = r.kind === "grandtotal";
+                  return (
+                    <tr key={i} data-row={grand ? "res" : "sub"} data-fin-double={grand && r === lastGrand ? "" : undefined}>
+                      <td data-cell="stick" className="uppercase" style={pad}>{r.label}</td>
+                      {cells(r, true)}
+                    </tr>
+                  );
+                }
+                if (r.kind === "group") {
+                  const open = r.groupId ? !collapsed.has(r.groupId) : false;
+                  return (
+                    <tr key={i} data-row={r.depth === 0 ? "sec" : "grp"} className="cursor-pointer select-none" title={open ? "Click to fold" : "Click to open"}
+                      onClick={r.groupId ? () => toggle(r.groupId!) : undefined}>
+                      <td data-cell="stick" className="uppercase" style={pad}><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{open ? "▾" : "▸"}</span>{r.label}</td>
+                      {cells(r, !open)}
+                    </tr>
+                  );
+                }
                 const drillCode = r.kind === "line" ? (r.drillCode ?? r.accountCode) : undefined;
                 const drilled = !!drillCode && drillOpen.has(drillCode);
                 return (
                   <Fragment key={i}>
-                  <tr className={`${rowBg} ${rowCls} ${isGroup ? "cursor-pointer" : ""}`} onClick={isGroup && r.groupId ? () => toggle(r.groupId!) : undefined}>
+                  <tr data-row="line">
                     {/* uppercase = display-only: unifies the COA's ALL-CAPS names with the owner-keyed Title Case historical labels */}
-                    <td className={`px-3 py-1.5 sticky left-0 ${rowBg} uppercase whitespace-nowrap ${deepLine ? "text-[12px] text-[#6B7280]" : ""} ${isGroup && r.depth === 0 ? "tracking-wide" : ""}`} style={{ paddingLeft: `${12 + r.depth * 16}px` }}>
-                      {isGroup ? (open ? "▾ " : "▸ ") : ""}
+                    <td data-cell="stick" className={`uppercase ${r.depth >= 3 ? "text-[12px] text-[#6B7280]" : ""}`} style={pad}>
                       {drillCode ? (
                         <button type="button" className="uppercase text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this row"
                           onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillCode)) n.delete(drillCode); else n.add(drillCode); return n; })}>
-                          <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{r.label}
+                          <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{r.label}
                         </button>
                       ) : r.label}
                     </td>
-                    {r.values.map((v, j) => {
-                      const est = (r.estValues?.[j] ?? 0) !== 0;
-                      return (
-                      <React.Fragment key={j}>
-                        <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${est ? EST_ROW : v < 0 ? "text-[#9A3A2D]" : ""}`} title={est ? estTitle(r.estFrom) : undefined}>
-                          {fmt(v)}{est && <span className="ml-1 text-[9px] not-italic font-semibold">est.</span>}
-                        </td>
-                        <td className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${est ? EST_ROW : "text-[#9CA3AF]"}`}>{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
-                      </React.Fragment>
-                      );
-                    })}
+                    {cells(r, true)}
                   </tr>
                   {drilled && drillCode && <PlMonthlyDrillRows account={drillCode} cols={cols} line={line} rowValues={r.values} depth={r.depth} />}
                   </Fragment>
@@ -5799,13 +5857,13 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
             </tbody>
           </table>
         )}
-        {rows.some((r) => r.estValues) && (
-          <p className="text-[11px] text-[#9C6F1E] mt-3">
-            Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
-            month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
-          </p>
-        )}
-      </CardContent></Card>
+      </ReportFrame>
+      {rows.some((r) => r.estValues) && (
+        <p className="text-[11px] text-[#9C6F1E]">
+          Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+        </p>
+      )}
     </div>
   );
 }
@@ -5841,12 +5899,11 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
       .catch(() => { if (!dead) setErr("Could not load the ledger lines"); });
     return () => { dead = true; };
   }, [account, from, to]);
-  const pad = { paddingLeft: `${28 + depth * 16}px` };
+  const pad = { paddingLeft: `${34 + depth * 18}px` };
   const span = cols.length * 2;
-  const bg = "bg-[#FAF8F5]";
   if (!data) {
     return (
-      <tr className={bg}><td className={`px-3 py-1 sticky left-0 ${bg} text-[12px] ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{err ?? "Loading the ledger lines…"}</td><td colSpan={span} /></tr>
+      <tr data-row="det"><td data-cell="stick" className={err ? "text-[#9A3412]" : "text-[#9CA3AF]"} style={pad}>{err ?? "Loading the ledger lines…"}</td><td colSpan={span} /></tr>
     );
   }
   // Income reads credit as positive, everything else debit — the row's own way.
@@ -5875,28 +5932,31 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   // The lines must make the row, month by month (the All view only — the
   // Sofa / Bedframe rows carry a share of each line).
   const tied = line !== "all" || cols.every((c, j) => c.accum || oldBooks(c.key) || (perMonth.get(c.key) ?? 0) === (rowValues[j] ?? 0));
-  const amtCls = (sen: number) => `px-3 py-1 text-right tabular-nums border-l border-[#F0ECE9] ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
+  // Finance v2: a material group's PURCHASE line is not one account, so it
+  // has no ledger to open.
+  const glOk = /^\d{3}-/.test(account);
   return (
     <>
       {entries.map((e) => (
-        <tr key={e.key} className={`${bg} text-[12px] text-[#4B5563] ${e.italic ? "italic" : ""}`}>
-          <td className={`px-3 py-1 sticky left-0 ${bg}`} style={pad} title={e.title || e.text}>
+        <tr key={e.key} data-row="det" className={e.italic ? "italic" : undefined}>
+          <td data-cell="stick" style={pad} title={e.title || e.text}>
             <div className="truncate max-w-[34rem]">{e.text}</div>
           </td>
           {cols.map((c) => {
             const on = c.accum || c.key === e.ym;
             return (
               <React.Fragment key={c.key}>
-                <td className={on ? amtCls(e.sen) : "border-l border-[#F0ECE9]"}>{on ? drillCellAmt(e.sen) : ""}</td>
-                <td />
+                <td data-cell="num split" data-neg={on && e.sen < 0 ? "" : undefined}>{on ? drillCellAmt(e.sen) : ""}</td>
+                <td data-cell="num pct" />
               </React.Fragment>
             );
           })}
         </tr>
       ))}
-      <tr className="bg-[#F7F4EF] text-[12px] font-semibold text-[#4B5563] border-t border-[#E2DDD8]">
-        <td className="px-3 py-1 sticky left-0 bg-[#F7F4EF]" style={pad}>
-          {entries.length} entr{entries.length === 1 ? "y" : "ies"} · <Link to={glHref(account, from, to)} className="underline decoration-dotted text-[#6B5C32]">open in GL</Link>
+      <tr data-row="detsum">
+        <td data-cell="stick" style={pad}>
+          {entries.length} entr{entries.length === 1 ? "y" : "ies"}
+          {glOk && <> · <Link to={glHref(account, from, to)} className="text-[#6B5C32] hover:text-[#574A28]">Open In GL →</Link></>}
           {line !== "all" && <span className="font-normal text-[#9CA3AF]"> · full amounts — this view carries a share</span>}
           {!tied && <span className="font-normal text-[#9A3412]"> · these lines do not add up to the row — please report it</span>}
         </td>
@@ -5905,8 +5965,8 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
           const old = !c.accum && oldBooks(c.key);
           return (
             <React.Fragment key={c.key}>
-              <td className={amtCls(sen)} title={old ? "Keyed from the old books — no ledger lines behind it" : undefined}>{old ? "old books" : drillCellAmt(sen)}</td>
-              <td />
+              <td data-cell="num split" data-neg={!old && sen < 0 ? "" : undefined} title={old ? "Keyed from the old books — no ledger lines behind it" : undefined}>{old ? "old books" : drillCellAmt(sen)}</td>
+              <td data-cell="num pct" />
             </React.Fragment>
           );
         })}
@@ -6075,7 +6135,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
   // period starts with everything closed.
   const [drillOpen, setDrillOpen] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [data, setData] = useState<{ rows: PnlStmtRow[]; netSalesSen: number; fyLabel: string; periodLabel: string; materialWarnings?: PnlMaterialWarnings } | null>(null);
+  const [data, setData] = useState<{ rows: PnlStmtRow[]; netSalesSen: number; ytdNetSalesSen?: number; fyLabel: string; periodLabel: string; materialWarnings?: PnlMaterialWarnings } | null>(null);
   const loading = data === null;
   const { toast } = useToast();
   const [edit, setEdit] = useState(false);
@@ -6122,7 +6182,11 @@ function PLStatementTab({ line }: { line: PlLine }) {
 
   const rows = data?.rows ?? [];
   const net = data?.netSalesSen || 0;
+  // Each column's % is of its OWN net sales: the period's, and the FY to date's
+  // (BUG-2026-10-16-305: the YTD column used to divide by the period's).
+  const ytdNet = data?.ytdNetSalesSen || 0;
   const pct = (v: number | undefined) => fmtPctOfSales(v, net);
+  const pctYtd = (v: number | undefined) => fmtPctOfSales(v, ytdNet);
   const amt = (v: number | undefined) => (v === undefined ? "" : v === 0 ? "-" : fmtAmt(v));
 
   // Walk rows honouring folded groups (finance v2, the design's statement): a
@@ -6141,7 +6205,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
       aoa.push([
         indent + r.label,
         r.ytdSen === undefined ? "" : (r.ytdSen / 100).toFixed(2),
-        r.ytdSen === undefined || !(net > 0) ? "" : `${((r.ytdSen / net) * 100).toFixed(1)}%`,
+        r.ytdSen === undefined || !(ytdNet > 0) ? "" : `${((r.ytdSen / ytdNet) * 100).toFixed(1)}%`,
         r.periodSen === undefined ? "" : (r.periodSen / 100).toFixed(2),
         r.periodSen === undefined || !(net > 0) ? "" : `${((r.periodSen / net) * 100).toFixed(1)}%`,
       ]);
@@ -6233,9 +6297,9 @@ function PLStatementTab({ line }: { line: PlLine }) {
       )}
 
       <ReportFrame
-        company="HOOKKA MANUFACTURING SDN BHD"
+        company={PL_COMPANY}
         title={line === "all" ? "Manufacturing & Profit-and-Loss Account (Overall)" : line === "sofa" ? "Profit-and-Loss Account — SOFA" : "Profit-and-Loss Account — BEDFRAME"}
-        note={`Period: ${periodLabel(period, today)} · ${data?.fyLabel ?? ""} · % = of net sales`}
+        note={[`Period: ${periodLabel(period, today)}`, data?.fyLabel, "% = of net sales"].filter(Boolean).join(" · ")}
         maxHeight="calc(100vh - 300px)"
       >
         {loading ? (
@@ -6263,7 +6327,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
                     <tr key={i} data-row="sub">
                       <td data-cell="stick" style={pad}>{row.totalLabel ?? `TOTAL ${row.label}`}</td>
                       <td data-cell="num split">{amt(row.ytdSen)}</td>
-                      <td data-cell="num pct">{pct(row.ytdSen)}</td>
+                      <td data-cell="num pct">{pctYtd(row.ytdSen)}</td>
                       <td data-cell="num split">{amt(row.periodSen)}</td>
                       <td data-cell="num pct">{pct(row.periodSen)}</td>
                     </tr>
@@ -6276,7 +6340,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
                     <tr key={i} data-row={grand ? "res" : "sub"} data-fin-double={grand && row === lastGrand ? "" : undefined}>
                       <td data-cell="stick" style={pad}>{row.label}</td>
                       <td data-cell="num split">{amt(row.ytdSen)}</td>
-                      <td data-cell="num pct">{pct(row.ytdSen)}</td>
+                      <td data-cell="num pct">{pctYtd(row.ytdSen)}</td>
                       <td data-cell="num split">{amt(row.periodSen)}</td>
                       <td data-cell="num pct">{pct(row.periodSen)}</td>
                     </tr>
@@ -6297,7 +6361,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
                       <td data-cell="stick" style={pad}><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{!edit ? (isOpen ? "▾" : "▸") : "•"}</span>{row.label}</td>
                       {/* An open group shows its figure on its total line below. */}
                       <td data-cell="num split">{isOpen ? "" : amt(row.ytdSen)}</td>
-                      <td data-cell="num pct">{isOpen ? "" : pct(row.ytdSen)}</td>
+                      <td data-cell="num pct">{isOpen ? "" : pctYtd(row.ytdSen)}</td>
                       <td data-cell="num split">{isOpen ? "" : amt(row.periodSen)}</td>
                       <td data-cell="num pct">{isOpen ? "" : pct(row.periodSen)}</td>
                     </tr>
@@ -6326,7 +6390,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
                       {row.estSen ? <span className="ml-1.5 text-[10px] font-semibold">· est.</span> : null}
                     </td>
                     <td data-cell="num split">{amt(row.ytdSen)}</td>
-                    <td data-cell="num pct">{pct(row.ytdSen)}</td>
+                    <td data-cell="num pct">{pctYtd(row.ytdSen)}</td>
                     <td data-cell="num split">{amt(row.periodSen)}</td>
                     <td data-cell="num pct">{pct(row.periodSen)}</td>
                   </tr>
