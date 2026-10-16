@@ -132,3 +132,13 @@ test("ledger balances: debit plain, credit in brackets, zero plain", () => {
   assert.match(fmtLedgerBal(-100000), /^\(RM\s1,000\.00\)$/);
   assert.match(fmtLedgerBal(0), /^RM\s0\.00$/);
 });
+
+test("report amounts read without RM, negatives in brackets; the check strip's verdict", async () => {
+  const { fmtAmt, checkLabel } = await import("../src/lib/finance-reports.ts");
+  assert.equal(fmtAmt(413610971), "4,136,109.71");
+  assert.equal(fmtAmt(-50000), "(500.00)");
+  assert.equal(fmtAmt(0), "0.00");
+  assert.equal(checkLabel(0), "Balanced ✓");
+  assert.equal(checkLabel(-100), "Out of balance · difference 1.00");
+  assert.equal(checkLabel(123456), "Out of balance · difference 1,234.56");
+});

@@ -163,3 +163,15 @@ export function codesInRange(codes: string[], from: string, to: string): string[
 export function fmtLedgerBal(sen: number): string {
   return sen < 0 ? `(${formatCurrency(-sen)})` : formatCurrency(sen);
 }
+
+/** A report amount without the currency (the frame says "All figures RM"):
+ *  "1,234.56"; a negative in brackets, "(1,234.56)". */
+export function fmtAmt(sen: number): string {
+  const s = (Math.abs(sen) / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return sen < 0 ? `(${s})` : s;
+}
+
+/** The check strip's verdict for a difference in sen. */
+export function checkLabel(diffSen: number): string {
+  return diffSen === 0 ? "Balanced ✓" : `Out of balance · difference ${fmtAmt(Math.abs(diffSen))}`;
+}
