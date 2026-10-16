@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main` (ports staging #888, #889, #890; BUG-2026-10-16-295 to -299) added below (its entries are the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
@@ -6347,3 +6348,12 @@ unapplied advances 0.00.
 **Next:** Houzs and The Conts openings (the Carress playbook, written into the
 checkpoint); the 18 Carress ghosts await a void ruling; the 10 CN/DN invoices;
 SUNMAT K26050470; May labour unposted.
+
+## 2026-10-16 — Self-apply ALTERs no longer lock a table when the column exists (BUG-2026-10-16-304)
+
+Asked (owner, 2026-10-16): fix the job card save stalls seen on staging after deploys.
+
+1. [x] Skip a no-op `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in the database adapter by
+   checking `information_schema` first (branch `fix/self-apply-skip-existing-column`, to `main`).
+2. [ ] Verify on staging after deploy: the slow-SQL log should stop showing those ALTERs.
+

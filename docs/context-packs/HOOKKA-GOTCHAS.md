@@ -1,5 +1,6 @@
 # Hookka — Hard-Won Gotchas
 
+> **Last verified: 2026-10-16** (branch `fix/self-apply-skip-existing-column`, to `main`): the runtime self-apply gotcha gained the table-lock warning, read from `src/api/lib/supabase-compat.ts`. Nothing else re-checked.
 > **Last verified: 2026-08-13** against every file it cites — all 17 exist and carry the
 > named symbols: `roundUpToRinggitSen` (`src/lib/utils.ts:270`), `distributeComboUnitPrices`
 > (`src/api/lib/sofa-combo.ts`), `bedframeSizeDefault` (`src/api/routes/fg-units.ts:235`),
@@ -149,6 +150,13 @@ costing model. See `docs/BUG-CLASSES.md`.
   and the first write 500s on a missing column (BUG-2026-06-20-002 — caught in
   verify-live, one step from a broken prod). Still write the migration file too
   (record + SQLite test mirror), but the runtime self-apply is what's load-bearing.
+  **It locks the whole table, even when the column already exists** (Postgres takes
+  ACCESS EXCLUSIVE before it checks), and every later query on that table, reads too,
+  queues behind it. After a deploy many fresh isolates run their self-applies at once.
+  The adapter now looks the column up in `information_schema` first and skips a no-op
+  ALTER (`parseAddColumnIfNotExists` in `src/api/lib/supabase-compat.ts`,
+  BUG-2026-10-16-304). It only recognises one column per ALTER, so keep it that way:
+  an `ADD COLUMN a, ADD COLUMN b` statement is passed through and still takes the lock.
 
 - **Two rename-map entries can point at ONE column, and only the LAST one wins on
   read.** `columnFrom` (`src/api/lib/db-pg.ts:57`) resolves a `SELECT *` column
