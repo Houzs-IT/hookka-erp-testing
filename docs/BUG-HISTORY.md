@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-297 (branch `fix/production-poll-skip-inflight`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -160,6 +161,25 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
+
+🟡 **Fixed on branch** (`fix/cached-fetch-inflight-298` → `staging`). Found 2026-10-16 while reproducing BUG-2026-10-16-297; not reported by a user. How often it happens on the live sites is UNMEASURED.
+
+**Symptom.** A page that refreshes its data while the previous request is still running (the /production 8 s poll before BUG-2026-10-16-297, the come-back-to-the-tab refresh, a cache invalidation) could leave a request running that nothing was waiting for. The server built the full response and the browser downloaded it, then threw it away.
+
+**Root cause.** `joinInflight` in `src/lib/cached-fetch.ts` keeps one entry per URL so callers share a request and the last one to leave can cancel it. When a request settled, its `.finally` ran `inflight.delete(url)`, deleting by URL. A cancelled request settles a moment after it is cancelled, and by then a newer request for the same URL may have registered. The old request's `.finally` then deleted the NEWER entry. The next refresh looked for an entry to cancel, found none, and started a third request, while the second ran on to the end for a consumer that had already left.
+
+Reproduced 2026-10-16 with the real hook rendered by react-dom in node (refresh every 100 ms, response 300 ms): in 1 s, 10 requests started, 5 were aborted and 3 finished unwatched. With the fix: every superseded request is aborted and none finishes.
+
+**Fix.** The `.finally` deletes the entry only if it is still its own (`inflight.get(url)?.promise === promise`). Abort, ref counting and the 502/503/504 retry are unchanged; the existing `cached-fetch-*` tests pass.
+
+**Same shape, not fixed (open).** `releaseInflight(url)` also finds the entry by URL. Two components sharing one URL: request A settles and its entry is dropped, component 2 refreshes and starts B, then component 1 unmounts and its cleanup decrements B's count to 0 and aborts B while component 2 is still waiting on it. Found by reading the code; not reproduced. One component alone cannot hit it (React runs the old cleanup before the new request starts).
+
+**Regression.** `tests/cached-fetch-inflight-identity.test.mjs`.
+
+
+---
+
 ## BUG-2026-10-16-297 — /production cancelled its own order list when the list took longer than 8 seconds `production` `performance` 🟡
 
 🟡 **Fixed on branch** (`fix/production-poll-skip-inflight` → `staging`). Seen 2026-10-16 in the app's network panel while checking BUG-2026-10-16-294: `GET /api/production-orders`, status 0, AbortError, at 8,007 ms. Which site that was, and how often it happens, are UNMEASURED.
@@ -172,7 +192,7 @@ Reproduced 2026-10-16 with the real hook rendered by react-dom in node (100 ms p
 
 **Fix.** `useCachedJson` now returns `isFetching()`, true from the moment its request starts until it settles (a cancelled run leaves the flag to the run that replaced it). The `/production` poll tick returns early while it is true. `loading` could not be used: it is only true when there is no cached copy, so it stays false on every poll. The abort and ref-count rules in `cached-fetch.ts` are unchanged. The flag clears on every settle path: a 2xx, an HTTP error, and the 30 s global abort from `api-client.ts`. So a request that never answers now costs one 30 s gap in polling, not an endless 8 s cancel loop.
 
-**Found in passing, not fixed (open).** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still can. C15 row 8.
+**Found in passing, fixed separately as BUG-2026-10-16-298.** In `joinInflight`, `.finally(() => inflight.delete(url))` deletes by URL. When an aborted request settles after a newer request for the same URL has registered, it deletes the newer entry. The next refresh then cannot abort the newer request, which finishes, but its consumer was already cancelled, so the body is downloaded and dropped. That is the "3 finished, none delivered" in the repro. The poll no longer aborts, so it no longer triggers this; the come-back-to-the-tab refresh and cache invalidations still could. C15 row 8.
 
 **Other timed refreshes checked.** Every other `setInterval` / `useInterval` in `src/` (sidebar unread counts, IT support tickets, the scan-queue polls in the two scan modals, presence, version check, RUM flush) uses a plain fetch that does not cancel the previous call. `/production` was the only poll through `useCachedJson().refresh`. The same page's come-back-to-the-tab refresh (3 s gate only) can still cancel a running list request; not changed here. Same mechanism, not a timer: `revalidateOnFocus: true` (`sales/create.tsx`, `sales/edit.tsx`) refetches on focus when the saved copy is over 2 s old, which during a slow first load (no copy) cancels and restarts the request.
 

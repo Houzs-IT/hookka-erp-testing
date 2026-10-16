@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/cached-fetch-inflight-298`, to `staging`: BUG-2026-10-16-298 added as item 5 of the /production poll entry (still the newest entry).
 > **Last verified: 2026-10-16**: branch `fix/production-poll-skip-inflight`, to `staging` (BUG-2026-10-16-297) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-296) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging` (BUG-2026-10-16-294/295) added below (its entry is the newest).
@@ -250,12 +251,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
-## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297)
+## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
 
 1. 🟡 Confirm with evidence: code read end to end, reproduced with the real hook in node (5 of 10 requests aborted, none delivered). Site and frequency of the 8,007 ms abort UNMEASURED.
 2. 🟡 Poll tick skips while the list request runs (`useCachedJson().isFetching()`); shared abort rules unchanged.
-3. 🟡 Other timed refreshes listed: none go through `useCachedJson().refresh`. Open: `joinInflight` settle deletes by URL (C15 row 8).
+3. 🟡 Other timed refreshes listed: none go through `useCachedJson().refresh`. `joinInflight` settle deleted by URL: fixed, item 5.
 4. 🟡 Test `tests/production-poll-skip-inflight.test.mjs`.
+5. 🟡 BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, after the branch above merged): identity check in the `joinInflight` `.finally` (C15 row 8 closed), test `tests/cached-fetch-inflight-identity.test.mjs` (10 started, 5 aborted, 3 finished unwatched before). Open: `releaseInflight` also finds its entry by URL (two components sharing a URL).
 ## 2026-10-16 — 🟡 Production order list: keep a salesperson's narrowed list out of the shared KV cache (branch `fix/po-list-cache-staging` → `staging`)
 
 1. 🟡 Confirm with evidence: code read, prod measured read-only (3 active SALES users; page use UNMEASURED). See BUG-2026-10-16-296.

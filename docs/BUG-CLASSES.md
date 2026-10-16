@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-16**: branch `fix/cached-fetch-inflight-298`, to `staging`, closes C15 row 8 (BUG-2026-10-16-298). Nothing else re-checked.
 > **Last verified: 2026-10-16**: branch `fix/production-poll-skip-inflight`, to `staging`, adds C15 rows 7 (fixed) and 8 (open), BUG-2026-10-16-297. Nothing else re-checked.
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging`, adds C22 row 4, fixed (BUG-2026-10-16-296). Nothing else re-checked.
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-staging`, to `staging`, adds C2 row 9 (BUG-2026-10-16-295). Nothing else re-checked.
@@ -896,7 +897,7 @@ class must not use it.
 | 5 | **Worker Efficiency card** (/m Home and /dashboard): `/api/workers` refused with 403 for PRODUCTION, and every row printed the raw worker id as if it were the name | ✅ 2026-09-25 (BUG-2026-09-25-194): the name now travels with the hours in `/api/working-hour-entries/summary`, so there is no second request left to fail. Test `tests/working-hours-summary-names.test.mjs` |
 | 6 | **Staging patch notes** (`/staging-notes`, staging only): `deploy.yml` asked for `fetch-depth` with `&& 0 \|\| 1`, a bare 0 is falsy in Actions, so the clone was depth 1, the git log had no merge parents, and the page printed *"Latest 0 PRs"* as fact | ✅ 2026-09-29 (BUG-2026-09-29-215): quoted `'0'`, and `scripts/gen-staging-notes.mjs` now exits 1 on a shallow repo so the page says "no notes in this build" instead of a false zero. Test `tests/staging-notes.test.mjs` |
 | 7 | **/production 8 s poll**: `refresh()` while the list request was still running cancelled it, silently, so a list slower than 8 s never reached the sheet and the page kept showing its older copy | ✅ on branch `fix/production-poll-skip-inflight` (BUG-2026-10-16-297): the poll checks `useCachedJson().isFetching()` first. Test `tests/production-poll-skip-inflight.test.mjs` |
-| 8 | **`joinInflight` settle deletes by URL**: an aborted request that settles after its replacement registered deletes the replacement's entry, so the replacement's body is downloaded and dropped | ⬜ open (found with row 7, BUG-2026-10-16-297). The fix would be an identity check in that `.finally`; shared code, left for its own change |
+| 8 | **`joinInflight` settle deleted by URL**: an aborted request that settled after its replacement registered deleted the replacement's entry, so the next refresh could not abort the replacement; it finished and its body was dropped (its consumer was already gone) | ✅ on branch `fix/cached-fetch-inflight-298` (BUG-2026-10-16-298, found with row 7): the `.finally` deletes only its own entry. Test `tests/cached-fetch-inflight-identity.test.mjs` |
 
 Rows 3 and 4 are why this section exists rather than a note in the bug entry.
 Row 2's pass fixed **19 files across 11 modules**; every one would have been
