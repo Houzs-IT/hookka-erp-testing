@@ -414,8 +414,9 @@ function joinInflight<T>(url: string, reuseUnchanged = false): Promise<T> {
 
   const promise: Promise<T> = run().finally(() => {
     // Drop the entry once settled — refs no longer matter after resolution.
-    // Late releaseInflight() calls become no-ops.
-    inflight.delete(url);
+    // Late releaseInflight() calls become no-ops. Only drop OUR entry: an
+    // aborted request can settle after a newer one for this URL registered.
+    if (inflight.get(url)?.promise === promise) inflight.delete(url);
   }) as Promise<T>;
   inflight.set(url, { promise, controller, refs: 1 });
   return promise;
