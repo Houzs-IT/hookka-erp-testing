@@ -33,10 +33,7 @@
 
 import type { Aoa } from "./export-report";
 import { priceComponentApplies } from "./invoice-line-price";
-
-const rm = (sen: number | null | undefined): number => Math.round(Number(sen) || 0) / 100;
-const num = (n: number | null | undefined): number => Number(n) || 0;
-const day = (iso: string | null | undefined): string => (iso ? String(iso).slice(0, 10) : "");
+import { commonCells, commonHeaders, rm, day, uomFor } from "./doc-columns";
 
 /**
  * A component cell: blank when the component does not apply to this line's
@@ -74,6 +71,10 @@ export type InvoiceDetailItem = {
 export type InvoiceDetailDoc = {
   id?: string | null;
   invoiceNo?: string | null;
+  /** Set = the invoice was raised from a delivery order ("DI"); empty = "SI". */
+  deliveryOrderId?: string | null;
+  doNo?: string | null;
+  customerId?: string | null;
   invoiceDate?: string | null;
   dueDate?: string | null;
   customerName?: string | null;
@@ -86,15 +87,25 @@ export type InvoiceDetailDoc = {
   items?: InvoiceDetailItem[] | null;
 };
 
+/**
+ * DI vs SI (owner YH 2026-10-16): both live in the one `invoices` table. An
+ * invoice raised from a delivery order (deliveryOrderId set — the normal path,
+ * POST /api/invoices requires one) is a DI, "Delivery Invoice"; one with no DO
+ * (consignment-note conversion, opening-balance AR) is an SI.
+ */
+export const invoiceDocType = (d: { deliveryOrderId?: string | null }): "DI" | "SI" =>
+  d.deliveryOrderId ? "DI" : "SI";
+
+/** Shared common block (doc-columns.ts, Ref Doc No. = the DO), then the
+ *  invoice's own columns. */
 export const INVOICE_DETAIL_HEADERS = [
-  "Doc. No.", "Date", "Due Date", "Debtor Name", "Status",
-  "Doc SubTotal", "Doc Total", "Paid",
+  ...commonHeaders(true),
+  "Due Date", "Status", "Doc SubTotal", "Doc Total", "Paid",
   "Cust. PO", "Cust. SO Ref", "Our SO",
-  "Item Code", "Detail Description", "Size", "Fabric", "Category", "Qty",
+  "Size", "Fabric", "Category",
   "Base", "Divan", "Leg", "T.Height", "Special",
-  "Unit Price", "Discount", "Line Total",
-  "Build-up Reconciles", "Price Edited", "Line ID",
-] as const;
+  "Build-up Reconciles", "Price Edited",
+];
 
 /**
  * Does the build-up account for the charge?
@@ -118,7 +129,11 @@ export function reconcilesCell(it: InvoiceDetailItem): string {
   return sum === unit ? "YES" : "NO";
 }
 
-export function buildInvoiceDetailListingAoa(docs: InvoiceDetailDoc[]): Aoa {
+export function buildInvoiceDetailListingAoa(
+  docs: InvoiceDetailDoc[],
+  /** customerId → customer.code; a missing entry leaves Party Code blank. */
+  customerCodes?: Map<string, string>,
+): Aoa {
   const body: (string | number)[][] = [];
   for (const d of docs) {
     // An invoice with no lines still gets one row: dropping it silently would
@@ -127,10 +142,26 @@ export function buildInvoiceDetailListingAoa(docs: InvoiceDetailDoc[]): Aoa {
     for (const it of items) {
       const cat = it.itemCategory;
       body.push([
-        d.invoiceNo ?? "",
-        day(d.invoiceDate),
+        ...commonCells(
+          {
+            docType: invoiceDocType(d),
+            docNo: d.invoiceNo,
+            docDate: d.invoiceDate,
+            partyCode: (d.customerId && customerCodes?.get(d.customerId)) || "",
+            partyName: d.customerName,
+            refDocNo: d.doNo,
+            lineId: it.id,
+            itemCode: it.productCode,
+            description: it.productName,
+            qty: Number(it.quantity) || 0,
+            uom: uomFor(cat),
+            unitPriceSen: it.unitPriceSen ?? 0,
+            discountSen: it.discountSen ?? 0,
+            lineTotalSen: it.totalSen ?? 0,
+          },
+          true,
+        ),
         day(d.dueDate),
-        d.customerName ?? "",
         d.status ?? "",
         rm(d.subtotalSen),
         rm(d.totalSen),
@@ -138,25 +169,18 @@ export function buildInvoiceDetailListingAoa(docs: InvoiceDetailDoc[]): Aoa {
         it.customerPOId ?? d.customerPOId ?? "",
         it.customerSOLine ?? "",
         it.companySO ?? d.companySOId ?? "",
-        it.productCode ?? "",
-        it.productName ?? "",
         it.sizeLabel ?? "",
         it.fabricCode ?? "",
         cat ?? "",
-        num(it.quantity),
         comp("base", cat, it.basePriceSen),
         comp("divan", cat, it.divanPriceSen),
         comp("leg", cat, it.legPriceSen),
         comp("totalHeight", cat, it.totalHeightPriceSen),
         comp("special", cat, it.specialOrderPriceSen),
-        rm(it.unitPriceSen),
-        rm(it.discountSen),
-        rm(it.totalSen),
         reconcilesCell(it),
         Number(it.priceEdited) === 1 ? "YES" : "",
-        it.id ?? "",
       ]);
     }
   }
-  return [INVOICE_DETAIL_HEADERS as unknown as string[], ...body];
+  return [INVOICE_DETAIL_HEADERS, ...body];
 }
