@@ -1,5 +1,6 @@
 # Hookka ERP — Start Here (read before any task)
 
+> **Last verified: 2026-10-16** (branch `chore/sync-staging-from-main-1016`, staging<-main merge): `docs/API.md` regenerated on the merged tree and the mount/handler counts below restamped (147 / 1041). Nothing else on this page re-checked.
 > **Last verified: 2026-10-13** (branch `chore/sync-staging-from-main-1013`, staging<-main merge): `docs/API.md` regenerated on the merged tree and the mount/handler counts below restamped (147 / 1034). Nothing else on this page re-checked.
 
 > **Last verified: 2026-10-09** (branch `feat/dashboard-compare-plant-card-drills`, staging merged in): `docs/API.md` regenerated on the merged tree; both sides had added one handler, so the count below is 146 / 1024. Nothing else on this page re-checked.
@@ -67,8 +68,8 @@ measured 2026-09-22; this line said 2,122). Use the map's file:line +
 
 5. **Which endpoint** → [`docs/API.md`](docs/API.md) — **generated** from
    `src/api/worker.ts` + `src/api/routes/*.ts` by `node scripts/gen-api-docs.mjs`
-   (147 mounts, **1034** handlers, plus the exact public/auth surface — re-measured 2026-10-13
-   by `--check`; this line said 146 / 1024).
+   (147 mounts, **1041** handlers, plus the exact public/auth surface — re-measured 2026-10-16
+   by `--check`; this line said 147 / 1034).
    Regenerate it instead of hand-editing; `--check` tells you if it is stale — **it WAS stale
    on `main` on 2026-08-14**, and the committed copy carried four duplicated mount rows with
    two different line sets for the same handlers. Run `--check` before trusting it.

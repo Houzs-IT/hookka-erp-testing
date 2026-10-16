@@ -44,6 +44,7 @@ import {
   freezeMonth,
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
+import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
 import {
   allocateDocsByCategory,
   loadDeptRevenue,
@@ -303,57 +304,10 @@ app.get("/", async (c) => {
       }
     }
 
-    // Rolling 14 most-recent COMPLETE working days (Mon-Sat, EXCLUDING
-    // Sundays AND public holidays), ending YESTERDAY — same window the
-    // Planning page uses (ROLLING_WINDOW_DAYS there). Owner 2026-10-08 moved
-    // it from 7 to 14 days. Drives Daily Capacity for All-time and the
-    // current month, and every department's own capacity in the backlog
-    // table. `guard` caps the walk-back so a malformed holiday list can
-    // never spin.
-    const ROLLING_DAYS = windowOverride ?? 14;
-    const rollingDays: string[] = [];
-    {
-      // Compare view on a past month: count back from the month's last day.
-      const cur =
-        windowOverride && isPastMonth && monthScope
-          ? new Date(`${monthScope.lastDay}T00:00:00`)
-          : new Date(new Date(today).getTime() - 24 * 60 * 60 * 1000);
-      let guard = 0;
-      // Compare view on a month: the window never reaches into the month
-      // before (owner 2026-10-09), so it can hold fewer than ROLLING_DAYS.
-      const clipStart = windowOverride && monthScope ? monthScope.start : null;
-      while (rollingDays.length < ROLLING_DAYS && guard < 130) {
-        guard++;
-        const iso = fmtISO(cur);
-        if (clipStart && iso < clipStart) break;
-        if (cur.getDay() !== 0 && !holidaySet.has(iso)) rollingDays.push(iso);
-        cur.setDate(cur.getDate() - 1);
-      }
-    }
-    const rollingSet = new Set(rollingDays);
-
-    // Daily-Capacity widget window (Mon-Sat, EXCLUDING Sundays AND public
-    // holidays). The widget's average divisor is `windowDays.length`.
-    //   - All-time / current month → the rolling 14 above. The current month
-    //     used to average its own days so far, which on the 2nd of the month
-    //     was one day of output (owner 2026-10-08).
-    //   - A PAST month → every working day in that month. Divisor becomes
-    //     that month's working-day COUNT.
-    let windowDays: string[];
-    if (monthScope && isPastMonth && !windowOverride) {
-      windowDays = [];
-      const cur = new Date(`${monthScope.start}T00:00:00`);
-      let guard = 0;
-      while (fmtISO(cur) <= monthScope.end && guard < 40) {
-        guard++;
-        const iso = fmtISO(cur);
-        if (cur.getDay() !== 0 && !holidaySet.has(iso)) windowDays.push(iso);
-        cur.setDate(cur.getDate() + 1);
-      }
-    } else {
-      windowDays = rollingDays;
-    }
-    const windowSet = new Set(windowDays);
+    // The two working-day windows (rolling 7 for Backlog, the Daily-Capacity
+    // window) are built further down, right after the job cards load: a
+    // Sunday / public holiday counts only when production happened on it
+    // (owner 2026-10-15), and that needs the job cards. See lib/working-days.
 
     const [
       jcRes,
@@ -989,6 +943,42 @@ app.get("/", async (c) => {
         )
         .all<{ dept: string; n: number }>(),
     ]);
+
+    // ---- Working-day windows (owner 2026-10-15) ----
+    // A day counts toward the per-day averages when it is Mon–Sat and not a
+    // public holiday, OR when production happened on it (a worked Sunday /
+    // holiday is pulled in; an idle one never deflates the average).
+    const workedDays = new Set<string>();
+    for (const jc of jcRes.results ?? []) {
+      if ((jc.status === "COMPLETED" || jc.status === "TRANSFERRED") && jc.completedDate) {
+        if (jcMinutesTotal(jc.actualMinutes ?? jc.estMinutes ?? 0, jc) > 0) {
+          workedDays.add(String(jc.completedDate).slice(0, 10));
+        }
+      }
+    }
+    const yesterdayISOForWindows = fmtISO(new Date(new Date(today).getTime() - 24 * 60 * 60 * 1000));
+    // Rolling 14 most-recent COMPLETE working days, ending YESTERDAY — same
+    // window the Planning page uses (ROLLING_WINDOW_DAYS there). Owner
+    // 2026-10-08 moved it from 7 to 14 days. Drives Daily Capacity for
+    // All-time and the current month, and every department's own capacity in
+    // the backlog table. Compare view on a past month counts back from the
+    // month's last day and never reaches into the month before (owner
+    // 2026-10-09), so it can hold fewer days.
+    const rollingEnd =
+      windowOverride && isPastMonth && monthScope ? monthScope.lastDay : yesterdayISOForWindows;
+    let rollingDays = workingDaysBack(rollingEnd, windowOverride ?? 14, holidaySet, workedDays);
+    if (windowOverride && monthScope) rollingDays = rollingDays.filter((d) => d >= monthScope.start);
+    const rollingSet = new Set(rollingDays);
+    // Daily-Capacity widget window. The widget's average divisor is
+    // `windowDays.length`.
+    //   - All-time / current month → the rolling 14 above.
+    //   - A PAST month → every working day in that month; the divisor is that
+    //     month's working-day COUNT.
+    const windowDays =
+      monthScope && isPastMonth && !windowOverride
+        ? workingDaysInRange(monthScope.start, monthScope.end, holidaySet, workedDays)
+        : rollingDays;
+    const windowSet = new Set(windowDays);
 
     // ---- Production ----
     let capacityMin = 0; // capacity over the Daily-Capacity widget window

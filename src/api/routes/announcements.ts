@@ -37,6 +37,13 @@ import {
 // subscribed worker devices, RESPECTING the same targeting the worker GET uses.
 // Best-effort: wrapped in try/catch so a push failure NEVER faults the create.
 import { sendPushToSubscribers } from "./push";
+import {
+  MAX_NOTICE_ORDERS,
+  buildOrderNotice,
+  orderNoticeCategory,
+  readOrderPriority,
+  type OrderPriority,
+} from "../../lib/order-notification";
 
 // ---- runtime schema self-apply (idempotent, once per isolate) ----
 let _announcementsMig: Promise<void> | null = null;
@@ -200,6 +207,21 @@ function ensureAnnouncementsTable(db: D1Database): Promise<void> {
     } catch {
       _announcementsMig = null;
     }
+    // Order notices (HK-0025, 2026-10-15). priority = URGENT | OVERDUE |
+    // PRIORITY (NULL for an ordinary announcement); order_no / order_id name the
+    // production order the notice is about. Nullable, so existing rows are
+    // untouched. Same self-heal posture as the columns above.
+    try {
+      for (const col of ["priority", "order_no", "order_id"]) {
+        await db
+          .prepare(
+            `ALTER TABLE announcements ADD COLUMN IF NOT EXISTS ${col} TEXT`,
+          )
+          .run();
+      }
+    } catch {
+      _announcementsMig = null;
+    }
   })();
   return _announcementsMig;
 }
@@ -305,6 +327,12 @@ type AnnouncementRow = {
   // column, so the PG driver hands it back as `category` unchanged; declared
   // dual-keyed defensively. Missing/unknown normalizes to GENERAL on read.
   category?: string | null;
+  // Order notice (HK-0025) — all null on an ordinary announcement.
+  priority?: string | null;
+  order_no?: string | null;
+  orderNo?: string | null;
+  order_id?: string | null;
+  orderId?: string | null;
 };
 
 // Targeting kinds. ALL = everyone (the back-compat default); the others narrow
@@ -423,6 +451,10 @@ function toPublic(r: AnnouncementRow) {
     // Category — normalized (uppercase, unknown/missing → GENERAL) so the office
     // list + worker portal always get one of the four known values.
     category: readCategory(r.category),
+    // Order notice (HK-0025): null / null / null on an ordinary announcement.
+    priority: readOrderPriority(r.priority) as OrderPriority | null,
+    orderNo: r.orderNo ?? r.order_no ?? null,
+    orderId: r.orderId ?? r.order_id ?? null,
   };
 }
 
@@ -466,7 +498,33 @@ admin.get("/", async (c) => {
   )
     .bind(orgId)
     .all<AnnouncementRow>();
-  return c.json({ success: true, data: (res.results ?? []).map(toPublic) });
+  const rows = res.results ?? [];
+  // "Sent by" for the notification history: created_by holds a user id.
+  const senderIds = [
+    ...new Set(
+      rows
+        .map((r) => r.createdBy ?? r.created_by)
+        .filter((v): v is string => !!v),
+    ),
+  ];
+  const nameById = new Map<string, string>();
+  if (senderIds.length > 0) {
+    const u = await c.var.DB.prepare(
+      `SELECT id, displayName FROM users WHERE orgId = ? AND id IN (${senderIds.map(() => "?").join(",")})`,
+    )
+      .bind(orgId, ...senderIds)
+      .all<{ id: string; displayName?: string | null }>();
+    for (const x of u.results ?? []) {
+      if (x.displayName) nameById.set(x.id, x.displayName);
+    }
+  }
+  return c.json({
+    success: true,
+    data: rows.map((r) => ({
+      ...toPublic(r),
+      createdByName: nameById.get(r.createdBy ?? r.created_by ?? "") ?? null,
+    })),
+  });
 });
 
 // GET /api/announcements/:id/acks — read-receipt for one announcement. Splits
@@ -553,8 +611,83 @@ admin.post("/", async (c) => {
   await ensureAnnouncementsTable(c.var.DB);
   const orgId = adminOrgId(c);
   const body = await c.req.json().catch(() => ({}));
-  const title = String((body as { title?: unknown }).title ?? "").trim();
-  const text = String((body as { body?: unknown }).body ?? "").trim();
+  let title = String((body as { title?: unknown }).title ?? "").trim();
+  let text = String((body as { body?: unknown }).body ?? "").trim();
+  // Order notice (HK-0025): the client sends priority + orderIds (+ note); the
+  // server looks the orders up by id AND org and builds the text itself, so a
+  // client cannot name an order it does not own or spoof its number.
+  const priority = readOrderPriority((body as { priority?: unknown }).priority);
+  let orderNo: string | null = null;
+  let orderId: string | null = null;
+  if (priority) {
+    const ids = [
+      ...new Set(
+        readStringArray(
+          (body as { orderIds?: unknown }).orderIds as string[] | undefined,
+        ),
+      ),
+    ];
+    if (ids.length === 0 || ids.length > MAX_NOTICE_ORDERS) {
+      return c.json(
+        {
+          success: false,
+          error: `Select 1 to ${MAX_NOTICE_ORDERS} orders per notification`,
+        },
+        400,
+      );
+    }
+    const found = await c.var.DB.prepare(
+      `SELECT po.id, po.poNo, po.productName, po.productCode, po.status,
+              po.targetEndDate,
+              (SELECT so.hookkaExpectedDD FROM sales_orders so
+                WHERE so.id = po.salesOrderId) AS hookkaExpectedDD
+         FROM production_orders po
+        WHERE po.orgId = ? AND po.id IN (${ids.map(() => "?").join(",")})`,
+    )
+      .bind(orgId, ...ids)
+      .all<Record<string, string | null>>();
+    const byId = new Map((found.results ?? []).map((r) => [String(r.id), r]));
+    const missing = ids.filter((i) => !byId.has(i));
+    if (missing.length > 0) {
+      return c.json(
+        { success: false, error: `Order not found: ${missing.join(", ")}` },
+        404,
+      );
+    }
+    const orders = ids.map((i) => byId.get(i)!);
+    const built = buildOrderNotice({
+      priority,
+      orders: orders.map((r) => ({
+        poNo: String(r.poNo ?? ""),
+        model: String(r.productName || r.productCode || ""),
+        requiredDate: String(r.hookkaExpectedDD || r.targetEndDate || ""),
+        status: String(r.status ?? ""),
+      })),
+      note: String((body as { note?: unknown }).note ?? "").slice(0, 300),
+    });
+    title = built.title;
+    text = built.body;
+    orderNo = orders.map((r) => r.poNo).join(", ");
+    orderId = ids.slice().sort().join(",");
+    // Dedupe: the same orders + priority already sent today (UTC) -> 409, so a
+    // retry / double click never re-alerts the floor.
+    const dup = await c.var.DB.prepare(
+      `SELECT id FROM announcements
+        WHERE org_id = ? AND priority = ? AND order_id = ? AND created_at >= ?
+        LIMIT 1`,
+    )
+      .bind(orgId, priority, orderId, new Date().toISOString().slice(0, 10))
+      .first<{ id: string }>();
+    if (dup) {
+      return c.json(
+        {
+          success: false,
+          error: "This notification was already sent today for these orders",
+        },
+        409,
+      );
+    }
+  }
   if (!title) {
     return c.json({ success: false, error: "Title is required" }, 400);
   }
@@ -594,7 +727,12 @@ admin.post("/", async (c) => {
   );
   const targetType = deriveTargetType(reqDeptCodes, reqWorkerIds);
   // Category — GENERAL | WARNING | SOP | LEARNING; default/invalid → GENERAL.
-  const category = readCategory((body as { category?: unknown }).category);
+  // Order notice (HK-0025): URGENT / OVERDUE are always WARNING so the phone
+  // highlights them whatever category the client sent.
+  const category =
+    priority && orderNoticeCategory(priority) === "WARNING"
+      ? "WARNING"
+      : readCategory((body as { category?: unknown }).category);
   const userId =
     (c as unknown as { get: (k: string) => string | undefined }).get(
       "userId",
@@ -614,8 +752,8 @@ admin.post("/", async (c) => {
     `INSERT INTO announcements
        (id, org_id, title, body, is_active, expires_at, created_by, created_at,
         translations, attachments, target_type, target_dept_codes, target_worker_ids,
-        category)
-     VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        category, priority, order_no, order_id)
+     VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -631,6 +769,9 @@ admin.post("/", async (c) => {
       reqDeptCodes.length ? JSON.stringify(reqDeptCodes) : null,
       reqWorkerIds.length ? JSON.stringify(reqWorkerIds) : null,
       category,
+      priority,
+      orderNo,
+      orderId,
     )
     .run();
   const row = await c.var.DB.prepare(

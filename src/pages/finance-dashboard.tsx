@@ -34,6 +34,9 @@ type Slice = {
   materials: number; labour: number; overhead: number; stockMovement: number;
   staffCost: number; otherOpex: number;
 };
+// The API's slice also says how much of it is running-month estimate for
+// recurring costs not yet recorded (2026-10-13) — read apart from the chart keys.
+const estimatedOf = (s: Slice | null | undefined): number => (s as (Slice & { estimated?: number }) | null | undefined)?.estimated ?? 0;
 // Income-card tabs (owner 2026-07-29: not just sales — break the cost side
 // down). materials + labour + overhead + stock movement = COGS;
 // staff cost + other opex = operating expenses.
@@ -1040,6 +1043,16 @@ export default function FinanceDashboardPage() {
                     })}
                   </tr>
                   <tr><td className={`${td} text-left font-medium`}>vs last period</td>{plData.map((d) => <td key={d.label} className={`${td} ${(d.mom ?? 0) < 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>{d.mom === null ? "-" : `${d.mom > 0 ? "+" : ""}${d.mom.toFixed(1)}%`}</td>)}</tr>
+                  {/* Running-month estimates (owner 2026-10-13): say which
+                      periods carry them and how much. */}
+                  {rows.some((r) => estimatedOf(r.actual) > 0) && (
+                    <tr>
+                      <td className={`${td} text-left font-medium text-[#9C6F1E]`}>incl. estimates</td>
+                      {rows.map((r) => (
+                        <td key={r.label} className={`${td} text-[#9C6F1E] italic`}>{estimatedOf(r.actual) > 0 ? rm(estimatedOf(r.actual)) : "-"}</td>
+                      ))}
+                    </tr>
+                  )}
                 </tbody>
               </table>
             }

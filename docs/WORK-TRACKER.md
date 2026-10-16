@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `chore/sync-staging-from-main-1016` (staging<-main sync) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/wip-save-one-transaction`, to `staging`: the WIP time auto-sync entry below got its one-transaction hardening (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
@@ -21,6 +22,10 @@
 > BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
 > staging measurement are in the entry below, dated 2026-09-29. upstream/staging
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main` (ports staging #888, #889, #890; BUG-2026-10-16-295 to -299) added below (its entries are the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
 > **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
@@ -95,6 +100,7 @@
 > **Last verified: 2026-10-07**: branch `perf/production-dept-tab-cache-main` (#734 to `main`, BUG-2026-10-07-265) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev39-kpi-view-calculation-to-main` (DEV-39 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev36-kpi-department-to-main` (DEV-36 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `fix/bug06-do-duplicate-guard-main` (BUG-06 to `main`, BUG-2026-09-30-223) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev37-kpi-self-view-to-main` (DEV-37 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/rm-uom-bottle-main` (DEV-20 follow-up to `main`, BUG-2026-10-07-262) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/sales-transfer-credit-block` (to `staging`, BUG-2026-10-07-263) added below (its entry is the newest).
@@ -263,6 +269,228 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-16 — 🔵 Sync `staging` from `main` (branch `chore/sync-staging-from-main-1016` → `staging`)
+
+110 `main` commits merged into `staging`, then the newest `staging` (#913). Conflicts: 14 code/test files, 21 docs.
+1. 🔵 Dashboard working days (`dashboard-overview.ts`): main's rule (a Sunday or holiday counts only when production happened, `lib/working-days.ts`) now builds staging's windows: rolling 14 days, the compare view's 7/14 override ending on a past month's last day and clipped to that month. Main's rolling 7 and month-so-far window are not taken (staging moved to 14 on 2026-10-08). Two source tests updated to the new shape.
+2. 🔵 Sales Transfer to DO (`sales/index.tsx`): main's latest-click-wins guard added around staging's `?fresh=1` read and empty-list warning; staging's credit-block override kept (BUG-34 is not on main).
+3. 🔵 Accounting Overview: main's new `overview-tab.tsx` replaces the old inline Overview (the staging today override there goes with it; the new tab takes its months from the server). Production page keeps both permission flags (stock PO, send notice). IT Support takes main's words and keeps staging's paging. Mail outbox and phone mail screen keep staging's MailSlurp and phone header.
+4. 🔵 Docs: logs and stamps unioned. Bugs main logged again under another number keep staging's number with a "Ported to main" line; main's reused numbers get a `b` (293b, 288b, 223b). Main's BUG-CLASSES C30 is C32 here. `API.md` regenerated (147 / 1041); module and map anchors re-measured.
+
+`npm test` 6106 tests: 6102 pass, 1 fail, 3 skipped. The failure (`mobile-sales-list` "phone: summary sits above search") fails the same way on a clean `staging` checkout; this merge does not touch it. Map, API.md and docs-freshness checks pass. tsc not run locally.
+
+## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+1. 🟡 Confirm with evidence: code read end to end, reproduced with the real hook in node (5 of 10 requests aborted, none delivered). Site and frequency of the 8,007 ms abort UNMEASURED.
+2. 🟡 Poll tick skips while the list request runs (`useCachedJson().isFetching()`); shared abort rules unchanged.
+3. 🟡 Other timed refreshes listed: none go through `useCachedJson().refresh`. `joinInflight` settle deleted by URL: fixed, item 5.
+4. 🟡 Test `tests/production-poll-skip-inflight.test.mjs`.
+5. 🟡 BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, after the branch above merged): identity check in the `joinInflight` `.finally` (C15 row 8 closed), test `tests/cached-fetch-inflight-identity.test.mjs` (10 started, 5 aborted, 3 finished unwatched before). Open: `releaseInflight` also finds its entry by URL (two components sharing a URL).
+## 2026-10-16 — 🟡 Production order list: keep a salesperson's narrowed list out of the shared KV cache (branch `fix/po-list-cache-staging` → `staging`)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+1. 🟡 Confirm with evidence: code read, prod measured read-only (3 active SALES users; page use UNMEASURED). See BUG-2026-10-16-296.
+2. 🟡 Skip the KV read and write for scoped users, MISS write and stale refresh both (`production-orders.ts` GET /).
+3. 🟡 Regression test `tests/po-list-kv-scoped-user.test.mjs`; C22 row 4 flipped.
+## 2026-10-16 — 🔵 /production poll: 304 when the order list is unchanged (branch `fix/po-list-cache-staging` → `staging`, BUG-2026-10-16-299 and -295)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on the wire. Asks:
+1. 🔵 ETag + 304 for the non-paginated PO list; `no-store` relaxed to `private, no-cache` only for ETag replies (BUG-2026-10-16-299).
+2. 🔵 Background list refresh reads the cache version before the build (BUG-2026-10-16-295).
+3. ⚪ Self-reload when leaving a page (`vite:preloadError` in `src/main.tsx`): not in this branch, cause not confirmed yet.
+4. ⚪ Bundle split (React out of the `charts` chunk, lazy `WorkerLayout`): not in this branch.
+5. 🔵 Check on staging: a second poll with unchanged data returns 304, and a scan still shows within about 8 s. After deploy, prod bytes per idle poll are UNMEASURED.
+## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
+
+Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:
+1. 🟡 Move file bytes out of the database row into object storage (`scan_queue.file_key`, `scan-file-store.ts`).
+2. 🟡 Inject only the matching customer's rules (exact code/name hint) and drop empty stubs. 🔵 Identify-the-customer-first by a model pre-pass is NOT built (owner question below).
+3. 🟡 Log every correction into an alias table (`scan_field_corrections`) and replay it on the next scan of the same customer / supplier.
+4. 🟡 Keep every original (consume no longer evicts), inline view (`GET /api/scan-queue/:id/original`) and an access trail (`scan_original_access`).
+5. 🔵 Acceptance "scan time down by a third": UNMEASURED, needs a before/after timing on staging.
+Owner questions: see the PR body and the ticket's internal note.
+## 2026-10-15 — 🔵 HK-0025: Send Notification (order priority) from the Production Overview (branch `feat/hk-0025-production-notify` → `staging`)
+
+Ticket HK-0025 (Violet, 2026-09-23, support.houzscentury.com), asks 1 to 7.
+
+1. **Send Notification button** — Overview, tick order(s), Send Notification (`SendOrderNotificationDialog`, max 10 orders per send, one announcement each).
+2. **Priority** — URGENT / OVERDUE / PRIORITY (`src/lib/order-notification.ts`); URGENT and OVERDUE are forced to the WARNING category, which the worker phone already shows as a red card plus must-ack popup.
+3. **Recipients** — departments (multi), individual workers, or all; this is the existing announcement targeting, unchanged.
+4. **Content** — order no., model, required date, status, priority, optional supervisor note, built by `buildOrderNotice`.
+5. **Mobile** — announcement feed + Web Push, unchanged. Not done: tapping the notice does not open a dedicated order screen (the order details are in the notice text).
+6. **History** — /announcements shows priority, order no., "by <sender>" (`createdByName`) and the existing read-receipt panel (acked vs pending). Not done: a history view filtered to order notices only.
+7. Columns `priority`, `order_no`, `order_id` on `announcements`, runtime self-apply (nullable, no backfill).
+
+Tests: `tests/order-notification.test.mjs`. Prod state: UNMEASURED (not deployed; staging check pending).
+## 2026-10-15 — ⬜ HK-0055: Department Efficiency access per employee: triage, no code (branch `docs/hk0055-dept-efficiency-triage` → `staging`)
+
+Ticket HK-0055 (High, type Development, reporter Violet, created 2026-10-05): assign department efficiency to an employee (specific / multiple / Overall), the employee's dashboard shows only those, admin can assign / change / remove, the system records who has what. [Violet, Houzs Hub HK-0055, 2026-10-05]
+
+1. 🔵 Already built under DEV-36 / DEV-37, so no code change is made here. Assign: Library > KPI > Production time efficiency or Department efficiency, per-person department chips, any number ticked, none = Overall [code: src/api/routes/kpi.ts:974-1015]. Sofa / Bedframe split per department gives "Fab Cut Sofa + Fab Sew Sofa" [code: src/api/routes/kpi.ts:1006]. Employee sees only their own card, view only (DEV-37). Remove = `isActive: false`. Record = `kpi_assignments.scope` + `assigned_by` + `updated_at` [code: src/api/routes/kpi.ts:1020-1034].
+2. 🔵 The ticket's floor-worker reading ("Employee A" on the worker app) was built on staging as #714 and taken back as #715 by owner decision 2026-10-06 ("KPIs go to login accounts only, no worker app card", see the DEV-36 entry below). Re-adding it would reverse that decision, so it is not done without the owner.
+3. ⬜ Owner questions (unanswered): (a) is HK-0055 satisfied by DEV-36 / DEV-37, so it can close? (b) if not, which "Employee Dashboard": the KPI Card, Dashboard Experimental > Employees, or the worker app? (c) must floor workers (no ERP login) see it, which reverses #715? (d) is last-writer `assigned_by` enough for "record which departments are assigned", or is a change history wanted (who / when / old scope)? (e) the card names departments by code (`FAB_CUT + FAB_SEW`); wanted as names?
+4. Prod state UNMEASURED: no prod access from this branch; whether assignments exist for these staff was not queried.
+
+## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
+
+## 2026-10-15 — 🔵 HK-0080 PO overdue: scanned delivery dates not forced to ISO (Violet「can cross check why there are many PO overdue? is OCR using convert?」)(branch `fix/hk0080-po-scan-date-iso` -> `main`, BUG-2026-10-15-288)
+
+1. DONE on branch: `toIsoDate` in scan route + SO create; regression `tests/scan-delivery-date-iso.test.mjs`.
+1b. Review fixes DONE: SO create / PUT 400 on an unreadable date (was silent blank); day-first assumption documented.
+2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
+3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
+## 2026-10-15 — 🔵 RM unit follows the material (HK-0037, branch `fix/hk0037-rm-uom-propagation` → `main`, PR #863)
+
+1. 🔵 RM create rejects an unlisted unit; PO line unit from the RM base unit; Adjustments and GRN show the real unit.
+2. ⬜ Owner questions: per-category unit lists, ROLL/MTR conversion, BOM unit display; other PO writers (`procurement-backfills.ts`, `convert-from-po-modal.tsx`).
+## 2026-10-15 — ⬜ IT Hub HK-0052: department option on Production Time Efficiency is already shipped as DEV-36; one ask left for the owner (branch `docs/hk0052-already-delivered-dev36` → `main`, docs only)
+
+Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TESTING 2026-10-14) asks for a Department field on the Production Time Efficiency KPI, the existing Overall kept, and assignment to the workers of that department. Read from the code on `main`, no change made:
+
+1. 🔵 Department option, Overall kept, scored on that department only: shipped as DEV-36 (see the 2026-10-07 entry below). `src/pages/kpi/index.tsx` offers every production department as All / Sofa / Bedframe; `PUT /api/kpi/assignments/:kpiKey` stores it in `kpi_assignments.scope`; `parseEfficiencyScope` is covered by `tests/efficiency-allowance.test.mjs`. Nothing ticked is Overall.
+2. 🔵 "Fab Cut Sofa", "Fab Sew Sofa", "Upholstery Bedframe", "Packing Sofa" etc. are the department + category pairs of item 1. Whether "foam bonding" and "Packing" exist as production departments on prod is UNMEASURED (no prod access from this session).
+3. ❓ "Assign to individual workers within that department": not built, on purpose. Owner decision 2026-10-06 (DEV-36): holders are office login accounts, not floor workers; `9af643c9` removed the floor-worker half. The people list is every login, with no department filter. OWNER QUESTION: keep it so (close HK-0052 as delivered), or should the people list narrow to accounts linked to the chosen department? If the latter, which field links a login account to a department is not decided.
+4. ⬜ Violet / Laphii: say what failed when Laphii reopened it; the ticket carries no comment.
+
+## 2026-10-15 — 🔵 SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(branch `feat/hk0094-so-customer-edit` → `main`)
+## 2026-10-15 — 🔵 Dashboard: idle Sundays out of every per-day chart and average (branch `feat/hide-idle-sundays` → `main`)
+
+Owner asks (2026-10-15): 「礼拜天 remove 掉，因为没开工，除非礼拜天开工才拉进来 … 全部的 chart 和数据都是，不要被这个影响了我们的数据」.
+1. 🔵 Charts (/dashboard Revenue + Department Revenue, /m Revenue, Completed per-day list): a Sunday whose every plotted value is 0 is left off the axis; a Sunday with any figure stays. Weekday zeros still show. `src/lib/idle-sundays.ts`.
+2. 🔵 Averages (Daily Capacity, Backlog days of queue): working days were Mon–Sat minus holidays, so a WORKED Sunday's output was dropped. Now a Sunday or public holiday counts only when production happened on it (completed job-card minutes > 0). `src/api/lib/working-days.ts`.
+3. 🔵 Not covered: /dashboard-experimental's Daily tab; frozen past months keep the figures they were frozen with.
+
+## 2026-10-15 — ✅ SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(#864 9688216, prod-verified)
+
+1. ✅ The order behind the ticket: SO-2609-392 (Customer PO `2990-PO-2609-042`) was keyed under Houzs Century. Siti asked for it
+   moved and re-priced, so Samuel ran a one-off SQL repair on prod on 2026-10-15: 2990 HOME SDN BHD / 2990 KL, line price
+   RM 1,155.00 → RM 1,091.48 (2990's seat-24 price). The SQL also covered the production order and the PACKED fg_unit, and
+   wiped the seven `sales` snapshot tables. Read-back on prod confirmed it. Siti reprints the packing sticker.
+2. ✅ `PATCH /api/sales-orders/:id/customer` `{customerId, hubId?, reason?}`. Moves the SO, its production orders
+   (`customerName` / `customerState`), its un-shipped fg_units (sticker customer + hub), and any DRAFT DO / DRAFT invoice
+   (customer + hub contact block). Item prices are not touched (Siti: prices stay the same).
+   Returns 409 when: a DO is LOADED or later; a non-DRAFT, non-CANCELLED invoice exists; a draft DO also carries another
+   SO; or an open service order exists. A POTENTIAL customer is refused (`assertCustomerBillable`). Writes a
+   `customer-change` audit row. Wipes the `sales` snapshots and bumps the PO-list KV version.
+3. ✅ `src/components/orders/CustomerEditModal.tsx` + a pencil next to Customer on `src/pages/sales/detail.tsx`. Pick the
+   customer, then its hub (auto-picked when the customer has one). Disabled with the reason once a DO has shipped or an
+   invoice has been issued.
+4. ✅ Staging preview `claude-hk94` (staging DB), 2026-10-15: SO-2609-392 moved Houzs Century → 2990 HOME through the UI;
+   SO, production order and SO list show 2990 HOME / 2990 KL, price stayed RM 1,155.00, `customer-change` audit row
+   written. SO-2610-170 (DO-2610-029 INVOICED) shows the pencil disabled with the lock reason. PR #864.
+5. ✅ Siti saw BEFORE/AFTER from canary-864 (modal only, no save)「okey nice . can put it live already」.
+6. ✅ Prod, read-only after deploy: SO-2609-392 pencil enabled; SO-2610-182 pencil disabled ("Customer locked: DO
+   DO-2610-048 already INVOICED."); the route answers an empty body with 400 "customerId is required".
+## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue-main` → `main`; staging #860)
+
+Owner asks (2026-10-15, decisions confirmed in chat; owner asked to put it on prod before the staging check):
+1. 🔵 Department revenue, same rule as Production (UPHOLSTERY) revenue: department X books a production order's full value (SO line → CO line → product price × qty) on the day ALL of that order's department-X job cards are COMPLETED/TRANSFERRED. Every department books the full value (a RM 2,000 sofa through 9 departments = RM 18,000 across departments), so equal output = balanced supply. An order with no card in a department books nothing there. All 10 production departments, Packing included.
+2. 🔵 New /dashboard card "Department Revenue": one row per department, Bedframe / Sofa / Total for the selected period, plus a per-day (month) / per-week (all-time) line chart per department; All / Bedframe / Sofa toggle.
+3. 🔵 Existing Revenue chart (Sales Orders · Invoices · Production) gets an All / Bedframe / Sofa toggle; Accessory counts in All only.
+4. 🔵 The existing Labor Cost "category revenue" (minutes-weighted slices that sum to the order value) is a different measure and stays unchanged.
+5. 🔵 Phone dashboard (/m Home): the same Bedframe / Sofa toggle on its Revenue chart and a Department Revenue section, laid out for a phone.
+6. 🔵 Not yet checked against real data (staging or prod) — needs a sign-in; to do after deploy.
+
+## 2026-10-14 — 🔵 Second void of a purchase invoice answers 500 (branch `fix/pi-revoid-legno-main` → `main`, BUG-2026-10-14-286)
+
+1. ✅ Fixed and verified on staging first (#852): void, unvoid and void again all pass there.
+2. 🔵 Same `buildPiDeltaLegs` fix to `main`, without staging's PO-direct auto receipt.
+3. ⬜ After deploy: void, unvoid, void a test invoice on prod and check it answers 200 each time.
+
+
+
+
+## 2026-10-14 — 🔵 CN print: CO No. and fabric missing on a CN printed right after it was created (IT Hub HK-0093, Siti「COLOUR MISSING AND ALSO PLS CHECK SUPPOSELY HAVE NUMBER CO BUT DIDNT SHOW IT AT STICKER AND CO NOTE」→ Samuel「开始」)(branch `fix/hk0093-cn-print-co-fabric` → `main`, BUG-2026-10-14-285)
+
+1. 🔵 `GET /api/consignment-notes/:id/print-extras` returns each line's PO `companyCOId` + `fabricCode` (it already
+   joins `production_orders`), and `buildCnPdfData` prefers them over `poToCoNoMap` / `poToFabricMap`, which come from
+   the stale-while-revalidate `/ready-planning` snapshot and miss a CN created moments earlier.
+2. 🔵 Regression test + BUG-HISTORY entry + BUG-CLASSES C29 row.
+3. 🟡 Sticker missing the CO number: Siti printed it from Foam Bonding → Print Packing Stickers. Previewed on prod
+   (read-only, 2026-10-14): Our SO = `CO-2610-010` / `-04/-05/-06` and Colour = `HG1313-01` are on it; PO No / Cust Ref /
+   Cust SO are `—`. 2990's own CO number `2990-PCO-2610-019` (`consignment_orders.customer_co_id`) is on neither the
+   sticker nor the CN (`production_orders.customer_po_id` is blank on all 166 CO-origin POs). Asked Siti which number she
+   meant.
+   → Siti「ouh ya can put 2990 own CO number on sticker . consignment note also want Po No」→ Samuel: same PR, "PO No" line.
+   🔵 Production: Siti「ya for all production also need 2990's co number」→ `attachCustomerSO` sets `customerPOId` on a
+   CO-origin PO from `consignment_orders.customerCOId` (blank on all 166 today), so Customer PO on every dept sheet /
+   Overview / filter / search and "PO No" on the packing + job-card stickers all show it. SO-origin POs unchanged.
+   🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the first column is Order,
+   stacked `Our CO: <our CO>` / `PO: <2990's CO no.>` like the DO's Order column (Siti「can put like this ? our CO and
+   their own PO」with a DO screenshot).
+4. ✅ "Colour": Siti「for colour HG1313-01 already okey, no need name」. No change.
+
+## 2026-10-14 — ✅ Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(#851 a2770f0c, prod-verified)
+
+1. ✅ Only the Overview from PR #849 — that PR stays open and unmerged with the rest of the finance UI refresh while the owner reworks it in Claude Design. Brought over: `overview-tab.tsx`, `overview-trend.ts`, `GET /accounting/overview-trend`, and the three small helpers the Overview uses (`finance-money.ts`, `amount.tsx`, `finance-names.ts`). The page header, money format, reports, payment pages and phone layout on `main` are untouched.
+2. ✅ Prod check (read-only, in the owner's session): the Overview loads at 3 and 6 months and a hover explains its bar. For every month May–Oct, its net sales, cost of goods sold, raw materials, direct labour, gross profit and net profit equal the P&L statement's rows; gross profit = net sales − cost of goods sold, net profit = gross profit + other income − expenses, and the materials add up to raw materials used. May's raw-material share is far above the other months because May is the month the books opened — the statement shows the same.
+
+## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
+
+1. ✅ For the running month (Malaysia time) only: an operating expense, salaries & contribution or factory overhead
+   account with an amount in each of the last three months and nothing recorded so far this month shows last month's
+   amount. As soon as anything is recorded on it this month the real figure replaces the estimate; months that have
+   ended are never estimated. Report layer only — nothing is posted (trial balance / balance sheet / cash flow
+   unchanged). Read from the same one-month ledger windows the statement shows for those months, before any estimate.
+2. ✅ One place for every P&L consumer: `computePnlWindow` adds the estimates to a copy of the ledger window when the
+   window reaches the running month, and tags each line (`estSen`, `estFrom`). The statement rows, the Monthly P&L
+   matrix (`estValues` per column), the P&L drill (an `estimate` row so it still adds up) and the dashboard slices
+   (`estimated`; payload version moves up) carry them.
+3. ✅ The pages colour an estimate: amber text on a pale amber row (Monthly P&L: the cell), italic, an "est." tag,
+   a hover naming the month it came from, and a note under the table; the dashboard's Income Statement card adds an
+   "incl. estimates" row.
+4. ✅ Prod (2026-10-13, read-only): the running month gained exactly the estimate lines predicted from the three
+   months before it (operating expenses, salaries & contribution and factory overhead), its net profit moved by exactly
+   their total, and every closed month reads as before to the sen (statement, Monthly P&L, dashboard). The Monthly P&L
+   marks only the running month and Accumulated; the drill on an estimated line shows the estimate row and ties; the
+   dashboard carries the same total; the statement shows the amber rows with the note. The running month's statement
+   loads about half a second slower.
+
+## 2026-10-13 — ✅ Balance Sheet lines in account-code order (owner「排序按科目编号，做」)(#843 8d546ce0, prod-verified)
+
+1. ✅ Within each section the Balance Sheet listed accounts in the order the ledger read first met them (no ORDER BY,
+   no sort), with the stock lines appended in stock-map order. `/pl` now sorts the sheet's account lines by code;
+   Current Year Earnings (unclosed) stays last in Equity.
+2. ✅ Prod (2026-10-13, read-only): a closed month and the running month come back in code order within every
+   section, Current Year Earnings last in Equity; the closed month's totals are unchanged and both sheets balance.
+
+## 2026-10-13 — ✅ Balance Sheet stock = the P&L's closing stock (owner「balance sheet 就让他的 closing stock 和 P&L closing stock 一样」→「做」)(#840 973232c7, prod-verified)
+
+1. ✅ The Balance Sheet's stock accounts (the stock map's 330-x homes: each material group, WIP, FG) show the same
+   closing stock the P&L uses for that month-end (the Stock Summary figure, including a blank month's production-order
+   FG / WIP). Report layer only — nothing is posted to the ledger. The ledger's own balance on those accounts (none
+   today) is replaced, and the difference goes to Current Year Earnings (unclosed), so the sheet still balances and a
+   year-end stock entry by the accountant would not be counted twice. Months before the opening month get nothing.
+2. ✅ The same rule in the dashboard's balance-sheet figures (assets / current assets / inventory) and in the finance
+   series (assets and equity per month); the dashboard payload version moves up.
+3. ✅ The Balance Sheet drill on a stock line shows the Stock Summary movement per material group (b/f = last
+   month-end's closing stock, c/f = this month-end's).
+4. ✅ The Stock Summary's old "Post closing stock to GL" button is hidden (not needed; its posting rule would mis-date
+   reversals). The endpoint is left in place.
+5. ✅ Prod (2026-10-13, read-only): for every closed month since the opening month the sheet's stock lines equal the
+   Stock Summary's closing to the sen, per account and in total; total assets and Current Year Earnings each moved by
+   exactly that amount against a baseline taken before the deploy; every sheet still balances; the P&L's net profit for
+   those months is unchanged to the sen. The running month carries the P&L's live closing (no raw-material count yet).
+   The drill on a stock line shows last month-end → this month-end per group (the opening month starts from zero). The
+   dashboard's inventory and assets match the sheet. The Stock Summary no longer shows the post button.
+
+## 2026-10-13 — 🔵 On-time delivery KPI: urgent orders scored apart, full score tables on the card (branch `feat/kpi-urgent-orders-scored-apart` → `staging`)
+
+Owner ask, with the points table Violet sent on 2026-10-05. Owner answers 2026-10-13: the urgent % is the share of urgent orders delivered on time or early; urgent orders are taken out of the late % and early % and get their own points, added to the score (capped at 100).
+
+1. 🔵 Urgent orders (promised within the urgent days of the order date) leave the late % and early %. Their on-time-or-early % earns 0% → 5, +5 per 10%, 90% → 50, 100% → 60. Replaces the "late urgent order counts as X% of a late one" rule.
+2. 🔵 The calculation panel lists every value: late %, early % and urgent % to points, built from the saved rules.
+3. 🔵 The card summary line always shows the urgent orders (how many, how many on time or early).
+6. 🔵 Follow-up ask (branch `feat/kpi-urgent-points-editable`): the urgent points are set in the Library like the late and early numbers: points at 0%, points per step, the step %, points at 100% (defaults 5, 5, 10%, 60).
+5. 🔵 Follow-up ask (branch `feat/kpi-delivery-score-breakdown`): "Your result" on the delivery card lists each part on its own line: orders, %, the sum and the points (late, early, urgent).
+3b. 🔵 The card's order list: Late / Early / On time count only the non-urgent orders (so they match the card), and a new Urgent filter lists the urgent ones. The result line shows late + early + urgent points.
+4. ⬜ Staging check after deploy.
+
 ## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
@@ -945,6 +1173,14 @@ Reporter ask (Violet, DEV-36): pick a department when assigning the Production T
 4. 🔵 Staging check 2026-10-07, September 2026 data, 11 of 11 passed: several departments pooled (Fabric Cutting + Fabric Sewing 107.3% from 108,817 min on 1,690 h), Overall unchanged (91%), worker route gone (404), Department efficiency equal to the dashboard for Upholstery (66.1%), Framing (62.1%), Upholstery + Framing (64.0%) and the whole floor (93.3%, the Overall Efficiency tile), bad scopes refused, test assignments removed. Part 1 was checked 2026-10-06 (10 of 10).
 5. Notes, not blocking: the card names departments by code (`FAB_CUT + FAB_SEW`); the Efficiency tab's department ledger "Factory total" (90.7% in September) only sums workers with a department, so it reads lower than the Overall Efficiency tile (93.3%) that the whole-floor KPI follows; phones are sent to `/m`, which has no KPI page (as before).
 6. ⬜ After deploy: Super Admin check on prod (Library pickers, one scoped assignment, card figure against the dashboard), then remove the test assignment.
+## 2026-10-07 — 🔵 BUG-06: Transfer / Convert duplicate guard to main (branch `fix/bug06-do-duplicate-guard-main` → `main`, BUG-2026-09-30-223)
+
+Ask: BUG-06 was finished and tested on staging (2026-09-30, #593); bring it to production. PR #448 (all of T-006) was closed for conflicts, so only the BUG-06 pieces come over, as patches onto `main`.
+1. 🔵 Server: DO create guards every production order in `productionOrderIds` and `items`; an SO-linked create with none is refused.
+2. 🔵 Sales "Transfer to Delivery Order" sends the SO's ready production orders.
+3. 🔵 Consignment "Transfer to Delivery Order" (same refused shape, could never succeed) becomes "Create Consignment Note".
+4. 🔵 Tests: the two BUG-06 files pass on main. Not brought over: the T-006 R2 to R10 work and the client Idempotency-Key (staging only).
+5. ⬜ After deploy: check on prod that a second transfer of the same SO is refused.
 
 ## 2026-10-06 — ⬜ DEV-37: every staff login can open their own KPI card (branch `feat/dev37-kpi-office-self-view` → `staging`)
 
@@ -2183,6 +2419,91 @@ Ask (DEV-20, requester VIOLET): the RM UOM should be selectable from options tha
 5. 🔵 Items 1-4 MERGED to `staging` as PR #536 (labelled `staging`; the conflict was CODEBASE-MAP restamp lines only). Items 6-7 follow on branch `feat/rm-whole-uoms` → `staging`.
 6. 🔵 Edit RM dialog Stock Qty used `parseInt`, so 12.5 MTR saved as 12. Now `Number`.
 7. 🔵 Whole-number units: RM Settings gets a global list of units that cannot be fractional (default BOX / CTN / SET / PAIR; PCS left out because foam sheets in PCS consume fractionally). Enforced on the Inventory page ONLY (owner correction: not PO, GRN or Stock Adjustments): the RM balance typed on Add RM / Edit RM, checked by `raw-materials.ts` POST and PUT (PUT only when the number changes). NOT on production consumption. Owner answered 2026-09-29: no per-category rule, users pick the unit per material.
+
+---
+
+## 2026-09-21 — ✅ PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (shipped to prod 2026-10-16, verified live)
+
+Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
+`T-012-Hookka-mail-center - wei siang.pdf` (not in repo). Sheet row DEV-04 (Samuel). All 16
+requirements built, merged to `staging` (#655, #895, #896) and ported to `main` (#898).
+
+**Done (all 16), eight commits on `feat/t012-mail-center`:** R1-R4 `8a6e5f9d`, R5/R6/R11
+`210caab7`, R7/R8/R15 `7b17e7aa`, R9/R10 `b0357db5`, R12/R13 `eb40d744`, R14 `457b48b5`,
+R16 `4095bef8`. New files: `src/api/lib/mail-threading.ts` (pure recipients + RFC headers),
+`mail-provision.ts`, `mail-acks.ts`, `src/pages/mail-center/recipients-input.tsx`,
+`recipient-picker.tsx`, `ack-request-row.tsx`, `visibility-panel.tsx`,
+`migrations-postgres/0233_mail_reads_acks.sql` (mirrors the runtime DDL). 62 new tests across
+`tests/mail-threading`, `mail-send-path`, `mail-provision`, `mail-reads-acks`,
+`email-outbox-attachments`, `mobile-mail-center`, plus additions to `mail-center-rbac` and
+`org-people`. `npm test` 4672 → all pass except `tests/pcb-not-fabricated.test.mjs` (13), which
+fails on ANY checkout whose path has a space (`Internal%20Project` — it builds paths from
+`import.meta.url` without `fileURLToPath`; passes on a space-free worktree of `origin/main`) —
+pre-existing, not touched. `build:strict` clean. `docs/API.md` regenerated (140 mounts, 962
+handlers). CODEBASE-MAP restamped.
+
+**Decisions taken from the PRD text (owner to confirm at review):**
+- R12 → super admins follow `mail_user_scope` like everyone. **On deploy the seven prod super
+  admins drop to `personal` until set to `company` in the Mailbox tab** (UNMEASURED which of
+  them rely on company-wide reading). No migration seeds them — the PRD said the other system's
+  owner set the opposite deliberately.
+- R13 → `mail-sync/` + `.github/workflows/mail-sync.yml` deleted (the Hostinger IMAP poller;
+  MX is on Cloudflare since 2026-08-19). The scheduled run keeps firing from `main` until this
+  merges.
+- Acknowledgement is asked of STAFF recipients only (an `email_addresses` row); the send is
+  refused when none is on the mail. Chase = a reminder through the outbox, once per 24 h.
+- Brevo rewrites `Message-ID`; the inbound resolver matches ours OR the provider's id.
+
+**Not verified live:** no local Supabase / Brevo, so the send path, the ack chase and the
+Storage upload were not exercised end-to-end — verify on staging: compose with Cc + Bcc to a
+colleague, reply-all from the colleague's box, "Read by", request + confirm an acknowledgement,
+Auto-sent attachment download for a post-deploy notice.
+
+**VERIFIED LIVE ON PRODUCTION 2026-10-16** (#898 deployed 04:56 UTC). Measured on
+`erp.hookka.com`, not inferred:
+
+- **Schema self-apply on the prod database: 539 ms, no error.** `mail_thread_reads`,
+  `mail_acknowledgements` and the three `email_messages` columns were created through
+  canary-898 (which talks to prod — `docs/CANARY-DEPLOY.md`) before merge, then used after.
+- **A real send carried several recipients, a copy and a blind copy correctly.** From
+  `kiansin@hookka.com` through Brevo to a Gmail and three `+` tags of it. On a **To**
+  recipient's delivered copy: `To: kiansin1998@gmail.com, kiansin1998+to2@gmail.com`, the Cc
+  present, and **no `Bcc` line anywhere** — confirmed in Gmail's "Show original" raw text and
+  corroborated by the DKIM and ARC `h=` lists, which enumerate `to` and `cc` and omit `bcc`.
+  The **Bcc** recipient's own copy showed its own `bcc:` line, which is correct behaviour.
+  SPF, DKIM (`hookka.com`) and DMARC all PASS.
+- **Brevo REWRITES our `Message-ID`.** Sent `<...@hookka.com>`, delivered as
+  `<35b74908-...@smtp-relay.sendinblue.com>`. This is exactly why an outbound row stores both
+  `message_id` (ours) and `provider_message_id` (theirs), and why `ingestInboundEmail` resolves
+  a thread by EITHER: a customer's reply quotes the provider's id. Without the dual match, PRD
+  finding 5 ("customer replies start new threads") would have reproduced. Now measured.
+- Per-person read ("Read by 1 of 4"), the org-chart picker, the Cc/Bcc compose UI, the
+  visibility panel, server-side paging and the four pre-send validation refusals were exercised
+  on staging and seen again on prod.
+
+**Production configuration applied 2026-10-16**, per the owner's ruling (*"Only management can
+see support and whole company"*): `mail_user_scope` = `company` for Lim Wei Siang, Nico Choong
+and Violet — **written BEFORE the merge**, so `support@hookka.com` and `hr@hookka.com` were
+never unreadable for a moment. Everyone else stays `personal`. IT accounts (Kiansin, Laphii,
+Zaim, yh, zulaikha) were deliberately NOT given `company`: R12's whole point is that visibility
+follows the job, not the role.
+
+**Open — operational, not code:**
+
+1. **`support@hookka.com` and `hr@hookka.com` have no assigned owner** (`assigned_user_id`
+   NULL) and the `email_address_access` matrix is empty (measured on prod). Management can read
+   them via `company`, but nobody is named responsible for either. Owner to decide.
+2. **`kiansin@hookka.com` has an `email_addresses` row but no mail ROUTE.** Mail sent to it
+   never reached the ERP after an hour. The row records who owns a mailbox; a Cloudflare Email
+   Routing rule is what makes it receive. The same will apply to every address R5 provisions for
+   a new starter — worth checking whether the catch-all actually covers them.
+3. Staging carries a `kiansin@hookka.com` row and the same three `company` rows, added while
+   testing. Harmless; drop them if staging is re-cloned from prod.
+
+**Docs note:** this entry's heading had briefly overwritten the 2026-09-25
+`/dashboard-experimental` entry below, from a cherry-pick conflict resolved the wrong way on
+`feat/t012-mail-center-main`. Restored here; that entry's items 1-6 and its `npm test 4881`
+line belong to it, not to T-012.
 
 ---
 

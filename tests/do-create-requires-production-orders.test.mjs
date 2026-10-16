@@ -37,6 +37,8 @@ const PO = {
   quantity: 1,
 };
 const PO2 = { ...PO, id: "po-2", poNo: "PO-2" };
+const PO_OTHER_ORG = { ...PO, id: "po-x", poNo: "PO-X", orgId: "org-2" };
+const orgBinds = [];
 // po-1 already sits on a live DO: delivering it again is the duplicate.
 const LIVE_DO_ITEM = { productionOrderId: "po-1", deliveryOrderId: "do-old", doNo: "DO-OLD", status: "DRAFT" };
 
@@ -53,7 +55,14 @@ function fakeCtx() {
     },
     async all() {
       log.push(sql);
-      if (/FROM production_orders WHERE id IN/.test(sql)) return { results: [PO, PO2].filter((p) => args.includes(p.id)) };
+      if (/FROM production_orders WHERE id IN/.test(sql)) {
+        orgBinds.push(/AND orgId = \?/.test(sql) ? args[args.length - 1] : null);
+        // Honour the org predicate only when the SQL carries it, so an
+        // unscoped query leaks po-x (that is what the regression asserts).
+        const scoped = /AND orgId = \?/.test(sql);
+        const org = args[args.length - 1];
+        return { results: [PO, PO2, PO_OTHER_ORG].filter((p) => args.includes(p.id) && (!scoped || (p.orgId ?? "org-1") === org)) };
+      }
       if (/delivery_order_items/.test(sql) && /production_?[oO]rder_?[iI]d/.test(sql)) return { results: [LIVE_DO_ITEM].filter((r) => args.includes(r.productionOrderId)) };
       return { results: [] };
     },
@@ -125,4 +134,43 @@ test("items naming an already-delivered PO are refused with no sales order and n
   assert.equal(wroteDo(log), false, "po-1 is already on DO-OLD");
   assert.equal(out.ok, false);
   assert.equal(out.status, 409);
+});
+
+test("production order lookup is scoped to the caller's org: another org's PO id is not found", async () => {
+  const { c, log } = fakeCtx();
+  orgBinds.length = 0;
+  const out = await createDeliveryOrderForPOs(c, {
+    productionOrderIds: ["po-x"],
+    items: [{ productionOrderId: "po-x", productCode: "BED-Q", quantity: 1 }],
+  });
+  assert.deepEqual(orgBinds, ["org-1"], "orgId bound to the production_orders query");
+  assert.equal(out.ok, false);
+  assert.equal(out.status, 400);
+  assert.equal(wroteDo(log), false);
+});
+
+test("a line with no productionOrderId is refused when productionOrderIds is given", async () => {
+  const { c, log } = fakeCtx();
+  const out = await createDeliveryOrderForPOs(c, {
+    productionOrderIds: ["po-2"],
+    items: [
+      { productionOrderId: "po-2", productCode: "BED-Q", quantity: 1 },
+      { productCode: "EXTRA", productName: "Smuggled line", quantity: 5 },
+    ],
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.status, 400);
+  assert.match(String(out.body.error), /productionOrderId/);
+  assert.equal(wroteDo(log), false);
+});
+
+test("a line naming a PO outside the selected set is refused", async () => {
+  const { c, log } = fakeCtx();
+  const out = await createDeliveryOrderForPOs(c, {
+    productionOrderIds: ["po-2"],
+    items: [{ productionOrderId: "po-unknown", productCode: "BED-Q", quantity: 1 }],
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.status, 400);
+  assert.equal(wroteDo(log), false);
 });

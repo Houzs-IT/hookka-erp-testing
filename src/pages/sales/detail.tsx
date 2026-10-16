@@ -20,6 +20,7 @@ import {
 // spawn 0+ Service Orders for the rework/swap/repair flow.
 import { CreateServiceCaseModal } from "@/pages/service-cases";
 import { HubEditModal } from "@/components/orders/HubEditModal";
+import { CustomerEditModal } from "@/components/orders/CustomerEditModal";
 // generateSOPdf is dynamic-imported at the click handler so the 1MB jspdf
 // vendor chunk only ships when the user actually prints.
 import { DocumentChainMap } from "@/components/ui/document-chain-map";
@@ -775,6 +776,22 @@ export default function SalesOrderDetailPage() {
   const shipmentLockReason = shippedDo
     ? `Hub locked: DO ${shippedDo.doNo} already ${shippedDo.status}.`
     : "";
+
+  // Customer pencil — same window as the hub, and also closed by an issued
+  // invoice. Must match PATCH /:id/customer.
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const issuedInvoice = useMemo(
+    () =>
+      (orderResp?.success ? orderResp.linkedInvoices ?? [] : []).find(
+        (i) => !["DRAFT", "CANCELLED"].includes((i.status || "").toUpperCase()),
+      ),
+    [orderResp],
+  );
+  const customerLockReason = shippedDo
+    ? `Customer locked: DO ${shippedDo.doNo} already ${shippedDo.status}.`
+    : issuedInvoice
+      ? `Customer locked: invoice ${issuedInvoice.invoiceNo} already ${issuedInvoice.status}.`
+      : "";
 
   const submitOverride = useCallback(async () => {
     if (!id) return;
@@ -1621,6 +1638,33 @@ export default function SalesOrderDetailPage() {
         />
       )}
 
+      <CustomerEditModal
+        open={customerModalOpen}
+        endpoint={`/api/sales-orders/${order.id}/customer`}
+        currentCustomerId={order.customerId}
+        onClose={() => setCustomerModalOpen(false)}
+        onSaved={(newCustomerName, newHubName, cascade) => {
+          setCustomerModalOpen(false);
+          const parts: string[] = [];
+          if (cascade) {
+            if (cascade.productionOrdersUpdated > 0) {
+              parts.push(`${cascade.productionOrdersUpdated} production order${cascade.productionOrdersUpdated === 1 ? "" : "s"}`);
+            }
+            if (cascade.deliveryOrdersUpdated > 0) {
+              parts.push(`${cascade.deliveryOrdersUpdated} draft DO${cascade.deliveryOrdersUpdated === 1 ? "" : "s"}`);
+            }
+            if (cascade.invoicesUpdated > 0) {
+              parts.push(`${cascade.invoicesUpdated} draft invoice${cascade.invoicesUpdated === 1 ? "" : "s"}`);
+            }
+          }
+          let msg = `Customer changed to ${newCustomerName}${newHubName ? ` (${newHubName})` : ""}.`;
+          if (parts.length) msg += ` Also updated: ${parts.join(", ")}.`;
+          toast.success(msg);
+          invalidateCachePrefix("/api/sales-orders");
+          fetchOrder();
+        }}
+      />
+
       <HubEditModal
         open={hubModalOpen}
         endpoint={`/api/sales-orders/${order.id}/hub`}
@@ -1689,7 +1733,24 @@ export default function SalesOrderDetailPage() {
           <CardHeader className="pb-3"><CardTitle>Order Information</CardTitle></CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm max-[360px]:grid-cols-1">
-              <div><p className="text-xs text-[#9CA3AF]">Customer</p><p className="font-medium">{order.customerName}</p></div>
+              <div>
+                <p className="text-xs text-[#9CA3AF]">Customer</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{order.customerName}</p>
+                  <button
+                    type="button"
+                    onClick={() => setCustomerModalOpen(true)}
+                    disabled={!!customerLockReason}
+                    title={customerLockReason || "Change customer"}
+                    className="text-[#9CA3AF] hover:text-[#6B5C32] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <p className="text-[10px] text-[#9CA3AF] mt-1">
+                  {customerLockReason || "Editable until goods leave the warehouse or an invoice is issued."}
+                </p>
+              </div>
               <div>
                 <p className="text-xs text-[#9CA3AF]">Delivery Hub</p>
                 <div className="flex items-center gap-2">

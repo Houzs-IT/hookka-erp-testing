@@ -116,3 +116,38 @@ test("route wiring: create / edit / import all enforce the rules", () => {
   // A blank UOM cell keeps the existing unit instead of resetting it to PCS.
   assert.match(bulk, /pickUnit\(r, prior\?\.baseUOM \|\| "PCS"\)/);
 });
+
+test("HK-0037 propagation: PO line unit comes from the RM baseUOM (behaviour)", () => {
+  const rows = [
+    { itemCode: "FAB-01", baseUOM: "MTR" },
+    { itemCode: "FAB-02", baseUOM: "ROLL" },
+    { itemCode: "FAB-02", baseUOM: "MTR" }, // intentional duplicate, different unit
+    { itemCode: "SCR-1", baseUOM: " " },
+  ];
+  const m = mv.rmUnitMap(rows);
+  assert.equal(mv.poLineUnit(m, "FAB-01", undefined), "MTR", "RM line, no client unit: not the 'pcs' default");
+  assert.equal(mv.poLineUnit(m, " fab-01 ", "pcs"), "MTR", "code matched ignoring case/space");
+  assert.equal(mv.poLineUnit(m, "FAB-01", "ROLL"), "ROLL", "a unit chosen on purpose is kept, no conversion");
+  assert.equal(mv.poLineUnit(m, "FAB-02", "ROLL"), "ROLL", "ambiguous duplicate: keep the client unit");
+  assert.equal(mv.poLineUnit(m, "FAB-02", undefined), "pcs", "ambiguous and no client unit: default");
+  assert.equal(mv.poLineUnit(m, "", "SET"), "SET", "non-RM line keeps its unit");
+  assert.equal(mv.poLineUnit(m, "NOPE", undefined), "pcs", "unknown code: old default");
+  assert.equal(mv.poLineUnit(m, "SCR-1", "BOX"), "BOX", "RM with blank baseUOM: client unit");
+});
+
+test("HK-0037 propagation: create rejects a unit outside the list; adjustments no longer hardcode ea", () => {
+  const units = mv.rmUnitsFrom(null);
+  assert.equal(mv.isUomAllowed("XYZ", units), false);
+  assert.equal(mv.isUomAllowed("5", units), false);
+  const inv = read("src/api/routes/inventory.ts");
+  const post = inv.slice(inv.indexOf('app.post("/raw-materials"'));
+  assert.ok(post.indexOf("isUomAllowed(uom, units)") > 0);
+  assert.ok(post.indexOf("isUomAllowed(uom, units)") < post.indexOf("INSERT INTO raw_materials"));
+  assert.doesNotMatch(read("src/pages/inventory/adjustments.tsx"), /\|\| "ea"/);
+});
+
+test("HK-0037 review: a stored (part-)received PO line keeps its unit even if the payload says receivedQty 0", () => {
+  const po = read("src/api/routes/purchase-orders.ts");
+  assert.match(po, /SELECT id, material_code, unit, receivedQty FROM purchase_order_items WHERE purchaseOrderId = \?/);
+  assert.match(po, /Number\(prior\?\.receivedQty\) > 0 \|\| Number\(item\.receivedQty\) > 0/);
+});

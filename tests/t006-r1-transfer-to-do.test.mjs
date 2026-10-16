@@ -39,3 +39,9 @@ test('the create button is disabled when there is nothing ready to transfer', ()
 
 // The server-side refusal is covered by behaviour, not source text, in
 // tests/do-create-requires-production-orders.test.mjs.
+
+test('a slow response for an earlier SO cannot overwrite the latest Transfer click', () => {
+  const src = readFileSync('src/pages/sales/index.tsx', 'utf8');
+  assert.match(src, /const seq = \+\+transferReqSeq\.current/);
+  assert.match(src, /if \(seq !== transferReqSeq\.current\) return;/);
+});

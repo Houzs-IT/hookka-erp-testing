@@ -15,8 +15,7 @@ import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/dat
 import { MoneyInput } from "@/components/ui/money-input";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
-import { formatCurrency, formatDateDMY, formatRM, roundSen } from "@/lib/utils";
-import { todayYmdMYForReads } from "@/lib/staging-today";
+import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
 import { monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
@@ -39,11 +38,7 @@ import { COA_TYPE_COLOR, SUCCESS, DANGER, INFO, ACCENT_PLUM } from "@/lib/design
 import {
   BookOpen,
   TrendingUp,
-  TrendingDown,
-  DollarSign,
   FileText,
-  ArrowUpRight,
-  ArrowDownRight,
   Plus,
   ChevronRight,
   ChevronDown as ChevronDownIcon,
@@ -93,6 +88,7 @@ import {
   usePartyAliases,
   teachPartyAlias,
 } from "@/lib/party-alias-client";
+import { OverviewTab } from "./overview-tab";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -190,7 +186,7 @@ function buildPvVoucher(
   const isTransfer = pv.pvKind === "TRANSFER";
   const billNo = (pv.billNo ?? pv.bill_no) ?? "";
   const billDate = String((pv.billDate ?? pv.bill_date) ?? "").slice(0, 10);
-  const billText = billNo ? `Bill no. ${billNo}${/^d{4}-d{2}-d{2}$/.test(billDate) ? ` dated ${formatDateDMY(billDate)}` : ""}` : "";
+  const billText = billNo ? `Bill no. ${billNo}${/^\d{4}-\d{2}-\d{2}$/.test(billDate) ? ` dated ${formatDateDMY(billDate)}` : ""}` : "";
   return {
     // A voided voucher must never print as a clean/valid document.
     title: pv.status === "VOID" ? "PAYMENT VOUCHER — VOID" : "PAYMENT VOUCHER",
@@ -631,7 +627,7 @@ export default function AccountingPage() {
       ) : (
         <>
           {tab === "overview" && (
-            <OverviewTab journals={journals} arData={arData} apData={apData} />
+            <OverviewTab arData={arData} apData={apData} />
           )}
           {/* One P&L entry, three views (owner 2026-09-22 sidebar slim-down);
               the old deep links still land on their view. */}
@@ -725,29 +721,6 @@ function PlHubTab({ initialView }: { initialView: "statement" | "monthly" | "cos
     </div>
   );
 }
-
-// A figure with no posted account behind it is UNKNOWN, not zero — it renders
-// as this dash, and any total derived from it inherits the dash.
-const NO_FIGURE = "—";
-
-// The ledger-truth P&L slice the Overview KPI cards read (GET /accounting/pl).
-// Same shape `src/pages/reports.tsx` consumes for the same three figures.
-type OverviewPlEntry = {
-  accountCode: string;
-  accountName: string;
-  category: "REVENUE" | "COGS" | "OPERATING_EXPENSE";
-  amount: number;
-};
-type OverviewPl = {
-  entries: OverviewPlEntry[];
-  totals: {
-    revenue: number;
-    cogs: number;
-    grossProfit: number;
-    operatingExpenses: number;
-    netProfit: number;
-  };
-};
 
 // =============== TAB 1: OVERVIEW ===============
 
@@ -2720,260 +2693,6 @@ function OpeningStockTab() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function OverviewTab({
-  journals,
-  arData,
-  apData,
-}: {
-  journals: JournalEntry[];
-  arData: ARAgingEntry[];
-  apData: APAgingEntry[];
-}) {
-  // BUG-2026-08-13-091 — these three cards used to be:
-  //   revenue  = Σ chart_of_accounts.balanceSen where type=REVENUE && parentCode
-  //   expenses = Σ  …                      where type=EXPENSE && parentCode
-  //   netProfit = revenue − expenses
-  // Three separate untruths in six lines:
-  //   (a) `balance` is `chart_of_accounts.balanceSen`, and the ONLY writers of
-  //       that column in the whole API are the manual-JV paths — accounting.ts
-  //       PUT /journals/:id (POSTED at :1378, REVERSED at :1447) and
-  //       POST /journals/:id/lifecycle (:1640). Every real posting — sales
-  //       invoices, purchase invoices, receipts, supplier payments, DOs,
-  //       credit/debit notes, trade finance — writes `ledger_journal_entries`
-  //       and never touches balanceSen. So the cards reported the net of hand-
-  //       keyed journals and called it the company's revenue.
-  //   (b) "(MTD)" was fabricated: nothing in this component filtered by date.
-  //       balanceSen is a running since-inception balance.
-  //   (c) EXPENSE was summed but the COST type was not, though the ledger
-  //       treats them alike (accounting.ts:1370-1375) — so Net Profit was
-  //       overstated by the entire cost-of-sales block.
-  // The fix is the one already blessed for these exact three figures on
-  // /reports (BUG-2026-08-13-009): read GET /accounting/pl, which nets the
-  // posted ledger per account and classifies by the account's own COA type,
-  // and publish "—" — never RM 0.00 — for a category no account has posted to.
-  const ym = todayYmdMYForReads().slice(0, 7); // staging-only today override (reads only)
-  const { data: plResp } = useCachedJson<{ success?: boolean; data?: OverviewPl }>(
-    `/api/accounting/pl?period=${ym}`,
-  );
-  const pl = plResp?.success ? plResp.data : undefined;
-  const plEntries = pl?.entries ?? [];
-  const nAccts = (cat: OverviewPlEntry["category"]) =>
-    plEntries.filter((e) => e.category === cat).length;
-  const revenueAccts = nAccts("REVENUE");
-  const cogsAccts = nAccts("COGS");
-  const opexAccts = nAccts("OPERATING_EXPENSE");
-  // A figure is published only when an account behind it carries a posting;
-  // a derived line is only as sourced as the weakest line it derives from.
-  const sourced = (n: number, v: number | undefined) =>
-    n > 0 && v !== undefined ? formatCurrency(roundSen(v)) : NO_FIGURE;
-  const derived = (deps: number[], v: number | undefined) =>
-    deps.every((n) => n > 0) && v !== undefined ? formatCurrency(roundSen(v)) : NO_FIGURE;
-  // Cost & Expenses is COGS + OpEx so that the three cards tie by the server's
-  // own arithmetic (netProfit = revenue − cogs − opex); summing only one of
-  // them would leave Revenue − Expenses ≠ Net Profit on screen.
-  const costExpenseSen =
-    pl?.totals ? pl.totals.cogs + pl.totals.operatingExpenses : undefined;
-  const netProfitSen = pl?.totals?.netProfit;
-  const totalAR = arData.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
-  const totalAP = apData.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
-
-  // Aggregate aging buckets
-  const arBuckets = [
-    { period: "Current", amountSen: arData.reduce((s, a) => s + a.currentSen, 0) },
-    { period: "1 month", amountSen: arData.reduce((s, a) => s + a.days30Sen, 0) },
-    { period: "2 months", amountSen: arData.reduce((s, a) => s + a.days60Sen, 0) },
-    { period: "3 months", amountSen: arData.reduce((s, a) => s + a.days90Sen, 0) },
-    { period: "3+ months", amountSen: arData.reduce((s, a) => s + a.over90Sen, 0) },
-  ];
-  const apBuckets = [
-    { period: "Current", amountSen: apData.reduce((s, a) => s + a.currentSen, 0) },
-    { period: "1 month", amountSen: apData.reduce((s, a) => s + a.days30Sen, 0) },
-    { period: "2 months", amountSen: apData.reduce((s, a) => s + a.days60Sen, 0) },
-    { period: "3 months", amountSen: apData.reduce((s, a) => s + a.days90Sen, 0) },
-    { period: "3+ months", amountSen: apData.reduce((s, a) => s + a.over90Sen, 0) },
-  ];
-
-  const recentJournals = journals.slice(0, 5);
-
-  const recentColumns: Column<JournalEntry>[] = [
-    {
-      key: "entryNo",
-      label: "Entry No.",
-      render: (value, row) => <span className="doc-number font-medium">{row.entryNo}</span>,
-    },
-    {
-      key: "date",
-      label: "Date",
-      render: (value, row) => <span className="text-[#4B5563]">{formatDateDMY(row.date)}</span>,
-    },
-    {
-      key: "description",
-      label: "Description",
-      render: (value, row) => <span className="font-medium text-[#1F1D1B]">{row.description}</span>,
-    },
-    {
-      key: "totalDebit",
-      label: "Total Debit",
-      align: "right",
-      render: (value, row) => {
-        const total = row.lines.reduce((s, l) => s + l.debitSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
-      },
-    },
-    {
-      key: "status",
-      label: "Status",
-      render: (value, row) => (
-        <Badge variant="status" status={row.status}>
-          {row.status}
-        </Badge>
-      ),
-    },
-  ];
-
-  // BUG-2026-08-13-090: this menu was four `action: () => {}` no-ops — View,
-  // Edit, a separator and Refresh — on the Recent Journal Entries grid. "Edit"
-  // in particular advertised an action on a POSTED journal that does not exist.
-  // The grid now carries no context menu; the Journal Entries tab has the real
-  // one. Print is kept because it works from data already on screen.
-  const overviewContextMenu: ContextMenuItem[] = [
-    { label: "Print voucher", action: (r) => printVoucher(buildJvVoucher(r)) },
-  ];
-
-  return (
-    <>
-      {/* KPI Cards */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-5">
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">Revenue ({ym})</p>
-              <p className="text-xl font-bold text-[#4F7C3A]">{sourced(revenueAccts, pl?.totals?.revenue)}</p>
-            </div>
-            <ArrowUpRight className="h-5 w-5 text-[#4F7C3A]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">Cost &amp; Expenses ({ym})</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{derived([cogsAccts, opexAccts], costExpenseSen)}</p>
-            </div>
-            <ArrowDownRight className="h-5 w-5 text-[#9A3A2D]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">Net Profit ({ym})</p>
-              <p className={`text-xl font-bold ${(netProfitSen ?? 0) >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}`}>
-                {derived([revenueAccts, cogsAccts, opexAccts], netProfitSen)}
-              </p>
-            </div>
-            <DollarSign className="h-5 w-5 text-[#6B5C32]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">AR Outstanding</p>
-              <p className="text-xl font-bold text-[#9C6F1E]">{formatCurrency(totalAR)}</p>
-            </div>
-            <TrendingUp className="h-5 w-5 text-[#9C6F1E]" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-[#6B7280]">AP Outstanding</p>
-              <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(totalAP)}</p>
-            </div>
-            <TrendingDown className="h-5 w-5 text-[#3E6570]" />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* AR & AP Aging Summary */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
-        <AgingCard title="Accounts Receivable Aging" icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />} buckets={arBuckets} barColor="bg-[#6B5C32]" />
-        <AgingCard title="Accounts Payable Aging" icon={<TrendingDown className="h-5 w-5 text-[#6B5C32]" />} buckets={apBuckets} barColor="bg-[#9C6F1E]" />
-      </div>
-
-      {/* Recent Journal Entries */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-[#6B5C32]" />
-            Recent Journal Entries
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <DataGrid
-            columns={recentColumns}
-            data={recentJournals}
-            keyField="id"
-            virtualize
-            gridId="accounting-overview-journals"
-            contextMenuItems={overviewContextMenu}
-          />
-        </CardContent>
-      </Card>
-    </>
-  );
-}
-
-function AgingCard({
-  title,
-  icon,
-  buckets,
-  barColor,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  buckets: { period: string; amountSen: number }[];
-  barColor: string;
-}) {
-  const total = buckets.reduce((s, b) => s + b.amountSen, 0);
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2">
-          {icon}
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {buckets.map((item) => {
-            const pct = total > 0 ? Math.round((item.amountSen / total) * 100) : 0;
-            return (
-              <div key={item.period} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-[#4B5563]">{item.period}</span>
-                  <span className="font-medium text-[#1F1D1B]">{formatCurrency(item.amountSen)}</span>
-                </div>
-                <div className="h-2 bg-[#F0ECE9] rounded-full overflow-hidden">
-                  <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-            );
-          })}
-          <div className="flex items-center justify-between text-sm font-semibold pt-2 border-t border-[#E2DDD8]">
-            <span className="text-[#1F1D1B]">Total</span>
-            <span className="text-[#1F1D1B]">{formatCurrency(total)}</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -5476,6 +5195,11 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 // Phase 5.1/5.2 — manufacturing-account P&L statement (owner workbook
 // format): Overall / Sofa / Bedframe, L1–L4 expand, columns
 // ITEM | FY YTD | YTD % | <period> | %  (% = of net sales).
+// A running-month estimate for a recurring cost nothing has been recorded for
+// yet (owner 2026-10-13 「不是真实的数据…字体颜色和 row 的 background colour
+// 不一样」): warning amber text on a pale amber row, italic, with an "est." tag.
+const EST_ROW = "bg-[#FAEFCB] text-[#9C6F1E] italic";
+const estTitle = (fromYm?: string) => `Estimated from ${fromYm ? drillMonthLabel(fromYm) : "last month"} — nothing recorded yet this month`;
 type PnlStmtRow = {
   kind: "group" | "line" | "total" | "grandtotal" | "gap";
   depth: number;
@@ -5490,6 +5214,10 @@ type PnlStmtRow = {
   // The account a computed line (a group's PURCHASE, carriage, SST) opens on in
   // the inline drill — kept apart from accountCode, which also drives the drag.
   drillCode?: string;
+  // The part of the period figure that is a running-month estimate, and the
+  // month it was taken from.
+  estSen?: number;
+  estFrom?: string;
 };
 
 // Material data-quality warnings surfaced on the P&L (from the FIFO engine):
@@ -5906,7 +5634,7 @@ function MonthlyTrendTab() {
   );
 }
 
-type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[] };
+type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
 type PlMonthlyData = { fyLabel: string; line: string; anchor: string; columns: { key: string; label: string; accum: boolean }[]; rows: PlMatrixRow[] };
 
 function MonthlyPlTab() {
@@ -6038,12 +5766,17 @@ function MonthlyPlTab() {
                         </button>
                       ) : r.label}
                     </td>
-                    {r.values.map((v, j) => (
+                    {r.values.map((v, j) => {
+                      const est = (r.estValues?.[j] ?? 0) !== 0;
+                      return (
                       <React.Fragment key={j}>
-                        <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${v < 0 ? "text-[#9A3A2D]" : ""}`}>{fmt(v)}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-[#9CA3AF]">{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${est ? EST_ROW : v < 0 ? "text-[#9A3A2D]" : ""}`} title={est ? estTitle(r.estFrom) : undefined}>
+                          {fmt(v)}{est && <span className="ml-1 text-[9px] not-italic font-semibold">est.</span>}
+                        </td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${est ? EST_ROW : "text-[#9CA3AF]"}`}>{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
                       </React.Fragment>
-                    ))}
+                      );
+                    })}
                   </tr>
                   {drilled && drillCode && <PlMonthlyDrillRows account={drillCode} cols={cols} line={line} rowValues={r.values} depth={r.depth} />}
                   </Fragment>
@@ -6051,6 +5784,12 @@ function MonthlyPlTab() {
               })}
             </tbody>
           </table>
+        )}
+        {rows.some((r) => r.estValues) && (
+          <p className="text-[11px] text-[#9C6F1E] mt-3">
+            Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+            month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+          </p>
         )}
       </CardContent></Card>
     </div>
@@ -6113,7 +5852,7 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   for (const e of data.extra) {
     entries.push({
       key: `${e.kind}:${e.ym}`, ym: e.ym, italic: true, sen: creditNormal ? -e.sen : e.sen,
-      text: e.kind === "payroll" ? `Payroll ${drillMonthLabel(e.ym)} from the payslips, not posted to the ledger yet` : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`,
+      text: e.kind === "payroll" ? `Payroll ${drillMonthLabel(e.ym)} from the payslips, not posted to the ledger yet` : e.kind === "estimate" ? estTitle(e.fromYm) : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`,
       title: "",
     });
   }
@@ -6200,7 +5939,7 @@ type PlDrillData = {
   historical?: boolean;
   account?: { code: string; name: string; type: string | null };
   lines: PlDrillLine[];
-  extra: { kind: "payroll" | "opening_slice"; ym: string; sen: number }[];
+  extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
   debitSen: number; creditSen: number; netSen: number; tied?: boolean;
 };
 const plDrillAmt = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -6286,7 +6025,9 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
                     <td className="py-1 pr-3 whitespace-nowrap">{drillMonthLabel(e.ym)}</td>
                     <td className="py-1 pr-3" colSpan={4}>{e.kind === "payroll"
                       ? `Payroll ${drillMonthLabel(e.ym)} from the payslips, not posted to the ledger yet`
-                      : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`}</td>
+                      : e.kind === "estimate"
+                        ? estTitle(e.fromYm)
+                        : `Opening balance: this month's share (${drillMonthLabel(e.ym)})`}</td>
                     <td className={amtCls(sen)}>{amt(sen)}</td>
                   </tr>
                 );
@@ -6566,11 +6307,12 @@ function PLStatementTab() {
                   const drilled = canDrill && drillOpen.has(drillKey);
                   return (
                     <Fragment key={i}>
-                    <tr className={`hover:bg-[#F7F4EF] ${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
+                    <tr className={`${row.estSen ? EST_ROW : "hover:bg-[#F7F4EF]"} ${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""} ${drilled && !row.estSen ? "bg-[#F7F4EF]" : ""}`}
+                      title={row.estSen ? estTitle(row.estFrom) : undefined}
                       draggable={draggable}
                       onDragStart={draggable ? (e) => { setDragCode(row.accountCode!); setDragClass(classOfBucket(row.bucket)); e.dataTransfer.setData("text/plain", row.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
                       onDragEnd={draggable ? () => { setDragCode(null); setDragClass(null); setDragOverBucket(null); } : undefined}>
-                      <td className="py-0.5 text-[#4B5563]" style={pad}>
+                      <td className={`py-0.5 ${row.estSen ? "" : "text-[#4B5563]"}`} style={pad}>
                         {canDrill ? (
                           <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
                             onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
@@ -6578,6 +6320,7 @@ function PLStatementTab() {
                           </button>
                         ) : <>{draggable ? "⠿ " : ""}{row.label}</>}
                         {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
+                        {row.estSen ? <span className="ml-1.5 text-[9px] not-italic font-semibold">est.</span> : null}
                       </td>
                       <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
                       <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
@@ -6593,6 +6336,12 @@ function PLStatementTab() {
               </tbody>
             </table>
             </div>
+          )}
+          {rows.some((r) => r.estSen) && (
+            <p className="text-[11px] text-[#9C6F1E] mt-3">
+              Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+              month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+            </p>
           )}
           <p className="text-[11px] text-[#9CA3AF] mt-3">
             Stock (raw material / WIP / FG) is live from the cost ledger; labour, overhead, carriage, SST, revenue and
@@ -12834,11 +12583,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
 // real check possible, but choosing that basis is an owner/finance decision.
 
 function StockSummaryTab() {
-  const { toast } = useToast();
-  const { confirm } = useConfirm();
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [reloadKey, setReloadKey] = useState(0);
-  const [posting, setPosting] = useState(false);
   const [data, setData] = useState<{
     rows: { group: string; description: string; openingSen: number; purchasesSen: number; consumptionSen: number; closingSen: number; balanced: boolean; accounts: { stock: string; opening: string; closing: string } }[];
     wip: { openingSen: number; closingSen: number };
@@ -12854,7 +12599,7 @@ function StockSummaryTab() {
       .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
       .catch(() => {});
     return () => { stale = true; };
-  }, [month, reloadKey]);
+  }, [month]);
 
   const [byLine, setByLine] = useState<{
     sofa: { materialSen: number; labourSen: number };
@@ -12873,27 +12618,11 @@ function StockSummaryTab() {
       .then((j) => { if (!stale && j?.success && j.data) setByLine(j.data); })
       .catch(() => {});
     return () => { stale = true; };
-  }, [month, reloadKey]);
+  }, [month]);
 
-
-  const handlePost = async () => {
-    if (!(await confirm({ title: "Post closing stock?", message: `Post closing stock for ${month}? This takes the period's stock onto the balance-sheet stock accounts (DR 330-x · CR closing-stock) and brings down opening; re-posting/next month re-bases automatically.`, danger: false }))) return;
-    setPosting(true);
-    try {
-      const res = await fetch("/api/accounting/stock/close-post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month }),
-      });
-      const j = await res.json() as { success?: boolean; data?: { closingTotalSen: number }; error?: string };
-      if (j?.success && j.data) {
-        toast.success(`Closing stock ${month} posted — ${formatCurrency(j.data.closingTotalSen)} on the balance sheet`);
-        setReloadKey((k) => k + 1);
-      } else toast.error(j?.error || "Post failed");
-    } finally {
-      setPosting(false);
-    }
-  };
+  // No "Post closing stock to GL" button any more (owner 2026-10-13 「balance
+  // sheet 就让他的 closing stock 和 P&L closing stock 一样」): the Balance Sheet
+  // reads this month-end's closing stock itself, so nothing needs posting.
 
   return (
     <div className="space-y-4">
@@ -12905,12 +12634,7 @@ function StockSummaryTab() {
             <input type="month" value={month} onChange={(e) => { setData(null); setMonth(e.target.value); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
           </div>
           {data && (
-            <>
-              <Button variant="primary" size="sm" disabled={posting || data.totals.closingSen === 0} onClick={handlePost}>
-                {posting ? "Posting…" : data.posted ? "Re-post closing stock" : "Post closing stock to GL"}
-              </Button>
-              {data.posted && <span className="text-xs text-[#27500A] pb-2">Posted ✓ — on the balance sheet</span>}
-            </>
+            <span className="text-xs text-[#6B7280] pb-2">The Balance Sheet shows this month-end&apos;s closing stock by itself — the same figure as the P&amp;L.</span>
           )}
           <p className="text-[11px] text-[#9CA3AF] pb-1">Opening + Purchases − Consumption = Closing, per material group, live from the cost ledger.</p>
         </CardContent>
@@ -13017,7 +12741,7 @@ function StockSummaryTab() {
         costs (no-issue factory materials, SST, admin) are apportioned by the sales ratio shown, in the Phase-5 split P&L.
       </p>
 
-      <WipDetailCard month={month} reloadKey={reloadKey} />
+      <WipDetailCard month={month} reloadKey={0} />
     </div>
   );
 }
@@ -16342,6 +16066,8 @@ function GroupByCompanyCard({ period, options }: { period: string; options: Comp
 type BsDrillData = {
   account?: { code: string; name: string; type: string | null; section: string };
   assetSide: boolean; bfSen: number; cfSen: number; lines: PlDrillLine[]; tied?: boolean;
+  // A stock account: the lines are the Stock Summary's movement, not ledger lines.
+  fromStockTake?: boolean;
 };
 const prevYmOf = (ym: string) => { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; };
 function BsDrillPanel({ period, account, company }: { period: string; account: string; company: string }) {
@@ -16366,6 +16092,7 @@ function BsDrillPanel({ period, account, company }: { period: string; account: s
       {data && (
         <div className="overflow-x-auto">
           {data.tied === false && <div className="text-[11px] text-[#9A3412] mb-1">These lines do not add up to the balance — please report it.</div>}
+          {data.fromStockTake && <div className="text-[11px] text-[#6B7280] mb-1">From the Stock Summary — the P&amp;L&apos;s closing stock per material group, not ledger lines.</div>}
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-[11px] uppercase tracking-wide text-[#6B7280]">
@@ -16425,11 +16152,14 @@ function BalanceSheetTab() {
       months.push(d.toISOString().slice(0, 7));
     }
   }
-  const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
+  const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp; sheetStock?: { month: string; totalSen: number } | null; sheetStockError?: string | null } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
   const bsData: BalanceSheetEntry[] = useMemo(
     () => (bsResp?.success && bsResp.data?.balanceSheet ? bsResp.data.balanceSheet : []),
     [bsResp]
   );
+  // The stock lines are the P&L's closing stock for this month (owner 2026-10-13).
+  const bsStock = bsResp?.success ? bsResp.data?.sheetStock ?? null : null;
+  const bsStockError = bsResp?.success ? bsResp.data?.sheetStockError ?? null : null;
 
   const { toast } = useToast();
   const [edit, setEdit] = useState(false);
@@ -16633,6 +16363,14 @@ function BalanceSheetTab() {
               <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: {formatCurrency(Math.abs(totalAssets - totalLiabEquity))}</span>
             )}
           </div>
+          {bsStock && (
+            <p className="mt-2 text-xs text-[#6B7280]">
+              Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
+            </p>
+          )}
+          {bsStockError && (
+            <p className="mt-2 text-xs text-[#9A3412]">The stock could not be read ({bsStockError}) — the stock lines show the ledger&apos;s own balance.</p>
+          )}
         </CardContent>
       </Card>
     </div>

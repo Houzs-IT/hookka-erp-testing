@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -465,6 +465,9 @@ export default function SalesPage() {
   // the productionOrderIds sent on submit — see ReadyPlanningSchema above.
   const [transferReadyPOs, setTransferReadyPOs] = useState<ReadyPORowForTransfer[]>([]);
   const [transferPOsLoading, setTransferPOsLoading] = useState(false);
+  // Latest Transfer click wins: a slow response for an earlier SO must not
+  // overwrite the list shown for the SO the user opened last.
+  const transferReqSeq = useRef(0);
 
   // Filters — already wired via the early _flXXX bindings above so the
   // fetch URL can drop pagination when any filter is active. Re-bind here
@@ -1094,20 +1097,22 @@ export default function SalesPage() {
         setTransferSuccess(null);
         setTransferReadyPOs([]);
         setTransferDORow(row);
+        const seq = ++transferReqSeq.current;
         setTransferPOsLoading(true);
         try {
           // fresh=1: the shared list is served stale for a moment after a
           // change, which showed a just-finished order as "Nothing ready".
           const rp = await fetchJson("/api/delivery-orders/ready-planning?fresh=1", ReadyPlanningSchema);
+          if (seq !== transferReqSeq.current) return;
           const forThisSO = (rp.ready ?? []).filter((po) => po.salesOrderId === row.id);
           setTransferReadyPOs(forThisSO);
           if (forThisSO.length === 0) {
             toast.warning("No production orders are ready to deliver for this SO yet.");
           }
         } catch {
-          toast.error("Couldn't load production orders for this SO. Try again.");
+          if (seq === transferReqSeq.current) toast.error("Couldn't load production orders for this SO. Try again.");
         } finally {
-          setTransferPOsLoading(false);
+          if (seq === transferReqSeq.current) setTransferPOsLoading(false);
         }
       },
     },
