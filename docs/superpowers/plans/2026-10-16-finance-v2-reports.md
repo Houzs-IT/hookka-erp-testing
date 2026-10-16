@@ -35,7 +35,9 @@
 Popup dates and the Daily Cash Position table read `15 Oct 2026` (`fmtDocDate`). Test in the existing `finance-v2-*` files. Commit `fix(finance-v2): document dates in popups and the cash position read the v2 way`.
 
 ### Task 1: Pure helpers — `src/lib/finance-reports.ts`
-`monthOptions`, `stepPeriod`, `periodLabel` (`Oct 2026 · so far`), `asAtDate`, `glLink({ account, fromYm, toDate })`, `tbSections`, `codesInRange`, `fmtLedgerBal`, `stockTotals`, `rowKindOf`. Test `tests/finance-reports.test.mjs` (made-up figures).
+`monthOptions`, `stepPeriod`, `periodLabel` (`Oct 2026 · so far`), `asAtDate`, `glLink({ account, fromYm, toDate })`, `tbSections`, `codesInRange`, `fmtLedgerBal`, `fmtAmt`, `checkLabel`. Test `tests/finance-reports.test.mjs` (made-up figures). Done; helpers a later report needs (stock totals, row kinds) are added in that report's task.
+
+**Shipped in parts:** part 1 = Tasks 0–3 (shell + Trial Balance pilot) so the shell is checked on prod before the other reports use it.
 
 ### Task 2: Report shell — `src/components/finance/report-shell.tsx` + CSS
 `ReportToolbar` (`PeriodStepper`, `EditToggle`, `DetailLevels`, `DownloadMenu`), `CheckStrip`, `ReportFrame`, `EditLayoutBanner`; `table[data-fin-report]` rules keyed by `data-row` / `data-cell`. Popovers close on Esc and outside click. Test `tests/finance-v2-report-shell.test.mjs`.

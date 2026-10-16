@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-reports` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 2b (#923) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-daily-b` (to `main`) added below (its entry is the newest); plan 2a (#922) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-daily` (to `main`) added below (its entry is the newest).
@@ -186,6 +187,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 3: Reports (branch `feat/finance-v2-reports` → `main`; shipped in parts)
+
+1. ✅ Popup and cash-position dates read "15 Oct 2026" (carried over from plan 2b).
+2. 🔵 Part 1 — report shell (title-row toolbar: period stepper, DETAIL levels, one download icon; check strip; framed report with centred head; report table look) + Trial Balance pilot (month stepper, sections by the chart's rules with fold and subtotal, L1 / L2, double-click an account to open its ledger on the same as-at date, Excel / Print-PDF). Figures and the balanced check unchanged (server's).
+3. ⚪ General Ledger, P&L (statement / monthly / cost structure), Cash Flow, Stock Summary, Balance Sheet look, Overview.
+4. 🟡 Waiting on the owner: the legal company name on report heads (screen + PDF), the Balance Sheet layout, dropping CSV.
 
 ## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2b: Daily part 2 — Receipts, Daily Cash Position, Fund Transfer, popups (#923 fe84208e, prod-verified)
 
