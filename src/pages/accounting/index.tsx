@@ -1999,16 +1999,10 @@ function StockTakeTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs text-[#6B7280] max-w-3xl">
-            Enter the closing stock value per material group at each month-end. The P&amp;L
-            uses it as that month&apos;s closing (and the next month&apos;s opening), so material
-            cost works without a full BOM. Leave a group blank OR enter 0 to keep the
-            system&apos;s automatic (FIFO) figure — only a positive amount overrides it.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      {/* Finance v2: the month and the same buttons on the title row. */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={ym} options={monthOptions(todayYmdMY().slice(0, 7), 18)} onChange={setYm} />
           <Button
             variant="outline"
             size="sm"
@@ -2042,8 +2036,14 @@ function StockTakeTab() {
           <Button variant="primary" size="sm" onClick={save} disabled={saving || !allRowGroups}>
             {saving ? "Saving…" : "Save"}
           </Button>
-        </div>
-      </div>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-xs text-[#6B7280] max-w-3xl">
+        Enter the closing stock value per material group at each month-end. The P&amp;L
+        uses it as that month&apos;s closing (and the next month&apos;s opening), so material
+        cost works without a full BOM. Leave a group blank OR enter 0 to keep the
+        system&apos;s automatic (FIFO) figure — only a positive amount overrides it.
+      </p>
 
       {/* Priced count (owner 2026-10-09 「用最近一次进货价」): a quantity-only count
           priced at each item's latest purchase on or before month-end. A group
@@ -2107,7 +2107,7 @@ function StockTakeTab() {
               </div>
 
               <div className="border rounded-md overflow-x-auto">
-                <table className="w-full text-sm" data-col-resize="off">
+                <table data-fin-list className="w-full text-sm" data-col-resize="off">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className={`${th} text-left w-20`}>Count in</th>
@@ -2181,7 +2181,7 @@ function StockTakeTab() {
               </div>
 
               <div className="border rounded-md overflow-auto max-h-[36rem]">
-                <table className="w-full text-sm" data-col-resize="off">
+                <table data-fin-list className="w-full text-sm" data-col-resize="off">
                   <thead className="bg-gray-50 sticky top-0 z-10">
                     <tr>
                       <th className={`${th} w-8`} />
@@ -2312,14 +2312,8 @@ function StockTakeTab() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-end gap-4">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-[#6B7280]">Month (closes at month-end)</label>
-              <input
-                type="month"
-                className="border border-[#E2DDD8] rounded-md px-3 py-2 text-sm"
-                value={ym}
-                onChange={(e) => setYm(e.target.value)}
-              />
+            <div className="text-sm font-semibold text-[#1F1D1B] pb-2">
+              Closing stock for {periodLabel(ym, "")} <span className="font-normal text-[#6B7280]">(closes at month-end; pick the month on the title row)</span>
             </div>
             {linesOnFile && linesOnFile.ym === ym && (
               <div className="text-xs text-[#6B7280] pb-2">
@@ -2341,7 +2335,7 @@ function StockTakeTab() {
             <p className="text-sm text-gray-400 italic">No material groups found.</p>
           ) : (
             <div className="border rounded-md overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium text-gray-600">Material Group</th>
@@ -2384,7 +2378,7 @@ function StockTakeTab() {
             </p>
           </div>
           <div className="border rounded-md overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="text-left px-3 py-2 font-medium text-gray-600">Line</th>
@@ -2433,7 +2427,7 @@ function StockTakeTab() {
               </p>
             </div>
             <div className="border rounded-md overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium text-gray-600">Item</th>
@@ -14494,7 +14488,8 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Monthly session view (owner 2026-09-01 「每个月我upload文件自动对账」+
   // 「现在太乱了」): one month at a time, with earlier unmatched leftovers
   // pulled in so last month's in-transit cheques can still be ticked off.
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [month, setMonth] = useState(() => today.slice(0, 7));
   const [includeEarlier, setIncludeEarlier] = useState(true);
   const [data, setData] = useState<{ migrationMissing: boolean; openingDate?: string | null; finalizedMonths?: string[]; legs: RecoLeg[]; statementLines: RecoLine[] } | null>(null);
   const [report, setReport] = useState<RecoReport | null>(null);
@@ -14957,9 +14952,15 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <span aria-hidden="true" />
-        <div className="flex gap-2">
+      {/* Finance v2: the account, the month and the same import / match
+          buttons on the title row. */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <select aria-label="Bank / Cash account" value={account} onChange={(e) => { setAccount(e.target.value); setData(null); setReport(null); }} className="h-8 w-64 rounded-lg border border-[#D9D3CA] bg-white px-2.5 text-[12.5px] font-semibold text-[#1F1D1B]">
+            <option value="">— pick account —</option>
+            {bankCash.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+          </select>
+          <PeriodStepper value={month} options={monthOptions(today.slice(0, 7), 18)} onChange={setMonth} today={today} />
           <input
             ref={pdfInputRef}
             type="file"
@@ -14972,22 +14973,12 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
           </Button>
           <Button variant="outline" size="sm" disabled={!account} onClick={() => setShowImport(!showImport)}>Import CSV</Button>
           <Button variant="outline" size="sm" disabled={!account || busy || unmatchedStmt.length === 0} onClick={handleAutoMatch}>Auto-match</Button>
-        </div>
-      </div>
+        </ReportToolbar>
+      </FinanceTitleActions>
 
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Bank / Cash account</label>
-            <select value={account} onChange={(e) => { setAccount(e.target.value); setData(null); setReport(null); }} className={`${selCls} w-72`}>
-              <option value="">— pick account —</option>
-              {bankCash.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Month</label>
-            <input type="month" value={month} onChange={(e) => { if (e.target.value) setMonth(e.target.value); }} className={selCls} />
-          </div>
+        <CardContent className="p-4 flex flex-wrap items-end gap-4 rounded-lg">
+          {!account && <span className="text-sm text-[#6B7280] pb-2">Pick the bank or cash account on the title row.</span>}
           <label className="flex items-center gap-2 text-sm pb-2 cursor-pointer">
             <input type="checkbox" checked={includeEarlier} onChange={(e) => setIncludeEarlier(e.target.checked)} className="h-4 w-4 accent-[#6B5C32]" />
             Include earlier unmatched items
@@ -15067,6 +15058,25 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
           </CardContent>
         </Card>
       )}
+
+      {account && data && !data.migrationMissing && report?.importedAt && !preview && (() => {
+        // The reconciliation card's own figures, as cards (finance v2).
+        const shown = recoFinal ?? report;
+        const diffSen = shown.statementClosingSen != null ? shown.glSen - shown.statementClosingSen : null;
+        const unexplained = diffSen == null ? null : diffSen - (shown.unclearedBookSen - shown.unbookedStmtSen);
+        return (
+          <KpiCards
+            items={[
+              { label: `Bank balance · ${fmtDocDate(monthEnd(month))}`, value: shown.statementClosingSen != null ? formatCurrency(shown.statementClosingSen) : "—", note: "per statement" },
+              { label: "Book balance", value: formatCurrency(shown.glSen), note: recoFinal ? "per ledger, at finalising" : "per ledger" },
+              { label: "Open items", value: `${shown.unbookedStmtCount} bank · ${shown.unclearedBookCount} book`, note: "bank not in book · book not in bank" },
+              unexplained == null
+                ? { label: "Unexplained", value: "—", note: "no statement closing balance" }
+                : { label: "Unexplained", value: `${formatCurrency(Math.abs(unexplained))}${unexplained === 0 ? " ✓" : ""}`, tone: unexplained === 0 ? "ok" : "err", note: unexplained === 0 ? "book − bank fully explained" : "book − bank not fully explained" },
+            ]}
+          />
+        );
+      })()}
 
       {account && data && !data.migrationMissing && report?.importedAt && !preview && (
         <Card>
@@ -15167,7 +15177,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             {!dailyRows ? (
               <div className="px-4 py-4 text-sm text-[#9CA3AF]">Loading…</div>
             ) : (
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left">Day</th>
@@ -15270,7 +15280,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   </div>
                 );
               })()}
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left" colSpan={2}>Bank statement — to match ({unmatchedStmt.length})</th>
@@ -15396,7 +15406,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
           {/* Book side — open legs */}
           <Card>
             <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left" colSpan={2}>Book — not yet in the bank ({unmatchedLegs.length})</th>
@@ -15454,7 +15464,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <details className="rounded-lg border border-[#E2DDD8] bg-white">
               <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-[#1F1D1B]">Matched ({matchedStmt.length})</summary>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <tbody>
                     {matchedStmt.map((s) => (
                       <tr key={s.id} className="border-b border-[#F0ECE9] bg-[#EAF3DE]/30">
@@ -15482,7 +15492,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 Before opening ({preStmt.length}) <span className="font-normal text-[#6B7280]">— already inside the opening balance</span>
               </summary>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <tbody>
                     {preStmt.map((s) => (
                       <tr key={s.id} className="border-b border-[#F0ECE9] opacity-60">
@@ -15508,7 +15518,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <details className="rounded-lg border border-[#E2DDD8] bg-white">
               <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-[#1F1D1B]">Ignored ({ignoredStmt.length})</summary>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <tbody>
                     {ignoredStmt.map((s) => (
                       <tr key={s.id} className="border-b border-[#F0ECE9] opacity-60">
