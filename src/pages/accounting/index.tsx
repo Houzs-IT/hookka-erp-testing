@@ -7718,20 +7718,23 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
 }) {
   // Esc closes it (owner 2026-10-02 「点开后无法用esc 关闭」) — the ✕ always said so.
   useEscapeClose(onClose);
+  // The v2 frame (finance v2, owner 2026-10-16): white header and action bar,
+  // a light body whose blocks read as white cards (finance-v2.css,
+  // [data-fin-modal-body]); the body scrolls, the header and actions stay.
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className={`bg-white rounded-lg shadow-xl w-full ${wide ? "max-w-4xl" : "max-w-3xl"} max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-semibold text-[#1F1D1B]">{title}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
+      <div className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-[16px] font-semibold text-[#1F1D1B]">{title}</h2>
             {badges}
           </div>
-          <button onClick={onClose} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none" title="Close (Esc)">✕</button>
+          <button onClick={onClose} aria-label="Close" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg leading-none text-[#9CA3AF] hover:bg-[#F0ECE9] hover:text-[#6B7280]" title="Close (Esc)">✕</button>
         </div>
-        <div className="p-5 space-y-4 text-sm">
+        <div data-fin-modal-body className="flex-1 space-y-3 overflow-y-auto p-5 text-sm">
           {children}
-          {actions && <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-[#F0ECE9]">{actions}</div>}
         </div>
+        {actions && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#E2DDD8] bg-white px-5 py-3">{actions}</div>}
       </div>
     </div>
   );
@@ -7739,8 +7742,8 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
 function DetailField({ label, children, span }: { label: string; children: React.ReactNode; span?: number }) {
   return (
     <div className={span === 2 ? "col-span-2" : span === 3 ? "col-span-3" : span === 4 ? "col-span-2 sm:col-span-4" : undefined}>
-      <p className="text-[#9CA3AF] text-xs">{label}</p>
-      <p className="font-medium">{children}</p>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">{label}</p>
+      <p className="mt-0.5 font-medium text-[#1F1D1B]">{children}</p>
     </div>
   );
 }

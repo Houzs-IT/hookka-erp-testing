@@ -160,6 +160,15 @@ body:has([data-fin-ui]) {
   font-weight: 600;
 }
 
+/* ── Document popups (DocDetailModal) ──────────────────────────────────────── */
+/* Each block in the popup's light body reads as a white card. */
+[data-fin-ui] [data-fin-modal-body] > * {
+  background-color: #FFFFFF;
+  border: 1px solid #E2DDD8;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
 /* ── Menus (row / header right-click) ──────────────────────────────────────── */
 /* Row menus open on <body> (outside the page root), so they are matched by
    "a finance page is open" rather than by being inside it. */
