@@ -1729,6 +1729,46 @@ export async function buildDoDeliveredSoAndInvoice(
     !billing.fullyInvoiced && soIds.length > 0 && !incomplete
       ? await computeDoInvoiceLines(db, doRow.id, soIds)
       : null;
+  // BUG-2026-10-07-266 — the same "nothing to invoice" refusal the manual
+  // POST /api/invoices has always made (invoices.ts). Without it, two
+  // DELIVERED requests 0.6 s apart (a double click, DO-2610-013) both passed
+  // the billing gate above before either committed; the second then read the
+  // lines the first had just drawn down and posted INV-2610-021 at RM 0 with
+  // no lines — and the delivered email attaches the NEWEST live invoice, so
+  // the customer got the empty one. The losing request still has to leave the
+  // SOs and the DO at INVOICED: its own batch carries SO→DELIVERED and the
+  // DO's DELIVERED update from the stale read, which would otherwise undo the
+  // winner's status bumps.
+  if (lines && lines.invItems.length === 0 && lines.computedTotal === 0) {
+    const after = await loadDoBillingState(db, doRow.id);
+    if (after.fullyInvoiced) {
+      for (const sid of soBillable) {
+        statements.push(
+          db
+            .prepare(
+              "UPDATE sales_orders SET status = 'INVOICED', updated_at = ? WHERE id = ? AND status = 'DELIVERED'",
+            )
+            .bind(now, sid),
+        );
+      }
+      statements.push(
+        db
+          .prepare(
+            "UPDATE delivery_orders SET status = 'INVOICED', overdue = 'INVOICED', updated_at = ? WHERE id = ?",
+          )
+          .bind(now, doRow.id),
+      );
+    }
+    return {
+      statements,
+      rebuildInvoiceInsert: null,
+      invoiceStmtIdx: -1,
+      createdInvoice: false,
+      invoiceTotalSen: 0,
+      soAdvanced,
+    };
+  }
+
   // Nothing left to bill (every line came back on a Delivery Return) → raise
   // no invoice at all, rather than an empty RM 0 one.
   if (lines && (lines.invItems.length > 0 || lines.computedTotal > 0)) {
@@ -4334,21 +4374,8 @@ export async function applyDeliveryOrderUpdate(
           409,
         );
       }
-      // Customer credit re-check at dispatch (BUG-34): a DRAFT raised while
-      // the customer was clear must not leave once an invoice has gone
-      // overdue or the undelivered total passes the limit. This DO is still
-      // DRAFT, so it is already inside the undelivered total — no extra
-      // items. Covers the office button and the public QR scan (both land
-      // here); only a signed-in user with the override can pass a block.
-      if (body.status === "LOADED" && existing.status === "DRAFT") {
-        const gate = await gateCredit(
-          c,
-          await checkCustomerCredit(c.var.DB, existing.customerId, []),
-          body.creditOverride,
-          { resource: "delivery-orders", resourceId: id },
-        );
-        if (!gate.ok) return c.json(gate.body, gate.status);
-      }
+      // No credit check at dispatch (BUG-2026-10-12-282): the gate runs when
+      // the DO is created; a DO that exists can always leave.
       // A cancel is a whole-document reversal (see the `cancelled` block
       // below). Replacing the line items in the SAME request would make it
       // reverse a composition that was never delivered — refuse and let the

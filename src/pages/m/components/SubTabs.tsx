@@ -7,6 +7,7 @@
 // Intentional horizontal scroll (the only allowed horizontal overflow on these
 // screens).
 import { M } from "../theme";
+import { useStickyBelowHeader } from "../lib/header-geometry";
 
 type Tab = { key: string; label: string };
 
@@ -19,11 +20,12 @@ type Props = {
 };
 
 export function SubTabs({ tabs, active, onChange, counts }: Props) {
+  const top = useStickyBelowHeader();
   return (
     <div
       style={{
         position: "sticky",
-        top: 52, // sits under the MobileHeader (minHeight 52)
+        top, // directly under the MobileHeader (52 + top inset on phones)
         zIndex: 30,
         backgroundColor: M.paper,
         borderBottom: `1px solid ${M.border}`,

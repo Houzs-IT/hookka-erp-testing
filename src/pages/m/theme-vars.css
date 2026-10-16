@@ -14,6 +14,109 @@
 /* Body bg matches theme so pull-to-refresh / overscroll show the right tint. */
 body[data-theme] {
   background-color: var(--m-paper);
+
+  /* -----------------------------------------------------------------------
+   * Mobile UI Foundation — Phase 0.
+   *
+   * These are additive contracts for future /m/* work. No existing screen
+   * consumes them yet, so introducing the foundation cannot change a current
+   * layout. See docs/MOBILE-UI-FOUNDATION.md before adopting a token.
+   * --------------------------------------------------------------------- */
+
+  /* Typography roles — keep the existing system-ui family from theme.ts. */
+  --m-type-page-title-size: 24px;
+  --m-type-page-title-line-height: 1.2;
+  --m-type-page-title-weight: 700;
+  --m-type-page-title-tracking: -0.3px;
+  --m-type-section-heading-size: 18px;
+  --m-type-section-heading-line-height: 1.3;
+  --m-type-section-heading-weight: 700;
+  --m-type-section-heading-tracking: -0.15px;
+  --m-type-card-title-size: 15px;
+  --m-type-card-title-line-height: 1.4;
+  --m-type-card-title-weight: 600;
+  --m-type-card-title-tracking: -0.1px;
+  --m-type-business-value-size: 24px;
+  --m-type-business-value-line-height: 1.15;
+  --m-type-business-value-weight: 700;
+  --m-type-business-value-tracking: -0.3px;
+  --m-type-description-size: 14px;
+  --m-type-description-line-height: 1.5;
+  --m-type-description-weight: 400;
+  --m-type-metadata-size: 12px;
+  --m-type-metadata-line-height: 1.4;
+  --m-type-metadata-weight: 400;
+  --m-type-label-size: 12px;
+  --m-type-label-line-height: 1.35;
+  --m-type-label-weight: 600;
+  --m-type-label-tracking: 0.02em;
+  --m-type-input-size: 16px;
+  --m-type-input-line-height: 1.5;
+  --m-type-input-weight: 400;
+  --m-type-button-size: 14px;
+  --m-type-button-line-height: 1.2;
+  --m-type-button-weight: 700;
+  --m-type-status-size: 11px;
+  --m-type-status-line-height: 1.2;
+  --m-type-status-weight: 600;
+  --m-type-status-tracking: 0.02em;
+
+  /* 4px base rhythm. Semantic aliases describe layout intent. */
+  --m-space-0: 0;
+  --m-space-1: 4px;
+  --m-space-2: 8px;
+  --m-space-3: 12px;
+  --m-space-4: 16px;
+  --m-space-5: 20px;
+  --m-space-6: 24px;
+  --m-space-8: 32px;
+  --m-space-10: 40px;
+  --m-space-12: 48px;
+  --m-page-gutter: 18px;
+  --m-page-gutter-compact: 14px;
+  --m-section-gap: 20px;
+  --m-card-gap: 12px;
+  --m-card-padding: 16px;
+  --m-content-readable-max: 680px;
+  --m-safe-top: env(safe-area-inset-top, 0px);
+  --m-safe-right: env(safe-area-inset-right, 0px);
+  --m-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --m-safe-left: env(safe-area-inset-left, 0px);
+
+  /* Shape, controls and icons. Compact controls are secondary-only; every
+     pointer target still needs at least --m-target-min in both dimensions. */
+  --m-radius-sm: 8px;
+  --m-radius-md: 12px;
+  --m-radius-lg: 16px;
+  --m-radius-xl: 20px;
+  --m-radius-pill: 999px;
+  --m-control-compact: 32px;
+  --m-control-default: 44px;
+  --m-control-comfortable: 48px;
+  --m-target-min: 44px;
+  --m-icon-xs: 14px;
+  --m-icon-sm: 16px;
+  --m-icon-md: 18px;
+  --m-icon-lg: 20px;
+  --m-icon-xl: 24px;
+
+  /* Elevation. Card is the existing Announcements/Notifications shadow. */
+  --m-shadow-none: none;
+  --m-shadow-card: 0 1px 0 rgba(31, 29, 27, 0.03), 0 6px 20px -12px rgba(31, 29, 27, 0.14);
+  --m-shadow-floating: 0 8px 24px -12px rgba(31, 29, 27, 0.25);
+  --m-shadow-sheet: 0 -8px 30px rgba(31, 29, 27, 0.18);
+
+  /* Focus and interaction values are tokens only in Phase 0. Applying them
+     to existing controls is deliberately deferred to a migration task. */
+  --m-focus-ring-width: 2px;
+  --m-focus-ring-offset: 2px;
+  --m-focus-ring: 0 0 0 2px var(--m-card), 0 0 0 4px var(--m-focus-color);
+  --m-pressed-opacity: 0.86;
+  --m-disabled-opacity: 0.48;
+  --m-motion-fast: 120ms;
+  --m-motion-standard: 180ms;
+  --m-motion-slow: 240ms;
+  --m-ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
 body[data-theme="light"],
@@ -31,8 +134,28 @@ body:not([data-theme]) {
   --m-body: #6B7280;
   --m-muted: #9A9082;
   --m-faint: #9CA3AF;
+  /* Accessible semantic text roles. Normal text tokens are >=4.5:1 against
+     both --m-card and --m-paper; disabled text is the documented exception. */
+  --m-text-primary: #1F1D1B;
+  --m-text-secondary: #4D4630;
+  --m-text-subtle: #6B5C32;
+  --m-text-placeholder: #6B5C32;
+  --m-text-disabled: #9A9082;
+  --m-text-on-accent: #FFFFFF;
+  --m-text-status-success: #4F7C3A;
+  --m-text-status-warning: #95691A;
+  --m-text-status-danger: #9A3A2D;
+  --m-text-status-info: #3E6570;
+  --m-focus-color: #6B5C32;
   --m-logo-from: #8B7A4E;
   --m-logo-to: #6B5C32;
+  /* Notification severity (dot + left bar + severity word). Light = the
+     desktop dot colours (SEMANTIC DANGER / INFO hex), except Warning: the
+     desktop #9C6F1E is 4.46:1 as text on white, so it is darkened a touch to
+     #976B1C (4.73:1, owner 2026-10-13). */
+  --m-sev-critical: #9A3A2D;
+  --m-sev-warning: #976B1C;
+  --m-sev-info: #3E6570;
 }
 
 body[data-theme="dark"] {
@@ -48,12 +171,61 @@ body[data-theme="dark"] {
   --m-body: #B9B0A0;
   --m-muted: #8A8170;
   --m-faint: #6B6353;
+  /* Dark-mode text roles are tuned independently, not inverted. */
+  --m-text-primary: #F0EBE2;
+  --m-text-secondary: #D4C9A8;
+  --m-text-subtle: #B9B0A0;
+  --m-text-placeholder: #B9B0A0;
+  --m-text-disabled: #8A8170;
+  --m-text-on-accent: #1A1816;
+  --m-text-status-success: #8FBE78;
+  --m-text-status-warning: #D9A441;
+  --m-text-status-danger: #D67B6B;
+  --m-text-status-info: #6FA3B0;
+  --m-focus-color: #D9BD7B;
   /* Accents kept BRAND-warm but slightly brighter for dark surface contrast */
   --m-taupe: #B59A5C;      /* lighter taupe — primary CTAs stay readable */
   --m-taupe-dark: #8B7A4E;
   --m-gold: #D9BD7B;
   --m-logo-from: #C9A961;
   --m-logo-to: #B59A5C;
+  /* Severity, lifted for the dark card (#2A2722): the light values measure
+     2.14 / 3.33 / 2.34, these 4.89 / 6.61 / 5.34 (non-text needs 3:1). */
+  --m-sev-critical: #D67B6B;
+  --m-sev-warning: #D9A441;
+  --m-sev-info: #6FA3B0;
+}
+
+/* Foundation breakpoints mirror the existing /m shell: phone first, Fold /
+ * tablet enhancement from 720px. Only foundation aliases change here; no
+ * existing selector or layout consumes them in Phase 0. */
+@media (min-width: 720px) {
+  body[data-theme] {
+    --m-page-gutter: 24px;
+    --m-section-gap: 24px;
+    --m-card-gap: 16px;
+    --m-card-padding: 20px;
+  }
+}
+
+@media (max-width: 719px) and (orientation: landscape) {
+  body[data-theme] {
+    --m-page-gutter: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-theme] {
+    --m-motion-fast: 0.01ms;
+    --m-motion-standard: 0.01ms;
+    --m-motion-slow: 0.01ms;
+  }
+}
+
+@media (forced-colors: active) {
+  body[data-theme] {
+    --m-focus-color: Highlight;
+  }
 }
 
 /* Logo + photos must NOT invert (per CHANGELOG: "logo/QR/photos

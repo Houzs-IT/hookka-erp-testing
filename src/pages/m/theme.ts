@@ -47,6 +47,10 @@ export const M = {
   faint: "var(--m-faint)",
   logoFrom: "var(--m-logo-from)",
   logoTo: "var(--m-logo-to)",
+  /** Notification severity (dot + left bar); dark mode lifted for contrast. */
+  sevCritical: "var(--m-sev-critical)",
+  sevWarning: "var(--m-sev-warning)",
+  sevInfo: "var(--m-sev-info)",
 } as const;
 
 /**

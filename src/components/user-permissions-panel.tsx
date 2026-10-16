@@ -15,6 +15,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Search, Save, RotateCcw, Lock, Loader2 } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { roleLabel } from "@/lib/role-labels";
+import { EXPLICIT_ONLY_RIGHTS } from "@/lib/explicit-rights";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type PanelUser = { id: string; email: string; displayName: string; role: string; isActive: boolean };
@@ -37,6 +38,7 @@ const titleCase = (s: string) =>
 
 /** Same wildcard rule as the gate (rbac.ts `permitted`). */
 function granted(set: Set<string>, resource: string, action: string): boolean {
+  if (EXPLICIT_ONLY_RIGHTS.has(`${resource}:${action}`)) return set.has(`${resource}:${action}`);
   return set.has(`${resource}:${action}`) || set.has(`${resource}:*`) || set.has(`*:${action}`) || set.has("*:*");
 }
 

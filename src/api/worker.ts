@@ -143,6 +143,15 @@ export type Env = {
     // the queue worker cannot drive extractions — uploads still queue but
     // every row will land in 'failed' with a clear error message.
     SCAN_WORKER_TOKEN?: string;
+    // IT Support (routes/it-support.ts). Tickets live in the Houzs IT Hub;
+    // IT_HUB_URL is its origin (public, a [vars] entry or a Pages variable),
+    // IT_HUB_API_KEY is Hookka's key for it (`wrangler pages secret put`).
+    // With either unset the routes answer 503 and the page says so.
+    IT_HUB_URL?: string;
+    IT_HUB_API_KEY?: string;
+    // The hub sends this as x-it-hub-secret when it pushes a ticket event to
+    // /api/it-support/hub-events (>= 16 chars). Unset: that endpoint answers 503.
+    IT_HUB_WEBHOOK_SECRET?: string;
   };
   // Per-request variables.  DB is the Supabase-backed D1-compat adapter
   // installed by the middleware below; typed as D1Database so existing route
@@ -918,6 +927,29 @@ app.post("/api/mail-center/inbound", async (c) => {
   }
 });
 
+// IT Hub ticket events: the hub POSTs each IT reply / status change here and
+// it lands in the reporter's top-bar bell. Machine-to-machine, so registered
+// BEFORE authMiddleware and gated on IT_HUB_WEBHOOK_SECRET (x-it-hub-secret),
+// same constant-time pattern as above. Idempotent on the hub's event id.
+app.post("/api/it-support/hub-events", async (c) => {
+  const expected = c.env.IT_HUB_WEBHOOK_SECRET;
+  if (!expected || expected.length < 16) {
+    console.error("[it-hub-events] IT_HUB_WEBHOOK_SECRET unset or too short — refusing");
+    return c.json({ ok: false, error: "service unavailable" }, 503);
+  }
+  const given = c.req.header("x-it-hub-secret") || "";
+  if (!(await constantTimeEqual(given, expected))) {
+    return c.json({ ok: false, error: "forbidden" }, 403);
+  }
+  try {
+    const { recordHubEvent } = await import("./routes/it-support");
+    return await recordHubEvent(c);
+  } catch (err) {
+    console.error("[it-hub-events] error:", err);
+    return c.json({ ok: false, error: "record failed" }, 500);
+  }
+});
+
 // Web Push — Worker Portal notifications (additive). Registered BEFORE
 // authMiddleware because each handler does its OWN auth: /subscribe +
 // /unsubscribe gate on X-Worker-Token, /clock-reminder on the x-push-secret
@@ -1091,6 +1123,7 @@ import dashboardOverview from "./routes/dashboard-overview";
 import dashboardPrototype from "./routes/dashboard-prototype";
 import dashboardFinance from "./routes/dashboard-finance";
 import kpi from "./routes/kpi";
+import itSupport from "./routes/it-support";
 // Phase C #4 quick-win — MDM duplicate-detection review queue.
 import mdm from "./routes/mdm";
 // Phase B.4 — file_assets storage (Supabase Storage-backed; was R2 before
@@ -1334,6 +1367,9 @@ app.route("/api/dashboard/finance", dashboardFinance);
 // KPI module (owner 2026-08-06). /me is self-only; every other route is
 // SUPER_ADMIN — enforced in the route, not the page.
 app.route("/api/kpi", kpi);
+// IT Support: a proxy to the Houzs IT Hub. Self-scoped like /api/kpi/me (the
+// reporter is the session's user), so signed in is the only gate.
+app.route("/api/it-support", itSupport);
 // Phase C #4 quick-win — MDM duplicate-detection review queue. Routes
 // scoped by orgId via getOrgId(c); detection-pass endpoint is admin-only
 // in spirit (gated by the existing auth middleware until role-aware

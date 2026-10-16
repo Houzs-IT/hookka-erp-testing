@@ -10,7 +10,7 @@
 //
 // ADDITIVE: list = CUSTOM_L1['mail-center']; thread = CUSTOM_L2['mail-center'].
 // ===========================================================================
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Search, Plus, Paperclip } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -21,6 +21,7 @@ import { newMailSpec } from "../config/forms";
 import { type FormSpec } from "../config/form-types";
 import { str, num, dateOnly, shortDate } from "../config/helpers";
 import { useDebounced } from "../lib/use-debounced";
+import { useResponsiveLayout } from "../lib/responsive-layout";
 
 const AV = ["#6B5C32", "#3E6570", "#4F7C3A", "#9A3A2D", "#6B4A6D"];
 const avColor = (s: string) => AV[(s || "?").charCodeAt(0) % 5];
@@ -62,6 +63,7 @@ export function MailCenterScreen() {
       <MobileHeader
         title="Mail Center"
         onBack={() => navigate(-1)}
+        menu
         trailing={
           <button
             onClick={() => setComposeSpec(newMailSpec())}
@@ -155,6 +157,7 @@ type ThreadResp = { thread?: Record<string, unknown>; messages?: Record<string, 
 
 export function MailThreadScreen() {
   const navigate = useNavigate();
+  const phone = useResponsiveLayout().mode === "phone";
   const { id = "" } = useParams();
   const { data, loading, error } = useCachedJson<ThreadResp>(
     `/api/mail-center/threads/${encodeURIComponent(id)}`,
@@ -192,15 +195,31 @@ export function MailThreadScreen() {
     }
   };
 
-  if (loading && !thread) return <Center text="Loading…" />;
-  if (error && !thread) return <Center text="Couldn’t load this thread." />;
-  if (!thread) return <Center text="Thread not found." />;
+  // Phones: the shared header (with back) shows on the loading / error states
+  // too, so the header does not jump once the document arrives.
+  const withHeader = (node: ReactNode) =>
+    phone ? (
+      <>
+        <MobileHeader title="Mail" onBack={() => navigate(-1)} />
+        {node}
+      </>
+    ) : (
+      node
+    );
+  if (loading && !thread) return withHeader(<Center text="Loading…" />);
+  if (error && !thread) return withHeader(<Center text="Couldn’t load this thread." />);
+  if (!thread) return withHeader(<Center text="Thread not found." />);
 
   return (
     <div style={{ paddingBottom: 92 }}>
-      <div style={{ background: M.card, padding: "14px 16px 12px", borderBottom: `1px solid ${M.divider}`, position: "sticky", top: 0, zIndex: 5 }}>
-        <button onClick={() => navigate(-1)} style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}>‹ Mail</button>
-        <div style={{ fontSize: 16, fontWeight: 700, color: M.ink, marginTop: 4, letterSpacing: "-0.2px" }}>
+      {/* Phones: shared MobileHeader (back arrow); the subject block scrolls
+          with the page. Tablets keep the original sticky block. */}
+      {phone ? <MobileHeader title="Mail" onBack={() => navigate(-1)} /> : null}
+      <div style={{ background: M.card, padding: "14px 16px 12px", borderBottom: `1px solid ${M.divider}`, ...(phone ? null : { position: "sticky", top: 0, zIndex: 5 }) }}>
+        {phone ? null : (
+          <button onClick={() => navigate(-1)} style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}>‹ Mail</button>
+        )}
+        <div style={{ fontSize: 16, fontWeight: 700, color: M.ink, marginTop: phone ? 0 : 4, letterSpacing: "-0.2px" }}>
           {str(thread, "subject") || "(No subject)"}
         </div>
       </div>

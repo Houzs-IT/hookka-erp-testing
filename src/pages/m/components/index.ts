@@ -7,6 +7,7 @@ export { BottomTabBar } from "./BottomTabBar";
 export { Sheet } from "./Sheet";
 export { MobileHeader } from "./MobileHeader";
 export { SubTabs } from "./SubTabs";
+export { SegmentedSwitch } from "./SegmentedSwitch";
 export { FilterSheet } from "./FilterSheet";
 export { FormSheet } from "./FormSheet";
 export { QrModal } from "./QrModal";
@@ -17,3 +18,12 @@ export type { ScanPOExtracted } from "./ScanPOSheet";
 export { LeftRail } from "./LeftRail";
 export { InstallAppCard } from "./InstallAppCard";
 export { ResponsiveActionDock } from "./ResponsiveActionDock";
+export {
+  ProfileCard,
+  ThemeToggleCard,
+  ModuleGroupList,
+  DesktopAppLink,
+  handleSignOut,
+} from "./ModuleMenu";
+export { MenuButton } from "./MenuButton";
+export { NavDrawer } from "./NavDrawer";

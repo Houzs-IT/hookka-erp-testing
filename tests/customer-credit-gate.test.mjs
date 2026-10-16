@@ -8,6 +8,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
+register("./tests/_alias-loader.mjs", pathToFileURL("./"));
 const { decideCredit } = await import(
   pathToFileURL(resolve(process.cwd(), "src/api/lib/customer-credit.ts")).href
 );
@@ -46,6 +47,15 @@ test("fully paid / zero-balance / undated invoices never block", () => {
   assert.equal(decideCredit(s, 0, "2026-09-28"), null);
 });
 
+test("bills dated before the opening date never block; opening seeds still do", () => {
+  const s = { ...base, openingDate: "2026-05-22", unpaid: [inv("2026-05-08"), { ...inv("2026-05-20"), isOpening: true }] };
+  const b = decideCredit(s, 0, "2026-10-12");
+  assert.equal(b.code, "PAYMENT_OVERDUE");
+  assert.deepEqual(b.details.overdue.map((i) => i.invoiceDate), ["2026-05-20"]);
+  assert.equal(decideCredit({ ...s, unpaid: [inv("2026-05-08")] }, 0, "2026-10-12"), null);
+  assert.equal(decideCredit({ ...s, unpaid: [inv("2026-05-22")] }, 0, "2026-10-12").code, "PAYMENT_OVERDUE", "the opening day itself counts");
+});
+
 test("limit: outstanding + undelivered DOs + this DO", () => {
   const s = { ...base, limitSen: 100000, outstandingSen: 50000, pendingDoSen: 30000 };
   assert.equal(decideCredit(s, 20000, "2026-09-28"), null, "exactly at the limit passes");
@@ -66,13 +76,14 @@ test("overdue wins over the limit", () => {
   assert.equal(decideCredit(s, 0, "2026-09-28").code, "PAYMENT_OVERDUE");
 });
 
-test("structural: DO create, packing-list-first and dispatch all run the shared gate", () => {
+test("structural: DO create and packing-list-first run the shared gate, dispatch does not", () => {
   const helpers = readFileSync("src/api/routes/delivery-orders/_helpers.ts", "utf8");
   const routes = readFileSync("src/api/routes/delivery-orders.ts", "utf8");
   const core = helpers.slice(helpers.indexOf("export async function createDeliveryOrderForPOs("));
   assert.match(core.slice(0, core.indexOf("genDoId()")), /gateCredit\(\s*c,\s*await checkCustomerCredit\(/);
   const upd = helpers.slice(helpers.indexOf("export async function applyDeliveryOrderUpdate("));
-  assert.match(upd, /body\.status === "LOADED" && existing\.status === "DRAFT"[\s\S]{0,200}checkCustomerCredit\(/);
+  // BUG-2026-10-12-282: a DO that exists can always be dispatched (office or phone scan).
+  assert.doesNotMatch(upd.slice(0, upd.indexOf("\nexport ", 1)), /checkCustomerCredit\(|gateCredit\(/);
   const pl = routes.slice(routes.indexOf('app.post("/packing-list-first"'));
   assert.ok(pl.indexOf("checkCustomerCredit(") < pl.indexOf("body.preview === true"), "credit check before preview");
   assert.match(pl, /creditOverride: body\.creditOverride/, "override reaches the core");
@@ -94,4 +105,35 @@ test("structural: Sales transfer box shows the credit dialog and reads a fresh r
   assert.match(rp.slice(0, 400), /c\.req\.query\("fresh"\) === "1"/);
   assert.match(routes, /staleWhileRevalidate: !fresh/);
   assert.match(routes, /const db = fresh \? freshReads\(c\.var\.DB\) : c\.var\.DB;/);
+});
+
+// Staff who may not override get the same overdue-invoice list (OK button only),
+// not a one-line toast.
+test("no override: the dialog still lists each overdue invoice", async () => {
+  globalThis.React ??= (await import("react")).default; // tsx compiles JSX to React.createElement
+  const { askCreditOverride } = await import(
+    pathToFileURL(resolve(process.cwd(), "src/pages/delivery/credit-override.tsx")).href
+  );
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const seen = [];
+  const toasts = [];
+  const out = await askCreditOverride(
+    async (o) => { seen.push(o); return true; },
+    { error: (m) => toasts.push(m) },
+    {
+      code: "PAYMENT_OVERDUE",
+      error: "Acme has 1 overdue invoice (RM 123.45) past their NET30 term.",
+      overrideAllowed: false,
+      details: { overdue: [{ invoiceNo: "INV-2606-001", dueDate: "2026-07-31", balanceSen: 12345 }] },
+    },
+  );
+  assert.equal(out, null);
+  assert.equal(toasts.length, 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].hideCancel, true);
+  assert.equal(seen[0].confirmLabel, "OK");
+  const html = renderToStaticMarkup(seen[0].message);
+  assert.match(html, /INV-2606-001/);
+  assert.match(html, /due 2026-07-31/);
+  assert.doesNotMatch(html, /textarea/);
 });

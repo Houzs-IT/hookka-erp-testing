@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState, useUrlStateNumber, useUrlBatch } from "@/lib/use-url-state";
 import { pageSlice } from "@/lib/delivery-list-filters";
 import { useToast } from "@/components/ui/toast";
@@ -1129,6 +1130,8 @@ export default function DeliveryPage() {
   // editDialogDrivers can finish the resolve. Cleared when match found or
   // when the user closes the edit dialog.
   const pendingDriverNameToResolveRef = useRef<string>("");
+  // The SO lookup the effect below builds, kept for the all-pages Export.
+  const soRefMapRef = useRef<Map<string, { customerSO: string; reference: string; customerPO: string }>>(new Map());
 
   // ----- Customer hub lookup -----
   const [customersData, setCustomersData] = useState<Customer[]>([]);
@@ -1448,6 +1451,7 @@ export default function DeliveryPage() {
             if (so.companySOId) soRefMap.set(so.companySOId, v);
           }
         }
+        soRefMapRef.current = soRefMap;
         if (dRes.success && dRes.data) {
           const realRows = (dRes.data as DeliveryOrder[])
             .filter((d) => !d.id.startsWith("virt-"))
@@ -4187,6 +4191,7 @@ export default function DeliveryPage() {
         label: "Packing List",
         width: "110px",
         align: "center",
+        exportValue: (row) => doPackingMap.get(row.id) ?? "",
         render: (_value, row) => {
           const inPL = doPackingMap.get(row.id);
           return inPL ? (
@@ -4232,6 +4237,12 @@ export default function DeliveryPage() {
         // the planned deliveryDate (set at SO/DO creation) with a small
         // "(planned)" tag so operators see SOMETHING to plan against instead
         // of a "-" placeholder.
+        exportValue: (row) =>
+          row.dispatchDate
+            ? row.dispatchDate.slice(0, 10)
+            : row.deliveryDate
+              ? `${row.deliveryDate.slice(0, 10)} (planned)`
+              : "",
         render: (_value, row) => {
           if (row.dispatchDate) {
             return <span>{formatDate(row.dispatchDate)}</span>;
@@ -4259,6 +4270,10 @@ export default function DeliveryPage() {
         // customerName as the primary, and bump the count if dropPoints
         // carries multi-drop info). Shows "Houzs Century +1 more" style
         // when the DO is multi-customer.
+        exportValue: (row) => {
+          const drops = (row as DeliveryOrderRow & { dropPoints?: number }).dropPoints ?? 1;
+          return drops > 1 ? `${row.customerName || "-"} +${drops - 1} more` : row.customerName || "";
+        },
         render: (_value, row) => {
           const drops = (row as DeliveryOrderRow & { dropPoints?: number }).dropPoints ?? 1;
           if (drops > 1) {
@@ -4285,6 +4300,16 @@ export default function DeliveryPage() {
         // row.hubState (resolved server-side via delivery_hubs.state on hubId)
         // over the legacy hubBranch (which mirrors customerState — frequently
         // NULL on production rows even when hubId is set).
+        exportValue: (row) => {
+          const states = Array.from(
+            new Set(
+              (row.items || [])
+                .map((it) => (it as DOItem & { hubState?: string }).hubState)
+                .filter((s): s is string => Boolean(s))
+            )
+          );
+          return states.length > 0 ? states.join(", ") : row.hubState || row.hubBranch || "";
+        },
         render: (_value, row) => {
           const states = Array.from(
             new Set(
@@ -4307,6 +4332,12 @@ export default function DeliveryPage() {
         // Distinct SO numbers from items[]. A DO can span multiple SOs
         // (e.g. one truck trip consolidating SO-2604-326 + SO-2604-328);
         // shown comma-separated.
+        exportValue: (row) => {
+          const sos = Array.from(
+            new Set((row.items || []).map((it) => it.salesOrderNo).filter((s): s is string => Boolean(s)))
+          );
+          return sos.length > 0 ? sos.join(", ") : row.salesOrderId || "";
+        },
         render: (_value, row, _index, highlight) => {
           const sos = Array.from(
             new Set(
@@ -4369,6 +4400,7 @@ export default function DeliveryPage() {
         type: "text",
         width: "120px",
         sortable: true,
+        exportValue: (row) => (row.valueSen ?? 0) / 100,
         render: (_value, row) => (
           <span className="font-medium text-[#1F1D1B] tabular-nums">
             {formatCurrency(row.valueSen ?? 0)}
@@ -4381,6 +4413,7 @@ export default function DeliveryPage() {
         type: "status",
         width: "180px",
         sortable: true,
+        exportValue: (row) => STATUS_LABEL[row.status] ?? row.status,
         render: (_value, row) => (
           <div className="flex flex-col gap-0.5 text-xs leading-tight">
             <span className="font-medium">{STATUS_LABEL[row.status] ?? row.status}</span>
@@ -4428,6 +4461,7 @@ export default function DeliveryPage() {
         type: "text",
         width: "180px",
         sortable: true,
+        exportValue: (row) => providers.find((p) => p.id === row.driverId)?.name ?? row.driverId ?? "",
         render: (_value, row) => {
           const company = providers.find((p) => p.id === row.driverId)?.name ?? row.driverId;
           return (
@@ -5130,6 +5164,16 @@ export default function DeliveryPage() {
               contextMenuItems={getContextMenuItems}
               exportName="delivery-orders"
               exportSheetLabel="Delivery Orders"
+              // One 50-row page per tab is loaded; Export walks the tab's
+              // statuses page by page. Search already loads every match.
+              exportAllRows={search.trim() || !TAB_DO_STATUSES[activeTab] ? undefined : () => {
+                const statuses = TAB_DO_STATUSES[activeTab];
+                return fetchAllPages<DeliveryOrder>((p, l) => `/api/delivery-orders?page=${p}&limit=${l}&status=${statuses.join(",")}`)
+                  .then((rows) => rows
+                    .filter((d) => !d.id.startsWith("virt-"))
+                    .map((d) => mapDOToRow(d, soRefMapRef.current))
+                    .filter((d) => statuses.includes(d.status)));
+              }}
               detailExport={{ label: "Detail Listing", build: (rows) => buildDoDetailListingAoa(rows) }}
             />
 

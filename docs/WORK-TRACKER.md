@@ -1,8 +1,36 @@
 # Hookka ERP — Work Tracker
 
-> **Last verified: 2026-10-09**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
-> synced with staging and extended: DEV-05 A9 (BUG-2026-10-09-273, renumbered from -223)
-> plus the A7 resolver pins. Its entry is below, dated 2026-09-29.
+> **Last verified: 2026-10-16**: branch `fix/dev-05-allocation-loser-note` (→ `staging`)
+> re-synced with staging (290 commits; docs headers only). DEV-05 A9 is
+> BUG-2026-10-16-291 (renumbered from -273, then -223). A7's resolver pins plus its
+> staging measurement are in the entry below, dated 2026-09-29.
+> **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
+> **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
+> **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
+> **Last verified: 2026-10-14**: branch `fix/pi-revoid-and-finance-auto-receipt` (to `staging`, BUG-87 follow-up, BUG-2026-10-14-286/287) added below (its entry is the newest).
+> **Last verified: 2026-10-14**: branch `design/mobile-ui-foundation` (Phase 0 mobile UI foundation, local only) added below.
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, mobile Updates Phase 1) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `design/mobile-home-dashboard` (to `staging`, phone Home two views) added below.
+> **Last verified: 2026-10-13**: branch `feat/kpi-urgent-points-editable` (to `staging`) added item 6 to the urgent orders KPI entry below.
+> **Last verified: 2026-10-13**: branch `feat/kpi-delivery-score-breakdown` (to `staging`) added item 5 to the urgent orders KPI entry below.
+> **Last verified: 2026-10-13**: branch `chore/sync-staging-from-main-1013` (to `staging`, staging<-main sync) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/it-support-sort-cycle` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/it-support-header-filters` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`, bell events) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `feat/it-support-mobile-cards` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder` (to `staging`, BUG-2026-10-13-284) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-table-style` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `design/safe-area-fix` (/m safe-area fix) added below (its entry is the newest); `upstream/staging` merged in.
+> **Last verified: 2026-10-12**: branch `feat/it-support-empty-card` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-list-layout` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support-form-tweaks` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/credit-no-dispatch-check` (to `staging`, BUG-2026-10-12-282) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `feat/it-support` (to `staging`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`) closed item 3 of the list Export entry below.
+> **Last verified: 2026-10-12**: branch `fix/export-all-pages` (to `staging`, BUG-2026-10-12-281) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: BUG-87 entry got item 5 (staging check of #803 found a snake_case read; fix on `fix/bug87-auto-grn-read`).
+> **Last verified: 2026-10-12**: branch `fix/bug87-po-overdue-stock-check` (to `staging`, BUG-87, BUG-2026-10-12-279) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/grid-export-computed-columns` (to `staging`, BUG-2026-10-12-278) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/po-picker-show-supplier` (BUG-98 follow-up to `staging`) added item 5 to the BUG-98 entry below.
 > **Last verified: 2026-10-09**: branch `fix/po-line-material-supplier-only` (BUG-98 follow-up to `staging`) added item 4 to the BUG-98 entry below.
 > **Last verified: 2026-10-09**: branch `feat/po-supplier-combobox-material-modal` (BUG-98 to `staging`) added below (its entry is the newest).
@@ -11,12 +39,46 @@
 > **Last verified: 2026-10-09**: branch `feat/dev64-price-list-default-column` (DEV-64 to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-09**: branch `fix/worker-i18n-popups-and-date` (to `staging`, then `main`) added below (in progress, its entry is the newest).
 > **Last verified: 2026-10-09**: branch `feat/dashboard-month-static-kpis` (to `staging`) added below (its entry is the newest).
-> **Last verified: 2026-10-08**: branch `feat/plant-load-14d` (to `staging`, BUG-2026-10-08-269) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `feat/plant-load-14d` (to `staging`, BUG-2026-10-08-285, logged as 269) added below (its entry is the newest).
 > **Last verified: 2026-10-08**: branch `fix/bom-module-guide-anchors` (to `staging`) added item 5b to the editable WIP types entry below.
 > **Last verified: 2026-10-08**: branch `feat/bom-variant-fields-list` (to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-08**: branch `fix/kpi-delivered-last-leg-myt` (to `staging`, BUG-2026-10-08-267) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/kpi-dept-efficiency-daily-chart` (DEV-36 follow-up to `staging`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `chore/sync-staging-from-main-1007` (staging<-main merge): both trackers merged, main-only entries added, entry below.
+> **Last verified: 2026-10-13**: Stock Summary blank-month FG / WIP (#830) prod-verified.
+> **Last verified: 2026-10-13**: branch `feat/stock-summary-blank-month-fg-wip` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: blank-month FG / WIP from the production orders (#829) prod-verified.
+> **Last verified: 2026-10-13**: branch `feat/pnl-live-fg-wip` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `feat/it-support-to-main` (IT Support staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-13**: branch `fix/claude-calls-via-sg-forwarder-main` (to `main`, BUG-2026-10-13-284) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: running-month labour to date (#818) prod-verified.
+> **Last verified: 2026-10-12**: branch `feat/pnl-running-month-labour-to-date` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: Labor Cost incl. EPF & Allowances card (#814) prod-verified.
+> **Last verified: 2026-10-12**: branch `feat/labor-cost-incl-payroll-card` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: finance dashboard Production Revenue (#811) prod-verified.
+> **Last verified: 2026-10-12**: branch `feat/cost-structure-production-revenue` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-12**: branch `fix/po-picker-duplicate-supplier-rows` (BUG-2026-10-12-276, to `main`) added item 7 to the BUG-98 to-main entry below.
+> **Last verified: 2026-10-09**: Journal Entries undone fold (#798) prod-verified.
+> **Last verified: 2026-10-09**: branch `feat/system-journal-undone-fold` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/po-picker-row-per-supplier` (BUG-98 follow-up, to `main`) added item 6 to the BUG-98 to-main entry below.
+> **Last verified: 2026-10-09**: branch `feat/po-picker-show-supplier-main` (BUG-98 follow-up, staging #790 to `main`) added item 5 to the BUG-98 to-main entry below.
+> **Last verified: 2026-10-09**: branch `feat/bug98-po-supplier-picker-main` (BUG-98 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `feat/dev64-price-list-default-column-to-main` (DEV-64 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: stock-take priced count (#775), price-list hint fix (#776) and price-list prefill (#778) all prod-verified.
+> **Last verified: 2026-10-09**: branch `fix/co-scan-po-creates-co` (to `main`, BUG-2026-10-09-271) added below (its entry is the newest).
+> **Last verified: 2026-10-09**: branch `docs/outsourced-ot-box-next-time` (to `main`) added item 7 (outsourced staff OT box, next time) to the hourly-rate entry below.
+> **Last verified: 2026-10-08**: branch `feat/bom-variant-fields-list-main` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `fix/ot-hourly-rate-display` (to `main`, second commit of #759) closed item 5 of the hourly-rate entry below (the ÷9 rule is seeded from 2026-10-01).
+> **Last verified: 2026-10-08**: branch `fix/ot-hourly-rate-display` (to `main`, BUG-2026-10-08-269) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `feat/kpi-dept-efficiency-daily-chart-main` (to `main`, DEV-36) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `feat/editable-wip-types-main-v2` (staging #752 to `main`, second try after #753 was reverted by #754) updated the entry below.
+> **Last verified: 2026-10-08**: branch `feat/editable-wip-types-main` (staging #752 to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-08**: branch `fix/kpi-delivery-rules-main` (to `main`) (BUG-2026-10-08-267) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `feat/dev08-pillow-follows-sofa-to-main` (DEV-08 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `fix/empty-auto-invoice-guard` (to `main`, BUG-2026-10-07-266) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `perf/production-dept-tab-cache-main` (#734 to `main`, BUG-2026-10-07-265) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `feat/dev39-kpi-view-calculation-to-main` (DEV-39 staging to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-07**: branch `feat/dev36-kpi-department-to-main` (DEV-36 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `feat/dev37-kpi-self-view-to-main` (DEV-37 staging to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/rm-uom-bottle-main` (DEV-20 follow-up to `main`, BUG-2026-10-07-262) added below (its entry is the newest).
 > **Last verified: 2026-10-07**: branch `fix/sales-transfer-credit-block` (to `staging`, BUG-2026-10-07-263) added below (its entry is the newest).
@@ -184,7 +246,368 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+design/mobile-home-dashboard
+## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
+Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
+1. 🔵 Audit (read-only): desktop SKU Master / Catalog, `/api/products` (server strips selling prices without `product-pricing:read`), seat × tier pricing, modular family photos, BOM on the existing detail, /m dispatch.
+2. 🔵 `src/pages/m/screens/ProductsScreen.tsx` (phone hub; tablet renders the unchanged `ModuleListScreen`) + `src/pages/m/lib/products-hub.ts` (pure) + one `CUSTOM_L1` line in `MobileLayout.tsx`.
+3. 🔵 Real SKUs only, no SKU images; families via `familyOf`; family cover from `/api/files?resourceType=modular`, "No photo" fallback.
+4. 🔵 Prices per category; missing = "No price" / "—", never RM 0.00; prices hidden without `product-pricing:read`.
+5. 🔵 Search (SKU + family, exact code first), category chips, sort, size filter, family sheet → SKU detail, SKU card → detail; view / category / q in URL.
+6. 🔵 BOM stays on the existing detail; setup completeness and ⋮ menu not on the page.
+7. 🔵 `tests/m-products-hub.test.mjs` (9); tsc strict 0; eslint clean on touched files (`MobileLayout.tsx` set-state-in-effect error pre-exists on HEAD); full `npm test` 5890 pass / 0 fail; `npm run build` ok.
+8. 🔵 390px harness (local Vite + Edge, fixture /api, no DB): 29/29 checks incl. no overflow, no RM 0.00, P1/P2 sheet, broken photo fallback, no-pricing role, tablet unchanged, dark mode.
+9. 🟡 UNMEASURED on real data: family photo coverage, real `tier` values on sofa rows, real size labels / SKU count. Needs a staging look after merge.
+10. 🟡 Not changed (owner): existing tablet list + product detail still print RM 0.00 for an unpriced SKU (`money(sen || 0)` in `config/helpers.ts`).
+
+## 2026-10-15 (later) — 🔵 Phone Sales Orders list: follow the live `Sales Orders.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-15 after a read-only audit). Source: the live `Sales Orders.dc.html` in the Claude Design project (newer than the handoff README behind the 2026-10-14 entry). PHONE only; tablet, desktop and shared components unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. **Typography follows the repo**; text on the gradient summary turns white (unavoidable).
+1. 🔵 Header: round gradient "+" (New Sales Order) back in the phone header `trailing`; the Sort + New SO row is removed.
+2. 🔵 Summary moves to the top as a gradient card (fixed taupe hex in both themes for contrast), icon tiles, "By status" toggle, title follows the chip; breakdown restyled; Cancelled revenue still excluded.
+3. 🔵 Search row: search + Scan PO only; Filter moves to (4).
+4. 🔵 New "N ORDERS" row with a round Filter & Sort button (same `FilterSheet`) + count badge.
+5. 🔵 Removable active-filter chips + "Clear all" (each removes its key from the existing `filters` state).
+6. 🔵 Empty state: icon tile + pill reset. Card gap 11.
+7. 🟡 OVERDUE indicator: audited, business rule awaiting owner approval. Not implemented.
+8. 🔵 Test updated; `tsc -p tsconfig.app.json` run.
+9. 🔵 (approved later 2026-10-15) Summary card spacing: KPI columns 1.4fr | 1px | .9fr, KPI value line-height 1.1, fixed right-aligned count column in the breakdown; money never ellipsised (KPIs stack when the revenue cannot fit; breakdown status names wrap).
+10. 🔵 Phone-only `SalesFilterSheet` (prototype "Filter orders"): Sort | Filter switch keeping every existing sort; Status, Expected DD presets (week = Mon–Sun), Amount presets (< RM 10k · RM 10k–50k · > RM 50k, non-overlapping), RM inputs → sen; every existing filter under More filters; sticky Reset + live "Show N orders". Main status chip and sheet Status never disagree. Shared `FilterSheet` untouched (tablet + other modules).
+11. 🔵 Log the shared `FilterSheet` Amount-in-sen bug in `BUG-HISTORY.md` (not fixed here).
+12. 🔵 Checks: tsc, Sales tests, 320 / 375 / 390 px incl. long revenue, light + dark.
+13. 🔵 (owner, later 2026-10-15) Sort | Filter switch removed: the phone sheet is "Filter orders" only, as the prototype. No new sort UI; the list keeps its sort state, default (Expected DD, soonest first) and applySort. Phone users can no longer change the sort order; tablet still can (shared FilterSheet).
+
+## 2026-10-15 — 🔵 Phone Home: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-15 after a read-only audit). Source: Claude Design `Home.dc.html` + `design_handoff_home_mobile/README.md`. Branch fast-forwarded to `upstream/staging` (80ad740f) first, so the Mobile UI Foundation is present. PHONE only; tablet and desktop unchanged. Real data / API / calculations / permissions / routes unchanged; no prototype mock data. Prototype shadows kept (owner). **Typography follows the repo** (decision 8).
+1. 🔵 Phone order: Operations | Performance switch → KPI hero → Quick Actions → the rest (decision 2). Hero keeps the past-month "as of" note, "…" loading, "—" no record; money never ellipsed.
+2. 🔵 Orders due: horizontal snap carousel with a visible "N of M" position and total, last card reachable, overdue shown by icon + text, not colour alone (decision 3).
+3. 🔵 Shared components untouched: MobileHeader, BottomTabBar, SegmentedSwitch, InstallAppCard, GlobalSearchSheet (decision 4). No frosted header / tab bar, no switch icons.
+4. 🔵 "Production" and "Purchasing" section headings (decision 5).
+5. 🔵 Neutral colour for zero / loading / non-warning: Daily Report total, Plant Load ring and Queue Load tile (decision 6).
+6. 🔵 Copy that matches the data (decision 7): Receive → New PO; Completed = yesterday (or the month's last day); "This Month" only on the current month; Orders due title; Sales by Customer denominators; "N low" = the real total; efficiency bands vs the Daily Report's 60%; no "LIVE" (the pipeline is cached and all-months).
+7. 🔵 Loading / empty / error states where the data has them; dark mode via `M.*` and the Foundation status text colours.
+8. 🔵 `tests/mobile-home-views.test.mjs` updated only where the phone presentation changed; tsc + tests run.
+
+## 2026-10-15 — 🔵 Dashboard: revenue per department + Bedframe / Sofa split (branch `feat/dept-revenue` → `staging`)
+
+Owner asks (2026-10-15, decisions confirmed in chat):
+1. 🔵 Department revenue, same rule as Production (UPHOLSTERY) revenue: department X books a production order's full value (SO line → CO line → product price × qty) on the day ALL of that order's department-X job cards are COMPLETED/TRANSFERRED. Every department books the full value (a RM 2,000 sofa through 9 departments = RM 18,000 across departments), so equal output = balanced supply. An order with no card in a department books nothing there. All 10 production departments, Packing included.
+2. 🔵 New /dashboard card "Department Revenue": one row per department, Bedframe / Sofa / Total for the selected period, plus a per-day (month) / per-week (all-time) line chart per department; All / Bedframe / Sofa toggle.
+3. 🔵 Existing Revenue chart (Sales Orders · Invoices · Production) gets an All / Bedframe / Sofa toggle; Accessory counts in All only.
+4. 🔵 The existing Labor Cost "category revenue" (minutes-weighted slices that sum to the order value) is a different measure and stays unchanged.
+
+## 2026-10-14 (later) — 🔵 Phone Sales Orders list: follow the Claude Design prototype (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks (approved 2026-10-14). Source: `Sales Orders.dc.html` + handoff README (premium card refresh). **Overrides the entry below where they differ.** PHONE only; tablet and desktop unchanged. Real data / API / logic / permissions / navigation unchanged; no prototype mock data. **Typography (family, sizes, weights, text colours, hierarchy) follows the repo**; every other visual follows the prototype.
+1. 🔵 Header: the "+" moves out of the header (phone) into a gradient "New SO" pill on a new Sort + New SO row; Sort opens the existing FilterSheet.
+2. 🔵 Search: borderless shadowed field (radius 14), clear button, Scan PO as a gold 34px tile inside it; Filter button borderless + shadow, taupe when active.
+3. 🔵 Chips: borderless, shadow, `aria-pressed`.
+4. 🔵 Summary: card with Revenue + Total Orders and an expandable per-status breakdown (same revenue rule: Cancelled excluded).
+5. 🔵 Card: borderless + deeper shadow, 3px rail, borderless tile pill, customer name wraps, PO and Cust SO both shown, inset meta panel with icons, Cancelled dimmed (.55), press scale.
+6. 🔵 Test updated to the new decisions; `tsc -p tsconfig.app.json` run.
+
+## 2026-10-14 — 🔵 Phone Sales Orders list: search row + card refinement (branch `design/mobile-home-dashboard` → `staging`, local only)
+
+Owner asks (planned and approved 2026-10-14). Frontend only, `src/pages/m/screens/SalesScreen.tsx`; PHONE only (<720px), tablet and desktop unchanged. No API, DB, permission, detail or create-flow change.
+1. 🔵 Search row: the separate Scan button removed; the same `ScanPOSheet` opens from a trailing icon inside the search field, labelled "Scan PO to create Sales Order". Filter button stays separate on the right.
+2. 🔵 Card: Company SO + status pill; customer name up to 2 lines; Customer PO (`customerPOId ?? customerPO`, as desktop) with Customer SO only as fallback; Expected DD · Total Qty (sum of item quantities, "—" when items are absent, never the line count) · Amount (`totalSen`).
+3. 🔵 Order Date removed from the card (still in the detail and the Filter sheet). Operational progress omitted until accurate data is wired in.
+4. 🔵 3px left rail + pill from the existing `SO_STATUS_COLOR` map; Notifications card shadow; Cancelled no longer dimmed.
+5. 🔵 Shared `MobileCard` untouched. Targeted tests + `tsc -p tsconfig.app.json` run.
+## 2026-10-14 — 🟢 BUG-87 re-test: second void fails, Finance can't void a PO-direct invoice (branch `fix/pi-revoid-and-finance-auto-receipt` → `staging`, #852, verified on staging)
+
+Staging re-test of #803/#805 on 2026-10-14 (DARK PINK SPONGE). Confirm puts stock in, void takes it out, unvoid puts it back, qty frozen / price free, a partly received PO only receives the rest, Office can create + confirm. Two bugs:
+
+1. ✅ BUG-2026-10-14-286: void → unvoid → void of any purchase invoice answers 500. Staging log: `duplicate key value violates unique constraint "idx_lje_idempotent"`. `buildPiDeltaLegs` numbers legs from 1 every time, and the first void already owns those leg numbers. Owner: fix on `staging`.
+2. ✅ BUG-2026-10-14-287: Finance may void, but the void cancels the auto receipt through the GRN route, which checks the caller's own `grn:delete`. Staging Finance holds 53 grants, none for `grn`, so the void is refused (409 "Forbidden"). Owner: ignore that permission for the auto receipt.
+3. ✅ After deploy (2026-10-14): PI-2610-023 and PI-2610-024 voided, PO-2610-022 / PO-2610-023 cancelled, stock back to 196. Void → unvoid → void and Finance void/unvoid all pass, also on fresh PI-2610-027 / PI-2610-028. All test POs (022 to 027) cancelled, all test PIs (023 to 028) voided.
+4. 🔵 BUG-2026-10-14-286 to `main` (branch `fix/pi-revoid-legno-main`): the same `buildPiDeltaLegs` fix, without the staging-only auto receipt.
+5. ⬜ Not checked: other ledger posters that number legs from 1 with a reused sourceId (e.g. `invoices.ts` `invoice_void`).
+
+## 2026-10-14 — 🟡 Mobile UI Foundation, Phase 0 (branch `design/mobile-ui-foundation`, local only; ready for owner review)
+
+Owner asks (approved Phase 0 specification). Foundation only: no screen migration or visual change.
+1. 🔵 Add mobile-scoped semantic typography and accessible light/dark text-colour tokens.
+2. 🔵 Add mobile spacing, gutter, radius, control, icon, elevation, focus, interaction and responsive tokens.
+3. 🔵 Use the existing Announcements/Notifications soft card shadow for `--m-shadow-card`.
+4. 🔵 Document mobile theme/type, flexible card variants, shadows, spacing/responsiveness, controls/chips, themes, accessibility and future adoption.
+5. 🔵 Keep Hookka's existing brand palette and font; do not change screens, shared components, desktop tokens, backend or business logic.
+6. ⚪ Phase 1: adopt the foundation in existing mobile components/screens only through separately approved migration tasks.
+
+Implemented locally and stopped for review. Verification: CSS parses with PostCSS; all 14 normal/status text pairs pass 4.5:1 on their lowest-contrast mobile surface (minimum 4.59:1); the exact card-shadow source and all 10 typography roles are present; docs freshness and codebase-map checks pass; 45 targeted mobile shell/Home/Updates tests pass; `git diff --check` passes; no mobile screen, shared component, desktop token, API or data file changed. staging
+
+## 2026-10-13 — 🔵 Mobile Updates: Notifications | Announcements, Phase 1 (branch `design/mobile-home-dashboard` → `staging`, local only)
+
+Owner asks (planned, revised and Phase 1 approved 2026-10-13). Frontend only: no backend, DB, migration, API route or permission change.
+1. 🔵 One `/m/updates` page with a Notifications | Announcements switch (the existing `SegmentedSwitch`). Notifications by default; the view is kept in `?view=` so Back from an announcement returns to it.
+2. 🔵 Numeric unread badge on the Notifications tab only, from the real `/api/notifications` rows. No Announcements badge (no per-user tracking exists yet).
+3. 🔵 Opening a notification marks only that one read; switching tabs marks nothing. Explicit "Mark all read" stays.
+4. 🔵 Announcements view = the existing list (search, All/Pinned, + create, detail with read-receipts), unchanged. `/m/announcements` routes unchanged.
+5. 🔵 Home bell: the hardcoded red dot replaced by a real unread-notifications dot; the bell opens `/m/updates`.
+6. 🔵 Loading, error and empty states; an error is not shown as "no notifications".
+7. 🔵 Notification links are desktop paths: only same-origin paths with a known mobile screen navigate; anything else expands the card instead.
+8. 🔵 Tablet and desktop behaviour preserved. Checks and tests run.
+9. ⚪ Phase 2 (NOT approved): per-user office announcement views. Owner notes: versioned migration (not runtime CREATE TABLE), pre-launch announcements count as viewed, confirm which announcements count as unread, worker acknowledgements untouched.
+10. ⚪ Separate fix (to `main`, not in this branch): the desktop bell's optimistic mark-read never self-corrects on a failed PUT (the change broadcast only fires on success).
+11. 🟡 Needs prod access: count of broadcast notifications (`user_id IS NULL`) still unread. UNMEASURED.
+12. 🔵 (approved 2026-10-13, card + search/filter) Notification card follows the desktop: severity dot beside the title + 3px severity left bar (brand colours, dark-mode tokens), subtle plain-text "Critical / Warning / Info" label, no severity pills, no unread dot; unread title 600, read 500; category pill + date + icon + chevron only when it opens.
+13. 🔵 Search (title, message, link reference; every word must match) + one filter sheet: Category (All types + 7) · Read status (All / Unread / Read) · Severity (All + 3), single-select each, AND together. Reset, Show N results, active-filter count on the button, removable active-filter row, no-results state. State kept in the URL (`q`, `cat`, `read`, `sev`, replace) so Back restores it.
+14. 🔵 All / Unread chips removed; desktop summary cards NOT copied.
+16. 🔵 (approved 2026-10-13, card polish) Severity word uses the same colour as its dot + bar (all widths); light `--m-sev-warning` #9C6F1E → #976B1C (4.73:1 as text). PHONE only (<720px): title 15px / -0.2px / up to 2 lines (600 unread, 500 read), description + date in M.body, chevron M.muted, padding 13/15/13/18, 11px between cards, 4px title→description, 10px above the meta row. Tablet card unchanged.
+17. 🔵 (2026-10-13, whole-view consistency pass) Page chrome follows existing /m conventions: search + filter row = the Sales row (filter button outlined 44×44, taupe with the count when active), active chips = the selected-chip look (30px, 12/600, gold), result count = the Sales summary strip (11.5px), date headings = the /m section heading (11/700/1px), Mark all read = the 34×34 header-action shape (outlined), filter sheet = FilterSheet conventions (no double padding, 12/700 labels, 12px chips in 44px targets, equal 14/700 buttons). Search input stays 16px (iOS zoom).
+15. 🔵 Mark all read still marks ALL unread. No confirm when nothing is filtered (as today and as desktop); with a search/filter active it asks first with the /m `window.confirm` pattern, because the list on screen is not "all".
+
+## 2026-10-13 — 🔵 Phone Home: Operations | Performance views (branch `design/mobile-home-dashboard` → `staging`, local only)
+
+Owner asks (planned and approved 2026-10-13). Phone only (below 720px); tablet and desktop unchanged.
+1. 🔵 One Home page, a 44px full-width Operations | Performance switch under the Install App card. Operations by default. Text only, M.* tokens, soft active shadow.
+2. 🔵 Operations: Quick Actions, Pending Delivery + Outstanding, Daily Report, Orders due, Order Pipeline, Plant Load, Department Backlog, Stock alerts, Purchasing.
+3. 🔵 Performance: This Month Sales + This Month Invoices, Revenue, Worker Efficiency, Sales by Customer, Top Sellers, Fabric Usage.
+4. 🔵 The 2x2 KPI grid splits into two rows of two on the phone only; tablet keeps the one four-card grid.
+5. 🔵 Month chip stays in the greeting row; the month is kept when switching; no new fetches, no API or calculation change.
+6. 🔵 Phone Order Pipeline wording: "Order Pipeline · Live", "shipped vs still to ship · all months", note without the month (`/api/sales-orders/stats` has no date filter). Pending Delivery / Outstanding snapshot labels unchanged.
+7. 🔵 Tablet must render the same HTML as before (before/after render comparison).
+8. ⚪ Follow-up, not in this branch: the TABLET Order Pipeline still says "Order Pipeline · <month>" and ends its note with the month, but `/api/sales-orders/stats` is not filtered by month.
+
+## 2026-10-13 — 🔵 Sync `staging` from `main` (branch `chore/sync-staging-from-main-1013` → `staging`)
+
+190 `main` commits merged into `staging` (471 staging-only kept). Conflicts: 12 code/test files, 10 docs.
+1. 🔵 KPI on-time delivery (`kpi-catalog.ts`, `kpi-metrics.ts`, `kpi.ts`, `kpi/index.tsx`, three tests): staging's side, the newer 2026-10-13 rule (urgent orders scored apart) replaces main's 2026-10-08 `urgentLatePct` share.
+2. 🔵 New PO (`procurement/create.tsx`), worker home tiles (`worker/index.tsx`), worker translations (`worker-i18n.ts`): main's files, which already hold everything staging had. Git had silently merged `worker-i18n.ts` wrong (dropped Working Hours).
+3. 🔵 `production-revenue.ts` (added on both sides): both kept, main's monthly loader and staging's per-day query in one file. `worker.ts` takes main's v4 cache key. `/m` IT Support keeps staging's menu header; the row sits under System only (main's #832), not twice.
+4. 🔵 Two fixes the merge needed: main's double-click invoice guard (BUG-2026-10-07-266) was unreachable behind staging's nothing-left-to-bill gate, so it now runs first; the staging-only sequence-unlock refetch now invalidates the production-orders cache first, as main's cache test asks.
+5. 🔵 Docs: logs and stamps unioned, one copy of each entry. Staging's Plant Load bug BUG-2026-10-08-269 renumbered to 285 (main used 269). `API.md` regenerated (147 / 1034); production, employees and map anchors re-measured.
+
+`npm test` 5781 tests: 5778 pass, 0 fail, 3 skipped (after also merging the newest `staging`, #834). Map, API.md and docs-freshness checks pass. tsc not run locally.
+## 2026-10-13 — 🔵 On-time delivery KPI: urgent orders scored apart, full score tables on the card (branch `feat/kpi-urgent-orders-scored-apart` → `staging`)
+
+Owner ask, with the points table Violet sent on 2026-10-05. Owner answers 2026-10-13: the urgent % is the share of urgent orders delivered on time or early; urgent orders are taken out of the late % and early % and get their own points, added to the score (capped at 100).
+
+1. 🔵 Urgent orders (promised within the urgent days of the order date) leave the late % and early %. Their on-time-or-early % earns 0% → 5, +5 per 10%, 90% → 50, 100% → 60. Replaces the "late urgent order counts as X% of a late one" rule.
+2. 🔵 The calculation panel lists every value: late %, early % and urgent % to points, built from the saved rules.
+3. 🔵 The card summary line always shows the urgent orders (how many, how many on time or early).
+6. 🔵 Follow-up ask (branch `feat/kpi-urgent-points-editable`): the urgent points are set in the Library like the late and early numbers: points at 0%, points per step, the step %, points at 100% (defaults 5, 5, 10%, 60).
+5. 🔵 Follow-up ask (branch `feat/kpi-delivery-score-breakdown`): "Your result" on the delivery card lists each part on its own line: orders, %, the sum and the points (late, early, urgent).
+3b. 🔵 The card's order list: Late / Early / On time count only the non-urgent orders (so they match the card), and a new Urgent filter lists the urgent ones. The result line shows late + early + urgent points.
+4. ⬜ Staging check after deploy.
+
+## 2026-10-13 — 🔵 Grid sort: third click clears it; IT Support Issue not sortable (branch `fix/it-support-sort-cycle` → `staging`)
+
+1. ✅ Shared DataGrid: clicking a header goes A to Z, Z to A, then off (back to the page's own order). Before, it flipped between the two forever. Applies to every list.
+2. ✅ The ▲▼ arrows only show on sortable columns (`sortable: false` columns used to show dead arrows).
+3. ✅ IT Support: Issue is `sortable: false`.
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy.
+
+## 2026-10-13 — 🔵 IT Support: no header filter on Ticket, Issue, Last update (branch `fix/it-support-header-filters` → `staging`)
+
+1. ✅ New opt-in `Column.noFilter` on the shared DataGrid hides a column's header ▼ value filter. No other grid sets it, so every other list is unchanged.
+2. ✅ IT Support sets it on Ticket, Issue and Last update (every row differs, so the tick-box list was just every ticket again). Status, Urgency and Handled by keep theirs. Search still finds a ticket by code or title.
+3. ⬜ NOT yet seen in a browser. Check on the staging site after deploy.
+
+## 2026-10-13 — 🔵 IT Support: ticket updates in the top-bar bell (branch `feat/it-support-mobile-cards` → `staging`, PR #823)
+
+1. ✅ `POST /api/it-support/hub-events` (before the login gate, secret `IT_HUB_WEBHOOK_SECRET` in header `x-it-hub-secret`): each IT reply or status change becomes one bell row for the reporter only, linking to `/it-support?ticket=<code>`. A retried event is stored once. Tests in `tests/it-support.test.mjs`; full suite 5693 pass, 0 fail. tsc and lint skipped.
+2. ⬜ Hub repo (not here): after saving a developer reply or status change on a ticket filed from Hookka, POST JSON `{ event_id, kind: "comment" | "status", author_kind: "developer", ticket_code, ticket_title, reporter_id, body?, to_status? }` with header `x-it-hub-secret`. `reporter_id` is the `X-Reporter-Id` Hookka sent. Treat 2xx as done, retry on 5xx or network failure, do not retry 4xx.
+3. ⬜ Set `IT_HUB_WEBHOOK_SECRET` on Pages Preview (staging) and in the hub, then check end to end on the staging site.
+
+## 2026-10-13 — 🔵 IT Support: ticket cards on phones, tidier report form, /m screen (branch `feat/it-support-mobile-cards` → `staging`, local only)
+
+1. ✅ Below 768px the ticket grid is hidden (with it the Columns button and the Record 1 of X pager) and each ticket is a tappable card: code and last update on top, title (2 lines max), then status, urgency and who handles it.
+2. ✅ Phone toolbar: All / Active / Resolved tabs on one horizontally scrollable row and a full-width search box (code, title, handler, status, urgency).
+3. ✅ Desktop (768px and up) unchanged: same grid, same toolbar.
+4. ✅ Report form: card capped at ~768px and centred (header too), padding p-6 / p-8, dropzone py-6 (previews stay below it), Send / Cancel larger (px-5 py-2.5, rounded-lg) in a gap-3 row.
+5. ✅ Phone app: IT Support in the /m side menu (Service & Support) opens /m/it-support, which runs the same page (list, report, ticket, reply, confirm). It stays light when /m is in dark mode.
+6. ⬜ NOT yet seen in a browser. Check on the staging site after deploy at 320px, 375px and desktop, and /m/it-support on a phone (light and dark).
+
+## 2026-10-13 — 🔵 Claude calls from Singapore so scans work on any network (branch `fix/claude-calls-via-sg-forwarder` → `staging`, BUG-2026-10-13-284)
+
+1. ✅ New Worker `claude-forwarder-worker/` pinned to Singapore (`[placement] region = "aws:ap-southeast-1"`), no public URL.
+2. ✅ All five Claude call sites (scan, rule distilling, agent brain, AI assistant, announcement translation) go through `claudeFetch` (`src/api/lib/claude-fetch.ts`), which uses the `CLAUDE_FORWARDER` service binding when present.
+3. ⬜ Owner: deploy the forwarder BEFORE this merges (`cd claude-forwarder-worker && npx wrangler deploy`).
+4. ⬜ After the staging deploy: run a scan on the staging site while `npx wrangler tail` runs in `claude-forwarder-worker/`, and confirm the log shows a Singapore placement and status 200.
+
+## 2026-10-13 — ✅ Stock Summary carries the same blank-month FG / WIP as the P&L (owner「Stock Summary 也一起改」)(#830 287a678b, prod-verified)
+
+1. ✅ `stockSummaryRange` (the Stock Summary page and the closing-stock post) uses `blankMonthStock` for its opening and
+   closing WIP / FG, so a month the Stock Take leaves blank shows the production-order valuation the P&L carries. The
+   eligibility rule is one helper (`blankStockParts`) for both; the doc-date context loads only when there is a blank
+   month to value.
+2. ✅ Prod (2026-10-13, read-only): the running month's Stock Summary WIP and FG (opening and closing) equal the P&L's,
+   read at the same moment; the typed month before it reads as before.
+
+## 2026-10-13 — ✅ P&L: FG and WIP of a month the Stock Take leaves blank, valued from the production orders (owner「10 月的 FG 可以计算还没送的货，然后在我的 P&L 出现吗」→ 1.A, WIP the same method, cost ratio without factory overhead, 「人工用这个月的，做」, 「已经出车…那就不能算 wip 了，上线」)(#829 475f181a, prod-verified)
+
+1. ✅ A month-end with no FG / WIP in Stock Take (FG only under "stock take only") is valued live from the production
+   orders — as of today for the running month, the month's last day otherwise; a typed month keeps its figure. FG =
+   orders closed and not yet out by delivery order / consignment note; WIP = orders open with work done, at completion
+   by standard minutes (all done but not closed = 100%); orders already out are neither; SERVICE CHARGE is neither.
+2. ✅ Value = selling price (sales-order line for the product, own line first; else consignment line; else category
+   average) × cost ratio = last month's materials ÷ last month's completed goods + this month's direct labour ÷ this
+   month's completed goods; no factory overhead. Core `src/lib/production-stock.ts`, loader
+   `src/api/lib/production-stock.ts`, wiring `liveStockFor` / `blankMonthStock` in `computePnlWindow`.
+3. ✅ Checked before shipping on production data: September's FG by this method matches the figure keyed on 2026-10-09
+   to within 0.1% (same units); September's WIP differs only by the owner's two rules (service charges, orders already
+   out) plus later scans. Dashboard payload `v17`.
+4. ✅ The Stock Summary page follows since the next branch (`feat/stock-summary-blank-month-fg-wip`).
+5. ✅ Prod (2026-10-13, read-only): the running month's P&L now carries FG and WIP closing figures (both were blank
+   / the engine's own before); the typed months before it read exactly as before the deploy. An independent browser
+   run of the same core on the same data gives the server's FG to within a few ringgit once service orders are included
+   (the sales-order list leaves them out by default); WIP differs ~2% because the server also uses estimated minutes for
+   job cards with no standard time, which the job-card list doesn't return. The running month's statement loads about
+   half a second slower.
+
+## 2026-10-13 — 🔵 IT Support, staging to main (branch `feat/it-support-to-main` → `main`)
+
+1. ✅ Cherry-picked the 9 IT Support code commits from staging (#812, #815, #816, #817, #821, #823, #825, #827): the module and hub proxy, report form, list tabs and empty state, table styling, phone cards and /m screen, bell events, header filters, sort cycle. Docs written fresh for main instead of picked.
+2. ✅ /m: main's shell has no side menu, so IT Support sits on the More screen (Service & Support) and its header has a back button to /m/more instead of the menu button.
+3. ✅ `npm test` 5405 pass, 0 fail. tsc and lint skipped.
+4. ⬜ Owner: set `IT_HUB_URL`, `IT_HUB_API_KEY` and `IT_HUB_WEBHOOK_SECRET` on Production. Without them the page says IT Support is not connected and the bell endpoint answers 503.
+5. ⬜ After deploy: open /it-support and /m/it-support on the live site, read and write path.
+
+## 2026-10-13 — 🔵 Claude calls from Singapore so scans work on any network (branch `fix/claude-calls-via-sg-forwarder-main` → `main`, BUG-2026-10-13-284)
+
+1. ✅ New Worker `claude-forwarder-worker/` pinned to Singapore (`[placement] region = "aws:ap-southeast-1"`), no public URL.
+2. ✅ All five Claude call sites (scan, rule distilling, agent brain, AI assistant, announcement translation) go through `claudeFetch` (`src/api/lib/claude-fetch.ts`), which uses the `CLAUDE_FORWARDER` service binding when present.
+3. ⬜ Owner: deploy the forwarder BEFORE this merges (`cd claude-forwarder-worker && npx wrangler deploy`).
+4. ⬜ After the prod deploy: run a scan on erp.hookka.com while `npx wrangler tail` runs in `claude-forwarder-worker/`, and confirm the log shows a Singapore placement and status 200.
+
+## 2026-10-12 — 🔵 IT Support: high-contrast ticket table (branch `feat/it-support-table-style` → `staging`, local only)
+
+1. ✅ Table in a white rounded card with a slate border and shadow; slate-50 uppercase header; white rows with a slate hover. Scoped to this page, the shared grid is unchanged.
+2. ✅ Status chips with a coloured dot: Open blue, In progress amber, Done please confirm green, Waiting for you orange, Testing violet, On hold / Closed slate, Rejected rose.
+3. ✅ Urgency chips: High rose, Medium amber, Low slate (older Urgent tickets a stronger rose).
+4. ✅ Handled by: initials avatar and name, or muted italic "Not picked up yet". Ticket code semi-bold slate; Issue keeps the free width.
+5. ⬜ NOT yet seen in a browser. Check on the staging site after deploy, desktop and 320px.
+
+## 2026-10-12 — 🔵 /m phone shell safe-area fix (viewport-fit + 4-side insets) (branch `design/safe-area-fix`)
+
+- Files: `index.html`, `src/pages/m/MobileLayout.tsx`, `src/pages/m/components/BottomTabBar.tsx`, `src/pages/m/components/LeftRail.tsx`
+- Fix: Dynamic Island clipping (top), home indicator (bottom), landscape notch (left/right)
+- Status: in progress. `NavDrawer` left inset is not on this branch; do it on the merged branch.
+
+## 2026-10-12 — 🔵 IT Support: empty state as its own card (branch `feat/it-support-empty-card` → `staging`, local only)
+
+1. ✅ No tickets at all: a standalone rounded card (illustration, "No tickets yet", Report an issue). No grid, so no headers, search, Views, Columns or record count.
+2. ✅ One ticket or more: the grid with tabs, search, views, columns and paging, as before. Split into `EmptyState` and `TicketTable` in the page file.
+3. ✅ DataGrid `emptyMessage` back to `string` (the ReactNode use is gone).
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy with an account that has no tickets, then one that has some.
+
+## 2026-10-12 — 🔵 IT Support: list layout with status tabs and an empty state (branch `feat/it-support-list-layout` → `staging`, local only)
+
+1. ✅ All / Active / Resolved tabs with counts, in the grid toolbar left of Search / Views / Columns (new optional DataGrid prop `toolbarStart`).
+2. ✅ Empty list: illustration, "No tickets yet", a short line and a Report an issue button. An empty tab or search shows one plain line.
+3. ✅ Resolved tab holds Done-please-confirm, Closed and Rejected; Active holds the rest.
+4. ⬜ NOT yet seen in a browser. Check on the staging site after deploy, desktop and a 320px phone width.
+
+## 2026-10-12 — 🔵 IT Support: report form tweaks and a new attachment picker (branch `feat/it-support-form-tweaks` → `staging`, local only)
+
+1. ✅ Type options read Bug / Development (stored values unchanged).
+2. ✅ How urgent? offers High / Medium / Low. `urgent` is still labelled so an older ticket reads.
+3. ✅ "When did it happen?" removed; `occurred_at` is the moment Send is pressed.
+4. ✅ The form button reads Send (Cancel kept, the reply box keeps Send reply).
+5. ✅ Attachments (form and reply box): browse, drag-and-drop, Ctrl+V / Cmd+V paste; type and 10 MB checked on add, max 5; image thumbnails with a full-size preview, PDF / video show an icon and the extension; preview URLs freed on remove.
+6. ⬜ NOT yet seen in a browser. Check on the staging site after deploy: paste, drop, remove, preview, then send a ticket and confirm it reaches the hub with its files.
+
+## 2026-10-12 — 🔵 Credit block: drivers cannot dispatch for a customer with overdue bills (branch `fix/credit-no-dispatch-check` → `staging`, BUG-2026-10-12-282)
+
+1. ✅ Explained why the phone dispatch was blocked (overdue bills, not the credit limit) and how the NET30 due date is counted (answered in chat).
+2. ✅ Owner chose no credit check at dispatch: an existing DO can always leave, office button and phone scan alike. The check stays at DO create and packing-list-first. Production had the block from #808, reverted in #809.
+3. ⬜ Check on the staging site after deploy: dispatch a DO for a customer with overdue bills from the phone scan page.
+
+## 2026-10-12 — 🔵 IT Support: report an issue to the Houzs IT Hub from inside Hookka (branch `feat/it-support` → `staging`, local only)
+
+Source: Houzs IT Hub ticket DEV-35 ("To Create Centralise IT system"). Tickets live in the hub (support.houzscentury.com); Hookka is its first reporting system.
+1. ✅ `src/api/routes/it-support.ts`: 7 handlers proxying to the hub server to server. Reporter = the session's user, reporter name / email / department from `users`. 503 when `IT_HUB_URL` / `IT_HUB_API_KEY` are unset, 502 when the hub is down or refuses the key.
+2. ✅ `/it-support` page (`src/pages/it-support/index.tsx`): my tickets, Report an issue form with screenshots, ticket conversation, reply, confirm the fix. Sidebar link for every login with an unread badge.
+3. ✅ `tests/it-support.test.mjs` (14 cases), `docs/API.md` regenerated, tsc strict shows only the 2 errors already on `staging` (`dashboard-overview.ts:2536`, `sales/index.tsx:1748`).
+4. ⬜ NOT yet seen in a browser. This checkout has no `.dev.vars`, so the page has only been type-checked and linted. Run it locally against the sandbox before pushing.
+5. ⬜ Owner: issue Hookka's hub key (`node scripts/issue-api-key.mjs HK` in the hub repo) and set `IT_HUB_URL` + `IT_HUB_API_KEY` on Pages Preview (staging), later Production.
+6. ⬜ End to end on staging: report in Hookka → pick up in the hub → reply → reporter sees it → Done → Confirm.
+7. ⬜ Optional, from the hub notes: a "Report issue" button in the top bar that opens `/it-support?new=1&from=<current page>` (the page already reads `from`).
+
+## 2026-10-12 — 🔵 /m phone navigation shell: 4 flat tabs + hamburger + left drawer (branch `design/mobile-iPad`, local only, awaiting owner review)
+
+Phone mode only (`layout.mode === "phone"`, < 720). iPad rail / breakpoints / permissions / API untouched.
+1. Bottom nav: 4 flat tabs Home · Sales · Delivery · Procurement; raised More removed; active state matches by path segment and no tab lights up on non-tab routes.
+2. Hamburger: flat icon, no box. Home (replaces the brand tile on phone only) + L1 list headers (`MobileHeader menu`) + bespoke headers.
+3. Left drawer: 324px, slides from left, profile + search pinned, grouped modules, theme toggle, install, desktop link, sign out.
+4. More content extracted to a shared component; `/m/more` route kept and renders the same content.
+5. Permissions: the existing `navGate` / `isNavAllowed` filter only.
+6. A11y: Escape / backdrop / close button, focus trap + restore, body scroll lock, safe areas, labels.
+7. Validation: tsc strict, tests, regression test `tests/mobile-nav-drawer.test.mjs`.
+
+## 2026-10-12 — 🔵 List Export compared with Houzs: all pages, Excel formats, line layout (branch `fix/export-all-pages` → `staging`, BUG-2026-10-12-281)
+
+1. ✅ Compared Hookka's list Export with the Houzs ERP one (answered in chat).
+2. ✅ Export of an unfiltered paged list (Sales, Purchase, GRN, Invoices, Delivery) now walks every page; Invoices search and filter no longer stop at 500.
+3. ✅ Excel: real date cells (dd/mm/yyyy) and `#,##0.00` money, plus status with spaces as on screen (branch `fix/export-all-pages`).
+4. ✅ Showed the one-row-per-line Detail Listing against Houzs's default layout (answered in chat).
+5. ⬜ Check on the staging site after deploy: download Delivery Orders and Sales Orders with more than one page and count rows.
+
+## 2026-10-12 — 🔵 BUG-87: PO overdue, check stock in / stock out on both convert routes, then clear the old ones (branch `fix/bug87-po-overdue-stock-check` → `staging`)
+
+Ticket BUG-87 (Laphii): overdue purchase orders pile up. Two routes are in use: PO → GRN → PI, and PO → PI direct.
+
+1. ✅ Checked on staging 2026-10-12 with one material (start balance 196). PO → GRN put 2 in (198) and moved the PO to RECEIVED; the PI on that GRN changed nothing. PO → PI direct put nothing in and left the PO CONFIRMED (so it goes overdue). A GRN added after a direct PI still put stock in (+4) and moved the PO to RECEIVED. Cancelling each GRN took its stock back out; ended at 196. Marking a direct-PI PO received answers 412 "Create + post a GRN first"; cancelling it works and leaves the PI alone. Test documents: PIs deleted, PO-2610-019/020/021 and GRN-2610-006/007 left CANCELLED on staging. Local test: `BUG-87` in `tests/purchasing-convert-flow.test.mjs`.
+2. ✅ Staging count 2026-10-12 (MYT date): 109 overdue POs, all CONFIRMED, expected dates 2026-06 to 2026-10. 91 have a PI and no GRN, 17 have neither (mostly Aug to Oct, likely real late deliveries), 1 has both (PO-2606-006: a PI plus a DRAFT, not-arrived receipt that was never posted). Staging has 573 PIs against 42 GRNs, so PO → PI direct is the normal route. Matched on the PI header PO only. Prod UNMEASURED.
+3. 🟡 Clear the old ones. Owner 2026-10-12: leave them for now, decide after checking whether their stock was already adjusted by hand. Nothing changed on prod.
+4. 🔵 Owner 2026-10-12: "stock should be able to change if PO -> PI". Built (BUG-2026-10-12-279): when an invoice billed straight off a PO is confirmed (owner: Confirm, not create; a draft holds no stock), it posts an automatic goods receipt for the part no receipt covers yet, so stock goes in and the PO moves to received. Void cancels the receipt (refused if the stock was already used); unvoid receives again; quantity and material on those lines are frozen while the receipt holds the stock. Merged as #803.
+5. 🔵 Staging check of #803: Draft held no stock (196), Confirm put 3 in (199), PO RECEIVED, GRN-2610-008 "Auto (PI-2610-023)". But a qty edit saved and void left the stock in: the receipt id was read snake_case only and the adapter returns camelCase. Fix on `fix/bug87-auto-grn-read`; recheck after deploy, then clean up PO-2610-022 / PI-2610-023 / GRN-2610-008.
+
+## 2026-10-12 — 🔵 List Export: Items showed "[object Object]" and Qty was blank (branch `fix/grid-export-computed-columns` → `staging`, BUG-2026-10-12-278)
+
+1. ✅ Listed every export button on staging (answered in chat).
+2. ✅ Sales Orders Listing export: Items and Qty now match the screen.
+3. ✅ Swept the other 11 export grids; six pages had the same gap (ids, sen, blanks, `[object Object]`), all fixed with `exportValue`.
+4. ⬜ Check the downloaded file on the staging site after deploy.
+5. ⬜ `main` has the same Sales Orders bug; a separate PR to `main` waits on the owner.
+
+## 2026-10-12 — ✅ P&L + finance dashboard: the running month's labour is labour TO DATE (owner「然后我任何的 payroll 还没 confirm 都拿这个新卡显示的数据可以吗？就算我的 pnl, dash board 这些」→「做」)(#818 2108559e, prod-verified)
+
+1. ✅ The month still running carries the Labor Cost page's "Labor Cost incl. EPF & Allowances" figure on the P&L
+   (report-layer labour) instead of a whole month of draft / projected payroll against a part-month of sales — split by
+   each worker's home department and EPF / SOCSO / EIS, like a finished month. Pure core `src/lib/labour-to-date.ts`
+   (mirrors the card line for line; the split is trued up to the card's total), loader `src/api/lib/labour-to-date.ts`.
+2. ✅ Finance dashboard: the Production / Non-Production Salary stacks for the running month use the same to-date
+   figures (per home department; per worker for the hours share). Payload `v16`.
+3. ✅ Unchanged: finished months (payslips), months recorded in the ledger (the ledger), the Labour post, the
+   Employees module (owner: not this work's — the card itself is untouched). `labour-projection` now also returns
+   its per-worker records (`projectedPayslipsForMonth`); its per-department figure is their sum.
+4. ✅ Prod (2026-10-12, read-only): the running month's P&L direct labour equals the Labor Cost card to the sen (EPF /
+   SOCSO / EIS on their own lines); the earlier months' direct labour is unchanged; the dashboard's Production Salary
+   for the running month equals the same figure and its Non-Production stack follows; earlier months unchanged.
+   Before deploy, the pure core run in the browser on production data had given the card's figure to the sen.
+
+## 2026-10-12 — ✅ Labor Cost vs Revenue: a "Labor Cost incl. EPF & Allowances" card (owner「如果我要看到今天的工资包括津贴、雇主 EPF/SOCSO/EIS、缺勤和扣钱的差价，我哪里可以看到？」→ method B →「原本的没有碰到对吗？我只是多一个 card 罢了是吗？」→「做」)(#814 97a8d568, prod-verified)
+
+1. ✅ One card after Total Labor Cost. A finished month shows the payroll itself (gross + employer EPF / SOCSO / EIS —
+   the reconciliation's Total Payroll Cost). A month still running shows the logged-hours labour so far, plus the
+   payslips' allowances and employer statutory pro-rated to the working days logged, plus the absent-day / OT /
+   docked-hours pay differences already incurred, marked "to <last logged day> · estimate"
+   (`src/lib/labor-cost-incl-payroll.ts`). Needs an un-filtered whole month, like the reconciliation.
+2. ✅ A running month with no payslips generated yet reads the same live estimate the Payroll tab shows
+   (`GET /api/payslips/projected`).
+3. ✅ Unchanged: the five existing cards, the breakdown, the reconciliation and the print. The strip goes six across
+   only when all six cards show.
+4. ✅ Prod (2026-10-12, read-only): a finished month's card equals the reconciliation's Total Payroll Cost and the five
+   existing cards read exactly as before the deploy; the running month's card matches an independent recomputation from
+   the payslips, working days, holidays, pay rules and docks to the sen. The strip shows six across.
+
+## 2026-10-12 — ✅ Finance dashboard: Production Revenue beside Sales Revenue on Cost Structure and both salary cards (owner「这个 cost structure 我要优化一点」→ 4 asks →「做」)(#811 d51f5646, prod-verified)
+
+1. ✅ Cost Structure: the REVENUE row is renamed SALES REVENUE, and a PRODUCTION REVENUE row sits under it — the
+   Employees › Labor Cost vs Revenue page's Total Revenue (orders whose last upholstery piece completed in the period,
+   selling price × quantity), from one shared loader so the two screens always agree.
+2. ✅ Every cost figure reads "% of sales / % of production revenue".
+3. ✅ A TOTAL row under the materials (amount and both percentages; the forecast column totals too).
+4. ✅ The Production Salary and Non-Production Salary cards get the same two revenue rows and the "/" percentage.
+5. ⚪ Owner: the unit-price matching inside Production Revenue is not this card's concern — left as is.
+6. ✅ Prod (2026-10-12, read-only): the Labor Cost endpoint, now on the shared loader, returns the same month totals as
+   before the deploy; the dashboard's Production Revenue equals it month by month, category split included, and is
+   blank for months ahead. Cost Structure and both salary cards show the two revenue rows, `% / %` and TOTAL; a figure
+   re-divided by hand matches.
 ## 2026-10-09 — 🔵 BUG-98: New Purchase Order supplier search box and material picker popup (branch `feat/po-supplier-combobox-material-modal` → `staging`)
 
 Ticket BUG-98 (reporter siti): the supplier picker on New Purchase Order shows every supplier. Owner then asked for two changes to the page:
@@ -239,6 +662,115 @@ Owner ask: a picked month must show that month's Pending Delivery and Outstandin
 3. 🟡 Part 2, not started: estimate Outstanding for September and older (confirmed by month end minus delivered by month end), tagged estimated. Pending Delivery for those months stays "no record": rebuilding "ready for delivery" at a past date would re-express `poReadyForDelivery`, which the code warns against. Months frozen before part 2 ships will need a refreeze.
 4. ⬜ Staging check after deploy (staging data stops at the 30 Sep clone; the save itself can still be seen).
 
+## 2026-10-09 — ✅ Journal Entries: an undone system posting is one REVERSED · UNDONE row (owner「我post 了，然后发现unposted 有显示posted,很让人混乱」→「做」)(#798 47d52f03, prod-verified)
+
+1. ✅ An undo (Unpost on the Labour tab, a closing-stock or opening-balance reversal) used to be listed as its own
+   POSTED row beside the posting it cancelled. It now folds into that posting: the posting shows REVERSED with
+   SYSTEM · UNDONE chips, like a voided journal, and the undo is no longer its own row. Paired on the legs (same
+   family, exactly reverses the posting, the latest live posting first); an undo that pairs with nothing stays listed.
+2. ✅ The popup says when it was undone and that it no longer counts; the printed voucher reads JOURNAL VOUCHER — UNDONE.
+3. ✅ Prod (2026-10-09, read-only): the system postings list went from 27 rows to 15 — every labour undo and every
+   opening-balance re-post reversal paired with the posting it cancelled, none left unpaired; each month's latest
+   posting stays POSTED. The Journal Entries list and the popup show the UNDONE chip and the undo date.
+
+## 2026-10-09 — ✅ P&L: a posted-then-unposted Labour month showed no direct labour (owner「做，8 月的 bug 修好，7 月我自己 Unpost」)(#795 29d33882, BUG-2026-10-09-275, prod-verified)
+
+1. ✅ August's P&L direct labour read zero: the month was posted and unposted on the Labour tab, and the P&L's
+   "already recorded" check still counted the undone posting, so the payslip labour was skipped. Fixed by netting
+   each document's legs (`src/lib/recorded-salary.ts`), in the P&L and in the cost & expense classes report.
+2. ✅ Owner: July's production wages were in the ledger twice (a manual July salary journal that includes the
+   production lines, and the Labour-tab posting). The owner unposted July on the Labour tab.
+3. ✅ Prod (2026-10-09, read-only): August's direct labour now equals its payslip figures (the 750-0010 drill ties: the
+   undone posting nets to zero plus the payroll line); July's equals its salary journal plus two vouchers after the
+   owner's Unpost; May, June and September unchanged.
+
+## 2026-10-09 — 🔵 BUG-98: New Purchase Order supplier search box and material picker popup, to main (branch `feat/bug98-po-supplier-picker-main` → `main`)
+
+Ticket BUG-98 (reporter siti). Shipped to staging in #784 and #786; this brings the same two files to main.
+
+1. 🔵 Order Details Supplier is a type-to-search box with an inline clear (✕). Changing or clearing it while items from another supplier are in the table asks, then clears the items.
+2. 🔵 Materials are added from a Select Materials popup (`+ Add Materials from Supplier`) instead of the inline list.
+3. 🔵 With a supplier picked, the popup and the per-line RM code box only offer that supplier's materials.
+4. ⚪ Check on prod after deploy.
+5. 🔵 Follow-up (staging #790): with no supplier picked, each Select Materials row names the supplier Add will use ("+N more" when others sell it), or "No supplier linked".
+6. 🔵 Follow-up: with no supplier picked, a material sold by several suppliers shows one Select Materials row per supplier, each with its own price and Add, instead of one row with "+N more".
+7. 🔵 Fix (BUG-2026-10-12-276): the popup search stopped filtering after item 6, because a supplier listed twice for one material gave two rows the same key. Now one row per supplier.
+
+## 2026-10-09 — ✅ Labour posting: EPF / SOCSO / EIS accrue on their own; system postings on Journal Entries (owner「这个post to GL 我在journal 看没有，然后epf, socso 那些也要accrual」→「EIS 单独记 0040，journal 也要显示，做」)(#785 1d7f7dce, prod-verified)
+
+1. ✅ Labour month-end posting, credit side: each fund's share — the employer's plus the employee's (from the payslips) —
+   credits its own accrual (EPF 410-0020, SOCSO 410-0030, EIS 410-0040; editable under "Statutory accruals (credit)" in the
+   account map); the rest of the month's cost (net pay, PCB, deductions) stays on 410-0010. Preview and post use one function
+   (`src/lib/labour-credit.ts`); the credits still sum to the debit side. A month already posted keeps its one-line credit
+   until the owner presses Unpost, then Post — the tab says so. Measured on prod before merge (read-only): the three accrual
+   accounts exist, are liabilities and are postable; the saved labour map carries no accrual keys yet (defaults apply).
+2. ✅ Journal Entries now lists the system's own postings — labour (and its undo), closing stock (and reversal), depreciation,
+   the year-end close, the opening balance (and reversal) — beside the manual journals: one entry per posting, dated as the
+   reports date it, SYSTEM badge, read-only (View / Print / Open the tab that made it; no Edit / Void / Delete / Duplicate).
+   `GET /api/accounting/system-journals`, grouping in `src/lib/system-journals.ts`.
+3. ✅ Prod (2026-10-09, read-only, nothing posted or saved): the July–October previews each show four credit lines
+   (410-0010 / 0020 / 0030 / 0040) summing to the debit side; the labour map reads the three accrual defaults;
+   `/system-journals` returned every labour and opening-balance posting on file, each balanced (no closing-stock,
+   depreciation or year-end-close postings exist yet); the Journal list shows them between the manual journals by date
+   with the SYSTEM badge; the July detail popup and its row menu offer only View / Print / Open Labour, and Open Labour
+   lands on the tab; a manual journal's menu is unchanged; July (posted the old way) shows the Unpost-then-Post note;
+   the map editor shows the three accrual pickers (closed with Cancel). July still carries its one-line credit until the
+   owner re-posts it; August stays unposted.
+
+## 2026-10-09 — 🔵 DEV-64: customer price list shows every Maintenance sofa size, DEFAULT included, to main (branch `feat/dev64-price-list-default-column-to-main` → `main`)
+
+Reporter ask (Siti, DEV-64 "price list"): "can add column default for the customer price". Cherry-pick of the staging commit e8f1a578 (#777).
+
+1. 🔵 Customer → Products → Sofa price grid (`CustomerProductsPanel` in `src/pages/customers.tsx`) hard-coded the seat columns `24 / 28 / 30 / 32 / 35`, so a named size like DEFAULT (and 20, 26) from Maintenance → Sofa → Sizes had no customer-price column. The grid now reads `useSofaSeatHeights()`, header via `sofaSeatLabel`. No backend change: prices are stored by size string.
+2. ✅ Seen on the `claude/dev64` preview (2026-10-09): header `20" 24" 26" 28" 30" 32" 35" DEFAULT`, existing 26" customer prices now visible. Save of a DEFAULT price not exercised.
+3. ✅ canary-782 (prod data, view-only, 2026-10-09): same header on 2990 HOME SDN BHD; its existing DEFAULT prices (8210-4FT RM 720.00, 6FT RM 1,080.00, 7FT RM 1,260.00) were invisible before and now show.
+4. ⬜ Reporter OK, then merge.
+
+## 2026-10-09 — 🔵 DEV-63: Bank charges column on the Trade Finance aging block, to main (branch `feat/dev63-bank-charges-to-main` → `main`)
+
+Same change as staging #779 (merged 2026-10-09), cherry-picked onto `main`. Ticket DEV-63 (reporter Ain): add a bank charges column beside interest in the creditor aging's trade-finance section. Ain's ruling (2026-10-09 WhatsApp): the bank charges are owed to Houzs Century and are keyed by hand, so they join the draw's outstanding.
+
+1. 🔵 `PUT /api/accounting/trade-finance/draw-bank-charge` delta-posts `tf_bank_charge` legs under `tfbc-<date>-<draw>` (DR 900-B001 BANK CHARGES / CR the TF account); 900-B001 is created only if missing, and the post is refused if the code is some other account.
+2. 🔵 `deriveDraws` returns `bankChargeSen`; GL drill / Cash Flow / cash-flow drill treat `tf_bank_charge` like `tf_interest`; voiding a draw with bank charges refuses.
+3. 🔵 UI: `TradeFinanceBlock.tsx` Bank charges input column beside Interest, with a total.
+4. ⬜ Prod check after deploy: key bank charges on one draw, then confirm the outstanding, the identity line and the 900-B001 ledger. Whether 900-B001 exists on prod today is UNMEASURED.
+
+## 2026-10-09 — 🔵 Stock take priced at the latest purchase; Cash Flow office salaries (owner「这个是9月的closing stock … 只是价钱没有，你看可以从purchase 那边capture吗？先读和确定」→「用最近一次进货价」+「cash flow 这边，direct labour 和office 的salaries 参在一起了」→「我用accrual account 去分辨吧」)(#775 69e91ddb, prod-verified; fix branch `fix/stock-take-price-list-sen`)
+
+1. ✅ Stock take — the count file is now the raw-material master export (Item Code / Item Group / Balance Qty, no prices).
+   Measured on prod (read-only): about two thirds of the counted items match a purchase-invoice line by item code; some
+   codes were bought in different units (roll vs metre, pack vs piece); items not bought since the system started have
+   price-list / old batch costs only, in units that do not match the count; the file carries groups never counted before.
+   Built: Shape 3 of the import → latest purchase price per item code on or before month-end → "Priced count" review
+   (earlier-counted groups ticked; rows to check; prices editable) → "Put into <month>" fills the group totals → Save keeps
+   the priced lines with the month. The owner presses Save.
+   Prod (2026-10-09, nothing saved): the price endpoint answers for every item code bought; the owner's file opened the
+   panel with every counted item read, earlier-counted groups ticked and new ones not, rows to check marked; "Put into"
+   refused while ticked groups held unpriced items, filled only the ticked group when that was all, and Close took it back;
+   the month still has no saved figure or priced record.
+   ✅ BUG-2026-10-09-273: the supplier price list is kept in sen and the hints read it as RM (100× high) — hints only, no
+   value affected; fixed by #776 (17913a63), prod-verified: the price list now reads in sen.
+   ✅ Owner「要，先带价目表价」: an item with no purchase on file now starts at its supplier price-list price (the price a
+   purchase order would take), marked "price list" and listed under To check / Price list; only an item on neither
+   stays empty (#778 ea4f6915). Prod (nothing saved): the owner's file gave the Price list view and a much shorter
+   No price list; a list-priced row reads "price list · <supplier>" with a check-the-unit note; purchased rows unchanged.
+2. ✅ Cash Flow office salaries — answered, no code: every salary voucher debits the production salary accrual (410-0010)
+   and the system payroll holds only the production departments, so whole payments were split over production departments.
+   The chart already has the office twins (410-0011 / 0021 / 0031 / 0041) and the cash flow puts any 410-0000 child other
+   than 410-0010 under General Expense, unsplit — booking office pay to 410-0011 separates it. The owner will book that way.
+
+## 2026-10-09 — 🔵 Scan PO on the Consignment Orders page made Sales Orders (branch `fix/co-scan-po-creates-co` → `main`)
+
+Reported as BUG-95 (Siti): a consignment order scanned and saved landed as a draft on the Sales Order side. BUG-2026-10-09-271.
+
+1. 🔵 Scan PO opened from the Consignment Orders page creates real Consignment Orders. Owner picked the small fix: header fields mapped to the CO names, no new CO columns.
+2. 🔵 A line with a "+ Custom" special (description + own surcharge) is refused on the CO path, because the CO save has no custom specials and would drop the surcharge.
+3. 🔵 The customer's S/O No. and the original scanned PO are not kept on a CO (no column, no files section); the done step says so.
+4. ⬜ Staging check after deploy.
+5. 🟡 Not touched (owner did not ask): Sales Order drafts already created this way on prod stay where they are.
+6. 🟡 Known limit: the scan queue is shared, so a batch uploaded on the Sales page and resumed on the Consignment page creates Consignment Orders. The create button names the document type.
+7. 🟡 Known limit: no duplicate warning on the CO side (the CO save has no duplicate-PO check), so scanning the same PO twice on the Consignment page creates two COs.
+
 ## 2026-10-08 — 🔵 Plant Load: 14-day capacity, Foam Cutting, past months frozen (branch `feat/plant-load-14d` → `staging`)
 
 Owner asks (one message, plus answers to three follow-up questions):
@@ -246,7 +778,7 @@ Owner asks (one message, plus answers to three follow-up questions):
 1. 🔵 Daily Capacity averages the last 14 working days instead of 7. Applies to the This month and All time views; a past month keeps its own month average. Planning page moves to 14 days too, so the two pages agree.
 2. ✅ Accuracy check, "production hours = from card": measured on prod (read-only, 2026-10-08), all 6,068 job cards completed in the last 14 working days have no actual minutes recorded, so capacity is 100% the card's estimated minutes × quantity.
 3. ✅ Backlog check: the per-department backlog adds to exactly 4,440h, the figure on the card. 7 vs 14 days moves the headline only 18.5d to 18.4d today. Per-department days range 12.0d (Fabric Cutting) to 22.9d (Foam Bonding) on 14 days.
-4. 🔵 Foam Cutting was missing from the dashboard's department list: 23h of sofa backlog (132 cards) left out of the total and its "stalled" flag (no completions in 14 days) never shown. Added. BUG-2026-10-08-269.
+4. 🔵 Foam Cutting was missing from the dashboard's department list: 23h of sofa backlog (132 cards) left out of the total and its "stalled" flag (no completions in 14 days) never shown. Added. BUG-2026-10-08-285 (logged as 269, renumbered in the 2026-10-13 sync).
 5. 🔵 Past months are frozen: the first time a finished month is opened its whole dashboard is stored and served as-is afterwards, never recalculated. Known limit: it freezes on that first view; nothing refreezes it later.
 6. 🟡 Not fixed (owner did not pick it): capacity counts Accessory work (about 6h/day) but the backlog does not, so backlog days read slightly low (about 18.4d vs 18.9d).
 7. ⬜ Staging check after deploy.
@@ -284,6 +816,51 @@ Owner ask: the KPI must follow the 2026-08-14 rule the Hookka Report already use
 6. 🔵 BUG-HISTORY entry, CODEBASE-MAP kpi-metrics row, API.md, stamps.
 7. ⬜ Staging check after deploy.
 
+## 2026-10-08 — 🔵 BOM Variant Fields and WIP Types as lists with product-type ticks, to main (branch `feat/bom-variant-fields-list-main` → `main`)
+
+Same change as staging #762.
+
+1. 🔵 Products > Maintenance > BOM > Variant Fields: one row per field, each with Bedframe / Sofa / Accessory ticks. Same saved data as before.
+2. 🔵 Products > Maintenance > BOM > WIP Types: the six built-ins (fixed) then the added types, each with Bedframe / Sofa / Accessory ticks (`variants-config.wipTypeProducts`, all ticked until changed). The BOM editor type dropdowns only offer types ticked for the product type, keeping a row's current type. Test: `tests/wip-types.test.mjs`.
+
+## 2026-10-08 — 🔵 Payroll hourly rate: one rounded rate, and the OT line adds up (branch `fix/ot-hourly-rate-display` → `main`, BUG-2026-10-08-269)
+
+Owner ask: the expanded payroll row showed "2 hrs x RM 8.76 x 1.5 = RM 23.65" for a RM 2,050 worker (and "4 hrs x RM 9.44 x 1.5 = RM 51.00" for a RM 85/day one). The page divided by 9 hours, the engine by 9 + 1h lunch, so the line did not add up. Owner ruling 2026-10-08: the hourly rate is day rate / working hours, lunch NOT included (2050/26/9 = 8.76, 85/9 = 9.44), and it is rounded to the sen before multiplying, like a calculator (8.76 x 1.5 x 2 = 26.28).
+
+1. 🔵 One shared hourly rate, rounded to the sen (`payrollHourRateSen` in `src/lib/pay-rules.ts`), used by the engine (OT pay, short-hour dock), the payslip routes, the worker pay routes and the labour-cost recon bridges.
+2. 🔵 The payslip hourly rate shown on the payroll row comes from that rate (it divided by the hours alone, ignoring the pay-rule mode).
+3. 🔵 The expanded row label shows the real sum: day rate (salary / days, or the daily rate) / the divisor the pay rules give.
+4. 🔵 Tests: the owner's two figures under hours-only (5664 and 5256 sen), and the existing engine test updated to the rounded rate.
+5. 🔵 The ÷9 rule (owner confirmed salary ÷ 26 ÷ 9): the saved 2026-07-01 rule says "hours + lunch" and beats the code default, so a dated rule is needed. Owner chose to have the deploy add it rather than schedule it by hand: `seedHoursOnlyRule` (`src/api/lib/pay-rules-store.ts`) writes one row "from 2026-10-01, hours only", copying every other field in force on that date, once. September and earlier keep ÷10. Second commit of #759. Test: `tests/pay-rule-hours-only-seed.test.mjs`. Fallback if the owner asks for it: drop the lunch from `payrollHourDivisor` (`pay-rules.ts`, one line) so every month, past ones included, prices at ÷hours.
+6. ⬜ Check on production after deploy (this goes to `main` directly; staging gets it through the usual staging<-main sync).
+7. ⬜ Next time (owner ask 2026-10-09): the OUTSOURCED (daily-paid) worker's OT box shows the rate the same way as full-time staff, "Hourly Rate: RM {day rate x days} / ({days} x 9) = RM 9.44/hr", where days = Mon-Sat days with clock in/out that month (the engine's `daysWorked`). Display only: the days cancel, so the rate stays day rate / hours. Needs `daysWorked` on the payslip row (projected and stored); the row only carries `workingDays` (26) today.
+
+## 2026-10-08 — 🟡 DEV-36 follow-up to `main`: daily efficiency chart on the Department efficiency KPI card (branch `feat/kpi-dept-efficiency-daily-chart-main` → `main`)
+
+Owner ask: every KPI change made on staging goes to main. This was the only KPI commit on staging not yet on `main` (checked 2026-10-08 against `main`'s log; the delivery KPI work reached `main` in #750). Owner ask, from staging: the department leads holding Department efficiency cannot open Dashboard Experimental, so the card's "See the list" link leads nowhere for them; the card draws the Daily efficiency line itself, for the departments ticked at assignment.
+
+1. 🔵 Staging commit cherry-picked: `dailyEfficiencyPct` in `src/api/lib/workforce-perf.ts`, `daily` on the `/me` line, the chart on My KPI, the link hidden. Code applied cleanly; doc conflicts taken from `main` and rewritten here.
+2. 🔵 `tests/workforce-perf.test.mjs` (card points equal the page's daily line) passes on the `main` tree.
+3. ⬜ Production check after deploy: a Department efficiency holder sees the chart for their departments.
+
+## 2026-10-08 — 🔵 Editable BOM WIP types and variant fields to `main` (branch `feat/editable-wip-types-main` → `main`, same change as staging #752)
+
+Owner ask: the BOM editor's WIP type dropdown and the code-builder variant fields were hard-coded; Sandback had no type and Accessory could not use Model. Both commits copied from staging #752; the code diff is identical.
+
+1. 🔵 `src/lib/wip-types.ts`: six fixed built-ins plus extra names from Products > Maintenance > BOM > WIP Types (`variants-config.wipTypes`); extras default to Sandback. An extra type follows the departments in its BOM.
+2. 🔵 `src/lib/bom-variant-fields.ts`: variant fields ticked per product type in Maintenance > BOM > Variant Fields (`variants-config.bomVariantFields`); Accessory offers Model by default. Only the ten known fields.
+3. 🔵 Tests: `tests/wip-types.test.mjs`, `tests/bom-variant-fields.test.mjs`.
+3b. 🔵 #753 merged, then was reverted (#754): the full suite failed `tests/docs-module-guide-anchors.test.mjs`, because four line anchors in `docs/modules/production.md` and `docs/modules/products.md` no longer named their symbol after the line shifts. Re-landed on `feat/editable-wip-types-main-v2` with every anchor into `bom.tsx` and `products/index.tsx` re-derived. Full suite run locally: 5311 tests, 0 failed.
+4. ⬜ Prod check after deploy: Sandback in the Master BOM Template type dropdown, saved and reloaded; Accessory code builder offers Model.
+
+## 2026-10-08 — 🟡 On-time delivery KPI to `main`: no-negative late points, urgent orders, delivered date on the last delivery (branch `fix/kpi-delivery-rules-main` → `main`, BUG-2026-10-08-267)
+
+Owner ask: PR to main. Staging #748 (late points floor at 0 before the early bonus; urgent orders count as an editable share of a late order, default 100%) and #749 (the KPI judged on the delivered date, last delivery, Malaysia date, through the shared on-time code) cherry-picked onto `main`. The code matches the staging branches except for staging-only features (the department efficiency daily chart).
+
+1. 🔵 Four commits cherry-picked; code conflicts none, doc conflicts taken from `main` and the entries rewritten here.
+2. 🔵 KPI, on-time, drill-down, dashboard and report tests pass on the `main` tree.
+3. ⬜ Production check after deploy: the delivery KPI card for 2026-08 shows 49 late of 267 delivered (measured read-only 2026-10-08), "Show orders" says delivered, and the Sales late-to-customer list loads.
+
 ## 2026-10-07 — ⬜ DEV-36 follow-up: daily efficiency chart on the Department efficiency KPI card (branch `feat/kpi-dept-efficiency-daily-chart` → `staging`)
 
 Owner ask: the department leads holding Department efficiency cannot open Dashboard Experimental, so the card's "See the list" link leads nowhere for them. Show the graph on their own card instead, for the departments ticked when the KPI was assigned. Owner picked the Daily efficiency line, on Department efficiency only. The department pick is a scoring scope, not an access limit: nothing else on the site is narrowed by it.
@@ -307,6 +884,51 @@ Owner ask: the department leads holding Department efficiency cannot open Dashbo
 1. ✅ Ran the 36 credit control test cases on the staging site (TEST COMPANY plus test orders for SL HOME DESIGN, RX HOMICE, SOON, The Conts; all test DOs, invoices, SOs, packing list and consignment notes cancelled or returned afterwards, customer terms and limits restored). 33 pass, 1 fail (CC-31), 2 skipped (CC-10 cannot occur: every payment path sets PAID at full payment; CC-36 needs prod).
 2. 🔵 CC-31 fix: the Sales "Transfer to Delivery Order" box now shows the credit dialog with the override, and asks `ready-planning?fresh=1` so a just-finished order is not shown as "Nothing ready". Staging check after deploy pending.
 3. 🟡 Owner decisions found by the run: OFFICE and SALES roles can override today (`delivery-orders:*` includes `credit-override`), not only admins; term "CASH" counts as one month, not COD; the phone New DO form and the DO detail "Load & Generate DO" have no override; invoice due dates disagree (stored "+30 days" on older and consignment invoices vs the block's calendar-month rule; PDFs print "NET 30" for every customer). Prod count of customers that would be blocked is UNMEASURED.
+
+## 2026-10-07 — 🔵 DEV-08: pillows cut, sewn and packed with their sofa (Violet, High) (branch `feat/dev08-pillow-follows-sofa-to-main` → `main`)
+
+Violet chose the rules (WhatsApp 2026-10-01): B, a pillow is finished before its sofa is packed; A, a pillow is cut together with its sofa. #653 on `staging` (commit `b4ee5283`), cherry-picked onto `main`. The SO-status half (BUG-2026-10-01-241) is already on `main` (#652).
+
+1. 🔵 Cutting: `CutCard.mainItem` (`planning-scheduler.ts`), set by `tagPillowCuts` in `planning-schedule.ts` on both the chain loader and `/schedule/fabric-cutting`. Sofa still waiting to be cut → pillow uses `modelLeadDays`; sofa already cut → pillow cut on day 1, sorted first. Pillow-only orders stay just in time.
+2. 🔵 Sewing: `runSewing` dues a pillow by its main item's last sew day (now, if the main item is past sewing).
+3. 🔵 Packing: ACCESSORY PACKING cards ride the sofa (else bedframe) pack unit as `PackUnit.acc`.
+4. 🔵 `tests/planning-pillow-follows-sofa.test.mjs` (9 cases).
+5. ✅ Verified on staging 2026-10-02 in the browser (read-only): Packing shows SO-2609-021 / -223 pillows under their sofa; Fabric Cutting puts their pillows at Accessory A1-A4 on day 1.
+6. ⬜ Canary on this PR (prod data, view only): the same two pages.
+## 2026-10-07 — 🔵 No empty auto-invoice on a double-clicked Delivered (branch `fix/empty-auto-invoice-guard` → `main`, BUG-2026-10-07-266)
+
+Reporter ask (Violet, WhatsApp): the customer received INV-2610-021 with no details. Cause: Delivered was clicked twice on DO-2610-013; the second request posted a RM 0 invoice with no lines, and the email sent that one.
+1. 🔵 Auto-invoice on Delivered skips when there is nothing left to bill, and keeps the SOs and DO at INVOICED. Regression test added.
+2. 🔵 Prod data: INV-2610-021 voided 2026-10-07 (measured: 021 CANCELLED, 020 SENT, DO and both SOs INVOICED). ⬜ Violet: Resend invoice email on DO-2610-013 so INV-2610-020 goes out.
+3. ⬜ After deploy: mark a test DO Delivered and check one invoice; no prod double-click test.
+
+## 2026-10-07 — 🔵 Production dept pages (Fab Cut to Packing): tab switches use the saved copy (branch `perf/production-dept-tab-cache-main` → `main`, BUG-2026-10-07-265)
+
+Same change as #734 (to `staging`), brought to `main`. Owner: improve the load time from Fab Cut to Packing; "why when I swap between tabs it needs to keep loading over and over again, I should just cache it".
+
+1. ✅ Measured on staging: each dept page loads every open order, ~1,200-1,300 orders, 6-7 MB decoded, 0.4-2.6 s per load. The "today" date seed never reached the URL (a no-op since 2026-05-12); owner chose to keep loading everything, so the dead seed and its wasted first request are removed.
+2. ✅ The 8 s poll's `fetchOrders` wiped every dept's saved copy, so every tab switch downloaded again. `fetchOrders` no longer invalidates (the stock-PO create path invalidates first), and `cached-fetch.ts` keeps bodies too big for localStorage in memory. The staging-only sequence-unlock dialog is not on `main`, so its caller is not part of this branch.
+3. 🔵 Check on prod after deploy: Fab Cut → Fab Sew → Fab Cut shows rows at once with no "(loading…)". Prod: UNMEASURED.
+
+## 2026-10-07 — ⬜ DEV-39: View calculation on each KPI in My KPI (branch `feat/dev39-kpi-view-calculation-to-main` → `main`)
+
+Reporter ask (Violet, DEV-39): the employee clicks "View Calculation" on each KPI and sees how the result is worked out. Laphii's #698 on `staging` (commit `b9c26a7f`), cherry-picked onto `main`; Laphii asked Samuel to confirm before it goes to main. Code merged clean; main's docs kept, this entry added.
+
+1. 🔵 `buildCard` in `src/api/routes/kpi.ts` sends `purpose` / `definition` / `measurement` on all three line branches (settled, unavailable, live). They were typed on the page but never sent.
+2. 🔵 My KPI card: a "View calculation" toggle per KPI shows why, what is counted, the formula, the steps, then this person's measured value, score out of 100, `score × weight ÷ 100 = points`, and points ÷ total weight × 100 = the month's score. All server numbers; nothing recomputed in the browser. `gateFailed` is always false on main, so the last line always adds up.
+3. 🔵 Guard in `tests/kpi-module.test.mjs`: every `lines.push` in `buildCard` carries the three fields; the page shows `l.formula`.
+4. ⬜ After deploy: Violet opens My KPI with a staff login and checks one KPI's calculation against its number.
+
+## 2026-10-07 — ⬜ DEV-36: department option on the efficiency KPIs (branch `feat/dev36-kpi-department-to-main` → `main`)
+
+Reporter ask (Violet, DEV-36): pick a department when assigning the Production Time Efficiency KPI, keep Overall, and score only that department when one is picked. Owner decision on 2026-10-06: the holders are office staff (for example the R&D or Upholstery lead), not floor workers. Same four changes as #712, #714, #715 and #716 on `staging`, cherry-picked onto `main` in order.
+
+1. 🔵 Production time efficiency takes one or more departments (each whole or Sofa / Bedframe), pooled into one figure, stored in `kpi_assignments.scope` (runtime self-applied by `ensureKpiTables`). Nothing ticked = Overall, unchanged.
+2. 🔵 New Department efficiency KPI: the Dashboard Experimental > Employees efficiency figure for the workers whose home department is ticked; none = whole floor. The dashboard's per-day maths moved unchanged into `src/api/lib/workforce-perf.ts` so both run the same code.
+3. 🔵 The floor-worker half of #714 is not here (#715 took it back on staging): KPIs go to login accounts only, no worker app card.
+4. 🔵 Staging check 2026-10-07, September 2026 data, 11 of 11 passed: several departments pooled (Fabric Cutting + Fabric Sewing 107.3% from 108,817 min on 1,690 h), Overall unchanged (91%), worker route gone (404), Department efficiency equal to the dashboard for Upholstery (66.1%), Framing (62.1%), Upholstery + Framing (64.0%) and the whole floor (93.3%, the Overall Efficiency tile), bad scopes refused, test assignments removed. Part 1 was checked 2026-10-06 (10 of 10).
+5. Notes, not blocking: the card names departments by code (`FAB_CUT + FAB_SEW`); the Efficiency tab's department ledger "Factory total" (90.7% in September) only sums workers with a department, so it reads lower than the Overall Efficiency tile (93.3%) that the whole-floor KPI follows; phones are sent to `/m`, which has no KPI page (as before).
+6. ⬜ After deploy: Super Admin check on prod (Library pickers, one scoped assignment, card figure against the dashboard), then remove the test assignment.
 
 ## 2026-10-06 — ⬜ DEV-37: every staff login can open their own KPI card (branch `feat/dev37-kpi-office-self-view` → `staging`)
 
@@ -6519,7 +7141,7 @@ other orders"*. Only-stock-is-an-oversized-set → its own sentence. No stock at
 all → still silent, because a note on every unstocked product is noise. The
 availability read is for the notes and nothing else; the pool stays the single
 authority on what moves, so a stale aggregate can only produce a wrong sentence,
-never a wrong allocation. Logged BUG-2026-10-09-273.
+never a wrong allocation. Logged BUG-2026-10-16-291.
 
 **Why it hid**: an emptied pool is byte-for-byte identical to a product nobody
 stocks — `loadAllocatablePOs` stops returning pieces the moment another order

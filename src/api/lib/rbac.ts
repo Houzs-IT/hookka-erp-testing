@@ -28,6 +28,7 @@ import { permissionsForRole, dashboardTabsForRole, dashboardReadsForRole } from 
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { getUserOverride } from "./user-permissions";
+import { EXPLICIT_ONLY_RIGHTS } from "../../lib/explicit-rights";
 
 const PERM_CACHE_TTL_S = 300;
 // In-isolate memo for role→permission sets (perf audit 2026-07-31). 5s TTL,
@@ -192,6 +193,7 @@ async function getEffectivePermissions(c: Context<Env>, role: string): Promise<P
 
 /** Wildcard match — allow `*:*`, `*:action`, `resource:*` and the exact match. */
 function permitted(set: PermSet, resource: string, action: string): boolean {
+  if (EXPLICIT_ONLY_RIGHTS.has(`${resource}:${action}`)) return set.has(`${resource}:${action}`);
   return (
     set.has(`${resource}:${action}`) ||
     set.has(`${resource}:*`) ||

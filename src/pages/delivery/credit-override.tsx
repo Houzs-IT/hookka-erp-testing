@@ -5,8 +5,8 @@
 // or PAYMENT_OVERDUE, `askCreditOverride` shows why. If the server said the
 // override is allowed (switch on + permission), the dialog takes a reason and
 // returns it so the caller re-sends with `creditOverride: { reason }`;
-// otherwise it just reports the block. Returns null when nothing should be
-// re-sent.
+// otherwise it shows the same breakdown with an OK button. Returns null
+// when nothing should be re-sent.
 // ---------------------------------------------------------------------------
 import type { ConfirmOptions } from "@/components/ui/confirm-dialog";
 import { formatCurrency } from "@/lib/utils";
@@ -37,39 +37,45 @@ export async function askCreditOverride(
   toast: { error: (msg: string) => void },
   body: CreditBlockBody,
 ): Promise<string | null> {
+  const d = body.details ?? {};
+  const title =
+    body.code === "PAYMENT_OVERDUE" ? "Customer has overdue invoices" : "Credit limit exceeded";
+  const why = (
+    <>
+      <p>{body.error || "Blocked by the customer's credit control."}</p>
+      {body.code === "PAYMENT_OVERDUE" ? (
+        <ul className="max-h-32 overflow-auto rounded border border-[#E2DDD8] text-xs">
+          {(d.overdue ?? []).map((i) => (
+            <li key={i.invoiceNo} className="flex justify-between gap-2 px-2 py-1">
+              <span>{i.invoiceNo}</span>
+              <span>due {i.dueDate}</span>
+              <span className="font-medium">{formatCurrency(i.balanceSen)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-3 text-xs">
+          <dt>Credit limit</dt><dd className="text-right">{formatCurrency(d.limit ?? 0)}</dd>
+          <dt>Outstanding</dt><dd className="text-right">{formatCurrency(d.outstanding ?? 0)}</dd>
+          <dt>Undelivered DOs</dt><dd className="text-right">{formatCurrency(d.pendingDo ?? 0)}</dd>
+          <dt>This delivery</dt><dd className="text-right">{formatCurrency(d.doTotal ?? 0)}</dd>
+          <dt className="font-semibold">Total</dt><dd className="text-right font-semibold">{formatCurrency(d.projected ?? 0)}</dd>
+        </dl>
+      )}
+    </>
+  );
   if (!body.overrideAllowed) {
-    toast.error(body.error || "Blocked by the customer's credit control.");
+    await confirm({ title, message: <div className="space-y-3">{why}</div>, confirmLabel: "OK", hideCancel: true });
     return null;
   }
-  const d = body.details ?? {};
   let reason = "";
   const ok = await confirm({
-    title:
-      body.code === "PAYMENT_OVERDUE" ? "Customer has overdue invoices" : "Credit limit exceeded",
+    title,
     danger: true,
     confirmLabel: "Override and continue",
     message: (
       <div className="space-y-3">
-        <p>{body.error}</p>
-        {body.code === "PAYMENT_OVERDUE" ? (
-          <ul className="max-h-32 overflow-auto rounded border border-[#E2DDD8] text-xs">
-            {(d.overdue ?? []).map((i) => (
-              <li key={i.invoiceNo} className="flex justify-between gap-2 px-2 py-1">
-                <span>{i.invoiceNo}</span>
-                <span>due {i.dueDate}</span>
-                <span className="font-medium">{formatCurrency(i.balanceSen)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <dl className="grid grid-cols-2 gap-x-3 text-xs">
-            <dt>Credit limit</dt><dd className="text-right">{formatCurrency(d.limit ?? 0)}</dd>
-            <dt>Outstanding</dt><dd className="text-right">{formatCurrency(d.outstanding ?? 0)}</dd>
-            <dt>Undelivered DOs</dt><dd className="text-right">{formatCurrency(d.pendingDo ?? 0)}</dd>
-            <dt>This delivery</dt><dd className="text-right">{formatCurrency(d.doTotal ?? 0)}</dd>
-            <dt className="font-semibold">Total</dt><dd className="text-right font-semibold">{formatCurrency(d.projected ?? 0)}</dd>
-          </dl>
-        )}
+        {why}
         <label className="block text-xs font-medium text-[#1F1D1B]">
           Reason for override (required, recorded in the audit log)
           <textarea

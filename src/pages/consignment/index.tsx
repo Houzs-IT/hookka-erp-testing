@@ -416,6 +416,7 @@ export default function SalesPage() {
       type: "number",
       width: "50px",
       sortable: true,
+      exportValue: (row: ConsignmentOrder) => row.items.length,
       render: (_value, row) => <span>{row.items.length}</span>,
     },
     {
@@ -425,6 +426,7 @@ export default function SalesPage() {
       width: "55px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: ConsignmentOrder) => row.items.reduce((s, i) => s + i.quantity, 0),
       render: (_value: unknown, row: ConsignmentOrder) => {
         const totalQty = row.items.reduce((s, i) => s + i.quantity, 0);
         return <span>{totalQty}</span>;
@@ -436,6 +438,17 @@ export default function SalesPage() {
       type: "text",
       width: "100px",
       sortable: true,
+      // Same branches as render below, as plain text.
+      exportValue: (row: ConsignmentOrder) => {
+        if (["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT"].includes(row.status)) return "";
+        const linkedPOs = linkedPOMap[row.id] || [];
+        if (linkedPOs.length === 0) return `${row.items.reduce((s, i) => s + i.quantity, 0)} pcs`;
+        const outstandingPOs = linkedPOs.length - linkedPOs.filter(p => p.status === "COMPLETED").length;
+        if (outstandingPOs > 0) return `${outstandingPOs}/${linkedPOs.length}`;
+        if (row.status === "READY_TO_SHIP") return "Ship";
+        if (row.status === "SHIPPED") return "Deliver";
+        return "Done";
+      },
       render: (_value: unknown, row: ConsignmentOrder) => {
         // Completed statuses - no outstanding
         if (["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT"].includes(row.status)) {
@@ -1057,6 +1070,7 @@ export default function SalesPage() {
       )}
       {/* Scan PO Modal */}
       <ScanPOModal
+        target="CO"
         open={scanPOOpen}
         onClose={() => setScanPOOpen(false)}
         onCreated={(soIds) => {

@@ -241,20 +241,23 @@ test("the export reads the FILTERED rows and the VISIBLE columns, never raw data
     /const ticked = selectable\s*\?\s*sortedData\.filter\(/,
     "ticked rows must be picked out of the filtered rows",
   );
+  // With nothing ticked: the filtered rows, or on a paged list every page put
+  // through the same filter + sort (tests/export-all-pages.test.mjs).
+  assert.match(src, /if \(ticked\.length > 0\) return ticked;/, "ticked rows win");
   assert.match(
     src,
-    /const exportRows = ticked\.length > 0 \? ticked : sortedData;/,
+    /if \(!exportAllRows\) return sortedData;/,
     "with nothing ticked the export falls back to the filtered rows",
   );
   assert.match(
     src,
-    /buildListingAoa\(visibleColumns as unknown as ExportColumn<T>\[\], exportRows\)/,
-    "listing must be built from visibleColumns × exportRows",
+    /buildListingAoa\(visibleColumns as unknown as ExportColumn<T>\[\], rows\)/,
+    "listing must be built from visibleColumns × the export rows",
   );
   assert.match(
     src,
-    /detailExport\.build\(exportRows\)/,
-    "the detail listing must also be built from the same rows",
+    /void exportRows\(\)\s*\.then\(build\)/,
+    "listing and detail listing are both built from the same rows",
   );
 });
 
@@ -276,3 +279,30 @@ test("no export path re-fetches around the customer-scope middleware", () => {
     assert.ok(scope.includes(`"${p}"`), `${p} must stay a scoped prefix`);
   }
 });
+
+// Columns whose screen value exists only inside `render` (an array, a field
+// that is not on the row, an id or code turned into a name, sen shown as RM).
+// The export ignores render, so each needs an exportValue or it ships
+// "[object Object]", a blank, an id or a sen integer. (BUG-2026-10-12-278)
+const RENDER_ONLY_COLUMNS = {
+  "src/pages/sales/index.tsx": ["salesOrgCode", "items", "totalQty", "currentDept", "poProgress"],
+  "src/pages/procurement/index.tsx": ["purchaseOrgCode", "supplierOtr", "orderedQty", "outstandingQty"],
+  "src/pages/procurement/grn.tsx": ["purchaseOrgCode", "arrival_state"],
+  "src/pages/procurement/pi.tsx": ["purchaseOrgCode", "status"],
+  "src/pages/delivery/index.tsx": ["_packingList", "dispatchDate", "customerCount", "hubBranch", "salesOrderNos", "valueSen", "status", "driverId"],
+  "src/pages/consignment/index.tsx": ["items", "totalQty", "outstanding"],
+  "src/pages/customers.tsx": ["salespersonUserId", "deliveryHubs", "contactName", "phone", "outstandingSen", "availableSen"],
+};
+
+for (const [file, keys] of Object.entries(RENDER_ONLY_COLUMNS)) {
+  test(`${file}: render-only columns carry an exportValue`, () => {
+    const src = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+    for (const k of keys) {
+      // A key can repeat in another grid on the same page; the exported
+      // definition is the one with an exportValue before its render.
+      const defs = src.split(`key: "${k}"`).slice(1).map((s) => s.split("render:")[0]);
+      assert.ok(defs.length > 0, `${k} column not found`);
+      assert.ok(defs.some((d) => d.includes("exportValue:")), `${k} has no exportValue`);
+    }
+  });
+}

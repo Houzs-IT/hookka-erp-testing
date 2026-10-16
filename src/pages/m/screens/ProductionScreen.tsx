@@ -128,7 +128,7 @@ export function ProductionScreen() {
 
   return (
     <>
-      <MobileHeader title="Production Orders" />
+      <MobileHeader title="Production Orders" menu />
 
       {/* Search */}
       <div style={{ padding: "12px 18px 4px" }}>

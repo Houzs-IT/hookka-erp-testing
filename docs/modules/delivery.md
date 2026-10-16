@@ -2,6 +2,7 @@
 
 > **Last verified: 2026-10-09** (branch `feat/dashboard-month-static-kpis`): the `app.post("/packing-list-first")` anchor re-derived after `/stats` and `/pending-value` gained the dashboard's daily save. Nothing else re-checked.
 > **Last verified: 2026-09-30** (branch `test/bug06-do-guard-behavioural`, BUG-2026-09-30-223): `createDeliveryOrderForPOs` `_helpers.ts:2242` and `validateDoComposition` `:2113` re-derived; create now guards every production order named in `items` as well as `productionOrderIds`. Nothing else re-checked.
+> **Last verified: 2026-10-12** (branch `fix/credit-no-dispatch-check`, BUG-2026-10-12-282): the two credit gate rows; dispatch no longer runs the gate. Nothing else re-checked.
 > **Last verified: 2026-09-28** (branch `feat/customer-credit-control`, BUG-34) — anchors for `DeliveryPage`, `runBulkDoTransition`, `resendCustomerNotice` / `warnIfNoCustomerEmail`, `detailLive`, `lineSpec` re-derived; credit gate rows added. Nothing else re-checked.
 > **Last verified: 2026-09-25** (branch `chore/sync-staging-from-main-0925`) — `POST /packing-list-first` anchor re-derived against the staging←main merge; nothing else re-checked.
 
@@ -100,9 +101,9 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | Symbol / section | file:line | Role |
 |---|---|---|
 | `DeliveryPage` | `src/pages/delivery/index.tsx:903` | DO workbench + 3PL + agent, `pageTab` toggle |
-| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3090` | FE bulk status move (all guards/cascades); asks for a credit override per blocked DO |
+| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3090` | FE bulk status move (all guards/cascades); its credit override prompt no longer fires at dispatch (BUG-2026-10-12-282) |
 | `askCreditOverride` / `isCreditBlock` | `src/pages/delivery/credit-override.tsx` | Credit block dialog (BUG-34): shows why, takes the override reason when the server allows it |
-| `checkCustomerCredit` / `gateCredit` | `src/api/lib/customer-credit.ts` | THE customer credit gate (overdue by term + limit incl. undelivered DOs), run at DO create, packing-list-first and DRAFT→LOADED |
+| `checkCustomerCredit` / `gateCredit` | `src/api/lib/customer-credit.ts` | THE customer credit gate (overdue by term + limit incl. undelivered DOs), run at DO create and packing-list-first (not at dispatch, BUG-2026-10-12-282) |
 | `resendCustomerNotice` / `warnIfNoCustomerEmail` | `delivery/index.tsx:2979 / :2961` | Feature A per-DO resend / Feature B no-email warning |
 | `columns` (DataGrid) | `src/pages/delivery/index.tsx` (~3.9k) | DO grid column defs |
 | `getContextMenuItems` | `src/pages/delivery/index.tsx` (~4.4k) | THE DO status table — row menu **and** the drawer's action bar |

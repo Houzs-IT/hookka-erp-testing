@@ -29,6 +29,8 @@ import {
   DEFAULT_PAYOUT_BANDS,
   bandFor,
   attainment,
+  penaltyParts,
+  deliveryBreakdown,
   editableRules,
   withRules,
   kpiByKey,
@@ -137,6 +139,10 @@ interface CardLine {
   sampleSize: number;
   /** department_efficiency only: efficiency per day, drawn on the card. */
   daily?: Array<{ date: string; pct: number }>;
+  /** PENALTY_PER_PCT only: the late, early and urgent points the score adds up. */
+  scoreParts?: { late: number; early: number; urgent: number };
+  /** Delivery KPI only: one line per part, its orders, % and points. */
+  breakdown?: string[];
 }
 
 /**
@@ -256,7 +262,7 @@ async function buildCard(c: Context<Env>, userId: string, role: string, period: 
             ? await manualRating(c, period, userId, def.key)
             : await computeMetric(c, def.key, period, a.scope, def);
     const att =
-      m.actual === null ? null : attainment(def, Number(a.target), m.actual, m.earlyPct);
+      m.actual === null ? null : attainment(def, Number(a.target), m.actual, m.earlyPct, m.urgentOnTimePct);
     lines.push({
       key: def.key, label: def.label, detail: def.detail,
       scoring: def.scoring, formula: def.formula, checklistItems: def.checklistItems,
@@ -269,6 +275,12 @@ async function buildCard(c: Context<Env>, userId: string, role: string, period: 
       attainment: att,
       points: att === null ? null : Math.round((att / 100) * Number(a.weight) * 10) / 10,
       evidence: m.detail, sampleSize: m.sampleSize, daily: m.daily,
+      scoreParts: def.curve === "PENALTY_PER_PCT" && m.actual !== null
+        ? penaltyParts(def, m.actual, m.earlyPct, m.urgentOnTimePct)
+        : undefined,
+      breakdown: m.counts && m.actual !== null
+        ? deliveryBreakdown(def, m.actual, m.earlyPct, m.urgentOnTimePct, m.counts)
+        : undefined,
     });
   }
 
@@ -783,6 +795,9 @@ app.put("/rules/:kpiKey", async (c) => {
   }
   if (rules.earlyStepPct !== undefined && rules.earlyStepPct <= 0) {
     return c.json({ success: false, error: "earlyStepPct must be more than 0" }, 400);
+  }
+  if (rules.urgentStepPct !== undefined && rules.urgentStepPct <= 0) {
+    return c.json({ success: false, error: "urgentStepPct must be more than 0" }, 400);
   }
 
   await c.var.DB.prepare(

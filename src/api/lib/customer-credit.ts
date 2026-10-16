@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // customer-credit.ts — the ONE customer credit gate (BUG-34, 2026-09-28).
 //
-// Two rules block goods leaving for a customer (DO create, DO dispatch,
-// consignment note):
+// Two rules block a new DO for a customer (DO create, packing-list-first);
+// not dispatch (BUG-2026-10-12-282), not consignment notes:
 //
 //   1. PAYMENT_OVERDUE — the customer has an issued, unpaid invoice past the
 //      due date of THEIR credit term (src/lib/terms.ts dueDateForTerms: NET30
@@ -10,6 +10,8 @@
 //      date is derived from invoiceDate + the customer's CURRENT term on every
 //      check, not read from invoices.dueDate, so old invoices stamped with the
 //      former "+30 days" rule are judged by the same calendar-month rule.
+//      Invoices dated before the books' opening date are skipped, the same
+//      floor outstandingSen and the AR reports use (rowBeforeOpening).
 //   2. CREDIT_LIMIT_EXCEEDED — outstanding A/R + undelivered DOs + this DO >
 //      credit limit. outstandingSen only moves when a DO is DELIVERED (the
 //      auto-invoice), so DOs already created but not delivered are added here;
@@ -17,13 +19,15 @@
 //      creditLimitSen <= 0 = no limit configured → rule 2 is skipped.
 //
 // Admin override (testing phase): body.creditOverride = { reason } lets a user
-// with delivery-orders:credit-override (ADMIN / SUPER_ADMIN always) pass a
-// block, audited. kv_config "credit-override-enabled" = false turns the
+// with the exact delivery-orders:credit-override tick (a delivery-orders:*
+// wildcard does not count; ADMIN / SUPER_ADMIN always) pass a block, audited. kv_config "credit-override-enabled" = false turns the
 // override off for everyone (strict SOP) without a deploy. Missing key = ON.
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { dueDateForTerms } from "../../lib/terms";
+import { rowBeforeOpening } from "../../lib/opening-floor";
+import { getOpeningDate } from "../routes/accounting";
 import { todayYmdMY } from "../../lib/utils";
 import { loadSoLinePriceIndex, priceForItem } from "./do-value";
 import { hasPermission } from "./rbac";
@@ -46,6 +50,7 @@ export type UnpaidInvoice = {
   invoiceNo: string;
   invoiceDate: string;
   balanceSen: number;
+  isOpening?: boolean;
 };
 
 export type CreditState = {
@@ -56,6 +61,7 @@ export type CreditState = {
   outstandingSen: number;
   pendingDoSen: number;
   unpaid: UnpaidInvoice[];
+  openingDate?: string | null;
 };
 
 export type CreditBlock =
@@ -91,7 +97,7 @@ export function decideCredit(
   today: string,
 ): CreditBlock | null {
   const overdue = s.unpaid
-    .filter((i) => i.balanceSen > 0)
+    .filter((i) => i.balanceSen > 0 && !rowBeforeOpening(i.invoiceDate, s.openingDate, i.isOpening))
     .map((i) => ({ ...i, dueDate: dueDateForTerms(i.invoiceDate, s.creditTerms) }))
     .filter((i) => i.invoiceDate && i.dueDate < today)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -166,7 +172,7 @@ export async function loadCreditCheck(
 
   const invRes = await db
     .prepare(
-      `SELECT invoiceNo, invoiceDate, totalSen, paidAmount
+      `SELECT invoiceNo, invoiceDate, totalSen, paidAmount, isOpening
          FROM invoices
         WHERE customerId = ?
           AND UPPER(status) NOT IN ('DRAFT', 'PAID', 'CANCELLED')`,
@@ -179,7 +185,9 @@ export async function loadCreditCheck(
     balanceSen:
       (Number(r.totalSen ?? r.total_sen) || 0) -
       (Number(r.paidAmount ?? r.paid_amount) || 0),
+    isOpening: Boolean(Number(r.isOpening ?? r.is_opening)),
   }));
+  const openingDate = await getOpeningDate(db);
 
   const limitSen = Number(cust.creditLimitSen ?? cust.credit_limit_sen) || 0;
   let pendingDoSen = 0;
@@ -219,6 +227,7 @@ export async function loadCreditCheck(
       outstandingSen: Number(cust.outstandingSen ?? cust.outstanding_sen) || 0,
       pendingDoSen,
       unpaid,
+      openingDate,
     },
     addSen,
   };

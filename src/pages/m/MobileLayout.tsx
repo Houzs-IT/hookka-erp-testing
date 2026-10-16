@@ -5,22 +5,26 @@
 // cookie-based auth/session as the desktop dashboard (gated by <RequireAuth>
 // in router.tsx — the user is already logged in), the SAME global fetch
 // interceptor (CSRF + credentials), and the SAME design tokens. It does NOT
-// touch or import any desktop layout/page, so the existing app is unchanged.
+// touch any desktop layout; the one desktop page it imports is IT Support.
 //
 // The shell:
 //   • centers content to ~414px (phone width) on any viewport,
 //   • paints the paper background + system font,
 //   • renders its own nested <Routes> for the /m/* screens,
-//   • pins the 5-item BottomTabBar (Home · Sales · Production · Procure · More).
+//   • on phones pins the 5-tab BottomTabBar (Home · Sales · Products ·
+//     Delivery · Procurement) and owns the left NavDrawer opened by the header
+//     hamburger; on tablets renders the LeftRail instead (unchanged).
 //
 // Phase 1: Home + More + placeholders. Phase 2 (this): every module's L1 list
 // is wired to <ModuleListScreen> driven by its ModuleConfig (config-driven —
 // see src/pages/m/config/modules.ts). L2 detail routes (/m/<slug>/:id) land on
 // a ComingSoon detail until Phase 3 supplies the real detail screen.
 // ===========================================================================
-import { lazy, Suspense, useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { Route, Routes } from "react-router-dom";
-import { BottomTabBar, LeftRail } from "./components";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { ToastProvider } from "@/components/ui/toast";
+import { BottomTabBar, LeftRail, MobileHeader, NavDrawer } from "./components";
+import { NavDrawerProvider } from "./lib/nav-drawer";
 import { M, M_FONT, M_MAX_WIDTH } from "./theme";
 import MobileHome from "./screens/Home";
 import MobileMore from "./screens/More";
@@ -31,10 +35,12 @@ import { LineItemDetailScreen } from "./screens/LineItemDetailScreen";
 import { WarehouseScreen } from "./screens/WarehouseScreen";
 import { ProductionScreen } from "./screens/ProductionScreen";
 import { SalesScreen } from "./screens/SalesScreen";
+import { ProductsScreen } from "./screens/ProductsScreen";
 import { SalesDetailScreen } from "./screens/SalesDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
 import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
+import { UpdatesScreen } from "./screens/UpdatesScreen";
 import { MailCenterScreen, MailThreadScreen } from "./screens/MailCenterScreen";
 import { MODULE_CONFIGS } from "./config/modules";
 import { preloadMobileCritical } from "./lib/preload";
@@ -54,6 +60,22 @@ import "./theme-vars.css";
 const DashboardScreen = lazy(() =>
   import("./screens/dashboard/DashboardScreen").then((m) => ({ default: m.DashboardScreen })),
 );
+// IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
+// ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
+const ItSupportPage = lazy(() => import("@/pages/it-support"));
+function ItSupportRoute() {
+  return (
+    <ToastProvider>
+      <MobileHeader title="IT Support" menu />
+      <div className="bg-[#FAF8F4] p-4">
+        <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+          <ItSupportPage />
+        </Suspense>
+      </div>
+    </ToastProvider>
+  );
+}
+
 function DashboardRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -78,6 +100,9 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // design v12) — the generic list flattens that signal. Detail route stays
   // generic via productionConfig.detail.
   production: ProductionScreen,
+  // Phone: SKU Master | Catalog hub. Tablet: ProductsScreen renders the
+  // generic ModuleListScreen itself, so tablet is unchanged.
+  products: ProductsScreen,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -145,8 +170,42 @@ export default function MobileLayout() {
     });
   };
 
+  // Phone left drawer (hamburger → NavDrawer). Closes on any route change
+  // (incl. browser back) and whenever the shell leaves phone mode, so a
+  // rotated/resized device never keeps a stale overlay over the tablet rail.
+  const phone = layout.mode === "phone";
+  const { pathname } = useLocation();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  // Reset during render when the route or phone mode changes (React's
+  // "adjusting state when a prop changes" pattern) instead of in an effect,
+  // so there is no extra render with a stale open drawer.
+  const drawerKey = `${pathname}|${phone}`;
+  const [prevDrawerKey, setPrevDrawerKey] = useState(drawerKey);
+  if (drawerKey !== prevDrawerKey) {
+    setPrevDrawerKey(drawerKey);
+    setDrawerOpen(false);
+  }
+  const drawer = useMemo(
+    () => (phone ? { isOpen: drawerOpen, open: openDrawer, close: closeDrawer } : null),
+    [phone, drawerOpen, openDrawer, closeDrawer],
+  );
+
   return (
     <ResponsiveLayoutProvider value={layout}>
+      <NavDrawerProvider value={drawer}>
+      {/* Safe-area left/right (landscape notch / home indicator). The padding sits
+          on this outer box so the measured shell below sees only the usable width,
+          which keeps the layout mode and canSplitDetail honest. Zero on iPad/SE. */}
+      <div
+        style={{
+          minHeight: "100dvh",
+          backgroundColor: M.paper,
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
+      >
       <div
         ref={shellRef}
         style={{
@@ -172,7 +231,7 @@ export default function MobileLayout() {
             minHeight: "100dvh",
             paddingBottom: layout.hasBottomNavigation
               ? "calc(72px + env(safe-area-inset-bottom))"
-              : "24px",
+              : "calc(24px + env(safe-area-inset-bottom))",
             position: "relative",
             overflowX: "hidden",
           }}
@@ -185,6 +244,10 @@ export default function MobileLayout() {
               the query string — see screens/dashboard/DashboardScreen.tsx. */}
           <Route path="dashboard" element={<DashboardRoute />} />
           <Route path="dashboard/:tab" element={<DashboardRoute />} />
+          <Route path="it-support" element={<ItSupportRoute />} />
+          {/* Updates: Notifications | Announcements (?view=). Not a module
+              config, so it sits beside the module routes, not inside them. */}
+          <Route path="updates" element={<UpdatesScreen />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders
@@ -244,7 +307,10 @@ export default function MobileLayout() {
           </Routes>
         </div>
         {layout.hasBottomNavigation ? <BottomTabBar /> : null}
+        {phone ? <NavDrawer open={drawerOpen} onClose={closeDrawer} /> : null}
       </div>
+      </div>
+      </NavDrawerProvider>
     </ResponsiveLayoutProvider>
   );
 }

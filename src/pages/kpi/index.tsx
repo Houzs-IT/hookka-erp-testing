@@ -44,6 +44,8 @@ type Line = {
   actual: number | null; attainment: number | null; points: number | null;
   evidence: string;
   daily?: Array<{ date: string; pct: number }>;
+  scoreParts?: { late: number; early: number; urgent: number };
+  breakdown?: string[];
 };
 type CardData = {
   period: string; locked: boolean; lines: Line[];
@@ -68,7 +70,8 @@ type LibItem = {
   current: number | null; evidence: string;
   editableRules?: string[];
   penaltyPerPct?: number; earlyStepPct?: number; earlyBonusPerStep?: number; earlyMaxBonus?: number;
-  urgentDays?: number; urgentLatePct?: number;
+  urgentDays?: number; urgentBasePoints?: number; urgentStepPct?: number;
+  urgentPointsPerStep?: number; urgentFullPoints?: number;
   assignedTo: Array<{ userId: string; name: string; role: string; scope?: string }>;
 };
 type PersonRow = {
@@ -1218,8 +1221,18 @@ export default function KpiPage() {
                             <p>{l.evidence || "No result yet this month."}</p>
                           ) : (
                             <ol className="ml-4 list-decimal space-y-0.5">
-                              <li>Measured: <b>{fmt(l.actual, l.unit)}</b>{l.evidence && <> · {l.evidence}</>}</li>
-                              <li>Score for this KPI: <b>{l.attainment}</b> out of 100</li>
+                              {l.breakdown ? (
+                                l.breakdown.map((b) => <li key={b}>{b}</li>)
+                              ) : (
+                                <li>Measured: <b>{fmt(l.actual, l.unit)}</b>{l.evidence && <> · {l.evidence}</>}</li>
+                              )}
+                              <li>
+                                Score for this KPI:{" "}
+                                {l.scoreParts && (
+                                  <>late {l.scoreParts.late} + early bonus {l.scoreParts.early} + urgent {l.scoreParts.urgent}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent > 100 && " (capped)"} ={" "}</>
+                                )}
+                                <b>{l.attainment}</b> out of 100
+                              </li>
                               {l.shape !== "GATE" && l.points !== null && (
                                 <>
                                   <li>{l.attainment} × weight {l.weight} ÷ 100 = <b>{l.points} points</b></li>
@@ -1423,7 +1436,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
   period: string; evidence: string; urgentDays?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [show, setShow] = useState<DeliveryStatus | "ALL">("ALL");
+  const [show, setShow] = useState<DeliveryStatus | "ALL" | "URGENT">("ALL");
   const { data, loading, error } = useCachedJson<{
     data?: Array<{
       id: string; companySOId: string | null; customerName: string | null;
@@ -1432,8 +1445,13 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
     }>;
   }>(open ? `/api/sales-orders/late-to-customer?period=${period}&all=1` : "");
   const rows = data?.data ?? [];
-  const count = (s: DeliveryStatus) => rows.filter((r) => r.status === s).length;
-  const shown = show === "ALL" ? rows : rows.filter((r) => r.status === show);
+  const isUrgent = (r: (typeof rows)[number]) =>
+    urgentDays != null && r.leadDays != null && r.leadDays <= urgentDays;
+  // Urgent orders are scored apart, so Late / Early / On time count only the
+  // others and match the card; Urgent lists them on their own.
+  const pick = (s: DeliveryStatus | "ALL" | "URGENT") =>
+    s === "ALL" ? rows : s === "URGENT" ? rows.filter(isUrgent) : rows.filter((r) => r.status === s && !isUrgent(r));
+  const shown = pick(show);
 
   return (
     <div className="mt-1.5">
@@ -1459,7 +1477,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
           ) : (
             <>
               <div className="flex flex-wrap gap-1.5 border-b border-[#E2DDD8] p-2">
-                {(["ALL", "LATE", "EARLY", "ON_TIME"] as const).map((s) => (
+                {(["ALL", "LATE", "EARLY", "ON_TIME", "URGENT"] as const).map((s) => (
                   <button
                     key={s}
                     type="button"
@@ -1470,7 +1488,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
                         : "border-[#E2DDD8] bg-white text-[#5A5550]"
                     }`}
                   >
-                    {s === "ALL" ? "All" : DELIVERY_STATUS[s].label} {s === "ALL" ? rows.length : count(s)}
+                    {s === "ALL" ? "All" : s === "URGENT" ? "Urgent" : DELIVERY_STATUS[s].label} {pick(s).length}
                   </button>
                 ))}
               </div>
@@ -1489,7 +1507,7 @@ function DeliveryOrderList({ period, evidence, urgentDays }: {
                       <span className="text-[#9CA3AF] tabular-nums">
                         promised {r.customerDeliveryDate ?? "—"} · delivered {r.deliveredOn ?? "—"}
                       </span>
-                      {urgentDays != null && r.leadDays != null && r.leadDays <= urgentDays && (
+                      {isUrgent(r) && (
                         <span
                           title={`Promised ${r.leadDays} day(s) after the order date`}
                           className="rounded-full bg-[#FBEFD5] px-2 py-0.5 text-[10.5px] font-semibold text-[#8A5A00]"
@@ -1525,7 +1543,10 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
     earlyBonusPerStep: String(item.earlyBonusPerStep ?? 1),
     earlyMaxBonus: String(item.earlyMaxBonus ?? 5),
     urgentDays: String(item.urgentDays ?? 7),
-    urgentLatePct: String(item.urgentLatePct ?? 100),
+    urgentBasePoints: String(item.urgentBasePoints ?? 5),
+    urgentStepPct: String(item.urgentStepPct ?? 10),
+    urgentPointsPerStep: String(item.urgentPointsPerStep ?? 5),
+    urgentFullPoints: String(item.urgentFullPoints ?? 60),
   });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -1577,7 +1598,13 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
       </p>
       <p className="text-[11.5px] text-[#3A3733] leading-loose">
         An order promised within{num("urgentDays", "Urgent order days")}days of its order date is urgent.
-        If it ships late it counts as{num("urgentLatePct", "Late urgent order counts as percent")}% of a late order.
+        Urgent orders are left out of the late and early % and scored on their own share delivered on time or early.
+      </p>
+      <p className="text-[11.5px] text-[#3A3733] leading-loose">
+        Urgent orders earn{num("urgentBasePoints", "Urgent points at 0 percent")}points at 0% on time or early, plus
+        {num("urgentPointsPerStep", "Urgent points per step")}point(s) for every
+        {num("urgentStepPct", "Urgent percent per step")}%, and
+        {num("urgentFullPoints", "Urgent points at 100 percent")}points at 100%.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button

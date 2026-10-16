@@ -21,6 +21,7 @@ import { Plus, ShoppingCart, Download, Filter, X, Eye, Pencil, Printer, Truck, F
 // 1MB jspdf vendor chunk only ships when the user actually prints a SO.
 import { ScanPOModal } from "@/components/scan-po-modal";
 import { StagingTestOrderFactory } from "@/components/staging-test-order-factory";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   OUTSTANDING_STATUSES,
@@ -799,6 +800,10 @@ export default function SalesPage() {
       type: "text",
       width: "120px",
       sortable: true,
+      exportValue: (row: SalesOrder) => {
+        const code = row.salesOrgCode || "HOOKKA";
+        return orgNameByCode[code] || code;
+      },
       render: (_v: unknown, row: SalesOrder) => {
         const code = row.salesOrgCode || "HOOKKA";
         const label = orgNameByCode[code] || code;
@@ -826,6 +831,7 @@ export default function SalesPage() {
       type: "number",
       width: "50px",
       sortable: true,
+      exportValue: (row: SalesOrder) => row.items.length,
       render: (_value, row) => <span>{row.items.length}</span>,
     },
     {
@@ -835,6 +841,7 @@ export default function SalesPage() {
       width: "55px",
       align: "right" as const,
       sortable: true,
+      exportValue: (row: SalesOrder) => row.items.reduce((s, i) => s + i.quantity, 0),
       render: (_value: unknown, row: SalesOrder) => {
         const totalQty = row.items.reduce((s, i) => s + i.quantity, 0);
         return <span>{totalQty}</span>;
@@ -948,6 +955,8 @@ export default function SalesPage() {
             label: "Current Dept",
             type: "text" as const,
             width: "120px",
+            exportValue: (row: SalesOrder) =>
+              aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []).dept ?? "",
             render: (_value: unknown, row: SalesOrder) => {
               const agg = aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []);
               return agg.dept ? (
@@ -962,6 +971,8 @@ export default function SalesPage() {
             label: "Progress",
             type: "number" as const,
             width: "130px",
+            exportValue: (row: SalesOrder) =>
+              aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []).progress ?? null,
             render: (_value: unknown, row: SalesOrder) => {
               const agg = aggregateServiceOrderProgress(linkedPOMap[row.id] ?? []);
               if (agg.progress == null)
@@ -1729,6 +1740,13 @@ export default function SalesPage() {
             onSearchChange={setGridSearch}
             gridId="sales-orders-list"
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
+            // Unfiltered, the grid holds one 200-row page; Export walks them
+            // all with the same tab rule as filteredOrders. Any filter already
+            // loads the whole set. The Draft tab counts as a filter
+            // (_filtersActive), so this only ever runs on Confirmed.
+            exportAllRows={_filtersActive ? undefined : () =>
+              fetchAllPages<SalesOrder>((p, l) => `/api/sales-orders?page=${p}&limit=${l}&${soFilterQs}`)
+                .then((rows) => rows.filter((o) => o.status !== "DRAFT"))}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}
             // Give each Status-dropdown selection its own filter session
