@@ -414,8 +414,9 @@ function joinInflight<T>(url: string, reuseUnchanged = false): Promise<T> {
 
   const promise: Promise<T> = run().finally(() => {
     // Drop the entry once settled — refs no longer matter after resolution.
-    // Late releaseInflight() calls become no-ops.
-    inflight.delete(url);
+    // Late releaseInflight() calls become no-ops. Only drop OUR entry: an
+    // aborted request can settle after a newer one for this URL registered.
+    if (inflight.get(url)?.promise === promise) inflight.delete(url);
   }) as Promise<T>;
   inflight.set(url, { promise, controller, refs: 1 });
   return promise;
@@ -557,6 +558,11 @@ type UseCachedJsonResult<T> = {
    */
   failure: CachedFetchFailure | null;
   refresh: () => void;
+  /**
+   * True while this hook's own request has not settled. A poll checks it
+   * before `refresh()`, because a refresh cancels the running request.
+   */
+  isFetching: () => boolean;
 };
 
 export type UseCachedJsonOptions = {
@@ -612,6 +618,7 @@ export function useCachedJson<T = unknown>(
   const [failure, setFailure] = useState<CachedFetchFailure | null>(null);
   const [tick, setTick] = useState(0);
   const lastUrl = useRef<string | null>(null);
+  const fetchingRef = useRef(false);
   const reuseUnchanged = options.reuseUnchanged === true;
 
   useEffect(() => {
@@ -623,6 +630,7 @@ export function useCachedJson<T = unknown>(
       setError(null);
       setFailure(null);
       lastUrl.current = null;
+      fetchingRef.current = false;
       return;
     }
 
@@ -657,6 +665,7 @@ export function useCachedJson<T = unknown>(
     let cancelled = false;
     const t0 = performance.now();
     const joinedUrl = url;
+    fetchingRef.current = true;
     joinInflight<T>(joinedUrl, reuseUnchanged)
       .then((raw) => {
         if (cancelled) return;
@@ -711,7 +720,10 @@ export function useCachedJson<T = unknown>(
         setError(f.message);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        // A cancelled run leaves the flag alone: the run that replaced it owns it now.
+        if (cancelled) return;
+        setLoading(false);
+        fetchingRef.current = false;
       });
 
     return () => {
@@ -723,6 +735,7 @@ export function useCachedJson<T = unknown>(
   const refresh = useCallback(() => {
     setTick((t) => t + 1);
   }, []);
+  const isFetching = useCallback(() => fetchingRef.current, []);
 
   // Subscribe to cache invalidations for this URL — fires when another
   // tab (or this tab's Maintenance Save) calls invalidateCache /
@@ -753,7 +766,7 @@ export function useCachedJson<T = unknown>(
     };
   }, [url, revalidateOnFocus]);
 
-  return { data, loading, error, failure, refresh };
+  return { data, loading, error, failure, refresh, isFetching };
 }
 
 /**

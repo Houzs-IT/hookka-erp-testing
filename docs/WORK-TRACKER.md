@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main` (ports staging #888, #889, #890; BUG-2026-10-16-295 to -299) added below (its entries are the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
@@ -178,6 +179,32 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+1. 🟡 Confirm with evidence: code read end to end, reproduced with the real hook in node (5 of 10 requests aborted, none delivered). Site and frequency of the 8,007 ms abort UNMEASURED.
+2. 🟡 Poll tick skips while the list request runs (`useCachedJson().isFetching()`); shared abort rules unchanged.
+3. 🟡 Other timed refreshes listed: none go through `useCachedJson().refresh`. `joinInflight` settle deleted by URL: fixed, item 5.
+4. 🟡 Test `tests/production-poll-skip-inflight.test.mjs`.
+5. 🟡 BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, after the branch above merged): identity check in the `joinInflight` `.finally` (C15 row 8 closed), test `tests/cached-fetch-inflight-identity.test.mjs` (10 started, 5 aborted, 3 finished unwatched before). Open: `releaseInflight` also finds its entry by URL (two components sharing a URL).
+## 2026-10-16 — 🟡 Production order list: keep a salesperson's narrowed list out of the shared KV cache (branch `fix/po-list-cache-staging` → `staging`)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+1. 🟡 Confirm with evidence: code read, prod measured read-only (3 active SALES users; page use UNMEASURED). See BUG-2026-10-16-296.
+2. 🟡 Skip the KV read and write for scoped users, MISS write and stale refresh both (`production-orders.ts` GET /).
+3. 🟡 Regression test `tests/po-list-kv-scoped-user.test.mjs`; C22 row 4 flipped.
+## 2026-10-16 — 🔵 /production poll: 304 when the order list is unchanged (branch `fix/po-list-cache-staging` → `staging`, BUG-2026-10-16-299 and -295)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on the wire. Asks:
+1. 🔵 ETag + 304 for the non-paginated PO list; `no-store` relaxed to `private, no-cache` only for ETag replies (BUG-2026-10-16-299).
+2. 🔵 Background list refresh reads the cache version before the build (BUG-2026-10-16-295).
+3. ⚪ Self-reload when leaving a page (`vite:preloadError` in `src/main.tsx`): not in this branch, cause not confirmed yet.
+4. ⚪ Bundle split (React out of the `charts` chunk, lazy `WorkerLayout`): not in this branch.
+5. 🔵 Check on staging: a second poll with unchanged data returns 304, and a scan still shows within about 8 s. After deploy, prod bytes per idle poll are UNMEASURED.
 ## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
 
 Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:

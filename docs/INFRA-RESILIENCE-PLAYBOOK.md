@@ -1,11 +1,12 @@
 # Infra Resilience & Performance Playbook
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
 > re-verified; the rest of this file still carries its earlier stamp.
 
-> **Last verified: 2026-08-13** against `src/api/lib/supabase-compat.ts:256` (`withConnRetry`, wired into every query path at :285-312), `src/api/routes/auth.ts:174-193` (graceful 503 on login), `.github/workflows/keep-warm.yml` (`*/5 * * * *` → `GET /api/pg-ping`), `wrangler.toml` (`[vars] SENTRY_DSN` set), and `src/api/worker.ts:1082,1474`.
+> **Last verified: 2026-08-13** against `src/api/lib/supabase-compat.ts:256` (`withConnRetry`, wired into every query path at :285-312), `src/api/routes/auth.ts:174-193` (graceful 503 on login), `.github/workflows/keep-warm.yml` (`*/5 * * * *` → `GET /api/pg-ping`), `wrangler.toml` (`[vars] SENTRY_DSN` set), and `src/api/worker.ts:1090,1474`.
 > Corrected 2026-08-13: the status columns were four levers behind. `withConnRetry` and the graceful-503 login are **shipped, not "written, not deployed"**; the keep-warm heartbeat is **live** as a GitHub Action; and the Sentry DSN **is set**, worker-side and client-side.
 > **UNVERIFIED ASSERTION** (as of 2026-08-13): everything in the Supabase dashboard — pool size 50, compute tier, PITR, the platform-incident block — cannot be checked from this repo. Treat those rows as the owner's last-known state, not fact.
 
@@ -66,7 +67,7 @@ Status legend: ✅ live · ⚠️ written, not deployed · ⏳ blocked/waiting �
 ### Tier 2 — Knowing before it breaks (observability)
 | Lever | IT term | What it buys | How | Status |
 |---|---|---|---|---|
-| Error tracking | **Observability / error tracking** | You get alerted the moment errors spike — before workers complain | Sentry. Worker DSN is in `wrangler.toml [vars] SENTRY_DSN` and consumed by `src/api/worker.ts:1474` → `reportWorkerError`; the browser DSN is injected as `VITE_SENTRY_DSN` by `.github/workflows/deploy.yml` | ✅ **DSN set, both sides** |
+| Error tracking | **Observability / error tracking** | You get alerted the moment errors spike — before workers complain | Sentry. Worker DSN is in `wrangler.toml [vars] SENTRY_DSN` and consumed by `src/api/worker.ts:1482` → `reportWorkerError`; the browser DSN is injected as `VITE_SENTRY_DSN` by `.github/workflows/deploy.yml` | ✅ **DSN set, both sides** |
 | Uptime + alerts | **Monitoring / alerting** | A text/email if the site or DB goes down. The pinger doubles as keep-warm | UptimeRobot (free) on `/api/health` + `/api/pg-ping`; Supabase dashboard alerts | ⬜ not started |
 | Health dashboard | **Observability** | One screen for CPU / memory / connections / error rate | Supabase → Reports → Database; app's own `/admin/health` | ✅ exists (Supabase) |
 

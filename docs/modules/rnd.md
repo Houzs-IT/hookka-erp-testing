@@ -1,5 +1,6 @@
 # R&D / New-Model Development — Module Guide
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-19** against `src/api/routes/rd-projects.ts` (2,261 lines),
 > `src/api/routes/rd-team-members.ts`, `src/pages/rd/{index,detail,maintenance}.tsx`,
 > `src/pages/rd/health.ts`, `src/api/worker.ts`, `src/api/lib/column-rename-map.json`,
@@ -29,7 +30,7 @@ Tracks new-model development as **R&D Projects** moving through a staged pipelin
   - `/rd/:id` → `src/pages/rd/detail.tsx:226` (`RDProjectDetailPage` — single-project dashboard, 3,176 lines)
   - `/rd/maintenance` → `src/pages/rd/maintenance.tsx:94` (`RDMaintenancePage` — R&D Team Members CRUD grid)
   - Health-scoring helper (non-page) → `src/pages/rd/health.ts:63` (`getProjectHealth`)
-- API routes (mounted in `src/api/worker.ts:1380-1381`)
+- API routes (mounted in `src/api/worker.ts:1388-1389`)
   - Full R&D lifecycle → `src/api/routes/rd-projects.ts` (2261 lines): CRUD + status transitions + pricing + material issuance + labour hours
   - R&D Team Members CRUD (feeds labour cost) → `src/api/routes/rd-team-members.ts` (305 lines)
 
