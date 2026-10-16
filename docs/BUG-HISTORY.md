@@ -1,5 +1,11 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) carries its staging
+> measurement now — the note was confirmed live on a real confirm, not only in tests
+> (branch `docs/dev05-a9-live-verified`). The entry also states what is still
+> unmeasured: the positive take-from-stock path has not been run live since the
+> dual-key and netting fixes landed.
+
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-297 (branch `fix/production-poll-skip-inflight`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-296 (branch `fix/po-list-cache-staging`, to `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-294 and -295 (branch `fix/po-list-cache-staging`, to `staging`; 293 is taken twice on other branches); a log, so "verified" means the entry matches the code on its branch.
@@ -283,6 +289,34 @@ a stale aggregate can only produce a wrong sentence, never a wrong allocation.
 `notes.length === 0` — they pinned the silence as correct. The suite now has a
 contention case (stock on hand, none available → the loser is told) and keeps a
 no-stock case asserting silence, so the two are no longer the same test.
+
+**MEASURED ON STAGING 2026-10-16**, after the merge, because until then this was
+proven only in tests — and a note nobody has watched appear is a claim, not a
+fix. A throwaway order for `1013-(Q)` (availability at the time: 4 on hand, 0
+available, all four allocated to SO-2609-395) was confirmed, and its
+`autoActions` read:
+
+```
+Created PO SO-2610-186-01
+No stock allocated for 1013-(Q) — all 4 on hand are already committed to other orders.
+```
+
+The `4` is counted live, so this also re-confirms the dual-keyed availability
+read of BUG-2026-09-29-219 on current code: a regression there would have put a
+0 in that sentence, or produced no sentence at all.
+
+The same confirm still raised one production order, which is the behaviour to
+keep: losing the stock does not quietly shrink what the customer gets. The test
+order and its production order were cancelled afterwards (14 job cards with
+them, 0 cost_ledger rows to reverse) and availability was re-read as unchanged —
+4 on hand, 0 available, the same four pieces still held by SO-2609-395 at
+RM 305.00 each. The check consumed no stock.
+
+**Still UNMEASURED on this ticket**: the positive path. "Order ten, take four,
+build six" was last seen live BEFORE BUG-2026-09-29-219 (dual-key reads) and
+BUG-2026-09-29-220 (netting key) landed. Both were fixes, and the suite covers
+the arithmetic, but no live run since has actually MOVED stock to an order. That
+is the one thing to watch in the next staging pass.
 
 ---
 
