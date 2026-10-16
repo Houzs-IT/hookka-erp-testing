@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-monthly` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 3 part 6 (#929) prod-verified; part 7 (Overview) added to its entry.
 > **Last verified: 2026-10-16**: finance v2 plan 3 part 5 (#928) prod-verified; part 6 (Stock Summary, Balance Sheet look) added to its entry.
 > **Last verified: 2026-10-16**: finance v2 plan 3 part 4 (#927) prod-verified incl. BUG-2026-10-16-305; part 5 (Cash Flow) added to its entry.
@@ -193,6 +194,11 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 4: Monthly group (branch `feat/finance-v2-monthly` → `main`; shipped in parts)
+
+1. 🔵 Part A — KPI cards + status banner (shared); Self-check as one list with result pills, items under the row and fix links, under a "N of M OK" card; Corrections on DataGrid under a count card, last 90 days by default or by month. Same reads.
+2. ⚪ Part B — Labour, Fixed Assets. Part C — Stock Take, Cash Book. Every posting / matching / saving button keeps its behaviour; prod checks never press them.
 
 ## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 3: Reports (branch `feat/finance-v2-reports` → `main`; shipped in parts)
 
