@@ -223,10 +223,14 @@ test("the Cash Flow tab offers only YYYY-MM periods", () => {
     /<optgroup label="Monthly">/.test(tab),
     "Cash Flow lost its Monthly period options",
   );
-  // The sibling P&L selector must still be there — this fix is Cash-Flow-only.
+  // The sibling P&L selector must still offer quarters and years — this fix is
+  // Cash-Flow-only. Finance v2 (2026-10-16): the P&L's period is a stepper fed
+  // the same keys (YYYY-MM, YYYY-Qn, YYYY).
+  const pl = src.slice(src.indexOf("function PLStatementTab("), src.indexOf("\nfunction ", src.indexOf("function PLStatementTab(") + 10));
   assert.ok(
-    /<optgroup label="Full year">/.test(src),
-    "the P&L Statement's Full-year option was removed too; /pl-statement handles quarters and years correctly",
+    /\[yr, yr - 1\]\.flatMap\(\(y\) => \[1, 2, 3, 4\]\.map\(\(q\) => `\$\{y\}-Q\$\{q\}`\)\)/.test(pl) &&
+      /String\(yr\), String\(yr - 1\),/.test(pl),
+    "the P&L Statement's quarter / full-year periods were removed too; /pl-statement handles quarters and years correctly",
   );
 });
 

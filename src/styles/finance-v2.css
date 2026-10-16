@@ -234,6 +234,10 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   border-left: 1.5px solid #7A6E5E;
 }
 
+[data-fin-ui] table[data-fin-report] [data-cell~="center"] {
+  text-align: center;
+}
+
 [data-fin-ui] table[data-fin-report] [data-cell~="code"] {
   color: #6B5C32;
   font-size: 12px;
@@ -258,11 +262,6 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   background-color: #F7F5F1;
 }
 
-[data-fin-ui] table[data-fin-report] [data-cell~="pct"] {
-  font-size: 11px;
-  color: #6B7280;
-}
-
 /* Row kinds. */
 [data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sec"] > td {
   border-top: 1.5px solid #7A6E5E;
@@ -284,8 +283,16 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 
 [data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"] > td {
   background-color: #E9E3D8;
+  border-top: 1.5px solid #7A6E5E;
+  border-bottom: 1.5px solid #7A6E5E;
   color: #1F1D1B;
+  font-size: 13.5px;
   font-weight: 700;
+}
+
+/* The last result (Net Profit) closes with a double line. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"][data-fin-double] > td {
+  border-bottom: 3px double #1F1D1B;
 }
 
 [data-fin-ui] table[data-fin-report] > tbody > tr[data-row="fin"] > td {
@@ -313,10 +320,22 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   font-weight: 600;
 }
 
-/* After the row kinds, so they win: an estimate, a negative amount. */
-[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="est"] {
+/* After the row kinds, so they win: an estimate (a cell, or a whole row), a
+   drop target in Edit Layout, % cells, a negative amount. */
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="est"],
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-est] > td {
   background-color: #FAEFCB;
   color: #9C6F1E;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-fin-drop] > td {
+  background-color: #F1EEE8;
+  box-shadow: inset 0 2px 0 #6B5C32, inset 0 -2px 0 #6B5C32;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="pct"] {
+  font-size: 11px;
+  color: #6B7280;
 }
 
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-neg] {
@@ -340,4 +359,27 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 [data-fin-ui] table[data-fin-report][data-fin-dense] > tbody > tr > td {
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+/* A two-row header (a period over its RM | % pair): the first row is 34px so
+   the second sticks right under it; the spanning first cell keeps the strong
+   line. */
+[data-fin-ui] table[data-fin-report] > thead > tr[data-row="h1"] > th {
+  height: 34px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #CBD5E1;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr[data-row="h1"] > th[rowspan] {
+  border-bottom: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr[data-row="h2"] > th {
+  top: 34px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
 }
