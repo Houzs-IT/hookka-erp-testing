@@ -186,7 +186,7 @@ function buildPvVoucher(
   const isTransfer = pv.pvKind === "TRANSFER";
   const billNo = (pv.billNo ?? pv.bill_no) ?? "";
   const billDate = String((pv.billDate ?? pv.bill_date) ?? "").slice(0, 10);
-  const billText = billNo ? `Bill no. ${billNo}${/^d{4}-d{2}-d{2}$/.test(billDate) ? ` dated ${formatDateDMY(billDate)}` : ""}` : "";
+  const billText = billNo ? `Bill no. ${billNo}${/^\d{4}-\d{2}-\d{2}$/.test(billDate) ? ` dated ${formatDateDMY(billDate)}` : ""}` : "";
   return {
     // A voided voucher must never print as a clean/valid document.
     title: pv.status === "VOID" ? "PAYMENT VOUCHER — VOID" : "PAYMENT VOUCHER",

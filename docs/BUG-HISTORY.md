@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-303 (branch `fix/pv-print-bill-date`, to main; 302 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-301 (branch `fix/resigned-month-absence`, to main; no open PR holds 301); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-300 (branch `fix/po-edit-save-rowid`, to main; no open PR holds 300); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-ups (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887, and the Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
@@ -122,6 +123,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-303 — A payment voucher's printout never showed its bill date `accounting` `printing` 🟡
+
+🟡 **Fixed on branch** (`fix/pv-print-bill-date` → `main`). Prod check after deploy still to do.
+
+**Symptom.** Found 2026-10-16 while comparing the finance v2 design with the code: a payment voucher with a bill no. and a bill date printed "Bill no. X" but never "dated dd/mm/yyyy" after it, since the voucher form gained the bill date (#663, 2026-10-01).
+
+**Root cause.** `buildPvVoucher` (`src/pages/accounting/index.tsx`) adds the date only when it looks like YYYY-MM-DD, but the check was `/^d{4}-d{2}-d{2}$/`: the backslashes were lost when the line was written through a shell, so the pattern matched the letters "dddd-dd-dd" and never a real date.
+
+**Fix.** The check is `/^\d{4}-\d{2}-\d{2}$/` again. A search of `src/` found no other regex with a digit pattern that lost its backslash.
+
+**Regression.** `tests/pv-print-bill-date.test.mjs`: the bill-date check is a real digit pattern (a real date passes, "dddd-dd-dd" does not), plus a class guard that fails on any regex line in `src/` quantifying a bare `d` (`d{4}` with no backslash).
 
 ## BUG-2026-10-16-301 — A worker who resigned this month showed near full pay on the month's payroll `payroll` 🟡
 
