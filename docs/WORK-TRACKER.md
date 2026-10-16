@@ -1,5 +1,8 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
+> now allocatable (finished pieces always first). Entry below; the stage threshold is a
+> null constant because the owner has not been asked which stage counts.
 HEAD
  HEAD
 > **Last verified: 2026-10-16**: branch `design/mobile-sidebar` (phone nav drawer reskin, local only) added below (its entry is the newest).
@@ -7335,3 +7338,55 @@ checked locally with stubbed data at desktop and 320px. **Not yet verified on st
 Known gap: a sofa Fab Cut card is shared by several lines of the order, so it is listed as
 skipped rather than recalculated.
 upstream/staging
+
+## 2026-10-16 — DEV-05 follow-on: work in progress counts as stock
+
+Branch `feat/dev05-allocate-wip`, to `staging`. Owner, during the showcase:
+*"WIP 也可以当成是库存"* — asked twice, confirmed twice.
+
+**What changed.** `loadAllocatablePOs` offered only COMPLETED stock pieces. It
+now offers in-progress ones too, BEHIND every finished one. Both halves of the
+feature read that one function, so auto-allocation on confirm and the manual
+"Allocate N" button moved together and cannot disagree.
+
+**Finished-first is enforced TWICE, and the second time is not redundant.** The
+SQL sorts, and the mapped rows are sorted again in code. "A piece that exists
+beats a piece that is promised" is a safety rule, and a safety rule living only
+in an ORDER BY is one edit from silently not holding. The in-code sort makes it
+provable without a database; `sort` is stable, so the query's oldest-first
+tie-break survives inside each half.
+
+**What was deliberately NOT invented.** No stage threshold. The owner said work
+in progress counts; he was not asked whether a piece cut this morning counts
+the same as one waiting to be packed. `ALLOCATABLE_FROM_DEPT` is a named
+constant, null today, with the comparison already written against
+`REPAIR_DEPT_CODES` — one line moves when he answers. An unknown department
+withholds the piece rather than promising it.
+
+**The sentences.** A line filled entirely off the shelf reads EXACTLY as before
+— pinned by its own test, because the wording people already know should not
+move for a case that did not change. When the floor is involved it says so:
+`Allocated 3 x A100 (2 from stock, 1 from pieces still in production)`. The A9
+loser note now names whichever supply exists; previously it said "0 on hand"
+and stopped, which told a salesperson the wrong thing when three were being
+built and all three were spoken for.
+
+**Why this needed no WIP-ledger fix.** The `wip_items` balance is a running
+tally that drifts (BUG-CLASSES C11; measured on staging the same day: 530 codes
+disagree, 183 rows negative, 1,152 units wrong gross). None of it is read here.
+`inProductionQty` is derived from `production_orders` status, the same source
+the finished figure uses — computed fresh every read, so it cannot drift. The
+two were conflated earlier in the session and they are not the same thing.
+
+**Safety that was already there.** The delivery path requires COMPLETED or
+TRANSFERRED (`delivery-orders.ts:3518`), so an allocated-but-unfinished piece
+is reserved and still cannot ship. Nothing needed adding for that.
+
+**Tests.** 39 in `tests/stock-allocations.test.mjs` (32 before, none of whose
+assertions changed). The stub now carries `status`/`current_department`,
+because real rows always do and a row without a status reads as unfinished.
+
+**Still open, and the owner has not been asked:** what happens when a piece
+promised to a customer is scrapped or re-specced. Finished stock cannot vanish;
+work in progress can. Today nothing tells the order. That is the one gap this
+branch knowingly leaves.

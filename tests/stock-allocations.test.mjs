@@ -231,13 +231,27 @@ test("an order's holding is NET of releases; a fully released line is absent", a
 // One row per FINISHED stock production order that is still owned by the stock
 // order it was born against. Whole orders are what move, so the fake hands back
 // orders, not a quantity.
-const stockPOs = (n, qtyEach = 1) =>
+const stockPOs = (n, qtyEach = 1, status = "COMPLETED", dept = null) =>
   Array.from({ length: n }, (_, i) => ({
     id: `pord-stock-${i + 1}`,
     poNo: `SOH-2609-001-0${i + 1}`,
     product_code: "A100",
     quantity: qtyEach,
     stock_origin_so_id: "so-stock",
+    // Real rows always carry these two; the fake carries them for the same
+    // reason it carries quantity — a row without a status reads as unfinished,
+    // which is the conservative default in the code and would otherwise make
+    // every fixture here silently describe work in progress.
+    status,
+    current_department: status === "COMPLETED" ? null : dept,
+  }));
+
+/** The same, but still on the floor — the pieces the WIP half of the pool offers. */
+const wipPOs = (n, qtyEach = 1, dept = "UPHOLSTERY") =>
+  stockPOs(n, qtyEach, "IN_PROGRESS", dept).map((p, i) => ({
+    ...p,
+    id: `pord-wip-${i + 1}`,
+    poNo: `SOH-2610-009-0${i + 1}`,
   }));
 
 const autoDb = ({ pool = [], held = [], avail = null }) =>
@@ -810,5 +824,138 @@ test("FACT: byAnyCode is first-wins and a zero-priced stock line can take that s
     priceForItem(idx, null, "", "A100"),
     0,
     "an unlinked line for a stock-only product falls through to zero",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// WIP is stock too (owner 2026-10-16). The pool offers unfinished pieces, but
+// only BEHIND every finished one, and the sentence has to say which is which:
+// a piece on the shelf exists, a piece on the floor is a claim on future
+// output. Conflating them is the shape of lie this feature exists to remove.
+// ---------------------------------------------------------------------------
+
+test("WIP: an unfinished stock piece is allocatable", async () => {
+  const db = autoDb({ pool: wipPOs(3) });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 5, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  await db.batch(plan.statements);
+  const moved = db.written.filter((w) => /^UPDATE production_orders/i.test(w.sql));
+  assert.equal(moved.length, 3, "all three in-progress pieces change hands");
+  assert.match(plan.notes[0], /3 from pieces still in production/);
+  assert.match(plan.notes[0], /2 to be produced/);
+});
+
+test("WIP: the sentence never calls an unfinished piece 'from stock'", async () => {
+  const db = autoDb({ pool: wipPOs(2) });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 2, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  assert.doesNotMatch(
+    plan.notes[0],
+    /from stock/,
+    "nothing was on the shelf — saying so would promise goods that do not exist",
+  );
+});
+
+test("WIP: finished pieces are spent FIRST, unfinished only to top up", async () => {
+  // Two on the shelf, two on the floor, a line wanting three. The shelf must
+  // empty before the floor is touched, whatever order the rows arrive in.
+  const db = autoDb({ pool: [...wipPOs(2), ...stockPOs(2)] });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 3, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  await db.batch(plan.statements);
+  const moved = db.written.filter((w) => /^UPDATE production_orders/i.test(w.sql));
+  const ids = moved.map((w) => w.args[w.args.length - 1]);
+  assert.equal(moved.length, 3);
+  assert.ok(
+    ids.includes("pord-stock-1") && ids.includes("pord-stock-2"),
+    "both finished pieces were taken before any unfinished one",
+  );
+  assert.equal(
+    ids.filter((id) => String(id).startsWith("pord-wip-")).length,
+    1,
+    "exactly one unfinished piece was needed to top the line up",
+  );
+  assert.match(plan.notes[0], /2 from stock, 1 from pieces still in production/);
+});
+
+test("WIP: a line filled entirely off the shelf reads EXACTLY as it did before", async () => {
+  // The regression guard for the sentence people already know. WIP being
+  // allocatable must not reword the case that did not change.
+  const db = autoDb({ pool: stockPOs(4) });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 10, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  assert.equal(plan.notes[0], "Allocated 4 x A100 from stock (6 to be produced)");
+});
+
+test("WIP: the loser is told about pieces on the FLOOR, not just the shelf", async () => {
+  // Nothing on hand at all, three being built, every one of them already
+  // promised elsewhere. The old sentence said "0 on hand" and stopped, which
+  // told a salesperson the wrong thing: supply exists, it is just spoken for.
+  const db = autoDb({
+    pool: [],
+    avail: { onHand: 0, available: 0, allocated: 3 },
+  });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 2, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  assert.match(plan.notes[0], /3 still in production are already committed/);
+  assert.doesNotMatch(plan.notes[0], /0 on hand/, "a zero is not worth a sentence");
+});
+
+test("WIP: a cancelled or held piece is NOT supply", async () => {
+  // The query excludes both, and it excludes the same two `loadAvailability`
+  // does — the pool and the figures must never disagree about what exists.
+  const src = readFileSync(
+    new URL("../src/api/lib/stock-allocations.ts", import.meta.url),
+    "utf8",
+  );
+  const matches = src.match(/status NOT IN \('CANCELLED', 'ON_HOLD'\)/g) ?? [];
+  assert.ok(
+    matches.length >= 2,
+    "both the availability aggregate and the candidate pool exclude CANCELLED/ON_HOLD",
+  );
+});
+
+test("WIP: the stage gate is a named constant, not a literal nobody can find", async () => {
+  // It encodes a decision the owner has not made. Null today (every stage
+  // qualifies); when he answers, this is the one line that moves.
+  const src = readFileSync(
+    new URL("../src/api/lib/stock-allocations.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(src, /export const ALLOCATABLE_FROM_DEPT: string \| null = null;/);
+  assert.match(
+    src,
+    /if \(at < 0 \|\| need < 0\) return false;/,
+    "an unknown department withholds the piece rather than promising it",
   );
 });
