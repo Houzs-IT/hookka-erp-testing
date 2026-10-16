@@ -14,6 +14,9 @@
 //     /m/updates;
 //   • SegmentedSwitch: a badge renders only for a count > 0, and an option
 //     without one renders its bare label (Home unchanged).
+//   • 2026-10-16 phone pass (Updates.dc.html): phone-only visuals, tablet
+//     values kept; filter icon (no sort); Announcements "Live" (isActive) and
+//     no author (createdBy is a user id).
 // ---------------------------------------------------------------------------
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -162,7 +165,7 @@ test("explicit loading, error, empty and no-results states", () => {
   assert.match(updates, /"Couldn’t load notifications\."/);
   assert.match(updates, /"No notifications yet\."/);
   assert.match(updates, /"No notifications match your search or filters\."/);
-  assert.match(updates, /<TextButton onClick=\{clearAll\}>Clear search and filters<\/TextButton>/);
+  assert.match(updates, /<TextButton onClick=\{clearAll\} elevated=\{phone\}>\s*Clear search and filters\s*<\/TextButton>/);
   // Search + filter controls stay disabled until the first load succeeds.
   assert.match(updates, /const disabled = !feed\.loaded;/);
   // A failed load is not an empty list.
@@ -229,8 +232,11 @@ test("plain-text severity word in the SAME colour as dot + bar, no pills, no unr
   assert.doesNotMatch(updates, /aria-label="Unread"/);
 });
 
-test("title weight 600 unread / 500 read", () => {
-  assert.match(updates, /fontWeight: unread \? 600 : 500,\s*color: unread \? M\.raisin : M\.body,/);
+test("title weight: phone 700 unread / 600 read (raisin); tablet 600 / 500", () => {
+  assert.match(
+    updates,
+    /fontWeight: phone \? \(unread \? 700 : 600\) : unread \? 600 : 500,\s*color: phone \? M\.raisin : unread \? M\.raisin : M\.body,/,
+  );
 });
 
 test("category pill + date stay on one line", () => {
@@ -281,12 +287,14 @@ test("phone card rhythm matches Announcements; tablet keeps its original values"
   const tablet = updates.match(/const CARD_TABLET = \{[\s\S]*?\} as const;/)?.[0] ?? "";
   const has = (block, k, v) => assert.ok(block.includes(`${k}: ${v},`), `${k}: ${v}`);
   for (const [k, v] of Object.entries({
-    padding: '"13px 15px 13px 18px"', gapBelow: "11", titleSize: "15", titleTracking: '"-0.2px"',
+    padding: '"14px 14px 13px 17px"', gap: "12", tile: "36", tileRadius: "11", iconSize: "17",
+    gapBelow: "11", titleSize: "15", titleTracking: '"-0.2px"',
     messageTop: "4", messageColor: "M.body", metaTop: "10", metaColor: "M.body", chevronColor: "M.muted",
   })) has(phone, k, v);
   // Tablet: exactly the values the card had before the phone polish.
   for (const [k, v] of Object.entries({
-    padding: '"12px 13px 12px 16px"', gapBelow: "10", titleSize: "14", titleTracking: "undefined",
+    padding: '"12px 13px 12px 16px"', gap: "11", tile: "32", tileRadius: "9", iconSize: "16",
+    gapBelow: "10", titleSize: "14", titleTracking: "undefined",
     messageTop: "3", messageColor: "M.muted", metaTop: "8", metaColor: "M.faint", chevronColor: "M.faint",
   })) has(tablet, k, v);
   assert.match(updates, /const phone = useResponsiveLayout\(\)\.mode === "phone";\s*const card = phone \? CARD_PHONE : CARD_TABLET;/);
@@ -301,7 +309,10 @@ test("phone titles wrap to at most 2 lines; tablet keeps one line with an ellips
 // ── Page chrome follows existing /m conventions (2026-10-13 consistency pass) ─
 
 test("search row = the Sales row (18px gutters, 7px gap, 13px inset, 18px icon)", () => {
-  assert.match(updates, /<div style=\{\{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 \}\}>/);
+  // Tablet branch keeps the original row; phone takes the phone Sales row.
+  assert.match(updates, /: \{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 \}\}>/);
+  assert.match(updates, /phone \? \{ display: "flex", alignItems: "center", gap: 8, padding: "14px 18px 4px", minWidth: 0 \}/);
+  assert.match(updates, /\.\.\.\(phone \? \{ border: "none", borderRadius: 14, boxShadow: SHADOW_CONTROL \} : null\),/);
   assert.match(updates, /gap: 9,\s*padding: "0 0 0 13px",\s*backgroundColor: M\.card,\s*border: `1px solid \$\{M\.hairline\}`,\s*borderRadius: 12,/);
   assert.match(updates, /placeholder="Search title · message · ref"/);
 });
@@ -328,4 +339,76 @@ test("filter sheet = FilterSheet conventions, without double padding", () => {
   assert.match(filterSheet, /border: `1px solid \$\{on \? M\.taupe : M\.border\}`,\s*backgroundColor: on \? M\.taupe : M\.card,\s*color: on \? M\.card : M\.body,\s*fontSize: 12,\s*fontWeight: on \? 700 : 500,/);
   assert.match(filterSheet, /flex: 1,\s*height: 44,\s*borderRadius: 12,/);
   assert.equal((filterSheet.match(/style=\{footerButton\(/g) ?? []).length, 2);
+});
+
+// ── Phone visual pass (owner 2026-10-16, Updates.dc.html) ──────────────────
+
+test("phone view switch is local (design / Products pattern); shared SegmentedSwitch untouched", () => {
+  // The shared switch has no icon support — Home and every other user unchanged.
+  assert.doesNotMatch(sw, /icon/i);
+  // Phone renders PhoneViewSwitch; tablet keeps the shared SegmentedSwitch.
+  assert.match(updates, /\{phone \? \(\s*<div style=\{\{ padding: "6px 18px 0" \}\}>\s*<PhoneViewSwitch view=\{view\} onChange=\{setView\} unread=\{feed\.unread\} \/>/);
+  const fn = updates.match(/function PhoneViewSwitch\([\s\S]*?\n\}\n/)?.[0] ?? "";
+  assert.ok(fn, "PhoneViewSwitch found");
+  assert.match(fn, /gap: 4,\s*height: 46,\s*boxSizing: "border-box",\s*padding: 4,\s*borderRadius: 14,\s*backgroundColor: M\.divider,/);
+  assert.match(fn, /borderRadius: 10,\s*border: "none",\s*backgroundColor: on \? M\.card : "transparent",\s*boxShadow: on \? SHADOW_SEG : "none",\s*color: on \? M\.raisin : M\.ink,/);
+  assert.match(fn, /aria-pressed=\{on\}/);
+  assert.match(fn, /`Notifications, \$\{count\} unread`/);
+  // The count is the real unread number, shown only when > 0.
+  assert.match(fn, /const count = unread > 0 \? Math\.floor\(unread\) : 0;/);
+  assert.match(fn, /\{shown > 0 \? \(/);
+});
+
+test("phone filter button: 44px ArrowDownUp circle (Sales) that opens the FILTER sheet only", () => {
+  assert.match(updates, /<ArrowDownUp size=\{16\} strokeWidth=\{1\.9\} aria-hidden \/>/);
+  assert.match(updates, /position: "relative",\s*width: 44,\s*height: 44,\s*borderRadius: 999,/);
+  assert.match(updates, /data-filter-count/);
+  assert.match(updates, /title="Filter"\s*disabled=\{disabled\}\s*onClick=\{\(\) => setSheetOpen\(true\)\}/);
+  // Accessible name says Filters; nothing anywhere offers a sort.
+  assert.doesNotMatch(updates, /aria-label="[^"]*[Ss]ort/);
+});
+
+test("phone card is borderless with the Sales shadow; tablet keeps its border", () => {
+  assert.match(updates, /border: phone \? "none" : `1px solid \$\{M\.border\}`,/);
+  assert.match(updates, /boxShadow: phone \? SHADOW_CARD : /);
+  // Severity-tinted tile only on phone; the tint is the SAME severity token.
+  assert.match(updates, /\{phone && severity \? \(\s*<span style=\{\{ position: "absolute", inset: 0, backgroundColor: severity\.color, opacity: 0\.12 \}\} \/>/);
+  // Expandable cards say so on phone; navigable ones keep the right chevron.
+  assert.match(updates, /<ChevronDown[\s\S]{0,200}transform: expanded \? "rotate\(180deg\)" : "none"/);
+});
+
+test("phone header actions are 42px round; tablet keeps 34×34", () => {
+  assert.match(updates, /style=\{phone \? markAllPhoneStyle\(feed\.unread === 0\) : \{/);
+  assert.match(updates, /boxShadow: SHADOW_HEADER_ACTION,/);
+  assert.match(updates, /function markAllPhoneStyle\(none: boolean\): CSSProperties \{\s*return \{\s*width: 42,\s*height: 42,/);
+  assert.match(announcements, /width: 42,\s*height: 42,\s*borderRadius: 999,\s*background: `linear-gradient\(135deg, \$\{M\.logoFrom\}, \$\{M\.logoTo\}\)`/);
+});
+
+test("Announcements: 'Live', never 'Pinned'; author (a user id) never shown", () => {
+  assert.match(announcements, /\{ key: "live", label: "Live" \}/);
+  assert.doesNotMatch(announcements, /label: "Pinned"|>Pinned</);
+  assert.doesNotMatch(announcements, /str\(r, "createdBy"/);
+  assert.match(announcements, /aria-pressed=\{on\}/);
+  assert.match(announcements, /aria-label="Search announcements"/);
+});
+
+test("phone 'Live' follows the desktop rule: shown AND not expired (timezone-safe)", async () => {
+  const { isLiveAnnouncement } = await import(
+    pathToFileURL(resolve(process.cwd(), "src/pages/m/lib/announcement-live.ts")).href
+  );
+  const now = Date.parse("2026-10-16T04:00:00.000Z");
+  assert.equal(isLiveAnnouncement({ isActive: true }, now), true); // no expiry
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: null }, now), true);
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: "" }, now), true);
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: "garbage" }, now), true); // unparseable → not expired
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: "2026-10-16T04:00:01.000Z" }, now), true);
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: "2026-10-16T04:00:00.000Z" }, now), false); // at now → expired
+  assert.equal(isLiveAnnouncement({ isActive: true, expires_at: "2026-10-15T00:00:00Z" }, now), false); // snake_case read
+  // Same instant written with a +08:00 offset (MYT) → same answer.
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: "2026-10-16T12:00:01+08:00" }, now), true);
+  assert.equal(isLiveAnnouncement({ isActive: true, expiresAt: "2026-10-16T11:59:59+08:00" }, now), false);
+  assert.equal(isLiveAnnouncement({ isActive: false }, now), false);
+  assert.equal(isLiveAnnouncement({ isActive: "true" }, now), false);
+  // Phone uses it; tablet keeps the isActive-only chip.
+  assert.match(announcements, /chip === "live" && \(phone \? !isLiveAnnouncement\(r\) : r\.isActive !== true\)/);
 });

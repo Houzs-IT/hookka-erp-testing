@@ -1,5 +1,6 @@
 # Hookka ERP — Work Tracker
 
+> **Last verified: 2026-10-16**: branch `design/mobile-home-dashboard` (phone Updates visual pass, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `design/mobile-home-dashboard` (phone Products hub, local only) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/dept-revenue` (to `staging`, department revenue + Bedframe/Sofa split on /dashboard) added below (its entry is the newest).
 > **Last verified: 2026-10-14**: BUG-87 re-test entry below closed (#852 verified on staging; branch `docs/bug286-287-staging-verified`).
@@ -243,6 +244,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-16 — 🔵 Phone Updates (`/m/updates`): follow `Updates.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
+
+Owner asks, logged before work; read-only audit first, implementation approved 2026-10-16 with: A borderless cards + soft shadows (Sales / Products phone styling for search, chips, buttons); B "Pinned" → "Live" (the filter is `isActive`); C hide the announcement author (`createdBy` is a user id; no new lookup); D filter icon, not sort (no sort exists). Update the existing `UpdatesScreen.tsx`; PHONE only, tablet and desktop unchanged; no API / DB / logic changes; no prototype data. No commit / push / deploy.
+1. 🔵 Audit: `/api/notifications` GET/PUT, `/api/announcements`, read state, visibility, links, desktop + /m screens, filter sheet (draft / Reset / Show N, unchanged).
+2. 🔵 `UpdatesScreen.tsx` phone: round header actions, switch icons, Sales search + round filter button, shadow chips, ruled group headings, borderless card with severity-tinted tile, expand chevron, desktop-note strip, no-results icon.
+3. 🔵 Owner follow-up 2026-10-16: shared `MobileHeader` unchanged; filter = 44px round `ArrowDownUp` (Sales), filter only, aria "Filters"; view switch = the design's, as a local `PhoneViewSwitch` (Products pattern) — the shared `SegmentedSwitch` is NOT changed (an earlier icon prop was reverted).
+4. 🔵 `AnnouncementsScreen.tsx` (`AnnouncementsList`, shared with `/m/announcements`): Pinned → Live, author hidden, phone card + search + chips + round +. Phone "Live" = desktop rule (`isActive` AND not expired; `lib/announcement-live.ts`, epoch compare, timezone-safe); tablet chip keeps isActive only.
+5. 🔵 Tests updated / extended; tsc strict, eslint, tests, build.
+
 ## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.
