@@ -26,7 +26,12 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
-import { syncOpenCardsToBom, type CardSyncResult } from "./jobcard-sync";
+import {
+  saveBomAndSyncCards,
+  CardsBusyError,
+  type BomWrite,
+  type CardSyncResult,
+} from "./jobcard-sync";
 import {
   resolveWipTokens,
   type BomVariantContext,
@@ -250,20 +255,10 @@ function mutateMatchingNodes(
   return count;
 }
 
-// The BOM is already saved when this runs, so a failure here is reported next
-// to the saved result instead of failing the whole save.
-async function syncCardsAfterSave(
-  c: Parameters<typeof syncOpenCardsToBom>[0],
-  pairs: string[],
-  before: ReadonlyMap<string, string | null>,
-): Promise<{ jobCards: CardSyncResult } | { jobCardsError: string }> {
-  try {
-    return { jobCards: await syncOpenCardsToBom(c, new Set(pairs), before) };
-  } catch (e) {
-    console.error("[wip-times] job card sync failed:", e);
-    return { jobCardsError: e instanceof Error ? e.message : String(e) };
-  }
-}
+// The BOM rows and the job cards are written in one transaction, so a failure
+// saves nothing and the same save can be retried.
+const BUSY_RESPONSE = (c: Parameters<typeof saveBomAndSyncCards>[0], e: CardsBusyError) =>
+  c.json({ success: false, error: e.message }, 503);
 
 app.put("/", async (c) => {
   const denied = await requirePermission(c, "bom", "update");
@@ -325,9 +320,7 @@ app.put("/", async (c) => {
 
   let updatedBomCount = 0;
   let updatedNodeCount = 0;
-  const changedProducts = new Set<string>();
-  // Each product's BOM as it was before this save: only cards still at that time move.
-  const beforeWip = new Map<string, string | null>();
+  const bomWrites: BomWrite[] = [];
 
   for (const row of result.results ?? []) {
     if (!row.wipComponents) continue;
@@ -364,19 +357,30 @@ app.put("/", async (c) => {
     );
     if (nodesUpdated > 0) {
       const newJson = JSON.stringify(tree);
-      await c.var.DB.prepare(
-        `UPDATE bom_templates SET wipComponents = ? WHERE id = ? AND orgId = ?`,
-      )
-        .bind(newJson, row.id, orgId)
-        .run();
+      bomWrites.push({
+        stmt: c.var.DB.prepare(
+          `UPDATE bom_templates SET wipComponents = ? WHERE id = ? AND orgId = ?`,
+        ).bind(newJson, row.id, orgId),
+        productCode: row.productCode,
+        before: row.wipComponents,
+        after: newJson,
+      });
       updatedBomCount++;
       updatedNodeCount += nodesUpdated;
-      changedProducts.add(row.productCode);
-      if (!beforeWip.has(row.productCode)) beforeWip.set(row.productCode, row.wipComponents);
     }
   }
 
-  const cards = await syncCardsAfterSave(c, [...changedProducts].map((p) => `${p}::${deptCode}`), beforeWip);
+  let jobCards: CardSyncResult;
+  try {
+    jobCards = await saveBomAndSyncCards(
+      c,
+      bomWrites,
+      new Set(bomWrites.map((w) => `${w.productCode}::${deptCode}`)),
+    );
+  } catch (e) {
+    if (e instanceof CardsBusyError) return BUSY_RESPONSE(c, e);
+    throw e;
+  }
   return c.json({
     success: true,
     updatedBomCount,
@@ -384,7 +388,7 @@ app.put("/", async (c) => {
     wipLabel,
     deptCode,
     minutes,
-    ...cards,
+    jobCards,
   });
 });
 
@@ -606,36 +610,35 @@ app.post("/bulk-import", async (c) => {
     });
   }
 
-  // Write the dirty BOMs back, one row per UPDATE. Sequential to keep
-  // error reporting per-row simple and to avoid pile-up under load.
+  // Write the dirty BOMs and the matching job cards in one transaction: the
+  // whole import lands or none of it does, so a failed import can be re-run.
   let appliedBomCount = 0;
-  const savedPairs: string[] = [];
-  const beforeWip = new Map<string, string | null>();
+  let cards: { jobCards?: CardSyncResult } = {};
   if (!dryRun) {
+    const bomWrites: BomWrite[] = [];
+    const pairs = new Set<string>();
     for (const bom of bomCache) {
       if (!bom.dirty) continue;
-      try {
-        await c.var.DB
-          .prepare(
-            `UPDATE bom_templates SET wipComponents = ? WHERE id = ? AND orgId = ?`,
-          )
-          .bind(JSON.stringify(bom.tree), bom.id, orgId)
-          .run();
-        appliedBomCount++;
-        for (const d of bom.depts) savedPairs.push(`${bom.productCode}::${d}`);
-        if (!beforeWip.has(bom.productCode)) beforeWip.set(bom.productCode, bom.before);
-      } catch (e) {
-        // Don't abort the rest — record the write failure but keep going
-        // so an isolated row corruption doesn't lose every other update.
-        itemErrors.push({
-          rowIdx: -1,
-          error: `bom_template ${bom.id} write failed: ${e instanceof Error ? e.message : String(e)}`,
-        });
-      }
+      const after = JSON.stringify(bom.tree);
+      bomWrites.push({
+        stmt: c.var.DB.prepare(
+          `UPDATE bom_templates SET wipComponents = ? WHERE id = ? AND orgId = ?`,
+        ).bind(after, bom.id, orgId),
+        productCode: bom.productCode,
+        before: bom.before,
+        after,
+      });
+      for (const d of bom.depts) pairs.add(`${bom.productCode}::${d}`);
     }
+    try {
+      cards = { jobCards: await saveBomAndSyncCards(c, bomWrites, pairs) };
+    } catch (e) {
+      if (e instanceof CardsBusyError) return BUSY_RESPONSE(c, e);
+      throw e;
+    }
+    appliedBomCount = bomWrites.length;
   }
 
-  const cards = dryRun ? {} : await syncCardsAfterSave(c, savedPairs, beforeWip);
   const totalItems = rawItems.length;
   const applied = perItem.filter((p) => p.updatedNodeCount > 0).length;
   const skipped = perItem.length - applied;
