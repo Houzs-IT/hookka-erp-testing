@@ -1,5 +1,6 @@
 # Inventory — Module Guide
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-09-29** (branch `feat/rm-uom-options-main`, DEV-20): re-derived the `index.tsx` line anchors for `InventoryPage`, `deriveWIPFromPO`, `mergeSofaWIPSets` and the three column defs; nothing else re-checked.
 
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
@@ -22,7 +23,7 @@ Read-mostly stock visibility across the three stages of manufacturing: **Finishe
   - `/inventory/stock-value` → `src/pages/inventory/stock-value.tsx` (`StockValuePage` — valuation snapshots)
   - `/inventory/adjustments` → `src/pages/inventory/adjustments.tsx` (`StockAdjustmentsPage`)
   - Routes registered in `src/dashboard-routes.tsx:391-394`
-- **API routes** (mounted in `src/api/worker.ts:1240-1241`; `/wip` MUST mount before `/inventory`)
+- **API routes** (mounted in `src/api/worker.ts:1248-1249`; `/wip` MUST mount before `/inventory`)
   - Aggregate read + drill-downs → `src/api/routes/inventory.ts` (661 lines)
   - WIP derived view → `src/api/routes/inventory-wip.ts` (761) — mounted at `/api/inventory/wip`
   - RM CRUD + dup-code toggle → `src/api/routes/raw-materials.ts` (776)

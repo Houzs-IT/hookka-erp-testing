@@ -1,5 +1,6 @@
 # ERP Feature Gap Analysis
 
+> **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
@@ -314,7 +315,7 @@ successfully — all data secured"* (`:4302`) — a fake reassurance about backu
 seed reached production is *unverified*; either way there is **no notification engine**.
 
 **③ `scheduling.ts GET /capacity` — a second, disagreeing capacity model.** Mounted at
-`src/api/worker.ts:1381`, it computes `workerCount × hoursPerDay × 60 × 0.85` with a
+`src/api/worker.ts:1389`, it computes `workerCount × hoursPerDay × 60 × 0.85` with a
 hardcoded efficiency constant (`src/api/routes/scheduling.ts:287`, `:328-330`). Its own
 comment at `:283-286` says nothing consumes it, and the planning page confirms
 (`src/pages/planning/index.tsx:516-520`). The real engine is `src/api/lib/planning-*.ts` —
@@ -331,7 +332,7 @@ anywhere in the repo. The *live-computed* endpoints (`/summary`, `/:supplierId`)
 One feature, one real half and one fake half, behind one name.
 
 **⑤ Efficiency percentages are 100% by construction.**
-`src/api/routes/production-orders.ts:412-438` records that every non-zero `actualMinutes`
+`src/api/routes/production-orders.ts:414-440` records that every non-zero `actualMinutes`
 value on production is byte-identical to that card's own `estMinutes` — the column was
 populated by copying the estimate (`src/api/routes/import-completion/_shared.ts:468`).
 `src/pages/reports.tsx:781-789` now correctly prints `—` instead of a ratio, but the *data
@@ -419,7 +420,7 @@ Stated because each is easy to mistake for a shell:
 
 - **`src/api/routes/import-completion.ts`** is not dead. `API.md`'s static scan finds no
   routes in it because `:56-64` is an aggregator that `app.route("/", …)`s eight sub-routers;
-  it is mounted at `src/api/worker.ts:1411`.
+  it is mounted at `src/api/worker.ts:1419`.
 - **`src/api/routes/_fabric-cascade.ts`** is not dead. The `_` prefix means helper, not
   route; it is imported at `src/api/routes/raw-materials.ts:34`.
 - **`admin-health.ts`'s mock fallback is honest by design** — flagged `_mock: true` /
@@ -632,7 +633,7 @@ Three findings compound:
    variance, no usage variance, no labour rate or efficiency variance to report.
 2. **Shop-floor scans capture who, when and which piece — never a duration, never
    good-vs-bad.** The three scan handlers stamp `piece_pics.pic1Id/pic2Id + completedAt` and
-   roll the card up (`src/api/routes/production-orders.ts:1910-1914`, `:2206-2220`,
+   roll the card up (`src/api/routes/production-orders.ts:1916-1920`, `:2206-2220`,
    `:2282-2297`). `actualMinutes` is not in that UPDATE at all — which is why every
    efficiency ratio is 100% (§2.2 ⑤). No start/stop pair, no reject count, no reason code.
 3. **Two labour numbers that are never reconciled.** `/api/accounting/labor/post`
