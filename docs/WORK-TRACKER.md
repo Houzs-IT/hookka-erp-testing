@@ -1,6 +1,7 @@
 # Hookka ERP — Work Tracker
 
 > **Last verified: 2026-10-16**: branch `chore/sync-staging-from-main-1016` (staging<-main sync) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: branch `fix/wip-save-one-transaction`, to `staging`: the WIP time auto-sync entry below got its one-transaction hardening (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/self-apply-skip-existing-column`, to `main` (BUG-2026-10-16-304) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/dev05-allocate-wip` — work in progress is
 > now allocatable (finished pieces always first). Entry below; the stage threshold is a
@@ -7739,6 +7740,12 @@ row 08:32:34), saving 8 through the page moved it back (audit row 08:34:05, bann
 2 left as they were"); the two cards at 10 were never touched. Staging ends as it started. A
 stall of the job-card write past the app's 30 s timeout was seen twice in an earlier window and
 is UNMEASURED (BUG-2026-10-16-302).
+
+**Hardened the same day (owner: "yes both"):** saving a WIP time now writes the BOM and the
+job cards in one transaction with a 5 s lock limit (branch `fix/wip-save-one-transaction`, to
+`staging`). Busy job cards give "nothing was saved, try again" instead of a 30 s hang, and the
+retry works because nothing half-saved. The lock queue itself is fixed for every table by
+BUG-2026-10-16-304 (#911 to `main`, #913 to `staging`). **Not yet verified on staging.**
 
 ## 2026-10-16 — Self-apply ALTERs no longer lock a table when the column exists (BUG-2026-10-16-304)
 
