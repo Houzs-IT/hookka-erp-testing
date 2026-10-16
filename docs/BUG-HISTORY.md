@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-ups (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887, and the Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-293 (branch `fix/card-phone-padding`, to main, same card fix as staging #684 / BUG-2026-10-02-252; 290 and 291 are staging's, 292 is main's); a log, so "verified" means the entry matches the code on its branch.
@@ -234,6 +235,25 @@ Real note lengths, measured on staging 2026-10-16 (4,844 production orders, 1,04
 Special Order): median 14 characters, 90% at 39 or less, longest 179. Six are over the
 ~106 that fit. The reported sticker (SV-2609-025) is Nylon Fabric, Extend 5" plus TAG,
 about 30 characters, so it now prints in full at 11pt; only the 5" was being cut.
+
+**Follow-up 2026-10-16, bedframe regression from #887** (branch `fix/fg-sticker-notes-bedframe-main`):
+a bedframe print preview showed Notes sliced in half under the dashed line. Measured per sticker
+type on the mock, the room above the QR is: sofa 10.6mm, sofa + legs 13.7mm, sofa + pillow
+19.1mm, accessory 18.3mm, bedframe 3.0mm (Gap and Divan rows), bedframe + legs 6.1mm. The
+`min-h-0` row could shrink to that 3mm. Fix: the Notes row now has a one-line minimum
+(`minHeight: 1.25em`, same as before #887), and `notesFontSize` picks the largest size from
+11 to 7pt whose wrapped lines fit the room (17.5pt bedframe, 30pt otherwise) instead of a
+sofa-only formula. Checked on all seven types at 14, 39, 75 and 179 characters: everything up
+to 75 fits; 179 still clips on most types. The bedframe bottom margin is 2.9mm, the same as
+before #887.
+
+**Follow-up 2026-10-16, Foam Bonding preview** (same branch): the
+Foam Bonding tab has its own half-size copy of the packing sticker ("Show Packing Stickers"). It
+showed only "★ note", truncated, with no Notes label and no TAG, so it did not match the real
+print it claims to mirror. It now has the same Notes row as the print: label, TAG / LABEL, the
+note wrapping above the QR, a one-line minimum, and `notesFontSize` scaled by 9/14 (the tile's
+9px labels stand for the print's 14pt). Preview only; the print from that tab already used the
+fixed print layout.
 
 ---
 
