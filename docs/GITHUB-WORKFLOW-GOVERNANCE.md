@@ -1,5 +1,10 @@
 # GitHub Workflow Governance
 
+> **Last verified: 2026-10-16** (branch `feat/t012-mail-center`, after merging staging) —
+> `mail-sync.yml` and the `mail-sync/` IMAP poller are deleted (PRD T-012 R13). The
+> completeness list below was re-counted against `.github/workflows/` on the merged tree:
+> **29**, and four workflows that had never been listed were added to it.
+
 > **Last verified: 2026-09-29** (branch `chore/sync-main-into-staging`, staging<-main merge): kept staging's `deploy.yml` row (staging-only patch-notes step) and main's `sync-staging.yml` row. Nothing else re-checked.
 
 > **Last verified: 2026-09-29** (branch `ci/label-prs`) — added the `label-prs.yml` row, read from the workflow and the
@@ -28,14 +33,18 @@
 > all exist as named, there is no `ISSUE_TEMPLATE/` (correct — this doc says it is optional
 > and not needed), and `docs/BUG-HISTORY.md` is still the live bug log.
 >
-> For completeness, the **26** workflows present on 2026-08-14 are: agent-heartbeat,
-> analyze-staging, auto-clockout, backup, daily-reports, delivery-agent,
-> deploy-cron-worker, deploy, distill-ocr-rules, **docs-freshness**, ios-build,
-> keep-warm, mail-sync, nightly-counter-rebuild, nightly-pi-gl-backfill,
+> For completeness, the **29** workflows on the merged tree (measured 2026-10-16,
+> `ls .github/workflows/*.yml`) are: agent-heartbeat, analyze-staging, auto-clockout,
+> backfill-skipped-completions, backup, daily-reports, delivery-agent, deploy-cron-worker,
+> deploy, distill-ocr-rules, **docs-freshness**, ios-build, keep-warm, label-prs,
+> label-staging-prs, nightly-counter-rebuild, nightly-pi-gl-backfill,
 > process-email-outbox, push-clock-reminder, qc-cron, rebuild-dashboard-snapshot,
 > refresh-bundle-baseline, replay-audit-dlq, scan-queue-sweep, **secret-hygiene**,
-> sync-staging, trim-staging, warm-lists. *(The list said 24 and omitted exactly the
-> two gates this repo relies on for doc freshness and secret hygiene.)*
+> sync-staging, trim-staging, warm-lists, wip-reset. *(An earlier revision said 24 and
+> omitted exactly the two gates this repo relies on for doc freshness and secret hygiene;
+> `backfill-skipped-completions`, `label-prs`, `label-staging-prs` and `wip-reset` had
+> never been listed at all. `mail-sync` is gone — retired under PRD T-012 R13, since
+> Cloudflare Email Routing → mail-inbound-worker is the one inbound channel.)*
 > Note `ios-build.yml` (Capacitor iOS, `workflow_dispatch` only, unsigned archive) predates
 > this doc's "canary deploys on pull requests" framing and is not covered by it.
 

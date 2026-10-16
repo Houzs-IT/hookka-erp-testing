@@ -2694,6 +2694,72 @@ module (sidebar entry), desktop + `/m`. Done in code: `ServiceCaseLink.tsx` / `u
 button; gated by the sidebar permission; no API change. build:strict exit 0, 33/33 dashboard tests.
 NOT browser-verified, NOT deployed.
 
+## 2026-09-21 — 🟡 PRD T-012 · Mail Center: staff mailboxes, copy fields, acknowledgement, org picker (all 16 built; PR #655 open to `staging`, awaiting review + deploy)
+
+Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
+`T-012-Hookka-mail-center - wei siang.pdf` (not in repo — user's local Downloads). Sheet row
+DEV-04 (Samuel). Branch `feat/t012-mail-center` (worktree `hookka-erp-testing-t012`, off
+`origin/main` @ 6ef4f385).
+
+Asks (all 16 requirements, in dependency order):
+- R1 `sendMail` takes several recipients + cc / bcc / reply-to / custom headers (Brevo AND Resend)
+- R2 compose + reply gain cc / bcc + reply-all rebuilt from the latest inbound message
+- R3 a reply goes to the most recent correspondent, not the thread's first
+- R4 outgoing mail carries Message-ID; replies carry In-Reply-To + References
+- R5 registration / invite / accept-invite provision `first.last@hookka.com` in `email_addresses`
+- R6 Mail Center shows "My mailbox" first (inbox / sent by me / drafts)
+- R7 per-person read state (`mail_thread_reads`) replaces the shared `unread` flag; "read by 3 of 5"
+- R8 acknowledgement: sender flags a message, recipients confirm, thread shows who has / has not, overdue chased
+- R9 recipient picker (Department / My team / My managers) on a directory endpoint over the org chart
+- R10 "what may I see" panel
+- R11 thread list: server-side paging + sent / label / mailbox filters
+- R12 one rule for SUPER_ADMIN mailbox visibility (PRD: match the other system → scope table decides)
+- R13 retire the duplicate inbound channel (`mail-sync/` IMAP poller; routing worker stays)
+- R14 outbound attachments stored as files, not base64 text in `outbox_emails`
+- R15 audit rows for send / reply / forward / assign / archive / delete
+- R16 mobile Mail Center gains compose / reply / forward
+
+**Done (all 16), eight commits on `feat/t012-mail-center`:** R1-R4 `8a6e5f9d`, R5/R6/R11
+`210caab7`, R7/R8/R15 `7b17e7aa`, R9/R10 `b0357db5`, R12/R13 `eb40d744`, R14 `457b48b5`,
+R16 `4095bef8`. New files: `src/api/lib/mail-threading.ts` (pure recipients + RFC headers),
+`mail-provision.ts`, `mail-acks.ts`, `src/pages/mail-center/recipients-input.tsx`,
+`recipient-picker.tsx`, `ack-request-row.tsx`, `visibility-panel.tsx`,
+`migrations-postgres/0233_mail_reads_acks.sql` (mirrors the runtime DDL). 62 new tests across
+`tests/mail-threading`, `mail-send-path`, `mail-provision`, `mail-reads-acks`,
+`email-outbox-attachments`, `mobile-mail-center`, plus additions to `mail-center-rbac` and
+`org-people`. `npm test` 4672 → all pass except `tests/pcb-not-fabricated.test.mjs` (13), which
+fails on ANY checkout whose path has a space (`Internal%20Project` — it builds paths from
+`import.meta.url` without `fileURLToPath`; passes on a space-free worktree of `origin/main`) —
+pre-existing, not touched. `build:strict` clean. `docs/API.md` regenerated (140 mounts, 962
+handlers). CODEBASE-MAP restamped.
+
+**Decisions taken from the PRD text (owner to confirm at review):**
+- R12 → super admins follow `mail_user_scope` like everyone. **On deploy the seven prod super
+  admins drop to `personal` until set to `company` in the Mailbox tab** (UNMEASURED which of
+  them rely on company-wide reading). No migration seeds them — the PRD said the other system's
+  owner set the opposite deliberately.
+- R13 → `mail-sync/` + `.github/workflows/mail-sync.yml` deleted (the Hostinger IMAP poller;
+  MX is on Cloudflare since 2026-08-19). The scheduled run keeps firing from `main` until this
+  merges.
+- Acknowledgement is asked of STAFF recipients only (an `email_addresses` row); the send is
+  refused when none is on the mail. Chase = a reminder through the outbox, once per 24 h.
+- Brevo rewrites `Message-ID`; the inbound resolver matches ours OR the provider's id.
+
+**Not verified live:** no local Supabase / Brevo, so the send path, the ack chase and the
+Storage upload were not exercised end-to-end — verify on staging: compose with Cc + Bcc to a
+colleague, reply-all from the colleague's box, "Read by", request + confirm an acknowledgement,
+Auto-sent attachment download for a post-deploy notice.
+
+**State 2026-10-16:** pushed; **PR [#655](https://github.com/hookkadev/hookka-erp-testing/pull/655)
+to `staging`** (opened 2026-10-01, no review yet). `staging` had moved 1,259 commits since this
+branch left `origin/main` @ 6ef4f385, so `staging` was merged IN on 2026-10-16 and six conflicts
+resolved: `src/api/lib/email-outbox.ts` (keep both - `bf8daf5a`'s `MailEnv` AND this branch's
+`OutboxStorageEnv` on `processOutbox`), `src/pages/m/screens/MailCenterScreen.tsx` (keep both -
+the phone `withHeader` guard states AND this branch's `forwardBody` / action bar), `docs/API.md`
+(regenerated), and three doc stamp stacks. **Still never run live anywhere** - the end-to-end
+checklist above is unchanged and must happen on staging before the owner demo.
+
+---
 ## 2026-09-10 — 🔵 PRD T-004 · Import / Export across the whole system (P0/R3-R5 done, rest open)
 
 Requested by Mr Lim, PRD dated 2026-09-07, priority **Low (to be raised later)**. Full PRD:
