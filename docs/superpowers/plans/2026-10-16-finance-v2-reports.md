@@ -1,6 +1,6 @@
 # Finance v2 — Plan 3: Reports Implementation Plan
 
-> **Last verified: 2026-10-16** against `src/pages/accounting/index.tsx` (`PlHubTab`, `PLStatementTab`, `MonthlyPlTab`, `CostStructureTab`, `CashFlowTab`, `BalanceSheetTab`, `TrialBalanceTab`, `GeneralLedgerTab`, `StockSummaryTab`), `src/pages/accounting/overview-tab.tsx`, `src/lib/export-report.ts`, `src/lib/constants.ts` on branch `feat/finance-v2-reports`, after plans 1, 2a, 2b (#918, #922, #923).
+> **Last verified: 2026-10-16** (status section added after part 6) against `src/pages/accounting/index.tsx` (`PlHubTab`, `PLStatementTab`, `MonthlyPlTab`, `CostStructureTab`, `CashFlowTab`, `BalanceSheetTab`, `TrialBalanceTab`, `GeneralLedgerTab`, `StockSummaryTab`), `src/pages/accounting/overview-tab.tsx`, `src/lib/export-report.ts`, `src/lib/constants.ts` on branch `feat/finance-v2-reports`, after plans 1, 2a, 2b (#918, #922, #923).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -9,6 +9,10 @@
 **Architecture:** Shared shell first (`src/components/finance/report-shell.tsx`, pure `src/lib/finance-reports.ts`, CSS `table[data-fin-report]` keyed by `data-row` / `data-cell`), then one report per task, each keeping its data and engine untouched. The P&L hub lifts the line switch so the hub's views render one toolbar each.
 
 **Spec:** `docs/superpowers/specs/2026-10-16-finance-v2-design.md` — owner decisions win: Monthly P&L keeps Accumulated first and newest month first; Trade Finance stays its own Cash Flow block (interest under Finance Cost); GL Sales / Purchase scope keeps opening the per-party ledger; Month / Quarter / FY pickers with transition years, the per-company sheet and WIP-by-PO feeding the sheet are deferred.
+
+## Status (2026-10-16)
+
+Shipped in parts, each prod-checked read-only after merge: part 1 #924 (shell + Trial Balance), part 2 #925 (General Ledger), part 3 #926 (P&L hub + statement), part 4 #927 (Monthly P&L, Cost Structure; BUG-2026-10-16-305), part 5 #928 (Cash Flow), part 6 #929 (Stock Summary, Balance Sheet look), part 7 (Overview range switch on the title row). Not drawn on purpose: Stock Summary's "Every group balances ✓" (BUG-2026-08-13-093). Still waiting on the owner: the legal company name on report heads, the Balance Sheet's new layout, dropping CSV.
 
 ## Global Constraints
 
