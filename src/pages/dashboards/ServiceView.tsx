@@ -253,7 +253,9 @@ export function ServiceView({
         </>
       )}
 
-      {sub === "performance" && <ServicePerformancePanel slice={slice} period={period} onPeriodChange={onPeriodChange} />}
+      {/* Merged dashboard: Report holds performance and root causes; To do
+          (key "overdue") holds overdue cases and approvals. */}
+      {sub === "overview" && <ServicePerformancePanel slice={slice} period={period} onPeriodChange={onPeriodChange} />}
 
       {sub === "overdue" && (
         <>
@@ -302,9 +304,9 @@ export function ServiceView({
         </>
       )}
 
-      {sub === "approvals" && <ServiceApprovalsPanel />}
+      {sub === "overdue" && <ServiceApprovalsPanel />}
 
-      {sub === "issues" && (
+      {sub === "overview" && (
         <ServiceIssuesPanel
           cases={logged}
           period={period}

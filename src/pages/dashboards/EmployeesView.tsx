@@ -10,6 +10,7 @@ import { AttendanceLogCard } from "./AttendanceLogCard";
 import { filterSlice } from "./employee-filter";
 import { TAUPE, TEAL, MUTED, BORDER, fmtN, inPeriod, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge, MissingNote } from "./dashboard-shared";
+import { CommandCenterSections } from "./CommandCenterSections";
 
 // Real data from GET /api/dashboard/prototype — the `employee` +
 // `availability.employee` slices (workers + working_hour_entries +
@@ -175,8 +176,12 @@ export function EmployeesView({
       </div>
       <MissingNote fields={missing} />
 
-      {sub === "overview" && (
+      {/* Merged dashboard: the old Overview (headcount, working vs production
+          hours, workers) leads the Efficiency sub-tab — same data. */}
+      {sub === "efficiency" && (
         <>
+      {/* Worker Efficiency, the Command Center card (top / bottom 5). */}
+      <CommandCenterSections period={period} sections={["efficiency"]} />
 
       {/* Two real metrics; the config constants (target, working day) ride
           along as a baseline line and a subtitle instead of their own tiles. */}

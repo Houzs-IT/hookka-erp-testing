@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { PeriodPicker } from "./dashboard-shared";
-import { resolvePeriod, opensOnToday, ymd, type Period, type PeopleSub, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
+import { resolvePeriod, opensOnToday, ymd, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
 import { useDashboardUrlState } from "./use-dashboard-url-state";
 import { FinanceView } from "./FinanceView";
-import { AllOverviewView } from "./AllOverviewView";
 import { SalesOrdersView } from "./SalesOrdersView";
 import { OperationsView } from "./OperationsView";
-import { EmployeesView } from "./EmployeesView";
+import { EmployeesDashboard } from "./EmployeesDashboard";
 import { ServiceView } from "./ServiceView";
 import { OcrView } from "./OcrView";
 import { PageHeader } from "@/components/ui/page-header";
@@ -52,8 +51,10 @@ import { usePermissions } from "@/lib/use-permission";
 
 // Old keys (siti / lim / employee / department, people:departments) still resolve: see LEGACY in
 // dashboard-url-state-lib.ts.
-const TABS: TabItem<"overview" | "sales" | "operations" | "people" | "service" | "finance" | "ocr">[] = [
-  { key: "overview", label: "Overview" },
+// Merged dashboard (owner 2026-10-17): no separate Overview tab — its cards
+// moved into the tab that owns them (sales cards into Sales, production into
+// Operations, people into Employees). Old ?tab=overview links land on Sales.
+const TABS: TabItem<"sales" | "operations" | "people" | "service" | "finance" | "ocr">[] = [
   { key: "sales", label: "Sales" },
   { key: "operations", label: "Operations" },
   { key: "people", label: "Employees" },
@@ -85,7 +86,9 @@ export default function DashboardPrototypePage() {
   const blocked = !visibleTabs.some((t) => t.key === tab);
   /** The tab whose content renders: never a tab this role may not see. */
   const view: TabKey | null = blocked ? null : tab;
-  const subTabs = blocked ? undefined : TAB_SUBS[tab];
+  // Employees is one page in the merged dashboard (owner 2026-10-17: "no
+  // flipping to another page"), so it shows no sub-tab strip.
+  const subTabs = blocked || tab === "people" ? undefined : TAB_SUBS[tab];
 
   // The page reads the feed only for `meta.months` — the months that actually
   // exist in the book, which bound the stepper. Every tab below calls the same
@@ -161,7 +164,7 @@ export default function DashboardPrototypePage() {
         <PageHeader
           className="max-md:hidden"
           title="Dashboard"
-          subtitle="Experimental dashboard: Data may be inaccurate. Use with caution"
+          subtitle="Merged dashboard · local preview (live data, read only)"
           actions={<Tabs tabs={visibleTabs} value={tab} onChange={setTab} variant="pill" />}
         />
 
@@ -202,18 +205,11 @@ export default function DashboardPrototypePage() {
           <CardContent className="py-12 text-center text-sm text-[#6B7280]">Under maintenance</CardContent>
         </Card>
       )}
-      {view === "overview" && (
-        <AllOverviewView
-          period={effectivePeriod}
-          months={months}
-          onOpenTab={(t, s) => setTab(t as TabKey, s)}
-        />
-      )}
       {view === "sales" && (
         <SalesOrdersView period={effectivePeriod} months={months} onPeriodChange={setPeriod} />
       )}
       {view === "operations" && <OperationsView period={effectivePeriod} sub={sub as OpsSub} onPeriodChange={setPeriod} />}
-      {view === "people" && <EmployeesView period={effectivePeriod} sub={sub as PeopleSub} onPeriodChange={setPeriod} />}
+      {view === "people" && <EmployeesDashboard period={effectivePeriod} />}
       {view === "service" && <ServiceView period={effectivePeriod} sub={sub as ServiceSub} onPeriodChange={setPeriod} onSubChange={(x) => setSub(x)} />}
       {view === "finance" && <FinanceView period={effectivePeriod} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} />}
       {view === "ocr" && <OcrView period={effectivePeriod} />}

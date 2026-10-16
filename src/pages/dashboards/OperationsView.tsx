@@ -1,18 +1,17 @@
 import { useMemo } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, ReferenceLine,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { TAUPE, TEAL, AMBER, MUTED, BORDER, fmtN, fmtRMAxis, inPeriod, inFocus, overallEfficiencyPct, dayLabel, periodLabel, type Period, type OpsSub } from "./dashboard-shared-lib";
+import { TAUPE, TEAL, AMBER, MUTED, BORDER, fmtN, fmtRMAxis, inPeriod, inFocus, dayLabel, periodLabel, type Period, type OpsSub } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge } from "./dashboard-shared";
-import { AttendanceLogCard } from "./AttendanceLogCard";
 import { DueSoonWorklist, type ProdOrderSummary } from "./OverdueCards";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import { ProductionDailyPanels } from "./ProductionDailyPanels";
-import { CompletedCard, DeptBacklogCard, FabricUsageCard, PlantLoadCard, PurchasingCard } from "./DashboardWidgets";
+import { CompletedCard } from "./DashboardWidgets";
+import { CommandCenterSections } from "./CommandCenterSections";
 
 // Operations tab: the shop-floor report checklist (handed over on paper,
 // 2026-09-17), redesigned 2026-09-18 for density: a single KPI strip, a 2-column chart split
@@ -74,7 +73,6 @@ export function OperationsView({
 
   const production = data?.production;
   const inventory = data?.inventory;
-  const employee = data?.employee;
   const prodLive = data?.availability?.production?.live ?? false;
   const invLive = data?.availability?.inventory?.live ?? false;
 
@@ -129,34 +127,6 @@ export function OperationsView({
     () => (production?.productionCost?.byDay ?? []).filter((d) => inFocus(period, d.date)).reduce((a, d) => a + d.totalSen, 0),
     [production?.productionCost?.byDay, period],
   );
-
-  // Attendance — the table only ever records a PRESENT row (no absence rows
-  // exist, MEASURED — see dashboard-prototype.ts's own header comment), so
-  // "has a row on the latest date" is the honest ceiling of what this data
-  // can say, not a true present/absent split.
-  const attendanceStat = useMemo(() => {
-    const rows = employee?.attendance ?? [];
-    const headcount = (employee?.workers ?? []).filter((w) => w.countsToHeadcount).length;
-    const latest = rows.reduce((m, r) => (r.date && r.date > m ? r.date : m), "");
-    if (!latest || headcount === 0) return { pct: null, present: 0, headcount };
-    const present = new Set(rows.filter((r) => r.date === latest && r.employeeId).map((r) => r.employeeId)).size;
-    return { pct: (present / headcount) * 100, present, headcount };
-  }, [employee]);
-
-  // Efficiency — production ÷ working minutes, whole-book overall plus a
-  // 7-day sparkline. Same house metric the Employees tab uses (working_hour_
-  // entries clocked ÷ completed job_cards earned), not attendance_records.
-  const efficiencyStat = useMemo(() => {
-    const days = (employee?.performance.byDay ?? []).filter((d) => inFocus(period, d.date));
-    const last7 = [...days].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-7).map((d) => ({
-      date: d.date,
-      pct: d.workingMinutes > 0 ? (d.productionMinutes / d.workingMinutes) * 100 : 0,
-    }));
-    return {
-      pct: overallEfficiencyPct(days, period), // same helper as the Employees overview card
-      sparkline: last7,
-    };
-  }, [employee, period]);
 
   if (loading) {
     return <div className="py-16 text-center text-sm text-[#6B7280]">Loading…</div>;
@@ -234,7 +204,7 @@ export function OperationsView({
              </div>
              <div>
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#6B7280]">Materials &amp; cost</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3">
               <Kpi
                 label="Material Shortage"
                 value={fmtN((inventory?.materialShortage ?? []).length)}
@@ -253,55 +223,16 @@ export function OperationsView({
               />
               </div>
              </div>
-             <div>
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#6B7280]">People</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Kpi
-                label="Attendance"
-                value={attendanceStat.pct == null ? "—" : `${attendanceStat.pct.toFixed(1)}%`}
-                sub={`${fmtN(attendanceStat.present)} / ${fmtN(attendanceStat.headcount)} recorded, latest day`}
-              />
-              <div className="col-span-1">
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-[#6B7280] truncate">Efficiency (Prod ÷ Working)</p>
-                    <p className="mt-1 font-bold truncate tabular-nums text-2xl text-[#3E6570]">
-                      {efficiencyStat.pct == null ? "—" : `${efficiencyStat.pct.toFixed(1)}%`}
-                    </p>
-                    <div style={{ width: "100%", height: 32 }} className="mt-1.5">
-                      {efficiencyStat.sparkline.length > 1 && (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={efficiencyStat.sparkline} margin={{ top: 2, right: 2, bottom: 0, left: 2 }}>
-                            <Line type="monotone" dataKey="pct" stroke={TEAL} strokeWidth={1.75} dot={false} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-              </div>
-             </div>
             </div>
 
             {/* How loaded is the plant (dial) · where is it stuck (per-dept board:
                 queue days + overdue + due-soon) · what's due next (lanes). */}
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 items-start">
-              <div className="lg:col-span-2 min-w-0">
-                <PlantLoadCard period={period} />
-              </div>
-              <div className="lg:col-span-3 min-w-0">
-                <DeptBacklogCard
-                  period={period}
-                  overdueByDept={production?.overdueByDept ?? []}
-                  dueSoon={production?.dueSoon3Days ?? []}
-                />
-              </div>
-            </div>
+            {/* Command Center cards (owner 2026-10-17: the old Overview UI):
+                Hookka Report exceptions, Plant Load and Department Backlog. */}
+            <CommandCenterSections period={period} sections={["dailyReport", "plantLoad", "deptRevenue", "deptBacklog"]} />
 
             <DueSoonWorklist orders={production?.dueSoon3Days ?? []} />
 
-            {employee && <AttendanceLogCard employee={employee} period={period} />}
         </>
       )}
 
@@ -341,7 +272,9 @@ export function OperationsView({
         </>
       )}
 
-      {sub === "plan" && (
+      {/* Merged dashboard: Plan vs Actual is the same completions as Output, so
+          it renders under Output (old ?sub=plan links land here via LEGACY). */}
+      {sub === "production" && (
         <>
           <ProductionDailyPanels period={period} sub="plan" onPeriodChange={onPeriodChange} />
               <Card>
@@ -387,7 +320,6 @@ export function OperationsView({
 
       {sub === "cost" && (
         <>
-          <ProductionDailyPanels period={period} sub="revenue" onPeriodChange={onPeriodChange} />
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle>Production Cost trend · {periodLabel(period)}</CardTitle>
@@ -421,10 +353,12 @@ export function OperationsView({
         </>
       )}
 
-      {sub === "materials" && (
+      {/* Merged (owner 2026-10-17): Materials joined Cost — one "Cost &
+          Materials" sub-tab. Department Revenue moved to Overview, right above
+          Department Status. */}
+      {sub === "cost" && (
         <>
-            <PurchasingCard period={period} />
-            <FabricUsageCard period={period} />
+            <CommandCenterSections period={period} sections={["fabric", "purchasing"]} />
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle>Material Shortage detail</CardTitle>

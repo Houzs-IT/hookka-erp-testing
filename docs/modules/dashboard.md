@@ -43,7 +43,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales Â· Invoices Â
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:689` | Main component: staged fetches, useMemos, all JSX |
+| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:703` | Main component: staged fetches, useMemos, all JSX |
 | `KTile` | `src/pages/dashboard-b/index.tsx:424` | The KPI card used by the four Command Center cards |
 | `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:379 / 406` | Sparkline + delta-% chip |
 | `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:506` | Per-section loading placeholder |

@@ -456,26 +456,24 @@ export function workerDays(
 // the keys are shared between the shell and the views.
 // Tabs and sub-tabs are named after the FUNCTION, never the person who reads
 // them: a chart has one home, and whoever holds the role opens that home.
+// Merged dashboard (owner 2026-10-16): sub-tabs that read the same data were
+// folded together — Employees Overview into Efficiency, Output + Plan vs Actual
+// into Output, Service Performance + Top issues into Report, Overdue +
+// Approvals into To do. Old links resolve through LEGACY.
 export const PEOPLE_SUBS = [
-  { key: "overview", label: "Overview" },
-  { key: "time", label: "Time & attendance" },
-  { key: "efficiency", label: "Efficiency" }, // also holds the department ledger (was its own "departments" sub)
+  { key: "efficiency", label: "Efficiency" }, // headcount, hours, efficiency, department ledger
+  { key: "time", label: "Attendance" },
 ] as const;
 export const OPS_SUBS = [
   { key: "overview", label: "Overview" },
-  { key: "production", label: "Output" },
-  { key: "plan", label: "Plan vs Actual" },
-  { key: "cost", label: "Revenue & Cost" },
-  { key: "materials", label: "Materials" },
+  { key: "production", label: "Output" }, // plan vs actual + completed
+  { key: "cost", label: "Cost & Materials" }, // production cost, fabric, purchasing, shortages
 ] as const;
 export type PeopleSub = (typeof PEOPLE_SUBS)[number]["key"];
 export type OpsSub = (typeof OPS_SUBS)[number]["key"];
 export const SERVICE_SUBS = [
-  { key: "overview", label: "Report" },
-  { key: "performance", label: "Performance" },
-  { key: "overdue", label: "Overdue" },
-  { key: "approvals", label: "Approvals" },
-  { key: "issues", label: "Top issues" },
+  { key: "overview", label: "Report" }, // cases, closing time, root causes
+  { key: "overdue", label: "To do" }, // overdue cases + pending approvals
 ] as const;
 export type ServiceSub = (typeof SERVICE_SUBS)[number]["key"];
 export const FIN_SUBS = [

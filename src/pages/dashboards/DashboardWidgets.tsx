@@ -15,6 +15,9 @@ import {
   AMBER, BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, CHART_SERIES, GREEN, MUTED, RED, TEAL,
   widgetPeriod, widgetPeriodLabel, fmtDec2, fmtHM, fmtN, fmtPct2, fmtRM2, type Period,
 } from "./dashboard-shared-lib";
+import { dropIdleSundays } from "@/lib/idle-sundays";
+import { pickCat, type RevCat, type RevenueSplitResp } from "../dashboard-b/revenue-split";
+import { DeptRevenueCard } from "../dashboard-b/DeptRevenueCard";
 
 // ---------------------------------------------------------------------------
 // Widgets added to /dashboard-experimental (director 2026-09-23:
@@ -250,26 +253,54 @@ const REV_SERIES = [
   ["Invoices", TEAL],
 ] as const;
 
+/** The revenue-split feed (Bedframe / Sofa split + Department Revenue) for the period's widget scope. */
+function useRevenueSplit(period: Period) {
+  return useCachedJson<RevenueSplitResp & { success?: boolean }>(`/api/dashboard/overview/revenue-split?period=${widgetPeriod(period)}`);
+}
+
+const REV_CATS = [["all", "All"], ["bedframe", "Bedframe"], ["sofa", "Sofa"]] as const;
+
+// Merged dashboard (owner 2026-10-16): ONE revenue card, used on Overview and
+// Sales alike. All reads the overview's own lines; Bedframe / Sofa read the
+// split feed on the same buckets. Idle Sundays (every line 0) are left off.
 export function RevenueTrendCard({ period }: { period: Period }) {
   const label = widgetPeriodLabel(period);
   const ovR = useOverview(period);
   const ov = ok(ovR);
+  const splitR = useRevenueSplit(period);
+  const split = ok(splitR);
+  const [cat, setCat] = useState<RevCat>("all");
   const [hidden, toggle] = useToggleSet();
   // Values stay in sen; only the axis/tooltip format them (truncated).
-  const data = (ov?.weeklyRevenue ?? []).map((r) => ({
-    m: r.week.slice(5),
-    "Sales Orders": r.salesOrderSen,
-    Invoices: r.invoiceSen,
-    Production: r.productionSen,
+  const rows =
+    cat === "all"
+      ? (ov?.weeklyRevenue ?? []).map((r) => ({ day: r.week, so: r.salesOrderSen, inv: r.invoiceSen, prod: r.productionSen }))
+      : (split?.revenue ?? []).map((r) => ({
+          day: r.bucket,
+          so: pickCat(r.salesOrder, cat),
+          inv: pickCat(r.invoice, cat),
+          prod: pickCat(r.production, cat),
+        }));
+  const data = dropIdleSundays(rows, (r) => r.day, (r) => [r.so, r.inv, r.prod]).map((r) => ({
+    m: r.day.slice(5),
+    "Sales Orders": r.so,
+    Invoices: r.inv,
+    Production: r.prod,
   }));
+  const loaded = cat === "all" ? ov : split;
   return (
     <CardShell
       title={widgetPeriod(period) === "all" ? "Revenue — last 12 weeks (All-time)" : `Revenue — ${label}`}
-      sub="Sales Orders · Invoices · Production · click a legend to toggle"
-      right={<LegendToggle items={REV_SERIES} hidden={hidden} onToggle={toggle} />}
+      sub={`Sales Orders · Invoices · Production${cat === "all" ? "" : ` · ${cat === "sofa" ? "Sofa" : "Bedframe"} only`} · idle Sundays left out`}
+      right={
+        <div className="flex flex-wrap items-center gap-3">
+          <Pills value={cat} options={REV_CATS} onChange={setCat} />
+          <LegendToggle items={REV_SERIES} hidden={hidden} onToggle={toggle} />
+        </div>
+      }
     >
-      {!ov ? (
-        <Gate loading={ovR.loading} what="revenue" />
+      {!loaded ? (
+        <Gate loading={cat === "all" ? ovR.loading : splitR.loading} what="revenue" />
       ) : data.length === 0 ? (
         <p className="py-6 text-center text-xs" style={{ color: MUTED }}>No revenue data.</p>
       ) : (
@@ -291,6 +322,47 @@ export function RevenueTrendCard({ period }: { period: Period }) {
         </div>
       )}
     </CardShell>
+  );
+}
+
+/** Department Revenue for the period (same card as /dashboard, fed from the split feed). */
+export function DeptRevenueWidget({ period }: { period: Period }) {
+  const r = useRevenueSplit(period);
+  return <DeptRevenueCard data={ok(r)} loading={r.loading} periodLabel={widgetPeriod(period) === "all" ? "last 12 weeks" : widgetPeriodLabel(period)} />;
+}
+
+/**
+ * The four headline numbers, defined exactly as on /dashboard: Sales (confirmed
+ * SOs by SO date), Invoices (by invoice date), Pending Delivery and Outstanding
+ * (both live, money still to deliver).
+ */
+export function OverviewKpiRow({ period }: { period: Period }) {
+  const label = widgetPeriodLabel(period);
+  const ovR = useOverview(period);
+  const ov = ok(ovR);
+  const soR = useCachedJson<SoStats>("/api/sales-orders/stats");
+  const so = ok(soR);
+  const pendR = useCachedJson<PendingValueResp>("/api/delivery-orders/pending-value");
+  const doR = useCachedJson<DoStatsResp & { success?: boolean }>("/api/delivery-orders/stats");
+  const pend = ok(pendR);
+  const doStats = ok(doR);
+  const tile = (title: string, value: string, sub: string, color: string) => (
+    <Card>
+      <CardContent className="p-3">
+        <p className="text-xs text-[#6B7280] truncate">{title}</p>
+        <p className="mt-1 text-2xl max-md:text-xl font-bold tabular-nums truncate" style={{ color }}>{value}</p>
+        <p className="mt-0.5 text-[11px] text-[#6B7280] truncate">{sub}</p>
+      </CardContent>
+    </Card>
+  );
+  const val = (v: number | null, loading: boolean) => (v != null ? fmtRM2(v) : loading ? "…" : "—");
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {tile(`Sales · ${label}`, val(ov ? ov.salesThisMonthSen ?? 0 : null, ovR.loading), "confirmed SOs, by SO date", CHART_INK)}
+      {tile(`Invoices · ${label}`, val(ov ? ov.invoicesThisMonthSen ?? 0 : null, ovR.loading), "by invoice date, excl. cancelled", CHART_GOLD)}
+      {tile("Pending Delivery · live", val(pend && doStats ? pendingDeliveryTotalSen(pend, doStats) : null, pendR.loading || doR.loading), "made / on DO, not yet delivered", GREEN)}
+      {tile("Outstanding · live", val(so ? so.outstandingItemsSen ?? 0 : null, soR.loading), "confirmed, not yet delivered", "#1F1D1B")}
+    </div>
   );
 }
 

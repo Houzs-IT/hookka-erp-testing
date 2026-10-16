@@ -2,11 +2,9 @@ import { useMemo, useState } from "react";
 import {
   CartesianGrid,
   ComposedChart,
-  LineChart,
   Cell,
   Line,
   Bar,
-  BarChart,
   Legend,
   Pie,
   PieChart,
@@ -18,72 +16,25 @@ import {
 import { useCachedJson } from "@/lib/cached-fetch";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { CalendarX2 } from "lucide-react";
 import {
-  TAUPE, GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd, dayLabel,
+  TAUPE, GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
   CHART_INK, CHART_GOLD, CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
-  inPeriod, inFocus, periodLabel, isConfirmedOrder, type Period,
+  inPeriod, inFocus, periodLabel, type Period, widgetPeriod,
 } from "./dashboard-shared-lib";
-import { Kpi, LiveBadge } from "./dashboard-shared";
-import { CustomerRevenueCard, OrderPipelineCard, RevenueTrendCard, TopSellersCard } from "./DashboardWidgets";
+import { LiveBadge } from "./dashboard-shared";
+import { CommandCenterSections } from "./CommandCenterSections";
+import { dropIdleSundays } from "@/lib/idle-sundays";
+import { pickCat, type RevCat, type RevenueSplitResp } from "../dashboard-b/revenue-split";
+import type { Overview } from "./dashboard-widgets-lib";
 import { rollingForecast } from "@/lib/revenue-forecast";
-import { pctDelta, buildSalesTrend, previousSalesKpis, computeSalesKpis } from "./dashboard-sales-lib";
+import { buildSalesTrend, computeSalesKpis } from "./dashboard-sales-lib";
 
 // Today, in the app's own local date. Used to cap the zero-fill: a future day
 // has no rows because it has not happened, which is not the same as a day that
 // recorded nothing.
 const todayYmd = ymd(new Date());
 
-// Six customers + Other, drawn from the shared warm-industrial series so the
-// attribution chart reads as part of the same system as the trend/forecast.
-const ATTR_COLORS = CHART_SERIES;
 
-// Dark tooltip for Sales Attribution: header is the bucket and its total, then
-// one row per customer with money and share, largest first. Reads __sen /
-// __totalSen carried on the row so it can show both regardless of which mode
-// the chart is plotting.
-function AttrTooltip({
-  active,
-  payload,
-  label,
-  series,
-}: {
-  active?: boolean;
-  payload?: { payload?: Record<string, unknown> }[];
-  label?: string | number;
-  series: string[];
-}) {
-  if (!active || !payload?.length) return null;
-  const row = payload[0]?.payload as
-    | { __sen?: Record<string, number>; __totalSen?: number }
-    | undefined;
-  const sen = row?.__sen ?? {};
-  const total = row?.__totalSen ?? 0;
-  const rows = series
-    .map((name, i) => ({ name, sen: sen[name] ?? 0, color: ATTR_COLORS[i % ATTR_COLORS.length] }))
-    .filter((r) => r.sen > 0)
-    .sort((a, b) => b.sen - a.sen);
-
-  return (
-    <div className="rounded-lg px-3 py-2 text-[11px] shadow-lg" style={{ background: "#2A2723", color: "#F5F1EA" }}>
-      <p className="font-semibold mb-1 tabular-nums">
-        {String(label ?? "")} · {formatCurrency(total)}
-      </p>
-      {rows.map((r) => (
-        <p key={r.name} className="flex items-center gap-1.5 tabular-nums">
-          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: r.color }} />
-          <span className="truncate max-w-[13rem]">{r.name}:</span>
-          <span className="ml-auto">
-            {formatCurrency(r.sen)}
-            <span style={{ color: "#A39E93" }}>
-              {" "}({total > 0 ? Math.round((r.sen / total) * 100) : 0}%)
-            </span>
-          </span>
-        </p>
-      ))}
-    </div>
-  );
-}
 
 // Real data from GET /api/dashboard/prototype (src/api/routes/dashboard-
 // prototype.ts) — the SAME route + SQL the original HTML prototype read.
@@ -122,7 +73,6 @@ type Feed = {
 
 export function SalesOrdersView({
   period,
-  months,
   onPeriodChange,
 }: {
   period: Period;
@@ -130,8 +80,6 @@ export function SalesOrdersView({
   onPeriodChange: (p: Period) => void;
 }) {
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
-  const [attrGran, setAttrGran] = useState<"monthly" | "quarterly" | "yearly">("monthly");
-  const [attrView, setAttrView] = useState<"value" | "share">("value");
   const [stateFilter, setStateFilter] = useState<string | null>(null);
   const [skuCat, setSkuCat] = useState<string | null>(null);
   const [skuSort, setSkuSort] = useState<"revenue" | "units">("revenue");
@@ -168,11 +116,44 @@ export function SalesOrdersView({
   // window is generated here and missing ones default to 0, so a quiet day
   // reads as a real zero rather than vanishing. The fill stops at today: days
   // that have not happened yet are not zeros, they are unknown.
-  const chartData = useMemo(
+  const baseTrend = useMemo(
     () => buildSalesTrend(byDay, period, todayYmd),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [byDay, period.mode, period.month, period.from, period.to],
   );
+
+  // Merged dashboard (owner 2026-10-17): Sales Orders and Invoices are tied
+  // into this chart. The bars are Sales Orders by SO DATE (the Command Center
+  // definition, same as the KPI cards above), with Invoices and Production as
+  // lines; the Orders line keeps counting orders per day from the feed.
+  // Bedframe / Sofa read the revenue-split feed (per day; not offered in YTD,
+  // whose feed is weekly). Idle Sundays (nothing at all) are left off.
+  const wpTrend = widgetPeriod(period);
+  const { data: ovTrend } = useCachedJson<Overview & { success?: boolean }>(`/api/dashboard/overview?period=${wpTrend}`);
+  const { data: splitTrend } = useCachedJson<RevenueSplitResp & { success?: boolean }>(`/api/dashboard/overview/revenue-split?period=${wpTrend}`);
+  const [trendCat, setTrendCat] = useState<RevCat>("all");
+  const catActive = period.mode !== "ytd" ? trendCat : "all";
+  const chartData = useMemo(() => {
+    const money = new Map<string, { so: number; inv: number; prod: number }>();
+    if (period.mode === "ytd") {
+      for (const r of ovTrend?.monthlyRevenue ?? []) money.set(r.month, { so: r.salesOrderSen, inv: r.invoiceSen, prod: r.productionSen });
+    } else if (catActive === "all") {
+      for (const r of ovTrend?.weeklyRevenue ?? []) money.set(r.week, { so: r.salesOrderSen, inv: r.invoiceSen, prod: r.productionSen });
+    } else {
+      for (const r of splitTrend?.revenue ?? []) money.set(r.bucket, { so: pickCat(r.salesOrder, catActive), inv: pickCat(r.invoice, catActive), prod: pickCat(r.production, catActive) });
+    }
+    const haveMoney = money.size > 0;
+    const rows = baseTrend.map((d) => {
+      const m = money.get(d.iso);
+      return {
+        ...d,
+        Revenue: haveMoney ? Math.round((m?.so ?? 0) / 100) : d.Revenue,
+        Invoices: Math.round((m?.inv ?? 0) / 100),
+        Production: Math.round((m?.prod ?? 0) / 100),
+      };
+    });
+    return dropIdleSundays(rows, (r) => r.iso, (r) => [r.Revenue, r.Invoices, r.Production, r.Orders]);
+  }, [baseTrend, ovTrend, splitTrend, period.mode, catActive]);
 
   // Clicking a bar drills in: a month in YTD becomes the selected month; a day
   // anywhere else highlights that day. The highlight lives on `period.day`, the
@@ -203,17 +184,6 @@ export function SalesOrdersView({
     return { label: hit.iso, revenueSen: hit.Revenue * 100, orders: hit.Orders };
   }, [period.day, chartData]);
 
-  // Same KPI set over the previous comparable period, for the deltas.
-  //
-  // Suppressed while a single DAY is selected: comparing one day against a
-  // whole previous month produced "-86.6% vs Aug 2026", which reads as a
-  // collapse when it is really just a day-vs-month mismatch. No comparison is
-  // better than a wrong one.
-  const prevKpis = useMemo(
-    () => previousSalesKpis(allOrders, period, months, !!selectedDetail),
-    [allOrders, period, months, selectedDetail],
-  );
-
   // Clicking a day in the trend narrows EVERYTHING that is order-scoped —
   // the KPI row, the pipeline and the recent list — to that day, so the cards
   // answer "what happened on the 10th" rather than staying on the month while
@@ -227,80 +197,6 @@ export function SalesOrdersView({
   );
 
   const kpis = useMemo(() => computeSalesKpis(scopedOrders), [scopedOrders]);
-
-  // Sales Attribution — revenue by CUSTOMER over time. Granularity buckets the
-  // order's own createdAt, so this one spans the whole book rather than the
-  // selected period: the point of the chart is the trend BETWEEN periods.
-  const attrChart = useMemo(() => {
-    const bucketOf = (d: string) =>
-      attrGran === "yearly"
-        ? d.slice(0, 4)
-        : attrGran === "quarterly"
-          ? `${d.slice(0, 4)} Q${Math.ceil(Number(d.slice(5, 7)) / 3)}`
-          : d.slice(0, 7);
-
-    const totalByCustomer = new Map<string, number>();
-    for (const o of allOrders) {
-      if (!isConfirmedOrder(o.status) || !o.createdAt) continue;
-      totalByCustomer.set(o.customer ?? "Unnamed", (totalByCustomer.get(o.customer ?? "Unnamed") ?? 0) + o.totalSen);
-    }
-    const grand = [...totalByCustomer.values()].reduce((s, v) => s + v, 0);
-    const top = [...totalByCustomer.entries()].sort((a, b) => b[1] - a[1]);
-    const names = top.slice(0, 6).map(([n]) => n);
-
-    const buckets = new Map<string, Record<string, number>>();
-    for (const o of allOrders) {
-      if (!isConfirmedOrder(o.status) || !o.createdAt) continue;
-      const b = bucketOf(o.createdAt);
-      const row = buckets.get(b) ?? {};
-      const key = names.includes(o.customer ?? "Unnamed") ? (o.customer ?? "Unnamed") : "Other";
-      row[key] = (row[key] ?? 0) + o.totalSen;
-      buckets.set(b, row);
-    }
-    const series = [...names, "Other"];
-    const rows = [...buckets.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([bucket, row]) => {
-        const sum = series.reduce((s, k) => s + (row[k] ?? 0), 0) || 1;
-        // Carry the raw sen and the bucket total alongside the plotted value so
-        // the tooltip can show BOTH money and share without a second lookup —
-        // Recharts hands the whole row back on the payload.
-        const sen: Record<string, number> = {};
-        const out: Record<string, unknown> = { bucket, __sen: sen, __totalSen: sum };
-        for (const k of series) {
-          const v = row[k] ?? 0;
-          sen[k] = v;
-          out[k] = attrView === "share" ? (v / sum) * 100 : v / 100;
-        }
-        return out;
-      });
-
-    return {
-      rows,
-      series,
-      topName: top[0]?.[0] ?? "—",
-      topPct: grand > 0 && top[0] ? Math.round((top[0][1] / grand) * 100) : 0,
-      grandSen: grand,
-    };
-  }, [allOrders, attrGran, attrView]);
-
-  // Clicking an attribution bucket moves the global period onto it: a month
-  // bucket directly, a quarter/year bucket onto its first month that the book
-  // actually has (months outside the book would leave the picker stranded).
-  const onAttrBucketClick = (label: string) => {
-    let target: string | undefined;
-    if (/^\d{4}-\d{2}$/.test(label)) target = label;
-    else if (/^\d{4} Q[1-4]$/.test(label)) {
-      const [y, q] = label.split(" Q");
-      const first = String((Number(q) - 1) * 3 + 1).padStart(2, "0");
-      target = months.find((m) => m >= `${y}-${first}` && m.slice(0, 4) === y);
-    } else if (/^\d{4}$/.test(label)) {
-      target = months.find((m) => m.slice(0, 4) === label);
-    }
-    if (target && months.includes(target)) {
-      onPeriodChange({ mode: "monthly", month: target });
-    }
-  };
 
   // Sales forecast — the TARGET is the 3-month rolling average of the months
   // before it, which is what "actual vs target" means here; this book carries
@@ -433,14 +329,6 @@ export function SalesOrdersView({
       .slice(0, 10);
   }, [stateCatRows, stateFilter, skuCat, skuSort]);
 
-  const recentOrders = useMemo(
-    () =>
-      [...scopedOrders]
-        .sort((a, b) => ((a.createdAt ?? "") < (b.createdAt ?? "") ? 1 : -1))
-        .slice(0, 30),
-    [scopedOrders],
-  );
-
   if (loading) {
     return <div className="py-16 text-center text-sm text-[#6B7280]">Loading…</div>;
   }
@@ -475,58 +363,34 @@ export function SalesOrdersView({
         )}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <Kpi
-          label="Total Orders"
-          value={fmtN(kpis.soCount)}
-          sub={
-            prevKpis && prevKpis.count > 0
-              ? `${pctDelta(kpis.soCount, prevKpis.count)} vs ${prevKpis.label}`
-              : undefined
-          }
-        />
-        <Kpi
-          label="Revenue"
-          value={formatCurrency(kpis.revenueSen)}
-          sub={
-            prevKpis && prevKpis.revenueSen > 0
-              ? `${pctDelta(kpis.revenueSen, prevKpis.revenueSen)} vs ${prevKpis.label}`
-              : undefined
-          }
-          valueColorClass="text-[#6B5C32]"
-          valueSizeClass="text-xl"
-        />
-        <Kpi
-          label="Outstanding"
-          value={fmtN(kpis.outstandingCount)}
-          sub={`${formatCurrency(kpis.outstandingSen)} value`}
-          valueColorClass="text-[#9C6F1E]"
-        />
-        <Kpi
-          label="Pending Delivery"
-          value={fmtN(kpis.pendingDelivery)}
-          sub={`${formatCurrency(kpis.pendingDeliverySen)} value`}
-          valueColorClass="text-[#3E6570]"
-        />
-        <Kpi
-          label="Completed"
-          value={fmtN(kpis.completedCount)}
-          sub={`${formatCurrency(kpis.completedSen)} value`}
-          valueColorClass="text-[#4F7C3A]"
-        />
-      </div>
+      {/* The Command Center KPI cards, exactly as on the old Dashboard. */}
+      <CommandCenterSections period={period} sections={["kpis"]} />
 
       {/* Revenue trend + Recent orders side by side, as the design prototype
           has them. Revenue is BARS and orders a LINE on its own right-hand
           axis: two lines on one plot were unreadable where the scales differ
           by ~100x. Clicking a bar drills in — a month in YTD, a day in
           Monthly. The Both / Revenue / Orders switch hides either series. */}
-      <div className="grid gap-3 lg:grid-cols-3">
-        <Card className="lg:col-span-2 bg-white border-[#E5E0D8]">
+      <div className="grid gap-3">
+        <Card className="bg-white border-[#E5E0D8]">
           <CardHeader className="pb-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>Revenue trend</CardTitle>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {period.mode !== "ytd" && (
+                  <div className="flex items-center gap-1">
+                    {([["all", "All"], ["bedframe", "Bedframe"], ["sofa", "Sofa"]] as const).map(([k, label]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setTrendCat(k)}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${trendCat === k ? "bg-[#6B5C32] text-white" : "bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {selectedBucket && (
                   <button
                     type="button"
@@ -560,7 +424,7 @@ export function SalesOrdersView({
             <p className="text-xs text-[#6B7280]">
               {selectedDetail
                 ? `${selectedDetail.label} · ${formatCurrency(selectedDetail.revenueSen)} · ${fmtN(selectedDetail.orders)} orders`
-                : `${period.mode === "ytd" ? "Every month" : "Every day"} of ${periodLabel(period)} · click a bar to ${period.mode === "ytd" ? "open that month" : "highlight that day"}`}
+                : `Sales Orders (bars, by SO date) · Invoices · Production · Orders · ${period.mode === "ytd" ? "every month" : "every working day"} of ${periodLabel(period)}${catActive === "all" ? "" : ` · ${catActive === "sofa" ? "Sofa" : "Bedframe"} only`} · click a bar to ${period.mode === "ytd" ? "open that month" : "highlight that day"}`}
             </p>
           </CardHeader>
           <CardContent>
@@ -621,9 +485,9 @@ export function SalesOrdersView({
                         // blank, a null or a skipped entry.
                         const n = Number(value ?? 0);
                         const safe = Number.isFinite(n) ? n : 0;
-                        return name === "Revenue"
-                          ? [formatCurrency(safe * 100), name]
-                          : [fmtN(safe), name];
+                        return name === "Orders"
+                          ? [fmtN(safe), name]
+                          : [formatCurrency(safe * 100), name];
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -631,6 +495,7 @@ export function SalesOrdersView({
                       <Bar
                         yAxisId="rev"
                         dataKey="Revenue"
+                        name="Sales Orders"
                         fill={CHART_INK}
                         radius={[4, 4, 0, 0]}
                         maxBarSize={28}
@@ -661,6 +526,12 @@ export function SalesOrdersView({
                         ))}
                       </Bar>
                     )}
+                    {showRev && (
+                      <Line yAxisId="rev" type="monotone" dataKey="Invoices" stroke={TEAL} strokeWidth={2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+                    )}
+                    {showRev && (
+                      <Line yAxisId="rev" type="monotone" dataKey="Production" stroke="#4F7C3A" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    )}
                     {showOrd && (
                       <Line
                         yAxisId="ord"
@@ -679,203 +550,12 @@ export function SalesOrdersView({
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle>Recent orders</CardTitle>
-            <p className="text-xs text-[#6B7280]">
-              {selectedDetail ? selectedDetail.label : periodLabel(period)} · {fmtN(recentOrders.length)} shown
-            </p>
-          </CardHeader>
-          <CardContent className="p-0">
-            {/* A selected day with nothing on it gets a stated empty result,
-                not an blank panel — "no rows" and "failed to load" must not
-                look the same. */}
-            {selectedDetail && recentOrders.length === 0 ? (
-              <div className="m-3 rounded-lg border border-dashed border-[#E5E0D8] bg-[#FBF9F5] px-4 py-8 text-center">
-                <CalendarX2
-                  className="mx-auto mb-2 h-7 w-7"
-                  style={{ color: "#C0B49B" }}
-                  strokeWidth={1.5}
-                />
-                <p className="text-[13px] font-semibold text-[#1F1D1B]">
-                  No transactions recorded for {dayLabel(selectedDetail.label)}
-                </p>
-                <p className="mt-0.5 text-[11.5px]" style={{ color: CHART_AXIS }}>
-                  0 orders processed on this date.
-                </p>
-                <button
-                  type="button"
-                  onClick={clearDay}
-                  className="mt-3 rounded-md border border-[#E5E0D8] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6B5C32] hover:bg-[#F7F5F3]"
-                >
-                  Back to {periodLabel({ ...period, day: undefined })}
-                </button>
-              </div>
-            ) : (
-            <div className="overflow-y-auto" style={{ maxHeight: 300 }}>
-              <table className="w-full text-[12px]">
-                <tbody>
-                  {recentOrders.map((o) => (
-                    <tr key={o.id} className="border-b border-[#E2DDD8]">
-                      <td className="px-3 py-2 align-top">
-                        <p className="font-mono text-[#1F1D1B]">{o.no ?? o.id}</p>
-                        <p className="text-[#6B7280] truncate max-w-[11rem]">{o.customer ?? "—"}</p>
-                      </td>
-                      <td className="px-3 py-2 text-right align-top whitespace-nowrap">
-                        <p className="amount text-[#1F1D1B]">{formatCurrency(o.totalSen)}</p>
-                        <p className="text-[#6B7280]">{o.createdAt ?? "—"}</p>
-                      </td>
-                    </tr>
-                  ))}
-                  {recentOrders.length === 0 && (
-                    <tr>
-                      <td className="px-3 py-6 text-center text-[#6B7280]">No orders.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       {/* Attribution and forecast sit side by side, as the design
           prototype pairs them. */}
-      <div className="grid gap-3 xl:grid-cols-2">
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <CardTitle>Sales attribution</CardTitle>
-                <p className="text-xs" style={{ color: CHART_AXIS }}>
-                  {attrView === "share"
-                    ? `Each line is one customer's share of revenue per period · currently led by ${attrChart.topName} at ${attrChart.topPct}%`
-                    : `Top customer: ${attrChart.topName} (${attrChart.topPct}% of total) · Whole book: ${formatCurrency(attrChart.grandSen)}`}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex rounded-lg border border-[#E2DDD8] overflow-hidden">
-                  {(["monthly", "quarterly", "yearly"] as const).map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => setAttrGran(g)}
-                      className={
-                        "px-2.5 py-1 max-md:py-2.5 text-xs font-medium capitalize " +
-                        (attrGran === g ? "bg-[#F0ECE9] text-[#1F1D1B]" : "text-[#6B7280] hover:bg-[#F7F5F3]")
-                      }
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex rounded-lg border border-[#E2DDD8] overflow-hidden">
-                  {([
-                    { k: "value", label: "RM Value" },
-                    { k: "share", label: "% Share" },
-                  ] as const).map((v) => (
-                    <button
-                      key={v.k}
-                      type="button"
-                      onClick={() => setAttrView(v.k)}
-                      className={
-                        "px-2.5 py-1 max-md:py-2.5 text-xs font-medium " +
-                        (attrView === v.k ? "bg-[#F0ECE9] text-[#1F1D1B]" : "text-[#6B7280] hover:bg-[#F7F5F3]")
-                      }
-                    >
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div
-              className="select-none [&_*]:outline-none"
-              style={{ width: "100%", height: 300 }}
-            >
-              {attrChart.rows.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-xs" style={{ color: CHART_AXIS }}>
-                  No dated orders.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  {attrView === "share" ? (
-                    <LineChart data={attrChart.rows} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
-                      <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                      <XAxis
-                        dataKey="bucket"
-                        tick={{ fontSize: 10, fill: CHART_AXIS }}
-                        axisLine={{ stroke: CARD_BORDER }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        domain={[0, 100]}
-                        ticks={[0, 25, 50, 75, 100]}
-                        tick={{ fontSize: 10, fill: CHART_AXIS }}
-                        axisLine={false}
-                        tickLine={false}
-                        width={44}
-                        tickFormatter={(v) => `${v}%`}
-                      />
-                      <Tooltip content={<AttrTooltip series={attrChart.series} />} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" />
-                      {attrChart.series.map((s, i) => (
-                        <Line
-                          key={s}
-                          type="monotone"
-                          dataKey={s}
-                          stroke={ATTR_COLORS[i % ATTR_COLORS.length]}
-                          strokeWidth={2}
-                          isAnimationActive={false}
-                          dot={{ r: 3, fill: "#FFFFFF", stroke: ATTR_COLORS[i % ATTR_COLORS.length], strokeWidth: 2 }}
-                          activeDot={{ r: 5, fill: "#FFFFFF", stroke: ATTR_COLORS[i % ATTR_COLORS.length], strokeWidth: 2 }}
-                        />
-                      ))}
-                    </LineChart>
-                  ) : (
-                    <BarChart data={attrChart.rows} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
-                      <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                      <XAxis
-                        dataKey="bucket"
-                        tick={{ fontSize: 10, fill: CHART_AXIS }}
-                        axisLine={{ stroke: CARD_BORDER }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 10, fill: CHART_AXIS }}
-                        axisLine={false}
-                        tickLine={false}
-                        width={44}
-                        tickFormatter={(v) => fmtN(Number(v))}
-                      />
-                      <Tooltip content={<AttrTooltip series={attrChart.series} />} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" />
-                      {attrChart.series.map((s, i) => (
-                        <Bar
-                          key={s}
-                          dataKey={s}
-                          stackId="attr"
-                          fill={ATTR_COLORS[i % ATTR_COLORS.length]}
-                          cursor="pointer"
-                          isAnimationActive={false}
-                          activeBar={{ fillOpacity: 1 }}
-                          onClick={(d) => {
-                            const row = (d as unknown as { payload?: { bucket?: string } })?.payload;
-                            if (row?.bucket) onAttrBucketClick(row.bucket);
-                          }}
-                        />
-                      ))}
-                    </BarChart>
-                  )}
-                </ResponsiveContainer>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
+      <div className="grid gap-3 xl:grid-cols-2 items-start">
+        <CommandCenterSections period={period} sections={["pipeline"]} />
         <Card className="bg-white border-[#E5E0D8]">
           <CardHeader className="pb-3">
             <CardTitle>Sales forecast</CardTitle>
@@ -976,13 +656,9 @@ export function SalesOrdersView({
         </Card>
       </div>
 
-      {/* Widgets ported from /dashboard (same URLs + formulas). */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <OrderPipelineCard period={period} />
-        <RevenueTrendCard period={period} />
-      </div>
-      <CustomerRevenueCard period={period} />
-      <TopSellersCard period={period} />
+      {/* Sales by Customer & Month and Top Sellers: the Command Center cards
+          (they replace Sales attribution and the second customer card). */}
+      <CommandCenterSections period={period} sections={["customers", "topSellers"]} />
 
       {/* Fulfillment pipeline keeps its own row; the state/category donut
           and Top SKUs share one split, the way the design prototype pairs

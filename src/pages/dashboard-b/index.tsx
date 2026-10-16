@@ -688,10 +688,24 @@ function Gauge({
 }
 
 // ---------- page ----------
-export default function DashboardBPage() {
+/** The Command Center's sections, in page order. The merged dashboard embeds them by name. */
+export type CommandCenterSection =
+  | "kpis" | "dailyReport" | "revenue" | "plantLoad" | "deptRevenue" | "pipeline" | "efficiency"
+  | "customers" | "topSellers" | "fabric" | "deptBacklog" | "purchasing" | "ocr";
+
+/**
+ * Merged dashboard (owner 2026-10-16/17): the owner's favourite cards are these
+ * Command Center cards, so the tabbed dashboard embeds them as they are
+ * instead of redrawing them. `embed` hides the page header and footer, takes
+ * the period from the host page ("all" or "YYYY-MM") and renders only the
+ * named sections. Without `embed` the page is unchanged.
+ */
+export default function DashboardBPage({ embed }: { embed?: { period: string; sections: readonly CommandCenterSection[] } } = {}) {
   // Open the Command Center on the CURRENT month by default (owner request) —
   // not all-time. CUR_YM (module-scope) is the current "YYYY-MM".
-  const [period, setPeriod] = useState(CUR_YM);
+  const [periodState, setPeriod] = useState(CUR_YM);
+  const period = embed?.period ?? periodState;
+  const show = (s: CommandCenterSection): boolean => !embed || embed.sections.includes(s);
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const toggleSeries = (k: string) =>
     setHiddenSeries((prev) => {
@@ -1115,6 +1129,7 @@ export default function DashboardBPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
+      {!embed && (
       <div className="flex items-end justify-between flex-wrap gap-y-2">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#6B5C32]">
@@ -1137,12 +1152,14 @@ export default function DashboardBPage() {
           ))}
         </select>
       </div>
+      )}
 
       {/* KPI rail — four cards: This Month Sales · This Month Invoices ·
           Pending Delivery (consolidated) · Outstanding. Sales = confirmed-SO
           value; Invoices = invoice-sourced (owner 2026-06-12: "it captures
           straight from Invoices — when I deliver, the invoice is issued"), which
           replaced the old shipped-value Delivered card. */}
+      {show("kpis") && (
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 max-[360px]:grid-cols-1">
         {/* This Month Sales — confirmed-SO value for the selected month
             (all-time = cumulative). Owner 2026-06-12 kept this alongside the
@@ -1197,9 +1214,11 @@ export default function DashboardBPage() {
           tag="live"
         />
       </div>
+      )}
 
       {/* Daily Report — process / SOP exceptions summary. Independent fetch;
           links to the full /daily-report page. */}
+      {show("dailyReport") && (
       <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
         <CardContent className="p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1310,6 +1329,7 @@ export default function DashboardBPage() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* The Morning Brief · CNC Queue card was removed on 2026-08-05 at the
           owner's instruction ("CNCQ remove 掉"). The brief itself still exists
@@ -1319,7 +1339,9 @@ export default function DashboardBPage() {
           not a number anyone could act on from here. */}
 
       {/* Revenue + Plant load */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {(show("revenue") || show("plantLoad")) && (
+      <div className={show("revenue") && show("plantLoad") ? "grid grid-cols-1 lg:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
+        {show("revenue") && (
         <Card className="lg:col-span-2 bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -1380,7 +1402,9 @@ export default function DashboardBPage() {
             </div>
           </CardContent>
         </Card>
+        )}
 
+        {show("plantLoad") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5 flex flex-col items-center">
             <SectionTitle title="Plant Load" sub="backlog vs daily capacity" />
@@ -1620,17 +1644,23 @@ export default function DashboardBPage() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Department Revenue (owner 2026-10-15) */}
+      {show("deptRevenue") && (
       <DeptRevenueCard
         data={splitRaw}
         loading={splitL}
         periodLabel={isAllTime ? "last 12 weeks" : period}
       />
+      )}
 
       {/* Pipeline + Worker efficiency */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {(show("pipeline") || show("efficiency")) && (
+      <div className={show("pipeline") && show("efficiency") ? "grid grid-cols-1 lg:grid-cols-2 gap-4" : "grid grid-cols-1 gap-4"}>
+        {show("pipeline") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -1704,7 +1734,9 @@ export default function DashboardBPage() {
             )}
           </CardContent>
         </Card>
+        )}
 
+        {show("efficiency") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -1767,9 +1799,12 @@ export default function DashboardBPage() {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Revenue by Customer — financial-report concentration exhibit */}
+      {show("customers") && (
       <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
         <CardContent className="p-5">
           <SectionTitle
@@ -2085,8 +2120,10 @@ export default function DashboardBPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Top sellers */}
+      {show("topSellers") && (
       <div>
 
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
@@ -2198,8 +2235,10 @@ export default function DashboardBPage() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {/* Fabric */}
+      {show("fabric") && (
       <div>
         <div className="flex items-end justify-between mb-3 flex-wrap gap-y-2">
           <div>
@@ -2472,9 +2511,12 @@ export default function DashboardBPage() {
           })}
         </div>
       </div>
+      )}
 
       {/* Department backlog + Purchasing */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {(show("deptBacklog") || show("purchasing")) && (
+      <div className={show("deptBacklog") && show("purchasing") ? "grid grid-cols-1 lg:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
+        {show("deptBacklog") && (
         <Card className="lg:col-span-2 bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             {stateLiveTag && (
@@ -2598,7 +2640,9 @@ export default function DashboardBPage() {
             })()}
           </CardContent>
         </Card>
+        )}
 
+        {show("purchasing") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -2679,16 +2723,22 @@ export default function DashboardBPage() {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
+      )}
 
       {/* OCR accuracy — automation-readiness gauge (owner 2026-07-04, placed
           at the bottom of the dashboard). Follows the same `period` dropdown as
           the rest of the Command Center (owner: pick a month → OCR for that month). */}
+      {show("ocr") && (
       <OcrAccuracyCard period={period} range={period === "all" ? null : monthWindow(period)} />
+      )}
 
+      {!embed && (
       <p className="text-center text-[11px] text-[#9CA3AF] pt-2">
         Hookka Command Center
       </p>
+      )}
 
       {drill && (
         <Modal
