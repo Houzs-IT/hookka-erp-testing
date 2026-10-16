@@ -16,6 +16,7 @@ import { Search, X } from "lucide-react";
 import { M } from "../theme";
 import { visibleModuleGroups } from "../nav";
 import { NAV_DRAWER_ID } from "../lib/nav-drawer";
+import { useItUnread, withItBadge } from "../lib/it-unread";
 import { usePermissions } from "@/lib/use-permission";
 import { InstallAppCard } from "./InstallAppCard";
 import {
@@ -48,6 +49,7 @@ export function NavDrawer({ open, onClose }: Props) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { isNavAllowed } = usePermissions();
+  const itUnread = useItUnread();
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
@@ -105,7 +107,7 @@ export function NavDrawer({ open, onClose }: Props) {
     };
   }, [open, onClose]);
 
-  const groups = visibleModuleGroups(isNavAllowed, query);
+  const groups = withItBadge(visibleModuleGroups(isNavAllowed, query), itUnread);
   const go = (path: string) => {
     onClose();
     if (path !== pathname) navigate(path);

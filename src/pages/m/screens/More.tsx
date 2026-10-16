@@ -15,12 +15,14 @@ import {
   DesktopAppLink,
 } from "../components";
 import { visibleModuleGroups } from "../nav";
+import { useItUnread, withItBadge } from "../lib/it-unread";
 import { usePermissions } from "@/lib/use-permission";
 
 export default function MobileMore() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { isNavAllowed } = usePermissions();
+  const itUnread = useItUnread();
 
   return (
     <>
@@ -30,7 +32,7 @@ export default function MobileMore() {
         <ThemeToggleCard />
         <InstallAppCard />
         <ModuleGroupList
-          groups={visibleModuleGroups(isNavAllowed)}
+          groups={withItBadge(visibleModuleGroups(isNavAllowed), itUnread)}
           onSelect={(path) => navigate(path)}
           currentPath={pathname}
         />
