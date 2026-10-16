@@ -29,7 +29,11 @@ try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
 const links = await import(
   pathToFileURL(resolve(process.cwd(), "src/pages/m/lib/notification-links.ts")).href
 );
-const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
+// Normalise CRLF: the repo stores LF, but a Windows checkout with
+// core.autocrlf=true has CRLF on disk, and the `\n\}\n` function-end regexes
+// below would then find nothing.
+const read = (p) =>
+  readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const updates = read("screens/UpdatesScreen.tsx");
 const home = read("screens/Home.tsx");
 const sw = read("components/SegmentedSwitch.tsx");
