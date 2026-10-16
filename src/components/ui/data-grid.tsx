@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-export";
 import { exportReportCsv, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
-import { decodeRange, inRange, parseAmount, rangeTerm, RANGE_MODE } from "@/lib/grid-layout";
+import { columnTotals, decodeRange, inRange, parseAmount, rangeTerm, RANGE_MODE } from "@/lib/grid-layout";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -177,6 +177,13 @@ export type Column<T> = {
   // Set this for columns whose real value is computed in `render` and has no
   // usable raw/filter value.
   exportValue?: (row: T) => string | number | null;
+  // Sticky total row (finance v2 "PV table" rule). "sum" adds this column's
+  // values over every row the filter shows; a function computes the total from
+  // those rows (e.g. a sum over line items). Any visible column with `total`
+  // turns the footer on; a grid without one renders exactly as before.
+  total?: "sum" | ((rows: T[]) => number);
+  // How the total is shown. Default: formatRM for currency (sen), else formatNumber.
+  totalFormat?: (n: number) => React.ReactNode;
 };
 
 export type ContextMenuItem = {
@@ -315,6 +322,9 @@ export type DataGridProps<T> = {
   // cap is purely a rendering optimisation to keep DOM node count bounded on
   // grids with thousands of rows. Omit to disable (no cap, render everything).
   defaultRowCap?: number;
+  // The total row's first cell (shown only when a column has `total`).
+  // Default: "Total · <shown> shown of <all>".
+  footerLabel?: (shown: number, all: number) => React.ReactNode;
 };
 
 type SavedView = {
@@ -1728,6 +1738,7 @@ export function DataGrid<T extends Record<string, any>>({
   ensureColumns,
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
+  footerLabel,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -2816,6 +2827,14 @@ export function DataGrid<T extends Record<string, any>>({
   // tap to open the same menu that desktop right-click reveals.
   const hasContextMenu = !!contextMenuItems;
 
+  // Sticky total row (finance v2): totals over every row the filter shows —
+  // sortedData, not the render-capped displayedData.
+  const showFooter = visibleColumns.some((c) => c.total);
+  const totals = useMemo(
+    () => (showFooter ? columnTotals(sortedData, visibleColumns, (row, key) => getNestedValue(row, key)) : {}),
+    [showFooter, sortedData, visibleColumns],
+  );
+
   return (
     <div className={cn("flex flex-col", className)}>
       {/* Toolbar */}
@@ -3648,6 +3667,36 @@ export function DataGrid<T extends Record<string, any>>({
               })()
             )}
           </tbody>
+          {showFooter && !loading && (
+            <tfoot data-dg="foot" className="sticky bottom-0 z-30">
+              <tr className="border-t border-[#D0D0D0] bg-[#F0ECE9] text-[12px] font-semibold text-[#111]">
+                {selectable && (
+                  <td className="sticky left-0 z-20 bg-[#F0ECE9]" style={{ width: "32px", minWidth: "32px", maxWidth: "32px" }} />
+                )}
+                {visibleColumns.map((col, i) => {
+                  const stickyLeft = stickyOffsets.get(col.key);
+                  const isSticky = stickyLeft !== undefined;
+                  const t = totals[col.key];
+                  return (
+                    <td
+                      key={col.key}
+                      className={cn("whitespace-nowrap px-2 py-1.5 bg-[#F0ECE9]", alignClass(col), isSticky && "sticky z-20")}
+                      style={isSticky ? { left: `${stickyLeft}px` } : undefined}
+                    >
+                      {t !== undefined
+                        ? (col.totalFormat ? col.totalFormat(t) : col.type === "currency" ? formatRM(t) : formatNumber(t))
+                        : i === 0
+                          ? (footerLabel
+                            ? footerLabel(sortedData.length, data.length)
+                            : `Total · ${sortedData.length.toLocaleString()} shown of ${data.length.toLocaleString()}`)
+                          : null}
+                    </td>
+                  );
+                })}
+                {hasContextMenu && <td className="bg-[#F0ECE9]" />}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
