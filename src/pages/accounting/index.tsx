@@ -12454,7 +12454,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
           {rows === null ? (
             <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
           ) : (
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-3 py-2 w-8"><input type="checkbox" checked={ftSel.allSelected} onChange={ftSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
@@ -12475,7 +12475,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <input type="checkbox" checked={ftSel.isSelected(r.no)} onChange={() => ftSel.toggle(r.no)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
                     </td>
                     <td className="px-3 py-1.5 tabular-nums text-xs">{r.no}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{fmtDocDate(r.date)}</td>
                     <td className="px-3 py-1.5 text-xs">{r.fromAccount} {r.fromName}</td>
                     <td className="px-3 py-1.5 text-center text-[#6B7280]">→</td>
                     <td className="px-3 py-1.5 text-xs">{r.toAccount} {r.toName}</td>
@@ -12485,15 +12485,26 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       {/* Owner 2026-08-28 「fund transfer 没有办法 print out
                           voucher」— every row prints: since 2026-10-02 from its
                           right-click / ⋮ menu, as the JV grid's does. */}
-                      <span className="mr-2"><LifecycleBadge state={r.lifecycleState} /></span>
+                      <span className="mr-2">
+                        <FinPill tone={(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "ok" : "faint"}>{(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : r.lifecycleState}</FinPill>
+                      </span>
                       {rowMenu.button(r.no, () => ftRowMenu(r))}
                     </td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No transfers yet</td></tr>
+                  <tr data-fin-nolift><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No transfers yet</td></tr>
                 )}
               </tbody>
+              {rows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={6} className="px-3 py-2 text-xs">Total · {rows.length} shown <span className="text-[11px] font-normal text-[#6B7280]">· active transfers only</span></td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(activeTotalSen(rows.map((r) => ({ state: r.lifecycleState ?? "ACTIVE", totalSen: r.amountSen }))))}</td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           )}
         </CardContent>
