@@ -1,5 +1,11 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) now carries BOTH halves
+> measured on staging — the note on a real confirm, and the positive take-from-stock
+> path (order ten, take four, build six) that this entry previously listed as
+> unmeasured. Also notes the availability read lagging a minute after a confirm,
+> which is the query cache and not a stale write (branch `docs/dev05-a9-live-verified`).
+
 > **Last verified: 2026-10-16**: BUG-2026-10-16-291 (DEV-05 A9) carries its staging
 > measurement now — the note was confirmed live on a real confirm, not only in tests
 > (branch `docs/dev05-a9-live-verified`). The entry also states what is still
@@ -312,11 +318,31 @@ them, 0 cost_ledger rows to reverse) and availability was re-read as unchanged �
 4 on hand, 0 available, the same four pieces still held by SO-2609-395 at
 RM 305.00 each. The check consumed no stock.
 
-**Still UNMEASURED on this ticket**: the positive path. "Order ten, take four,
-build six" was last seen live BEFORE BUG-2026-09-29-219 (dual-key reads) and
-BUG-2026-09-29-220 (netting key) landed. Both were fixes, and the suite covers
-the arithmetic, but no live run since has actually MOVED stock to an order. That
-is the one thing to watch in the next staging pass.
+**The positive path, MEASURED on staging the same day.** It had last been seen
+live BEFORE BUG-2026-09-29-219 (dual-key reads) and BUG-2026-09-29-220 (netting
+key) landed, so it was carried here as unmeasured until it was re-run. Four
+stock pieces were released to make them available, a throwaway order for TEN was
+confirmed, and its `autoActions` read:
+
+```
+Created PO SO-2610-187-01 ... -06
+Allocated 4 x 1013-(Q) from stock (6 to be produced)
+```
+
+Six fresh production orders, not ten; four stock orders changed hands; 4 + 6 =
+10 with nothing built twice. Released, cancelled and restored afterwards, so the
+stock figures ended where they started.
+
+**One thing that run exposed, and it is a UX trap rather than a bug.** Read
+immediately after the confirm, availability still said 4 available / 0 allocated
+while the four pieces had already moved. It settles on its own in a minute or
+two -- the Hyperdrive query cache, not a stale write -- but on a demo screen it
+reads as the feature having failed. Worth saying out loud before anyone clicks.
+
+With that and A7 (invoice `INV-2610-005`, SO-2609-395, RM 1,220.00 at the
+customer's price) measured the same day, every DEV-05 acceptance criterion has
+now been run on staging end to end. The fuller account is in WORK-TRACKER; this
+entry keeps only what bears on the bug it describes.
 
 ---
 
