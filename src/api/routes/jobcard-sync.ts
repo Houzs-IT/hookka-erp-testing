@@ -569,6 +569,16 @@ type OpenCard = ProductionOrderRow & {
   oldMinutes: number | null;
   specialOrder: string | null;
   repairScope: string | null;
+  deptName: string | null;
+  wipLabel: string | null;
+  wipQty: number | null;
+  status: string | null;
+  dueDate: string | null;
+  pic1Name: string | null;
+  pic2Name: string | null;
+  poNo: string | null;
+  companySOId: string | null;
+  customerName: string | null;
 };
 
 type RefreshSkip =
@@ -597,7 +607,33 @@ export function refreshDecision(
   return res;
 }
 
-export type CardSyncResult = { updated: number; leftAlone: number; skipped: number; outOfDate: number };
+// One card in a save preview (what the confirm pop-up lists).
+export type CardDetail = {
+  jcId: string;
+  soNo: string;
+  poNo: string;
+  customerName: string;
+  productCode: string;
+  deptCode: string;
+  deptName: string;
+  wipLabel: string;
+  wipQty: number;
+  status: string;
+  dueDate: string;
+  workers: string;
+  oldMinutes: number;
+  newMinutes?: number;
+  reason?: RefreshSkip | "outOfDate";
+};
+
+export type CardSyncResult = {
+  updated: number;
+  leftAlone: number;
+  skipped: number;
+  outOfDate: number;
+  // Only on a preview: the cards behind each count.
+  details?: { willChange: CardDetail[]; keep: CardDetail[] };
+};
 
 // One BOM row the save will write: its UPDATE, plus the product's wipComponents
 // before and after.
@@ -621,12 +657,18 @@ function isLockTimeout(e: unknown): boolean {
 // Writes the BOM rows and the matching job card changes in ONE transaction, so
 // they land together or not at all and a failed save can simply be retried.
 // Throws CardsBusyError when a lock is not granted within SAVE_LOCK_TIMEOUT.
+// With `preview`, writes nothing and returns the cards it would change, and the
+// ones it would leave, in `details`.
 export async function saveBomAndSyncCards(
   c: Context<Env>,
   bomWrites: readonly BomWrite[],
   pairs: ReadonlySet<string>,
+  { preview = false }: { preview?: boolean } = {},
 ): Promise<CardSyncResult> {
   const result: CardSyncResult = { updated: 0, leftAlone: 0, skipped: 0, outOfDate: 0 };
+  const willChange: CardDetail[] = [];
+  const keep: CardDetail[] = [];
+  if (preview) result.details = { willChange, keep };
   if (bomWrites.length === 0) return result;
   const raw = c.var.DB;
   // freshReads wraps reads only; its statements cannot go into raw.batch.
@@ -648,7 +690,11 @@ export async function saveBomAndSyncCards(
                 po.specialOrder AS "specialOrder", po.repairScope AS "repairScope",
                 po.id, po.salesOrderId, po.productCode, po.itemCategory, po.quantity,
                 po.currentDepartment, po.targetEndDate, po.startDate, po.sizeCode, po.sizeLabel,
-                po.fabricCode, po.gapInches, po.divanHeightInches, po.legHeightInches
+                po.fabricCode, po.gapInches, po.divanHeightInches, po.legHeightInches,
+                jc.departmentName AS "deptName", jc.wipLabel AS "wipLabel", jc.wipQty AS "wipQty",
+                jc.status AS "status", jc.dueDate AS "dueDate", jc.pic1Name AS "pic1Name",
+                jc.pic2Name AS "pic2Name", po.poNo AS "poNo", po.companySOId AS "companySOId",
+                po.customerName AS "customerName"
            FROM job_cards jc
            JOIN production_orders po ON po.id = jc.productionOrderId
           WHERE jc.status IN ${OPEN_STATUSES}
@@ -714,8 +760,24 @@ export async function saveBomAndSyncCards(
       otherCardInDept,
     );
     if ("unchanged" in res) continue;
+    const detail = (): CardDetail => ({
+      jcId: r.jcId,
+      soNo: r.companySOId ?? "",
+      poNo: r.poNo ?? "",
+      customerName: r.customerName ?? "",
+      productCode,
+      deptCode,
+      deptName: r.deptName ?? deptCode,
+      wipLabel: r.wipLabel ?? "",
+      wipQty: Number(r.wipQty) || 1,
+      status: r.status ?? "",
+      dueDate: r.dueDate ?? "",
+      workers: [r.pic1Name, r.pic2Name].filter(Boolean).join(", "),
+      oldMinutes,
+    });
     if ("skip" in res) {
       result.skipped++;
+      if (preview) keep.push({ ...detail(), reason: res.skip });
       continue;
     }
     let was = beforeByPo.get(r.id);
@@ -726,10 +788,13 @@ export async function saveBomAndSyncCards(
     const prev = bomMinutesForCard({ wipKey, deptCode, poId: r.id }, was, otherCardInDept);
     if ("skip" in prev || prev.minutes !== oldMinutes) {
       result.outOfDate++;
+      if (preview) keep.push({ ...detail(), reason: "outOfDate" });
       continue;
     }
+    if (preview) willChange.push({ ...detail(), newMinutes: res.minutes });
     changes.push({ jcId: r.jcId, deptCode, oldMinutes, newMinutes: res.minutes });
   }
+  if (preview) return result;
 
   // One transaction: the lock limit, the BOM rows, then each guarded card
   // UPDATE followed by its audit row (written only if that UPDATE applied).

@@ -238,8 +238,9 @@ test("TC-11 Excel import: a dry run leaves cards alone, a real import updates th
   const f = makeDb(cards);
   const items = [{ wipLabel: "SQUARE PILLOW", deptCode: "FAB_SEW", minutes: 12 }];
   const dry = await call(f.db, "POST", "/bulk-import", { items, dryRun: true });
-  assert.equal(dry.body.jobCards, undefined);
+  assert.equal(dry.body.jobCards.details.willChange.length, 1, "the dry run previews the card");
   assert.equal(cards[0].oldMinutes, 10);
+  assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 10, "and saves nothing");
   const live = await call(f.db, "POST", "/bulk-import", { items, dryRun: false });
   assert.deepEqual(live.body.jobCards, { updated: 1, leftAlone: 0, skipped: 0, outOfDate: 0 });
   assert.equal(cards[0].oldMinutes, 12);
@@ -303,4 +304,33 @@ test("TC-16 busy job cards during an Excel import: the whole import is undone", 
   assert.equal(res.status, 503);
   assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 10);
   assert.equal(cards[0].oldMinutes, 10);
+});
+
+test("TC-17 a save preview lists the cards in detail and writes nothing", async () => {
+  const cards = [
+    card("follows", { companySOId: "SO-2610-003", poNo: "SO-2610-003-01", customerName: "TEST COMPANY", deptName: "Fabric Sewing", wipLabel: "SQUARE PILLOW MODENZA-01", pic1Name: "Ali", dueDate: "2026-10-20" }),
+    card("drifted", { oldMinutes: 8, poNo: "SO-2609-198-04" }),
+  ];
+  const f = makeDb(cards);
+  const { status, body } = await call(f.db, "PUT", "/", { ...SAVE, dryRun: true });
+  assert.equal(status, 200);
+  assert.equal(body.dryRun, true);
+  const { willChange, keep } = body.jobCards.details;
+  assert.equal(willChange.length, 1);
+  assert.deepEqual(
+    { so: willChange[0].soNo, po: willChange[0].poNo, cust: willChange[0].customerName, dept: willChange[0].deptName, wip: willChange[0].wipLabel, who: willChange[0].workers, due: willChange[0].dueDate, from: willChange[0].oldMinutes, to: willChange[0].newMinutes },
+    { so: "SO-2610-003", po: "SO-2610-003-01", cust: "TEST COMPANY", dept: "Fabric Sewing", wip: "SQUARE PILLOW MODENZA-01", who: "Ali", due: "2026-10-20", from: 10, to: 12 },
+  );
+  assert.deepEqual(keep.map((k) => [k.poNo, k.reason, k.oldMinutes]), [["SO-2609-198-04", "outOfDate", 8]]);
+  assert.equal(JSON.parse(f.bom.wipComponents)[0].processes[0].minutes, 10, "BOM not saved");
+  assert.deepEqual(cards.map((c) => c.oldMinutes), [10, 8], "no card moved");
+  assert.ok(!f.log.batches.some((b) => b.some((q) => /^UPDATE /.test(q))), "no write was sent");
+});
+
+test("TC-18 a real save carries no preview details", async () => {
+  const f = makeDb([card("follows")]);
+  const { body } = await call(f.db, "PUT", "/", SAVE);
+  assert.equal(body.dryRun, false);
+  assert.equal(body.jobCards.details, undefined);
+  assert.equal(body.jobCards.updated, 1);
 });
