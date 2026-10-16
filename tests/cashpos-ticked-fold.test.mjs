@@ -12,8 +12,9 @@ const ui = readFileSync("src/pages/accounting/index.tsx", "utf8").replace(/\r\n/
 const tab = ui.slice(ui.indexOf("function DailyCashTab("), ui.indexOf("function DailyCashTab(") + 40000);
 
 test("pending list shows only unticked rows; ticked ones fold under a count", () => {
-  assert.match(tab, /const open = a\.pending\.filter\(\(p\) => !p\.ticked\);/);
-  assert.match(tab, /const ticked = a\.pending\.filter\(\(p\) => p\.ticked\);/);
+  // Ordered receipts-first since finance v2 (pendingReceiptsFirst); the split is the same.
+  assert.match(tab, /const open = pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\);/);
+  assert.match(tab, /const ticked = pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => p\.ticked\)\);/);
   assert.match(tab, /\{open\.map\(row\)\}/);
   assert.match(tab, /\{showing && ticked\.map\(row\)\}/, "ticked rows render only when the fold is open");
   assert.match(tab, /✓ Ticked as gone through: \{ticked\.length\}/);

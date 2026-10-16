@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-daily-b` (to `main`) added below (its entry is the newest); plan 2a (#922) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-daily` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: finance v2 plan 1 (#918) prod-verified.
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-foundation` (to `main`) added below (its entry is the newest).
@@ -184,13 +185,22 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
-## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 2a: Daily part 1 — Payment Vouchers list (owner「继续做」; Receipts expand dropped and Daily Cash Position banks kept open, as recommended)(branch `feat/finance-v2-daily` → `main`)
+
+## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 2b: Daily part 2 — Receipts, Daily Cash Position, Fund Transfer, popups (branch `feat/finance-v2-daily-b` → `main`)
+
+1. ✅ Receipts list on DataGrid (v2 pills incl. Bounced and Posted · unallocated, funnels, header menu, total over active receipts); click-to-expand dropped (owner 「继续做」), double-click shows the same detail.
+2. ✅ Daily Cash Position: title-row buttons, weekday, slate bank header, v2 list look; pending lines receipts first on screen, image and print; banks stay open (owner).
+3. ✅ Fund Transfer: v2 list look, dates, pill, total over active transfers.
+4. ✅ Document popups (DocDetailModal) in the v2 frame.
+5. ⚪ Prod check after deploy (read-only).
+
+## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2a: Daily part 1 — Payment Vouchers list (owner「继续做」; Receipts expand dropped and Daily Cash Position banks kept open, as recommended)(branch `feat/finance-v2-daily` → `main`)
 
 1. ✅ Shared pieces: status pills, segmented chips, title-row button slot, ink primary buttons on finance pages, v2 look on row menus that open on `<body>`.
 2. ✅ DataGrid `checkboxSelectOnly` (the finance lists' rule: only the checkbox ticks) and `searchPlaceholder`.
 3. ✅ Payment Vouchers list on DataGrid: v2 columns and pills, funnels in place of the date / bank / door inputs, header menu, total over active payments; title-row buttons; the explanation behind the (i) with its two page links. Ladder batch, batch print / export, popups and row menus unchanged.
-4. ⚪ Prod check after deploy (read-only).
-5. ⚪ Plan 2b: popups, Receipts, Daily Cash Position, Fund Transfer.
+4. ✅ Prod check (#922, read-only, owner's session): title-row buttons, chips with counts, two-line payee / description, v2 pills; 307 rows from the four sources = 307 shown, and the footer total equals the active payments added up independently from the APIs; with a row ticked, a right-click on another opened its menu (row highlighted) and kept the tick; Esc closed it.
+5. ➡ Plan 2b (entry above).
 
 ## 2026-10-16 — ✅ Finance & Forecasting v2, plan 1: foundation (owner「照 README 把这些设计做进现有的 Hookka repo，接真正的 API」→ decisions in chat →「自己核对完直接上线」)(#918 e6288c0d, prod-verified)
 

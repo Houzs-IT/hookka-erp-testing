@@ -126,8 +126,11 @@ test("the finance lists carry no action links — each row opens its menu", () =
   const pv = slice(ui, "function PaymentsTab(", "// =============== TAB: OFFICIAL RECEIPT");
   assert.match(pv, /contextMenuItems=\{\(r\) => rowMenuItems\(r\.pv \? pvRowMenu\(r\.pv\) : payRowMenu\(r\)\)\}/);
   assert.doesNotMatch(pv, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, "PV: no inline print link");
+  // Receipts too (finance v2 plan 2b).
+  const rc = slice(ui, "function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER");
+  assert.match(rc, /contextMenuItems=\{\(r\) => rowMenuItems\(receiptRowMenu\(r\)\)\}/);
+  assert.doesNotMatch(rc, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, "Receipts: no inline print link");
   const lists = [
-    ["function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER", ["receiptRowMenu(r)"]],
     ["function FundTransferTab(", "// =============== TAB: STOCK SUMMARY", ["ftRowMenu(r)"]],
     ["function OtherPartyBillsManager(", "function OtherPartyPaymentForm(", ["billRowMenu(b)"]],
     ["function OtherPartyPaymentsManager(", "// =============== TAB: GENERAL LEDGER", ["opayRowMenu(g)"]],

@@ -23,6 +23,17 @@ export function fmtDocDate(iso: string | null | undefined): string {
   return mon ? `${m[3]} ${mon} ${m[1]}` : "";
 }
 
+const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "2026-10-15" → "Thursday" (the calendar day, whatever the browser's time
+ *  zone); unreadable → "". */
+export function weekdayOf(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ""));
+  if (!m) return "";
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return Number.isNaN(d.getTime()) ? "" : WEEKDAY[d.getUTCDay()];
+}
+
 /** The footer total of a money list: active rows only (void / deleted rows are
  *  shown but not counted), in whole sen. */
 export function activeTotalSen(rows: { state: string; totalSen: number }[]): number {
@@ -55,6 +66,31 @@ export function pvStatus(v: {
   }
   if (v.accrued === 1 && !v.settledAt) return { label: "Approved · accrued, unpaid", tone: "err" };
   return { label: "Approved · paid", tone: "ok" };
+}
+
+/** A receipt's status pill. A bounced cheque says so first; money still on
+ *  account (not knocked off) is info-blue; a customer receipt that cleared
+ *  the bank says so. Other debtor / official receipts read "Posted". */
+export function receiptStatus(v: { state: string; custStatus?: string | null; unallocated?: boolean }): FinStatus {
+  if (v.state !== "ACTIVE") return { label: v.state, tone: "faint" };
+  if (v.custStatus === "BOUNCED") return { label: "Bounced", tone: "err" };
+  if (v.unallocated) return { label: "Posted · unallocated", tone: "info", title: "Money still on account — not knocked off yet" };
+  if (v.custStatus === "CLEARED") return { label: "Posted · cleared", tone: "ok" };
+  return { label: "Posted", tone: "ok" };
+}
+
+/** Daily Cash Position pending lines (one signed amount: + in, − out):
+ *  receipts first, then payments, each by day; ties keep their order. The
+ *  screen, Get image and Print all use it (finance v2). */
+export function pendingReceiptsFirst<T extends { day: string; amountSen: number }>(lines: T[]): T[] {
+  return lines
+    .map((l, i) => ({ l, i }))
+    .sort((a, b) => {
+      const ga = a.l.amountSen > 0 ? 0 : 1;
+      const gb = b.l.amountSen > 0 ? 0 : 1;
+      return ga - gb || a.l.day.localeCompare(b.l.day) || a.i - b.i;
+    })
+    .map((x) => x.l);
 }
 
 /** A payment recorded on another page (supplier payment, other-creditor

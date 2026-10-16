@@ -36,11 +36,13 @@ test("Payment Vouchers: double-click opens the popup; single click does nothing 
   assert.match(pv, /onClick=\{\(\) => \{ close\(\); void handleLifecycle\(r\.id, r\.pvNo, "void"\); \}\}/);
 });
 
-test("Receipts hub: double-click opens the popup; the inline expand and the popup share one table", () => {
+test("Receipts hub: double-click opens the popup, which shows the receipt's detail table", () => {
   const hub = block("function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER");
-  assert.match(hub, /onDoubleClick=\{\(\) => setDetailKey\(r\.key\)\}/);
+  // A DataGrid since finance v2; the click-to-expand row went (owner 2026-10-16
+  // 「继续做」 on the recommendation) — double-click shows the same table.
+  assert.match(hub, /onDoubleClick=\{\(r\) => setDetailKey\(r\.key\)\}/);
   assert.match(hub, /const detailTable = \(r: ReceiptHubRow\) => \(/);
-  assert.equal((hub.match(/\{detailTable\(r\)\}/g) ?? []).length, 2, "inline expand + popup both render detailTable");
+  assert.equal((hub.match(/\{detailTable\(r\)\}/g) ?? []).length, 1, "the popup renders detailTable");
   assert.match(hub, /const r = rows\.find\(\(x\) => x\.key === detailKey\);/);
 });
 
