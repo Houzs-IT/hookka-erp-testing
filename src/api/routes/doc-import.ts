@@ -25,6 +25,7 @@ import { soImportAdapter } from "../lib/doc-import-so";
 import { poImportAdapter } from "../lib/doc-import-po";
 import { piImportAdapter } from "../lib/doc-import-pi";
 import { grnImportAdapter } from "../lib/doc-import-grn";
+import { doImportAdapter } from "../lib/doc-import-do";
 
 /** docType (lower-case, as in the URL) → adapter. */
 export const ADAPTERS: Record<string, DocImportAdapter> = {
@@ -34,6 +35,7 @@ export const ADAPTERS: Record<string, DocImportAdapter> = {
   po: poImportAdapter,
   pi: piImportAdapter,
   grn: grnImportAdapter,
+  do: doImportAdapter,
 };
 
 const MAX_ROWS = 5000;

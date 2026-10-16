@@ -231,6 +231,7 @@ export function buildCoDetailListingAoa(orders: CODetailOrder[]): Aoa {
 export type DoDetailItem = {
   id?: string | null;
   salesOrderNo?: string | null;
+  poNo?: string | null;
   customerPOId?: string | null;
   productCode?: string | null;
   productName?: string | null;
@@ -247,12 +248,18 @@ export type DoDetailOrder = {
   customerId?: string | null;
   customerName?: string | null;
   status?: string | null;
+  deliveryDate?: string | null;
+  remarks?: string | null;
   items?: DoDetailItem[] | null;
 };
 
+// PO No. / Delivery Date / Remarks are what the DO importer reads back
+// (src/api/lib/doc-import-do.ts): PO No. names the production order a new DO
+// line delivers; Delivery Date and Remarks are the editable header fields.
 export const DO_DETAIL_HEADERS = [
   ...commonHeaders(true),
   "Status", "Customer PO", "Size", "Fabric", "M3", "Racking",
+  "PO No.", "Delivery Date", "Remarks",
 ];
 
 export function buildDoDetailListingAoa(orders: DoDetailOrder[], customerCodes?: PartyCodeLookup): Aoa {
@@ -287,6 +294,9 @@ export function buildDoDetailListingAoa(orders: DoDetailOrder[], customerCodes?:
         it.fabricCode ?? "",
         num(it.itemM3),
         it.rackingNumber ?? "",
+        it.poNo ?? "",
+        day(o.deliveryDate),
+        o.remarks ?? "",
       ]);
     }
   }
