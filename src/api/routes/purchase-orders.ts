@@ -913,7 +913,7 @@ app.put("/:id", async (c) => {
       // payload's receivedQty is client-supplied and can be 0 or missing.
       const { results: storedLines } = await c.var.DB
         .prepare(
-          "SELECT id, material_code, unit, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ? ORDER BY line_no, rowid",
+          "SELECT id, material_code, unit, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ? ORDER BY line_no, id",
         )
         .bind(id)
         .all<{ id: string; material_code: string | null; unit: string | null; receivedQty: number | null }>();
