@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
-// invoice-detail-export — fetch the lines for a set of invoices and hand them
-// to the pure mapper in `invoice-detail-listing.ts`.
+// invoice-detail-export — fetch the lines for a set of invoices (sales AND
+// purchase) and hand them to the pure mappers in `invoice-detail-listing.ts`
+// and `doc-detail-listings.ts` (buildPiDetailListingAoa). Both list endpoints
+// ship no items, so both need the same paced per-document re-fetch.
 //
 // Split out of the invoices page for two reasons. The page may only export
 // components (react-refresh), and more usefully: the pacing and the failure
@@ -13,6 +15,7 @@ import {
   type InvoiceDetailDoc,
   type InvoiceDetailItem,
 } from "./invoice-detail-listing";
+import { buildPiDetailListingAoa, type PiDetailDoc, type PartyCodeLookup } from "./doc-detail-listings";
 
 /**
  * How many invoices one Detail Listing may pull without asking.
@@ -40,6 +43,8 @@ export type DetailExportDeps = {
   wait?: (ms: number) => Promise<void>;
   /** Returns true to proceed past the cap. Defaults to `window.confirm`. */
   confirmLarge?: (count: number, minutes: number) => boolean;
+  /** customer/supplier id → code, for the Party Code column. */
+  partyCodes?: PartyCodeLookup;
 };
 
 const defaultFetchJson = async (url: string): Promise<unknown> => {
@@ -47,6 +52,48 @@ const defaultFetchJson = async (url: string): Promise<unknown> => {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 };
+
+/**
+ * The pacing + cap + confirm shared by every per-document listing. Returns null
+ * when the operator declined the large-export confirm (export nothing — a
+ * refusal must not half-export). `fetchOne` throwing is the caller's to report.
+ */
+async function forEachPaced<R extends { id?: string | null }, D>(
+  rows: R[],
+  noun: string,
+  deps: DetailExportDeps,
+  fetchOne: (id: string, getJson: (url: string) => Promise<unknown>) => Promise<D>,
+  onFail: (row: R, e: unknown) => D,
+): Promise<D[] | null> {
+  const getJson = deps.fetchJson ?? defaultFetchJson;
+  const wait =
+    deps.wait ??
+    ((ms: number) => new Promise<void>((res) => window.setTimeout(res, ms)));
+  const confirmLarge =
+    deps.confirmLarge ??
+    ((count: number, minutes: number) =>
+      window.confirm(
+        `This will read ${count} ${noun} one at a time — roughly ${minutes} minute(s).\n\n` +
+          `Filter the list first if you only need part of it. Continue?`,
+      ));
+  const wanted = rows.filter((r) => r.id);
+  if (wanted.length > DETAIL_EXPORT_CAP) {
+    const minutes = Math.ceil((wanted.length * DETAIL_EXPORT_GAP_MS * 2) / 1000 / 60);
+    if (!confirmLarge(wanted.length, minutes)) return null;
+  }
+  const out: D[] = [];
+  for (const r of wanted) {
+    try {
+      out.push(await fetchOne(String(r.id), getJson));
+    } catch (e) {
+      out.push(onFail(r, e));
+    }
+    await wait(DETAIL_EXPORT_GAP_MS);
+  }
+  return out;
+}
+
+const failNote = (e: unknown) => `EXPORT FAILED — ${e instanceof Error ? e.message : "unknown"}`;
 
 /**
  * Fetch every line of every invoice given, and map it to the export rows.
@@ -61,28 +108,11 @@ export async function buildInvoiceDetailRows(
   rows: InvoiceRowLike[],
   deps: DetailExportDeps = {},
 ) {
-  const getJson = deps.fetchJson ?? defaultFetchJson;
-  const wait =
-    deps.wait ??
-    ((ms: number) => new Promise<void>((res) => window.setTimeout(res, ms)));
-  const confirmLarge =
-    deps.confirmLarge ??
-    ((count: number, minutes: number) =>
-      window.confirm(
-        `This will read ${count} invoices one at a time — roughly ${minutes} minute(s).\n\n` +
-          `Filter the list first if you only need part of it. Continue?`,
-      ));
-
-  const wanted = rows.filter((r) => r.id);
-  if (wanted.length > DETAIL_EXPORT_CAP) {
-    const minutes = Math.ceil((wanted.length * DETAIL_EXPORT_GAP_MS * 2) / 1000 / 60);
-    if (!confirmLarge(wanted.length, minutes)) return buildInvoiceDetailListingAoa([]);
-  }
-
-  const docs: InvoiceDetailDoc[] = [];
-  for (const r of wanted) {
-    const id = String(r.id);
-    try {
+  const docs = await forEachPaced<InvoiceRowLike, InvoiceDetailDoc>(
+    rows,
+    "invoices",
+    deps,
+    async (id, getJson) => {
       const invJson = (await getJson(`/api/invoices/${encodeURIComponent(id)}`)) as {
         data?: InvoiceDetailDoc;
       };
@@ -102,21 +132,37 @@ export async function buildInvoiceDetailRows(
         // keep the invoice, lose only the enrichment
       }
 
-      docs.push({
+      return {
         ...inv,
         items: (inv.items ?? []).map((it) => ({
           ...it,
           ...(extras[String(it.id)] ?? {}),
         })),
-      });
-    } catch (e) {
-      docs.push({
-        invoiceNo: r.invoiceNo ?? id,
-        status: `EXPORT FAILED — ${e instanceof Error ? e.message : "unknown"}`,
-        items: [],
-      });
-    }
-    await wait(DETAIL_EXPORT_GAP_MS);
-  }
-  return buildInvoiceDetailListingAoa(docs);
+      };
+    },
+    (r, e) => ({ invoiceNo: r.invoiceNo ?? String(r.id), status: failNote(e), items: [] }),
+  );
+  return buildInvoiceDetailListingAoa(docs ?? [], deps.partyCodes);
+}
+
+/**
+ * Purchase Invoice Detail Listing (HK-0002). Same reason, same pacing: the PI
+ * list (rowToPI) carries no items, so each PI is re-read from GET
+ * /api/purchase-invoices/:id. A PI that cannot be read is reported as a row.
+ */
+export async function buildPiDetailRows(
+  rows: Array<{ id?: string | null; piNo?: string | null }>,
+  deps: DetailExportDeps = {},
+) {
+  const docs = await forEachPaced(
+    rows,
+    "purchase invoices",
+    deps,
+    async (id, getJson) => {
+      const j = (await getJson(`/api/purchase-invoices/${encodeURIComponent(id)}`)) as { data?: PiDetailDoc };
+      return j?.data ?? ({} as PiDetailDoc);
+    },
+    (r, e): PiDetailDoc => ({ piNo: r.piNo ?? String(r.id), status: failNote(e), items: [] }),
+  );
+  return buildPiDetailListingAoa(docs ?? [], deps.partyCodes);
 }
