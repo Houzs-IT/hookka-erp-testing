@@ -1,5 +1,6 @@
 # Production & BOM — Module Guide
 
+> **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-bedframe-main`, to `main`): the `filteredOrders` (:2908) and FG-sticker (:5621 / :5580) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` grew by four lines. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-wrap-main`, to `main`): the `filteredOrders` (:2904) and FG-sticker (:5617 / :5576) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` was added beside `oemMarkFor`. Nothing else re-checked.
 > **Last verified: 2026-10-15** (branch `feat/bom-draft-activate-main`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5952, `EditBOMDialog` :2974, `MasterTemplatesDialog` :3836), read from `src/pages/bom.tsx` after the DRAFT badge and Activate button moved them. Same change as staging #875. Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `feat/editable-wip-types-main-v2`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5922, `EditBOMDialog` :2945, `MasterTemplatesDialog` :3807), read from `src/pages/bom.tsx` after the hard-coded variant lists moved to `src/lib/bom-variant-fields.ts`. Nothing else re-checked.
@@ -69,8 +70,8 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | Symbol / section | file:line | Role |
 |---|---|---|
 | `ProductionPage` | `src/pages/production/index.tsx:627` | WIP board; every column/row branches on `activeTab` |
-| `filteredOrders` (memo) | `src/pages/production/index.tsx:2904` | Dept-narrow + overdue-set grid filter |
-| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5617 / 5576` | FG sticker set (immediate paint → /p/ token upgrade) |
+| `filteredOrders` (memo) | `src/pages/production/index.tsx:2908` | Dept-narrow + overdue-set grid filter |
+| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5621 / 5580` | FG sticker set (immediate paint → /p/ token upgrade) |
 | `BOMManagementPage` | `src/pages/bom.tsx:5952` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2974 / 3836` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
