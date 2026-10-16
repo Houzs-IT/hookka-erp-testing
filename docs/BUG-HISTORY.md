@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-300 (branch `fix/po-edit-save-rowid`, to main; no open PR holds 300); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-294 follow-ups (branch `fix/fg-sticker-notes-bedframe-main`, to main): bedframe Notes row sliced after #887, and the Foam Bonding packing preview now shows Notes and TAG; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: newest entries BUG-2026-10-16-295 to -299, ported from `staging` PRs #888, #889 and #890 (branch `fix/po-list-cache-main`, to `main`). Staging logged 299 as 294; main's 294 is the packing sticker fix. A log, so "verified" means the entries match the code on this branch.
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-294 (branch `fix/fg-sticker-notes-wrap-main`, to main, same fix as staging #886 where it is logged as 293; 293 on main is the card padding bug); a log, so "verified" means the entry matches the code on its branch.
@@ -120,6 +121,20 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-16-300 — Saving an edited PO always failed with "Something went wrong" `procurement` 🟡
+
+🟡 **Fixed on branch** (`fix/po-edit-save-rowid` → `main`). Prod check after deploy still to do.
+
+**Symptom.** Reported 2026-10-16 on PO-2610-033 (CONFIRMED): changing the price and pressing Save Changes showed "Something went wrong. Please try again." Reported as a permission problem; it was not one (a refused permission answers "Forbidden", which the toast shows as is).
+
+**Root cause.** #863 (HK-0037, merged 2026-10-15) added a read of the stored PO lines to the edit save: `ORDER BY line_no, rowid`. `rowid` is a SQLite pseudo-column. Prod runs Postgres, where it does not exist, so the query threw, the route returned the raw `column "rowid" does not exist` as a 500, and the toast replaced that technical text with the generic line. Every PO edit that sends lines (all of them, from the Edit form) failed, whatever was changed. Staging never had #863, so it saved fine there. Inferred from the code and the toast; the prod response body was not captured.
+
+**Fix.** `ORDER BY line_no, id`.
+
+**Not changed.** `admin.ts` invoice price backfill still orders `invoice_items` by `rowid` (same failure on Postgres). That table has no line number and the backfill pairs lines by position, so a replacement order would be a guess; logged open as BUG-CLASSES C30 row 2.
+
+**Regression.** `tests/no-sqlite-rowid-in-sql.test.mjs` fails on any new `rowid` in API code.
 
 ## BUG-2026-10-16-298 — A cancelled request could unregister the newer request for the same page data, which then downloaded for nobody `frontend` `performance` 🟡
 

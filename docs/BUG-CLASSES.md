@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-16**: branch `fix/po-edit-save-rowid`, to `main`, **adds C30, SQLite-only SQL reaching Postgres** (BUG-2026-10-16-300). Nothing else re-checked.
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main`, ports from `staging` C2 row 9, C15 rows 7 and 8 (row 6 is staging-only) and C22 row 4 (BUG-2026-10-16-295 to -298). Nothing else re-checked.
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` adds C29 row 6, the CN print reading CO No. / fabric from a stale-while-revalidate snapshot (BUG-2026-10-14-285). Nothing else re-checked.
 > **Last verified: 2026-10-01**: branch `fix/worker-history-snapshot-stale` **adds C29 — a read right after a write, served from Hyperdrive's cache** (BUG-2026-10-01-245). Nothing else re-checked.
@@ -1774,3 +1775,21 @@ Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return tr
 | 6 | CN print CO No. / fabric from the `staleWhileRevalidate` `/ready-planning` snapshot (a snapshot that serves stale on purpose, the same read-after-write shape) | ✅ 2026-10-14 on branch `fix/hk0093-cn-print-co-fabric` (BUG-2026-10-14-285): the print reads them from `print-extras` instead; the CN grid columns still read the snapshot |
 
 Tests: `tests/worker-history-snapshot-fresh.test.mjs` (row 4), `tests/cn-pdf-co-fabric-fresh.test.mjs` (row 6).
+
+## C30 — SQLite-only SQL reaching Postgres
+
+**Shape.** A query written for D1 (SQLite) names something Postgres does not have, most often the `rowid` pseudo-column. On prod the statement throws and the route 500s; the toast shows the generic "Something went wrong" because the raw Postgres text is technical.
+
+**Why it keeps happening.** The code started on D1 and the type checker cannot read SQL strings. No test runs SQL against Postgres, and a branch that has not reached staging is never exercised against it.
+
+**The rule.** Order by a real column (`line_no`, then `id` to break ties). Where no real order column exists, do not invent one: change the logic so the order does not matter (see the price backfill fix in `import-completion/price-backfill.ts`).
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | PO edit save, stored lines `ORDER BY line_no, rowid` (`purchase-orders.ts` PUT, from #863) | ✅ 2026-10-16 on branch `fix/po-edit-save-rowid` (BUG-2026-10-16-300), `ORDER BY line_no, id` |
+| 2 | invoice price backfill, `invoice_items ... ORDER BY rowid` (`admin.ts`) | ⬜ open; pairs lines by position and `invoice_items` has no line number |
+| 3 | sofa price backfill (`import-completion/price-backfill.ts`) | ✅ earlier, pairing by product code instead of position |
+
+Tests: `tests/no-sqlite-rowid-in-sql.test.mjs` (row 2 allow-listed until fixed).
