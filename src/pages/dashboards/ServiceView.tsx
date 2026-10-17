@@ -8,6 +8,7 @@ import {
   inFocus, dayLabel, periodLabel, type Period, type ServiceSub } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge } from "./dashboard-shared";
 import { ServiceApprovalsPanel } from "./ServiceApprovalsPanel";
+import { DefectRateCard } from "./DefectRateCard";
 import { ServiceIssuesPanel } from "./ServiceIssuesPanel";
 import { ServicePerformancePanel } from "./ServicePerformancePanel";
 import { ServiceCaseNo, OpenServiceCasesLink } from "./ServiceCaseLink";
@@ -41,7 +42,7 @@ type ServiceCase = {
 type Feed = {
   success?: boolean;
   availability?: { service?: { live: boolean; reason?: string } };
-  service?: { overdueAfterDays: number; cases: ServiceCase[] } | null;
+  service?: { overdueAfterDays: number; cases: (ServiceCase & { productCategories?: string[] })[]; shipped?: { ym: string; category: string; units: number }[] } | null;
 };
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
@@ -147,11 +148,14 @@ export function ServiceView({
             period={period}
             onPeriodChange={onPeriodChange}
             afterKpis={
-              <ServiceIssuesPanel
-                cases={logged}
-                period={period}
-                onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); document.getElementById("svc-cases")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-              />
+              <>
+                <ServiceIssuesPanel
+                  cases={logged}
+                  period={period}
+                  onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); document.getElementById("svc-cases")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+                />
+                <DefectRateCard cases={cases} shipped={slice?.shipped} period={period} />
+              </>
             }
           />
 
