@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-308 (branch `fix/m-dashboard-anchor-month`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 flipped to 🟢 after the #941 prod check (branch `feat/finance-v2-mobile-b`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-307 (branch `fix/m-receivables-aging-total`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 flipped to 🟢 after the #937 prod check (branch `feat/finance-v2-einvoice`).
@@ -130,6 +131,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-308 — The phone's Finance Dashboard showed a month ahead with no figures `mobile` `finance` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 by the prod check of #944, the day it shipped and before anyone used it. The phone's Finance Dashboard showed "—" for the running month. Its chart showed four months ahead with no bars, and the cash card read a month with no books.
+
+**Root cause.** `DashScreen` took the endpoint's LAST row as "the latest month". `/api/accounting/dashboard` also sends the months ahead that carry only a forecast (`actual: null`), so on prod the last row was four months ahead. The desktop dashboard reads every row and was not affected.
+
+**Fix.** `dashAnchorIndex(rows)` picks the latest row with actual figures. The screen charts the four months ending there and names months from their keys (`dashMonthLabel`).
+
+**Regression.** `tests/m-dashboard-anchor-month.test.mjs` runs the helper over made-up rows ending in forecast-only months and asserts the screen never reads the API's last rows. It fails without the fix. Class: BUG-CLASSES C21 row 16.
 
 ## BUG-2026-10-17-307 — The phone's Receivables list showed every debtor owing RM 0.00 `mobile` `accounting` 🟢
 
