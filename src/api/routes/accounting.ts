@@ -43,6 +43,7 @@ import { billOutstandingBefore, statementBalanceBefore, type ApPrintBill as ApPr
 import { normalisePartyCurrency, partyText } from "../../lib/party-finance";
 import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
+import { auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
@@ -5239,6 +5240,178 @@ app.get("/audit-log", async (c) => {
     };
   });
   return c.json({ success: true, data });
+});
+
+// ---------------------------------------------------------------------------
+// GET /change-log?month=YYYY-MM — the Audit Log's "All changes" (finance
+// backlog item 10, the design's "a full Audit Log of every change"): every
+// change made in Finance in the month (Malaysia time; default the running
+// month), newest first — postings, edits (the legs before and after), voids,
+// restores, undos and deletes, the payment-voucher ladder, and the settings
+// and other steps the audit trail records (src/lib/change-log.ts). One act
+// seen by two trails is listed once. Read-only.
+// ---------------------------------------------------------------------------
+const CHANGE_LOG_RESOURCES = ["accounting", "trade-finance", "supplier-payments", "other-party-payments", "payments", "invoices", "purchase-invoices", "credit-notes", "debit-notes"];
+// An audit resource → the ledger's name for the same document.
+const AUDIT_DOC_TYPE: Record<string, string> = {
+  "supplier-payments": "supplier_payment",
+  payments: "payment",
+  invoices: "invoice",
+  "purchase-invoices": "purchase_invoice",
+  "credit-notes": "credit_note",
+  "debit-notes": "debit_note",
+};
+
+// Document number and party per (ledger doc type, id). One batched read per
+// kind; a failed read leaves the event's own id.
+async function resolveChangeRefs(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  keys: { docType: string; docId: string }[],
+): Promise<Map<string, { reference: string | null; party: string | null }>> {
+  const out = new Map<string, { reference: string | null; party: string | null }>();
+  const ids = (t: string) => [...new Set(keys.filter((k) => k.docType === t).map((k) => k.docId))];
+  const str = (v: unknown) => (v === null || v === undefined ? "" : String(v)).trim();
+  const read = async (type: string, sql: (ph: string) => string, map: (r: Record<string, unknown>) => [string, string, string], extra: unknown[] = []) => {
+    const all = ids(type);
+    try {
+      for (let i = 0; i < all.length; i += 200) {
+        const part = all.slice(i, i + 200);
+        const res = await db.prepare(sql(part.map(() => "?").join(","))).bind(...part, ...extra).all<Record<string, unknown>>();
+        for (const r of res.results ?? []) {
+          const [id, reference, party] = map(r);
+          if (id) out.set(`${type}|${id}`, { reference: reference || null, party: party || null });
+        }
+      }
+    } catch { /* the event keeps its own id */ }
+  };
+  await Promise.all([
+    read("payment_voucher", (ph) => `SELECT id, pv_no, payee FROM payment_vouchers WHERE id IN (${ph})`, (r) => [str(r.id), str(r.pvNo ?? r.pv_no), str(r.payee)]),
+    read("official_receipt", (ph) => `SELECT id, or_no, received_from FROM official_receipts WHERE id IN (${ph})`, (r) => [str(r.id), str(r.orNo ?? r.or_no), str(r.receivedFrom ?? r.received_from)]),
+    read("manual", (ph) => `SELECT id, entry_no, description FROM journal_entries WHERE id IN (${ph})`, (r) => [str(r.id), str(r.entryNo ?? r.entry_no), ""]),
+    read("invoice", (ph) => `SELECT id, invoice_no, customer_name FROM invoices WHERE id IN (${ph})`, (r) => [str(r.id), str(r.invoiceNo ?? r.invoice_no), str(r.customerName ?? r.customer_name)]),
+    read("purchase_invoice", (ph) => `SELECT id, pi_no, supplier_name FROM purchase_invoices WHERE id IN (${ph})`, (r) => [str(r.id), str(r.piNo ?? r.pi_no), str(r.supplierName ?? r.supplier_name)]),
+    read("payment", (ph) => `SELECT id, receipt_number, customer_name FROM payment_records WHERE id IN (${ph})`, (r) => [str(r.id), str(r.receiptNumber ?? r.receipt_number), str(r.customerName ?? r.customer_name)]),
+    read("credit_note", (ph) => `SELECT id, note_number, customer_name FROM credit_notes WHERE id IN (${ph})`, (r) => [str(r.id), str(r.noteNumber ?? r.note_number), str(r.customerName ?? r.customer_name)]),
+    read("debit_note", (ph) => `SELECT id, note_number, customer_name FROM debit_notes WHERE id IN (${ph})`, (r) => [str(r.id), str(r.noteNumber ?? r.note_number), str(r.customerName ?? r.customer_name)]),
+    read("purchase_credit_note", (ph) => `SELECT id, note_number, supplier_name FROM purchase_credit_notes WHERE id IN (${ph})`, (r) => [str(r.id), str(r.noteNumber ?? r.note_number), str(r.supplierName ?? r.supplier_name)]),
+    read("supplier_payment", (ph) => `SELECT payment_no, MAX(supplier_name) AS supplier_name FROM supplier_payments WHERE payment_no IN (${ph}) AND org_id = ? GROUP BY payment_no`, (r) => { const no = str(r.paymentNo ?? r.payment_no); return [no, no, str(r.supplierName ?? r.supplier_name)]; }, [orgId]),
+    read("other_party_payment", (ph) => `SELECT payment_no, MAX(party_name) AS party_name FROM other_party_payments WHERE payment_no IN (${ph}) GROUP BY payment_no`, (r) => { const no = str(r.paymentNo ?? r.payment_no); return [no, no, str(r.partyName ?? r.party_name)]; }),
+    read("other_party_bill", (ph) => `SELECT bill_no, party_name FROM other_party_bills WHERE bill_no IN (${ph}) AND org_id = ?`, (r) => { const no = str(r.billNo ?? r.bill_no); return [no, no, str(r.partyName ?? r.party_name)]; }, [orgId]),
+  ]);
+  return out;
+}
+
+app.get("/change-log", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const q = c.req.query("month") || "";
+  const ym = /^\d{4}-\d{2}$/.test(q) ? q : runningMonthYm();
+  const w = monthWindowMy(ym);
+  const { lo, hi } = sqlDayBounds(ym);
+  const warnings: string[] = [];
+  const optional = async (label: string, run: () => Promise<{ results?: Record<string, unknown>[] }>) => {
+    try {
+      return (await run()).results ?? [];
+    } catch {
+      warnings.push(`${label} could not be read`);
+      return [] as Record<string, unknown>[];
+    }
+  };
+  // The ledger is the backbone: a failed read is an error, not an empty month.
+  const [legRes, life, ladder, audit, coaRes] = await Promise.all([
+    db.prepare(
+      `SELECT sourceType, sourceId, accountCode, debitSen, creditSen, description, actorUserId, postedAt
+         FROM ledger_journal_entries WHERE orgId = ? AND postedAt >= ? AND postedAt < ?`,
+    ).bind(orgId, lo, hi).all<Record<string, unknown>>(),
+    optional("Voided / deleted documents", () => db.prepare(
+      `SELECT sourceType, sourceId, state, actionAt, actorUserId FROM document_lifecycle WHERE orgId = ? AND actionAt >= ? AND actionAt < ?`,
+    ).bind(orgId, lo, hi).all<Record<string, unknown>>()),
+    optional("Payment voucher approvals", () => db.prepare(
+      `SELECT id, pv_no, payee, total_sen, prepared_at, prepared_by, checked_at, checked_by, approved_at, approved_by
+         FROM payment_vouchers
+        WHERE (prepared_at >= ? AND prepared_at < ?) OR (checked_at >= ? AND checked_at < ?) OR (approved_at >= ? AND approved_at < ?)`,
+    ).bind(lo, hi, lo, hi, lo, hi).all<Record<string, unknown>>()),
+    optional("The audit trail", () => db.prepare(
+      `SELECT id, ts, actorUserId, actorUserName, resource, resourceId, action, beforeJson, afterJson
+         FROM audit_events
+        WHERE (orgId = ? OR orgId IS NULL) AND resource IN (${CHANGE_LOG_RESOURCES.map(() => "?").join(",")}) AND ts >= ? AND ts < ?`,
+    ).bind(orgId, ...CHANGE_LOG_RESOURCES, lo, hi).all<Record<string, unknown>>()),
+    db.prepare("SELECT code, name FROM chart_of_accounts").all<{ code: string; name: string }>().catch(() => ({ results: [] as { code: string; name: string }[] })),
+  ]);
+  const v = (r: Record<string, unknown>, camel: string, snake: string) => r[camel] ?? r[snake];
+  const s = (x: unknown) => (x === null || x === undefined ? null : String(x));
+  const events: ChangeEvent[] = [
+    ...ledgerEvents((legRes.results ?? []).map((r) => ({
+      sourceType: String(v(r, "sourceType", "source_type") ?? ""), sourceId: String(v(r, "sourceId", "source_id") ?? ""),
+      accountCode: String(v(r, "accountCode", "account_code") ?? ""), debitSen: Number(v(r, "debitSen", "debit_sen")) || 0,
+      creditSen: Number(v(r, "creditSen", "credit_sen")) || 0, description: s(r.description), actorUserId: s(v(r, "actorUserId", "actor_user_id")),
+      postedAt: v(r, "postedAt", "posted_at"),
+    }))),
+    ...ladderEvents(ladder.map((r) => ({
+      id: String(r.id), pvNo: s(v(r, "pvNo", "pv_no")), payee: s(r.payee), totalSen: Number(v(r, "totalSen", "total_sen")) || 0,
+      preparedAt: v(r, "preparedAt", "prepared_at"), preparedBy: s(v(r, "preparedBy", "prepared_by")),
+      checkedAt: v(r, "checkedAt", "checked_at"), checkedBy: s(v(r, "checkedBy", "checked_by")),
+      approvedAt: v(r, "approvedAt", "approved_at"), approvedBy: s(v(r, "approvedBy", "approved_by")),
+    }))),
+    ...lifecycleEvents(life.map((r) => ({
+      sourceType: String(v(r, "sourceType", "source_type") ?? ""), sourceId: String(v(r, "sourceId", "source_id") ?? ""),
+      state: String(r.state ?? ""), actionAt: v(r, "actionAt", "action_at"), actorUserId: s(v(r, "actorUserId", "actor_user_id")),
+    }))),
+    ...auditEvents(audit.map((r) => ({
+      id: String(r.id), ts: r.ts, actorUserId: s(v(r, "actorUserId", "actor_user_id")), actorUserName: s(v(r, "actorUserName", "actor_user_name")),
+      resource: String(r.resource ?? ""), resourceId: String(v(r, "resourceId", "resource_id") ?? ""), action: String(r.action ?? ""),
+      beforeJson: s(v(r, "beforeJson", "before_json")), afterJson: s(v(r, "afterJson", "after_json")),
+    }))),
+  ].filter((e) => inWindow(e.at, w));
+
+  // Document numbers and parties: the ledger's own name for the document, an
+  // audit resource mapped onto it; a ledger posting falls back to the number
+  // in its line text, an id that already is a document number to itself.
+  const refType = (e: ChangeEvent) => (e.source === "audit" ? AUDIT_DOC_TYPE[e.docType] ?? e.docType : e.docType.split(":")[0]);
+  const refs = await resolveChangeRefs(db, orgId, events.map((e) => ({ docType: refType(e), docId: e.docId })));
+  for (const e of events) {
+    const r = refs.get(`${refType(e)}|${e.docId}`);
+    const own = docNoFromDescription(e.docId) === e.docId ? e.docId : null;
+    e.reference = e.reference ?? r?.reference ?? own ?? (e.source === "ledger" ? docNoFromDescription(e.legs.find((l) => l.description)?.description) : null);
+    e.party = e.party ?? r?.party ?? null;
+  }
+  const merged = mergeEvents(events);
+
+  const actorIds = [...new Set(merged.filter((e) => !e.actorName && e.actorUserId).map((e) => e.actorUserId as string))];
+  const names = new Map<string, string>();
+  for (let i = 0; i < actorIds.length; i += 200) {
+    const part = actorIds.slice(i, i + 200);
+    try {
+      const u = await db.prepare(`SELECT id, displayName FROM users WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all<Record<string, unknown>>();
+      for (const x of u.results ?? []) {
+        const nm = String(x.displayName ?? x.display_name ?? "").trim();
+        if (nm) names.set(String(x.id), nm);
+      }
+    } catch { /* the id stays */ }
+  }
+  const coaName = new Map((coaRes.results ?? []).map((a) => [a.code, a.name] as const));
+  const rows = merged.map((e) => ({
+    id: e.id,
+    at: e.at,
+    kind: e.kind,
+    source: e.source,
+    action: e.action,
+    type: docTypeLabel(e),
+    docType: e.docType,
+    docId: e.docId,
+    reference: e.reference ?? e.docId,
+    party: e.party,
+    amountSen: e.amountSen,
+    beforeSen: e.beforeSen,
+    summary: changeSummary(e),
+    who: e.actorName ?? (e.actorUserId ? names.get(e.actorUserId) ?? e.actorUserId : null),
+    legs: e.legs.map((l) => ({ ...l, accountName: coaName.get(l.accountCode) ?? "" })),
+    changes: e.source === "audit" ? fieldChanges(e.before, e.after).slice(0, 40) : [],
+  }));
+  return c.json({ success: true, data: { month: ym, from: w.from, to: w.to, rows, warnings } });
 });
 
 // ---------------------------------------------------------------------------
