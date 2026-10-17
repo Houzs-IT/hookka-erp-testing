@@ -6794,7 +6794,6 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   const [parties, setParties] = useState<OtherParty[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [form, setForm] = useState({
     type: side as "DEBTOR" | "CREDITOR",
@@ -6886,17 +6885,44 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     else toast.error(j?.error || "Failed to update party");
   };
 
-  const kw = q.trim().toLowerCase();
   const passes = (p: OtherParty, st: typeof statusFilter) => {
     if (p.type !== side) return false;
     if (st === "ACTIVE" && !p.isActive) return false;
     if (st === "INACTIVE" && p.isActive) return false;
-    if (kw && ![p.name, p.email, p.contactPerson, p.phone].some((s) => (s ?? "").toLowerCase().includes(kw))) return false;
     return true;
   };
   const visible = (parties ?? []).filter((p) => passes(p, statusFilter));
-  // Each chip counts what it would show with the search as typed.
+  // Each chip counts what it would show (free-text search is the grid's own).
   const statusCount = (st: typeof statusFilter) => (parties ?? []).filter((p) => passes(p, st)).length;
+  // The names list is the Payment Vouchers table (owner 2026-10-17): a row's
+  // actions are its right-click / ⋮ menu; double-click edits it.
+  const partyRowMenu = (p: OtherParty): RowMenuGroups => [
+    [{ label: "Edit", action: () => startEdit(p) }],
+    [{ label: p.isActive ? "Deactivate" : "Reactivate", action: () => void setActive(p.id, !p.isActive) }],
+    [{ label: "Delete", danger: true, action: () => void del(p) }],
+  ];
+  const partyColumns = useMemo<Column<OtherParty>[]>(() => [
+    {
+      key: "name", label: "Name", width: "240px", noFilter: true,
+      render: (_v, p) => <span className="block leading-tight"><span className="text-[#1F1D1B] font-medium">{p.name}</span>{p.address ? <span className="block text-[11px] font-normal text-[#9CA3AF]">{p.address}</span> : null}</span>,
+    },
+    {
+      key: "tin", label: "TIN / Reg No", width: "170px",
+      filterAccessor: (p) => [p.tin, p.registrationNo].filter(Boolean).join(" / "), exportValue: (p) => [p.tin, p.registrationNo].filter(Boolean).join(" / "),
+      render: (_v, p) => <span className="text-[#6B7280] text-xs tabular-nums">{[p.tin, p.registrationNo].filter(Boolean).join(" / ")}</span>,
+    },
+    { key: "contactPerson", label: "Contact", width: "150px" },
+    { key: "email", label: "Email", width: "200px", render: (_v, p) => <span className="text-[#6B7280] text-xs">{p.email}</span> },
+    { key: "phone", label: "Phone", width: "140px" },
+    { key: "notes", label: "Notes", width: "200px", render: (_v, p) => <span className="text-[#6B7280] text-xs">{p.notes}</span> },
+    {
+      key: "isActive", label: "Status", width: "100px",
+      filterAccessor: (p) => (p.isActive ? "Active" : "Inactive"), exportValue: (p) => (p.isActive ? "Active" : "Inactive"),
+      render: (_v, p) => (p.isActive
+        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-[#E7F0E3] text-[#27500A]">Active</span>
+        : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-[#F3F4F6] text-[#6B7280]">Inactive</span>),
+    },
+  ], []);
   const mine = (parties ?? []).filter((p) => p.type === side);
   const newParty = () => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "", sstRegNo: "", currency: "MYR", bankAccount: "" }); setShowForm(!showForm); };
 
@@ -6917,16 +6943,6 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
           { label: side === "DEBTOR" ? "Other debtors" : "Other creditors", value: parties === null ? "—" : String(mine.length), note: `${mine.filter((p) => p.isActive).length} active` },
         ]}
       />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <SegmentedChips
-          options={PARTY_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
-          value={statusFilter}
-          onChange={setStatusFilter}
-        />
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / email / contact" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-        <span className="ml-auto text-xs text-[#6B7280]">{visible.length} shown</span>
-      </div>
 
       {showForm && (
         <Card>
@@ -6977,54 +6993,31 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
       )}
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {parties === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : visible.length === 0 ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">No parties yet — add transporters, deposit holders, staff advances…</div>
-          ) : (
-            <table data-fin-list className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-4 py-2 text-left">Type</th>
-                  <th className="px-4 py-2 text-left">Name</th>
-                  <th className="px-4 py-2 text-left">TIN / Reg No</th>
-                  <th className="px-4 py-2 text-left">Contact</th>
-                  <th className="px-4 py-2 text-left">Email</th>
-                  <th className="px-4 py-2 text-left">Phone</th>
-                  <th className="px-4 py-2 text-left">Notes</th>
-                  <th className="px-4 py-2 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((p) => (
-                  <tr key={p.id} className={`border-b border-[#F0ECE9] ${p.isActive ? "" : "opacity-50"}`}>
-                    <td className="px-4 py-1.5">
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${p.type === "DEBTOR" ? "bg-[#E6F1FB] text-[#0C447C] border-[#B5D4F4]" : "bg-[#FAEEDA] text-[#633806] border-[#FAC775]"}`}>
-                        {p.type === "DEBTOR" ? "Other Debtor" : "Other Creditor"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-1.5 text-[#1F1D1B] font-medium">{p.name}{p.address ? <span className="block text-[11px] font-normal text-[#9CA3AF]">{p.address}</span> : null}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280] text-xs tabular-nums">{[p.tin, p.registrationNo].filter(Boolean).join(" / ")}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280]">{p.contactPerson}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280] text-xs">{p.email}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280]">{p.phone}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280] text-xs">{p.notes}</td>
-                    <td className="px-4 py-1.5 text-right">
-                      <button onClick={() => startEdit(p)} className="text-[#6B5C32] hover:underline text-xs mr-3">Edit</button>
-                      <button onClick={() => del(p)} className="text-[#9A3A2D] hover:underline text-xs mr-3">Delete</button>
-                      <button
-                        onClick={() => setActive(p.id, !p.isActive)}
-                        className={`text-xs underline decoration-dotted cursor-pointer ${p.isActive ? "text-[#9A3A2D]" : "text-[#4F7C3A]"}`}
-                      >
-                        {p.isActive ? "Deactivate" : "Reactivate"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={partyColumns}
+            data={visible}
+            keyField="id"
+            gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-parties`}
+            onDoubleClick={startEdit}
+            contextMenuItems={(p) => rowMenuItems(partyRowMenu(p))}
+            rowClassName={(p) => (p.isActive ? "" : "opacity-50")}
+            toolbarStart={
+              <SegmentedChips
+                options={PARTY_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+                value={statusFilter}
+                onChange={setStatusFilter}
+              />
+            }
+            searchPlaceholder="Search name / email / contact"
+            alwaysSearchKeys={["name", "email", "contactPerson", "phone"]}
+            headerMenu
+            reorderableHeaders
+            exportName={side === "CREDITOR" ? "Other Creditors" : "Other Debtors"}
+            emptyMessage="No parties yet — add transporters, deposit holders, staff advances…"
+            loading={parties === null}
+            maxHeight="calc(100vh - 320px)"
+          />
         </CardContent>
       </Card>
     </div>

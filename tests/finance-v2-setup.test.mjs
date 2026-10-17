@@ -61,8 +61,10 @@ test("Opening Balance: Post on the title row with the same guard and label; the 
 test("Audit Log: no repeated heading; the list in the v2 look; Unvoid unchanged", () => {
   const al = read("src/pages/accounting/tabs/AuditLogTab.tsx");
   assert.doesNotMatch(al, /<h2[^>]*>Audit Log<\/h2>/);
-  assert.match(al, /<table data-fin-list className="w-full text-sm">/);
-  assert.match(al, /onClick=\{\(\) => unvoid\(r\)\}/);
+  // The PV-table grid since 2026-10-17; Unvoid is the row menu and double-click.
+  assert.match(al, /gridId="accounting-audit-log"/);
+  assert.match(al, /contextMenuItems=\{\[\{ label: "Unvoid — restore and repost", action: \(r: AuditRow\) => void unvoid\(r\) \}\]\}/);
+  assert.match(al, /onDoubleClick=\{\(r\) => void unvoid\(r\)\}/);
 });
 
 test("Settings: Document Numbering and Landed Cost lists in the v2 look; their buttons stay in their cards", () => {
