@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
+import { KpiCards, SegmentedSwitch } from "@/components/finance/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -15,7 +16,6 @@ import {
   XCircle,
   FileText,
   Code,
-  BarChart3,
   RefreshCw,
   Ban,
 } from "lucide-react";
@@ -286,80 +286,30 @@ export default function EInvoicePage() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-[#E2DDD8] overflow-x-auto">
-        {(
-          [
-            { id: "dashboard" as TabId, label: "Dashboard", icon: BarChart3 },
-            { id: "generate" as TabId, label: "Generate e-Invoice", icon: FileText },
-            { id: "xml" as TabId, label: "XML Preview", icon: Code },
-          ] as const
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab.id
-                ? "border-[#6B5C32] text-[#6B5C32]"
-                : "border-transparent text-[#6B7280] hover:text-[#1F1D1B]"
-            }`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            <tab.icon className="h-4 w-4" />
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs (finance v2: the switch; Generate counts what is ready) */}
+      <SegmentedSwitch
+        label="e-Invoice view"
+        options={[
+          { key: "dashboard", label: "Dashboard" },
+          { key: "generate", label: availableInvoices.length ? `Generate e-Invoice · ${availableInvoices.length}` : "Generate e-Invoice" },
+          { key: "xml", label: "XML Preview" },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* Tab 1: Dashboard */}
       {activeTab === "dashboard" && (
         <>
-          {/* KPI Cards */}
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-4">
-            <Card>
-              <CardContent className="p-2.5 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280]">Submitted (MTD)</p>
-                  <p className="text-xl font-bold text-[#1F1D1B]">
-                    {submittedMTD}
-                  </p>
-                </div>
-                <Send className="h-5 w-5 text-[#6B5C32]" />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-2.5 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280]">Validated</p>
-                  <p className="text-xl font-bold text-[#4F7C3A]">
-                    {validCount}
-                  </p>
-                </div>
-                <CheckCircle2 className="h-5 w-5 text-[#4F7C3A]" />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-2.5 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280]">Pending</p>
-                  <p className="text-xl font-bold text-[#9C6F1E]">
-                    {pendingCount}
-                  </p>
-                </div>
-                <Clock className="h-5 w-5 text-[#9C6F1E]" />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-2.5 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280]">Invalid / Rejected</p>
-                  <p className="text-xl font-bold text-[#9A3A2D]">
-                    {invalidCount}
-                  </p>
-                </div>
-                <AlertTriangle className="h-5 w-5 text-[#9A3A2D]" />
-              </CardContent>
-            </Card>
-          </div>
+          {/* KPI Cards (finance v2: same four figures) */}
+          <KpiCards
+            items={[
+              { label: "Submitted (MTD)", value: String(submittedMTD) },
+              { label: "Validated", value: String(validCount), tone: "ok" },
+              { label: "Pending", value: String(pendingCount), tone: "warn" },
+              { label: "Invalid / Rejected", value: String(invalidCount), tone: "err" },
+            ]}
+          />
 
           {/* Recent Submissions Table */}
           <Card>
@@ -380,7 +330,7 @@ export default function EInvoicePage() {
                   className="overflow-auto"
                   style={{ maxHeight: "calc(100vh - 340px)" }}
                 >
-                  <table className="w-full text-sm">
+                  <table data-fin-list className="w-full text-sm">
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
                         <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
@@ -415,7 +365,7 @@ export default function EInvoicePage() {
                         return (
                           <>
                             {padTop > 0 && (
-                              <tr aria-hidden="true">
+                              <tr aria-hidden="true" data-fin-nolift="">
                                 <td colSpan={6} style={{ height: padTop, padding: 0, border: 0 }} />
                               </tr>
                             )}
@@ -497,7 +447,7 @@ export default function EInvoicePage() {
                               );
                             })}
                             {padBottom > 0 && (
-                              <tr aria-hidden="true">
+                              <tr aria-hidden="true" data-fin-nolift="">
                                 <td colSpan={6} style={{ height: padBottom, padding: 0, border: 0 }} />
                               </tr>
                             )}
@@ -545,7 +495,7 @@ export default function EInvoicePage() {
                 className="overflow-auto"
                 style={{ maxHeight: "calc(100vh - 340px)" }}
               >
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <thead className="sticky top-0 z-10">
                     <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
                       <th className="py-3 px-4 text-left">
@@ -589,7 +539,7 @@ export default function EInvoicePage() {
                       return (
                         <>
                           {padTop > 0 && (
-                            <tr aria-hidden="true">
+                            <tr aria-hidden="true" data-fin-nolift="">
                               <td colSpan={6} style={{ height: padTop, padding: 0, border: 0 }} />
                             </tr>
                           )}
@@ -635,7 +585,7 @@ export default function EInvoicePage() {
                             );
                           })}
                           {padBottom > 0 && (
-                            <tr aria-hidden="true">
+                            <tr aria-hidden="true" data-fin-nolift="">
                               <td colSpan={6} style={{ height: padBottom, padding: 0, border: 0 }} />
                             </tr>
                           )}

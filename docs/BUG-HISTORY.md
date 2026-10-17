@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-306 flipped to 🟢 after the #937 prod check (branch `feat/finance-v2-einvoice`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-306 (branch `fix/ap-invoices-cancelled-outstanding`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-305 flipped to 🟢 after the #927 prod check (branch `feat/finance-v2-reports-5`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-305 (branch `feat/finance-v2-reports-4`, to main; 304 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
@@ -128,9 +129,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-306 — AP Invoices counted cancelled documents as outstanding `accounting` `reports` 🟡
+## BUG-2026-10-17-306 — AP Invoices counted cancelled documents as outstanding `accounting` `reports` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Shipped and verified** (#937, 4243e19c). Prod check 2026-10-17 (read-only): the All view's "677 shown · outstanding" now equals the Open · all card to the sen, none of the 35 cancelled rows owes anything in the API, and their Outstanding cells read "—".
 
 **Symptom.** Found 2026-10-17 in the finance v2 prod check of AP Invoices (#936). The default All view's "N shown · outstanding" line sat above the "Open · all" card by the face value of every cancelled document. On prod that was 1 voided AP bill and 34 cancelled purchase invoices. Each of those rows also showed its face amount in the Outstanding column. The cards were right because they count OPEN rows only. The line predates finance v2: before, it read "Shown outstanding".
 

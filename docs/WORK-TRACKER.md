@@ -1,4 +1,7 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: BUG-2026-10-17-306 (#937) prod-verified; plan 5 closed.
+> **Last verified: 2026-10-17**: finance v2 plan 5 part B (#936) prod-verified (entry items 2–4).
+> **Last verified: 2026-10-17**: branch `feat/finance-v2-einvoice` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 (found in the plan 5 part B prod check) added to the plan 5 entry, branch `fix/ap-invoices-cancelled-outstanding`.
 > **Last verified: 2026-10-17**: finance v2 plan 5 part A (#935) prod-verified; part B (Tasks 2–3) added to its entry, branch `feat/finance-v2-debtors-creditors-b`.
 > **Last verified: 2026-10-17**: the owner's three answers (#934) prod-verified; plan 4 closed; branch `feat/finance-v2-debtors-creditors` (to `main`) added below (its entry is the newest).
@@ -201,15 +204,22 @@ design/mobile-home-dashboard
 
 
 
-## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 5: Debtors / Creditors, look only (owner「继续做」; the five open questions for this group are not built)(branch `feat/finance-v2-debtors-creditors` → `main`)
+## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-einvoice-setup.md`. Not built here (deferred or against an owner rule): e-Invoice submission tracking, the Chart of Accounts form rework, Currency & FX monthly rates (owner chose per-document rates), Change Year End with closed-year locks, SST tax codes, adding pre-opening invoices one at a time.
+
+1. 🔵 Part A — e-Invoice: the tab strip as the v2 switch (Generate shows how many are ready), the four status figures as KPI cards, both lists in the v2 list look; the LHDN notice and every write unchanged.
+2. ⚪ Part B — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row, Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted); Settings cards keep their own buttons.
+
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 5: Debtors / Creditors, look only (owner「继续做」; the five open questions for this group are not built)(branch `feat/finance-v2-debtors-creditors` → `main`)
 
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-debtors-creditors.md`. Waiting on the owner (asked 2026-10-16), not built here: other-debtor aging inside Debtor Aging; a Next Due column; one Trade Finance row per drawdown; TIN / SST / Currency / Bank on parties; a Credit Note from a Delivery Return.
 
 1. ✅ Part A (#935 0752a29a) — Debtor / Creditor Aging: the control figures and Total outstanding as KPI cards, Recalculate counter and one download (Excel / PDF) on the title row as in the design, the aging / statement / contra / Trade Finance lists in the v2 list look (open rows and rows with inputs not lifted); on Creditor Aging the list comes first, then Trade Finance, Contra and the statement. Prod check (read-only, nothing pressed): Debtor Aging's four cards equal `/ar-control` and the aging total, its rows and every bucket total equal `/aging`, an opened debtor's document rows stay put; Creditor Aging's three cards equal `/ap-control` and the aging total, its rows and totals equal `/aging`, the blocks run list → Trade Finance → Contra → statement, and the Trade Finance table's rows and TOTAL equal `/trade-finance`; both downloads offer Excel and Print / PDF only.
-2. 🔵 Part B — AP Invoices (both buttons on the title row, the three open totals as KPI cards, the shared chips with counts, the list in the v2 look), Supplier Discount (both lists in the v2 look, rows holding inputs stay put, a note count), Other Debtors / Creditors (Add Party on the title row, the control balance and the names count as cards, status chips with counts instead of the select, the list in the v2 look; nested on the Bills page its buttons stay in the fold).
-3. 🔵 Part B — the other-party aging, bills and payments lists in the v2 list look (row menus and double-clicks unchanged; the aging total in `<tfoot>`); Credit / Debit Notes: the three summary figures as KPI cards, a caption with the count, the grid with the v2 header menu and draggable headers (columns memoised).
-4. ⚪ Part B ship and prod check (read-only: each list's rows and totals equal the API; no write pressed).
-5. 🔵 BUG-2026-10-17-306, found by the part B prod check: AP Invoices' All view counted cancelled bills / invoices as outstanding (their face amount on the row and in "N shown · outstanding"), above the Open · all card. Fix: `/ap-invoices` gives only OPEN rows an outstanding amount (branch `fix/ap-invoices-cancelled-outstanding`).
+2. ✅ Part B (#936 0e167cc2) — AP Invoices (both buttons on the title row, the three open totals as KPI cards, the shared chips with counts, the list in the v2 look), Supplier Discount (both lists in the v2 look, rows holding inputs stay put, a note count), Other Debtors / Creditors (Add Party on the title row, the control balance and the names count as cards, status chips with counts instead of the select, the list in the v2 look; nested on the Bills page its buttons stay in the fold).
+3. ✅ Part B (#936) — the other-party aging, bills and payments lists in the v2 list look (row menus and double-clicks unchanged; the aging total in `<tfoot>`); Credit / Debit Notes: the three summary figures as KPI cards, a caption with the count, the grid with the v2 header menu and draggable headers (columns memoised).
+4. ✅ Part B prod check (read-only, nothing pressed): AP Invoices — the three cards equal `/ap-invoices` totals, every chip count equals a count of the API's rows, the list shows every row, both buttons sit on the title row; Supplier Discount — the history lists the API's non-draft notes and the caption counts them; Other Creditors / Debtors — the control card equals the trial balance's 405 / 305 line, the names card and chips count the API's parties, the list shows them all, Add Party on the title row; the Bills page — the aging rows and Total outstanding equal `/other-party-aging`, the bills list shows every API bill, and opening the names fold keeps its Add Party inside the fold; the payments list shows every API row; Credit / Debit Notes — prod holds no notes (both lists empty, measured), the cards read 0, the header menu offers sort / filter / columns / layout / Excel / PDF / Print (no CSV) and closes with Esc, the headers drag.
+5. ✅ BUG-2026-10-17-306 (#937 4243e19c), found by the part B prod check: AP Invoices' All view counted cancelled bills / invoices as outstanding (their face amount on the row and in "N shown · outstanding"), above the Open · all card. Fix: `/ap-invoices` gives only OPEN rows an outstanding amount. Prod check (read-only): the All view's outstanding line equals the Open · all card; the cancelled rows read "—".
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2: the owner's three answers (「1. Hookka industries sdn Bhd 2. 可以 3. 可以」)(branch `feat/finance-v2-owner-answers` → `main`)
 
