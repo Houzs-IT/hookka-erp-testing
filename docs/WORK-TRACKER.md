@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: the owner's answers on the remaining finance v2 list logged as a new entry; item 1 in progress on branch `fix/finance-report-gap-rows`.
 > **Last verified: 2026-10-17**: items 6 (#951) and 7 (#952) prod-verified; the owner's-answers entry closed.
 > **Last verified: 2026-10-17**: item 7 (credit note from a delivery return) in progress on branch `feat/finance-v2-cn-from-return`.
 > **Last verified: 2026-10-17**: items 4 (#949) and 5 (#950) prod-verified; item 6 in progress on branch `feat/finance-v2-creditor-aging`.
@@ -218,6 +219,33 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-17 — 🔵 Finance & Forecasting v2: the rest of the design, as the owner ranked it (his answers on "还有什么没做", item by item)(shipped in parts, each to `main`)
+
+Now:
+1. 🔵 (branch `fix/finance-report-gap-rows`, BUG-2026-10-17-314) The empty strip between sections on the P&L, Monthly P&L and Cash Flow (owner's screenshot): a 10px spacer row that broke the table under NET SALES; now hidden, with the design's strong line on the next row.
+2. ⚪ Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines.
+3. ⚪ Scan Bills reads every bill in a multi-bill PDF (today only the first).
+4. ⚪ Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail).
+5. ⚪ Aging as at a chosen month-end.
+6. ⚪ A Code column on Debtor / Creditor Aging.
+7. ⚪ Debtor List / Creditor List pages (customers and other parties together).
+8. ⚪ A per-company Balance Sheet (every ledger entry has to carry its company first).
+9. ⚪ Month / Quarter / Financial Year pickers, Change Year End, closed-year locks.
+10. ⚪ A full audit log of every change.
+11. ⚪ "Add New Asset" when a payment voucher / AP Invoice uses a fixed-asset account.
+12. ⚪ WIP by production order feeding the Balance Sheet.
+13. ⚪ Daily Cash Position's TO REPAY lists Trade Finance due dates.
+14. ⚪ An Official Receipt can be edited.
+15. ⚪ The New Account form reworked (section chips, parent first, next free code) — existing accounts untouched.
+16. ⚪ Cash Book bank matching by pick list.
+17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns) — how interest is recorded to be confirmed with the owner.
+18. ⚪ To confirm with the owner: whether Monthly P&L changes its column order.
+19. ⚪ A delivery return that reads "CN issued" with no credit note behind it — fix.
+
+Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
+
+Not doing (owner): the Balance Sheet plant & machinery question; more permissions for the finance account; the payslip / employee prints (not his area).
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2: the owner's answers on the open questions (「这些都做」「1a 但是签名那边我要1b」; before that: close #849, keep the phone's Receivables)(shipped in parts, each to `main`)
 

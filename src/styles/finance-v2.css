@@ -281,6 +281,18 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 }
 
 /* Row kinds. */
+/* A break between sections is a line, not an empty strip (design rule 3,
+   "Lines, not fills, separate groups"; owner 2026-10-17 screenshot: the 10px
+   spacer row read as a hole in the table under NET SALES). The gap row stays
+   in the DOM as a marker and the row after it carries the strong line. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="gap"] {
+  display: none;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="gap"] + tr > td {
+  border-top: 1.5px solid #7A6E5E;
+}
+
 [data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sec"] > td {
   border-top: 1.5px solid #7A6E5E;
   color: #1F1D1B;

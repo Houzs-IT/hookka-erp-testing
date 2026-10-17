@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-314 (branch `fix/finance-report-gap-rows`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-312 and -313 flipped to 🟢 after the #949 prod check.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-309 to -311 flipped to 🟢 after the #948 prod check.
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-312 and -313 (branch `feat/finance-v2-party-fields`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -136,6 +137,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-314 — The P&L, Monthly P&L and Cash Flow showed an empty strip between sections `reports` `finance` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Reported by the owner 2026-10-17 with a screenshot of the P&L statement: under NET SALES the table broke for a white strip before COST OF GOODS SOLD, and "some places" showed the same. The three month-grid reports drew a 10px empty row between sections (after every subtotal), which interrupted the table's lines.
+
+**Root cause.** The report engines emit a `gap` row between sections (it also gives the Excel / PDF export its blank line), and the three on-screen renderers drew it as an empty 10px row. The Finance v2 design separates groups with a line, not an empty row.
+
+**Fix.** The gap row is kept in the DOM as a marker (`data-row="gap"`), hidden, and the row after it carries the strong 1.5px line. Exports unchanged.
+
+**Regression.** `tests/finance-report-gap-rows.test.mjs`. Class: none.
 
 ## BUG-2026-10-17-313 — The customer KYC block came back blank and its next Save wiped it `customers` 🟢
 

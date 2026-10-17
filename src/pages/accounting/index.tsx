@@ -6024,7 +6024,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
                     </tr>
                   );
                 }
-                if (r.kind === "gap") return <tr key={`gap${i}`} aria-hidden="true"><td colSpan={span} style={{ padding: 0, height: 10, border: 0 }} /></tr>;
+                if (r.kind === "gap") return <tr key={`gap${i}`} aria-hidden="true" data-row="gap"><td colSpan={span} /></tr>;
                 if (r.kind === "grandtotal" || r.kind === "total") {
                   const grand = r.kind === "grandtotal";
                   return (
@@ -6540,7 +6540,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
                     </tr>
                   );
                 }
-                if (row.kind === "gap") return <tr key={i} aria-hidden="true"><td colSpan={cols} style={{ padding: 0, height: 10, border: 0 }} /></tr>;
+                if (row.kind === "gap") return <tr key={i} aria-hidden="true" data-row="gap"><td colSpan={cols} /></tr>;
                 if (row.kind === "grandtotal" || row.kind === "total") {
                   const grand = row.kind === "grandtotal";
                   return (
@@ -17757,7 +17757,7 @@ function CashFlowTab() {
             </thead>
             <tbody>
               {visibleRows.map((r, i) => {
-                if (r.kind === "gap") return <tr key={i} aria-hidden="true"><td colSpan={cols.length + 1} style={{ padding: 0, height: 10, border: 0 }} /></tr>;
+                if (r.kind === "gap") return <tr key={i} aria-hidden="true" data-row="gap"><td colSpan={cols.length + 1} /></tr>;
                 const pad = { paddingLeft: `${14 + r.depth * 18}px` };
                 const isGroup = r.kind === "group";
                 const isOpen = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
