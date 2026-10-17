@@ -8,6 +8,7 @@ import { FinanceView } from "./FinanceView";
 import { SalesOrdersView } from "./SalesOrdersView";
 import { OperationsView } from "./OperationsView";
 import { EmployeesDashboard } from "./EmployeesDashboard";
+import { ProblemsStrip } from "./ProblemsStrip";
 import { ServiceView } from "./ServiceView";
 import { OcrView } from "./OcrView";
 import { PageHeader } from "@/components/ui/page-header";
@@ -201,6 +202,9 @@ export default function DashboardPrototypePage() {
           )}
         </div>
       </div>
+
+      {/* Today's problems: on every tab, above its content (owner 2026-10-17). */}
+      <ProblemsStrip visibleTabs={visibleTabs.map((t) => t.key)} onOpen={(t, s) => setTab(t as TabKey, s)} />
 
       {blocked && (
         <Card>

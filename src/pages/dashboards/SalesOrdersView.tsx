@@ -17,7 +17,7 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
-  TAUPE, GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
+  GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
   CHART_INK, CHART_GOLD, CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
   inPeriod, inFocus, periodLabel, type Period, widgetPeriod, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { LiveBadge } from "./dashboard-shared";
@@ -82,8 +82,6 @@ export function SalesOrdersView({
 }) {
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
   const [stateFilter, setStateFilter] = useState<string | null>(null);
-  const [skuCat, setSkuCat] = useState<string | null>(null);
-  const [skuSort, setSkuSort] = useState<"revenue" | "units">("revenue");
   const [trendShow, setTrendShow] = useState<"both" | "revenue" | "orders">("both");
   const showRev = trendShow !== "orders";
   const showOrd = trendShow !== "revenue";
@@ -240,27 +238,6 @@ export function SalesOrdersView({
     return out;
   }, [allByDay]);
 
-  // Fulfilment pipeline follows the period picker rather than showing the
-  // whole book. The feed's own `pipeline` is a book-wide aggregate, so it is
-  // used ONLY for its status ordering — the counts and values are re-summed
-  // from the orders already scoped to the selected period.
-  const pipeline = useMemo(() => {
-    const order = (data?.sales?.pipeline ?? []).map((p) => p.status);
-    const acc = new Map<string, { status: string; count: number; valueSen: number }>();
-    for (const o of scopedOrders) {
-      const st = o.status || "—";
-      const e = acc.get(st) ?? { status: st, count: 0, valueSen: 0 };
-      e.count += 1;
-      e.valueSen += o.totalSen;
-      acc.set(st, e);
-    }
-    const rank = (st: string) => {
-      const i = order.indexOf(st);
-      return i < 0 ? order.length : i;
-    };
-    return [...acc.values()].sort((a, b) => rank(a.status) - rank(b.status));
-  }, [scopedOrders, data]);
-  const pipelineMax = Math.max(1, ...pipeline.map((p) => p.count));
 
 
   // State x Category and Top SKUs follow the picker (and a clicked day), same
@@ -313,24 +290,6 @@ export function SalesOrdersView({
     return { state: top.state, pct: (top.revenueSen / attribution.total) * 100 };
   }, [donutData, attribution.total]);
 
-  // Rebuilt from the raw (state, category, sku) rows rather than from the
-  // pre-aggregated list, because a state filter has to re-sum the SKUs — an
-  // aggregate over every state cannot be narrowed to one afterwards.
-  const visibleSkus = useMemo(() => {
-    const acc = new Map<string, { sku: string; name: string; category: string; revenueSen: number; qty: number }>();
-    for (const r of stateCatRows) {
-      if (stateFilter && (r.state ?? "—") !== stateFilter) continue;
-      if (skuCat && (r.category ?? "—") !== skuCat) continue;
-      const sk = r.sku ?? "—";
-      const e = acc.get(sk) ?? { sku: sk, name: r.name ?? sk, category: r.category ?? "—", revenueSen: 0, qty: 0 };
-      e.revenueSen += r.revenueSen;
-      e.qty += r.qty;
-      acc.set(sk, e);
-    }
-    return [...acc.values()]
-      .sort((a, b) => (skuSort === "revenue" ? b.revenueSen - a.revenueSen : b.qty - a.qty))
-      .slice(0, 10);
-  }, [stateCatRows, stateFilter, skuCat, skuSort]);
 
   if (loading) {
     return <div className="py-16 text-center text-sm text-[#6B7280]">Loading…</div>;
@@ -663,37 +622,10 @@ export function SalesOrdersView({
           (they replace Sales attribution and the second customer card). */}
       <CommandCenterSections period={period} sections={["customers", "topSellers"]} />
 
-      {/* Fulfillment pipeline keeps its own row; the state/category donut
-          and Top SKUs share one split, the way the design prototype pairs
-          them — a donut beside the ranked table it filters. */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle>Fulfillment pipeline</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2.5">
-            {pipeline.length === 0 && (
-              <p className="text-xs text-[#6B7280]">No pipeline data.</p>
-            )}
-            {pipeline.map((p) => (
-              <div key={p.status} className="space-y-1">
-                <div className="flex items-baseline justify-between gap-2 text-[12.5px]">
-                  <span className="text-[#1F1D1B] truncate">{p.status}</span>
-                  <span className="tabular-nums text-[#6B7280] shrink-0">
-                    {fmtN(p.count)} · {formatCurrency(p.valueSen)}
-                  </span>
-                </div>
-                <div className="h-1.5 rounded-full bg-[#F0ECE9] overflow-hidden">
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${(p.count / pipelineMax) * 100}%`, background: TAUPE }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-      <div className="grid gap-3 xl:grid-cols-2">
+      {/* Fulfillment pipeline and Top SKUs were folded into the Command
+          Center Order Pipeline ("by status") and Top Sellers (owner
+          2026-10-17). Sales by state stays. */}
+      <div className="grid gap-3">
         <Card className="bg-white border-[#E5E0D8]">
           <CardHeader className="pb-3">
             <CardTitle>Sales by state &amp; category</CardTitle>
@@ -813,86 +745,6 @@ export function SalesOrdersView({
           </CardContent>
         </Card>
 
-        <Card className="bg-white border-[#E5E0D8]">
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <CardTitle>Top SKUs</CardTitle>
-                <p className="text-xs" style={{ color: CHART_AXIS }}>
-                  {selectedDetail ? selectedDetail.label : periodLabel(period)} · top {visibleSkus.length} · ranked by {skuSort === "revenue" ? "revenue" : "units"}
-                  {stateFilter ? " · " + stateFilter + " only" : ""}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {["All", ...attribution.categories.map((c) => c.category)].slice(0, 5).map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setSkuCat(c === "All" ? null : c)}
-                    className={
-                      "px-2 py-0.5 max-md:py-2 max-md:px-3 text-[11px] font-medium rounded-md border " +
-                      ((c === "All" ? skuCat === null : skuCat === c)
-                        ? "bg-[#2A2723] border-[#2A2723] text-white"
-                        : "bg-white border-[#E5E0D8] text-[#6B7280] hover:bg-[#F7F5F3]")
-                    }
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto" style={{ maxHeight: 300, overflowY: "auto" }}>
-              <table className="w-full text-[12.5px]">
-                <thead>
-                  <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E5E0D8,inset_0_-1px_0_#E5E0D8]">
-                    <th className="text-left px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide" style={{ color: CHART_AXIS }}>#</th>
-                    <th className="text-left px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide" style={{ color: CHART_AXIS }}>SKU</th>
-                    <th className="text-left px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide" style={{ color: CHART_AXIS }}>Category</th>
-                    {([
-                      { k: "units", label: "Units" },
-                      { k: "revenue", label: "Revenue" },
-                    ] as const).map((col) => (
-                      <th
-                        key={col.k}
-                        className="text-right px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide cursor-pointer select-none whitespace-nowrap"
-                        style={{ color: skuSort === col.k ? "#1F1D1B" : CHART_AXIS }}
-                        onClick={() => setSkuSort(col.k)}
-                      >
-                        {col.label}
-                        {skuSort === col.k ? " ▾" : ""}
-                      </th>
-                    ))}
-                    <th className="text-right px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide" style={{ color: CHART_AXIS }}>Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleSkus.map((s, i) => {
-                    const pct = attribution.total > 0 ? (s.revenueSen / attribution.total) * 100 : 0;
-                    return (
-                      <tr key={s.sku} className="border-b border-[#E5E0D8]">
-                        <td className="px-3 py-2 tabular-nums w-8" style={{ color: CHART_AXIS }}>{i + 1}</td>
-                        <td className="px-3 py-2 font-mono text-[#1F1D1B] whitespace-nowrap">{s.sku}</td>
-                        <td className="px-3 py-2 w-full" style={{ color: CHART_AXIS }}>{s.category}</td>
-                        <td className="px-3 py-2 tabular-nums text-right text-[#1F1D1B] whitespace-nowrap">{fmtN(s.qty)}</td>
-                        <td className="px-3 py-2 amount text-[#1F1D1B] whitespace-nowrap">{formatCurrency(s.revenueSen)}</td>
-                        <td className="px-3 py-2 tabular-nums text-right whitespace-nowrap" style={{ color: CHART_AXIS }}>{pct.toFixed(1)}%</td>
-                      </tr>
-                    );
-                  })}
-                  {visibleSkus.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center" style={{ color: CHART_AXIS }}>
-                        No line items.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
     </div>

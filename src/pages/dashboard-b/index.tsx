@@ -48,7 +48,20 @@ type SoStats = {
   csRevenueSen?: number;
   deliveredItemsSen?: number;
   outstandingItemsSen?: number;
+  byStatus?: Record<string, number>;
+  revenueByStatus?: Record<string, number>;
 };
+
+// Order Pipeline's "by status" rows, in the order an SO moves through them.
+const PIPELINE_STATUSES = [
+  ["CONFIRMED", "Confirmed"],
+  ["IN_PRODUCTION", "In production"],
+  ["READY_TO_SHIP", "Ready to ship"],
+  ["SHIPPED", "Shipped"],
+  ["DELIVERED", "Delivered"],
+  ["INVOICED", "Invoiced"],
+  ["ON_HOLD", "On hold"],
+] as const;
 type JobsBreakdown = {
   bedframeUnits: number;
   sofaSets: number;
@@ -1731,6 +1744,33 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                   confirmed{isMonthScoped ? ` · ${period}` : ""}.
                 </p>
               </>
+            )}
+            {/* Merged dashboard (owner 2026-10-17): the experimental
+                "Fulfillment pipeline" folded in here — where every order
+                stands right now, by status (count · value, all orders, live). */}
+            {so.byStatus && (
+              <div className="mt-4 border-t border-[#F0ECE6] pt-3">
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
+                  By status · live, all orders
+                </p>
+                {(() => {
+                  const maxN = Math.max(1, ...PIPELINE_STATUSES.map(([k]) => so.byStatus?.[k] ?? 0));
+                  return PIPELINE_STATUSES.map(([k, label]) => {
+                    const n = so.byStatus?.[k] ?? 0;
+                    if (n === 0) return null;
+                    return (
+                      <div key={k} className="flex items-center gap-3 py-1">
+                        <span className="w-24 text-xs text-[#5A5550]">{label}</span>
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#F5F2ED]">
+                          <div className="h-full rounded-full" style={{ width: `${Math.max(3, (n / maxN) * 100)}%`, background: k === "ON_HOLD" ? C_RED : C_PROD }} />
+                        </div>
+                        <span className="w-14 text-right text-[11px] tabular-nums text-[#9CA3AF]">{n.toLocaleString()} SO</span>
+                        <span className="w-28 text-right text-xs font-semibold tabular-nums text-[#1F1D1B]">{rm(so.revenueByStatus?.[k] ?? 0)}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
             )}
           </CardContent>
         </Card>
