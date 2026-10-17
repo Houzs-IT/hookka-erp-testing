@@ -168,6 +168,8 @@ type AgingDocRow = { no: string; date: string; mo: number; amountSen: number; du
 type ArAgingRow = {
   customerId: string;
   customerName: string;
+  /** The debtor code (owner 2026-10-17: a Code column on Debtor Aging). */
+  customerCode: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -179,6 +181,8 @@ type ArAgingRow = {
 type ApAgingRow = {
   supplierId: string;
   supplierName: string;
+  /** The creditor code (owner 2026-10-17: a Code column on Creditor Aging). */
+  supplierCode: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -539,8 +543,9 @@ app.get("/aging", async (c) => {
   // The suffix versions the cached shape so a snapshot built before a shape
   // change is never served: "|due" (2026-10-17) — purchase-invoice docs carry
   // their due date (Creditor Aging's Next Due); "|notes" (2026-10-17) — a
-  // credit / debit note is its own Debtor Aging line.
-  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due|notes` : "|due|notes";
+  // credit / debit note is its own Debtor Aging line; "|code" (2026-10-17) —
+  // every row carries its party's code.
+  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due|notes|code` : "|due|notes|code";
   const data = await withSnapshot(
     c.var.DB,
     {
@@ -554,6 +559,8 @@ app.get("/aging", async (c) => {
         // Credit / debit notes are their own Debtor Aging lines (a post or a
         // Back to Draft also touches its invoice, which rebuilds it anyway).
         "credit_notes", "debit_notes",
+        // A party's code shows on its row.
+        "customers", "suppliers",
         // Trade-finance section: a repayment allocation or a due-date edit
         // must rebuild the snapshot (kv_config above covers the Setup save).
         "trade_finance_draws", "trade_finance_repay_allocs",
@@ -561,7 +568,7 @@ app.get("/aging", async (c) => {
     },
     orgId,
     async () => {
-      const [invRes, piRes, cnAgRes, dnAgRes] = await Promise.all([
+      const [invRes, piRes, cnAgRes, dnAgRes, custCodeRes, supCodeRes] = await Promise.all([
         c.var.DB.prepare(
           `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
         )
@@ -603,7 +610,11 @@ app.get("/aging", async (c) => {
         c.var.DB.prepare(
           "SELECT invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'",
         ).all<Record<string, unknown>>(),
+        c.var.DB.prepare("SELECT id, code FROM customers").all<{ id: string; code: string | null }>(),
+        c.var.DB.prepare("SELECT id, code FROM suppliers").all<{ id: string; code: string | null }>(),
       ]);
+      const custCode = new Map((custCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+      const supCode = new Map((supCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
       // Issued notes per invoice — each becomes its own Debtor Aging line
       // (owner 2026-10-17), bucketed on its own date like an advance.
       const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
@@ -636,6 +647,7 @@ app.get("/aging", async (c) => {
           row = {
             customerId: i.customerId,
             customerName: i.customerName || "Unknown",
+            customerCode: custCode.get(i.customerId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -688,6 +700,7 @@ app.get("/aging", async (c) => {
           row = {
             supplierId: p.supplierId,
             supplierName: p.supplierName || "Unknown",
+            supplierCode: supCode.get(p.supplierId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -716,6 +729,7 @@ app.get("/aging", async (c) => {
           row = {
             supplierId,
             supplierName: adv.supplierName || "Unknown",
+            supplierCode: supCode.get(supplierId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -747,6 +761,7 @@ app.get("/aging", async (c) => {
           row = {
             customerId,
             customerName: adv.customerName || "Unknown",
+            customerCode: custCode.get(customerId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,

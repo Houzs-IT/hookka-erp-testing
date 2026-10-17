@@ -56,7 +56,7 @@ test("/aging documents carry the purchase invoice's due date; the cached shape i
   const api = read("src/api/routes/accounting.ts");
   assert.match(api, /type AgingDocRow = \{ no: string; date: string; mo: number; amountSen: number; due\?: string \};/);
   assert.match(api, /amountSen: outstanding,\n\s*due: String\(p\.dueDate \?\? ""\)\.slice\(0, 10\),/);
-  assert.match(api, /const cacheKey = coFilter\.active \? `company:\$\{coFilter\.orgId\}\|due\|notes` : "\|due\|notes";/);
+  assert.match(api, /const cacheKey = coFilter\.active \? `company:\$\{coFilter\.orgId\}\|due\|notes\|code` : "\|due\|notes\|code";/);
 });
 
 test("Creditor Aging: three sections in the design's order, Trade Finance by due date, the Next Due cell, the cards", () => {

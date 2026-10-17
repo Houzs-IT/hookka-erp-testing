@@ -21,6 +21,8 @@ export type AgingExportDoc = {
 
 export type AgingExportParty = {
   name: string;
+  /** The party's code, printed before its name (owner 2026-10-17). */
+  code?: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -80,19 +82,20 @@ function pushParty(aoa: AgingAoa, p: AgingExportParty, sum: number[]): void {
   buckets.forEach((v, i) => { sum[i] += v; });
   const total = buckets.reduce((s, v) => s + v, 0);
   const docs = p.docs ?? [];
+  const label = p.code ? `${p.code}  ${p.name}` : p.name;
   if (docs.length === 0) {
     // Defensive: a party with no doc detail exports as a single line.
-    aoa.push([p.name, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
+    aoa.push([label, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
     return;
   }
-  aoa.push([p.name, "", "", "", "", "", "", "", ""]);
+  aoa.push([label, "", "", "", "", "", "", "", ""]);
   for (const d of docs) {
     const cells: (string | number)[] = ["", "", "", "", ""];
     const b = Math.min(Math.max(Math.round(d.mo) || 0, 0), 4);
     cells[b] = rm(d.amountSen);
     aoa.push(["", d.date, d.no, ...cells, rm(d.amountSen)]);
   }
-  aoa.push([`${p.name} — Total`, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
+  aoa.push([`${label} — Total`, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
 }
 
 const grandRow = (grand: number[]): (string | number)[] =>
