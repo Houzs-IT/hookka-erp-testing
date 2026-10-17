@@ -160,6 +160,24 @@ body:has([data-fin-ui]) {
   font-weight: 600;
 }
 
+/* A list whose first column stays put when its months scroll sideways
+   (the Financial Dashboard's tables): data-fin-stick. A row's own colour
+   carries into the pinned cell; a plain row's pinned cell is white. */
+[data-fin-ui] table[data-fin-list][data-fin-stick] > thead > tr > th:first-child,
+[data-fin-ui] table[data-fin-list][data-fin-stick] > tbody > tr > td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+[data-fin-ui] table[data-fin-list][data-fin-stick] > tbody > tr > td:first-child {
+  background-color: inherit;
+}
+
+[data-fin-ui] table[data-fin-list][data-fin-stick] > tbody > tr:not([class*="bg-"]) > td:first-child {
+  background-color: #FFFFFF;
+}
+
 /* ── Document popups (DocDetailModal) ──────────────────────────────────────── */
 /* Each block in the popup's light body reads as a white card. */
 [data-fin-ui] [data-fin-modal-body] > * {

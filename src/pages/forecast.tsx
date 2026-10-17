@@ -10,12 +10,17 @@
 // operating expenses — classified with the SAME pnl-bucket rules (incl. the
 // owner's section-map overrides) so the forecast rows match the real report.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { TrendingUp, Plus, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useNavGuard } from "@/lib/use-nav-guard";
+import { nextCell, caretEdges, type CellPos } from "@/lib/grid-keys";
+import { forecastSnapshot } from "@/lib/forecast-snapshot";
+import { todayYmdMY } from "@/lib/utils";
+import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { pnlBucketFor } from "@/lib/pnl-bucket";
 import { monthHasDeptForecast, forecastEntryKind } from "@/lib/salary-dept";
 // One money parser. NOTE `strToBp` below is a PERCENTAGE and deliberately
@@ -60,11 +65,16 @@ function AmountInput({
   onChange,
   placeholder,
   className,
+  col,
+  onKeyDown,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   className?: string;
+  /** The sheet column this box sits in (finance v2 keyboard movement). */
+  col?: number;
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   const [focused, setFocused] = useState(false);
   return (
@@ -79,6 +89,8 @@ function AmountInput({
       }}
       onBlur={() => setFocused(false)}
       onChange={(e) => onChange(e.target.value.replace(/,/g, ""))}
+      onKeyDown={onKeyDown}
+      data-fc-col={col}
       className={className}
     />
   );
@@ -98,7 +110,8 @@ export default function ForecastPage() {
   const [months, setMonths] = useState<Record<string, MonthState>>({});
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [newYm, setNewYm] = useState("");
+  // The sheet as last loaded or saved (finance v2 unsaved-changes guard).
+  const [savedSnap, setSavedSnap] = useState<string | null>(null);
   // Owner 2026-07-29: parent sections collapse, and lines with no figure in
   // ANY month hide once saved data exists (toggle reveals them for keying —
   // a line stays visible the moment it carries a number, and totals always
@@ -143,6 +156,7 @@ export default function ForecastPage() {
           next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct };
         }
         setMonths(next);
+        setSavedSnap(forecastSnapshot(next));
         // Dept row list = departments master ∪ departments already keyed in
         // the saved blob (a keyed dept must never vanish from the grid). The
         // endpoint classifies each dept by its labour-map account's bucket;
@@ -280,8 +294,7 @@ export default function ForecastPage() {
   const setSales = (ym: string, v: string) =>
     setMonths((prev) => ({ ...prev, [ym]: { ...prev[ym], salesStr: v } }));
 
-  const addMonth = () => {
-    const ym = newYm;
+  const addMonth = (ym: string) => {
     if (!/^\d{4}-\d{2}$/.test(ym)) {
       toast.error("Pick a month first");
       return;
@@ -295,15 +308,57 @@ export default function ForecastPage() {
     const prevYm = [...yms].filter((k) => k < ym).pop() ?? [...yms].pop();
     const inherited = prevYm ? { ...months[prevYm].pct } : {};
     setMonths((prev) => ({ ...prev, [ym]: { salesStr: "", pct: inherited } }));
-    setNewYm("");
   };
 
-  const removeMonth = (ym: string) =>
+  const { confirm } = useConfirm();
+  const removeMonth = async (ym: string) => {
+    if (!(await confirm({ title: "Remove month?", message: `Remove ${monthLabel(ym)} from the forecast? It goes when you Save.`, danger: true }))) return;
     setMonths((prev) => {
       const next = { ...prev };
       delete next[ym];
       return next;
     });
+  };
+  // The month control (finance v2: picking a month adds it): a year back to a
+  // year and a half ahead of today, without the months already on the sheet.
+  const monthChoices = useMemo(() => {
+    const [y0, m0] = todayYmdMY().slice(0, 7).split("-").map(Number);
+    const out: string[] = [];
+    for (let k = -12; k <= 18; k++) {
+      const t = y0 * 12 + (m0 - 1) + k;
+      const ym = `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
+      if (!months[ym]) out.push(ym);
+    }
+    return out;
+  }, [months]);
+  // Unsaved changes: the sheet differs from what was last loaded or saved.
+  const snap = useMemo(() => forecastSnapshot(months), [months]);
+  const dirty = loaded && savedSnap !== null && snap !== savedSnap;
+  useNavGuard(dirty, "You have unsaved forecast changes. Leave without saving?");
+  // Arrow keys and Enter move between the keyed boxes (finance v2). Up / Down
+  // never nudge a number; Left / Right move only from the edge of the text.
+  const onCellKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault();
+    const el = e.currentTarget;
+    const table = el.closest("table");
+    const tr = el.closest("tr");
+    if (!table || !tr) return;
+    const rowsEls = [...table.querySelectorAll<HTMLTableRowElement>("tbody > tr")].filter((r) => r.querySelector("input[data-fc-col]"));
+    const cols = yms.length * 2;
+    const caret = caretEdges(el);
+    let pos: CellPos | null = { row: rowsEls.indexOf(tr), col: Number(el.dataset.fcCol) };
+    for (let step = 0; step < rowsEls.length + cols; step++) {
+      pos = nextCell(pos, e.key, caret, rowsEls.length, cols);
+      if (!pos) return;
+      const target = rowsEls[pos.row]?.querySelector<HTMLInputElement>(`input[data-fc-col="${pos.col}"]`);
+      if (target) {
+        e.preventDefault();
+        target.focus();
+        target.select();
+        return;
+      }
+    }
+  };
 
   // Every money cell on the sheet, labelled by month + account, so a refusal
   // can point at the one that cannot be read.
@@ -340,7 +395,7 @@ export default function ForecastPage() {
         body: JSON.stringify({ months: payload }),
       });
       const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
-      if (res.ok && j?.success) toast.success("Forecast saved");
+      if (res.ok && j?.success) { toast.success("Forecast saved"); setSavedSnap(snap); }
       else toast.error(j?.error || "Couldn't save the forecast — please try again.");
     } catch {
       toast.error("Couldn't save the forecast — connection hiccup, please try again.");
@@ -354,6 +409,7 @@ export default function ForecastPage() {
   // (RM 3,000 on 50,000 sales → % box hints 6.0; 10% → RM box hints 5,000.00).
   const cellInputs = (ym: string, code: string) => {
     const e = months[ym]?.pct[code] ?? {};
+    const ci = yms.indexOf(ym);
     const c = calc(ym);
     // A dept-mode month owns these wages in its department rows — the mapped
     // account's cell goes quiet instead of silently not counting.
@@ -373,23 +429,27 @@ export default function ForecastPage() {
     const derivedAmt = pctKeyed ? (c.amt(code) / 100).toFixed(2) : "";
     return (
       <span className="inline-flex items-center justify-end gap-1">
-        <span className={`${AMT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-white px-1`}>
+        <span className={`${AMT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1`}>
           <span className="text-[10px] text-[#9CA3AF] mr-0.5">RM</span>
           <AmountInput
+            col={ci * 2}
+            onKeyDown={onCellKey}
             value={e.a ?? ""}
             onChange={(v) => setAmtStr(ym, code, v)}
             placeholder={derivedAmt ? group(derivedAmt) : "-"}
-            className="w-full min-w-0 py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
+            className="w-full min-w-0 bg-transparent py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
           />
         </span>
-        <span className={`${PCT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-white px-1`}>
+        <span className={`${PCT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1`}>
           <input
             type="number"
             step="0.01"
+            data-fc-col={ci * 2 + 1}
+            onKeyDown={onCellKey}
             value={e.p ?? ""}
             onChange={(ev) => setPctStr(ym, code, ev.target.value)}
             placeholder={derivedPct || "-"}
-            className="w-full min-w-0 py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
+            className="w-full min-w-0 bg-transparent py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
           />
           <span className="text-[10px] text-[#9CA3AF] ml-0.5">%</span>
         </span>
@@ -410,10 +470,7 @@ export default function ForecastPage() {
   );
   const acctRow = (a: CoaAcct, indent = true) => (
     <tr key={a.code} className="border-b border-[#F0ECE9]">
-      <td className={`px-3 py-1 sticky left-0 bg-white whitespace-nowrap ${indent ? "pl-7" : ""}`}>
-        {!a.code.startsWith("cat:") && (
-          <span className="tabular-nums text-[11px] text-[#9CA3AF] mr-1.5">{a.code}</span>
-        )}
+      <td className={`px-3 py-1 sticky left-0 bg-white whitespace-nowrap ${indent ? "pl-7" : ""}`} title={a.code.startsWith("cat:") ? undefined : a.code}>
         <span className="text-[#1F1D1B]">{a.name}</span>
       </td>
       {yms.map((ym) => (
@@ -440,7 +497,7 @@ export default function ForecastPage() {
           <td className="px-3 py-1.5 sticky left-0 bg-[#F7F4EF] whitespace-nowrap">
             <button
               onClick={() => setCollapsed((p) => ({ ...p, [key]: open }))}
-              className="text-[11px] font-semibold text-[#6B5C32] cursor-pointer inline-flex items-center gap-1"
+              className="text-[13px] font-semibold text-[#6B5C32] cursor-pointer inline-flex items-center gap-1"
             >
               {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               {title}
@@ -489,15 +546,17 @@ export default function ForecastPage() {
           explain="Planning only — nothing here touches the books. Key the sales per month; every line is a % of sales; a new month starts with the previous month's percentages."
         />
         <div className="ml-auto flex items-center gap-2">
-          <input
-            type="month"
-            value={newYm}
-            onChange={(e) => setNewYm(e.target.value)}
-            className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm"
-          />
-          <Button variant="outline" size="sm" onClick={addMonth}>
-            <Plus className="h-4 w-4 mr-1" /> Add month
-          </Button>
+          {/* Finance v2: one control — picking a month adds it (it starts
+              from the previous month's percentages, as before). */}
+          <select
+            aria-label="Add month"
+            value=""
+            onChange={(e) => { if (e.target.value) addMonth(e.target.value); }}
+            className="h-8 rounded-lg border border-[#D9D3CA] bg-white px-2.5 text-[12.5px] font-semibold text-[#1F1D1B]"
+          >
+            <option value="">+ Add month…</option>
+            {monthChoices.map((ym) => <option key={ym} value={ym}>{monthLabel(ym)}</option>)}
+          </select>
           <Button variant="outline" size="sm" onClick={() => setShowEmpty((v) => !v)} title="Lines without a figure hide once saved — toggle to key new ones">
             {showEmpty ? <EyeOff className="h-4 w-4 mr-1" /> : <Eye className="h-4 w-4 mr-1" />}
             {showEmpty ? "Hide empty lines" : "Show empty lines"}
@@ -508,6 +567,16 @@ export default function ForecastPage() {
         </div>
       </div>
 
+      {dirty && (
+        <div data-fin-banner="todo" className="flex min-h-10 flex-wrap items-center gap-2.5 rounded-[10px] border border-[#E9D9B4] bg-[#FBF6EC] px-3.5 py-2.5">
+          <span className="text-[13px] font-bold text-[#7A5B12]">You have unsaved changes</span>
+          <span className="text-[12px] text-[#4B5563]">Save keeps them; leaving the page asks first.</span>
+          <Button size="sm" className="ml-auto" onClick={save} disabled={saving}>
+            <Save className="h-4 w-4 mr-1" /> {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
+
       {!loaded ? (
         <Card>
           <CardContent className="py-12 text-center text-[#6B7280] text-sm">Loading…</CardContent>
@@ -515,7 +584,7 @@ export default function ForecastPage() {
       ) : yms.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-[#6B7280] text-sm">
-            No forecast months yet — pick a month above and press <strong>Add month</strong> to start.
+            No forecast months yet — pick a month in <strong>+ Add month…</strong> above to start.
           </CardContent>
         </Card>
       ) : (
@@ -530,8 +599,8 @@ export default function ForecastPage() {
                       <div className="flex items-center justify-end gap-2">
                         <span className="text-sm font-bold text-[#1F1D1B] tracking-wide">{monthLabel(ym)}</span>
                         <button
-                          onClick={() => removeMonth(ym)}
-                          title="Remove this month (takes effect on Save)"
+                          onClick={() => void removeMonth(ym)}
+                          title="Remove this month (asks first; takes effect on Save)"
                           className="text-[#9A3A2D] hover:text-[#791F1F] cursor-pointer"
                         >
                           <X className="h-3.5 w-3.5 inline" />
@@ -555,10 +624,12 @@ export default function ForecastPage() {
                           reads continuously from the very first row. */}
                       <span className="inline-flex items-center justify-end gap-1">
                         <AmountInput
+                          col={yms.indexOf(ym) * 2}
+                          onKeyDown={onCellKey}
                           value={months[ym]?.salesStr ?? ""}
                           onChange={(v) => setSales(ym, v)}
                           placeholder="0.00"
-                          className={`${AMT_SLOT} rounded border border-[#E2DDD8] px-2 py-0.5 text-right tabular-nums`}
+                          className={`${AMT_SLOT} rounded border border-[#E2DDD8] bg-[#FFFBF2] px-2 py-0.5 text-right tabular-nums`}
                         />
                         <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
                           {(months[ym]?.salesStr ?? "") === "" ? "-" : "100.00%"}
@@ -575,7 +646,7 @@ export default function ForecastPage() {
                 {lines.labourAccounts.some((a) => rowHasData(a.code)) && (
                   <>
                     <tr className="bg-[#F7F4EF] border-b border-[#E2DDD8]">
-                      <td className="px-3 py-1.5 sticky left-0 bg-[#F7F4EF] whitespace-nowrap text-[11px] font-semibold text-[#6B5C32]">
+                      <td className="px-3 py-1.5 sticky left-0 bg-[#F7F4EF] whitespace-nowrap text-[13px] font-semibold text-[#6B5C32]">
                         DIRECT LABOUR — ACCOUNT-KEYED (legacy)
                       </td>
                       {yms.map((ym) => {
@@ -596,8 +667,7 @@ export default function ForecastPage() {
                     </tr>
                     {lines.labourAccounts.filter((a) => rowHasData(a.code)).map((a) => (
                       <tr key={a.code} className="border-b border-[#F0ECE9]">
-                        <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7">
-                          <span className="tabular-nums text-[11px] text-[#9CA3AF] mr-1.5">{a.code}</span>
+                        <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7" title={a.code}>
                           <span className="text-[#1F1D1B]">{a.name}</span>
                         </td>
                         {yms.map((ym) => (
