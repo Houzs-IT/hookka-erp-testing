@@ -17258,9 +17258,31 @@ app.get("/cash-position", async (c) => {
     state: String(v.approvalState ?? v.approval_state ?? "DRAFT") as "DRAFT" | "PREPARED" | "CHECKED",
   }));
   const awaitingCheckedSen = awaitingApproval.filter((v) => v.state === "CHECKED").reduce((s, v) => s + v.amountSen, 0);
+  // Trade finance to repay, by due date (owner 2026-10-17, Finance v2): every
+  // draw still owed — the same draws Creditor Aging's Trade Finance section
+  // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
+  const tradeFinance: { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number }[] = [];
+  try {
+    for (const s of await getTfSources(c.var.DB)) {
+      const derived = await loadTfDraws(c.var.DB, s);
+      for (const d of derived.draws) {
+        if (d.outstandingSen <= 0) continue;
+        let paidFor = "";
+        try {
+          const rs = await c.var.DB.prepare("SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?")
+            .bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
+          paidFor = [...new Set((rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean))].join(", ");
+        } catch { /* leave blank */ }
+        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender: s.lenderName, ref: d.drawSourceId, paidFor, outstandingSen: d.outstandingSen });
+      }
+    }
+  } catch {
+    /* trade finance not set up → nothing to repay there */
+  }
+  tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, tradeFinance },
   });
 });
 

@@ -122,7 +122,7 @@ export function CashScreen() {
                 </span>
               </div>
               <div style={{ fontSize: 11, color: M.faint, textAlign: "right" }}>
-                − to repay {fmtMoney(totals.repayShownSen)} + to receive {fmtMoney(totals.recvShownSen)}
+                − to repay {fmtMoney(totals.repayShownSen)}{totals.tfShownSen ? ` − trade finance ${fmtMoney(totals.tfShownSen)}` : ""} + to receive {fmtMoney(totals.recvShownSen)}
               </div>
             </MobileCard>
 

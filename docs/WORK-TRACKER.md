@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: item 19 follow-up merged (#959); item 13 in progress on branch `feat/cash-position-tf-due`.
 > **Last verified: 2026-10-17**: item 3 merged (#958); item 19 follow-up on branch `fix/delivery-return-cn-blocked`.
 > **Last verified: 2026-10-17**: item 2 prod-checked read-side (#955); item 19 merged (#956); item 3 in progress on branch `feat/ocb-scan-every-bill`.
 > **Last verified: 2026-10-17**: item 19 in progress on branch `fix/delivery-return-cn-status`.
@@ -239,13 +240,13 @@ Now:
 10. ⚪ A full audit log of every change.
 11. ⚪ "Add New Asset" when a payment voucher / AP Invoice uses a fixed-asset account.
 12. ⚪ WIP by production order feeding the Balance Sheet.
-13. ⚪ Daily Cash Position's TO REPAY lists Trade Finance due dates.
+13. 🔵 (branch `feat/cash-position-tf-due`) Daily Cash Position's TO REPAY lists Trade Finance due dates. Each draw still owed (as Creditor Aging lists them) under TO REPAY, due by month end by default ⇄ all; "Cash after repay & receive" takes it off — desktop, share image and phone alike.
 14. ⚪ An Official Receipt can be edited.
 15. ⚪ The New Account form reworked (section chips, parent first, next free code) — existing accounts untouched.
 16. ⚪ Cash Book bank matching by pick list.
 17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns). Owner 2026-10-17: interest is recorded at drawdown (「提款时就记」).
 18. ✅ Monthly P&L column order — owner 2026-10-17: keep it as it is, cumulative first and the newest month first (「照现在」). Nothing to build.
-19. 🔵 (#956 + branch `fix/delivery-return-cn-blocked`, BUG-2026-10-17-318, prod check pending) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when one can be raised; when the invoice is fully paid or was never raised, the page says so instead); stored data untouched. The reported return's invoice is fully paid, so a credit note cannot go against it under the current rule — the owner decides what happens to it.
+19. 🔵 (#956 + #959, BUG-2026-10-17-318, prod check pending) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when one can be raised; when the invoice is fully paid or was never raised, the page says so instead); stored data untouched. The reported return's invoice is fully paid, so a credit note cannot go against it under the current rule — the owner decides what happens to it.
 
 Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
 

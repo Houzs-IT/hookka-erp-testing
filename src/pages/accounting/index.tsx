@@ -102,7 +102,7 @@ import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
 import { FinPill } from "@/components/finance/pill";
 import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus, type FinTone } from "@/lib/finance-daily";
-import { drawCashPositionImage } from "@/lib/cash-position-image";
+import { drawCashPositionImage, tfDueByMonthEnd } from "@/lib/cash-position-image";
 import { financePage } from "@/lib/finance-nav";
 import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
 import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner } from "@/components/finance/report-shell";
@@ -14100,7 +14100,66 @@ type CashPosData = {
   // Vouchers on the approval ladder, not posted yet (2026-09-22).
   awaitingApproval?: { id: string; pvNo: string; date: string; payee: string; description: string; payFrom: string; amountSen: number; state: "DRAFT" | "PREPARED" | "CHECKED" }[];
   awaitingCheckedSen?: number;
+  // Trade-finance draws still owed, by due date (2026-10-17).
+  tradeFinance?: CashPosTfRow[];
 };
+type CashPosTfRow = { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number };
+
+// Trade finance to repay, by due date (owner 2026-10-17, Finance v2 「要」):
+// every draw still owed — the same draws Creditor Aging's Trade Finance
+// section lists. Overdue in red, due within a week in amber.
+function CashPosTfPanel({ rows, date, scope, onScope }: { rows: CashPosTfRow[]; date: string; scope: boolean; onScope: (v: boolean) => void }) {
+  const total = rows.reduce((s, r) => s + r.outstandingSen, 0);
+  const daysTo = (iso: string) => Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86400000);
+  return (
+    <Card data-cash-tf="">
+      <CardContent className="p-0">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E2DDD8]">
+          <span className="text-sm font-semibold text-[#1F1D1B]">TO REPAY — Trade finance (by due date)</span>
+          <button
+            onClick={() => onScope(!scope)}
+            className="rounded-full border border-[#E2DDD8] px-2 py-0.5 text-[11px] text-[#6B7280] hover:border-[#6B5C32] cursor-pointer"
+            title="Switch scope"
+          >
+            {scope ? "Due by month end" : "All outstanding"} ⇄
+          </button>
+        </div>
+        {rows.length === 0 ? (
+          <div className="px-4 py-5 text-sm text-[#9CA3AF]">Nothing in this scope ✓</div>
+        ) : (
+          <table className="w-full text-sm">
+            <tbody>
+              {rows.map((r) => {
+                const d = r.dueDate ? daysTo(r.dueDate) : null;
+                const tone = d === null || d < 0 ? "text-[#9A3A2D]" : d <= 7 ? "text-[#9C6F1E]" : "text-[#6B7280]";
+                const when = d === null ? "no due date" : d < 0 ? `${-d} day${d === -1 ? "" : "s"} overdue` : d === 0 ? "due today" : `in ${d} day${d === 1 ? "" : "s"}`;
+                return (
+                  <tr key={r.ref} className="border-b border-[#F0ECE9]">
+                    <td className="px-4 py-1 text-xs whitespace-nowrap">
+                      <span className="tabular-nums">{r.dueDate ? formatDateDMY(r.dueDate) : "—"}</span>
+                      <span className={`ml-2 text-[10px] ${tone}`}>{when}</span>
+                    </td>
+                    <td className="px-2 py-1 text-xs w-full max-w-0">
+                      <div className="truncate" title={[r.lender, r.paidFor && `for ${r.paidFor}`, r.ref].filter(Boolean).join(" · ")}>
+                        {r.lender}{r.paidFor ? <span className="text-[#6B7280]"> · for {r.paidFor}</span> : null}
+                        <span className="ml-1 text-[10px] text-[#9CA3AF]">{r.ref}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap">{formatCurrency(r.outstandingSen)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="bg-[#F7E5E1]/60">
+                <td className="px-4 py-1.5 text-sm font-semibold" colSpan={2}>TOTAL TRADE FINANCE</td>
+                <td className="px-4 py-1.5 text-right tabular-nums font-bold whitespace-nowrap">{formatCurrency(total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // Month-grouped breakdown the owner sketched: per month → one row per party
 // → month total → grand total.
@@ -14205,6 +14264,7 @@ function DailyCashTab() {
   // customers = already due per each invoice's terms).
   const [repayAll, setRepayAll] = useState(false);
   const [recvAll, setRecvAll] = useState(false);
+  const [tfAll, setTfAll] = useState(false);
   // Planned payments: default OFF (「可以做，但我不一定会用到」).
   const [showPlanned, setShowPlanned] = useState(() => {
     try { return localStorage.getItem("cashpos-planned") === "1"; } catch { return false; }
@@ -14292,15 +14352,19 @@ function DailyCashTab() {
   // instead of "due per terms". The toggle widens to all months.
   const recvRows = (cur?.receive ?? []).filter((r) => recvAll || r.month < curMonth);
   const recvAmt = (r: CashPosPartyRow) => r.totalSen ?? 0;
+  // Trade finance (owner 2026-10-17): due by the end of the viewed month by
+  // default (overdue included); the toggle widens to every draw still owed.
+  const tfRows = (cur?.tradeFinance ?? []).filter((t) => tfAll || tfDueByMonthEnd(t, curMonth));
   const repayShownSen = repayRows.reduce((s, r) => s + repayAmt(r), 0);
   const recvShownSen = recvRows.reduce((s, r) => s + recvAmt(r), 0);
-  const netAfterSen = (cur?.totalAvailableSen ?? 0) - repayShownSen + recvShownSen;
+  const tfShownSen = tfRows.reduce((s, t) => s + t.outstandingSen, 0);
+  const netAfterSen = (cur?.totalAvailableSen ?? 0) - repayShownSen - tfShownSen + recvShownSen;
 
   // The share image is drawn from data on a canvas (src/lib/cash-position-image.ts,
   // shared with the phone's Daily Cash Position since finance v2 mobile).
   const getImage = () => {
     if (!cur) return;
-    drawCashPositionImage(cur, { netAfterSen, repayShownSen, recvShownSen })
+    drawCashPositionImage(cur, { netAfterSen, repayShownSen, recvShownSen, tfShownSen })
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         setImgPopup((old) => {
@@ -14563,14 +14627,19 @@ function DailyCashTab() {
             );
           })()}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-            <CashPosPartyPanel
-              title="TO REPAY — Suppliers & creditors"
-              rows={repayRows}
-              amountOf={repayAmt}
-              scope={!repayAll} scopeLabel="Before this month" scopeAlt="All outstanding"
-              onScope={() => setRepayAll(!repayAll)}
-              tone="pay"
-            />
+            <div className="space-y-4">
+              <CashPosPartyPanel
+                title="TO REPAY — Suppliers & creditors"
+                rows={repayRows}
+                amountOf={repayAmt}
+                scope={!repayAll} scopeLabel="Before this month" scopeAlt="All outstanding"
+                onScope={() => setRepayAll(!repayAll)}
+                tone="pay"
+              />
+              {(cur.tradeFinance?.length ?? 0) > 0 && (
+                <CashPosTfPanel rows={tfRows} date={date} scope={!tfAll} onScope={() => setTfAll(!tfAll)} />
+              )}
+            </div>
             <CashPosPartyPanel
               title="TO RECEIVE — Customers"
               rows={recvRows}
@@ -14589,14 +14658,14 @@ function DailyCashTab() {
                 <span className={`text-xl font-bold tabular-nums ${netAfterSen >= 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>{formatCurrency(netAfterSen)}</span>
               </div>
               <div className="text-[11px] text-[#9CA3AF] text-right mt-0.5">
-                = available {formatCurrency(cur.totalAvailableSen)} − to repay {formatCurrency(repayShownSen)} + to receive {formatCurrency(recvShownSen)} (current scopes)
+                = available {formatCurrency(cur.totalAvailableSen)} − to repay {formatCurrency(repayShownSen)}{tfShownSen ? ` − trade finance ${formatCurrency(tfShownSen)}` : ""} + to receive {formatCurrency(recvShownSen)} (current scopes)
               </div>
             </CardContent>
           </Card>
           <p className="text-[11px] text-[#9CA3AF]">
             Repay / Receive use the SAME rules as Creditor & Debtor Aging, grouped by invoice month; a green negative
-            row is money already received but not yet knocked to invoices. TF / loans are not included here — they live
-            on the AP tab's Trade Finance block.
+            row is money already received but not yet knocked to invoices. Trade finance lists each draw still owed by
+            its due date, as on Creditor Aging; other loans are not included.
           </p>
         </div>
       )}

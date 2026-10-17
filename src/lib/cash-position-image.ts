@@ -25,12 +25,23 @@ export type CashImageAccount = {
 };
 export type CashImageData = { date: string; accounts: CashImageAccount[]; totalAvailableSen: number };
 
-/** The bottom line under the board: available − to repay + to receive. */
-export type CashImageTotals = { netAfterSen: number; repayShownSen: number; recvShownSen: number };
+/** The bottom line under the board: available − to repay − trade finance due
+ *  + to receive. */
+export type CashImageTotals = { netAfterSen: number; repayShownSen: number; recvShownSen: number; tfShownSen: number };
+
+/** A trade-finance draw still owed, as the cash-position API sends it. */
+export type CashTfRow = { dueDate: string; outstandingSen: number };
+
+/** The default trade-finance scope (owner 2026-10-17): every draw due by the
+ *  end of the viewed month, overdue ones included. A draw with no due date
+ *  counts as due — money owed is never hidden. */
+export function tfDueByMonthEnd(row: CashTfRow, curMonth: string): boolean {
+  return !row.dueDate || row.dueDate <= `${curMonth}-31`;
+}
 
 /** Draws the board and resolves to a PNG; rejects with a short reason. */
 export function drawCashPositionImage(cur: CashImageData, totals: CashImageTotals): Promise<Blob> {
-  const { netAfterSen, repayShownSen, recvShownSen } = totals;
+  const { netAfterSen, repayShownSen, recvShownSen, tfShownSen } = totals;
   const W = 1000;
   const line = 26;
   const acctRows = cur.accounts.map((a) => ({ a, rows: pendingReceiptsFirst(a.pending.filter((p) => !p.ticked)) }));
@@ -142,7 +153,7 @@ export function drawCashPositionImage(cur: CashImageData, totals: CashImageTotal
   ctx.fillText(netTxt, W - 28 - ctx.measureText(netTxt).width, y + 18);
   ctx.fillStyle = "#9CA3AF";
   ctx.font = "11px Arial";
-  const sub = `= available ${rm(cur.totalAvailableSen)} − to repay ${rm(repayShownSen)} + to receive ${rm(recvShownSen)}`;
+  const sub = `= available ${rm(cur.totalAvailableSen)} − to repay ${rm(repayShownSen)}${tfShownSen ? ` − trade finance ${rm(tfShownSen)}` : ""} + to receive ${rm(recvShownSen)}`;
   ctx.fillText(sub, W - 28 - ctx.measureText(sub).width, y + 36);
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not render the image"))), "image/png");
@@ -151,12 +162,14 @@ export function drawCashPositionImage(cur: CashImageData, totals: CashImageTotal
 
 /** The phone's and the desktop's bottom line, with the desktop's default
  *  scopes: suppliers owed from before this month, customers owing from before
- *  this month (owner 2026-09-05). Amounts as the API sends them. */
+ *  this month (owner 2026-09-05), trade finance due by this month's end
+ *  (owner 2026-10-17). Amounts as the API sends them. */
 export function cashAfterRepayReceive(
-  cur: { totalAvailableSen: number; repay: { month: string; outstandingSen?: number }[]; receive: { month: string; totalSen?: number }[] },
+  cur: { totalAvailableSen: number; repay: { month: string; outstandingSen?: number }[]; receive: { month: string; totalSen?: number }[]; tradeFinance?: CashTfRow[] },
   curMonth: string,
 ): CashImageTotals {
   const repayShownSen = cur.repay.filter((r) => r.month < curMonth).reduce((s, r) => s + (r.outstandingSen ?? 0), 0);
   const recvShownSen = cur.receive.filter((r) => r.month < curMonth).reduce((s, r) => s + (r.totalSen ?? 0), 0);
-  return { repayShownSen, recvShownSen, netAfterSen: cur.totalAvailableSen - repayShownSen + recvShownSen };
+  const tfShownSen = (cur.tradeFinance ?? []).filter((t) => tfDueByMonthEnd(t, curMonth)).reduce((s, t) => s + t.outstandingSen, 0);
+  return { repayShownSen, recvShownSen, tfShownSen, netAfterSen: cur.totalAvailableSen - repayShownSen - tfShownSen + recvShownSen };
 }

@@ -23,11 +23,11 @@ test("cash after repay & receive: only months before this one, as the desktop's 
     },
     "2026-10",
   );
-  assert.deepEqual(t, { repayShownSen: 30000, recvShownSen: 20000, netAfterSen: 90000 });
+  assert.deepEqual(t, { repayShownSen: 30000, recvShownSen: 20000, tfShownSen: 0, netAfterSen: 90000 });
   // The desktop computes the same thing inline.
   const ui = read("src/pages/accounting/index.tsx");
   assert.match(ui, /const repayRows = \(cur\?\.repay \?\? \[\]\)\.filter\(\(r\) => repayAll \|\| r\.month < curMonth\);/);
-  assert.match(ui, /const netAfterSen = \(cur\?\.totalAvailableSen \?\? 0\) - repayShownSen \+ recvShownSen;/);
+  assert.match(ui, /const netAfterSen = \(cur\?\.totalAvailableSen \?\? 0\) - repayShownSen - tfShownSen \+ recvShownSen;/);
 });
 
 test("the dashboard's gap: income under plan or a cost over it is bad", () => {
@@ -55,7 +55,7 @@ test("Daily Cash: the desktop read, the shared image through the share sheet, re
   assert.doesNotMatch(cash, /method: "(POST|PUT|DELETE)"/, "ticks and planned payments stay on the desktop");
   assert.match(cash, /pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\)/, "the desktop's order");
   const ui = read("src/pages/accounting/index.tsx");
-  assert.match(ui, /drawCashPositionImage\(cur, \{ netAfterSen, repayShownSen, recvShownSen \}\)/, "the desktop draws through the same module");
+  assert.match(ui, /drawCashPositionImage\(cur, \{ netAfterSen, repayShownSen, recvShownSen, tfShownSen \}\)/, "the desktop draws through the same module");
 });
 
 test("Finance Dashboard: the desktop read; both screens in the menu; the rail's Finance entry", () => {
