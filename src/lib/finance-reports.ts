@@ -7,6 +7,7 @@
 // directly. Figures are never computed here — the reports keep their engines.
 // ---------------------------------------------------------------------------
 import { formatCurrency } from "./utils";
+import { parseFyKey } from "./fiscal-year";
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -18,7 +19,8 @@ export function periodKind(key: string): PeriodKind | null {
   if (/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return "month";
   if (/^\d{4}-Q[1-4]$/.test(key)) return "quarter";
   if (/^\d{4}$/.test(key)) return "year";
-  return null;
+  // A financial year / one of its quarters (item 9, src/lib/fiscal-year.ts).
+  return parseFyKey(key)?.kind ?? null;
 }
 
 const ymOf = (y: number, m0: number) => {
@@ -27,9 +29,16 @@ const ymOf = (y: number, m0: number) => {
 };
 
 /** The period `delta` steps away, of the same kind (months by months,
- *  quarters by quarters, years by years). An unreadable key is returned as is. */
-export function stepPeriod(key: string, delta: number): string {
+ *  quarters by quarters, years by years). An unreadable key is returned as is.
+ *  A financial-year key steps to its neighbour among `options` (the years
+ *  follow the year-end schedule, not the calendar); none → "". */
+export function stepPeriod(key: string, delta: number, options?: readonly string[]): string {
   const kind = periodKind(key);
+  if (parseFyKey(key)) {
+    const same = (options ?? []).filter((o) => parseFyKey(o) && periodKind(o) === kind).sort();
+    const i = same.indexOf(key);
+    return i < 0 ? "" : same[i + delta] ?? "";
+  }
   const y = Number(key.slice(0, 4));
   if (kind === "month") return ymOf(y, Number(key.slice(5, 7)) - 1 + delta);
   if (kind === "quarter") {
@@ -42,6 +51,8 @@ export function stepPeriod(key: string, delta: number): string {
 
 /** First and last month of a period key. */
 function monthsOf(key: string): [string, string] | null {
+  const fk = parseFyKey(key);
+  if (fk) return [fk.startYm, fk.endYm];
   const kind = periodKind(key);
   const y = Number(key.slice(0, 4));
   if (kind === "month") return [key, key];
@@ -58,14 +69,32 @@ function monthsOf(key: string): [string, string] | null {
 export function periodLabel(key: string, todayYmd: string): string {
   const kind = periodKind(key);
   const y = key.slice(0, 4);
+  const fk = parseFyKey(key);
   const base =
-    kind === "month" ? `${MON[Number(key.slice(5, 7)) - 1]} ${y}`
+    fk ? (fk.kind === "quarter" ? `Q${fk.q} ${fk.fy.name}` : fk.fy.name)
+    : kind === "month" ? `${MON[Number(key.slice(5, 7)) - 1]} ${y}`
     : kind === "quarter" ? `${key.slice(5)} ${y}`
     : kind === "year" ? `Full Year ${y}`
     : key;
   const span = monthsOf(key);
   const now = todayYmd.slice(0, 7);
   return span && span[0] <= now && now <= span[1] ? `${base} · so far` : base;
+}
+
+/** Where the picker lists a period: its calendar year, or the financial
+ *  year a quarter belongs to. */
+export function periodGroup(key: string): string {
+  const fk = parseFyKey(key);
+  if (fk) return fk.fy.name;
+  return key.slice(0, 4);
+}
+
+/** A period's chip in the picker: "Oct", "Q3". */
+export function periodShort(key: string): string {
+  const fk = parseFyKey(key);
+  if (fk) return fk.kind === "quarter" ? `Q${fk.q}` : fk.fy.name;
+  const kind = periodKind(key);
+  return kind === "month" ? MON[Number(key.slice(5, 7)) - 1] : kind === "quarter" ? key.slice(5) : key;
 }
 
 /** "2026-02" → "2026-02-28". */

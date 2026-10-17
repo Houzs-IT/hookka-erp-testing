@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Download } from "lucide-react";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { todayYmdMY } from "@/lib/utils";
-import { codesInRange, periodKind, periodLabel, stepPeriod, type PeriodKind } from "@/lib/finance-reports";
+import { codesInRange, periodGroup, periodKind, periodLabel, periodShort, stepPeriod, type PeriodKind } from "@/lib/finance-reports";
 
 // A popover that closes on Esc and on a click outside its box.
 function usePopover() {
@@ -40,6 +40,8 @@ const KIND_TAB: { kind: PeriodKind; label: string }[] = [
   { kind: "quarter", label: "Quarter" },
   { kind: "year", label: "Full Year" },
 ];
+// (A report that offers financial years passes "fy:" / "fyq:" keys — the tab
+// still reads Quarter / Full Year; the chips name the financial year.)
 
 /** ‹ [📅 Oct 2026 · so far] › — the arrows step within the period's kind and
  *  only to a period the report offers; the label opens the picker. */
@@ -59,21 +61,21 @@ export function PeriodStepper({
   const now = today ?? todayYmdMY();
   const { open, setOpen, boxRef } = usePopover();
   const [tab, setTab] = useState<PeriodKind | null>(null);
-  const prev = stepPeriod(value, -1);
-  const next = stepPeriod(value, 1);
+  const prev = stepPeriod(value, -1, options);
+  const next = stepPeriod(value, 1, options);
   const canPrev = options.includes(prev);
   const canNext = options.includes(next);
   const kinds = KIND_TAB.filter((t) => options.some((o) => periodKind(o) === t.kind));
   const shown = tab ?? periodKind(value) ?? "month";
   const pick = (k: string) => { setOpen(false); setTab(null); onChange(k); };
   const ofKind = options.filter((o) => periodKind(o) === shown);
-  const years = [...new Set(ofKind.map((o) => o.slice(0, 4)))].sort().reverse();
+  const years = [...new Set(ofKind.map((o) => periodGroup(o)))].sort().reverse();
   const nowLabel = (k: string) => periodLabel(k, now).endsWith("· so far");
   const chip = (k: string) => {
     const on = k === value;
     return `rounded-[7px] border text-[12.5px] font-semibold ${on ? "border-[#1F1D1B] bg-[#1F1D1B] text-white" : nowLabel(k) ? "border-[#7A6E5E] bg-white text-[#1F1D1B] hover:bg-[#F4F6F8]" : "border-[#E7E1D8] bg-white text-[#1F1D1B] hover:bg-[#F4F6F8]"}`;
   };
-  const short = (k: string) => (shown === "month" ? periodLabel(k, "0000-00-00").slice(0, 3) : shown === "quarter" ? k.slice(5) : periodLabel(k, "0000-00-00"));
+  const short = (k: string) => (shown === "year" ? periodLabel(k, "0000-00-00") : periodShort(k));
 
   return (
     <span ref={boxRef} className={`relative inline-flex items-center ${CTRL}`}>
@@ -144,7 +146,7 @@ export function PeriodStepper({
                 <span className="text-[11.5px] font-bold tracking-[.05em] text-[#6B7280]">{y}</span>
                 <span className={`grid gap-1.5 ${shown === "month" ? "grid-cols-4" : "grid-cols-2"}`}>
                   {ofKind
-                    .filter((k) => k.startsWith(y))
+                    .filter((k) => periodGroup(k) === y)
                     .sort()
                     .map((k) => (
                       <button key={k} type="button" onClick={() => pick(k)} className={`h-[30px] ${chip(k)}`}>
