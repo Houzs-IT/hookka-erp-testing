@@ -68,7 +68,9 @@ test("Other parties: the status filter as chips with counts; same matching; the 
   assert.match(parties, /options=\{PARTY_STATUS_CHIPS\.map\(\(ch\) => \(\{ key: ch\.key, label: ch\.label, count: statusCount\(ch\.key\) \}\)\)\}/);
   assert.match(parties, /const visible = \(parties \?\? \[\]\)\.filter\(\(p\) => passes\(p, statusFilter\)\);/);
   assert.match(parties, /if \(st === "ACTIVE" && !p\.isActive\) return false;\n\s*if \(st === "INACTIVE" && p\.isActive\) return false;/);
-  assert.match(parties, /<table data-fin-list className="w-full text-sm">/);
+  // The names list is the PV-table grid since 2026-10-17; its actions are the row menu.
+  assert.ok(parties.includes('gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-parties`}'));
+  assert.ok(parties.includes("contextMenuItems={(p) => rowMenuItems(partyRowMenu(p))}"));
   // Writes unchanged.
   assert.match(parties, /const url = editingId \? `\/api\/accounting\/other-parties\/\$\{editingId\}` : "\/api\/accounting\/other-parties";/);
   assert.match(parties, /fetch\(`\/api\/accounting\/other-parties\/\$\{p\.id\}`, \{ method: "DELETE" \}\)/);
