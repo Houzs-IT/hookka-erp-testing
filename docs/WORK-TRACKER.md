@@ -6594,3 +6594,5 @@ Asks, in order:
 39. Service defect rate = cases ÷ units shipped, by category.
 40. Question: is Hookka Report open to everyone?
 41. Owner: merge the dashboard to prod — menu label "Dashboard" with the Dashboard icon (one entry).
+42. Employees: non-production hours per day and per department (owner worries about people gaming it).
+43. Every number on the dashboard clickable → layer-2 detail popup.

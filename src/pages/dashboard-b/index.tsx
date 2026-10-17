@@ -196,7 +196,7 @@ type Overview = {
         buyMinSen: number;
         buyMaxSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number }[];
+      monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
     };
     SOFA: {
       list: {
@@ -208,7 +208,7 @@ type Overview = {
         buyMinSen: number;
         buyMaxSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number }[];
+      monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
     };
   };
   monthlyRevenue?: {
@@ -349,20 +349,21 @@ const CUR_YM = new Date().toISOString().slice(0, 7);
 
 // Roll the last-12 monthly fabric series up into the last 8 quarters.
 function toQuarterly(
-  monthly: { month: string; meters: number; lateMeters?: number }[],
-): { label: string; meters: number; lateMeters: number }[] {
+  monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[],
+): { label: string; meters: number; lateMeters: number; costSen: number }[] {
   // The late share rolls up too: a quarter that absorbed the PREVIOUS
   // quarter's postings deserves the same warning a month gets. Late-within-
   // the-same-quarter is still flagged — the tag says "an earlier month", which
   // remains true, and a quarter bar is read against other quarters anyway.
-  const q = new Map<string, { meters: number; lateMeters: number }>();
+  const q = new Map<string, { meters: number; lateMeters: number; costSen: number }>();
   for (const m of monthly) {
     const [y, mm] = m.month.split("-");
     const qn = Math.ceil((Number(mm) || 1) / 3);
     const key = `${y}-Q${qn}`;
-    const e = q.get(key) ?? { meters: 0, lateMeters: 0 };
+    const e = q.get(key) ?? { meters: 0, lateMeters: 0, costSen: 0 };
     e.meters += m.meters;
     e.lateMeters += m.lateMeters ?? 0;
+    e.costSen += m.costSen ?? 0;
     q.set(key, e);
   }
   return [...q.entries()]
@@ -972,6 +973,9 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
 
   const aovAll = useMemo(() => ov.aovByCustomer ?? [], [ov.aovByCustomer]);
   const topBed = ov.topSellers?.BEDFRAME ?? [];
+  // Share of the period's confirmed sales (the Sales KPI), so a seller reads
+  // as "x% of what we sold".
+  const salesBase = ov.salesThisMonthSen ?? 0;
   const topSofa = ov.topSellers?.SOFA ?? [];
 
   // Period-over-period deltas (last vs previous month in the series) for the
@@ -2170,14 +2174,14 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           <CardContent className="p-5">
             <SectionTitle
               title="Top Sellers"
-              sub="bedframe by units · sofa by sets"
+              sub="top 10 · bedframe by units · sofa by sets · % = share of the period's sales"
             />
             <div className="grid grid-cols-2 gap-5 max-sm:grid-cols-1">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5A5550] mb-1.5">
                   Bedframe
                 </p>
-                {topBed.slice(0, 6).map((p) => {
+                {topBed.slice(0, 10).map((p) => {
                   const cr = tsByCust?.BEDFRAME?.[p.productCode] ?? [];
                   return (
                     <div
@@ -2217,6 +2221,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       </span>
                       <span className="text-xs font-semibold text-[#1F1D1B] tabular-nums">
                         {rm(p.valueSen)}
+                        <span className="ml-1.5 font-normal text-[#9CA3AF]">{salesBase > 0 ? `${((p.valueSen / salesBase) * 100).toFixed(1)}%` : ""}</span>
                       </span>
                     </div>
                   );
@@ -2226,7 +2231,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5A5550] mb-1.5">
                   Sofa
                 </p>
-                {topSofa.slice(0, 6).map((p) => {
+                {topSofa.slice(0, 10).map((p) => {
                   const cr = tsByCust?.SOFA?.[p.model] ?? [];
                   return (
                     <div
@@ -2266,6 +2271,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       </span>
                       <span className="text-xs font-semibold text-[#1F1D1B] tabular-nums">
                         {rm(p.valueSen)}
+                        <span className="ml-1.5 font-normal text-[#9CA3AF]">{salesBase > 0 ? `${((p.valueSen / salesBase) * 100).toFixed(1)}%` : ""}</span>
                       </span>
                     </div>
                   );
@@ -2373,6 +2379,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       label: m.month,
                       meters: m.meters,
                       lateMeters: m.lateMeters ?? 0,
+                      costSen: m.costSen ?? 0,
                     }))
                     // Newest at the top (owner 2026-08-05). The series arrives
                     // oldest-first because that is the order a chart needs;
@@ -2506,6 +2513,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       {fabGran === "quarter"
                         ? "Quarterly meters posted — last 8"
                         : "Monthly meters posted — last 12"}
+                      <span className="float-right font-normal text-[#9CA3AF]">avg cost / m</span>
                     </p>
                     {trend.length === 0 ? (
                       <p className="text-xs text-[#9CA3AF]">No data.</p>
@@ -2533,6 +2541,10 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                           </div>
                           <span className="w-16 text-right text-[11px] font-semibold text-[#1F1D1B] tabular-nums">
                             {Math.round(t.meters).toLocaleString()} m
+                          </span>
+                          {/* That month's average cost per metre (owner 2026-10-17). */}
+                          <span className="w-20 text-right text-[11px] text-[#6B5C32] tabular-nums" title="Issue cost ÷ meters that month">
+                            {t.meters > 0 && t.costSen > 0 ? `${rm(Math.round(t.costSen / t.meters))}/m` : "—"}
                           </span>
                         </div>
                       ))

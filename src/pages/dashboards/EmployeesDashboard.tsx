@@ -10,6 +10,7 @@ import { dropIdleSundays } from "@/lib/idle-sundays";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AttendanceLogCard } from "./AttendanceLogCard";
 import { DashModal } from "./DashModal";
+import { NonProdHoursCard } from "./NonProdHoursCard";
 import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
@@ -124,6 +125,8 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const [win, setWin] = useState<Win>("period");
   const [dept, setDept] = useState("ALL");
   const [open, setOpen] = useState<string | null>(null);
+  // Layer 2 for the headline tiles: every worker behind the number.
+  const [tileDrill, setTileDrill] = useState<"salary" | "eff" | null>(null);
   const dayMode = !!period.day;
   const anchor = period.day ?? latest;
   const effWin: Win = dayMode ? "day" : win;
@@ -387,7 +390,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           color={presence.absent.length ? "#9A3A2D" : "#1F1D1B"}
           onClick={() => document.getElementById("emp-attendance")?.scrollIntoView({ behavior: "smooth", block: "start" })}
         />
-        <Tile label={`Salary · ${winLabel}`} value={money(winSalary)} sub="logged hours at the Labor Cost rate" color={CHART_INK} />
+        <Tile label={`Salary · ${winLabel}`} value={money(winSalary)} sub="logged hours at the Labor Cost rate · click for each worker" color={CHART_INK} onClick={canSalary ? () => setTileDrill("salary") : undefined} />
         <Tile
           label="Avg labour cost / person"
           value={money(totals.fte ? winSalary / totals.fte : 0)}
@@ -403,7 +406,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           sub={`Upholstery output ÷ ${fteTxt} full-time people · ${revPerDay == null ? "…" : formatCurrency(Math.round(revPerDay))} per worker-day${prevRevPerDay ? ` (last month ${formatCurrency(Math.round(prevRevPerDay))})` : ""}`}
           color={GREEN}
         />
-        <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working`} color={effColor(eff(totals.prod, totals.work), target)} />
+        <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working · click for each worker`} color={effColor(eff(totals.prod, totals.work), target)} onClick={() => setTileDrill("eff")} />
       </div>
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
         {winLabel} · full-time people = worker-days ÷ working days ({fmtN(totals.workerDays)} ÷ {fmtN(totals.workingDays)}), so a joiner, a leaver or a day off counts by the days actually worked.
@@ -546,6 +549,8 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         {outsourcedRows.length > 0 && ` Outsourced, not ranked or counted as people: ${outsourcedRows.map((r) => r.name).join(", ")}.`}
       </p>
 
+      <NonProdHoursCard days={days} winDates={winDates} winLabel={winLabel} workerById={workerById} entries={hourEntries} />
+
       {/* Attendance log: opens on the picked day (or the latest day with hours);
           not in first, late second, on time last. */}
       <div id="emp-attendance" className="scroll-mt-48">
@@ -554,6 +559,40 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <p className="text-[11px]" style={{ color: MUTED, borderColor: BORDER }}>
         Salary = logged hours priced by the Labor Cost rule (regular hours at salary ÷ the month's working days ÷ hours per day; OT by day type), so it matches the Labor Cost tab. <span style={{ color: TEAL }}>Efficiency</span> = production minutes ÷ working minutes.
       </p>
+
+      {tileDrill && (
+        <DashModal
+          wide
+          title={tileDrill === "salary" ? `Salary by worker · ${winLabel}` : `Efficiency by worker · ${winLabel}`}
+          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · Labor Cost rate` : `Overall ${pct(eff(totals.prod, totals.work))} · production ÷ working hours`}
+          onClose={() => setTileDrill(null)}
+        >
+          <div className="max-h-[60vh] overflow-y-auto">
+            <table className="w-full text-[12.5px]">
+              <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
+                <th className="py-1.5">Worker</th><th className="py-1.5">Dept</th><th className="py-1.5 text-right">Days</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Salary</th>}
+              </tr></thead>
+              <tbody>
+                {[...rows].sort((a, b) => (tileDrill === "salary" ? b.cost - a.cost : (eff(a.prod, a.work) ?? 0) - (eff(b.prod, b.work) ?? 0))).map((r) => {
+                  const v = eff(r.prod, r.work);
+                  return (
+                    <tr key={r.id} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => { setTileDrill(null); setOpen(r.id); }}>
+                      <td className="py-1.5 text-[#1F1D1B]">{r.name}</td>
+                      <td className="py-1.5 text-[#6B7280]">{deptName(r.dept)}</td>
+                      <td className="py-1.5 text-right tabular-nums">{fmtN(r.daysWorked)}</td>
+                      <td className="py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
+                      <td className="py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
+                      <td className="py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}</td>
+                      {canSalary && <td className="py-1.5 text-right tabular-nums">{money(r.cost)}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px] text-[#9CA3AF]">Click a worker for each day. {tileDrill === "eff" ? "Lowest efficiency first." : "Highest salary first."}</p>
+        </DashModal>
+      )}
 
       {openWorker && (
         <DashModal title={`${openWorker.name} · ${deptName(openWorker.dept)}`} subtitle={`${winLabel} · ${fmtN(openWorker.daysWorked)} days · efficiency ${pct(eff(openWorker.prod, openWorker.work))}`} onClose={() => setOpen(null)}>

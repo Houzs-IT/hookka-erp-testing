@@ -318,7 +318,7 @@ export function SalesOrdersView({
           <CardContent>
             <div className="flex flex-wrap items-center justify-end gap-3 pb-2 text-xs text-[#6B7280]">
               {([
-                { key: "Actual", label: "Actual (green = hit, amber = missed, brown = so far)", color: GREEN, line: false },
+                { key: "Actual", label: "Actual (green = hit, amber = missed, brown = so far, grey = no target yet)", color: GREEN, line: false },
                 { key: "Still needed", label: `Still needed for target (this ${fcUnit})`, color: "#E9E3DA", line: false },
                 { key: "Target", label: "Target", color: TEAL, line: true },
               ] as const).map((l) => {
@@ -370,7 +370,7 @@ export function SalesOrdersView({
                       {forecast.map((r) => (
                         <Cell
                           key={r.iso}
-                          fill={r.inProgress ? (r.hit ? GREEN : "#6B5C32") : r.hit === null ? "#E3DED5" : r.hit ? GREEN : AMBER}
+                          fill={r.inProgress ? (r.hit ? GREEN : "#6B5C32") : r.projected ? "#E3DED5" : r.hit === null ? "#A39E93" : r.hit ? GREEN : AMBER}
                           // the bar's top corners are rounded only when no estimate sits on it
                           radius={(r.inProgress && r["Still needed"] ? [0, 0, 0, 0] : [4, 4, 0, 0]) as unknown as number}
                         />
@@ -399,7 +399,7 @@ export function SalesOrdersView({
 
       {/* Sales by Customer & Month and Top Sellers: the Command Center cards
           (they replace Sales attribution and the second customer card). */}
-      <CommandCenterSections period={period} sections={["customers", "topSellers"]} />
+      <CommandCenterSections period={period} sections={["customers"]} />
 
       {/* Fulfillment pipeline and Top SKUs were folded into the Command
           Center Order Pipeline ("by status") and Top Sellers (owner
@@ -530,6 +530,9 @@ export function SalesOrdersView({
         </Card>
 
       </div>
+
+      {/* Top Sellers last, 10 each with their share of sales (owner 2026-10-17). */}
+      <CommandCenterSections period={period} sections={["topSellers"]} />
 
     </div>
   );

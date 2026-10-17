@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useProductionRevenue } from "./use-production-revenue";
 import { useLabourCost } from "./use-labour-cost";
 import { useSeriesToggle } from "./use-series-toggle";
+import { DashModal } from "./DashModal";
 import { CC_AXIS_LINE, CC_TICK, fmtRMAxis, inPeriod, monthLabel, shiftMonth, ymd, type Period } from "./dashboard-shared-lib";
 
 // ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ import { CC_AXIS_LINE, CC_TICK, fmtRMAxis, inPeriod, monthLabel, shiftMonth, ymd
 // ---------------------------------------------------------------------------
 
 type CostDay = { date: string; materialSen: number; laborSen: number; totalSen: number };
-type CostStructure = { data?: { cols?: string[]; groups?: { months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
+type CostStructure = { data?: { cols?: string[]; groups?: { group?: string; description?: string; months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
 type Pi = { invoiceDate: string | null; amountSen: number | string | null; status: string };
 type Bucket = { revenue: number; material: number; labour: number; purchases: number };
 
@@ -144,7 +145,10 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
     return m;
   }, [byDay]);
 
-  const loading = revByDay == null || (canLabour && !labourReady) || !csNow;
+  // The P&L cost structure takes ~4s cold (the full P&L engine): the card no
+  // longer waits for it — materials, total and cost % show "…" until it lands.
+  const loading = revByDay == null || (canLabour && !labourReady);
+  const pnlReady = !!csNow;
   const estimated = (ym: string) => !pnlMaterials.has(ym);
   const cost = (b: Bucket) => b.material + (canLabour ? b.labour : 0);
 
@@ -153,10 +157,10 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
   const three = [1, 2, 3].map((i) => byMonth.get(shiftMonth(focusMonth, -i)) ?? ZERO);
   const threeSum = three.reduce<Bucket>((a, b) => ({ revenue: a.revenue + b.revenue, material: a.material + b.material, labour: a.labour + b.labour, purchases: a.purchases + b.purchases }), { ...ZERO });
   const isCurrent = focusMonth === today.slice(0, 7);
-  const cols: { label: string; sub: string; b: Bucket; avg?: boolean }[] = [
+  const cols: { label: string; sub: string; b: Bucket; avg?: boolean; ym?: string }[] = [
     ...(period.day ? [{ label: period.day.slice(5).replace("-", "/"), sub: "the selected day", b: byDay.get(period.day) ?? ZERO }] : []),
-    { label: monthLabel(focusMonth), sub: isCurrent ? `to date · live${estimated(focusMonth) ? " · materials est." : ""}` : `whole month${estimated(focusMonth) ? " · materials est." : ""}`, b: byMonth.get(focusMonth) ?? ZERO },
-    { label: monthLabel(prev), sub: "last month", b: byMonth.get(prev) ?? ZERO },
+    { label: monthLabel(focusMonth), sub: isCurrent ? `to date · live${estimated(focusMonth) ? " · materials est." : ""}` : `whole month${estimated(focusMonth) ? " · materials est." : ""}`, b: byMonth.get(focusMonth) ?? ZERO, ym: focusMonth },
+    { label: monthLabel(prev), sub: "last month", b: byMonth.get(prev) ?? ZERO, ym: prev },
     { label: "3-month avg", sub: `${monthLabel(shiftMonth(focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: threeSum.revenue / 3, material: threeSum.material / 3, labour: threeSum.labour / 3, purchases: threeSum.purchases / 3 }, avg: true },
   ];
   const head = cols[period.day ? 1 : 0];
@@ -189,15 +193,37 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
     else onPeriodChange({ ...period, day: period.day === hit.key ? undefined : hit.key });
   };
 
-  const row = (label: string, get: (b: Bucket) => number | null, opts: { pct?: boolean; strong?: boolean; muted?: boolean } = {}) => (
+  // Layer 2: a month header opens that month day by day; the materials row
+  // opens the P&L's raw-materials lines (opening + purchases − closing) per
+  // purchase account for that month.
+  const [drill, setDrill] = useState<{ kind: "month" | "materials"; ym: string } | null>(null);
+  const matLines = useMemo(() => {
+    if (!drill || drill.kind !== "materials") return [];
+    const out: { code: string; name: string; opening: number; purchase: number; closing: number }[] = [];
+    for (const cs of [csPrev, csNow]) {
+      const i = (cs?.data?.cols ?? []).indexOf(drill.ym);
+      if (i < 0) continue;
+      for (const g of cs?.data?.groups ?? []) {
+        const m = g.months?.[i];
+        if (!m) continue;
+        out.push({ code: g.group ?? "", name: g.description ?? "", opening: m.opening ?? 0, purchase: m.purchase ?? 0, closing: m.closing ?? 0 });
+      }
+    }
+    return out.filter((r) => r.opening || r.purchase || r.closing).sort((a, b) => (b.opening + b.purchase - b.closing) - (a.opening + a.purchase - a.closing));
+  }, [drill, csNow, csPrev]);
+  const monthDays = useMemo(() => {
+    if (!drill || drill.kind !== "month") return [];
+    return [...byDay.entries()].filter(([d]) => d.startsWith(drill.ym)).sort(([a], [b]) => a.localeCompare(b));
+  }, [drill, byDay]);
+  const row = (label: string, get: (b: Bucket) => number | null, opts: { pct?: boolean; strong?: boolean; muted?: boolean; onPick?: (ym: string) => void } = {}) => (
     <tr className={`border-b border-[#F0ECE6] ${opts.strong ? "font-semibold" : ""}`}>
       <td className={`py-2 pr-3 ${opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}`}>{label}</td>
       {cols.map((c) => {
         const v = get(c.b);
-        const p = opts.pct && v != null ? pctOf(v, c.b.revenue) : null;
+        const p = opts.pct && v != null && !Number.isNaN(v) ? pctOf(v, c.b.revenue) : null;
         return (
-          <td key={c.label} className="py-2 pl-3 text-right tabular-nums whitespace-nowrap">
-            <span className={opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}>{v == null ? "payroll only" : rm(v)}</span>
+          <td key={c.label} className={`py-2 pl-3 text-right tabular-nums whitespace-nowrap ${opts.onPick && c.ym ? "cursor-pointer hover:bg-[#FAF8F4]" : ""}`} onClick={opts.onPick && c.ym ? () => opts.onPick!(c.ym!) : undefined}>
+            <span className={opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}>{v == null ? "payroll only" : Number.isNaN(v) ? "…" : rm(v)}</span>
             {opts.pct && <span className="ml-2 inline-block min-w-[46px] rounded bg-[#F5F2ED] px-1.5 py-0.5 text-[11px] text-[#6B5C32]">{pctTxt(p)}</span>}
           </td>
         );
@@ -216,7 +242,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
           <div className="mb-3 flex items-end gap-4">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">Cost % · {head.label}</p>
-              <p className="text-3xl font-bold tabular-nums" style={{ color: headPct != null && prevPct != null && headPct > prevPct ? "#9A3A2D" : "#4F7C3A" }}>{loading ? "…" : pctTxt(headPct)}</p>
+              <p className="text-3xl font-bold tabular-nums" style={{ color: headPct != null && prevPct != null && headPct > prevPct ? "#9A3A2D" : "#4F7C3A" }}>{loading || !pnlReady ? "…" : pctTxt(headPct)}</p>
             </div>
             {!loading && headPct != null && prevPct != null && (
               <p className="pb-1 text-xs text-[#6B7280]">
@@ -230,7 +256,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
                 <tr className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">
                   <th className="py-1.5 text-left font-semibold" />
                   {cols.map((c) => (
-                    <th key={c.label} className="py-1.5 pl-3 text-right font-semibold">
+                    <th key={c.label} className={`py-1.5 pl-3 text-right font-semibold ${c.ym ? "cursor-pointer hover:text-[#6B5C32]" : ""}`} onClick={c.ym ? () => setDrill({ kind: "month", ym: c.ym! }) : undefined} title={c.ym ? "Click for each day" : undefined}>
                       <div className="text-[#6B7280]">{c.label}</div>
                       <div className="font-normal normal-case tracking-normal">{c.sub}</div>
                     </th>
@@ -239,9 +265,9 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
               </thead>
               <tbody>
                 {row("Production revenue", (b) => b.revenue, { strong: true })}
-                {row("Materials used (P&L)", (b) => b.material, { pct: true })}
+                {row("Materials used (P&L)", (b) => (pnlReady ? b.material : NaN), { pct: true, onPick: (ym) => setDrill({ kind: "materials", ym }) })}
                 {row("Labour", (b) => (canLabour ? b.labour : null), { pct: true })}
-                {row("Total cost", (b) => cost(b), { pct: true, strong: true })}
+                {row("Total cost", (b) => (pnlReady ? cost(b) : NaN), { pct: true, strong: true })}
                 {row("Purchases (supplier invoices)", (b) => b.purchases, { pct: true, muted: true })}
               </tbody>
             </table>
@@ -300,6 +326,40 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
           </div>
         </CardContent>
       </Card>
+      {drill && (
+        <DashModal
+          wide
+          title={drill.kind === "month" ? `${monthLabel(drill.ym)} · day by day` : `Materials used · ${monthLabel(drill.ym)} · P&L lines`}
+          subtitle={drill.kind === "materials" ? (estimated(drill.ym) ? "No stock take yet for this month — the dashboard estimates it; the P&L lines below have no closing stock" : "Opening stock + purchases − closing stock (stock take), per purchase account") : "Production revenue, materials, labour and cost % for each day"}
+          onClose={() => setDrill(null)}
+        >
+          <div className="max-h-[60vh] overflow-y-auto">
+            <table className="w-full text-[12.5px]">
+              {drill.kind === "month" ? (
+                <>
+                  <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]"><th className="py-1.5">Day</th><th className="py-1.5 text-right">Production revenue</th><th className="py-1.5 text-right">Materials</th><th className="py-1.5 text-right">Labour</th><th className="py-1.5 text-right">Cost %</th></tr></thead>
+                  <tbody>{monthDays.map(([d, b]) => (
+                    <tr key={d} className="border-b border-[#F0ECE6]"><td className="py-1.5">{d}</td><td className="py-1.5 text-right tabular-nums">{rm(b.revenue)}</td><td className="py-1.5 text-right tabular-nums">{rm(b.material)}</td><td className="py-1.5 text-right tabular-nums">{canLabour ? rm(b.labour) : "—"}</td><td className="py-1.5 text-right tabular-nums font-semibold">{pctTxt(pctOf(cost(b), b.revenue))}</td></tr>
+                  ))}</tbody>
+                </>
+              ) : (
+                <>
+                  <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]"><th className="py-1.5">Account</th><th className="py-1.5 text-right">Opening</th><th className="py-1.5 text-right">Purchases</th><th className="py-1.5 text-right">Closing</th><th className="py-1.5 text-right">Used</th></tr></thead>
+                  <tbody>
+                    {matLines.map((r) => (
+                      <tr key={r.code} className="border-b border-[#F0ECE6]"><td className="py-1.5">{r.name || r.code}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{rm(r.opening)}</td><td className="py-1.5 text-right tabular-nums">{rm(r.purchase)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{rm(r.closing)}</td><td className="py-1.5 text-right tabular-nums font-semibold">{rm(r.opening + r.purchase - r.closing)}</td></tr>
+                    ))}
+                    {matLines.length > 0 && (
+                      <tr className="font-semibold"><td className="py-1.5">Total</td><td className="py-1.5 text-right tabular-nums">{rm(matLines.reduce((a, r) => a + r.opening, 0))}</td><td className="py-1.5 text-right tabular-nums">{rm(matLines.reduce((a, r) => a + r.purchase, 0))}</td><td className="py-1.5 text-right tabular-nums">{rm(matLines.reduce((a, r) => a + r.closing, 0))}</td><td className="py-1.5 text-right tabular-nums">{rm(matLines.reduce((a, r) => a + r.opening + r.purchase - r.closing, 0))}</td></tr>
+                    )}
+                    {matLines.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-[#9CA3AF]">{pnlReady ? "No P&L lines for this month." : "Loading the P&L…"}</td></tr>}
+                  </tbody>
+                </>
+              )}
+            </table>
+          </div>
+        </DashModal>
+      )}
     </div>
   );
 }
