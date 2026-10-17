@@ -49,6 +49,9 @@ import "./theme-vars.css";
 const DashboardScreen = lazy(() =>
   import("./screens/dashboard/DashboardScreen").then((m) => ({ default: m.DashboardScreen })),
 );
+// The Finance app (finance v2 mobile) is code-split too: its report screens
+// pull in recharts and most phone sessions never open them.
+const FinanceRoute = lazy(() => import("./screens/finance/FinanceRoute"));
 // IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
 // ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
 const ItSupportPage = lazy(() => import("@/pages/it-support"));
@@ -63,6 +66,14 @@ function ItSupportRoute() {
         </Suspense>
       </div>
     </ToastProvider>
+  );
+}
+
+function FinanceRouteShell() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <FinanceRoute />
+    </Suspense>
   );
 }
 
@@ -164,6 +175,10 @@ export default function MobileLayout() {
           <Route path="dashboard" element={<DashboardRoute />} />
           <Route path="dashboard/:tab" element={<DashboardRoute />} />
           <Route path="it-support" element={<ItSupportRoute />} />
+          {/* Finance (finance v2 mobile): the menu and its read-only screens,
+              each gated like its desktop page. */}
+          <Route path="finance" element={<FinanceRouteShell />} />
+          <Route path="finance/:screen" element={<FinanceRouteShell />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders
