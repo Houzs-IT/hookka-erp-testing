@@ -219,3 +219,22 @@ export function foldStatementRows<R extends { kind: string; depth: number; group
   while (open.length) shown.push({ row: open.pop()!, close: true });
   return shown;
 }
+
+/** The dashboard tooltip's rows (finance v2): the bar series — top band first
+ *  when the bars are stacked — then the line series (forecast, per head / per
+ *  unit, ratios). On a stacked chart with more than one band shown, `total`
+ *  sums the bars shown; a line is never added in, and a band switched off is
+ *  not in the payload so it is not counted either. */
+export function chartTipRows<T extends { dataKey?: string; value?: number | string }>(
+  payload: T[],
+  lineKeys: string[],
+  stacked: boolean,
+): { bars: T[]; lines: T[]; total: number | null; counted: T[] } {
+  const lineSet = new Set(lineKeys);
+  const barRows = payload.filter((p) => !lineSet.has(String(p.dataKey)));
+  const bars = stacked ? [...barRows].reverse() : barRows;
+  const lines = payload.filter((p) => lineSet.has(String(p.dataKey)));
+  const counted = bars.filter((p) => typeof p.value === "number");
+  const total = stacked && counted.length > 1 ? counted.reduce((sum, p) => sum + (p.value as number), 0) : null;
+  return { bars, lines, total, counted };
+}

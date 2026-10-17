@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: branch `feat/finance-v2-forecasting` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: plan 6 part B (Setup) built on branch `feat/finance-v2-setup`.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 (#937) prod-verified; plan 5 closed.
 > **Last verified: 2026-10-17**: finance v2 plan 5 part B (#936) prod-verified (entry items 2–4).
@@ -204,6 +205,13 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 7: Forecasting — Financial Dashboard + Forecast P&L (owner「继续做」)(branch `feat/finance-v2-forecasting` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-forecasting.md`. Kept as today (owner rules): a new month starts from the previous month's percentages; Forecast P&L is desktop only.
+
+1. 🔵 Part A — Financial Dashboard: visible y-axis and clearer labels; the tooltip in three aligned columns (stack order, a bold Total on stacked charts, lines under a rule and never totalled); chart tabs as the v2 switch; the tables in the v2 list look with the period header as the table head and the first column pinned.
+2. ⚪ Part B — Forecast P&L: one month control (picking a month adds it), a confirm before a month is removed, arrow / Enter movement between cells, the unsaved-changes banner and leave guard, calmer cells, names without account numbers.
 
 ## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
 
