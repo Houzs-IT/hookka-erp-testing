@@ -74,6 +74,8 @@ export type ChangeEvent = {
   /** Set by the route: the document number and who it is with. */
   reference: string | null;
   party: string | null;
+  /** Set by the route: what a bank / cash-position step touched ("→ HPV-…"). */
+  note: string | null;
 };
 
 const blank = (e: Pick<ChangeEvent, "id" | "at" | "kind" | "source" | "docType" | "docId"> & Partial<ChangeEvent>): ChangeEvent => ({
@@ -87,6 +89,7 @@ const blank = (e: Pick<ChangeEvent, "id" | "at" | "kind" | "source" | "docType" 
   after: null,
   reference: null,
   party: null,
+  note: null,
   ...e,
 });
 
@@ -232,7 +235,7 @@ export function ladderEvents(rows: LadderRow[]): ChangeEvent[] {
       out.push(blank({
         id: `P|${r.id}|${kind}`, at, kind, source: "ladder", docType: "payment_voucher", docId: String(r.id),
         actorUserId: by ?? null, amountSen: r.totalSen === null || r.totalSen === undefined ? null : Math.round(Number(r.totalSen) || 0),
-        reference: pvNo && !pvNo.startsWith("DRAFT") ? pvNo : null, party: r.payee ? String(r.payee) : null,
+        reference: pvNo && !pvNo.startsWith("DRAFT") ? pvNo : null, party: r.payee ? String(r.payee).trim() || null : null,
       }));
     }
   }
@@ -264,6 +267,9 @@ const AUDIT_KIND: Record<string, ChangeKind> = {
   approve: "approved",
 };
 
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const rm = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 const parse = (s: string | null | undefined): unknown => {
   if (!s) return null;
   try {
@@ -279,9 +285,14 @@ export function auditEvents(rows: AuditRow[]): ChangeEvent[] {
     const at = toIso(r.ts);
     if (!at) continue;
     const action = String(r.action ?? "");
+    const before = parse(r.beforeJson);
+    const after = parse(r.afterJson);
+    // A bank line, a planned payment, an opening invoice: the amount it carried.
+    const senOf = (o: unknown) => (isObj(o) ? [o.amountSen, o.totalSen].find((v): v is number => typeof v === "number") ?? null : null);
+    const amt = senOf(after) ?? senOf(before);
     out.push(blank({
       id: `A|${r.id}`, at, kind: AUDIT_KIND[action] ?? "changed", source: "audit", docType: String(r.resource), docId: String(r.resourceId),
-      actorUserId: r.actorUserId ?? null, actorName: r.actorUserName ?? null, action, before: parse(r.beforeJson), after: parse(r.afterJson),
+      actorUserId: r.actorUserId ?? null, actorName: r.actorUserName ?? null, action, before, after, amountSen: amt,
     }));
   }
   return out;
@@ -294,7 +305,8 @@ export function auditEvents(rows: AuditRow[]): ChangeEvent[] {
 // The kept event takes the dropped one's actor when it had none.
 const SAME_ACT_MS = 120_000;
 const RANK: Record<ChangeSource, number> = { ledger: 0, ladder: 1, lifecycle: 2, audit: 3 };
-const sameKind = (a: ChangeKind, b: ChangeKind) => a === b || ((a === "posted" || a === "created") && (b === "posted" || b === "created"));
+const SAME_ACT: ChangeKind[][] = [["posted", "created"], ["undone", "deleted"]];
+const sameKind = (a: ChangeKind, b: ChangeKind) => a === b || SAME_ACT.some((g) => g.includes(a) && g.includes(b));
 
 export function mergeEvents(events: ChangeEvent[]): ChangeEvent[] {
   const ordered = [...events].sort((a, b) => RANK[a.source] - RANK[b.source]);
@@ -356,6 +368,21 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   opening_balance: "Opening balance",
   contra: "Contra",
   accounting: "Finance setting",
+  // Recorded since item 10 part 2 (audit resources).
+  "chart-of-accounts": "Chart of accounts",
+  journals: "Journal entry",
+  "other-parties": "Other party",
+  "other-party-bills": "Other party bill",
+  "payment-vouchers": "Payment voucher",
+  "official-receipts": "Official receipt",
+  "fund-transfers": "Fund transfer",
+  "finance-settings": "Finance setting",
+  "fixed-assets": "Fixed asset",
+  "bank-reco": "Bank reconciliation",
+  "cash-position": "Daily cash position",
+  "opening-balance": "Opening balance",
+  "stock-take": "Stock take",
+  "material-opening-stock": "Opening stock",
 };
 
 // The settings the "accounting" audit rows name by id.
@@ -367,7 +394,70 @@ const SETTING_LABEL: Record<string, string> = {
   "opening-date": "Opening date",
   fg_valuation_mode: "Finished goods valuation",
   rm_valuation_mode: "Raw material valuation",
+  labor_account_map: "Labour account map",
+  cashflow_account_map: "Cash flow mapping",
+  doc_number_prefixes: "Document numbering",
+  pnl_section_map: "P&L sections",
+  bs_section_map: "Balance sheet sections",
+  bank_reco_strict_lock: "Bank month lock",
 };
+
+// What an audit action is called in the list (the standard ones read as
+// their kind: Created / Edited / Voided …).
+export const ACTION_LABEL: Record<string, string> = {
+  withdraw: "Withdrawn",
+  reject: "Sent back",
+  attach: "File attached",
+  detach: "File removed",
+  settle: "Settled",
+  dispose: "Disposed",
+  describe: "Description changed",
+  match: "Matched",
+  "match-group": "Matched",
+  "match-split": "Matched",
+  automatch: "Auto-matched",
+  unmatch: "Unmatched",
+  import: "Statement imported",
+  ignore: "Ignored",
+  "restore-line": "Line restored",
+  "line-delete": "Line deleted",
+  "book-line": "Booked from bank",
+  finalize: "Month finalised",
+  reopen: "Month re-opened",
+  tick: "Ticked",
+  untick: "Unticked",
+  "planned-add": "Planned payment added",
+  "planned-delete": "Planned payment removed",
+  "alias-seed": "Item mappings loaded",
+  "knock-off": "Knocked off",
+  "un-knock": "Knock-off undone",
+  "recompute-pi-paid": "Paid amounts recomputed",
+  "price-import": "Prices imported",
+  "resync-gl": "Re-synced to the ledger",
+  unpost: "Unposted",
+  setup: "Set up",
+  "interest-account-repoint": "Re-pointed",
+  "draw-interest": "Interest recorded",
+  "draw-bank-charge": "Bank charge recorded",
+  "draw-due-edit": "Due date changed",
+};
+
+export function actionLabel(e: Pick<ChangeEvent, "kind" | "source" | "action">): string {
+  return (e.source === "audit" && e.action && ACTION_LABEL[e.action]) || CHANGE_KIND_LABEL[e.kind];
+}
+
+// A record with no document number: what it is called in its own snapshot
+// (an other party's or an asset's name, an opening invoice's number).
+export function payloadRef(e: Pick<ChangeEvent, "before" | "after">): string | null {
+  for (const o of [e.after, e.before]) {
+    if (!isObj(o)) continue;
+    for (const k of ["name", "partyName", "invoiceNo", "piNo", "entryNo", "code"]) {
+      const v = o[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
 
 const TF_ACTION_LABEL: Record<string, string> = {
   setup: "Facility set up",
@@ -385,6 +475,7 @@ export function docTypeLabel(e: Pick<ChangeEvent, "docType" | "docId" | "source"
     if (/^O[CD]B-/.test(e.docId)) return "Other party bill";
     if (/^cs-/.test(e.docId)) return "Closing stock";
     if (/^ob-/.test(e.docId)) return "Opening balance";
+    if (/^labor-/.test(e.docId)) return "Labour posting";
     // The opening balance's include / exclude of a pre-opening invoice, a
     // landed-cost run, a renamed account (the routes that write these ids).
     if (/^pi-/.test(e.docId)) return "Opening balance · purchase invoice";
@@ -399,29 +490,34 @@ export function docTypeLabel(e: Pick<ChangeEvent, "docType" | "docId" | "source"
 }
 
 const NOISE_FIELD = /^(updated_?at|created_?at|updated_?by|created_?by|org_?id|version|rev|row_?hash|prev_?hash)$/i;
-const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-const show = (v: unknown): string => {
+const show = (v: unknown, key = ""): string => {
   if (v === null || v === undefined || v === "") return "—";
+  // A sen field reads in RM ("interestSen: 96.28").
+  if (typeof v === "number" && /Sen$/.test(key)) return rm(v);
   if (typeof v === "object") return JSON.stringify(v).slice(0, 160);
   return String(v);
 };
 
+// Where the audit row's "after" is the whole stored value (a mapping, a stock
+// take month, an account, a register row) a key it no longer has was removed;
+// elsewhere "after" is what the save sent, and only those fields are compared.
+const FULL_AFTER = new Set(["finance-settings", "stock-take", "chart-of-accounts", "other-parties", "fixed-assets", "payment-vouchers"]);
+
 // The fields an audit row changed (top level; time stamps left out).
-export function fieldChanges(before: unknown, after: unknown): { field: string; before: string; after: string }[] {
+export function fieldChanges(before: unknown, after: unknown, docType = ""): { field: string; before: string; after: string }[] {
   if (!isObj(before) && !isObj(after)) return [];
   const b = isObj(before) ? before : {};
   const a = isObj(after) ? after : {};
+  const keys = isObj(after) && isObj(before) && !FULL_AFTER.has(docType) ? Object.keys(a) : [...new Set([...Object.keys(b), ...Object.keys(a)])];
   const out: { field: string; before: string; after: string }[] = [];
-  for (const k of [...new Set([...Object.keys(b), ...Object.keys(a)])]) {
+  for (const k of keys) {
     if (NOISE_FIELD.test(k)) continue;
-    const x = show(b[k]);
-    const y = show(a[k]);
+    const x = show(b[k], k);
+    const y = show(a[k], k);
     if (x !== y) out.push({ field: k, before: x, after: y });
   }
   return out;
 }
-
-const rm = (sen: number) => (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // The list's one-line "what": an edit's amount before → after (or the
 // accounts it moved), a setting's values, the first changed fields.
@@ -436,22 +532,24 @@ export function changeSummary(e: ChangeEvent): string {
     return e.legs.find((l) => l.description)?.description ?? "";
   }
   if (e.source === "audit") {
-    const what = e.docType === "trade-finance" ? TF_ACTION_LABEL[e.action ?? ""] : e.docType === "accounting" ? SETTING_LABEL[e.docId] : undefined;
-    const changes = e.kind === "created" || e.kind === "deleted" ? [] : fieldChanges(e.before, e.after);
+    const what = e.docType === "trade-finance" ? TF_ACTION_LABEL[e.action ?? ""] : e.docType === "accounting" || e.docType === "finance-settings" ? SETTING_LABEL[e.docId] : undefined;
+    const changes = e.kind === "created" || e.kind === "deleted" ? [] : fieldChanges(e.before, e.after, e.docType);
     const fields = changes.slice(0, 3).map((c) => `${c.field}: ${c.before} → ${c.after}`).join("; ");
-    const head = what ?? (AUDIT_KIND[e.action ?? ""] ? "" : humanize(e.action ?? ""));
-    return [head, fields].filter(Boolean).join(" · ");
+    const head = what ?? (AUDIT_KIND[e.action ?? ""] || ACTION_LABEL[e.action ?? ""] ? "" : humanize(e.action ?? ""));
+    return [head, fields, e.note].filter(Boolean).join(" · ");
   }
   return "";
 }
 
-// The accounts whose net (DR − CR) an edit changed, with the change.
+// The accounts whose net (DR − CR) an edit changed, with the change. The
+// "before" legs are the old entry REVERSED, so they already carry the minus:
+// reversal + re-post summed per account is the change (BUG-2026-10-18-326 —
+// they were flipped a second time, doubling every account of the entry).
 export function accountsMoved(legs: ChangeLeg[]): string[] {
   const net = new Map<string, number>();
   for (const l of legs) {
     if (!l.side) continue;
-    const sign = l.side === "after" ? 1 : -1;
-    net.set(l.accountCode, (net.get(l.accountCode) ?? 0) + sign * (l.debitSen - l.creditSen));
+    net.set(l.accountCode, (net.get(l.accountCode) ?? 0) + (l.debitSen - l.creditSen));
   }
   return [...net.entries()].filter(([, v]) => v !== 0).map(([code, v]) => `${code} ${v > 0 ? "+" : "−"}${rm(Math.abs(v))}`);
 }
