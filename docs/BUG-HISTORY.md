@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-318 (branch `fix/delivery-return-cn-status`, to main).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-317 (branch `feat/finance-notes-post`, to main); BUG-2026-10-17-314 flipped to 🟢 after the #954 prod check.
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-314 (branch `fix/finance-report-gap-rows`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-312 and -313 flipped to 🟢 after the #949 prod check.
@@ -138,6 +139,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-318 — A delivery return read "CN issued" with no credit note behind it `delivery` `finance` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Reported by the owner 2026-10-17 (DR-2608-001): the return's status chip said "CN issued", and no credit note existed for it.
+
+**Root cause.** "Return to stock" on an invoiced delivery order calls `POST /api/delivery-returns/:id/set-outcome` with `PURE_RETURN`, which sets the status to `CN_ISSUED` straight away and then opens the Credit Notes form pre-filled. The note is only linked when that form is saved; leaving the form left the return claiming a note that was never raised.
+
+**Fix.** The chip is worked from the note actually linked (`src/lib/delivery-return-status.ts`): no note → "Awaiting credit note" (amber, counted as open, and the return's page offers "Create credit note" pre-filled from the return); a draft note → "Credit note drafted"; an issued one → "CN issued". The API returns the linked note's status (`creditNoteStatus`). No stored data changed.
+
+**Regression.** `tests/delivery-return-cn-status.test.mjs`. Class: none.
 
 ## BUG-2026-10-17-317 — The phone's Credit Notes / Debit Notes lists showed an id and RM 0.00 for every note `mobile` `finance` 🟡
 
