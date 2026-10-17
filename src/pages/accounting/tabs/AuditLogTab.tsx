@@ -92,10 +92,8 @@ export function AuditLogTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Audit Log</h2>
-          <p className="text-xs text-[#6B7280]">Voided &amp; deleted documents — the GL keeps every reversal; restore any of them here.</p>
-        </div>
+        {/* The page title and its (i) name the page (finance v2). */}
+        <p className="text-xs text-[#6B7280]">Voided &amp; deleted documents — the GL keeps every reversal; restore any of them here.</p>
         <input
           type="text"
           value={query}
@@ -111,7 +109,7 @@ export function AuditLogTab() {
           ) : (filtered ?? []).length === 0 ? (
             <div className="py-12 text-center text-[#9CA3AF] text-sm">{q ? "No documents match your search." : "No voided or deleted documents."}</div>
           ) : (
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-3 py-2 text-left">When</th>

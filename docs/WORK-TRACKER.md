@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: plan 6 part B (Setup) built on branch `feat/finance-v2-setup`.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 (#937) prod-verified; plan 5 closed.
 > **Last verified: 2026-10-17**: finance v2 plan 5 part B (#936) prod-verified (entry items 2–4).
 > **Last verified: 2026-10-17**: branch `feat/finance-v2-einvoice` (to `main`) added below (its entry is the newest).
@@ -209,7 +210,7 @@ design/mobile-home-dashboard
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-einvoice-setup.md`. Not built here (deferred or against an owner rule): e-Invoice submission tracking, the Chart of Accounts form rework, Currency & FX monthly rates (owner chose per-document rates), Change Year End with closed-year locks, SST tax codes, adding pre-opening invoices one at a time.
 
 1. 🔵 Part A — e-Invoice: the tab strip as the v2 switch (Generate shows how many are ready), the four status figures as KPI cards, both lists in the v2 list look; the LHDN notice and every write unchanged.
-2. ⚪ Part B — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row, Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted); Settings cards keep their own buttons.
+2. 🔵 Part B — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row (Post keeps its guard and label), Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted), the Audit Log's repeated heading gone; Settings cards keep their own buttons; the shared virtual-scroll spacer rows never lift.
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2, plan 5: Debtors / Creditors, look only (owner「继续做」; the five open questions for this group are not built)(branch `feat/finance-v2-debtors-creditors` → `main`)
 

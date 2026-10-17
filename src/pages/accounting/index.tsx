@@ -1030,7 +1030,7 @@ function LandedCostCard() {
         )}
         {preview && (
           <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table data-fin-list className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                 <th className="px-2 py-1.5 text-left">Material</th>
@@ -1101,7 +1101,7 @@ function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
         </div>
         <p className="text-[11px] text-[#9CA3AF] mb-3">Number = prefix + voucher month + running no. Outgoing (Expense / Supplier payment) uses the OUT prefix; incoming (Customer payment / Receipt) uses the IN prefix. Per bank.</p>
         <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table data-fin-list className="w-full text-sm">
           <thead>
             <tr className="text-[12px] text-[#6B7280]">
               <td className="text-left pb-1">Bank / Cash account</td>
@@ -1111,13 +1111,13 @@ function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
           </thead>
           <tbody>
             {banks.map((a) => (
-              <tr key={a.code} className="border-t border-[#F0ECE9]">
+              <tr key={a.code} data-fin-nolift="" className="border-t border-[#F0ECE9]">
                 <td className="py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-2">{a.code}</span>{a.name}</td>
                 <td className="py-1.5"><input value={map[a.code]?.out ?? ""} onChange={(e) => setField(a.code, "out", e.target.value)} placeholder="e.g. HPV" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
                 <td className="py-1.5"><input value={map[a.code]?.in ?? ""} onChange={(e) => setField(a.code, "in", e.target.value)} placeholder="e.g. HOR" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
               </tr>
             ))}
-            {banks.length === 0 && <tr><td colSpan={3} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
+            {banks.length === 0 && <tr data-fin-nolift=""><td colSpan={3} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
           </tbody>
         </table>
         </div>
@@ -1347,6 +1347,13 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <Card className="mb-4">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -1358,15 +1365,12 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
               Values shown are the ones currently in effect.
             </p>
           </div>
-          <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
         </div>
         {!rows ? (
           <div className="py-8 text-center text-[#6B7280] text-sm">Loading mapping…</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="text-sm">
+            <table data-fin-list className="text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-3 py-2 text-left">Stock Group</th>
@@ -1379,7 +1383,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.group} className="border-b border-[#F0ECE9]">
+                  <tr key={r.group} data-fin-nolift="" className="border-b border-[#F0ECE9]">
                     <td className="px-3 py-1.5 font-medium text-[#1F1D1B] whitespace-nowrap">{r.group}</td>
                     <td className="px-3 py-1.5 text-[#6B7280] whitespace-nowrap">{r.description ?? r.group}</td>
                     <td className="px-3 py-1">{cell(r.purchase ?? "", (v) => setCell(i, "purchase", v))}</td>
@@ -1388,7 +1392,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1">{cell(r.closing, (v) => setCell(i, "closing", v))}</td>
                   </tr>
                 ))}
-                <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
                   <td className="px-3 py-1.5 font-medium text-[#6B7280] whitespace-nowrap">(Default)</td>
                   <td className="px-3 py-1.5 text-xs text-[#9CA3AF]">unmapped groups</td>
                   <td className="px-3 py-1">{cell(rmDefault.purchase, (v) => setRmDefault({ ...rmDefault, purchase: v }))}</td>
@@ -1396,7 +1400,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
                   <td className="px-3 py-1">{cell(rmDefault.opening, (v) => setRmDefault({ ...rmDefault, opening: v }))}</td>
                   <td className="px-3 py-1">{cell(rmDefault.closing, (v) => setRmDefault({ ...rmDefault, closing: v }))}</td>
                 </tr>
-                <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
                   <td className="px-3 py-1.5 font-medium text-[#6B7280]">WIP</td>
                   <td className="px-3 py-1.5 text-xs text-[#9CA3AF]">WORK IN PROGRESS</td>
                   <td className="px-3 py-1 text-xs text-[#9CA3AF]">—</td>
@@ -1404,7 +1408,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
                   <td className="px-3 py-1">{cell(wip.opening, (v) => setWip({ ...wip, opening: v }))}</td>
                   <td className="px-3 py-1">{cell(wip.closing, (v) => setWip({ ...wip, closing: v }))}</td>
                 </tr>
-                <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
                   <td className="px-3 py-1.5 font-medium text-[#6B7280]">FG</td>
                   <td className="px-3 py-1.5 text-xs text-[#9CA3AF]">FINISHED GOODS</td>
                   <td className="px-3 py-1 text-xs text-[#9CA3AF]">—</td>
@@ -2589,6 +2593,13 @@ function OpeningStockTab() {
 
   return (
     <div className="space-y-4">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs text-[#6B7280] max-w-3xl">
@@ -2598,9 +2609,6 @@ function OpeningStockTab() {
             closing becomes next month&apos;s opening).
           </p>
         </div>
-        <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
       </div>
 
       <Card>
@@ -2636,7 +2644,7 @@ function OpeningStockTab() {
           ) : (
             <>
             <div ref={scrollRef} className="overflow-auto max-h-[70vh]">
-              <table className="text-sm w-full">
+              <table data-fin-list className="text-sm w-full">
                 <thead className="sticky top-0 z-10 bg-white">
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left">Item Code</th>
@@ -2651,7 +2659,7 @@ function OpeningStockTab() {
                   {virt.topSpacer}
                   {(virt.active ? virt.indices.map((i) => filtered[i]) : filtered).map((r) =>
                     !r ? null : (
-                    <tr key={r.id} className="border-b border-[#F0ECE9]" style={{ height: OPENING_STOCK_ROW_PX }}>
+                    <tr key={r.id} data-fin-nolift="" className="border-b border-[#F0ECE9]" style={{ height: OPENING_STOCK_ROW_PX }}>
                       <td className="px-3 py-1.5 font-medium text-[#1F1D1B] whitespace-nowrap">{r.itemCode}</td>
                       <td className="px-3 py-1.5 text-[#1F1D1B]">{r.description}</td>
                       <td className="px-3 py-1.5 text-[#6B7280] whitespace-nowrap">{r.itemGroup || "—"}</td>
@@ -2961,12 +2969,13 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   return (
     <div className="space-y-4">
       {confirmDialog}
-      <div className="flex justify-between items-center">
-        <span aria-hidden="true" />
-        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
-          <Plus className="h-4 w-4" /> Add Account
-        </Button>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
+            <Plus className="h-4 w-4" /> Add Account
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
 
       {showForm && (
         <Card>
@@ -15898,7 +15907,14 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
         </Card>
       )}
 
-      {/* Opening date + balance check + Post */}
+      {/* Opening date + balance check; Post on the title row (finance v2) */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" disabled={posting || diff !== 0 || !openingDate || !!openingMoneyError} onClick={handlePost}>
+            {posting ? "Posting…" : data?.posted ? "Re-post opening balance" : "Post opening balance"}
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-4">
           <div>
@@ -15915,18 +15931,12 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
               </Button>
             </div>
           </div>
-          <div className="text-sm">
-            <span className="text-[#6B7280] mr-2">Total DR</span>
-            <span className="font-medium tabular-nums">{formatCurrency(totalDr)}</span>
-            <span className="text-[#6B7280] mx-2">· Total CR</span>
-            <span className="font-medium tabular-nums">{formatCurrency(totalCr)}</span>
-            <span className={`ml-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium border ${diff === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
-              {diff === 0 ? "Balanced ✓" : `Difference ${formatCurrency(Math.abs(diff))} ${diff > 0 ? "DR" : "CR"}`}
-            </span>
+          <div className="min-w-[320px] flex-1">
+            <CheckStrip ok={diff === 0} label={diff === 0 ? "Balanced ✓" : `Difference ${formatCurrency(Math.abs(diff))} ${diff > 0 ? "DR" : "CR"}`}>
+              <span>Total DR <b className="tabular-nums">{formatCurrency(totalDr)}</b></span>
+              <span>Total CR <b className="tabular-nums">{formatCurrency(totalCr)}</b></span>
+            </CheckStrip>
           </div>
-          <Button variant="primary" size="sm" disabled={posting || diff !== 0 || !openingDate || !!openingMoneyError} onClick={handlePost}>
-            {posting ? "Posting…" : data?.posted ? "Re-post opening balance" : "Post opening balance"}
-          </Button>
           {openingMoneyError && <span className="text-xs text-[#9A3A2D]">{openingMoneyError}</span>}
           {data?.posted && (
             <span className="text-xs text-[#6B7280]">
@@ -15958,7 +15968,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
           </div>
           {(data?.arInvoices.length ?? 0) > 0 && (
             <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-2 py-1.5 text-left">Customer</th>
@@ -16018,7 +16028,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
           </div>
           {(data?.apInvoices.length ?? 0) > 0 && (
             <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-2 py-1.5 text-left">Supplier</th>
@@ -16076,7 +16086,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
             </button>
             {preApOpen && (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-2 py-1.5 text-left">Supplier</th>
@@ -16176,7 +16186,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     Re-post the opening entry after changing this list.
                   </p>
                   <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                    <table className="w-full text-sm">
+                    <table data-fin-list className="w-full text-sm">
                       <thead className="sticky top-0 bg-white">
                         <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                           <th className="px-2 py-1.5 text-left">Customer</th>
@@ -16221,7 +16231,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
       <Card>
         <CardContent className="p-0">
           <div ref={obScrollRef} className="overflow-auto max-h-[70vh]">
-          <table className="w-full text-sm">
+          <table data-fin-list className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-white">
               <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                 <th className="px-3 py-2 text-left">Account (balance sheet &amp; P&amp;L)</th>
@@ -16233,7 +16243,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
               {obVirt.topSpacer}
               {(obVirt.active ? obVirt.indices.map((i) => obGridItems[i]) : obGridItems).map((it) =>
                 !it ? null : it.kind === "auto" ? (
-                <tr key={`auto-${it.code}`} className="border-b border-[#F0ECE9] bg-[#F7F4EF]" style={{ height: OPENING_BALANCE_ROW_PX }}>
+                <tr key={`auto-${it.code}`} data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]" style={{ height: OPENING_BALANCE_ROW_PX }}>
                   <td className="px-3 py-1.5">
                     <span className="tabular-nums text-xs text-[#6B7280] mr-1">{it.code}</span>
                     {it.name}
@@ -16247,7 +16257,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                   </td>
                 </tr>
               ) : (
-                <tr key={it.code} className="border-b border-[#F0ECE9]" style={{ height: OPENING_BALANCE_ROW_PX }}>
+                <tr key={it.code} data-fin-nolift="" className="border-b border-[#F0ECE9]" style={{ height: OPENING_BALANCE_ROW_PX }}>
                   <td className="px-3 py-1.5">
                     <span className="tabular-nums text-xs text-[#6B7280] mr-1">{it.code}</span>
                     <span className="text-[#1F1D1B]">{it.name}</span>
@@ -16274,7 +16284,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                 ),
               )}
               {obVirt.bottomSpacer}
-              <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
+              <tr data-fin-nolift="" className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                 <td className="px-3 py-2">TOTAL (incl. auto control rows)</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(totalDr)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(totalCr)}</td>
