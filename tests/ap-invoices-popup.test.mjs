@@ -59,11 +59,12 @@ test("in the popup the manager is just the form: open at once, no list, closes o
   assert.match(ui, /type BillPopupSpec = \{ mode: "new" \| "edit" \| "copy"; bill\?: OtherPartyBill; onDone: \(\) => void \};/);
   assert.match(mgr, /const \[showForm, setShowForm\] = useState\(!!formOnly\);/);
   assert.match(mgr, /useState<string \| null>\(formOnly\?\.mode === "edit" && formOnly\.bill \? formOnly\.bill\.billNo : null\)/, "Edit re-posts the same bill number");
-  // Save → close; Cancel → close.
-  assert.match(mgr, /load\(\);\n\s*formOnly\?\.onDone\(\);\n\s*\} else toast\.error/);
-  assert.match(mgr, /onClick=\{\(\) => \{ setShowForm\(false\); setEditingBillNo\(null\); formOnly\?\.onDone\(\); \}\}>Cancel<\/Button>/);
+  // Save → close (unless a scanned file still has bills to go — 2026-10-17,
+  // tests/ocb-scan-every-bill.test.mjs); Cancel → close.
+  assert.match(mgr, /load\(\);\n\s*if \(!keepOpen\) \{\n\s*setShowForm\(false\);\n\s*formOnly\?\.onDone\(\);\n\s*\}/);
+  assert.match(mgr, /onClick=\{\(\) => \{ setShowForm\(false\); setEditingBillNo\(null\); setScanQueue\(null\); formOnly\?\.onDone\(\); \}\}>Cancel<\/Button>/);
   // No "New Bill" toggle inside the popup; no scan while editing an existing bill.
-  assert.match(mgr, /\{\(!formOnly \|\| formOnly\.mode !== "edit"\) && <ScanPrefillButton label="Scan Bill" onResult=\{applyScan\} \/>\}/);
+  assert.match(mgr, /\{\(!formOnly \|\| formOnly\.mode !== "edit"\) && <ScanPrefillButton label="Scan Bill" allDocs onResult=\{applyScan\} \/>\}/);
   assert.match(mgr, /\{!formOnly && <Button variant="primary" size="sm" onClick=\{\(\) => \{/);
   // Search box, batch bar and the list render only outside the popup.
   const listStart = mgr.indexOf("{!formOnly && (<>");
