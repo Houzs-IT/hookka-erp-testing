@@ -23,7 +23,9 @@ test("Save & Post on bill k of N saves it and fills the form with bill k+1; the 
   assert.match(mgr, /const hasNext = !editingBillNo && !!q && q\.index \+ 1 < q\.docs\.length;\n\s*const saved = await submit\(hasNext\);\n\s*if \(!saved\) return;\n\s*if \(hasNext && q\) await startQueuedBill\(q, q\.index \+ 1\);\n\s*else setScanQueue\(null\);/);
   // submit keeps the form up only while bills remain, and reports success.
   assert.match(mgr, /const submit = async \(keepOpen = false\): Promise<boolean> => \{/);
-  assert.match(mgr, /if \(!keepOpen\) \{\n\s*setShowForm\(false\);\n\s*formOnly\?\.onDone\(\);\n\s*\}\n\s*return true;/);
+  // (Since 2026-10-17 the Add New Asset hand-off — never mid-scan — sits
+  // between closing the form and reporting success; tests/fixed-asset-from-voucher.test.mjs.)
+  assert.match(mgr, /if \(!keepOpen\) \{\n\s*setShowForm\(false\);\n\s*formOnly\?\.onDone\(\);\n\s*\}\n(\s*const faFresh = [^\n]*\n\s*if \(putFaQueue\(sessionStore\(\), faFresh\)\) \{\n[^\n]*\n[^\n]*\n\s*\}\n)?\s*return true;/);
   // The next bill starts on a clean form, with the same file attached.
   assert.match(mgr, /setScanQueue\(\{ \.\.\.q, index \}\);\n\s*setForm\(\{ partyId: "", billDate: today,[^\n]*\);\n\s*await prefillFromDoc\(q\.docs\[index\], q\.file\);/);
   assert.match(mgr, /setPendingBillFiles\(\[file\]\); \/\/ the scanned bill is the new bill's evidence/);
