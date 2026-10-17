@@ -70,7 +70,7 @@ test("in the popup the manager is just the form: open at once, no list, closes o
   const listStart = mgr.indexOf("{!formOnly && (<>");
   assert.notEqual(listStart, -1, "list wrapper missing");
   assert.ok(mgr.indexOf("Search bill no / party / reference / description") > listStart);
-  assert.ok(mgr.indexOf("No bills match") > listStart);
+  assert.ok(mgr.indexOf('emptyMessage="No bills yet"') > listStart, "the list (a DataGrid since 2026-10-17) renders only outside the popup");
 });
 
 test("AP Invoices: New AP bill → popup form; the duplicate list below is gone", () => {
