@@ -188,7 +188,7 @@ export default function DashboardPrototypePage() {
         <PageHeader
           className="max-md:hidden"
           title="Dashboard"
-          subtitle="Merged dashboard · local preview (live data, read only)"
+          subtitle="Sales · Operations · Employees · Service · Finance"
           actions={<Tabs tabs={visibleTabs} value={tab} onChange={setTab} variant="pill" />}
         />
 

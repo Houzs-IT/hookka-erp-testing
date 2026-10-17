@@ -18,7 +18,6 @@ import { PageSkeleton } from './components/ui/skeleton'
 
 // Dashboard — the old /dashboard page was retired 2026-05-21. Dashboard B
 // is now the one and only dashboard, served at /dashboard.
-const DashboardB = lazy(() => import('./pages/dashboard-b'))
 
 // Experimental dashboard. Native React, reads the same real endpoints
 // the Command Center uses (no dedicated backend route of its own).
@@ -232,11 +231,8 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
   // nav map uses, so the menu and the route cannot disagree.
   {
     path: '/dashboard',
-    element: (
-      <RequirePermission resource="dashboard" action="read">
-        <S><DashboardB /></S>
-      </RequirePermission>
-    ),
+    // Merged into /dashboard-experimental (owner 2026-10-17); old links land there.
+    element: <Navigate to={`/dashboard-experimental${typeof window !== 'undefined' ? window.location.search : ''}`} replace />,
   },
   { path: '/dashboard-b', element: <Navigate to="/dashboard" replace /> },
 
@@ -625,7 +621,7 @@ export const DASHBOARD_ROUTE_ELEMENTS = DASHBOARD_ROUTES.map((r) => {
 // actually links to need an entry; anything missing simply isn't prefetched
 // (safe no-op).
 const ROUTE_CHUNK_LOADERS: Record<string, () => Promise<unknown>> = {
-  '/dashboard': () => import('./pages/dashboard-b'),
+  '/dashboard': () => import('./pages/dashboards/dashboard-prototype'),
   '/dashboard-experimental': () => import('./pages/dashboards/dashboard-prototype'),
   '/daily-report': () => import('./pages/daily-report'),
   '/notifications': () => import('./pages/notifications'),
