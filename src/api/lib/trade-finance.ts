@@ -95,6 +95,86 @@ export async function saveTfSources(db: DB, sources: TfSource[]): Promise<void> 
 // = the payment's document date + tenor. That is the backfill for the draws
 // that existed before this feature, and the forever safety-net for strays
 // (e.g. an expense voucher paid from the TF account).
+/**
+ * The draws as they stood at `asOf` (aging as at a month-end, owner
+ * 2026-10-17): the same derivation, over the ledger lines dated by then and
+ * the repayments made by then — so an interest line later moved onto another
+ * draw counts where it sat at the date, as the trial balance has it. A line's
+ * date is its document's: a supplier payment's own date, an interest / bank
+ * charge line the date in its source id (`tfint-` / `tfbc-YYYY-MM-DD-…`),
+ * anything else when it was posted. Read-only: unlike loadTfDraws it never
+ * stores a missing due date.
+ */
+export async function loadTfDrawsAt(
+  db: DB,
+  source: TfSource,
+  asOf: string,
+): Promise<{ draws: TfDraw[]; accountNetSen: number; unallocatedSen: number }> {
+  await ensureTfTables(db);
+  const legsRes = await db
+    .prepare(
+      `SELECT sourceType, sourceId, debitSen, creditSen, postedAt
+         FROM ledger_journal_entries WHERE accountCode = ? AND hidden = 0`,
+    )
+    .bind(source.accountCode)
+    .all<Record<string, unknown>>();
+  const raw = (legsRes.results ?? []).map((r) => ({
+    sourceType: String(r.sourceType ?? r.source_type ?? ""),
+    sourceId: String(r.sourceId ?? r.source_id ?? ""),
+    debitSen: Number(r.debitSen ?? r.debit_sen) || 0,
+    creditSen: Number(r.creditSen ?? r.credit_sen) || 0,
+    postedAt: String(r.postedAt ?? r.posted_at ?? "").slice(0, 10),
+  }));
+  const allocsRes = await db
+    .prepare(`SELECT repay_payment_no, draw_source_id, amount_sen FROM trade_finance_repay_allocs`)
+    .all<Record<string, unknown>>();
+  const allAllocs: TfAlloc[] = (allocsRes.results ?? []).map((r) => ({
+    repayPaymentNo: String(r.repayPaymentNo ?? r.repay_payment_no ?? ""),
+    drawSourceId: String(r.drawSourceId ?? r.draw_source_id ?? ""),
+    amountSen: Number(r.amountSen ?? r.amount_sen) || 0,
+  }));
+  // Supplier payments' own dates (draws and repayments are supplier payments).
+  const nos = [...new Set([...raw.map((l) => l.sourceId), ...allAllocs.map((a) => a.repayPaymentNo)].filter(Boolean))];
+  const payDate = new Map<string, string>();
+  for (let i = 0; i < nos.length; i += 100) {
+    const chunk = nos.slice(i, i + 100);
+    const res = await db
+      .prepare(`SELECT payment_no, MIN(date) AS pay_date FROM supplier_payments WHERE payment_no IN (${chunk.map(() => "?").join(",")}) GROUP BY payment_no`)
+      .bind(...chunk)
+      .all<Record<string, unknown>>()
+      .catch(() => ({ results: [] as Record<string, unknown>[] }));
+    for (const r of res.results ?? []) payDate.set(String(r.paymentNo ?? r.payment_no ?? ""), String(r.payDate ?? r.pay_date ?? "").slice(0, 10));
+  }
+  const dateOf = (l: { sourceId: string; postedAt: string }) => {
+    const m = /^tf(?:int|bc)-(\d{4}-\d{2}-\d{2})-/.exec(l.sourceId);
+    return m ? m[1] : payDate.get(l.sourceId) ?? l.postedAt;
+  };
+  const legs: TfLegRow[] = raw
+    .filter((l) => dateOf(l) <= asOf)
+    .map(({ sourceType, sourceId, debitSen, creditSen }) => ({ sourceType, sourceId, debitSen, creditSen }));
+  // A repayment with no known date counts as made before the date.
+  const allocs = allAllocs.filter((a) => (payDate.get(a.repayPaymentNo) ?? "") <= asOf);
+  const metasRes = await db
+    .prepare(`SELECT draw_source_id, draw_date, due_date FROM trade_finance_draws WHERE account_code = ?`)
+    .bind(source.accountCode)
+    .all<Record<string, unknown>>();
+  const metas: TfDrawMeta[] = (metasRes.results ?? []).map((r) => ({
+    drawSourceId: String(r.drawSourceId ?? r.draw_source_id ?? ""),
+    drawDate: String(r.drawDate ?? r.draw_date ?? "").slice(0, 10),
+    dueDate: String(r.dueDate ?? r.due_date ?? "").slice(0, 10),
+  }));
+  const repayNos = new Set<string>(allAllocs.map((a) => a.repayPaymentNo));
+  try {
+    const repRes = await db
+      .prepare(`SELECT DISTINCT paymentNo FROM supplier_payments WHERE method = 'TF_REPAYMENT'`)
+      .all<Record<string, unknown>>();
+    for (const r of repRes.results ?? []) repayNos.add(String(r.paymentNo ?? r.payment_no ?? ""));
+  } catch {
+    /* very old DB without the table — allocs already cover it */
+  }
+  return deriveDraws(legs, metas, allocs, repayNos);
+}
+
 export async function loadTfDraws(
   db: DB,
   source: TfSource,

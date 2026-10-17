@@ -48,7 +48,7 @@ test("/other-party-aging gives each bill the /aging month bucket", () => {
   const at = api.indexOf('app.get("/other-party-aging"');
   const body = api.slice(at, api.indexOf("\n});\n", at));
   // As at a past date (2026-10-17) the bill is rolled back and aged at the date.
-  assert.match(body, /outstandingSen: owedAt\(r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\), mo: agingBucketIdx\(monthsOverdue\(r\.billDate, asOf \? asAtNow\(asOf\) : undefined\)\) \}\)\)/);
+  assert.match(body, /outstandingSen: owedAt\(pre \? 0 : r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\), mo: agingBucketIdx\(monthsOverdue\(r\.billDate, asOf \? asAtNow\(asOf\) : undefined\)\) \};/);
 });
 
 test("Debtor Aging lists trade customers and other debtors, chips and sections, and the other-debtor card", () => {

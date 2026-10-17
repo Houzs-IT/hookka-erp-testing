@@ -22,18 +22,6 @@ const add = (m: Map<string, number>, k: string, v: number) => {
   m.set(k, (m.get(k) ?? 0) + v);
 };
 
-/** A trade-finance draw's "after" figures, ready for `drawAt`. */
-export function tfAfterOf(
-  back: { repaidAfter: Map<string, number>; interestAfter: Map<string, number>; bankChargeAfter: Map<string, number> },
-  drawSourceId: string,
-): { repaidSen: number; interestSen: number; bankChargeSen: number } {
-  return {
-    repaidSen: back.repaidAfter.get(drawSourceId) ?? 0,
-    interestSen: back.interestAfter.get(drawSourceId) ?? 0,
-    bankChargeSen: back.bankChargeAfter.get(drawSourceId) ?? 0,
-  };
-}
-
 /** `monthsOverdue`'s "now" for an as-at date (noon UTC, so no timezone can
  *  move it into the next or previous day). */
 export function asAtNow(asOf: string): Date {
@@ -93,15 +81,16 @@ export async function notesAfter(db: Db, asOf: string): Promise<Map<string, numb
 
 /** Supplier payments dated after `asOf`, per purchase invoice id: the BOOKED
  *  amount (what came off the bill — a foreign payment's bank amount can
- *  differ; a supplier credit note's knock-off books with no bank amount).
- *  Live payments only. */
+ *  differ; a supplier credit note's knock-off books with no bank amount and
+ *  is dated by the note, as the creditor ledger has it). Live payments only. */
 export async function supplierPaymentsAfter(db: Db, orgId: string, asOf: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const res = await db
     .prepare(
       `SELECT sp.purchase_invoice_id AS purchase_invoice_id, sp.booked_sen AS booked_sen, sp.amount_sen AS amount_sen
          FROM supplier_payments sp
-        WHERE sp.org_id = ? AND sp.purchase_invoice_id IS NOT NULL AND sp.date > ?
+         LEFT JOIN purchase_credit_notes pcn ON sp.method = 'CREDIT_NOTE' AND pcn.note_number = sp.payment_no
+        WHERE sp.org_id = ? AND sp.purchase_invoice_id IS NOT NULL AND COALESCE(pcn.date, sp.date) > ?
           AND NOT EXISTS (
             SELECT 1 FROM document_lifecycle dl
              WHERE dl.source_type = 'supplier_payment' AND dl.source_id = sp.payment_no AND dl.state <> 'ACTIVE'
@@ -134,55 +123,6 @@ export async function otherPartyPaymentsAfter(db: Db, orgId: string, asOf: strin
     .all<Record<string, unknown>>();
   for (const r of res.results ?? []) add(out, String(r.billId ?? r.bill_id ?? ""), Math.round(Number(r.amountSen ?? r.amount_sen) || 0));
   return out;
-}
-
-/** Trade finance after `asOf`, per draw: the repayments dated after it, and
- *  the interest / bank charges posted on the draw after it (their source ids
- *  carry their date: `tfint-YYYY-MM-DD-<draw>` / `tfbc-YYYY-MM-DD-<draw>`). */
-export async function tradeFinanceAfter(
-  db: Db,
-  accountCode: string,
-  asOf: string,
-): Promise<{ repaidAfter: Map<string, number>; interestAfter: Map<string, number>; bankChargeAfter: Map<string, number> }> {
-  const repaidAfter = new Map<string, number>();
-  const interestAfter = new Map<string, number>();
-  const bankChargeAfter = new Map<string, number>();
-  const allocs = await db
-    .prepare("SELECT repay_payment_no, draw_source_id, amount_sen FROM trade_finance_repay_allocs")
-    .all<Record<string, unknown>>()
-    .catch(() => ({ results: [] as Record<string, unknown>[] }));
-  const nos = [...new Set((allocs.results ?? []).map((a) => String(a.repayPaymentNo ?? a.repay_payment_no ?? "")).filter(Boolean))];
-  const dateOf = new Map<string, string>();
-  for (let i = 0; i < nos.length; i += 100) {
-    const chunk = nos.slice(i, i + 100);
-    const res = await db
-      .prepare(`SELECT payment_no, MAX(date) AS pay_date FROM supplier_payments WHERE payment_no IN (${chunk.map(() => "?").join(",")}) GROUP BY payment_no`)
-      .bind(...chunk)
-      .all<Record<string, unknown>>()
-      .catch(() => ({ results: [] as Record<string, unknown>[] }));
-    for (const r of res.results ?? []) dateOf.set(String(r.paymentNo ?? r.payment_no ?? ""), String(r.payDate ?? r.pay_date ?? "").slice(0, 10));
-  }
-  for (const a of allocs.results ?? []) {
-    const d = dateOf.get(String(a.repayPaymentNo ?? a.repay_payment_no ?? ""));
-    // A repayment with no known date counts as made before the as-at date.
-    if (d && d > asOf) add(repaidAfter, String(a.drawSourceId ?? a.draw_source_id ?? ""), Math.round(Number(a.amountSen ?? a.amount_sen) || 0));
-  }
-  const legs = await db
-    .prepare(
-      `SELECT sourceType, sourceId, debitSen, creditSen FROM ledger_journal_entries
-        WHERE accountCode = ? AND hidden = 0 AND (sourceType LIKE 'tf_interest%' OR sourceType LIKE 'tf_bank_charge%')`,
-    )
-    .bind(accountCode)
-    .all<Record<string, unknown>>()
-    .catch(() => ({ results: [] as Record<string, unknown>[] }));
-  for (const l of legs.results ?? []) {
-    const sid = String(l.sourceId ?? l.source_id ?? "");
-    const m = /^tf(int|bc)-(\d{4}-\d{2}-\d{2})-(.+)$/.exec(sid);
-    if (!m || m[2] <= asOf) continue;
-    const net = (Number(l.creditSen ?? l.credit_sen) || 0) - (Number(l.debitSen ?? l.debit_sen) || 0);
-    add(m[1] === "int" ? interestAfter : bankChargeAfter, m[3], net);
-  }
-  return { repaidAfter, interestAfter, bankChargeAfter };
 }
 
 type AheadItem = { no: string; date: string; sen: number };
@@ -245,10 +185,12 @@ export async function supplierPaymentsAheadOf(
   const out = new Map<string, { name: string; items: AheadItem[] }>();
   const res = await db
     .prepare(
-      `SELECT sp.supplier_id AS supplier_id, sp.supplier_name AS supplier_name, sp.payment_no AS payment_no, sp.date AS date,
+      `SELECT sp.supplier_id AS supplier_id, sp.supplier_name AS supplier_name, sp.payment_no AS payment_no,
+              COALESCE(pcn.date, sp.date) AS date,
               sp.purchase_invoice_id AS purchase_invoice_id, sp.booked_sen AS booked_sen, sp.amount_sen AS amount_sen
          FROM supplier_payments sp
-        WHERE sp.org_id = ? AND sp.purchase_invoice_id IS NOT NULL AND sp.date <= ?
+         LEFT JOIN purchase_credit_notes pcn ON sp.method = 'CREDIT_NOTE' AND pcn.note_number = sp.payment_no
+        WHERE sp.org_id = ? AND sp.purchase_invoice_id IS NOT NULL AND COALESCE(pcn.date, sp.date) <= ?
           AND NOT EXISTS (
             SELECT 1 FROM document_lifecycle dl
              WHERE dl.source_type = 'supplier_payment' AND dl.source_id = sp.payment_no AND dl.state <> 'ACTIVE'
