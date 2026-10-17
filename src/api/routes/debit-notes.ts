@@ -13,11 +13,13 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
+import { buildJournalEntryStatements } from "../lib/journal-hash";
 import {
-  buildJournalEntryStatements,
-  ledgerHasSource,
-} from "../lib/journal-hash";
-import { buildDebitNoteLedgerLegs } from "../lib/note-ledger";
+  buildDebitNoteLedgerLegs,
+  buildNoteUnpostStatements,
+  invoiceAfterNoteReversal,
+  noteLedgerSourceType,
+} from "../lib/note-ledger";
 
 const app = new Hono<Env>();
 
@@ -323,6 +325,21 @@ app.put("/:id", async (c) => {
       }
     }
 
+    // A plain status edit never takes a posted debit note back out
+    // (BUG-2026-10-17-316): its charge (customer A/R + invoice total) fires on
+    // the transition INTO POSTED and is not idempotent, so POSTED → APPROVED /
+    // DRAFT → POSTED here charged the customer twice. Taking it back is
+    // POST /:id/unpost (Back to Draft), which reverses the charge and the GL.
+    if (existing.status === "POSTED" && status !== "POSTED") {
+      return c.json(
+        {
+          success: false,
+          error: `Debit note ${existing.noteNumber} is already posted. Use Back to Draft to take it back — that also takes the amount off the customer and the invoice.`,
+        },
+        409,
+      );
+    }
+
     const transitionedToPosted =
       existing.status !== "POSTED" && status === "POSTED";
 
@@ -349,15 +366,30 @@ app.put("/:id", async (c) => {
       //   else                                      → SENT (re-opened)
       if (existing.invoiceId) {
         const inv = await c.var.DB.prepare(
-          "SELECT totalSen, subtotalSen, paidAmount, status FROM invoices WHERE id = ?",
+          "SELECT invoiceNo, totalSen, subtotalSen, paidAmount, status FROM invoices WHERE id = ?",
         )
           .bind(existing.invoiceId)
           .first<{
+            invoiceNo: string;
             totalSen: number;
             subtotalSen: number;
             paidAmount: number;
             status: string;
           }>();
+        // A note only moves an issued invoice: on a DRAFT the charge would
+        // land twice (now, and when the draft posts at its raised total); a
+        // CANCELLED one is gone. (owner 2026-10-17)
+        if (inv && (inv.status === "DRAFT" || inv.status === "CANCELLED")) {
+          return c.json(
+            {
+              success: false,
+              error: inv.status === "DRAFT"
+                ? `Invoice ${inv.invoiceNo} is still a draft — post the invoice first.`
+                : `Invoice ${inv.invoiceNo} is cancelled.`,
+            },
+            409,
+          );
+        }
         if (inv) {
           const now = new Date().toISOString();
           const newTotal = (Number(inv.totalSen) || 0) + existing.totalAmount;
@@ -392,7 +424,10 @@ app.put("/:id", async (c) => {
           (
             c as unknown as { get: (k: string) => string | undefined }
           ).get("userId") ?? null;
-        if (!(await ledgerHasSource(c.var.DB, orgId, "debit_note", id))) {
+        // First post = "debit_note"; a re-post after Back to Draft takes a
+        // fresh restate source. null = a live set exists — never post twice.
+        const sourceType = await noteLedgerSourceType(c.var.DB, orgId, "debit_note", id);
+        if (sourceType) {
           const legs = await buildDebitNoteLedgerLegs(
             c.var.DB,
             orgId,
@@ -404,6 +439,7 @@ app.put("/:id", async (c) => {
             },
             existing.totalAmount,
             actorUserId,
+            sourceType,
           );
           const { statements: ledgerStmts } =
             await buildJournalEntryStatements(c.var.DB, orgId, legs);
@@ -445,6 +481,122 @@ app.put("/:id", async (c) => {
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
+});
+
+// POST /api/debit-notes/:id/unpost — Back to Draft (owner 2026-10-17,
+// Finance v2), the mirror of the credit-note one. A POSTED note: the customer
+// no longer owes it, the invoice drops it from its total and the GL legs are
+// mirrored and hidden, in ONE batch. Refused when the customer has already
+// paid it (the invoice total would fall below what was received). An
+// APPROVED note was never charged, so it just returns to DRAFT.
+app.post("/:id/unpost", async (c) => {
+  const denied = await requirePermission(c, "debit-notes", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const existing = await c.var.DB.prepare(
+    "SELECT * FROM debit_notes WHERE id = ?",
+  )
+    .bind(id)
+    .first<DebitNoteRow>();
+  if (!existing) {
+    return c.json({ success: false, error: "Debit note not found" }, 404);
+  }
+  if (existing.status !== "POSTED" && existing.status !== "APPROVED") {
+    return c.json(
+      { success: false, error: `Debit note ${existing.noteNumber} is already a draft.` },
+      409,
+    );
+  }
+  const amount = Number(existing.totalAmount) || 0;
+  const statements: D1PreparedStatement[] = [
+    c.var.DB.prepare(
+      "UPDATE debit_notes SET status = 'DRAFT', approvedBy = NULL WHERE id = ?",
+    ).bind(id),
+  ];
+  if (existing.status === "POSTED" && amount > 0) {
+    statements.push(
+      c.var.DB.prepare(
+        "UPDATE customers SET outstandingSen = GREATEST(0, outstandingSen - ?) WHERE id = ?",
+      ).bind(amount, existing.customerId),
+    );
+    if (existing.invoiceId) {
+      const inv = await c.var.DB.prepare(
+        "SELECT invoiceNo, totalSen, subtotalSen, paidAmount, status FROM invoices WHERE id = ?",
+      )
+        .bind(existing.invoiceId)
+        .first<{ invoiceNo: string; totalSen: number; subtotalSen: number; paidAmount: number; status: string }>();
+      if (inv?.status === "CANCELLED") {
+        return c.json(
+          { success: false, error: `Invoice ${inv.invoiceNo} is cancelled — its debit note can't go back to draft.` },
+          409,
+        );
+      }
+      if (inv) {
+        if ((Number(inv.paidAmount) || 0) > (Number(inv.totalSen) || 0) - amount) {
+          return c.json(
+            {
+              success: false,
+              error: `The customer has already paid part of debit note ${existing.noteNumber} on invoice ${inv.invoiceNo}. Undo or reduce that receipt first.`,
+            },
+            409,
+          );
+        }
+        const next = invoiceAfterNoteReversal(inv, "debit_note", amount);
+        statements.push(
+          c.var.DB.prepare(
+            `UPDATE invoices
+                SET totalSen = ?, subtotalSen = ?, status = ?, updated_at = ?
+              WHERE id = ?`,
+          ).bind(next.totalSen, next.subtotalSen, next.status, new Date().toISOString(), existing.invoiceId),
+        );
+      }
+    }
+    try {
+      const actorUserId =
+        (
+          c as unknown as { get: (k: string) => string | undefined }
+        ).get("userId") ?? null;
+      statements.push(
+        ...(await buildNoteUnpostStatements(
+          c.var.DB,
+          orgId,
+          "debit_note",
+          { id, noteNumber: existing.noteNumber },
+          actorUserId,
+        )),
+      );
+    } catch (e) {
+      console.error(`[ledger] DN ${id} back-to-draft GL build failed — aborting:`, e);
+      return c.json(
+        {
+          success: false,
+          error:
+            "Failed to build the GL reversal for this debit note — nothing was changed. Retry, and report if it persists.",
+        },
+        500,
+      );
+    }
+  }
+
+  await c.var.DB.batch(statements);
+
+  const updated = await c.var.DB.prepare(
+    "SELECT * FROM debit_notes WHERE id = ?",
+  )
+    .bind(id)
+    .first<DebitNoteRow>();
+  if (!updated) {
+    return c.json({ success: false, error: "Debit note not found" }, 404);
+  }
+  await emitAudit(c, {
+    resource: "debit-notes",
+    resourceId: id,
+    action: "unpost",
+    before: rowToDebitNote(existing),
+    after: rowToDebitNote(updated),
+  });
+  return c.json({ success: true, data: rowToDebitNote(updated) });
 });
 
 export default app;

@@ -27,6 +27,7 @@ import {
 import { getFyeMonth, fyWindowFor } from "../lib/fiscal";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
+import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
@@ -535,10 +536,11 @@ app.get("/aging", async (c) => {
   // cacheKey partitions the consolidated ("") result from each per-company
   // ("company:<orgId>") result so a filtered request never poisons the
   // default cache — the default read stays byte-identical to today.
-  // The "|due" suffix (2026-10-17) versions the cached shape: purchase-invoice
-  // docs now carry their due date (Creditor Aging's Next Due), so a snapshot
-  // built before that must not be served.
-  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due` : "|due";
+  // The suffix versions the cached shape so a snapshot built before a shape
+  // change is never served: "|due" (2026-10-17) — purchase-invoice docs carry
+  // their due date (Creditor Aging's Next Due); "|notes" (2026-10-17) — a
+  // credit / debit note is its own Debtor Aging line.
+  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due|notes` : "|due|notes";
   const data = await withSnapshot(
     c.var.DB,
     {
@@ -549,6 +551,9 @@ app.get("/aging", async (c) => {
       // snapshot (advances appear as negative rows below).
       sourceTables: [
         "invoices", "purchase_invoices", "supplier_payments", "kv_config", "opening_ap_excludes",
+        // Credit / debit notes are their own Debtor Aging lines (a post or a
+        // Back to Draft also touches its invoice, which rebuilds it anyway).
+        "credit_notes", "debit_notes",
         // Trade-finance section: a repayment allocation or a due-date edit
         // must rebuild the snapshot (kv_config above covers the Setup save).
         "trade_finance_draws", "trade_finance_repay_allocs",
@@ -556,12 +561,13 @@ app.get("/aging", async (c) => {
     },
     orgId,
     async () => {
-      const [invRes, piRes] = await Promise.all([
+      const [invRes, piRes, cnAgRes, dnAgRes] = await Promise.all([
         c.var.DB.prepare(
-          `SELECT customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
+          `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
         )
           .bind(...(coFilter.active ? [coFilter.param] : []))
           .all<{
+          id: string;
           customerId: string;
           customerName: string;
           invoiceNo?: string | null;
@@ -591,7 +597,30 @@ app.get("/aging", async (c) => {
           invoiceDate: string | null;
           isOpening: number | null;
         }>(),
+        c.var.DB.prepare(
+          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')",
+        ).all<Record<string, unknown>>(),
+        c.var.DB.prepare(
+          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'",
+        ).all<Record<string, unknown>>(),
       ]);
+      // Issued notes per invoice — each becomes its own Debtor Aging line
+      // (owner 2026-10-17), bucketed on its own date like an advance.
+      const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
+      for (const [rows, kind] of [[cnAgRes.results ?? [], "CN"], [dnAgRes.results ?? [], "DN"]] as const) {
+        for (const n of rows) {
+          const invId = String(n.invoiceId ?? n.invoice_id ?? "");
+          const amt = Math.round(Number(n.totalAmount ?? n.total_amount) || 0);
+          if (!invId || amt <= 0) continue;
+          const list = agingNotes.get(invId) ?? [];
+          list.push({
+            no: `${String(n.noteNumber ?? n.note_number ?? "")} · ${kind === "CN" ? "Credit note" : "Debit note"}`,
+            date: String(n.date ?? "").slice(0, 10),
+            sen: kind === "CN" ? -amt : amt,
+          });
+          agingNotes.set(invId, list);
+        }
+      }
       const obDateAg = await getOpeningDate(c.var.DB);
       const apExclAg = await loadOpeningApExcludes(c.var.DB);
 
@@ -617,13 +646,30 @@ app.get("/aging", async (c) => {
           arMap.set(i.customerId, row);
         }
         const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate);
-        addToBucket(row, moAr, outstanding);
-        row.docs.push({
-          no: String(i.invoiceNo ?? i.invoice_no ?? ""),
-          date: String(i.invoiceDate ?? "").slice(0, 10),
-          mo: agingBucketIdx(moAr),
-          amountSen: outstanding,
-        });
+        // A credit / debit note on the invoice is its own line: the invoice
+        // shows what was owed before its notes, each note its own amount on
+        // its own date. A debit note already paid would leave the invoice line
+        // negative — that invoice keeps its one combined line.
+        const notesAr = agingNotes.get(i.id) ?? [];
+        const invoiceSen = notesAr.length ? splitOutstandingByNotes(outstanding, notesAr) : null;
+        const split = invoiceSen !== null;
+        const ownSen = split ? invoiceSen : outstanding;
+        if (ownSen !== 0) {
+          addToBucket(row, moAr, ownSen);
+          row.docs.push({
+            no: String(i.invoiceNo ?? i.invoice_no ?? ""),
+            date: String(i.invoiceDate ?? "").slice(0, 10),
+            mo: agingBucketIdx(moAr),
+            amountSen: ownSen,
+          });
+        }
+        if (split) {
+          for (const n of notesAr) {
+            const moN = monthsOverdue(n.date || null);
+            addToBucket(row, moN, n.sen);
+            row.docs.push({ no: n.no, date: n.date, mo: agingBucketIdx(moN), amountSen: n.sen });
+          }
+        }
       }
 
       const apMap = new Map<string, ApAgingRow>();
@@ -1950,11 +1996,11 @@ app.get("/customer-statement", async (c) => {
       .bind(customerId)
       .first<{ id: string; name: string; code: string; outstandingSen: number }>(),
     c.var.DB.prepare(
-      `SELECT invoiceNo, invoiceDate, totalSen, status, isOpening FROM invoices
+      `SELECT id, invoiceNo, invoiceDate, totalSen, status, isOpening FROM invoices
         WHERE customerId = ? AND status NOT IN ('DRAFT','CANCELLED')`,
     )
       .bind(customerId)
-      .all<{ invoiceNo: string; invoiceDate: string; totalSen: number; status: string; isOpening: number | null }>(),
+      .all<{ id: string; invoiceNo: string; invoiceDate: string; totalSen: number; status: string; isOpening: number | null }>(),
     c.var.DB.prepare(
       // VOID/DELETED receipts are excluded, exactly as /debtor-ledger does it
       // (BUG-2026-08-13-080). The two build the SAME line model — this query was
@@ -1967,17 +2013,17 @@ app.get("/customer-statement", async (c) => {
       .bind(customerId)
       .all<{ receiptNumber: string; date: string; amount: number; status: string; method: string }>(),
     c.var.DB.prepare(
-      `SELECT noteNumber, date, totalAmount, status FROM credit_notes
+      `SELECT noteNumber, invoiceId, date, totalAmount, status FROM credit_notes
         WHERE customerId = ? AND status IN ('APPROVED','POSTED')`,
     )
       .bind(customerId)
-      .all<{ noteNumber: string; date: string; totalAmount: number; status: string }>(),
+      .all<{ noteNumber: string; invoiceId: string | null; date: string; totalAmount: number; status: string }>(),
     c.var.DB.prepare(
-      `SELECT noteNumber, date, totalAmount, status FROM debit_notes
+      `SELECT noteNumber, invoiceId, date, totalAmount, status FROM debit_notes
         WHERE customerId = ? AND status = 'POSTED'`,
     )
       .bind(customerId)
-      .all<{ noteNumber: string; date: string; totalAmount: number; status: string }>(),
+      .all<{ noteNumber: string; invoiceId: string | null; date: string; totalAmount: number; status: string }>(),
   ]);
   if (!cust) {
     return c.json({ success: false, error: "Customer not found" }, 404);
@@ -1991,12 +2037,15 @@ app.get("/customer-statement", async (c) => {
     isOpening?: number | null;
   };
   const lines: Line[] = [];
+  // The notes are their own lines below, so each invoice shows the amount it
+  // was issued at — its stored total already carries them (BUG-2026-10-17-315).
+  const noteSums = sumIssuedNotesByInvoice(cnRes.results ?? [], dnRes.results ?? []);
   for (const i of invRes.results ?? [])
     lines.push({
       date: i.invoiceDate ?? "",
       ref: i.invoiceNo,
       type: "INVOICE",
-      debitSen: Number(i.totalSen) || 0,
+      debitSen: invoiceIssuedSen(Number(i.totalSen) || 0, noteSums.get(i.id)),
       creditSen: 0,
       isOpening: i.isOpening,
     });
@@ -3711,14 +3760,17 @@ app.get("/debtor-ledger", async (c) => {
   const to = c.req.query("to") || "9999-12-31";
   const [custRes, invRes, payRes, cnRes, dnRes] = await Promise.all([
     c.var.DB.prepare("SELECT id, name, code FROM customers").all<{ id: string; name: string; code: string }>(),
-    c.var.DB.prepare(`SELECT customerId, invoiceNo, invoiceDate, totalSen, isOpening FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`).all<{ customerId: string; invoiceNo: string; invoiceDate: string; totalSen: number; isOpening: number | null }>(),
+    c.var.DB.prepare(`SELECT id, customerId, invoiceNo, invoiceDate, totalSen, isOpening FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`).all<{ id: string; customerId: string; invoiceNo: string; invoiceDate: string; totalSen: number; isOpening: number | null }>(),
     c.var.DB.prepare(`SELECT customerId, receiptNumber, date, amount, status FROM payment_records WHERE id NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'payment' AND state IN ('VOID','DELETED'))`).all<{ customerId: string; receiptNumber: string; date: string; amount: number; status: string }>(),
-    c.var.DB.prepare(`SELECT customerId, noteNumber, date, totalAmount FROM credit_notes WHERE status IN ('APPROVED','POSTED')`).all<{ customerId: string; noteNumber: string; date: string; totalAmount: number }>(),
-    c.var.DB.prepare(`SELECT customerId, noteNumber, date, totalAmount FROM debit_notes WHERE status = 'POSTED'`).all<{ customerId: string; noteNumber: string; date: string; totalAmount: number }>(),
+    c.var.DB.prepare(`SELECT customerId, invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')`).all<{ customerId: string; invoiceId: string | null; noteNumber: string; date: string; totalAmount: number; status: string }>(),
+    c.var.DB.prepare(`SELECT customerId, invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'`).all<{ customerId: string; invoiceId: string | null; noteNumber: string; date: string; totalAmount: number; status: string }>(),
   ]);
   const byParty = new Map<string, LedgerLine[]>();
   const push = (id: string, l: LedgerLine) => { if (!id) return; const arr = byParty.get(id) ?? []; arr.push(l); byParty.set(id, arr); };
-  for (const i of invRes.results ?? []) push(i.customerId, { date: i.invoiceDate ?? "", ref: i.invoiceNo, type: "INVOICE", debitSen: Number(i.totalSen) || 0, creditSen: 0, isOpening: i.isOpening });
+  // Invoices at the amount they were issued at — the notes are their own lines
+  // (BUG-2026-10-17-315), as on the customer statement.
+  const noteSumsDl = sumIssuedNotesByInvoice(cnRes.results ?? [], dnRes.results ?? []);
+  for (const i of invRes.results ?? []) push(i.customerId, { date: i.invoiceDate ?? "", ref: i.invoiceNo, type: "INVOICE", debitSen: invoiceIssuedSen(Number(i.totalSen) || 0, noteSumsDl.get(i.id)), creditSen: 0, isOpening: i.isOpening });
   for (const p of payRes.results ?? []) {
     push(p.customerId, { date: p.date ?? "", ref: p.receiptNumber, type: "RECEIPT", debitSen: 0, creditSen: Number(p.amount) || 0 });
     if (p.status === "BOUNCED") push(p.customerId, { date: p.date ?? "", ref: p.receiptNumber, type: "BOUNCED", debitSen: Number(p.amount) || 0, creditSen: 0 });

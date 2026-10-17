@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-17**: branch `feat/finance-notes-post`, to `main`, adds **C16 row 11** (the phone's Credit / Debit Notes lists read note-number and amount keys the API never returns, BUG-2026-10-17-317). Nothing else re-checked.
+
 > **Last verified: 2026-10-17**: branch `fix/m-dashboard-anchor-month`, to `main`, adds **C21 row 16** (the phone's Finance Dashboard took the API's last row as the latest month, BUG-2026-10-17-308). Nothing else re-checked.
 
 > **Last verified: 2026-10-17**: branch `fix/m-receivables-aging-total`, to `main`, adds **C16 row 9** (the phone's Receivables read a total the aging row does not carry, BUG-2026-10-17-307). Nothing else re-checked.
@@ -1184,6 +1186,7 @@ narrowing has to state what it is dropping.
 | 8 | `customerSOLine` / `customerRefLine` / `companySO` (read as the DO names `customerSO` / `customerRef` / `salesOrderNo`) | `computeInvoicePrintExtras` | `buildUnifiedInvoiceData` → invoice download + customer e-mail PDF | ✅ 2026-09-23 (-186) — a RENAMED field, not a dropped one: the invoice and DO extras share the `DocLineExtra` type, so `tsc` saw every name as optional-and-valid. Every line printed the invoice-level SO/REF and a blank CO SO. Enforced by `tests/invoice-pdf-line-refs.test.mjs` |
 | 9 | `total` / `totalSen` (the AR aging row carries five buckets and no total) | `/api/accounting/aging` | `receivablesConfig` → the phone's Receivables list | ✅ 2026-10-17 (-307) — every debtor read RM 0.00; the outstanding is now the sum of the five buckets; `tests/m-receivables-aging-total.test.mjs` imports the real config |
 | 10 | `pvKind` = `TRANSFER` (OVERWRITTEN, not dropped: the mapper wrote `isAp ? "AP" : "EXPENSE"` over the stored kind) | `GET /api/accounting/payment-vouchers` | every `pvKind === "TRANSFER"` branch in `src/pages/accounting/index.tsx` (door, print, detail, edit mode) | ✅ 2026-10-17 (-309) — a mapper written before the value existed; `tests/ap-payment-print.test.mjs` pins it |
+| 11 | `cnNo` / `creditNoteNo` / `dnNo` / `debitNoteNo` and `totalSen` (NEVER returned: the rows carry `noteNumber` / `totalAmount`) | `GET /api/credit-notes`, `GET /api/debit-notes` | `creditNotesSource` / `debitNotesSource` → the phone's Credit / Debit Notes lists | ✅ 2026-10-17 (-317) — latent (no notes on prod yet); `tests/finance-notes-post.test.mjs` pins the keys |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same

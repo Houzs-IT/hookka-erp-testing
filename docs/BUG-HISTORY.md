@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-317 (branch `feat/finance-notes-post`, to main); BUG-2026-10-17-314 flipped to 🟢 after the #954 prod check.
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-314 (branch `fix/finance-report-gap-rows`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-312 and -313 flipped to 🟢 after the #949 prod check.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-309 to -311 flipped to 🟢 after the #948 prod check.
@@ -138,9 +139,45 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-314 — The P&L, Monthly P&L and Cash Flow showed an empty strip between sections `reports` `finance` 🟡
+## BUG-2026-10-17-317 — The phone's Credit Notes / Debit Notes lists showed an id and RM 0.00 for every note `mobile` `finance` 🟡
 
 🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (production had no credit or debit notes when this was found, measured 2026-10-17): on the phone, each note's number would have shown its internal id and its amount RM 0.00.
+
+**Root cause.** The list config read `cnNo` / `creditNoteNo` / `dnNo` / `debitNoteNo` and `totalSen`; the API returns `noteNumber` and `totalAmount` (sen).
+
+**Fix.** `src/pages/m/config/modules.ts` reads `noteNumber` and `totalAmount` first, the old keys after.
+
+**Regression.** `tests/finance-notes-post.test.mjs`. Class: C16 row 11.
+
+## BUG-2026-10-17-316 — A posted debit note could charge the customer twice through a status edit `finance` `receivables` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (no debit notes on production, measured 2026-10-17). `PUT /api/debit-notes/:id` with POSTED → APPROVED (or DRAFT) → POSTED fired the charge twice: the customer's balance and the invoice's total went up by the note's amount again. The GL legs were guarded; the subledger was not.
+
+**Root cause.** The credit-note route had refused a transition back out of an issued status since Phase 1 (2026-06); the debit-note route, its mirror, never got the same guard.
+
+**Fix.** The debit-note PUT refuses POSTED → anything else (409, pointing at Back to Draft). Back to Draft (`POST /api/debit-notes/:id/unpost`) reverses the charge, the invoice and the GL in one batch, and refuses a note the customer has already paid.
+
+**Regression.** `tests/finance-notes-post.test.mjs`. Class: none (the credit-note twin was already guarded).
+
+## BUG-2026-10-17-315 — A posted credit / debit note counted twice on the customer statement, the debtor ledger and the invoice page `finance` `receivables` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (production had no credit or debit notes when found, measured 2026-10-17 — there was no Post button). Posting a credit note of 200 on an invoice of 1,000 would have shown, on the customer statement and in the debtor ledger, the invoice at 800 AND the note as −200: the customer's balance short by 200. The invoice page's "Net of posted adjustments" read 600. A reprinted invoice would have printed a TOTAL of 800 under lines adding up to 1,000.
+
+**Root cause.** Posting a note moves its invoice's stored total (the cascade takes a credit note off `invoices.totalSen` and adds a debit note to it), so every "what is still owed" reader is right without knowing about notes. The statement, the ledger and the invoice page also list the notes as their own lines, so they took the note off a second time. The GL (and so the P&L / Balance Sheet) was right: the invoice legs post at the issued amount.
+
+**Fix.** `src/lib/invoice-notes.ts` works the issued amount back (stored total + issued credit notes − posted debit notes); the statement, the debtor ledger, the invoice page and the invoice print use it. Debtor Aging shows each note as its own line on its own date (owner 2026-10-17), the invoice at what was owed before its notes. An invoice with an issued note can no longer be edited, re-priced, cancelled or voided-and-reissued under it (Back to Draft the note first), and a note only posts against an issued invoice (on a draft the cut would land twice).
+
+**Regression.** `tests/finance-notes-post.test.mjs`. Class: none.
+
+## BUG-2026-10-17-314 — The P&L, Monthly P&L and Cash Flow showed an empty strip between sections `reports` `finance` 🟢
+
+🟢 **Fixed and verified on prod 2026-10-17** (#954): the P&L (2), Monthly P&L (2) and Cash Flow (4) gap rows are hidden and the next row carries the strong line; no 10px strip left on any of the three.
 
 **Symptom.** Reported by the owner 2026-10-17 with a screenshot of the P&L statement: under NET SALES the table broke for a white strip before COST OF GOODS SOLD, and "some places" showed the same. The three month-grid reports drew a 10px empty row between sections (after every subtotal), which interrupted the table's lines.
 

@@ -29,7 +29,7 @@
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
 import { parseDebtorCode } from "../../lib/debtor";
-import type { LedgerEntryInput } from "./journal-hash";
+import { buildJournalEntryStatements, type LedgerEntryInput } from "./journal-hash";
 
 type Db = Env["Variables"]["DB"];
 
@@ -107,6 +107,7 @@ export async function buildCreditNoteLedgerLegs(
   note: NoteForLedger,
   amountSen: number,
   actorUserId: string | null,
+  sourceType: string = "credit_note",
 ): Promise<LedgerEntryInput[]> {
   const amount = Math.max(0, Math.round(amountSen) || 0);
   if (amount === 0) return [];
@@ -117,7 +118,7 @@ export async function buildCreditNoteLedgerLegs(
   let legNo = 1;
   legs.push({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-    sourceType: "credit_note",
+    sourceType,
     sourceId: note.id,
     legNo: legNo++,
     accountCode: cnDebitAccount(note.reason),
@@ -130,7 +131,7 @@ export async function buildCreditNoteLedgerLegs(
   if (taxSen > 0) {
     legs.push({
       id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "credit_note",
+      sourceType,
       sourceId: note.id,
       legNo: legNo++,
       accountCode: TAX_OUTPUT_ACCT,
@@ -143,7 +144,7 @@ export async function buildCreditNoteLedgerLegs(
   }
   legs.push({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-    sourceType: "credit_note",
+    sourceType,
     sourceId: note.id,
     legNo: legNo++,
     accountCode: controlCode,
@@ -162,6 +163,7 @@ export async function buildDebitNoteLedgerLegs(
   note: NoteForLedger,
   amountSen: number,
   actorUserId: string | null,
+  sourceType: string = "debit_note",
 ): Promise<LedgerEntryInput[]> {
   const amount = Math.max(0, Math.round(amountSen) || 0);
   if (amount === 0) return [];
@@ -172,7 +174,7 @@ export async function buildDebitNoteLedgerLegs(
   let legNo = 1;
   legs.push({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-    sourceType: "debit_note",
+    sourceType,
     sourceId: note.id,
     legNo: legNo++,
     accountCode: controlCode,
@@ -184,7 +186,7 @@ export async function buildDebitNoteLedgerLegs(
   });
   legs.push({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-    sourceType: "debit_note",
+    sourceType,
     sourceId: note.id,
     legNo: legNo++,
     accountCode: DN_SALES_ACCT,
@@ -197,7 +199,7 @@ export async function buildDebitNoteLedgerLegs(
   if (taxSen > 0) {
     legs.push({
       id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "debit_note",
+      sourceType,
       sourceId: note.id,
       legNo: legNo++,
       accountCode: TAX_OUTPUT_ACCT,
@@ -209,4 +211,88 @@ export async function buildDebitNoteLedgerLegs(
     });
   }
   return legs;
+}
+
+// ---------------------------------------------------------------------------
+// Post / Back to Draft (owner 2026-10-17, Finance v2: credit and debit notes
+// can be posted and put back to draft). A note's ledger family is every
+// sourceType starting with its kind, all under the note's id: the first post
+// ("credit_note"), a Back to Draft's mirror ("credit_note_restate_rev:<t>")
+// and a later re-post ("credit_note_restate_post:<t>"). The restate suffixes
+// are the ones the rest of the ledger already knows: the document-date
+// resolver dates them on the note's own date, and the Corrections report
+// lists them. At any moment at most one set is live (hidden = 0).
+// ---------------------------------------------------------------------------
+export type NoteKind = "credit_note" | "debit_note";
+
+const familyLike = (kind: NoteKind) => `${kind}%`;
+
+/** The source type a post of this note must use: its kind the first time, a
+ *  fresh "<kind>_restate_post:<stamp>" once earlier legs exist (hidden by a
+ *  Back to Draft) — null when a live set already exists, so nothing is posted
+ *  twice. */
+export async function noteLedgerSourceType(db: Db, orgId: string, kind: NoteKind, noteId: string): Promise<string | null> {
+  const rows = ((await db
+    .prepare(`SELECT hidden FROM ledger_journal_entries WHERE orgId = ? AND sourceId = ? AND sourceType LIKE ?`)
+    .bind(orgId, noteId, familyLike(kind))
+    .all<Record<string, unknown>>()).results ?? []);
+  if (rows.some((r) => Number(r.hidden ?? 0) === 0)) return null;
+  if (!rows.length) return kind;
+  return `${kind}_restate_post:${Date.now()}`;
+}
+
+/** Back to Draft, ledger side: post the mirror of the note's live legs under
+ *  "<kind>_restate_rev:<stamp>", then hide the whole family, so the books read
+ *  as if the note had never been issued and the trail stays. [] when nothing
+ *  is live. Run in the same batch as the subledger reversal. */
+export async function buildNoteUnpostStatements(
+  db: Db,
+  orgId: string,
+  kind: NoteKind,
+  note: { id: string; noteNumber: string },
+  actorUserId: string | null,
+) {
+  const live = ((await db
+    .prepare(`SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE orgId = ? AND sourceId = ? AND sourceType LIKE ? AND hidden = 0`)
+    .bind(orgId, note.id, familyLike(kind))
+    .all<Record<string, unknown>>()).results ?? []);
+  if (!live.length) return [];
+  const stamp = Date.now();
+  const label = kind === "credit_note" ? "CN" : "DN";
+  const legs: LedgerEntryInput[] = live.map((l, i) => ({
+    id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+    sourceType: `${kind}_restate_rev:${stamp}`,
+    sourceId: note.id,
+    legNo: i + 1,
+    accountCode: String(l.accountCode ?? l.account_code ?? ""),
+    debitSen: Number(l.creditSen ?? l.credit_sen) || 0,
+    creditSen: Number(l.debitSen ?? l.debit_sen) || 0,
+    description: `${label} ${note.noteNumber} · back to draft`,
+    actorUserId,
+    orgId,
+  }));
+  const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+  return [
+    ...statements,
+    db.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE orgId = ? AND sourceId = ? AND sourceType LIKE ?`)
+      .bind(orgId, note.id, familyLike(kind)),
+  ];
+}
+
+/** An invoice's totals once a note's amount is put back (Back to Draft): a
+ *  credit note's amount returns to the invoice, a debit note's comes off.
+ *  Status follows what is now paid against the new total. Pure. The caller
+ *  refuses a debit note whose amount is already paid (the total would drop
+ *  below what was received). */
+export function invoiceAfterNoteReversal(
+  inv: { totalSen: number; subtotalSen: number; paidAmount: number; status: string },
+  kind: NoteKind,
+  amountSen: number,
+): { totalSen: number; subtotalSen: number; status: string } {
+  const sign = kind === "credit_note" ? 1 : -1;
+  const totalSen = Math.max(0, (Number(inv.totalSen) || 0) + sign * amountSen);
+  const subtotalSen = Math.max(0, (Number(inv.subtotalSen) || 0) + sign * amountSen);
+  const paid = Number(inv.paidAmount) || 0;
+  const status = paid > 0 && paid >= totalSen ? "PAID" : paid > 0 ? "PARTIAL_PAID" : inv.status === "PAID" ? "SENT" : inv.status;
+  return { totalSen, subtotalSen, status };
 }

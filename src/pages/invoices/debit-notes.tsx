@@ -22,6 +22,9 @@ import { amountInWords } from "@/lib/amount-in-words";
 import { printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
+import { getCurrentUser } from "@/lib/auth";
 
 const DNMutationSchema = mutationWithData(DebitNoteSchema);
 
@@ -233,21 +236,72 @@ export default function DebitNotesPage() {
     },
   ], []);
 
-  const contextMenuItems: ContextMenuItem[] = [
+  // Post / Back to Draft (owner 2026-10-17, Finance v2), the mirror of the
+  // credit-note page: posting adds the note to the invoice and to what the
+  // customer owes and books it; Back to Draft takes all three off again.
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
+  const afterNoteChange = () => {
+    invalidateCachePrefix("/api/debit-notes");
+    invalidateCachePrefix("/api/invoices");
+    invalidateCachePrefix("/api/accounting");
+    refreshDebitNotes();
+  };
+  const sendNote = async (url: string, init: RequestInit, done: string, failed: string) => {
+    try {
+      const res = await fetch(url, init);
+      const j = (await res.json()) as { success?: boolean; error?: string };
+      if (res.ok && j.success) {
+        toast.success(done);
+        afterNoteChange();
+      } else toast.error(j.error || failed);
+    } catch {
+      toast.error(failed);
+    }
+  };
+  const postNote = async (dn: DebitNote) => {
+    if (!(await confirm({
+      title: `Post ${dn.noteNumber}?`,
+      message: `${formatCurrency(dn.totalAmount)} is added to invoice ${dn.invoiceNumber || "—"} and to what ${dn.customerName} owes, and goes into the books.`,
+      confirmLabel: "Post",
+    }))) return;
+    await sendNote(`/api/debit-notes/${encodeURIComponent(dn.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "POSTED", approvedBy: getCurrentUser()?.displayName?.trim() || undefined }),
+    }, `${dn.noteNumber} posted`, "Could not post the debit note");
+  };
+  const unpostNote = async (dn: DebitNote) => {
+    if (!(await confirm({
+      title: `Put ${dn.noteNumber} back to draft?`,
+      message: dn.status === "POSTED"
+        ? `${formatCurrency(dn.totalAmount)} comes off invoice ${dn.invoiceNumber || "—"} and off what ${dn.customerName} owes, and its entries come out of the books. You can post it again later.`
+        : "It was never posted, so nothing else changes.",
+      confirmLabel: "Back to Draft",
+      danger: true,
+    }))) return;
+    await sendNote(`/api/debit-notes/${encodeURIComponent(dn.id)}/unpost`, { method: "POST" },
+      `${dn.noteNumber} is a draft again`, "Could not put the debit note back to draft");
+  };
+
+  const contextMenuItems = (row: DebitNote): ContextMenuItem[] => [
     {
       label: "Print PDF",
-      action: async (row) => {
+      action: async (r: DebitNote) => {
         try {
           const { generateDebitNotePdf } = await import("@/lib/generate-debit-note-pdf");
-          generateDebitNotePdf(row);
+          generateDebitNotePdf(r);
         } catch {
           /* generator draws/saves itself */
         }
       },
     },
+    ...(row.status !== "POSTED" ? [{ label: "Post", action: (r: DebitNote) => void postNote(r) }] : []),
+    ...(row.status !== "DRAFT" ? [{ label: "Back to Draft", danger: true, action: (r: DebitNote) => void unpostNote(r) }] : []),
     {
       label: "Refresh",
-      action: (_row) => refreshDebitNotes(),
+      separator: true,
+      action: () => refreshDebitNotes(),
     },
   ];
 
