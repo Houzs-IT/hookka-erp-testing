@@ -25,7 +25,9 @@ import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/
 import { exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
 import { buildAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
-import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
+import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
+import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
+import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
@@ -172,18 +174,23 @@ function todayDMY(): string {
   return formatDateDMY(new Date());
 }
 
-// PV → voucher: expense (DR) lines, "Paid from" bank note, amount in words.
+// PV → voucher: expense (DR) lines, "Paid from" under the payee, the amount
+// boxed beside it (print design 1a). An AP Payment prints the bills it
+// settles instead (apDetail, fetched on demand); a legacy payment whose lines
+// hit the creditor control lists them under the lines (detail).
 function buildPvVoucher(
   pv: PvRow,
   accounts: ChartOfAccount[],
   detail?: { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[],
+  apDetail?: ApPrintDetail,
 ): VoucherSpec {
   const lines: VoucherLine[] = pv.lines.map((l) => ({
     cells: [accountLabel(accounts, l.accountCode), l.description ?? "", formatCurrency(l.amountSen)],
   }));
-  const paidFrom = pv.accrued === 1 && !pv.settledAt
-    ? `Accrued to: ${pv.accrualAccount ? accountLabel(accounts, pv.accrualAccount) : "—"}`
-    : `Paid from: ${pv.payFrom ? accountLabel(accounts, pv.payFrom) : "—"}`;
+  const accruedOnly = pv.accrued === 1 && !pv.settledAt;
+  const paidFrom: VoucherFact = accruedOnly
+    ? { label: "Accrued to", value: pv.accrualAccount ? accountLabel(accounts, pv.accrualAccount) : "—" }
+    : { label: "Paid from", value: pv.payFrom ? accountLabel(accounts, pv.payFrom) : "—" };
   // Houzs-style voucher (owner 2026-09-22): the ladder's real signatories and
   // dates print under the signature lines; an unposted voucher carries a
   // watermark so it can never pass as a paid document; a supplier payment
@@ -197,21 +204,33 @@ function buildPvVoucher(
   const isTransfer = pv.pvKind === "TRANSFER";
   const billNo = (pv.billNo ?? pv.bill_no) ?? "";
   const billDate = String((pv.billDate ?? pv.bill_date) ?? "").slice(0, 10);
-  const billText = billNo ? `Bill no. ${billNo}${/^\d{4}-\d{2}-\d{2}$/.test(billDate) ? ` dated ${formatDateDMY(billDate)}` : ""}` : "";
+  const billDateText = /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? formatDateDMY(billDate) : "";
+  const isAp = pv.pvKind === "AP";
+  const supplierAp = isAp && pv.partyKind === "SUPPLIER";
+  const bills = isAp && apDetail
+    ? apBillsBlock(apDetail, {
+        totalSen: pv.totalSen, money: formatCurrency,
+        docLabel: supplierAp ? "Purchase invoice" : "Bill", refLabel: supplierAp ? "Supplier inv no." : "Reference",
+        partyWord: supplierAp ? "Supplier" : "Creditor",
+      })
+    : null;
   return {
     // A voided voucher must never print as a clean/valid document.
     title: pv.status === "VOID" ? "PAYMENT VOUCHER — VOID" : "PAYMENT VOUCHER",
     company: VOUCHER_COMPANY,
     docNo: pv.pvNo,
     date: formatDateDMY(pv.date),
-    partyLabel: isTransfer ? "Transfer To" : "Pay To",
+    partyLabel: isTransfer ? "Transfer To" : supplierAp ? "Pay To (Supplier)" : "Pay To",
     partyName: isTransfer ? (pv.lines[0] ? accountLabel(accounts, pv.lines[0].accountCode) : "") : pv.payee ?? "",
-    columns: [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
-    lines,
-    footerNote: paidFrom,
-    totalCells: ["", "Total", formatCurrency(pv.totalSen)],
+    partyDetails: [isTransfer ? { label: "From", value: paidFrom.value } : paidFrom],
+    amountBox: { label: isTransfer ? "Amount transferred" : accruedOnly ? "Amount payable" : "Amount paid", value: formatCurrency(pv.totalSen) },
+    facts: billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : undefined,
+    columns: bills ? bills.columns : [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
+    lines: bills ? bills.lines : lines,
+    totalCells: bills ? bills.totalCells : ["", "Total", formatCurrency(pv.totalSen)],
+    balanceStrip: bills?.balanceStrip,
     amountWords: amountInWords(pv.totalSen),
-    remarks: [pv.description ?? "", billText].filter(Boolean).join(" · ") || undefined,
+    remarks: pv.description || undefined,
     signatures: [
       { label: "Prepared by", name: pvx.preparedByName ?? pvx.createdByName ?? undefined, on: dmy(pv.preparedAt ?? pv.prepared_at) ?? (pvx.preparedByName ? undefined : formatDateDMY(pv.date)) },
       { label: "Checked by", name: pvx.checkedByName ?? undefined, on: dmy(pv.checkedAt ?? pv.checked_at) },
@@ -220,7 +239,7 @@ function buildPvVoucher(
     ],
     printedOn: todayDMY(),
     watermark,
-    detail: detail && detail.length
+    detail: !bills && detail && detail.length
       ? {
           heading: "Bills settled by this payment",
           columns: [{ label: "Supplier" }, { label: "Bill" }, { label: "Amount", align: "right" }],
@@ -247,9 +266,10 @@ function buildOrVoucher(
     date: formatDateDMY(or.date),
     partyLabel: "Received From",
     partyName: or.receivedFrom ?? "",
+    partyDetails: [{ label: "Deposited to", value: or.payTo ? accountLabel(accounts, or.payTo) : "—" }],
+    amountBox: { label: "Amount received", value: formatCurrency(or.totalSen) },
     columns: [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
     lines,
-    footerNote: `Deposited to: ${or.payTo ? accountLabel(accounts, or.payTo) : "—"}`,
     totalCells: ["", "Total", formatCurrency(or.totalSen)],
     amountWords: amountInWords(or.totalSen),
     remarks: or.description ?? undefined,
@@ -311,11 +331,12 @@ function buildOtherPartyBillVoucher(b: OtherPartyBill, accounts: ChartOfAccount[
     company: VOUCHER_COMPANY,
     docNo: b.billNo,
     date: formatDateDMY(b.billDate),
-    partyLabel: "Party",
+    partyLabel: b.partyType === "DEBTOR" ? "Bill To" : "From",
     partyName: b.partyName,
+    amountBox: { label: "Bill amount", value: formatCurrency(b.totalSen) },
+    facts: [{ label: "Reference", value: b.referenceNo || "—" }],
     columns: [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
     lines,
-    footerNote: `Reference: ${b.referenceNo || "—"}`,
     totalCells: ["", "Total", formatCurrency(b.totalSen)],
     amountWords: amountInWords(b.totalSen),
     signatures: [{ label: "Prepared by" }, { label: "Approved by" }],
@@ -323,26 +344,40 @@ function buildOtherPartyBillVoucher(b: OtherPartyBill, accounts: ChartOfAccount[
   };
 }
 
-// Other-party payment → voucher: one line per allocated bill (Bill No · Amount),
-// "Paid from" bank note, amount in words. VOID-tagged if voided/deleted.
-function buildOtherPartyPaymentVoucher(p: PaymentGroup, accounts: ChartOfAccount[]): VoucherSpec {
+// Other-party payment → voucher (print design 1a): one line per allocated bill,
+// the bank under the party, the amount boxed beside it. Money in from an other
+// debtor prints as a receipt (BUG-2026-10-17-310: it printed as a payment
+// voucher "Paid from" the bank it was paid into); money out to an other
+// creditor prints as a payment, with the bills block when the print detail
+// (GET /api/accounting/ap-payment-print) is loaded. VOID-tagged if voided/deleted.
+function buildOtherPartyPaymentVoucher(p: PaymentGroup, accounts: ChartOfAccount[], apDetail?: ApPrintDetail): VoucherSpec {
   const voided = p.lifecycleState === "VOID" || p.lifecycleState === "DELETED";
+  const receipt = p.partyType === "DEBTOR";
   const lines: VoucherLine[] = p.lines.map((l) => ({
     cells: [l.billNo, formatCurrency(l.amountSen)],
   }));
+  const bills = !receipt && apDetail
+    ? apBillsBlock(apDetail, { totalSen: p.totalSen, money: formatCurrency, docLabel: "Bill", refLabel: "Reference", partyWord: "Creditor" })
+    : null;
+  const title = receipt ? "OTHER-PARTY RECEIPT" : "OTHER-PARTY PAYMENT VOUCHER";
   return {
-    title: voided ? "OTHER-PARTY PAYMENT VOUCHER — VOID" : "OTHER-PARTY PAYMENT VOUCHER",
+    title: voided ? `${title} — VOID` : title,
     company: VOUCHER_COMPANY,
     docNo: p.paymentNo,
     date: formatDateDMY(p.date),
-    partyLabel: "Party",
+    partyLabel: receipt ? "Received From" : "Pay To",
     partyName: p.partyName,
-    columns: [{ label: "Bill No" }, { label: "Amount", align: "right" }],
-    lines,
-    footerNote: `Paid from: ${p.bankAccount ? accountLabel(accounts, p.bankAccount) : "—"}`,
-    totalCells: ["Total", formatCurrency(p.totalSen)],
+    partyDetails: [{ label: receipt ? "Deposited to" : "Paid from", value: p.bankAccount ? accountLabel(accounts, p.bankAccount) : "—" }],
+    amountBox: { label: receipt ? "Amount received" : "Amount paid", value: formatCurrency(p.totalSen) },
+    columns: bills ? bills.columns : [{ label: "Bill No" }, { label: "Amount", align: "right" }],
+    lines: bills ? bills.lines : lines,
+    totalCells: bills ? bills.totalCells : ["Total", formatCurrency(p.totalSen)],
+    balanceStrip: bills?.balanceStrip,
     amountWords: amountInWords(p.totalSen),
-    signatures: [{ label: "Prepared by" }, { label: "Approved by" }, { label: "Received by" }],
+    remarks: p.reference || undefined,
+    signatures: receipt
+      ? [{ label: "Received by" }, { label: "Issued by" }]
+      : [{ label: "Prepared by" }, { label: "Approved by" }, { label: "Received by" }],
     printedOn: todayDMY(),
   };
 }
@@ -357,8 +392,11 @@ function buildFundTransferVoucher(t: FtRow, accounts: ChartOfAccount[]): Voucher
     company: VOUCHER_COMPANY,
     docNo: t.no,
     date: formatDateDMY(t.date),
-    partyLabel: "Description",
-    partyName: t.description ?? "",
+    partyLabel: "Transfer To",
+    partyName: accountLabel(accounts, t.toAccount),
+    partyDetails: [{ label: "From", value: accountLabel(accounts, t.fromAccount) }],
+    amountBox: { label: "Amount transferred", value: formatCurrency(t.amountSen) },
+    remarks: t.description ?? undefined,
     columns: [{ label: "From" }, { label: "To" }, { label: "Amount", align: "right" }],
     lines: [{ cells: [accountLabel(accounts, t.fromAccount), accountLabel(accounts, t.toAccount), formatCurrency(t.amountSen)] }],
     totalCells: ["", "Total", formatCurrency(t.amountSen)],
@@ -380,9 +418,10 @@ function buildSupplierDiscountVoucher(d: SDHistoryRow): VoucherSpec {
     date: formatDateDMY(d.date),
     partyLabel: "Supplier",
     partyName: d.supplierName ?? "",
+    amountBox: { label: "Discount amount", value: formatCurrency(d.totalAmount) },
+    facts: [{ label: "Against PI", value: d.piNo ?? "" }],
     columns: [{ label: "Description" }, { label: "Amount", align: "right" }],
     lines: [{ cells: [d.reason || "Supplier discount", formatCurrency(d.totalAmount)] }],
-    footerNote: d.piNo ? `Against PI: ${d.piNo}` : undefined,
     totalCells: ["Total", formatCurrency(d.totalAmount)],
     amountWords: amountInWords(d.totalAmount),
     signatures: [{ label: "Prepared by" }, { label: "Approved by" }],
@@ -8942,6 +8981,13 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
   };
 
   const opaySel = useRowSelection(history ?? [], (p) => p.paymentNo);
+  // A payment to an other creditor prints with its bills detail (dates,
+  // balances before — print design 1a), loaded first; a receipt from an other
+  // debtor needs none.
+  const printOtherPayments = async (list: PaymentGroup[]) => {
+    const details = await Promise.all(list.map((p) => (p.partyType === "CREDITOR" ? fetchApPrintDetail(p.paymentNo) : Promise.resolve(null))));
+    printVouchers(list.map((p, i) => buildOtherPartyPaymentVoucher(p, accounts, details[i] ?? undefined)));
+  };
 
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
   // links in the rows; a click still opens the payment.
@@ -8949,7 +8995,7 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
   const opayRowMenu = (g: PaymentGroup): RowMenuGroups => [
     [{ label: "Open", action: () => setDetail(g) }],
     [
-      { label: "Print", action: () => printVoucher(buildOtherPartyPaymentVoucher(g, accounts)) },
+      { label: "Print", action: () => void printOtherPayments([g]) },
       ...((g.lifecycleState ?? "ACTIVE") === "ACTIVE" ? [{ label: "Edit", action: () => editPayment(g) }] : []),
     ],
     lifecycleMenuItems(g.lifecycleState, {
@@ -8975,7 +9021,7 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
       <BatchActionsBar
         count={opaySel.count}
         onClear={opaySel.clear}
-        onPrint={() => printVouchers(opaySel.selectedRows.map((p) => buildOtherPartyPaymentVoucher(p, accounts)))}
+        onPrint={() => void printOtherPayments(opaySel.selectedRows)}
         exportName="other-party-payments"
         exportAoa={() => [
           ["Payment No", "Date", "Party", "Status", "Voucher Total (RM)", "Bill No", "Amount (RM)"],
@@ -10343,14 +10389,17 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
   return { ...row, payeeText, descText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
 }
 
-// The settled-bills detail block for a voucher's print: an AP voucher carries
-// its ticks (draft or posted), so no round-trip is needed.
-function pvApPrintDetail(pv: PvRow): { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[] | undefined {
+// The settled-bills detail block for a voucher's print when its print detail
+// (GET /api/accounting/ap-payment-print) cannot be loaded: an AP voucher
+// carries its ticks (draft or posted), so the bills still print — without
+// their dates and balances.
+function pvApFallbackDetail(pv: PvRow): ApPrintDetail | undefined {
   if (pv.pvKind !== "AP") return undefined;
-  const rows: { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[] =
-    (pv.allocs ?? []).map((a) => ({ supplierName: pv.payee ?? "", piNo: a.docNo || a.docId, opening: false, method: "", bookedSen: a.amountSen }));
-  if ((pv.advanceSen ?? 0) > 0) rows.push({ supplierName: pv.payee ?? "", piNo: null, opening: false, method: "", bookedSen: pv.advanceSen ?? 0 });
-  return rows.length ? rows : undefined;
+  return {
+    bills: (pv.allocs ?? []).map((a) => ({ docNo: a.docNo || a.docId, supplierInvNo: a.docRef ?? "", billDate: "", dueDate: "", outstandingBeforeSen: null, paidSen: a.amountSen })),
+    advanceSen: pv.advanceSen ?? 0,
+    balanceBeforeSen: null,
+  };
 }
 
 // Attachments block inside an expanded voucher row: the files on record, add
@@ -10918,12 +10967,18 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (j?.success) { setPrintFooter(footerDraft); setFooterOpen(false); toast.success("Print footer saved"); }
     else toast.error(j?.error || "Save failed");
   };
-  // Print with the settled-bills detail when the voucher is a supplier payment
-  // (its lines hit the AP control) — fetched on demand so the list stays light.
+  // Print with the bills a payment settles — an AP Payment's from its print
+  // detail (dates, balances before; print design 1a), a legacy voucher whose
+  // lines hit the creditor control from the bank-reco payment detail — fetched
+  // on demand so the list stays light.
   const pvPrintSpec = async (r: PvRow): Promise<VoucherSpec> => {
+    if (r.pvKind === "AP") {
+      const ap = (await fetchApPrintDetail(r.pvNo)) ?? pvApFallbackDetail(r);
+      return { ...buildPvVoucher(r, accounts, undefined, ap), footerText: printFooter };
+    }
     type DetailRow = { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number };
-    let detail: DetailRow[] | undefined = pvApPrintDetail(r);
-    if (!detail && r.lines.some((l) => l.accountCode.startsWith("400") || l.accountCode.startsWith("405"))) {
+    let detail: DetailRow[] | undefined;
+    if (r.lines.some((l) => l.accountCode.startsWith("400") || l.accountCode.startsWith("405"))) {
       try {
         const res = await fetch(`/api/accounting/bank-reco/payment-detail?paymentNo=${encodeURIComponent(r.pvNo)}`);
         const j = await res.json() as { success?: boolean; data?: { rows: DetailRow[] } };
@@ -10949,12 +11004,15 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     } finally { setBundleBusy(null); }
   };
   // Print one row whatever door it came in by — each document's own builder,
-  // so the paper is identical to its own page's.
-  const payVoucherOf = (row: PayRow): VoucherSpec =>
-    row.pv ? { ...buildPvVoucher(row.pv, accounts), footerText: printFooter }
-    : row.sp ? buildSupplierPaymentVoucher(row.sp)
+  // so the paper is identical to its own page's; the bills detail is loaded
+  // for every door that pays bills, in a batch too (BUG-2026-10-17-311: batch
+  // print used to drop an AP voucher's bills).
+  const payVoucherOf = async (row: PayRow): Promise<VoucherSpec> =>
+    row.pv ? pvPrintSpec(row.pv)
+    : row.sp ? buildSupplierPaymentVoucher({ ...row.sp, bankLabel: row.sp.bankAccount ? accountLabel(accounts, row.sp.bankAccount) : null }, (await fetchApPrintDetail(row.sp.paymentNo)) ?? undefined)
     : row.ft ? buildFundTransferVoucher(row.ft, accounts)
-    : buildOtherPartyPaymentVoucher(row.ocp!, accounts);
+    : buildOtherPartyPaymentVoucher(row.ocp!, accounts, (await fetchApPrintDetail(row.ocp!.paymentNo)) ?? undefined);
+  const printPayRows = async (list: PayRow[]) => { printVouchers(await Promise.all(list.map(payVoucherOf))); };
   // A foreign row voids / restores through its own document's endpoint — the
   // same call its own page makes (the Receipts hub does exactly this).
   const handleForeignLifecycle = async (row: PayRow, action: "void" | "delete" | "unvoid") => {
@@ -11239,7 +11297,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     [{ label: "Open", action: () => setDetailPayKey(g.key) }],
     [
       ...(g.ft && g.state === "ACTIVE" ? [{ label: "Edit description", action: () => setEditFtNo(g.no) }] : []),
-      { label: "Print", action: () => printVoucher(payVoucherOf(g)) },
+      { label: "Print", action: () => void printPayRows([g]) },
       { label: `Open on the ${PAY_DOOR_LABEL[g.door]} page ↗`, action: () => navigate(foreignHref(g)) },
     ],
     lifecycleMenuItems(g.state, {
@@ -11666,7 +11724,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       <BatchActionsBar
         count={picked.length}
         onClear={clearPicked}
-        onPrint={() => printVouchers(picked.map(payVoucherOf))}
+        onPrint={() => void printPayRows(picked)}
         exportName="payment-vouchers"
         exportAoa={() => [
           ["Door", "PV No", "Date", "Pay To", "Paid From", "Status", "Remarks", "Product Line", "Voucher Total (RM)", "Account Code", "Account Name", "Line Description", "Amount (RM)"],
@@ -11882,7 +11940,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             badges={<>{payDoorChip(g.door)}{statusChip}</>}
             onClose={close}
             actions={<>
-              <Button variant="outline" size="sm" onClick={() => printVoucher(payVoucherOf(g))}><Printer className="h-4 w-4" /> Print</Button>
+              <Button variant="outline" size="sm" onClick={() => void printPayRows([g])}><Printer className="h-4 w-4" /> Print</Button>
               <Link to={foreignHref(g)}><Button variant="outline" size="sm">Open on its page ↗</Button></Link>
               {g.ft && g.state === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); setEditFtNo(g.no); }}>Edit description</Button>}
               {g.state === "ACTIVE"

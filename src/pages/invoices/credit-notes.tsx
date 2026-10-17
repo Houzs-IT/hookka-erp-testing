@@ -61,6 +61,8 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
     date: formatDateDMY(cn.date),
     partyLabel: "Customer",
     partyName: cn.customerName ?? "",
+    amountBox: { label: "Credit amount", value: formatCurrency(cn.totalAmount) },
+    facts: [{ label: "Against invoice", value: cn.invoiceNumber || "—" }],
     columns: [
       { label: "Description" },
       { label: "Qty", align: "right" },
@@ -69,7 +71,6 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
     ],
     lines,
     totalCells: ["", "", "Total", formatCurrency(cn.totalAmount)],
-    footerNote: `Against Invoice: ${cn.invoiceNumber || "—"}`,
     remarks,
     amountWords: amountInWords(cn.totalAmount),
     signatures: [{ label: "Issued by" }, { label: "Approved by" }],

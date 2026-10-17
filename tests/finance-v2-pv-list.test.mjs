@@ -84,6 +84,6 @@ test("the footer counts every payment; the batch bars read the grid's ticks and 
   assert.match(tab, /of \{payRows\.length\}/);
   assert.match(tab, /const ids = picked\.map\(\(r\) => r\.pv\?\.id\)\.filter\(\(id\): id is string => !!id\);/, "the ladder takes vouchers only");
   assert.match(tab, /clearPicked\(\);\s*load\(\);/, "the selection clears after a batch");
-  assert.match(tab, /count=\{picked\.length\}\s*onClear=\{clearPicked\}\s*onPrint=\{\(\) => printVouchers\(picked\.map\(payVoucherOf\)\)\}/);
+  assert.match(tab, /count=\{picked\.length\}\s*onClear=\{clearPicked\}\s*onPrint=\{\(\) => void printPayRows\(picked\)\}/);
   assert.doesNotMatch(tab, /pvSel\./, "the old hand-made selection is gone");
 });

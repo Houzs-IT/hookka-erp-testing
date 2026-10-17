@@ -51,7 +51,9 @@ test("foreign rows carry their door badge and read as Approved / Cancelled on th
 });
 
 test("a foreign row prints, opens and voids through ITS OWN document — never the voucher endpoints", () => {
-  assert.match(tab, /: row\.sp \? buildSupplierPaymentVoucher\(row\.sp\)\s*\n\s*: row\.ft \? buildFundTransferVoucher\(row\.ft, accounts\)\s*\n\s*: buildOtherPartyPaymentVoucher\(row\.ocp!, accounts\);/);
+  // Each door its own builder; the doors that pay bills load the print detail
+  // first (print design 1a, owner 2026-10-17).
+  assert.match(tab, /: row\.sp \? buildSupplierPaymentVoucher\(\{ \.\.\.row\.sp, bankLabel: [^\n]+\}, \(await fetchApPrintDetail\(row\.sp\.paymentNo\)\) \?\? undefined\)\s*\n\s*: row\.ft \? buildFundTransferVoucher\(row\.ft, accounts\)\s*\n\s*: buildOtherPartyPaymentVoucher\(row\.ocp!, accounts, \(await fetchApPrintDetail\(row\.ocp!\.paymentNo\)\) \?\? undefined\);/);
   assert.match(tab, /\? `\/api\/supplier-payments\/\$\{encodeURIComponent\(row\.no\)\}\/lifecycle`\s*\n\s*: row\.ft\s*\n\s*\? `\/api\/accounting\/fund-transfers\/\$\{encodeURIComponent\(row\.no\)\}\/lifecycle`\s*\n\s*: `\/api\/accounting\/other-party-payments\/\$\{encodeURIComponent\(row\.no\)\}\/lifecycle`;/);
   assert.match(tab, /const foreignHref = \(row: PayRow\) => row\.sp \? "\/invoices\/supplier-payments" : row\.ft \? "\/accounting\?tab=transfer" : "\/accounting\?tab=ocreditorpay";/);
   // Double-click opens the shared shell; single click does nothing (owner 2026-10-01).
@@ -68,7 +70,9 @@ test("the ladder, edit and attachments stay voucher-only; batch print / export c
   // grid's (finance v2), mirrored into `picked`.
   assert.match(tab, /const ids = picked\.map\(\(r\) => r\.pv\?\.id\)\.filter\(\(id\): id is string => !!id\);/);
   assert.match(tab, /const sel = picked\.map\(\(x\) => x\.pv\)\.filter\(\(x\): x is PvRow => !!x\);/);
-  assert.match(tab, /onPrint=\{\(\) => printVouchers\(picked\.map\(payVoucherOf\)\)\}/);
+  // Batch print loads every row's detail too (BUG-2026-10-17-311).
+  assert.match(tab, /const printPayRows = async \(list: PayRow\[\]\) => \{ printVouchers\(await Promise\.all\(list\.map\(payVoucherOf\)\)\); \};/);
+  assert.match(tab, /onPrint=\{\(\) => void printPayRows\(picked\)\}/);
   assert.match(tab, /\["Door", "PV No", "Date", "Pay To", "Paid From", "Status", "Remarks", "Product Line", "Voucher Total \(RM\)"/);
   // Selection is keyed by the hub row, so a voucher and a foreign row never collide.
   assert.match(tab, /data=\{gridRows\}\s*\n\s*keyField="key"/);
@@ -96,7 +100,7 @@ test("a supplier payment's bank is read from its ledger CR leg — newest, never
 });
 
 test("one supplier-payment voucher builder, in a lib, used by both pages", () => {
-  assert.match(lib, /export function buildSupplierPaymentVoucher\(p: SupplierPaymentVoucherInput\): VoucherSpec/);
+  assert.match(lib, /export function buildSupplierPaymentVoucher\(p: SupplierPaymentVoucherInput, detail\?: ApPrintDetail\): VoucherSpec/);
   assert.match(lib, /"SUPPLIER PAYMENT VOUCHER — VOID"/);
   // An advance line has no PI — it prints as such, never as a blank cell.
   assert.match(lib, /l\.piNo \|\| "Advance \/ unallocated"/);
