@@ -359,6 +359,9 @@ export type SupplierPaymentCreateInput = {
   allocations: CreateAllocation[];
   advanceSen: number;
   paymentNo: string;
+  /** Legs posted in the same entry chain as the payment — the interest an
+      AP Payment drawing on trade finance records at drawdown (item 17). */
+  extraLegs?: Parameters<typeof buildJournalEntryStatements>[2];
 };
 export type SupplierPaymentCreateResult =
   | { ok: true; statements: D1PreparedStatement[]; totalBooked: number; totalBank: number; totalFx: number }
@@ -655,6 +658,7 @@ export async function buildSupplierPaymentCreate(
       orgId,
     });
   }
+  legs.push(...(input.extraLegs ?? []));
   const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
   statements.push(...ls);
   statements.push(bumpSupplierPaymentsRev(db));

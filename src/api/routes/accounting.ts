@@ -58,7 +58,7 @@ import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, 
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
-import { tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
+import { addDays, tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
@@ -11026,7 +11026,10 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
     _pendingPvApCols = (async () => {
       // notes / bill_no / bill_date (owner 2026-10-01, the voucher form):
       // internal notes, the supplier's own bill number and date.
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT"]) {
+      // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
+      // finance carries the drawdown's due date and the interest recorded at
+      // drawdown (finance backlog item 17, owner 「提款时就记」).
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -11227,6 +11230,9 @@ async function pvOpenBillsFor(
 type PvApValidated = {
   partyKind: PvPartyKind; partyId: string; partyName: string; payFrom: string;
   allocs: PvAlloc[]; advanceSen: number; totalSen: number;
+  /** Paid from a trade-finance line = a drawdown: its due date and the
+      interest recorded at drawdown (null for a bank / cash payment). */
+  tf: { dueDate: string; interestSen: number } | null;
 };
 // Create/edit validation for an AP voucher: party exists, Pay From is bank/
 // cash, every ticked bill is the party's, open, and within (outstanding −
@@ -11243,9 +11249,31 @@ export async function validatePvAp(
   const partyId = String(body.partyId ?? "");
   if (!partyId) return { ok: false, error: "Pick the creditor to pay" };
   if (body.accrued === true || body.accrued === 1) return { ok: false, error: "An AP payment cannot be accrued — the bill already carries the liability" };
-  const h = validatePvHeader(coa, { payFrom: body.payFrom });
-  if (!h.ok) return h;
-  const payFrom = h.payFrom!;
+  // Paid from a trade-finance line = the lender pays the supplier for us (a
+  // drawdown, finance backlog item 17): a supplier that is not the lender;
+  // the due date defaults to the payment date + the line's tenor; interest
+  // is recorded at drawdown (owner 「提款时就记」).
+  const tfSourcesV = await getTfSources(db).catch(() => [] as TfSource[]);
+  const tfSrc = tfSourcesV.find((x) => x.accountCode === String(body.payFrom ?? ""));
+  let payFrom: string;
+  let tf: { dueDate: string; interestSen: number } | null = null;
+  if (tfSrc) {
+    if (partyKind !== "SUPPLIER") return { ok: false, error: "Only a supplier can be paid through trade finance" };
+    if (tfSourcesV.some((x) => x.lenderSupplierId === partyId)) return { ok: false, error: "The lender is repaid from a bank account — it cannot be paid by drawing on its own line" };
+    const date = String(body.date ?? "").slice(0, 10);
+    const dueIn = String(body.tfDueDate ?? "").slice(0, 10);
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueIn) ? dueIn : /^\d{4}-\d{2}-\d{2}$/.test(date) ? addDays(date, tfSrc.tenorDays) : "";
+    if (!dueDate) return { ok: false, error: "The drawdown needs a due date" };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && dueDate < date) return { ok: false, error: "The drawdown's due date is before the payment date" };
+    const interestSen = Math.round(Number(body.tfInterestSen) || 0);
+    if (interestSen < 0) return { ok: false, error: "Interest cannot be negative" };
+    payFrom = tfSrc.accountCode;
+    tf = { dueDate, interestSen };
+  } else {
+    const h = validatePvHeader(coa, { payFrom: body.payFrom });
+    if (!h.ok) return h;
+    payFrom = h.payFrom!;
+  }
   const open = await pvOpenBillsFor(db, orgId, partyKind, partyId, exclude);
   if (!open) return { ok: false, error: partyKind === "SUPPLIER" ? "Supplier not found" : "Other creditor not found" };
   const rawAllocs = Array.isArray(body.allocations) ? (body.allocations as Record<string, unknown>[]) : [];
@@ -11277,12 +11305,14 @@ export async function validatePvAp(
   }
   if (allocs.length === 0 && advanceSen <= 0) return { ok: false, error: "Tick at least one bill (or enter an advance)" };
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
-  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen } };
+  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen, tf } };
 }
 
 type PvApHeader = {
   id: string; pvNo: string; date: string; payFrom: string; partyKind: PvPartyKind; partyId: string;
   reference: string | null; advanceSen: number;
+  /** A drawdown (Paid from a trade-finance line): due date + interest at drawdown. */
+  tfDueDate?: string | null; tfInterestSen?: number;
 };
 // The posting moment of an AP voucher — the settlement document is built by the
 // page-native builders under paymentNo = pvNo. Returns the statements to batch;
@@ -11312,12 +11342,33 @@ export async function pvApSettlementStatements(
       });
       return { ok: true, statements, totalSen: chk.totalSen };
     }
+    // Paid from a trade-finance line = a DRAWDOWN (finance backlog item 17):
+    // the same supplier payment (DR creditors · CR the TF line), its due date
+    // in trade_finance_draws, and the interest recorded at drawdown
+    // (DR 900-I004 · CR the TF line, dated the payment day) in the same entry
+    // chain — exactly what the Creditor Aging interest box would post.
+    const drawSrc = tfSources.find((s) => s.accountCode === pv.payFrom);
+    let extraLegs: LedgerEntryInput[] = [];
+    if (drawSrc && (pv.tfInterestSen ?? 0) > 0) {
+      const acctErr = await ensureTfInterestAccount(db);
+      if (acctErr) return { ok: false, error: acctErr };
+      extraLegs = tfInterestLegs({ drawSourceId: pv.pvNo, accountCode: drawSrc.accountCode, chargeDate: pv.date, deltaSen: pv.tfInterestSen ?? 0, legNoBase: 1, actorUserId, orgId });
+    }
     const built = await buildSupplierPaymentCreate(db, {
       orgId, actorUserId, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
       allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ({ piId: a.docId, payMyrSen: a.amountSen })),
-      advanceSen: pv.advanceSen, paymentNo: pv.pvNo,
+      advanceSen: pv.advanceSen, paymentNo: pv.pvNo, extraLegs,
     });
     if (!built.ok) return built;
+    if (drawSrc) {
+      await ensureTfTables(db);
+      built.statements.push(
+        db.prepare(
+          `INSERT INTO trade_finance_draws (draw_source_id, account_code, draw_date, due_date, org_id)
+           VALUES (?, ?, ?, ?, ?) ON CONFLICT (draw_source_id) DO NOTHING`,
+        ).bind(pv.pvNo, drawSrc.accountCode, pv.date, pv.tfDueDate || addDays(pv.date, drawSrc.tenorDays), orgId),
+      );
+    }
     return { ok: true, statements: built.statements, totalSen: built.totalBank };
   }
   const party = await db.prepare("SELECT * FROM other_parties WHERE id = ? AND orgId = ?").bind(pv.partyId, orgId)
@@ -11814,8 +11865,8 @@ app.post("/payment-vouchers", async (c) => {
              accrualAccount, settledAt, productLine, totalSen, status,
              approval_state, approved_at, approved_by,
              createdBy, created_at, updated_at,
-             pv_kind, party_kind, party_id, advance_sen
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id, pvNo, date, ap.v.partyName, reference, ap.v.payFrom,
           ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
@@ -11823,6 +11874,7 @@ app.post("/payment-vouchers", async (c) => {
           asDraft ? null : now, asDraft ? null : actorUserId,
           actorUserId, now, now,
           PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
+          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
         ),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ];
@@ -11832,6 +11884,7 @@ app.post("/payment-vouchers", async (c) => {
         const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
           id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
           reference: reference || null, advanceSen: ap.v.advanceSen,
+          tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0,
         }, ap.v.allocs);
         if (!built.ok) return c.json({ success: false, error: built.error }, 400);
         statements.push(...built.statements);
@@ -11950,9 +12003,9 @@ app.put("/payment-vouchers/:id", async (c) => {
       await c.var.DB.batch([
         c.var.DB.prepare(
           `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
-                  party_kind = ?, party_id = ?, advance_sen = ?, updated_at = ? WHERE id = ?`,
+                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, updated_at = ? WHERE id = ?`,
         ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
-          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, now, id),
+          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, now, id),
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
@@ -12079,6 +12132,8 @@ async function pvApprovalCore(
       partyId: String(pv.partyId ?? pv.party_id ?? ""),
       reference: String(pv.description ?? "") || null,
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
+      tfDueDate: (pv.tfDueDate ?? pv.tf_due_date ?? null) as string | null,
+      tfInterestSen: Math.round(Number(pv.tfInterestSen ?? pv.tf_interest_sen) || 0),
     }, allocs);
     if (!built.ok) return fail(built.error);
     await db.batch([
@@ -14241,6 +14296,25 @@ app.get("/trade-finance", async (c) => {
 // the post instead of absorbing it), and POST /trade-finance/
 // interest-account-repoint to move the legs already posted to the old code.
 const TF_INTEREST_ACCT = { code: "900-I004", name: "INTEREST ON TRADE FINANCE", parentCode: "902-0000" };
+
+// The interest legs on a drawdown: DR 900-I004 · CR the TF line for an
+// increase (the reverse for a decrease), under `tfint-<charge date>-<draw>`
+// so the leg self-dates and folds into its draw. One builder for the
+// Creditor Aging interest box and an AP Payment that records the interest at
+// drawdown (finance backlog item 17).
+function tfInterestLegs(o: {
+  drawSourceId: string; accountCode: string; chargeDate: string; deltaSen: number; legNoBase: number;
+  actorUserId: string | null; orgId: string;
+}): LedgerEntryInput[] {
+  const sourceId = `tfint-${o.chargeDate}-${o.drawSourceId}`;
+  const abs = Math.abs(o.deltaSen);
+  const up = o.deltaSen > 0;
+  const desc = `TF interest${up ? "" : " adjust"} · ${o.drawSourceId}`;
+  return [
+    { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId, legNo: o.legNoBase, accountCode: up ? TF_INTEREST_ACCT.code : o.accountCode, debitSen: abs, creditSen: 0, description: desc, actorUserId: o.actorUserId, orgId: o.orgId },
+    { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId, legNo: o.legNoBase + 1, accountCode: up ? o.accountCode : TF_INTEREST_ACCT.code, debitSen: 0, creditSen: abs, description: desc, actorUserId: o.actorUserId, orgId: o.orgId },
+  ];
+}
 const TF_INTEREST_LEGACY_ACCT = "900-I001";
 
 // Creates the dedicated account once (quietly) and proves the code is ours:
@@ -14356,16 +14430,7 @@ app.put("/trade-finance/draw-interest", async (c) => {
     // deriveDraws strips the `tfint-<date>-` prefix to fold it into the draw.
     const interestSourceId = `tfint-${chargeDate}-${drawSourceId}`;
     const legNoBase = await nextLegNo(c.var.DB, orgId, "tf_interest", interestSourceId);
-    const abs = Math.abs(deltaSen);
-    const legs: LedgerEntryInput[] = deltaSen > 0
-      ? [
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase, accountCode: TF_INTEREST_ACCT.code, debitSen: abs, creditSen: 0, description: `TF interest · ${drawSourceId}`, actorUserId, orgId },
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase + 1, accountCode: accountCode, debitSen: 0, creditSen: abs, description: `TF interest · ${drawSourceId}`, actorUserId, orgId },
-        ]
-      : [
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase, accountCode: accountCode, debitSen: abs, creditSen: 0, description: `TF interest adjust · ${drawSourceId}`, actorUserId, orgId },
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase + 1, accountCode: TF_INTEREST_ACCT.code, debitSen: 0, creditSen: abs, description: `TF interest adjust · ${drawSourceId}`, actorUserId, orgId },
-        ];
+    const legs = tfInterestLegs({ drawSourceId, accountCode, chargeDate, deltaSen, legNoBase, actorUserId, orgId });
     const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
     await c.var.DB.batch(statements);
     await emitAudit(c, {
