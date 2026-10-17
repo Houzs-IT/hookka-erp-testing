@@ -219,7 +219,7 @@ export default function MobileMore() {
           ...g,
           // Rows with a navGate follow the server's nav gate (hidden for roles
           // that cannot see the desktop equivalent).
-          items: g.items.filter((i) => !i.navGate || isNavAllowed(i.navGate)),
+          items: g.items.filter((i) => (!i.navGate || isNavAllowed(i.navGate)) && (!i.navGateAny || i.navGateAny.some(isNavAllowed))),
         })).filter((g) => g.items.length > 0).map((group) => (
           <section key={group.title}>
             <div

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: plan 7 (#940) prod-verified and closed; branch `feat/finance-v2-mobile` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 (the phone's Receivables at RM 0.00) added as a new entry, branch `fix/m-receivables-aging-total`.
 > **Last verified: 2026-10-17**: plan 6 parts A (#938) and B (#939) prod-verified, plan 6 closed; plan 7 part B (Forecast P&L) added to its entry.
 > **Last verified: 2026-10-17**: branch `feat/finance-v2-forecasting` (to `main`) added below (its entry is the newest).
@@ -208,16 +209,24 @@ design/mobile-home-dashboard
 
 
 
+## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 8: mobile Finance (/m/finance) (owner「继续做」; the owner's 2026-10-14 gate decision)(branch `feat/finance-v2-mobile` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-mobile.md`. Not here: aging as at a month-end (deferred), Forecast P&L on the phone (desktop only), voucher / receipt entry.
+
+1. 🔵 Part A — the Finance menu (three sections, rows gated like their desktop pages, no permission = no row, a refused deep link says No access), the Finance row in More, Receivables gated like Debtor Aging; Debtor / Creditor Aging (Outstanding card and bucket chips summed from the rows, stacked bar, search, parties opening to their documents).
+2. ⚪ Part B — Overview, P&L, Cash Flow, Balance Sheet.
+3. ⚪ Part C — Finance Dashboard, Daily Cash Position (share as image).
+
 ## 2026-10-17 — 🔵 BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
 
 1. 🔵 `receivablesConfig` read a `total` the aging API never sends; it now sums the five aging buckets (the desktop Debtor Aging's Total). Regression `tests/m-receivables-aging-total.test.mjs`.
 
-## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 7: Forecasting — Financial Dashboard + Forecast P&L (owner「继续做」)(branch `feat/finance-v2-forecasting` → `main`; shipped in parts)
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 7: Forecasting — Financial Dashboard + Forecast P&L (owner「继续做」)(branch `feat/finance-v2-forecasting` → `main`; shipped in parts)
 
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-forecasting.md`. Kept as today (owner rules): a new month starts from the previous month's percentages; Forecast P&L is desktop only.
 
-1. 🔵 Part A — Financial Dashboard: visible y-axis and clearer labels; the tooltip in three aligned columns (stack order, a bold Total on stacked charts, lines under a rule and never totalled); chart tabs as the v2 switch; the tables in the v2 list look with the period header as the table head and the first column pinned.
-2. 🔵 Part B — Forecast P&L: one month control (picking a month adds it), a confirm before a month is removed, arrow / Enter movement between cells, the unsaved-changes banner and leave guard, calmer cells, names without account numbers.
+1. ✅ Part A (#940 7ef9d681) — Financial Dashboard: visible y-axis and clearer labels; the tooltip in three aligned columns (stack order, a bold Total on stacked charts, lines under a rule and never totalled); chart tabs as the v2 switch; the tables in the v2 list look with the period header as the table head and the first column pinned. Prod check (read-only): every y-axis draws its line; the eight tables (the salary card twice) have the slate head and a pinned first column; on the stacked salary chart the tooltip lists the departments top band first, its Total equals their sum and its share the sum of theirs, and the per-head / per-unit lines sit under the rule, not totalled.
+2. ✅ Part B (#940) — Forecast P&L: one month control (picking a month adds it), a confirm before a month is removed, arrow / Enter movement between cells, the unsaved-changes banner and leave guard, calmer cells, names without account numbers. Prod check (read-only, nothing saved or typed): the Add month list offers the months not on the sheet and no month input remains; keyed boxes are warm and carry their columns; no account codes in the side column; Down moves to the next row in the same column and Right to the next column, and moving alone does not raise the unsaved banner.
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
 
