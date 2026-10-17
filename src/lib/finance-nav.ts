@@ -41,6 +41,8 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   assets: { title: "Fixed Assets", explain: "The asset register and its monthly depreciation." },
   ar: { title: "Debtor Aging", explain: "What customers owe, by how long it has been outstanding." },
   ap: { title: "Creditor Aging", explain: "What we owe suppliers, by how long it has been outstanding. Trade Finance is its own block." },
+  debtors: { title: "Debtor List", explain: "Everyone who owes us money — trade customers and other debtors — in one place. Double-click a row to edit it; set it inactive instead of deleting." },
+  creditors: { title: "Creditor List", explain: "Everyone we owe — suppliers and other creditors — in one place. Double-click a row to edit it; set it inactive instead of deleting." },
   apinvoices: { title: "AP Invoices", explain: "Everything owed on paper in one list: purchase invoices and other creditor bills." },
   "supplier-discount": { title: "Supplier Discount", explain: "Discounts and credits received from suppliers." },
   odebtor: { title: "Other Debtors", explain: "Parties other than customers who owe us." },

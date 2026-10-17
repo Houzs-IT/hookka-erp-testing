@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KycPanel } from "@/components/customer/KycPanel";
 import { PhoneInput } from "@/components/ui/phone-input";
@@ -3468,7 +3468,8 @@ export default function CustomersPage() {
   const [stageFilter, setStageFilter] = useState<"CONFIRMED" | "POTENTIAL" | "ALL">("CONFIRMED");
 
   // add-form state
-  const [showAdd, setShowAdd] = useState(false);
+  // Finance › Debtor List (2026-10-17): ?new=1 opens the Add form.
+  const [showAdd, setShowAdd] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
   const [addForm, setAddForm] = useState({ code: "", name: "", contactName: "", phone: "", email: "", creditTerms: "NET30", creditLimitSen: 0 });
   const [addSaving, setAddSaving] = useState(false);
 
@@ -3634,6 +3635,10 @@ export default function CustomersPage() {
   };
 
   // ---------- Edit Customer ----------
+  // Finance › Debtor List (2026-10-17): ?edit=<id> opens that customer's
+  // edit form once the list has loaded. Once.
+  const [editParam] = useState(() => new URLSearchParams(window.location.search).get("edit") || "");
+  const editParamDone = useRef(false);
   const openEditCustomer = (cust: Customer) => {
     setEditCustomer(cust);
     setEditCustForm({
@@ -3657,6 +3662,13 @@ export default function CustomersPage() {
       })(),
     });
   };
+  useEffect(() => {
+    if (!editParam || editParamDone.current || !data.length) return;
+    editParamDone.current = true;
+    const cust = data.find((c) => c.id === editParam);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot deep link, ref-guarded
+    if (cust) openEditCustomer(cust);
+  }, [editParam, data]);
 
   const saveEditCustomer = async () => {
     if (!editCustomer || savingEdit) return;

@@ -89,6 +89,7 @@ import type { SupplierPaymentGroup } from "@/lib/supplier-payment-alloc";
 import type { PaymentRecord } from "@/types";
 import { AuditLogTab } from "./tabs/AuditLogTab";
 import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
+import { PartyListTab } from "./tabs/PartyListTab";
 import { bestMatch } from "@/lib/party-fuzzy-match";
 import {
   resolveAlias,
@@ -146,7 +147,7 @@ function CompanySelect({
 
 // =============== TYPES ===============
 
-type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
+type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
 
 // =============== VOUCHER PRINTING (PV / OR / JV) ===============
 //
@@ -605,6 +606,9 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   // Debtor / Creditor
   { key: "ar", label: "Debtor Aging", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "ap", label: "Creditor Aging", icon: <Building2 className="h-4 w-4" />, group: "Debtor / Creditor" },
+  // Finance v2 (owner 2026-10-17): everyone who owes / is owed, in one list.
+  { key: "debtors", label: "Debtor List", icon: <List className="h-4 w-4" />, group: "Debtor / Creditor" },
+  { key: "creditors", label: "Creditor List", icon: <List className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "apinvoices", label: "AP Invoices", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "supplier-discount", label: "Supplier Discount", icon: <CreditCard className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtor", label: "Other Debtor", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
@@ -708,6 +712,8 @@ export default function AccountingPage() {
           {tab === "ar" && <ARTab arData={arData} onRefresh={fetchAll} />}
           {tab === "ap" && <APTab apData={apData} onRefresh={fetchAll} />}
           {tab === "supplier-discount" && <SupplierDiscountTab />}
+          {tab === "debtors" && <PartyListTab side="DEBTOR" />}
+          {tab === "creditors" && <PartyListTab side="CREDITOR" />}
           {tab === "odebtor" && <OtherPartiesTab side="DEBTOR" />}
           {tab === "odebtorbills" && <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />}
           {tab === "odebtorpay" && <OtherPartyPaymentsTab accounts={accounts} side="DEBTOR" />}
@@ -6845,6 +6851,22 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     setForm({ type: p.type, name: p.name, contactPerson: p.contactPerson, phone: p.phone, email: p.email, tin: p.tin, registrationNo: p.registrationNo, address: p.address, notes: p.notes, sstRegNo: p.sstRegNo ?? "", currency: p.currency || "MYR", bankAccount: p.bankAccount ?? "" });
     setShowForm(true);
   };
+  // Finance › Debtor / Creditor List (2026-10-17) opens a party here:
+  // ?edit=<id> once the names have loaded, ?new=1 for a blank form. Once.
+  const [deepLink] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return { edit: q.get("edit") || "", isNew: q.get("new") === "1" };
+  });
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || (!deepLink.edit && !deepLink.isNew) || parties === null) return;
+    deepLinkDone.current = true;
+    const p = deepLink.edit ? parties.find((x) => x.id === deepLink.edit) : undefined;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot deep link, ref-guarded
+    if (p) startEdit(p);
+    else if (deepLink.isNew) { setEditingId(null); setShowForm(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot, ref-guarded
+  }, [parties]);
   const del = async (p: OtherParty) => {
     if (!(await confirm({ title: "Delete party?", message: `Delete ${p.name}? (only allowed if it has no bills/payments)`, danger: true }))) return;
     const res = await fetch(`/api/accounting/other-parties/${p.id}`, { method: "DELETE" });
