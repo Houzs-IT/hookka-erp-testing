@@ -147,13 +147,25 @@ test("what changed: fields before → after (time stamps left out); an edit's am
   assert.deepEqual(m.fieldChanges(null, null), []);
   const amountEdit = { ...ev({ id: "x", at: "2026-10-01T00:00:00.000Z", kind: "edited", source: "ledger", docId: "pv-1" }), beforeSen: 100000, amountSen: 125000 };
   assert.equal(m.changeSummary(amountEdit), "Amount 1,000.00 → 1,250.00");
+  // The ledger keeps the old entry as its REVERSAL (the "before" legs carry
+  // the minus already): DR 310 / CR 600-1000 reverses DR 600-1000 / CR 310.
   const moved = { ...amountEdit, beforeSen: 12000, amountSen: 12000, legs: [
-    { side: "before", accountCode: "600-1000", debitSen: 12000, creditSen: 0, description: "" },
-    { side: "before", accountCode: "310-0010", debitSen: 0, creditSen: 12000, description: "" },
+    { side: "before", accountCode: "310-0010", debitSen: 12000, creditSen: 0, description: "" },
+    { side: "before", accountCode: "600-1000", debitSen: 0, creditSen: 12000, description: "" },
     { side: "after", accountCode: "600-1100", debitSen: 12000, creditSen: 0, description: "" },
     { side: "after", accountCode: "310-0010", debitSen: 0, creditSen: 12000, description: "" },
   ] };
   assert.equal(m.changeSummary(moved), "Accounts: 600-1000 −120.00, 600-1100 +120.00");
+  // BUG-2026-10-18-326: an edit that moved nothing used to read "+608 / −608"
+  // (every account doubled) — the reversal was flipped a second time.
+  const same = { ...amountEdit, beforeSen: 30400, amountSen: 30400, legs: [
+    { side: "before", accountCode: "310-0010", debitSen: 30400, creditSen: 0, description: "" },
+    { side: "before", accountCode: "400-0000", debitSen: 0, creditSen: 30400, description: "" },
+    { side: "after", accountCode: "400-0000", debitSen: 30400, creditSen: 0, description: "" },
+    { side: "after", accountCode: "310-0010", debitSen: 0, creditSen: 30400, description: "" },
+  ] };
+  assert.deepEqual(m.accountsMoved(same.legs), []);
+  assert.equal(m.changeSummary(same), "Same amount and accounts");
   assert.equal(m.changeSummary({ ...amountEdit, beforeSen: null }), "Adjustment posted");
   const setting = { ...ev({ id: "a", at: "2026-10-01T00:00:00.000Z", kind: "edited", source: "audit", docType: "accounting", docId: "fg_valuation_mode", action: "update" }), before: { mode: "auto" }, after: { mode: "stock_take_only" } };
   assert.equal(m.changeSummary(setting), "Finished goods valuation · mode: auto → stock_take_only");
@@ -186,7 +198,16 @@ test("GET /change-log: read-only, org-scoped, the month in Malaysia time, every 
   assert.match(ep, /const merged = mergeEvents\(events\);/);
   assert.match(ep, /warnings\.push\(`\$\{label\} could not be read`\);/, "a trail that cannot be read is said, not hidden");
   assert.doesNotMatch(ep, /\b(INSERT|UPDATE|DELETE)\b/, "nothing written");
-  assert.match(api, /const CHANGE_LOG_RESOURCES = \["accounting", "trade-finance", "supplier-payments", "other-party-payments", "payments", "invoices", "purchase-invoices", "credit-notes", "debit-notes"\];/);
+  const res = slice(api, "const CHANGE_LOG_RESOURCES = [", "];");
+  for (const r of ["accounting", "trade-finance", "supplier-payments", "other-party-payments", "payments", "invoices", "purchase-invoices", "credit-notes", "debit-notes",
+    "chart-of-accounts", "journals", "other-parties", "other-party-bills", "payment-vouchers", "official-receipts", "fund-transfers", "finance-settings",
+    "fixed-assets", "bank-reco", "cash-position", "opening-balance", "stock-take", "material-opening-stock"]) {
+    assert.ok(res.includes(`"${r}"`), `the log reads ${r}`);
+  }
+  // A bank match / tick names the document of the ledger line it touched.
+  assert.match(ep, /SELECT id, description, sourceId FROM ledger_journal_entries WHERE id IN \(\$\{part\.map\(\(\) => "\?"\)\.join\(","\)\}\) AND orgId = \?/);
+  assert.match(ep, /actionLabel: actionLabel\(e\),/);
+  assert.match(ep, /changes: e\.source === "audit" \? fieldChanges\(e\.before, e\.after, e\.docType\)\.slice\(0, 40\) : \[\],/);
 });
 
 test("screen: All changes (default, by month) beside Voided & deleted; double-click shows the change", () => {
@@ -199,6 +220,8 @@ test("screen: All changes (default, by month) beside Voided & deleted; double-cl
   assert.match(ui, /gridId="accounting-change-log"/);
   assert.match(ui, /onDoubleClick=\{\(r\) => setOpen\(r\)\}/);
   for (const h of ["When", "Who", "Action", "Type", "Reference", "Party", "Amount", "What changed"]) assert.ok(ui.includes(`label: "${h}"`), h);
-  assert.match(ui, /\{ key: "before", title: "Before — the entry reversed" \}, \{ key: "after", title: "After — the entry posted" \}/);
+  assert.match(ui, /\{ key: "before", title: "Before — the entry as it was" \}, \{ key: "after", title: "After — the entry as posted now" \}/);
+  assert.match(ui, /\.map\(\(l\) => \(side === "before" \? \{ \.\.\.l, debitSen: l\.creditSen, creditSen: l\.debitSen \} : l\)\);/, "the old entry shown as it was, not as its reversal");
+  assert.match(ui, /const kindLabel = \(r: ChangeRow\) => r\.actionLabel \|\| CHANGE_KIND_LABEL\[r\.kind\] \|\| r\.kind;/);
   assert.match(ui, /useEscapeClose\(onClose\);/);
 });

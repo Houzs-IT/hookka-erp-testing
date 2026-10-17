@@ -98,6 +98,7 @@ type ChangeRow = {
   kind: ChangeKind;
   source: "ledger" | "ladder" | "lifecycle" | "audit";
   action: string | null;
+  actionLabel?: string;
   type: string;
   docType: string;
   docId: string;
@@ -132,7 +133,7 @@ const SOURCE_LABEL: Record<ChangeRow["source"], string> = {
   audit: "Audit trail",
 };
 
-const kindLabel = (r: ChangeRow) => CHANGE_KIND_LABEL[r.kind] ?? r.kind;
+const kindLabel = (r: ChangeRow) => r.actionLabel || CHANGE_KIND_LABEL[r.kind] || r.kind;
 
 function ChangeLogView({ month, today }: { month: string; today: string }) {
   const [data, setData] = useState<{ month: string; rows: ChangeRow[]; warnings: string[] } | null>(null);
@@ -165,8 +166,8 @@ function ChangeLogView({ month, today }: { month: string; today: string }) {
   ], []);
 
   const counts = useMemo(() => {
-    const by = new Map<ChangeKind, number>();
-    for (const r of rows ?? []) by.set(r.kind, (by.get(r.kind) ?? 0) + 1);
+    const by = new Map<string, number>();
+    for (const r of rows ?? []) by.set(kindLabel(r), (by.get(kindLabel(r)) ?? 0) + 1);
     return [...by.entries()].sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
@@ -175,7 +176,7 @@ function ChangeLogView({ month, today }: { month: string; today: string }) {
       <p className="text-xs text-[#6B7280]">
         Every change made in Finance in {periodLabel(month, today)} (Malaysia time), newest first — postings, edits, voids, restores and deletes,
         payment voucher approvals and settings. Double-click a row to see the change.
-        {rows && rows.length > 0 && <> {rows.length} change{rows.length === 1 ? "" : "s"}: {counts.map(([k, n]) => `${n} ${CHANGE_KIND_LABEL[k].toLowerCase()}`).join(", ")}.</>}
+        {rows && rows.length > 0 && <> {rows.length} change{rows.length === 1 ? "" : "s"}: {counts.map(([k, n]) => `${n} ${k.toLowerCase()}`).join(", ")}.</>}
       </p>
       {data && data.month === month && data.warnings.length > 0 && (
         <p className="rounded-md bg-[#FBF3E4] px-3 py-2 text-xs text-[#7A5B12]">{data.warnings.join("; ")} — the list may be missing those changes.</p>
@@ -211,9 +212,13 @@ function ChangeLogView({ month, today }: { month: string; today: string }) {
 function ChangeDetail({ row, onClose }: { row: ChangeRow; onClose: () => void }) {
   useEscapeClose(onClose);
   const sides: { key: "before" | "after" | null; title: string }[] = row.kind === "edited" && row.legs.some((l) => l.side)
-    ? [{ key: "before", title: "Before — the entry reversed" }, { key: "after", title: "After — the entry posted" }]
+    ? [{ key: "before", title: "Before — the entry as it was" }, { key: "after", title: "After — the entry as posted now" }]
     : [{ key: null, title: "Ledger entry" }];
-  const legsOf = (side: "before" | "after" | null) => row.legs.filter((l) => (side === null ? true : l.side === side));
+  // The ledger keeps the old entry as its REVERSAL; shown here as it was
+  // (debit and credit swapped back).
+  const legsOf = (side: "before" | "after" | null) => row.legs
+    .filter((l) => (side === null ? true : l.side === side))
+    .map((l) => (side === "before" ? { ...l, debitSen: l.creditSen, creditSen: l.debitSen } : l));
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
       <div className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -272,7 +277,7 @@ function ChangeDetail({ row, onClose }: { row: ChangeRow; onClose: () => void })
           ))}
           {row.changes.length > 0 && (
             <div className="overflow-hidden rounded-[10px] bg-white">
-              <p className="border-b border-[#E2DDD8] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[#3E6570]">{row.kind === "created" ? "Recorded with" : "Fields changed"}</p>
+              <p className="border-b border-[#E2DDD8] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[#3E6570]">{row.kind === "created" ? "Recorded with" : row.kind === "deleted" ? "As it was" : "Fields changed"}</p>
               <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-[#6B7280]">

@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-326 (branch `feat/finance-change-log-2`, to main); BUG-2026-10-18-325 stays 🟡 until its prod check.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-325 (branch `fix/wip-card-no-ratio`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-322 and -323 flipped to 🟢 after the #970 prod check; -320 / -321 stay 🟡 (deployed, nothing on production to exercise without a write).
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-320 to -323 (branch `fix/edit-keeps-bank-match`; 319 is taken by the production-finishing fix, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -144,6 +145,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-18-326 — Audit Log "What changed" doubled every account of an edit `finance` 🟡
+
+🟡 Fixed on branch `feat/finance-change-log-2`, prod check pending.
+
+**Symptom.** Found verifying #981 on production (read-only): an edited supplier payment that moved no account read "Accounts: 400-0000 +608.00, 310-0010 −608.00" (twice its amount, opposite signs), and an edited bill listed its accounts at double their amounts.
+
+**Root cause.** An edit's "before" legs are the old entry already REVERSED (`<doc>_restate_rev`). `accountsMoved` multiplied them by −1 again, so reversal and re-post added up instead of cancelling.
+
+**Fix.** Reversal and re-post are summed as they are (`src/lib/change-log.ts`); the popup shows the old entry as it was (debit and credit swapped back from its reversal). Nothing stored changes — it is the list's reading of the ledger.
+
+**Regression.** `tests/change-log.test.mjs` ("what changed" case: an unchanged edit reads "Same amount and accounts"). Class: none (a display of correct ledger rows).
 
 ## BUG-2026-10-18-325 — WIP by production order showed every order at 0 and a full "difference" in the books' first month `finance` 🟡
 

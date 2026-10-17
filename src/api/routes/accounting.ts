@@ -43,7 +43,7 @@ import { billOutstandingBefore, statementBalanceBefore, type ApPrintBill as ApPr
 import { normalisePartyCurrency, partyText } from "../../lib/party-finance";
 import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
-import { auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
+import { actionLabel, auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, payloadRef, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
@@ -1047,6 +1047,7 @@ app.post("/coa", async (c) => {
     )
       .bind(code)
       .first<CoaRow>();
+    await emitAudit(c, { resource: "chart-of-accounts", resourceId: code, action: "create", after: rowToCoa(created!) });
     return c.json({ success: true, data: rowToCoa(created!) }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -1183,6 +1184,7 @@ app.put("/coa", async (c) => {
     )
       .bind(code)
       .first<CoaRow>();
+    await emitAudit(c, { resource: "chart-of-accounts", resourceId: code, action: "update", before: rowToCoa(existing), after: rowToCoa(updated!) });
     return c.json({ success: true, data: rowToCoa(updated!) });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -1835,6 +1837,7 @@ app.post("/journals/:id/lifecycle", async (c) => {
   }
 
   await c.var.DB.batch(statements);
+  await emitAudit(c, { resource: "journals", resourceId: id, action, after: { state: lc.newState, entryNo: entry.entryNo } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -1858,6 +1861,7 @@ app.delete("/journals/:id", async (c) => {
   await c.var.DB.prepare("DELETE FROM journal_entries WHERE id = ?")
     .bind(id)
     .run();
+  await emitAudit(c, { resource: "journals", resourceId: id, action: "delete", before: entry });
   return c.json({ success: true });
 });
 
@@ -4071,6 +4075,7 @@ app.post("/other-parties", async (c) => {
     )
       .bind(id)
       .first<OtherPartyRow>();
+    await emitAudit(c, { resource: "other-parties", resourceId: id, action: "create", after: rowToOtherParty(created!) });
     return c.json({ success: true, data: rowToOtherParty(created!) }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -4163,6 +4168,7 @@ app.put("/other-parties/:id", async (c) => {
     )
       .bind(id)
       .first<OtherPartyRow>();
+    await emitAudit(c, { resource: "other-parties", resourceId: id, action: "update", before: rowToOtherParty(existing), after: rowToOtherParty(updated!) });
     return c.json({ success: true, data: rowToOtherParty(updated!) });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -4189,7 +4195,9 @@ app.delete("/other-parties/:id", async (c) => {
     return c.json({ success: false, error: "This party has bills or payments — deactivate it instead of deleting." }, 400);
   }
 
+  const gone = await c.var.DB.prepare("SELECT * FROM other_parties WHERE id = ? AND orgId = ?").bind(id, orgId).first<OtherPartyRow>().catch(() => null);
   await c.var.DB.prepare("DELETE FROM other_parties WHERE id = ? AND orgId = ?").bind(id, orgId).run();
+  await emitAudit(c, { resource: "other-parties", resourceId: id, action: "delete", before: gone ? rowToOtherParty(gone) : null });
   return c.json({ success: true });
 });
 
@@ -4700,6 +4708,7 @@ app.post("/other-party-bills/:billNo/attachments", async (c) => {
   if (!(file instanceof File)) return c.json({ success: false, error: "file field required" }, 400);
   const stored = await storeUploadedFile(c, { file, resourceType: OCB_ATTACH_RESOURCE, resourceId: bill.id });
   if (!stored.ok) return c.json({ success: false, error: stored.error }, stored.status);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: c.req.param("billNo"), action: "attach", after: stored.data });
   return c.json({ success: true, data: stored.data }, 201);
 });
 
@@ -4720,6 +4729,7 @@ app.delete("/other-party-bills/:billNo/attachments/:fileId", async (c) => {
   if (!own) return c.json({ success: false, error: "Attachment not found on this bill" }, 404);
   const removed = await removeStoredFile(c, fileId);
   if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: c.req.param("billNo"), action: "detach", before: { fileId } });
   return c.json({ success: true });
 });
 
@@ -4904,6 +4914,7 @@ app.delete("/other-party-bills/:billNo", async (c) => {
     return c.json({ success: false, error: (e as Error).message }, 400);
   }
   await c.var.DB.batch(lc.statements);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: billNo, action: "delete" });
   return c.json({ success: true });
 });
 
@@ -4961,6 +4972,7 @@ app.post("/other-party-bills/:billNo/lifecycle", async (c) => {
   // No status-column change: other_party_bills.status carries payment progress
   // (OPEN/PARTIAL_PAID/PAID); lifecycle state lives in document_lifecycle.
   await c.var.DB.batch(lc.statements);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: billNo, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -5242,6 +5254,40 @@ app.get("/audit-log", async (c) => {
   return c.json({ success: true, data });
 });
 
+// A payment voucher as the audit trail shows it before / after a change
+// (finance backlog item 10 part 2): header and lines ("account amount; …").
+async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<Record<string, unknown> | null> {
+  try {
+    const h = await db.prepare("SELECT date, payee, description, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    if (!h) return null;
+    const ls = await db.prepare("SELECT accountCode, amountSen FROM payment_voucher_lines WHERE voucherId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>();
+    const sen = (v: unknown) => ((Number(v) || 0) / 100).toFixed(2);
+    return {
+      date: h.date ?? null,
+      payee: h.payee ?? null,
+      description: h.description ?? null,
+      payFrom: h.payFrom ?? h.pay_from ?? null,
+      total: sen(h.totalSen ?? h.total_sen),
+      lines: (ls.results ?? []).map((l) => `${String(l.accountCode ?? l.account_code ?? "")} ${sen(l.amountSen ?? l.amount_sen)}`).join("; "),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// The stored value of settings (kv_config) before a change, for the audit
+// trail's before / after (finance backlog item 10 part 2). Unreadable = none.
+async function kvSnapshot(db: Env["Variables"]["DB"], keys: string[]): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  try {
+    const res = await db.prepare(`SELECT key, value FROM kv_config WHERE key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all<{ key: string; value: string | null }>();
+    for (const r of res.results ?? []) {
+      try { out[r.key] = r.value ? JSON.parse(r.value) : null; } catch { out[r.key] = r.value; }
+    }
+  } catch { /* no before */ }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // GET /change-log?month=YYYY-MM — the Audit Log's "All changes" (finance
 // backlog item 10, the design's "a full Audit Log of every change"): every
@@ -5251,10 +5297,21 @@ app.get("/audit-log", async (c) => {
 // and other steps the audit trail records (src/lib/change-log.ts). One act
 // seen by two trails is listed once. Read-only.
 // ---------------------------------------------------------------------------
-const CHANGE_LOG_RESOURCES = ["accounting", "trade-finance", "supplier-payments", "other-party-payments", "payments", "invoices", "purchase-invoices", "credit-notes", "debit-notes"];
+const CHANGE_LOG_RESOURCES = [
+  "accounting", "trade-finance", "supplier-payments", "other-party-payments", "payments", "invoices", "purchase-invoices", "credit-notes", "debit-notes",
+  // Recorded since item 10 part 2.
+  "chart-of-accounts", "journals", "other-parties", "other-party-bills", "payment-vouchers", "official-receipts", "fund-transfers", "finance-settings",
+  "fixed-assets", "bank-reco", "cash-position", "opening-balance", "stock-take", "material-opening-stock",
+];
 // An audit resource → the ledger's name for the same document.
 const AUDIT_DOC_TYPE: Record<string, string> = {
   "supplier-payments": "supplier_payment",
+  "other-party-payments": "other_party_payment",
+  "other-party-bills": "other_party_bill",
+  "payment-vouchers": "payment_voucher",
+  "official-receipts": "official_receipt",
+  "fund-transfers": "fund_transfer",
+  journals: "manual",
   payments: "payment",
   invoices: "invoice",
   "purchase-invoices": "purchase_invoice",
@@ -5375,8 +5432,36 @@ app.get("/change-log", async (c) => {
   for (const e of events) {
     const r = refs.get(`${refType(e)}|${e.docId}`);
     const own = docNoFromDescription(e.docId) === e.docId ? e.docId : null;
-    e.reference = e.reference ?? r?.reference ?? own ?? (e.source === "ledger" ? docNoFromDescription(e.legs.find((l) => l.description)?.description) : null);
+    e.reference = e.reference ?? r?.reference ?? own ?? (e.source === "ledger" ? docNoFromDescription(e.legs.find((l) => l.description)?.description) : null) ?? (e.source === "audit" ? payloadRef(e) : null);
     e.party = e.party ?? r?.party ?? null;
+  }
+  // A bank match / cash-position tick names a ledger line: the document it
+  // belongs to, from the line's own text.
+  const legIdsOf = (e: ChangeEvent) => {
+    const out: string[] = [];
+    for (const o of [e.after, e.before]) {
+      if (!o || typeof o !== "object") continue;
+      const rec = o as Record<string, unknown>;
+      if (typeof rec.legId === "string") out.push(rec.legId);
+      if (Array.isArray(rec.legIds)) out.push(...rec.legIds.filter((x): x is string => typeof x === "string"));
+    }
+    return out;
+  };
+  const legEvents = events.filter((e) => e.source === "audit" && (e.docType === "bank-reco" || e.docType === "cash-position"));
+  const legIds = [...new Set(legEvents.flatMap(legIdsOf))];
+  if (legIds.length) {
+    const docByLeg = new Map<string, string>();
+    try {
+      for (let i = 0; i < legIds.length; i += 200) {
+        const part = legIds.slice(i, i + 200);
+        const res = await db.prepare(`SELECT id, description, sourceId FROM ledger_journal_entries WHERE id IN (${part.map(() => "?").join(",")}) AND orgId = ?`).bind(...part, orgId).all<Record<string, unknown>>();
+        for (const x of res.results ?? []) docByLeg.set(String(x.id), docNoFromDescription(String(x.description ?? "")) ?? String(x.sourceId ?? x.source_id ?? ""));
+      }
+    } catch { /* the step keeps its own text */ }
+    for (const e of legEvents) {
+      const docs = [...new Set(legIdsOf(e).map((id) => docByLeg.get(id)).filter((x): x is string => !!x))];
+      if (docs.length) e.note = `→ ${docs.join(", ")}`;
+    }
   }
   const merged = mergeEvents(events);
 
@@ -5399,6 +5484,7 @@ app.get("/change-log", async (c) => {
     kind: e.kind,
     source: e.source,
     action: e.action,
+    actionLabel: actionLabel(e),
     type: docTypeLabel(e),
     docType: e.docType,
     docId: e.docId,
@@ -5409,7 +5495,7 @@ app.get("/change-log", async (c) => {
     summary: changeSummary(e),
     who: e.actorName ?? (e.actorUserId ? names.get(e.actorUserId) ?? e.actorUserId : null),
     legs: e.legs.map((l) => ({ ...l, accountName: coaName.get(l.accountCode) ?? "" })),
-    changes: e.source === "audit" ? fieldChanges(e.before, e.after).slice(0, 40) : [],
+    changes: e.source === "audit" ? fieldChanges(e.before, e.after, e.docType).slice(0, 40) : [],
   }));
   return c.json({ success: true, data: { month: ym, from: w.from, to: w.to, rows, warnings } });
 });
@@ -5695,6 +5781,7 @@ app.post("/other-party-payments/:paymentNo/void", async (c) => {
   try {
     const { statements } = await buildOtherPartyPaymentLifecycle(c.var.DB, orgId, paymentNo, "void", actorUserId);
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "other-party-payments", resourceId: paymentNo, action: "void" });
     return c.json({ success: true });
   } catch (e) {
     if ((e as Error).message === "PAYMENT_NOT_FOUND") return c.json({ success: false, error: "Payment not found" }, 404);
@@ -5715,6 +5802,7 @@ app.post("/other-party-payments/:paymentNo/lifecycle", async (c) => {
   try {
     const { statements, newState } = await buildOtherPartyPaymentLifecycle(c.var.DB, orgId, paymentNo, action, actorUserId);
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "other-party-payments", resourceId: paymentNo, action, after: { state: newState } });
     return c.json({ success: true, data: { state: newState } });
   } catch (e) {
     if ((e as Error).message === "PAYMENT_NOT_FOUND") return c.json({ success: false, error: "Payment not found" }, 404);
@@ -11846,6 +11934,7 @@ app.post("/payment-vouchers/:id/attachments", async (c) => {
   if (!(file instanceof File)) return c.json({ success: false, error: "file field required" }, 400);
   const stored = await storeUploadedFile(c, { file, resourceType: PV_ATTACH_RESOURCE, resourceId: id });
   if (!stored.ok) return c.json({ success: false, error: stored.error }, stored.status);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "attach", after: stored.data });
   return c.json({ success: true, data: stored.data }, 201);
 });
 
@@ -11870,6 +11959,7 @@ app.delete("/payment-vouchers/:id/attachments/:fileId", async (c) => {
   if (!own) return c.json({ success: false, error: "Attachment not found on this voucher" }, 404);
   const removed = await removeStoredFile(c, fileId);
   if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "detach", before: { fileId } });
   return c.json({ success: true });
 });
 
@@ -12075,6 +12165,7 @@ app.post("/payment-vouchers", async (c) => {
         statements.push(...built.statements);
       }
       await c.var.DB.batch(statements);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "create", after: { pvNo, ...(await pvAuditSnapshot(c.var.DB, id)) } });
       return c.json({ success: true, data: { id, pvNo } }, 201);
     }
 
@@ -12140,6 +12231,7 @@ app.post("/payment-vouchers", async (c) => {
       }, v.lines));
     }
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "create", after: { pvNo, ...(await pvAuditSnapshot(c.var.DB, id)) } });
     return c.json({ success: true, data: { id, pvNo } }, 201);
   } catch (e) {
     console.error("[pv] create failed:", e);
@@ -12173,6 +12265,7 @@ app.put("/payment-vouchers/:id", async (c) => {
     if (state !== "DRAFT" && state !== "PREPARED") {
       return c.json({ success: false, error: state === "CHECKED" ? "Checked vouchers are locked — Reject it back to draft to change anything." : "Already posted — use Edit (restate) on the posted voucher instead." }, 400);
     }
+    const pvBefore = await pvAuditSnapshot(c.var.DB, id);
     const date = String(body.date || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
     const coaRes = await c.var.DB.prepare(
@@ -12194,6 +12287,7 @@ app.put("/payment-vouchers/:id", async (c) => {
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "update", before: pvBefore, after: await pvAuditSnapshot(c.var.DB, id) });
       return c.json({ success: true });
     }
     // The kind is fixed at birth — a transfer stays a transfer.
@@ -12227,6 +12321,7 @@ app.put("/payment-vouchers/:id", async (c) => {
         ).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx),
       ),
     ]);
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "update", before: pvBefore, after: await pvAuditSnapshot(c.var.DB, id) });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -12369,6 +12464,7 @@ app.post("/payment-vouchers/:id/approval", async (c) => {
   const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   const r = await pvApprovalCore(c.var.DB, getOrgId(c), actorUserId, c.req.param("id"), action, reason);
   if (!r.ok) return c.json({ success: false, error: r.error }, 400);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: c.req.param("id"), action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   return c.json({ success: true, data: { pvNo: r.pvNo, state: r.state } });
 });
 
@@ -12402,6 +12498,7 @@ app.post("/payment-vouchers/approval-batch", async (c) => {
   for (const id of ordered) {
     const r = await pvApprovalCore(c.var.DB, orgId, actorUserId, id, action, reason);
     results.push(r.ok ? { id, ok: true, pvNo: r.pvNo } : { id, ok: false, error: r.error });
+    if (r.ok) await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   }
   return c.json({ success: true, data: { results, done: results.filter((r) => r.ok).length } });
 });
@@ -12477,6 +12574,7 @@ app.post("/payment-vouchers/:id/settle", async (c) => {
       ).bind(payFrom, new Date().toISOString(), new Date().toISOString(), id),
       ...ledgerStmts,
     ]);
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "settle" });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -12520,6 +12618,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
         c.var.DB.prepare("UPDATE payment_vouchers SET status = 'DRAFT', updated_at = ? WHERE id = ?").bind(now, id),
         lifecycleRow("ACTIVE"),
       ]);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: "ACTIVE" } });
       return c.json({ success: true, data: { state: "ACTIVE" } });
     }
     if (action === "delete") {
@@ -12527,10 +12626,12 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
         c.var.DB.prepare("UPDATE payment_vouchers SET status = 'VOID', updated_at = ? WHERE id = ?").bind(now, id),
         lifecycleRow("DELETED"),
       ]);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: "DELETED" } });
       return c.json({ success: true, data: { state: "DELETED" } });
     }
     if (pv.status === "VOID") return c.json({ success: false, error: "Already cancelled" }, 400);
     await c.var.DB.prepare("UPDATE payment_vouchers SET status = 'VOID', updated_at = ? WHERE id = ?").bind(now, id).run();
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: "VOID" } });
     return c.json({ success: true, data: { state: "VOID" } });
   }
 
@@ -12589,6 +12690,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
     statements.push(...(await restoreEditedFamilyStatements(c.var.DB, orgId, "payment_voucher", id)));
   }
   await c.var.DB.batch(statements);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -13037,6 +13139,7 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
     statements.push(...(await restoreEditedFamilyStatements(c.var.DB, orgId, "official_receipt", id)));
   }
   await c.var.DB.batch(statements);
+  await emitAudit(c, { resource: "official-receipts", resourceId: id, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -13277,6 +13380,7 @@ app.post("/fund-transfers/:no/lifecycle", async (c) => {
 
   // No status column to sync (ledger-only document): just run the lifecycle statements.
   await c.var.DB.batch(lc.statements);
+  await emitAudit(c, { resource: "fund-transfers", resourceId: no, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -13306,6 +13410,7 @@ app.put("/fund-transfers/:no/description", async (c) => {
   await c.var.DB.prepare(
     "UPDATE ledger_journal_entries SET description = ? WHERE sourceType = 'fund_transfer' AND sourceId = ? AND orgId = ? AND hidden = 0",
   ).bind(description, no, orgId).run();
+  await emitAudit(c, { resource: "fund-transfers", resourceId: no, action: "describe", after: { description } });
   return c.json({ success: true, data: { no, description } });
 });
 
@@ -14143,6 +14248,7 @@ app.get("/labor/map", async (c) => {
 app.put("/labor/map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["labor_account_map"]);
   try {
     const body = await c.req.json();
     const fallback = String(body.fallback || DEFAULT_LABOUR_MAP.fallback);
@@ -14179,6 +14285,7 @@ app.put("/labor/map", async (c) => {
     )
       .bind(JSON.stringify({ fallback, byDept, ...statutory }), new Date().toISOString())
       .run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "labor_account_map", action: "update", before: kvBefore["labor_account_map"] ?? null, after: { fallback, byDept, ...statutory } });
     return c.json({ success: true, data: { fallback, byDept, ...statutory } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -14198,6 +14305,7 @@ app.get("/cashflow/map", async (c) => {
 app.put("/cashflow/map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["cashflow_account_map", "cashflow_stockgroup_map", "cashflow_supplier_category_map"]);
   try {
     const body = (await c.req.json()) as {
       map?: Record<string, { section?: string; order?: number }>;
@@ -14248,6 +14356,7 @@ app.put("/cashflow/map", async (c) => {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       ).bind(JSON.stringify(supCat), now).run();
     }
+    await emitAudit(c, { resource: "finance-settings", resourceId: "cashflow_account_map", action: "update", before: kvBefore, after: { cashflow_account_map: map, cashflow_stockgroup_map: sg, cashflow_supplier_category_map: supCat } });
     return c.json({ success: true, data: { map, stockGroupMap: sg, supplierCategoryMap: supCat } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -14264,6 +14373,7 @@ app.get("/doc-number-prefixes", async (c) => {
 app.put("/doc-number-prefixes", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["doc_number_prefixes"]);
   try {
     const body = (await c.req.json()) as { map?: Record<string, { out?: string; in?: string }> };
     if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
@@ -14278,6 +14388,7 @@ app.put("/doc-number-prefixes", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('doc_number_prefixes', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(JSON.stringify(map), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "doc_number_prefixes", action: "update", before: kvBefore["doc_number_prefixes"] ?? null, after: map });
     return c.json({ success: true, data: { map } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -14294,6 +14405,7 @@ app.get("/pnl/section-map", async (c) => {
 app.put("/pnl/section-map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["pnl_section_map"]);
   try {
     const body = (await c.req.json()) as { map?: Record<string, string> };
     if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
@@ -14304,6 +14416,7 @@ app.put("/pnl/section-map", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('pnl_section_map', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(JSON.stringify(map), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "pnl_section_map", action: "update", before: kvBefore["pnl_section_map"] ?? null, after: map });
     return c.json({ success: true, data: { map } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -14320,6 +14433,7 @@ app.get("/bs/section-map", async (c) => {
 app.put("/bs/section-map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["bs_section_map"]);
   try {
     const body = (await c.req.json()) as { map?: Record<string, string> };
     if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
@@ -14330,6 +14444,7 @@ app.put("/bs/section-map", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('bs_section_map', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(JSON.stringify(map), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "bs_section_map", action: "update", before: kvBefore["bs_section_map"] ?? null, after: map });
     return c.json({ success: true, data: { map } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16038,6 +16153,7 @@ app.post("/fixed-assets", async (c) => {
     )
       .bind(id, name, b.assetAccount, b.accumAccount, b.expenseAccount, b.purchaseDate, costSen, residualSen, life, openingAccumSen, String(b.remarks ?? ""), now, now)
       .run();
+    await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "create", after: { name, assetAccount: b.assetAccount, purchaseDate: b.purchaseDate, costSen, residualSen, usefulLifeMonths: life, openingAccumSen } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json({ success: false, error: "Failed — is migration 0161 applied?" }, 400);
@@ -16060,6 +16176,7 @@ app.put("/fixed-assets/:id", async (c) => {
       )
         .bind(new Date().toISOString(), new Date().toISOString(), id)
         .run();
+      await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "dispose", before: row });
       return c.json({ success: true });
     }
     const name = b.name === undefined ? row.name : String(b.name).trim();
@@ -16073,6 +16190,7 @@ app.put("/fixed-assets/:id", async (c) => {
     )
       .bind(name, life, residualSen, b.remarks === undefined ? row.remarks : String(b.remarks ?? ""), new Date().toISOString(), id)
       .run();
+    await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "update", before: row, after: { name, usefulLifeMonths: life, residualSen, remarks: b.remarks === undefined ? row.remarks : String(b.remarks ?? "") } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16094,7 +16212,9 @@ app.delete("/fixed-assets/:id", async (c) => {
       400,
     );
   }
+  const goneAsset = await c.var.DB.prepare("SELECT * FROM fixed_assets WHERE id = ?").bind(id).first<FixedAssetRow>().catch(() => null);
   await c.var.DB.prepare("DELETE FROM fixed_assets WHERE id = ?").bind(id).run();
+  await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "delete", before: goneAsset });
   return c.json({ success: true });
 });
 
@@ -16423,6 +16543,7 @@ app.post("/bank-reco/import", async (c) => {
       );
     }
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "bank-reco", resourceId: account, action: "import", after: { lines: statements.length } });
     return c.json({ success: true, data: { imported: statements.length } }, 201);
   } catch {
     return c.json(
@@ -16494,6 +16615,7 @@ app.post("/bank-reco/match", async (c) => {
     )
       .bind(legId, new Date().toISOString(), lineId)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "match", after: { amountSen: line.amountSen, legId } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16520,6 +16642,7 @@ app.post("/bank-reco/unmatch", async (c) => {
         c.var.DB.prepare("DELETE FROM bank_line_leg_splits WHERE line_id = ?").bind(lineId),
         c.var.DB.prepare("UPDATE bank_statement_lines SET matchedLegId = NULL, matchedAt = NULL WHERE id = ?").bind(lineId),
       ]);
+      await emitAudit(c, { resource: "bank-reco", resourceId: `${umLine.accountCode} ${umLine.txnDate}`, action: "unmatch" });
       return c.json({ success: true, data: { released: "split" } });
     }
     // Unmatching one piece of a combo group dissolves the WHOLE group — a
@@ -16537,6 +16660,7 @@ app.post("/bank-reco/unmatch", async (c) => {
       await c.var.DB.prepare(
         "UPDATE bank_statement_lines SET matchedLegId = NULL, matchedAt = NULL WHERE accountCode = ? AND matchedLegId = ?",
       ).bind(umLine.accountCode, umLine.matchedLegId).run();
+      await emitAudit(c, { resource: "bank-reco", resourceId: `${umLine.accountCode} ${umLine.txnDate}`, action: "unmatch", before: { legId: umLine.matchedLegId } });
       return c.json({ success: true, data: { released: (siblings.results ?? []).length } });
     }
     await c.var.DB.prepare(
@@ -16544,6 +16668,7 @@ app.post("/bank-reco/unmatch", async (c) => {
     )
       .bind(lineId)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${umLine.accountCode} ${umLine.txnDate}`, action: "unmatch", before: { legId: umLine.matchedLegId } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16615,6 +16740,7 @@ app.post("/bank-reco/match-group", async (c) => {
     await c.var.DB.prepare(
       `UPDATE bank_statement_lines SET matchedLegId = ?, matchedAt = ? WHERE id IN (${marks})`,
     ).bind(legId, nowG, ...lineIds).run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${lines[0].txnDate}`, action: "match-group", after: { lines: lineIds.length, amountSen: lines.reduce((sum, l) => sum + (Number(l.amountSen) || 0), 0), legId } });
     return c.json({ success: true, data: { matched: lineIds.length } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16707,6 +16833,7 @@ app.post("/bank-reco/match-split", async (c) => {
           .bind(lineId, g.id, (Number(g.debitSen) || 0) - (Number(g.creditSen) || 0), now),
       ),
     ]);
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "match-split", after: { amountSen: line.amountSen, legIds } });
     return c.json({ success: true, data: { legs: legs.length } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16845,6 +16972,7 @@ app.post("/bank-reco/automatch", async (c) => {
       if (candidates.length === 1) take(line.id, candidates[0].id);
     }
     if (updates.length > 0) await c.var.DB.batch(updates);
+    if (matched > 0) await emitAudit(c, { resource: "bank-reco", resourceId: account, action: "automatch", after: { matched, from, to } });
     return c.json({ success: true, data: { matched } });
   } catch {
     return c.json({ success: false, error: "Auto-match failed — is migration 0160 applied?" }, 400);
@@ -16868,6 +16996,7 @@ app.delete("/bank-reco/line/:id", async (c) => {
     return c.json({ success: false, error: BANK_RECO_FINALIZED_ERR }, 400);
   }
   await c.var.DB.prepare("DELETE FROM bank_statement_lines WHERE id = ?").bind(id).run();
+  await emitAudit(c, { resource: "bank-reco", resourceId: `${row.accountCode} ${row.txnDate}`, action: "line-delete" });
   return c.json({ success: true });
 });
 
@@ -16958,6 +17087,7 @@ app.post("/bank-reco/import-session", async (c) => {
     )
       .bind(`bank_reco_meta:${account}:${month}`, JSON.stringify({ ...meta, importedAt: now }), now)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${month}`, action: "import", after: { lines: inserts.length, keptMatched: keptKeys.size, skippedDupes } });
     return c.json({ success: true, data: { imported: inserts.length, keptMatched: keptKeys.size, skippedDupes } }, 201);
   } catch {
     return c.json({ success: false, error: "Import failed — is migration 0160 applied?" }, 400);
@@ -16984,6 +17114,7 @@ app.post("/bank-reco/ignore", async (c) => {
     await c.var.DB.prepare("UPDATE bank_statement_lines SET ignored_at = ? WHERE id = ?")
       .bind(body.ignored === false ? null : new Date().toISOString(), id)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${row.accountCode} ${row.txnDate}`, action: body.ignored === false ? "restore-line" : "ignore" });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -17084,6 +17215,7 @@ app.post("/bank-reco/book-line", async (c) => {
         .bind(bankLegId, now, id),
     );
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "book-line", after: { amountSen: line.amountSen, docNo } });
     return c.json({ success: true, data: { docId, docNo, kind: isOut ? "PV" : "OR" } }, 201);
   } catch (e) {
     console.error("[bank-reco] book-line failed:", e);
@@ -17472,6 +17604,7 @@ app.post("/cash-position/tick", async (c) => {
     if (!legId) return c.json({ success: false, error: "legId required" }, 400);
     if (body.cleared === false) {
       await c.var.DB.prepare("DELETE FROM bank_board_cleared WHERE leg_id = ?").bind(legId).run();
+      await emitAudit(c, { resource: "cash-position", resourceId: String(body.accountCode || ""), action: "untick", before: { legId } });
       return c.json({ success: true });
     }
     const clearedOn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "")) ? String(body.date) : new Date().toISOString().slice(0, 10);
@@ -17479,6 +17612,7 @@ app.post("/cash-position/tick", async (c) => {
       `INSERT INTO bank_board_cleared (leg_id, account_code, cleared_on, created_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(leg_id) DO UPDATE SET cleared_on = excluded.cleared_on`,
     ).bind(legId, String(body.accountCode || ""), clearedOn, new Date().toISOString()).run();
+    await emitAudit(c, { resource: "cash-position", resourceId: String(body.accountCode || ""), action: "tick", after: { legId, clearedOn } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -17502,6 +17636,7 @@ app.post("/cash-position/planned", async (c) => {
     await c.var.DB.prepare(
       "INSERT INTO planned_payments (id, party_name, ref, expected_date, amount_sen, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     ).bind(id, party, String(body.ref || "") || null, dateS, amt, new Date().toISOString()).run();
+    await emitAudit(c, { resource: "cash-position", resourceId: party, action: "planned-add", after: { partyName: party, ref: String(body.ref || "") || null, expectedDate: dateS, amountSen: amt } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -17512,7 +17647,9 @@ app.delete("/cash-position/planned/:id", async (c) => {
   const denied = await requirePermission(c, "accounting", "delete");
   if (denied) return denied;
   await ensureCashBoardTables(c.var.DB);
+  const plan = await c.var.DB.prepare("SELECT party_name, ref, expected_date, amount_sen FROM planned_payments WHERE id = ?").bind(c.req.param("id")).first<Record<string, unknown>>().catch(() => null);
   await c.var.DB.prepare("DELETE FROM planned_payments WHERE id = ?").bind(c.req.param("id")).run();
+  if (plan) await emitAudit(c, { resource: "cash-position", resourceId: String(plan.partyName ?? plan.party_name ?? ""), action: "planned-delete", before: { partyName: plan.partyName ?? plan.party_name, ref: plan.ref, expectedDate: plan.expectedDate ?? plan.expected_date, amountSen: plan.amountSen ?? plan.amount_sen } });
   return c.json({ success: true });
 });
 
@@ -17839,6 +17976,7 @@ app.post("/bank-reco/finalize", async (c) => {
            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         ).bind(`bank_reco_reopen:${account}:${month}:${now}`, JSON.stringify({ actorUserId, reason, priorSnapshot: prior?.value ? JSON.parse(prior.value) : null }), now),
       ]);
+      await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${month}`, action: "reopen", after: reason ? { reason } : null });
       return c.json({ success: true, data: { reopened: true } });
     }
     const snap = await computeBankRecoReport(c.var.DB, account, month);
@@ -17861,6 +17999,7 @@ app.post("/bank-reco/finalize", async (c) => {
     )
       .bind(key, JSON.stringify({ v: 1, finalizedAt: now, actorUserId, ...snapStored }), now)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${month}`, action: "finalize", after: { balanced: snap.balanced } });
     return c.json({ success: true, data: { finalizedAt: now, balanced: snap.balanced } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -17884,6 +18023,7 @@ app.put("/bank-reco/strict-lock", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('bank_reco_strict_lock', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(body.strict ? "1" : "0", new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "bank_reco_strict_lock", action: "update", after: { strict: !!body.strict } });
     return c.json({ success: true, data: { strict: !!body.strict } });
   } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
 });
@@ -18589,6 +18729,7 @@ app.post("/opening-balance/ar", async (c) => {
         "UPDATE customers SET outstandingSen = outstandingSen + ? WHERE id = ?",
       ).bind(amountSen, cust.id),
     ]);
+    await emitAudit(c, { resource: "opening-balance", resourceId: String(invoiceNo), action: "create", after: { customerId, invoiceNo, invoiceDate, amountSen } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json(
@@ -18603,10 +18744,10 @@ app.delete("/opening-balance/ar/:id", async (c) => {
   if (denied) return denied;
   const id = c.req.param("id");
   const row = await c.var.DB.prepare(
-    "SELECT id, customerId, totalSen, paidAmount, isOpening FROM invoices WHERE id = ?",
+    "SELECT id, invoiceNo, customerId, totalSen, paidAmount, isOpening FROM invoices WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; customerId: string; totalSen: number; paidAmount: number; isOpening: number | null }>();
+    .first<{ id: string; invoiceNo?: string | null; customerId: string; totalSen: number; paidAmount: number; isOpening: number | null }>();
   if (!row || (row.isOpening ?? 0) !== 1) {
     return c.json({ success: false, error: "Opening invoice not found" }, 404);
   }
@@ -18637,6 +18778,7 @@ app.delete("/opening-balance/ar/:id", async (c) => {
       "UPDATE customers SET outstandingSen = outstandingSen - ? WHERE id = ?",
     ).bind(Number(row.totalSen) || 0, row.customerId),
   ]);
+  await emitAudit(c, { resource: "opening-balance", resourceId: id, action: "delete", before: row });
   return c.json({ success: true });
 });
 
@@ -18684,6 +18826,7 @@ app.post("/opening-balance/ap", async (c) => {
         "UPDATE suppliers SET outstandingSen = outstandingSen + ? WHERE id = ?",
       ).bind(amountSen, sup.id),
     ]);
+    await emitAudit(c, { resource: "opening-balance", resourceId: String(piNo), action: "create", after: { supplierId, piNo, invoiceDate, amountSen } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json(
@@ -18698,10 +18841,10 @@ app.delete("/opening-balance/ap/:id", async (c) => {
   if (denied) return denied;
   const id = c.req.param("id");
   const row = await c.var.DB.prepare(
-    "SELECT id, supplierId, amountSen, status, isOpening FROM purchase_invoices WHERE id = ?",
+    "SELECT id, piNo, supplierId, amountSen, status, isOpening FROM purchase_invoices WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; supplierId: string; amountSen: number; status: string; isOpening: number | null }>();
+    .first<{ id: string; piNo?: string | null; supplierId: string; amountSen: number; status: string; isOpening: number | null }>();
   if (!row || (row.isOpening ?? 0) !== 1) {
     return c.json({ success: false, error: "Opening PI not found" }, 404);
   }
@@ -18717,6 +18860,7 @@ app.delete("/opening-balance/ap/:id", async (c) => {
       "UPDATE suppliers SET outstandingSen = outstandingSen - ? WHERE id = ?",
     ).bind(Number(row.amountSen) || 0, row.supplierId),
   ]);
+  await emitAudit(c, { resource: "opening-balance", resourceId: id, action: "delete", before: row });
   return c.json({ success: true });
 });
 
@@ -19131,6 +19275,13 @@ app.put("/stock-take", async (c) => {
     if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ success: false, error: "ym must be 'YYYY-MM'" }, 400);
     if (!Array.isArray(body.rows)) return c.json({ success: false, error: "rows[] is required" }, 400);
     const now = new Date().toISOString();
+    // The month's figures before this save, for the audit trail (item 10).
+    const stBefore: Record<string, string> = {};
+    try {
+      const prev = await c.var.DB.prepare("SELECT item_group, value_sen FROM stock_take WHERE org_id = ? AND ym = ?").bind(orgId, ym).all<Record<string, unknown>>();
+      for (const r of prev.results ?? []) stBefore[String(r.itemGroup ?? r.item_group)] = ((Number(r.valueSen ?? r.value_sen) || 0) / 100).toFixed(2);
+    } catch { /* no before */ }
+    const stAfter: Record<string, string> = { ...stBefore };
     const seen = new Set<string>();
     const stmts: D1PreparedStatement[] = [];
     let cleared = 0;
@@ -19139,6 +19290,8 @@ app.put("/stock-take", async (c) => {
       if (!g || seen.has(g)) continue;
       seen.add(g);
       const sen = Math.max(0, Math.round(Number(raw?.valueSen) || 0));
+      if (sen === 0) delete stAfter[g];
+      else stAfter[g] = (sen / 100).toFixed(2);
       if (sen === 0) {
         cleared++;
         stmts.push(
@@ -19199,6 +19352,7 @@ app.put("/stock-take", async (c) => {
       linesSaved = lines.length;
     }
     if (stmts.length) await c.var.DB.batch(stmts);
+    await emitAudit(c, { resource: "stock-take", resourceId: ym, action: "update", before: stBefore, after: { ...stAfter, ...(linesSaved ? { countedLines: linesSaved } : {}), ...(aliasesSaved ? { newItemMappings: aliasesSaved } : {}) } });
     return c.json({ success: true, saved: groupsSaved, cleared, aliasesSaved, linesSaved, ym });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -19251,6 +19405,7 @@ app.post("/stock-take-item-alias-seed", async (c) => {
     );
   }
   if (!dry && stmts.length) await db.batch(stmts);
+  if (!dry && stmts.length) await emitAudit(c, { resource: "stock-take", resourceId: "item-mappings", action: "alias-seed", after: { mappings: stmts.length, overwrite } });
   return c.json({
     success: true,
     dry,
@@ -19473,6 +19628,7 @@ app.put("/material-opening-stock", async (c) => {
     )
       .bind(orgId)
       .all<MaterialOpeningStockRow>();
+    await emitAudit(c, { resource: "material-opening-stock", resourceId: "opening-stock", action: "update", after: { rows: Array.isArray(body.rows) ? body.rows.length : 0 } });
     return c.json({
       success: true,
       data: { saved: cleaned.length },
