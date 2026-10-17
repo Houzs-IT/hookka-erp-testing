@@ -8300,12 +8300,14 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
     { label: "Tax / SST", value: form.taxStr },
   ]);
 
-  const submit = async () => {
-    if (billMoneyError) { toast.error(billMoneyError); return; }
-    if (!editingBillNo && !form.partyId) { toast.error("Select a party"); return; }
+  // `keepOpen`: a scanned file still has bills to go — the form stays up for
+  // the next one instead of closing. Resolves true once the bill is saved.
+  const submit = async (keepOpen = false): Promise<boolean> => {
+    if (billMoneyError) { toast.error(billMoneyError); return false; }
+    if (!editingBillNo && !form.partyId) { toast.error("Select a party"); return false; }
     const items = postableBillLines
       .map((l) => ({ counterAccount: l.counterAccount, amountSen: toSen(l.amountStr), description: l.description }));
-    if (items.length === 0) { toast.error("Add at least one line with account + amount"); return; }
+    if (items.length === 0) { toast.error("Add at least one line with account + amount"); return false; }
     const payload = { partyId: form.partyId, billDate: form.billDate, referenceNo: form.referenceNo, description: form.description, taxSen: toSen(form.taxStr), items, isOpening: form.isOpening };
     const res = editingBillNo
       ? await fetch(`/api/accounting/other-party-bills/${encodeURIComponent(editingBillNo)}`, {
@@ -8343,12 +8345,17 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       }
       setScannedPartyName(null);
       forgetScanMemory();
-      setShowForm(false);
       setEditingBillNo(null);
       setForm({ partyId: "", billDate: today, referenceNo: "", description: "", taxStr: "", lines: [blankLine()], isOpening: false });
       load();
-      formOnly?.onDone();
-    } else toast.error(j?.error || (editingBillNo ? "Failed to save changes" : "Failed to create bill"));
+      if (!keepOpen) {
+        setShowForm(false);
+        formOnly?.onDone();
+      }
+      return true;
+    }
+    toast.error(j?.error || (editingBillNo ? "Failed to save changes" : "Failed to create bill"));
+    return false;
   };
 
   // Copy = open a fresh bill prefilled from an existing one. F4 #1.
@@ -8409,6 +8416,11 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   // any picked by hand (owner 2026-10-01 「OCB 附件要做」).
   const [pendingBillFiles, setPendingBillFiles] = useState<File[]>([]);
   const billFileRef = useRef<HTMLInputElement | null>(null);
+  // A file that carries several bills (owner 2026-10-17 「scan bill 要改」):
+  // each one is drafted in turn — the form shows bill 1, saving it fills the
+  // form with the next, the last one closes the form. Every bill keeps the
+  // scanned file as its attachment. null = a one-bill file.
+  const [scanQueue, setScanQueue] = useState<{ docs: ScanFinanceDoc[]; file: File; index: number } | null>(null);
   const allSideParties = [...sideParties, ...extraParties.filter((p) => p.type === side)];
   // Unknown scanned party → a small NEW-PARTY dialog: name prefilled from the
   // letterhead, every other field OPTIONAL and left to the operator (owner
@@ -8425,6 +8437,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       && !(await confirm({ title: "Close without saving?", message: "What you keyed in this bill will be lost.", confirmLabel: "Discard", cancelLabel: "Keep editing", danger: true }))) return;
     setShowForm(false);
     setEditingBillNo(null);
+    setScanQueue(null);
     formOnly?.onDone();
   };
   useEscapeClose(() => void requestCloseBillPopup(), !!formOnly);
@@ -8450,7 +8463,8 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       setCreatingParty(false);
     }
   };
-  const applyScan = async (d: ScanFinanceResult, file: File) => {
+  // One scanned bill → the form (a multi-bill file calls this once per bill).
+  const prefillFromDoc = async (d: ScanFinanceDoc, file: File) => {
     setEditingBillNo(null); // a scan always drafts a NEW bill, never overwrites an edit
     setScannedPartyName(d.partyName ?? null);
     setPendingBillFiles([file]); // the scanned bill is the new bill's evidence
@@ -8506,6 +8520,25 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
         : "Scanned — review the lines and pick the account(s).",
     );
   };
+  const applyScan = async (d: ScanFinanceResult, file: File) => {
+    const docs = d.docs && d.docs.length > 1 ? d.docs : null;
+    setScanQueue(docs ? { docs, file, index: 0 } : null);
+    await prefillFromDoc(docs ? docs[0] : d, file);
+  };
+  // The next bill of the scanned file (after a save, or Skip) — on a clean form.
+  const startQueuedBill = async (q: { docs: ScanFinanceDoc[]; file: File; index: number }, index: number) => {
+    setScanQueue({ ...q, index });
+    setForm({ partyId: "", billDate: today, referenceNo: "", description: "", taxStr: "", lines: [blankLine()], isOpening: false });
+    await prefillFromDoc(q.docs[index], q.file);
+  };
+  const saveBill = async () => {
+    const q = scanQueue;
+    const hasNext = !editingBillNo && !!q && q.index + 1 < q.docs.length;
+    const saved = await submit(hasNext);
+    if (!saved) return;
+    if (hasNext && q) await startQueuedBill(q, q.index + 1);
+    else setScanQueue(null);
+  };
   // A reference already on our books (creditor side) — said under the field.
   const refDup = side === "CREDITOR" && scanMemory && form.referenceNo.trim()
     ? findDuplicate(
@@ -8542,7 +8575,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
     <div className="space-y-3">
       {rowMenu.element}
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" onResult={applyScan} />}
+        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} />}
         {!formOnly && <Button variant="primary" size="sm" onClick={() => {
           if (editingBillNo) {
             setEditingBillNo(null);
@@ -8612,6 +8645,20 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
 
       {showForm && (
         <Card><CardContent className="p-4 space-y-3">
+          {scanQueue && !editingBillNo && (
+            <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#D9E2E5] bg-[#EEF3F5] px-3 py-2 text-xs text-[#3E6570]" data-bill-scan-queue="">
+              <span className="font-semibold">Bill {scanQueue.index + 1} of {scanQueue.docs.length} in {scanQueue.file.name}</span>
+              <span>Save & Post fills the next one.</span>
+              {scanQueue.index + 1 < scanQueue.docs.length && (
+                <button type="button" className="underline decoration-dotted cursor-pointer" onClick={() => void startQueuedBill(scanQueue, scanQueue.index + 1)}>
+                  Skip this one
+                </button>
+              )}
+              <button type="button" className="underline decoration-dotted cursor-pointer" onClick={() => setScanQueue(null)}>
+                Stop after this one
+              </button>
+            </div>
+          )}
           {editingBillNo && (
             <div className="text-xs font-medium text-[#6B5C32] bg-[#F6F1E7] rounded-md px-3 py-2">
               Editing {editingBillNo} — saving reverses its ledger entry and posts the corrected one under the same number. The party cannot change (Copy for that).
@@ -8730,8 +8777,8 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="primary" size="sm" disabled={!!billMoneyError} onClick={submit}>{editingBillNo ? "Save Changes (re-post)" : "Save & Post"}</Button>
-            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setEditingBillNo(null); formOnly?.onDone(); }}>Cancel</Button>
+            <Button variant="primary" size="sm" disabled={!!billMoneyError} onClick={() => void saveBill()}>{editingBillNo ? "Save Changes (re-post)" : "Save & Post"}</Button>
+            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setEditingBillNo(null); setScanQueue(null); formOnly?.onDone(); }}>Cancel</Button>
           </div>
         </CardContent></Card>
       )}
