@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: item 19 in progress on branch `fix/delivery-return-cn-status`.
 > **Last verified: 2026-10-17**: item 1 prod-verified (#954); item 2 in progress on branch `feat/finance-notes-post`; the owner's answers on items 17 and 18 logged.
 > **Last verified: 2026-10-17**: the owner's answers on the remaining finance v2 list logged as a new entry; item 1 in progress on branch `fix/finance-report-gap-rows`.
 > **Last verified: 2026-10-17**: items 6 (#951) and 7 (#952) prod-verified; the owner's-answers entry closed.
@@ -242,7 +243,7 @@ Now:
 16. ⚪ Cash Book bank matching by pick list.
 17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns). Owner 2026-10-17: interest is recorded at drawdown (「提款时就记」).
 18. ✅ Monthly P&L column order — owner 2026-10-17: keep it as it is, cumulative first and the newest month first (「照现在」). Nothing to build.
-19. ⚪ A delivery return that reads "CN issued" with no credit note behind it — fix.
+19. 🔵 (branch `fix/delivery-return-cn-status`, BUG-2026-10-17-318) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when none); stored data untouched.
 
 Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
 

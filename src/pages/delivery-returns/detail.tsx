@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Loader2, ArrowLeft, Printer } from "lucide-react";
 import { generateDeliveryReturnPdf } from "@/lib/generate-delivery-return-pdf";
+import { deliveryReturnStatus } from "@/lib/delivery-return-status";
 
 interface DRItem {
   id: string;
@@ -54,20 +55,12 @@ interface DeliveryReturn {
   creditNoteId: string;
   /** The note's number when one was raised from this return (2026-10-17). */
   creditNoteNo?: string;
+  /** The linked note's own status (DRAFT / APPROVED / POSTED), "" when none. */
+  creditNoteStatus?: string;
   reason: string;
   items: DRItem[];
 }
 type Resp = { success?: boolean; data?: DeliveryReturn };
-
-const STATUS_LABEL: Record<string, string> = {
-  OPEN: "Open",
-  RETURNED_TO_STOCK: "Returned to stock",
-  SERVICE_SPAWNED: "Service in progress",
-  CN_ISSUED: "CN issued",
-  REDELIVERED: "Re-delivered",
-  CLOSED: "Closed",
-  CANCELLED: "Cancelled",
-};
 
 export default function DeliveryReturnDetail() {
   const { id } = useParams();
@@ -135,6 +128,7 @@ export default function DeliveryReturnDetail() {
   }
 
   const isOpen = dr.status === "OPEN";
+  const statusView = deliveryReturnStatus(dr);
   // Outcomes are MUTUALLY EXCLUSIVE — you pick exactly one from OPEN. Once any
   // outcome is chosen (restock / repair / pure-return) the DR is resolved and
   // the other buttons disappear. This is what stops "restock (+1 good stock)
@@ -148,7 +142,7 @@ export default function DeliveryReturnDetail() {
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
         <h1 className="text-xl font-bold text-[#1F1D1B]">{dr.returnNo}</h1>
-        <Badge variant="status" status={dr.status}>{STATUS_LABEL[dr.status] ?? dr.status}</Badge>
+        <Badge variant="status" status={statusView.chip}>{statusView.label}</Badge>
         {dr.returnType && (
           <span className="text-xs text-[#6B7280]">
             {dr.returnType === "PURE_RETURN" ? "Pure return" : "Repair & re-deliver"}
@@ -251,6 +245,17 @@ export default function DeliveryReturnDetail() {
           )}
           {dr.creditNoteId && (
             <p className="mt-1 text-xs text-[#6B7280]">Credit note: <Link to="/invoices/credit-notes" className="font-mono text-[#6B5C32] underline decoration-dotted">{dr.creditNoteNo || dr.creditNoteId}</Link></p>
+          )}
+          {/* Returned to stock on an invoiced order, but the credit note was
+              never saved (BUG-2026-10-17-318): say so, and offer the form
+              again, pre-filled from this return. */}
+          {statusView.awaitingCreditNote && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-[#F2D9A6] bg-[#FBF3E4] px-3 py-2 text-[12px] text-[#7A5B12]" data-dr-awaiting-cn="">
+              <span>Returned to stock — the credit note for this return has not been raised yet.</span>
+              <Button size="sm" variant="outline" onClick={() => navigate(`/invoices/credit-notes?fromReturn=${id}`)}>
+                Create credit note
+              </Button>
+            </div>
           )}
 
           <div className="flex gap-2 flex-wrap pt-4 mt-4 border-t border-[#E2DDD8]">
