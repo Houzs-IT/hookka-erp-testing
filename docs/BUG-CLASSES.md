@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-17**: branch `fix/m-receivables-aging-total`, to `main`, adds **C16 row 9** (the phone's Receivables read a total the aging row does not carry, BUG-2026-10-17-307). Nothing else re-checked.
+
 > **Last verified: 2026-10-17**: branch `fix/ap-invoices-cancelled-outstanding`, to `main`, adds **C15 row 46** (AP Invoices counted cancelled documents as outstanding, BUG-2026-10-17-306). Nothing else re-checked.
 
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-reports-4`, to `main`, adds **C15 row 45** (the P&L statement's FY-to-date % divided by the period's net sales, BUG-2026-10-16-305). Nothing else re-checked.
@@ -1178,6 +1180,7 @@ narrowing has to state what it is dropping.
 | 6 | `finishedGoods` / `finishedProducts` | `/api/inventory` | `suppliers/detail.tsx:214` | ✅ 2026-08-13 (-024) — and note the fix was to DELETE the read, not rename it; the two payload halves are different entities |
 | 7 | `regNo` / `tin` / `address` | the PERMISSION projection on `GET /api/organisations` | `letterheadForPurchaseOrg` → the PO / GRN / PI letterhead | ✅ 2026-08-13 (-100) — caught **before** merge, by looking for this class rather than by an incident |
 | 8 | `customerSOLine` / `customerRefLine` / `companySO` (read as the DO names `customerSO` / `customerRef` / `salesOrderNo`) | `computeInvoicePrintExtras` | `buildUnifiedInvoiceData` → invoice download + customer e-mail PDF | ✅ 2026-09-23 (-186) — a RENAMED field, not a dropped one: the invoice and DO extras share the `DocLineExtra` type, so `tsc` saw every name as optional-and-valid. Every line printed the invoice-level SO/REF and a blank CO SO. Enforced by `tests/invoice-pdf-line-refs.test.mjs` |
+| 9 | `total` / `totalSen` (the AR aging row carries five buckets and no total) | `/api/accounting/aging` | `receivablesConfig` → the phone's Receivables list | ✅ 2026-10-17 (-307) — every debtor read RM 0.00; the outstanding is now the sum of the five buckets; `tests/m-receivables-aging-total.test.mjs` imports the real config |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same
