@@ -87,10 +87,11 @@ import { buildHistIdentityRemap } from "../../lib/pnl-hist-remap";
 import { rmLineOf, rmScale } from "../../lib/product-line-rm";
 import { buildInventoryOpeningSeed, applyOpeningSeed, type InventoryOpeningRow } from "../../lib/inventory-opening";
 import { bucketAging } from "../../lib/other-party-aging";
-import { applyLifecycle, getDocState } from "../lib/document-lifecycle";
+import { applyLifecycle, getDocState, restoreEditedFamilyStatements } from "../lib/document-lifecycle";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
-import { liveRestatePostType } from "../../lib/lifecycle-machine";
-import { orBankCarry } from "../../lib/official-receipt-edit";
+import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
+import { planEditBankCarry } from "../lib/bank-leg-carry";
+import { loadAccountResolver } from "../lib/account-resolver";
 import {
   computeMaterialCheckpoints,
   windowFromCheckpoints,
@@ -260,33 +261,7 @@ async function nextJeNo(db: D1Database): Promise<string> {
   return `JE-${yymm}-${String(seq).padStart(4, "0")}`;
 }
 
-// ---------------------------------------------------------------------------
-// Account-code rename aliases (migration 0157). The immutable ledger
-// hash-chains accountCode into every row, so a rename can never rewrite
-// history — instead old→new mappings live in account_aliases and EVERY
-// read surface resolves through this (transitively, for chained renames).
-// Identity fallback when the table hasn't been migrated yet.
-// ---------------------------------------------------------------------------
-async function loadAccountResolver(
-  db: Env["Variables"]["DB"],
-): Promise<(code: string) => string> {
-  try {
-    const res = await db
-      .prepare("SELECT oldCode, newCode FROM account_aliases")
-      .all<{ oldCode: string; newCode: string }>();
-    const m = new Map(
-      (res.results ?? []).map((r) => [r.oldCode, r.newCode] as const),
-    );
-    if (m.size === 0) return (c) => c;
-    return (code) => {
-      let c = code;
-      for (let i = 0; i < 10 && m.has(c); i++) c = m.get(c)!;
-      return c;
-    };
-  } catch {
-    return (c) => c;
-  }
-}
+// Account-code rename aliases: loadAccountResolver, src/api/lib/account-resolver.ts.
 
 // Accounts the POSTING CODE references directly (control accounts, tax,
 // sales split, default purchase/stock maps, bank/cash, retained earnings,
@@ -5360,6 +5335,8 @@ async function buildOtherPartyPaymentLifecycle(
         .bind(paymentNo, orgId),
     );
   }
+  // An unvoid brings back the EDITED legs, not the pre-edit ones (class C5).
+  if (reactivated) statements.push(...(await restoreEditedFamilyStatements(db, orgId, "other_party_payment", paymentNo)));
   if (deactivated || reactivated) {
     const now = new Date().toISOString();
     for (const r of rows) {
@@ -5408,6 +5385,10 @@ async function buildOtherPartyPaymentRestate(
     ).results ?? [];
   const first = rows[0];
   if (!first) throw new Error("PAYMENT_NOT_FOUND");
+  // A cancelled payment's legs are hidden; editing it would post live ones.
+  if ((await getDocState(db, orgId, "other_party_payment", paymentNo)) !== "ACTIVE") {
+    throw new Error(`Payment ${paymentNo} is cancelled — restore it before editing.`);
+  }
   const now = new Date().toISOString();
   const statements: D1PreparedStatement[] = [];
 
@@ -5468,11 +5449,11 @@ async function buildOtherPartyPaymentRestate(
     (
       await db
         .prepare(
-          `SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
             WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'other_party_payment%'`,
         )
         .bind(paymentNo, orgId)
-        .all<{ accountCode: string; debitSen: number; creditSen: number }>()
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
     ).results ?? [];
   const revLegs = cur.map((l, i) => ({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
@@ -5507,6 +5488,9 @@ async function buildOtherPartyPaymentRestate(
           orgId,
         }))
       : [];
+  // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+  const carry = await planEditBankCarry(db, cur, postLegs, "payment");
+  if (!carry.ok) throw new BankMatchedEditRefused(carry.error);
   const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [
     ...revLegs,
     ...postLegs,
@@ -5519,6 +5503,7 @@ async function buildOtherPartyPaymentRestate(
       )
       .bind(paymentNo, orgId, `other_party_payment_restate_post:${stamp}`),
   );
+  statements.push(...carry.statements);
 
   return statements;
 }
@@ -5606,6 +5591,7 @@ app.post("/other-party-payments/:paymentNo/restate", async (c) => {
   } catch (e) {
     if ((e as Error).message === "PAYMENT_NOT_FOUND")
       return c.json({ success: false, error: "Payment not found" }, 404);
+    if (e instanceof BankMatchedEditRefused) return c.json({ success: false, error: e.message }, 409);
     return c.json({ success: false, error: (e as Error).message }, 400);
   }
 });
@@ -11684,6 +11670,9 @@ app.get("/payment-vouchers", async (c) => {
       for (const u of uRes.results ?? []) nameById.set(String(u.id), String(u.displayName ?? u.display_name ?? ""));
     }
     const nm = (r: Record<string, unknown>, a: string, b: string) => { const id = (r[a] ?? r[b]); return typeof id === "string" ? (nameById.get(id) ?? null) : null; };
+    // Today's code for a renamed account (class C32), as the receipts read.
+    const resolveCode = await loadAccountResolver(c.var.DB);
+    const rc = (v: unknown) => (typeof v === "string" && v ? resolveCode(v) : v);
     const data = (pvRes.results ?? []).map((v) => {
       const r = v as Record<string, unknown>;
       const id = String(r.id);
@@ -11706,7 +11695,9 @@ app.get("/payment-vouchers", async (c) => {
         advanceOpenSen: isAp && !apVoided ? (advanceOpenByNo.get(pvNo) ?? 0) : 0,
         allocs: allocsByVoucher.get(id) ?? [],
         attachmentCount: attachCountById.get(id) ?? 0,
-        lines: lines.filter((l) => l.voucherId === id),
+        payFrom: rc(r.payFrom ?? r.pay_from),
+        accrualAccount: rc(r.accrualAccount ?? r.accrual_account),
+        lines: lines.filter((l) => l.voucherId === id).map((l) => ({ ...l, accountCode: rc((l as { accountCode?: string }).accountCode) })),
         preparedByName: nm(r, "preparedBy", "prepared_by"),
         checkedByName: nm(r, "checkedBy", "checked_by"),
         approvedByName: nm(r, "approvedBy", "approved_by"),
@@ -12287,11 +12278,14 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
     c.var.DB.prepare("UPDATE payment_vouchers SET status = ? WHERE id = ?").bind(docStatus, id),
   ];
   // Cover restate legs (payment_voucher_restate_post:*) on void/delete so an
-  // edited-then-voided voucher still nets to zero in the GL.
+  // edited-then-voided voucher still nets to zero in the GL; an unvoid brings
+  // back the EDITED legs, not the pre-edit ones (class C5).
   if (lc.newState !== "ACTIVE") {
     statements.push(
       c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%'`).bind(id, orgId),
     );
+  } else {
+    statements.push(...(await restoreEditedFamilyStatements(c.var.DB, orgId, "payment_voucher", id)));
   }
   await c.var.DB.batch(statements);
   return c.json({ success: true, data: { state: lc.newState } });
@@ -12309,8 +12303,13 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
   try {
     await ensurePvApprovalCols(c.var.DB);
     await ensurePvApColumns(c.var.DB);
-    const pv = await c.var.DB.prepare("SELECT id, pvNo, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
+    const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; status: string | null; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
     if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+    // A cancelled voucher's legs are hidden; editing it would post live ones
+    // under a VOID voucher (the screen never offers it — the server refuses too).
+    if (String(pv.status ?? "") === "VOID" || (await getDocState(c.var.DB, orgId, "payment_voucher", id)) !== "ACTIVE") {
+      return c.json({ success: false, error: "This voucher is cancelled — restore it before editing." }, 400);
+    }
     if (String((pv.approvalState ?? pv.approval_state) ?? "APPROVED") !== "APPROVED") {
       return c.json({ success: false, error: "Not posted yet — edit the draft directly, no restate needed." }, 400);
     }
@@ -12358,14 +12357,17 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
 
     const statements: D1PreparedStatement[] = [];
     // 1. Reverse the live voucher legs (incl. any settle legs).
-    const cur = (await c.var.DB.prepare(`SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'payment_voucher%'`).bind(id, orgId).all<{ accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
+    const cur = (await c.var.DB.prepare(`SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'payment_voucher%'`).bind(id, orgId).all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
     const revLegs = cur.map((l, i) => ({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: `payment_voucher_restate_rev:${stamp}`, sourceId: id, legNo: i + 1, accountCode: l.accountCode, debitSen: l.creditSen, creditSen: l.debitSen, description: `Restate rev · ${pv.pvNo}`, actorUserId, orgId }));
     // 2. Corrected legs (DR expense lines, CR pay-from / accrual).
     const postSource = `payment_voucher_restate_post:${stamp}`;
     const newLegs: LedgerEntryInput[] = v.lines.map((l, idx) => ({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: id, legNo: idx + 1, accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0, description: `${pv.pvNo} · ${l.description || body.description || "Payment"}${accrued ? " (accrued)" : ""}`, actorUserId, orgId }));
     newLegs.push({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: id, legNo: newLegs.length + 1, accountCode: creditAccount, debitSen: 0, creditSen: v.totalSen, description: `${pv.pvNo} · ${body.payee ? `to ${body.payee}` : "Payment"}${accrued ? " (accrued)" : ""}`, actorUserId, orgId });
+    // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+    const carry = await planEditBankCarry(c.var.DB, cur, newLegs, "voucher");
+    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
     const { statements: jeStmts } = await buildJournalEntryStatements(c.var.DB, orgId, [...revLegs, ...newLegs]);
-    statements.push(...jeStmts);
+    statements.push(...jeStmts, ...carry.statements);
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
     const extra = pvExtraFields(body as Record<string, unknown>);
@@ -12483,11 +12485,20 @@ app.get("/official-receipts", async (c) => {
         `SELECT * FROM official_receipt_lines ORDER BY lineOrder`,
       ).all(),
     ]);
-    const lines = (lineRes.results ?? []) as { receiptId: string }[];
-    const data = (orRes.results ?? []).map((r) => ({
-      ...(r as object),
-      lines: lines.filter((l) => l.receiptId === (r as { id: string }).id),
-    }));
+    // A receipt keeps the account code it was posted with; when the chart
+    // later RENAMED that code, the edit form, popup and print must see
+    // today's code (class C32 — HOR-2610-002's line said 407-0000, renamed
+    // 440-0040, and the form showed an empty account).
+    const resolve = await loadAccountResolver(c.var.DB);
+    const lines = (lineRes.results ?? []) as { receiptId: string; accountCode: string }[];
+    const data = (orRes.results ?? []).map((r) => {
+      const row = r as { id: string; payTo?: string | null };
+      return {
+        ...(r as object),
+        payTo: row.payTo ? resolve(row.payTo) : row.payTo,
+        lines: lines.filter((l) => l.receiptId === row.id).map((l) => ({ ...l, accountCode: resolve(l.accountCode) })),
+      };
+    });
     return c.json({ success: true, data });
   } catch {
     return c.json({ success: true, data: [], migrationMissing: true });
@@ -12617,7 +12628,8 @@ app.post("/official-receipts", async (c) => {
 // (official_receipt_restate_rev/post:<stamp>) and hides every older family —
 // the payment-voucher restate. A bank match (or the cash board's daily tick)
 // on the old bank leg moves to the new one when the bank account and amount
-// are unchanged; a matched receipt cannot change them (orBankCarry).
+// are unchanged; a matched receipt cannot change them (planEditBankCarry,
+// class C31).
 app.post("/official-receipts/:id/restate", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
@@ -12642,27 +12654,6 @@ app.post("/official-receipts/:id/restate", async (c) => {
       `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
         WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'official_receipt%'`,
     ).bind(id, orgId).all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
-    // What on the bank side points at those legs.
-    const curIds = cur.map((l) => l.id);
-    const matched = new Set<string>();
-    const ticked = new Set<string>();
-    let splitHeld = false;
-    if (curIds.length > 0) {
-      const marks = curIds.map(() => "?").join(", ");
-      for (const r of (await db.prepare(`SELECT matchedLegId FROM bank_statement_lines WHERE matchedLegId IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
-        matched.add(String(r.matchedLegId ?? r.matched_leg_id ?? ""));
-      }
-      for (const r of (await db.prepare(`SELECT leg_id FROM bank_line_leg_splits WHERE leg_id IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
-        matched.add(String(r.legId ?? r.leg_id ?? ""));
-        splitHeld = true;
-      }
-      for (const r of (await db.prepare(`SELECT leg_id FROM bank_board_cleared WHERE leg_id IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
-        ticked.add(String(r.legId ?? r.leg_id ?? ""));
-      }
-    }
-    const carry = orBankCarry(cur, { matched, ticked }, { payTo: v.payTo, totalSen: v.totalSen });
-    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
-
     const now = new Date().toISOString();
     const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
     const stamp = Date.now();
@@ -12673,19 +12664,15 @@ app.post("/official-receipts/:id/restate", async (c) => {
       accountCode: l.accountCode, debitSen: Number(l.creditSen) || 0, creditSen: Number(l.debitSen) || 0, description: `Restate rev · ${orNo}`, actorUserId, orgId,
     }));
     const newLegs = officialReceiptLegs(v, { id, orNo, sourceType: postSource, bankLegId }, actorUserId, orgId);
+    // The bank side follows the re-posted bank leg, or the edit is refused.
+    const carry = await planEditBankCarry(db, cur, newLegs, "receipt");
+    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
     const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
     const statements: D1PreparedStatement[] = [...jeStmts];
     statements.push(db.prepare(
       `UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%' AND sourceType <> ?`,
     ).bind(id, orgId, postSource));
-    // The bank match / split / daily tick follow the re-posted bank leg.
-    if (carry.carryFrom) {
-      if (matched.has(carry.carryFrom)) {
-        statements.push(db.prepare("UPDATE bank_statement_lines SET matchedLegId = ? WHERE matchedLegId = ?").bind(bankLegId, carry.carryFrom));
-      }
-      if (splitHeld) statements.push(db.prepare("UPDATE bank_line_leg_splits SET leg_id = ? WHERE leg_id = ?").bind(bankLegId, carry.carryFrom));
-      if (ticked.has(carry.carryFrom)) statements.push(db.prepare("UPDATE bank_board_cleared SET leg_id = ? WHERE leg_id = ?").bind(bankLegId, carry.carryFrom));
-    }
+    statements.push(...carry.statements);
     statements.push(db.prepare(
       "UPDATE official_receipts SET date = ?, receivedFrom = ?, description = ?, payTo = ?, totalSen = ?, updated_at = ? WHERE id = ?",
     ).bind(v.date, v.receivedFrom, v.description, v.payTo, v.totalSen, now, id));
@@ -12705,7 +12692,7 @@ app.post("/official-receipts/:id/restate", async (c) => {
       before: { date: or.date, payTo: or.payTo ?? or.pay_to, receivedFrom: or.receivedFrom ?? or.received_from, description: or.description, totalSen: or.totalSen ?? or.total_sen, lines: beforeLines },
       after: { date: v.date, payTo: v.payTo, receivedFrom: v.receivedFrom, description: v.description, totalSen: v.totalSen, lines: v.lines },
     });
-    return c.json({ success: true, data: { id, orNo, bankMatchMoved: !!carry.carryFrom } });
+    return c.json({ success: true, data: { id, orNo, bankMatchMoved: carry.moved > 0 } });
   } catch (e) {
     console.error("[or] restate failed:", e);
     return c.json({ success: false, error: "Failed to update the receipt" }, 400);
@@ -12746,16 +12733,7 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
       c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
     );
   } else {
-    const fams = (await c.var.DB.prepare(
-      `SELECT DISTINCT sourceType FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt_restate_post:%'`,
-    ).bind(id, orgId).all<{ sourceType: string }>()).results ?? [];
-    const live = liveRestatePostType(fams.map((f) => String(f.sourceType)), "official_receipt");
-    if (live) {
-      statements.push(
-        c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
-        c.var.DB.prepare("UPDATE ledger_journal_entries SET hidden = 0 WHERE sourceId = ? AND orgId = ? AND sourceType = ?").bind(id, orgId, live),
-      );
-    }
+    statements.push(...(await restoreEditedFamilyStatements(c.var.DB, orgId, "official_receipt", id)));
   }
   await c.var.DB.batch(statements);
   return c.json({ success: true, data: { state: lc.newState } });
