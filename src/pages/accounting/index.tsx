@@ -23,13 +23,14 @@ import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type L
 // and a null the caller must refuse. See src/lib/parse-money.ts.
 import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/money-field";
 import { exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
-import { buildAgingExportAoa, buildGroupedAgingExportAoa, agingRowKind } from "@/lib/aging-export";
+import { buildGroupedAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party-aging-rows";
+import { daysUntil, dueText, dueTone, monthBucket, nextDueOf, overdueSen } from "@/lib/aging-next-due";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
@@ -4376,6 +4377,11 @@ function AgingListTable({
     </table>
   );
 }
+// The slice of GET /api/accounting/trade-finance Creditor Aging reads.
+type TfAgingSource = {
+  lenderName: string;
+  draws: { drawSourceId: string; drawDate: string; dueDate: string; interestSen: number; outstandingSen: number; paidSupplier: string }[];
+};
 const AGING_TYPE_TAG: Record<string, string> = {
   trade: "bg-[#EEF1F4] text-[#4B5563]",
   other: "bg-[#F4EEE3] text-[#6B5C32]",
@@ -5255,6 +5261,69 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   }, [company]);
   const rows = company ? (scopedAp ?? []) : apData;
 
+  // Other creditors and trade-finance draws (owner 2026-10-17, Finance v2:
+  // "Groups: Trade Suppliers / Other Creditors / Trade Finance, where Trade
+  // Finance has one row per drawdown, sorted by due date", and a Next Due
+  // column). Each kind is its own section, never mixed into the supplier
+  // rows; the Trade Finance block below stays where draws are managed (owner
+  // 2026-08-11 / 2026-10-16). A draw ages by its draw date like any bill.
+  const [ocBills, setOcBills] = useState<OtherPartyAgingBill[] | null>(null);
+  const [tfSources, setTfSources] = useState<TfAgingSource[] | null>(null);
+  useEffect(() => {
+    let stale = false;
+    fetch("/api/accounting/other-party-aging?type=CREDITOR")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { bills?: OtherPartyAgingBill[] } }>)
+      .then((j) => { if (!stale) setOcBills(j?.success ? (j.data?.bills ?? []) : []); })
+      .catch(() => { if (!stale) setOcBills([]); });
+    fetch("/api/accounting/trade-finance", { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: TfAgingSource[] } }>)
+      .then((j) => { if (!stale) setTfSources(j?.success ? (j.data?.sources ?? []) : []); })
+      .catch(() => { if (!stale) setTfSources([]); });
+    return () => { stale = true; };
+  }, []);
+  const today = todayYmdMY();
+  const [show, setShow] = useState<AgingShow>("all");
+  const supplierList: AgingListRow[] = rows.map((a) => ({
+    key: `s:${a.supplierId}`, kind: "trade", name: a.supplierName,
+    currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen,
+    docs: a.docs ?? [], nextDue: nextDueOf(a.docs ?? []),
+  }));
+  const otherList: AgingListRow[] = otherPartyAgingRows(ocBills ?? []).map((r) => ({
+    key: `o:${r.partyId}`, kind: "other", name: r.partyName,
+    currentSen: r.currentSen, days30Sen: r.days30Sen, days60Sen: r.days60Sen, days90Sen: r.days90Sen, over90Sen: r.over90Sen, docs: r.docs,
+  }));
+  const tfList: AgingListRow[] = (tfSources ?? [])
+    .flatMap((src) => src.draws.filter((d) => d.outstandingSen > 0).map((d) => {
+      const mo = monthBucket(d.drawDate, today);
+      const row: AgingListRow = {
+        key: `f:${d.drawSourceId}`, kind: "tf", name: src.lenderName,
+        sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`, d.interestSen ? `incl. interest ${formatCurrency(d.interestSen)}` : ""].filter(Boolean).join(" · "),
+        currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 0, over90Sen: 0,
+        docs: [{ no: d.drawSourceId, date: d.drawDate, mo, amountSen: d.outstandingSen, due: d.dueDate }],
+        nextDue: d.dueDate,
+      };
+      row[AGING_KEYS[mo]] = d.outstandingSen;
+      return row;
+    }))
+    .sort((a, b) => (a.nextDue ?? "").localeCompare(b.nextDue ?? ""));
+  const groups = agingGroupsFor(show, [
+    { key: "tf", label: "Trade finance", rows: tfList },
+    { key: "trade", label: "Trade suppliers", rows: supplierList },
+    { key: "other", label: "Other creditors", rows: otherList },
+  ]);
+  const shownList = groups.flatMap((g) => g.rows);
+  const nextDueCell = (r: AgingListRow) => {
+    if (!r.nextDue) return <span className="text-[#C4BDB3]">-</span>;
+    const days = daysUntil(r.nextDue, today);
+    const tone = dueTone(days);
+    return (
+      <span data-due-tone={tone} className={tone === "overdue" ? "text-[#9A3A2D]" : tone === "soon" ? "text-[#7A5B12]" : "text-[#1F1D1B]"}>
+        {formatDateDMY(r.nextDue)}
+        <span className="block text-[11px]">{dueText(days)}</span>
+      </span>
+    );
+  };
+
   // BUG-2026-08-13-090, creditor twin of the debtor case in ARTab above. The
   // removed "Record Payment" form POSTed /api/accounting/aging, which UPDATEs
   // `ap_aging` — a table GET /aging does not read (it computes the creditor
@@ -5262,20 +5331,19 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   // supplier_payments row, no GL leg, no PI paid_amount_sen change, and the
   // unchecked `await fetch(...)` swallowed the dead table's 404. Supplier
   // payments are made on /invoices/supplier-payments, which posts for real.
-  const totalOutstanding = rows.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
+  const totalOutstanding = shownList.reduce((s, a) => s + agingListTotal(a), 0);
+  const ocTotal = otherList.reduce((s, a) => s + agingListTotal(a), 0);
+  const overdue = overdueSen(shownList.flatMap((r) => r.docs), today);
 
   const ctl = useApControl(company);
+  const ocControl = ctl?.controls.find((x) => x.code === "405-0000");
 
   // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
   // only (owner), from the same aging builder.
   const asAt = todayYmdMY();
   const fileBase = `creditor-aging-${asAt}${company ? `-${company}` : ""}`;
-  const buildAging = () => buildAgingExportAoa("Supplier", rows.map((a) => ({
-    name: a.supplierName, currentSen: a.currentSen, days30Sen: a.days30Sen,
-    days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
+  const buildAging = () => buildGroupedAgingExportAoa("Creditor", groups.map((g) => ({
+    label: g.label, parties: g.rows.map((r) => ({ ...r, name: r.sub ? `${r.name} (${r.sub})` : r.name })),
   })));
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Creditor Aging (AP)", buildAging(), { moneyFormat: true }); } },
@@ -5310,87 +5378,49 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
               ),
             },
           ] : []),
-          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "info" as const, note: "the aging below" },
+          {
+            label: "Other creditors · 405-0000",
+            value: ocBills === null ? "—" : formatCurrency(ocTotal),
+            tone: "err" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{ocControl ? <> · {controlDriftNote(ocControl.balanceSen - ocTotal)}</> : null}</>,
+          },
+          { label: "Overdue", value: formatCurrency(overdue), tone: "err" as const, note: "past the due date" },
+          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "info" as const, note: show === "all" ? "trade finance + suppliers + other creditors" : show === "tf" ? "trade finance" : show === "trade" ? "trade suppliers" : "other creditors" },
         ]}
       />
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <h3 className="text-[14px] font-semibold text-[#1F1D1B]">By creditor</h3>
-        <span className="text-[12px] text-[#6B7280]">{rows.length} supplier{rows.length === 1 ? "" : "s"}</span>
-        <span className="ml-auto text-[12px] text-[#9CA3AF]">Read-only. Pay a supplier bill on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>.</span>
+        <span className="text-[12px] text-[#6B7280]">{tfList.length} drawdown{tfList.length === 1 ? "" : "s"} · {supplierList.length} supplier{supplierList.length === 1 ? "" : "s"} · {otherList.length} other creditor{otherList.length === 1 ? "" : "s"}</span>
+        <div className="ml-auto">
+          <SegmentedChips
+            options={[
+              { key: "all", label: "All", count: tfList.length + supplierList.length + otherList.length },
+              { key: "tf", label: "Trade Finance", count: tfList.length },
+              { key: "trade", label: "Trade", count: supplierList.length },
+              { key: "other", label: "Other creditors", count: otherList.length },
+            ]}
+            value={show}
+            onChange={(k) => setShow(k as AgingShow)}
+          />
+        </div>
       </div>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Pay a bill from <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>; repay trade finance on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>. Next Due is amber within 7 days and red once overdue.</p>
 
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table data-fin-list className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                  <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Supplier</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Current</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">1 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">2 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3+ mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((ap) => {
-                  const total = ap.currentSen + ap.days30Sen + ap.days60Sen + ap.days90Sen + ap.over90Sen;
-                  const open = openAging.has(ap.supplierId);
-                  return (
-                    <Fragment key={ap.supplierId}>
-                    <tr data-fin-nolift={open ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
-                      <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                        <button className="inline-flex items-center gap-1.5 text-left" onClick={() => toggleAging(ap.supplierId)} title="Show the documents behind this balance">
-                          {open ? <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
-                          {ap.supplierName}
-                        </button>
-                      </td>
-                      <td className={`py-3 px-4 text-right ${ap.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.currentSen !== 0 ? formatCurrency(ap.currentSen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.days30Sen !== 0 ? formatCurrency(ap.days30Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days60Sen < 0 ? "text-[#9A3A2D]" : ap.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ap.days60Sen !== 0 ? formatCurrency(ap.days60Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days90Sen < 0 ? "text-[#9A3A2D]" : ap.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ap.days90Sen !== 0 ? formatCurrency(ap.days90Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ap.over90Sen !== 0 ? formatCurrency(ap.over90Sen) : "-"}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
-                    </tr>
-                    {open && (ap.docs ?? []).map((d, i) => (
-                      <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
-                        {[0, 1, 2, 3, 4].map((b) => (
-                          <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
-                            {d.mo === b ? formatCurrency(d.amountSen) : ""}
-                          </td>
-                        ))}
-                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
-                      </tr>
-                    ))}
-                    {open && !(ap.docs ?? []).length && (
-                      <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td colSpan={7} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
-                      </tr>
-                    )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-[#F0ECE9]/50 font-semibold">
-                  <td className="py-3 px-4 text-[#1F1D1B]">Total</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.currentSen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days30Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days60Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.over90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(totalOutstanding)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            <AgingListTable
+              partyHeader="Creditor"
+              groups={groups}
+              sectioned={show === "all"}
+              open={openAging}
+              onToggle={toggleAging}
+              typeLabel={{ tf: "Trade Finance", trade: "Trade", other: "Other creditor" }}
+              nextDue={nextDueCell}
+            />
           </div>
         </CardContent>
       </Card>
-      {/* Trade finance (owner 2026-08-11): its own section — owed to a LENDER
-          for bills it paid on our behalf, never mixed into trade creditors. */}
       <TradeFinanceBlock />
       <ContraCard />
       <SupplierStatementCard />

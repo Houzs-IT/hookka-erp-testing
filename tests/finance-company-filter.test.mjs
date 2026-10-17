@@ -109,8 +109,9 @@ test("finance report handlers append the org filter ONLY when coFilter.active", 
 test("aging snapshot partitions filtered vs consolidated by cache_key", () => {
   const src = read("src/api/routes/accounting.ts");
   // The /aging snapshot MUST use a per-company cacheKey when filtered so a
-  // scoped result never overwrites the consolidated ("") cache slot.
-  assert.match(src, /const cacheKey = coFilter\.active \? `company:\$\{coFilter\.orgId\}` : ""/);
+  // scoped result never overwrites the consolidated cache slot. Both slots
+  // carry the "|due" shape version (2026-10-17, Creditor Aging's Next Due).
+  assert.match(src, /const cacheKey = coFilter\.active \? `company:\$\{coFilter\.orgId\}\|due` : "\|due"/);
 });
 
 // --- ensureFinanceOrgColumns: additive DDL + idempotent ----------------------

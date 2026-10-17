@@ -746,6 +746,8 @@ export type AgingDocDetail = {
   date: string;
   mo: number; // bucket 0..4: current / 1 / 2 / 3 / 3+ months
   amountSen: number; // negative = un-knocked advance
+  /** "YYYY-MM-DD" a purchase invoice / draw falls due; absent or "" when none is on file (Creditor Aging's Next Due). */
+  due?: string;
 };
 
 export type ARAgingEntry = {

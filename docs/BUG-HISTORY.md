@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-312 and -313 flipped to 🟢 after the #949 prod check.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-309 to -311 flipped to 🟢 after the #948 prod check.
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-312 and -313 (branch `feat/finance-v2-party-fields`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-309 to -311 (branch `feat/finance-v2-print-1a`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -136,9 +137,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-313 — The customer KYC block came back blank and its next Save wiped it `customers` 🟡
+## BUG-2026-10-17-313 — The customer KYC block came back blank and its next Save wiped it `customers` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Shipped and verified** (#949, b0111f86). Prod check 2026-10-17 (read-only): prod holds no KYC record for any of its customers (measured, `/api/customer-crm/onboarding` per customer), so nothing was lost; the panel now reads the API's keys.
 
 **Symptom.** Found 2026-10-17 by reading the code while adding the customer's SST Reg. No. next to its TIN (Finance v2 party fields). The Onboarding / KYC block on a customer (owner 2026-07-30: TIN, e-Invoice ID, consent letter, notes, "docs requested") showed empty fields after every reload, and an unticked consent box. Saving the block then — even to change one note — wrote those blanks over the stored TIN, e-Invoice ID and consent. A plain Save also wrote null over the "docs requested" date, because the form never sends it.
 
@@ -148,9 +149,9 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/party-finance-fields.test.mjs`. Class: BUG-CLASSES C23 row 8.
 
-## BUG-2026-10-17-312 — A customer's default company always read blank, and an edit saved the blank `customers` 🟡
+## BUG-2026-10-17-312 — A customer's default company always read blank, and an edit saved the blank `customers` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Shipped and verified** (#949). Prod check 2026-10-17 (read-only): with the read fixed, no customer on prod has a default company stored (measured over `/api/customers`), so the SO form's pre-fill is unchanged today and the next one set will stick.
 
 **Symptom.** Found 2026-10-17 by reading `src/api/routes/customers.ts` while adding the Finance v2 party fields. A customer's "Default Company (new orders)" (Multi-Company Phase 4) always came back as none, so a new sales order never pre-filled it. The customer edit form sends the whole record, so editing any field saved that blank over the stored company.
 
