@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-308 flipped to 🟢 after the #945 prod check (branch `docs/finance-v2-plan8-close`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-308 (branch `fix/m-dashboard-anchor-month`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 flipped to 🟢 after the #941 prod check (branch `feat/finance-v2-mobile-b`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-307 (branch `fix/m-receivables-aging-total`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -132,9 +133,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-308 — The phone's Finance Dashboard showed a month ahead with no figures `mobile` `finance` 🟡
+## BUG-2026-10-17-308 — The phone's Finance Dashboard showed a month ahead with no figures `mobile` `finance` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Shipped and verified** (#945, acebb8dc). Prod check 2026-10-17 (read-only): the screen anchors on the running month and says it is still running. Revenue, its gap to forecast, Net Profit and the five cash-flow lines equal that month in `/dashboard`, and the chart draws the four months ending there.
 
 **Symptom.** Found 2026-10-17 by the prod check of #944, the day it shipped and before anyone used it. The phone's Finance Dashboard showed "—" for the running month. Its chart showed four months ahead with no bars, and the cash card read a month with no books.
 
