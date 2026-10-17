@@ -55,7 +55,7 @@ test("Supplier Discount: v2 lists; rows holding inputs stay put; writes unchange
 
 test("Other parties: Add Party on the title row with the same reset; the control balance and the names as cards", () => {
   assert.match(bar(parties), /<Button variant="primary" size="sm" onClick=\{newParty\}>\n\s*<Plus className="h-4 w-4" \/> Add Party/);
-  assert.match(parties, /const newParty = \(\) => \{ setEditingId\(null\); setForm\(\{ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" \}\); setShowForm\(!showForm\); \};/);
+  assert.match(parties, /const newParty = \(\) => \{ setEditingId\(null\); setForm\(\{ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "", sstRegNo: "", currency: "MYR", bankAccount: "" \}\); setShowForm\(!showForm\); \};/);
   assert.match(parties, /label: "Other debtor control · 305-0000", value: controls \? formatCurrency\(controls\.od\) : "—"/);
   assert.match(parties, /label: "Other creditor control · 405-0000", value: controls \? formatCurrency\(controls\.oc\) : "—"/);
   assert.match(parties, /value: parties === null \? "—" : String\(mine\.length\), note: `\$\{mine\.filter\(\(p\) => p\.isActive\)\.length\} active`/);

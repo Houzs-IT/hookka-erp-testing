@@ -28,6 +28,7 @@ import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFro
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
+import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
@@ -222,7 +223,9 @@ function buildPvVoucher(
     date: formatDateDMY(pv.date),
     partyLabel: isTransfer ? "Transfer To" : supplierAp ? "Pay To (Supplier)" : "Pay To",
     partyName: isTransfer ? (pv.lines[0] ? accountLabel(accounts, pv.lines[0].accountCode) : "") : pv.payee ?? "",
-    partyDetails: [isTransfer ? { label: "From", value: paidFrom.value } : paidFrom],
+    partyDetails: isTransfer
+      ? [{ label: "From", value: paidFrom.value }]
+      : [{ label: "Payee bank", value: apDetail?.payeeBank ?? "" }, paidFrom],
     amountBox: { label: isTransfer ? "Amount transferred" : accruedOnly ? "Amount payable" : "Amount paid", value: formatCurrency(pv.totalSen) },
     facts: billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : undefined,
     columns: bills ? bills.columns : [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
@@ -367,7 +370,10 @@ function buildOtherPartyPaymentVoucher(p: PaymentGroup, accounts: ChartOfAccount
     date: formatDateDMY(p.date),
     partyLabel: receipt ? "Received From" : "Pay To",
     partyName: p.partyName,
-    partyDetails: [{ label: receipt ? "Deposited to" : "Paid from", value: p.bankAccount ? accountLabel(accounts, p.bankAccount) : "—" }],
+    partyDetails: [
+      ...(receipt ? [] : [{ label: "Payee bank", value: apDetail?.payeeBank ?? "" }]),
+      { label: receipt ? "Deposited to" : "Paid from", value: p.bankAccount ? accountLabel(accounts, p.bankAccount) : "—" },
+    ],
     amountBox: { label: receipt ? "Amount received" : "Amount paid", value: formatCurrency(p.totalSen) },
     columns: bills ? bills.columns : [{ label: "Bill No" }, { label: "Amount", align: "right" }],
     lines: bills ? bills.lines : lines,
@@ -6490,6 +6496,10 @@ type OtherParty = {
   address: string;
   notes: string;
   isActive: boolean;
+  // Finance v2 party fields (owner 2026-10-17); absent on an older API.
+  sstRegNo?: string;
+  currency?: string;
+  bankAccount?: string;
 };
 
 // The names list's status filter (finance v2: chips with counts, was a select).
@@ -6515,6 +6525,9 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     registrationNo: "",
     address: "",
     notes: "",
+    sstRegNo: "",
+    currency: "MYR",
+    bankAccount: "",
   });
   const [controls, setControls] = useState<{ od: number; oc: number } | null>(null);
 
@@ -6547,14 +6560,14 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     const j = asMutationResponse(await res.json());
     if (j?.success) {
       setShowForm(false); setEditingId(null);
-      setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" });
+      setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "", sstRegNo: "", currency: "MYR", bankAccount: "" });
       load();
     } else toast.error(j?.error || (editingId ? "Failed to update party" : "Failed to create party"));
   };
 
   const startEdit = (p: OtherParty) => {
     setEditingId(p.id);
-    setForm({ type: p.type, name: p.name, contactPerson: p.contactPerson, phone: p.phone, email: p.email, tin: p.tin, registrationNo: p.registrationNo, address: p.address, notes: p.notes });
+    setForm({ type: p.type, name: p.name, contactPerson: p.contactPerson, phone: p.phone, email: p.email, tin: p.tin, registrationNo: p.registrationNo, address: p.address, notes: p.notes, sstRegNo: p.sstRegNo ?? "", currency: p.currency || "MYR", bankAccount: p.bankAccount ?? "" });
     setShowForm(true);
   };
   const del = async (p: OtherParty) => {
@@ -6588,7 +6601,7 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   // Each chip counts what it would show with the search as typed.
   const statusCount = (st: typeof statusFilter) => (parties ?? []).filter((p) => passes(p, st)).length;
   const mine = (parties ?? []).filter((p) => p.type === side);
-  const newParty = () => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" }); setShowForm(!showForm); };
+  const newParty = () => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "", sstRegNo: "", currency: "MYR", bankAccount: "" }); setShowForm(!showForm); };
 
   return (
     <div className="space-y-4">
@@ -6638,16 +6651,21 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
               <input type="text" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
             </div>
             <div>
-              <label className="text-xs font-medium text-[#6B7280] mb-1 block">TIN</label>
-              <input type="text" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })} placeholder="e.g. C12345678900 / IG…" className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-            </div>
-            <div>
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Registration No (SSM)</label>
               <input type="text" value={form.registrationNo} onChange={(e) => setForm({ ...form, registrationNo: e.target.value })} placeholder="e.g. 202301012345" className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
             </div>
             <div className="sm:col-span-3">
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Address</label>
               <textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={2} placeholder="Full address for statements / e-Invoice" className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
+            </div>
+            {/* Finance v2 party fields (owner 2026-10-17): TIN, SST Reg. No.,
+                Currency, Bank & account no. — the block every party form shares. */}
+            <div className="sm:col-span-3">
+              <PartyFinanceFields
+                labelClassName="text-xs font-medium text-[#6B7280] mb-1 block"
+                value={{ tin: form.tin, sstRegNo: form.sstRegNo, currency: form.currency, bankAccount: form.bankAccount }}
+                onChange={(v) => setForm({ ...form, tin: v.tin, sstRegNo: v.sstRegNo, currency: v.currency, bankAccount: v.bankAccount })}
+              />
             </div>
             <div className="sm:col-span-2">
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Notes</label>

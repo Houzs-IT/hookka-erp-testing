@@ -1,4 +1,6 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-309 to -311 flipped to 🟢 after the #948 prod check.
+> **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-312 and -313 (branch `feat/finance-v2-party-fields`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-309 to -311 (branch `feat/finance-v2-print-1a`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-308 flipped to 🟢 after the #945 prod check (branch `docs/finance-v2-plan8-close`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-308 (branch `fix/m-dashboard-anchor-month`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -134,9 +136,33 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-311 — Batch print dropped an AP Payment voucher's bills `accounting` `print` 🟡
+## BUG-2026-10-17-313 — The customer KYC block came back blank and its next Save wiped it `customers` 🟡
 
 🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 by reading the code while adding the customer's SST Reg. No. next to its TIN (Finance v2 party fields). The Onboarding / KYC block on a customer (owner 2026-07-30: TIN, e-Invoice ID, consent letter, notes, "docs requested") showed empty fields after every reload, and an unticked consent box. Saving the block then — even to change one note — wrote those blanks over the stored TIN, e-Invoice ID and consent. A plain Save also wrote null over the "docs requested" date, because the form never sends it.
+
+**Root cause.** `GET /api/customer-crm/onboarding` returns `SELECT *`, and the database driver camelCases every column (`tinNumber`, `consentReceived`, `docsRequestedAt`). `KycPanel` read only the snake_case keys. The upsert sets every column from the body, so whatever the panel sends replaces the record.
+
+**Fix.** The panel reads camelCase first, snake_case second; a plain Save sends the stored "docs requested" date back. How many customers had a KYC record that was overwritten is UNMEASURED (the KYC table has no history).
+
+**Regression.** `tests/party-finance-fields.test.mjs`. Class: BUG-CLASSES C23 row 8.
+
+## BUG-2026-10-17-312 — A customer's default company always read blank, and an edit saved the blank `customers` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 by reading `src/api/routes/customers.ts` while adding the Finance v2 party fields. A customer's "Default Company (new orders)" (Multi-Company Phase 4) always came back as none, so a new sales order never pre-filled it. The customer edit form sends the whole record, so editing any field saved that blank over the stored company.
+
+**Root cause.** `rowToCustomer` and the PUT's merge read `row.default_company_code`. The driver returns the column as `defaultCompanyCode`, and the name is not in the rename map, so the snake_case key was always undefined.
+
+**Fix.** Both reads take `defaultCompanyCode` first, then `default_company_code`. How many customers have a stored default company is UNMEASURED before the deploy (the API hid it); the prod check counts them.
+
+**Regression.** `tests/party-finance-fields.test.mjs`. Class: BUG-CLASSES C23 row 9.
+
+## BUG-2026-10-17-311 — Batch print dropped an AP Payment voucher's bills `accounting` `print` 🟢
+
+🟢 **Shipped and verified** (#948, a546cf01). Prod check 2026-10-17 (read-only; the print captured, no dialog): ticking an other-creditor AP voucher and a supplier payment and pressing the batch Print gives two sheets, each with the six bill columns and the balance strip.
 
 **Symptom.** Found 2026-10-17 while building the voucher print in the Finance v2 layout. Printing one AP Payment voucher from Payment Vouchers listed the bills it paid. Ticking the same voucher and pressing the batch bar's Print gave a voucher whose table was empty except for the Total: an AP voucher has no expense lines, only bills.
 
@@ -146,9 +172,9 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/ap-payment-print.test.mjs` pins that every bill-paying door loads its detail before printing, batch included. Class: BUG-CLASSES C18 row 9.
 
-## BUG-2026-10-17-310 — An other debtor's receipt printed as a payment voucher `accounting` `print` 🟡
+## BUG-2026-10-17-310 — An other debtor's receipt printed as a payment voucher `accounting` `print` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Shipped and verified** (#948). Prod check 2026-10-17 (read-only; the print captured): the one other-debtor receipt on prod prints "OTHER-PARTY RECEIPT", "Received From", "Deposited to <bank>", "Amount received" and the Received by / Issued by boxes.
 
 **Symptom.** Found 2026-10-17 by reading the print builders for the Finance v2 print layout. Printing money received from an other debtor (Receipts, or the Other Debtor Receipts page) gave "OTHER-PARTY PAYMENT VOUCHER" with "Paid from: <the bank it was paid into>" and payment signatures.
 
@@ -158,9 +184,9 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/ap-payment-print.test.mjs` pins the side switch. Class: none — one builder shared by two kinds of document.
 
-## BUG-2026-10-17-309 — A transfer voucher was read back as a payment `accounting` 🟡
+## BUG-2026-10-17-309 — A transfer voucher was read back as a payment `accounting` 🟢
 
-🟡 **Fixed on its branch; prod check pending.** How many transfer vouchers prod holds is UNMEASURED (the list API hid the kind); the prod check counts them.
+🟢 **Shipped and verified** (#948). Prod check 2026-10-17 (read-only): prod holds one transfer voucher (cancelled); `GET /payment-vouchers` now returns it as TRANSFER and the list shows it with the TR door, "Transfer to <account>" and "→ <account>".
 
 **Symptom.** Found 2026-10-17 while building the voucher print. A Payment Voucher saved as a Transfer (owner 2026-10-01: money between our own bank / cash accounts) listed with the Payment Voucher door, printed "Pay To <payee>" instead of "Transfer To <receiving account>", opened its detail as a Payment and its edit form in Payment mode. Its lines also fed the scan's learned expense accounts.
 

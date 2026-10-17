@@ -3237,7 +3237,11 @@ const supplierDetail: DetailConfig = {
     fld("State", (d) => str(d, "state")),
     fld("Currency", (d) => str(d, "currency")),
     fld("Payment Terms", (d) => str(d, "paymentTerms")),
-    fld("Tax ID", (d) => str(d, "taxId")),
+    // The API sends the TIN as taxEntityTin (it never sent "taxId", so this row
+    // was always blank); SST Reg. No. and the bank arrived with the Finance v2
+    // party fields (2026-10-17).
+    fld("TIN", (d) => str(d, "taxEntityTin")),
+    fld("SST Reg. No.", (d) => str(d, "sstRegNo")),
     fld("Bank Account", (d) => str(d, "bankAccount")),
     fld("Address", (d) => str(d, "address"), true),
   ],

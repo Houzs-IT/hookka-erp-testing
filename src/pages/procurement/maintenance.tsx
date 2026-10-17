@@ -54,6 +54,13 @@ type Supplier = {
   // Default = HOOKKA. Picks which org's letterhead prints on the PO PDF.
   // The legal/AP buyer is always HOOKKA — this is cosmetic.
   purchaseOrgCode: string;
+  // Finance v2 party fields (2026-10-17). Carried so the edit dialog opens
+  // with the stored values — it sends them back on every save.
+  registrationNo: string;
+  taxEntityTin: string;
+  sstRegNo: string;
+  currency: string;
+  bankAccount: string;
 };
 
 // ============================================================
@@ -951,6 +958,11 @@ export default function SupplierMaintenancePage() {
       // Falls back to HOOKKA for pre-0142 rows (the column is missing on
       // the JSON response when the migration hasn't been applied yet).
       purchaseOrgCode: String(s.purchaseOrgCode ?? "HOOKKA"),
+      registrationNo: String(s.registrationNo ?? ""),
+      taxEntityTin: String(s.taxEntityTin ?? ""),
+      sstRegNo: String(s.sstRegNo ?? ""),
+      currency: String(s.currency ?? "MYR") || "MYR",
+      bankAccount: String(s.bankAccount ?? ""),
     }));
     setSuppliers(mapped);
   }, [suppliersResp]);

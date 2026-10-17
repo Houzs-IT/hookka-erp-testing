@@ -1183,7 +1183,7 @@ narrowing has to state what it is dropping.
 | 7 | `regNo` / `tin` / `address` | the PERMISSION projection on `GET /api/organisations` | `letterheadForPurchaseOrg` → the PO / GRN / PI letterhead | ✅ 2026-08-13 (-100) — caught **before** merge, by looking for this class rather than by an incident |
 | 8 | `customerSOLine` / `customerRefLine` / `companySO` (read as the DO names `customerSO` / `customerRef` / `salesOrderNo`) | `computeInvoicePrintExtras` | `buildUnifiedInvoiceData` → invoice download + customer e-mail PDF | ✅ 2026-09-23 (-186) — a RENAMED field, not a dropped one: the invoice and DO extras share the `DocLineExtra` type, so `tsc` saw every name as optional-and-valid. Every line printed the invoice-level SO/REF and a blank CO SO. Enforced by `tests/invoice-pdf-line-refs.test.mjs` |
 | 9 | `total` / `totalSen` (the AR aging row carries five buckets and no total) | `/api/accounting/aging` | `receivablesConfig` → the phone's Receivables list | ✅ 2026-10-17 (-307) — every debtor read RM 0.00; the outstanding is now the sum of the five buckets; `tests/m-receivables-aging-total.test.mjs` imports the real config |
-| 10 | `pvKind` = `TRANSFER` (OVERWRITTEN, not dropped: the mapper wrote `isAp ? "AP" : "EXPENSE"` over the stored kind) | `GET /api/accounting/payment-vouchers` | every `pvKind === "TRANSFER"` branch in `src/pages/accounting/index.tsx` (door, print, detail, edit mode) | 🟡 2026-10-17 (-309) — a mapper written before the value existed; `tests/ap-payment-print.test.mjs` pins it |
+| 10 | `pvKind` = `TRANSFER` (OVERWRITTEN, not dropped: the mapper wrote `isAp ? "AP" : "EXPENSE"` over the stored kind) | `GET /api/accounting/payment-vouchers` | every `pvKind === "TRANSFER"` branch in `src/pages/accounting/index.tsx` (door, print, detail, edit mode) | ✅ 2026-10-17 (-309) — a mapper written before the value existed; `tests/ap-payment-print.test.mjs` pins it |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same
@@ -1284,7 +1284,7 @@ parties in a single pass"* — which is true of the maths and false of the queri
 | 6 | `/ap-control` (`loadUnappliedSupplierAdvances`) vs `/ap-reconciliation` (`ap-recon.ts`) | trade-finance repayments (`TF_REPAYMENT`) left out of the advances | ✅ 2026-09-30 (-229) |
 | 7 | `/ar-control` (`loadUnappliedCustomerAdvances`) vs `/ar-reconciliation` | receipts held on account netted off as advances | ✅ 2026-09-30 (-229) |
 | 8 | customer vs supplier opening seeds (`openingControlSums`, `/opening-balance` lists) | CANCELLED seeds left out | ✅ 2026-09-30 (-230) |
-| 9 | single print (`printPvWithDetail`) vs batch print (`payVoucherOf`) of a payment voucher — not a ledger pair, the same shape | the bills an AP Payment settles | 🟡 2026-10-17 (-311) — batch now prints through the single print's spec |
+| 9 | single print (`printPvWithDetail`) vs batch print (`payVoucherOf`) of a payment voucher — not a ledger pair, the same shape | the bills an AP Payment settles | ✅ 2026-10-17 (-311) — batch now prints through the single print's spec |
 
 **The rule.** When you add a predicate to one subsidiary-ledger surface, open its twin in
 the same commit and diff the query — not the file. And when the two must agree on a
@@ -1677,6 +1677,8 @@ in both, a read that cannot succeed returns a value that looks like data.
 | 5 | `dashboard-prototype.ts` — 260 reads, whole route | ✅ 2026-09-15 (BUG-2026-09-15-181) — converted from the rename map |
 | 6 | **every other route reading rows from `getSql`** | ⬜ unswept. No test forbids a sixth. The cheap sweep is `grep -oE "\br\.[a-z]+_[a-z_]+" src/api/routes/*.ts` — a hit is not automatically a bug (some are bound params or SQL fragments) but every hit deserves a look |
 | 7 | **no test asserts a payload's money field is non-zero** | ⬜ open. This class has now recurred five times and every instance was found by a human noticing a wrong number on a screen. One assertion per money-bearing endpoint — "this field is not 0 for a book with sales" — would have caught all five |
+| 8 | the customer KYC block (`KycPanel` over `GET /api/customer-crm/onboarding`) — the CLIENT read snake_case off a `SELECT *` row, and the upsert wrote the blanks back | 🟡 2026-10-17 (-313) — the write-back is what makes this variant destructive, not just wrong on screen |
+| 9 | `customers.default_company_code` in `rowToCustomer` and the PUT merge | 🟡 2026-10-17 (-312) — same destructive shape: the edit form sends the whole record |
 
 ## C24 — the parent feeds the grid's own output back into the grid's inputs
 

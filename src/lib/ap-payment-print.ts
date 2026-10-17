@@ -29,6 +29,8 @@ export type ApPrintDetail = {
   tfRepaySen?: number;
   /** The party's balance just before this payment; null hides the strip. */
   balanceBeforeSen: number | null;
+  /** The payee's bank & account no. from its master (Finance v2 party fields); "" when none is on file. */
+  payeeBank?: string;
 };
 
 /** One payment's amount on one bill. */

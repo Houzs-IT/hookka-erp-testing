@@ -38,6 +38,7 @@ import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { ensureFinanceOrgColumns } from "../lib/ensure-finance-org";
 import { apRowBeforeOpening, legBeforeOpening, rowBeforeOpening } from "../../lib/opening-floor";
 import { billOutstandingBefore, statementBalanceBefore, type ApPrintBill as ApPrintBillOut, type BillSettlement } from "../../lib/ap-payment-print";
+import { normalisePartyCurrency, partyText } from "../../lib/party-finance";
 import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
@@ -3810,6 +3811,13 @@ type OtherPartyRow = {
   address: string | null;
   notes: string | null;
   isActive: number;
+  // Finance v2 party fields (2026-10-17). Dual-keyed read; absent until the
+  // first write self-applies them.
+  sstRegNo?: string | null;
+  sst_reg_no?: string | null;
+  currency?: string | null;
+  bankAccount?: string | null;
+  bank_account?: string | null;
 };
 
 function rowToOtherParty(r: OtherPartyRow) {
@@ -3825,7 +3833,27 @@ function rowToOtherParty(r: OtherPartyRow) {
     address: r.address ?? "",
     notes: r.notes ?? "",
     isActive: r.isActive === 1,
+    sstRegNo: (r.sstRegNo ?? r.sst_reg_no ?? "").trim(),
+    currency: normalisePartyCurrency(r.currency),
+    bankAccount: (r.bankAccount ?? r.bank_account ?? "").trim(),
   };
+}
+
+// Finance v2 party fields (owner 2026-10-17): SST Reg. No., currency and the
+// bank & account no. on an other debtor / creditor (TIN and SSM were already
+// here). snake_case, runtime self-applied before the first write; the flag is
+// set only once all three exist (C9).
+let otherPartyFinanceColsEnsured = false;
+async function ensureOtherPartyFinanceColumns(db: Env["Variables"]["DB"]): Promise<void> {
+  if (otherPartyFinanceColsEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS sst_reg_no TEXT NOT NULL DEFAULT ''").run();
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'MYR'").run();
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS bank_account TEXT NOT NULL DEFAULT ''").run();
+    otherPartyFinanceColsEnsured = true;
+  } catch (err) {
+    console.warn("[accounting] ensureOtherPartyFinanceColumns:", err instanceof Error ? err.message : err);
+  }
 }
 
 type OtherPartyBillRow = {
@@ -3888,6 +3916,7 @@ app.get("/other-parties", async (c) => {
 app.post("/other-parties", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
+  await ensureOtherPartyFinanceColumns(c.var.DB);
   try {
     const body = (await c.req.json()) as {
       type?: string;
@@ -3899,6 +3928,9 @@ app.post("/other-parties", async (c) => {
       registrationNo?: string;
       address?: string;
       notes?: string;
+      sstRegNo?: string;
+      currency?: string;
+      bankAccount?: string;
     };
     if (body.type !== "DEBTOR" && body.type !== "CREDITOR") {
       return c.json(
@@ -3915,8 +3947,9 @@ app.post("/other-parties", async (c) => {
     const now = new Date().toISOString();
     await c.var.DB.prepare(
       `INSERT INTO other_parties
-         (id, type, name, contactPerson, phone, email, tin, registrationNo, address, notes, isActive, orgId, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         (id, type, name, contactPerson, phone, email, tin, registrationNo, address, notes, isActive, orgId, createdAt,
+          sst_reg_no, currency, bank_account)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -3931,6 +3964,9 @@ app.post("/other-parties", async (c) => {
         body.notes ?? null,
         orgId,
         now,
+        partyText(body.sstRegNo),
+        normalisePartyCurrency(body.currency),
+        partyText(body.bankAccount),
       )
       .run();
     const created = await c.var.DB.prepare(
@@ -3947,6 +3983,7 @@ app.post("/other-parties", async (c) => {
 app.put("/other-parties/:id", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  await ensureOtherPartyFinanceColumns(c.var.DB);
   try {
     const id = c.req.param("id");
     const existing = await c.var.DB.prepare(
@@ -3968,6 +4005,9 @@ app.put("/other-parties/:id", async (c) => {
       notes: string;
       isActive: boolean;
       type: string;
+      sstRegNo: string;
+      currency: string;
+      bankAccount: string;
     }>;
     if (body.type !== undefined && body.type !== existing.type) {
       // Switching DEBTOR↔CREDITOR retroactively moves the party between
@@ -3990,13 +4030,18 @@ app.put("/other-parties/:id", async (c) => {
       notes: body.notes !== undefined ? body.notes : existing.notes,
       isActive:
         body.isActive === undefined ? existing.isActive : body.isActive ? 1 : 0,
+      // Finance v2 party fields — only change when the body sends them.
+      sstRegNo: body.sstRegNo !== undefined ? partyText(body.sstRegNo) : (existing.sstRegNo ?? existing.sst_reg_no ?? ""),
+      currency: body.currency !== undefined ? normalisePartyCurrency(body.currency) : normalisePartyCurrency(existing.currency),
+      bankAccount: body.bankAccount !== undefined ? partyText(body.bankAccount) : (existing.bankAccount ?? existing.bank_account ?? ""),
     };
     if (!merged.name) {
       return c.json({ success: false, error: "name cannot be empty" }, 400);
     }
     await c.var.DB.prepare(
       `UPDATE other_parties
-          SET name = ?, contactPerson = ?, phone = ?, email = ?, tin = ?, registrationNo = ?, address = ?, notes = ?, isActive = ?, updatedAt = ?
+          SET name = ?, contactPerson = ?, phone = ?, email = ?, tin = ?, registrationNo = ?, address = ?, notes = ?, isActive = ?, updatedAt = ?,
+              sst_reg_no = ?, currency = ?, bank_account = ?
         WHERE id = ?`,
     )
       .bind(
@@ -4010,6 +4055,9 @@ app.put("/other-parties/:id", async (c) => {
         merged.notes,
         merged.isActive,
         new Date().toISOString(),
+        merged.sstRegNo,
+        merged.currency,
+        merged.bankAccount,
         id,
       )
       .run();
@@ -11306,9 +11354,18 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
       .filter((b) => String(b.billDate ?? b.bill_date ?? "").slice(0, 10) <= src.date)
       .reduce((t, b) => t + beforeOf(b), 0);
   }
+  // The payee's bank from its master (Finance v2 party fields). SELECT * so a
+  // party table that has not grown the column yet still answers.
+  let payeeBank = "";
+  if (src.partyId) {
+    const party = await db.prepare(
+      src.partyKind === "SUPPLIER" ? "SELECT * FROM suppliers WHERE id = ?" : "SELECT * FROM other_parties WHERE id = ?",
+    ).bind(src.partyId).first<Record<string, unknown>>().catch(() => null);
+    payeeBank = String((party?.bankAccount ?? party?.bank_account) ?? "").trim();
+  }
   return {
     paymentNo, partyKind: src.partyKind, partyId: src.partyId, date: src.date,
-    bills, advanceSen: src.advanceSen, tfRepaySen: src.tfRepaySen, balanceBeforeSen,
+    bills, advanceSen: src.advanceSen, tfRepaySen: src.tfRepaySen, balanceBeforeSen, payeeBank,
   };
 }
 

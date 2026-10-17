@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { isValidEmail } from "@/lib/contact-format";
 import { X } from "lucide-react";
+import { PartyFinanceFields } from "@/components/party/party-finance-fields";
+import type { PartyFinanceValue } from "@/lib/party-finance";
 
 export type SupplierStatus = "ACTIVE" | "INACTIVE" | "BLACKLISTED";
 export type PaymentTerms = "NET15" | "NET30" | "NET45" | "NET60" | "COD";
@@ -33,6 +35,13 @@ export type SupplierFormData = {
   rating: number;
   status: SupplierStatus;
   purchaseOrgCode: string;
+  // Finance v2 party fields (owner 2026-10-17). registrationNo / taxEntityTin /
+  // currency were already stored but had no input here.
+  registrationNo: string;
+  taxEntityTin: string;
+  sstRegNo: string;
+  currency: string;
+  bankAccount: string;
 };
 
 // editData only needs to provide the editable fields plus rating (preserved on
@@ -49,6 +58,11 @@ export type SupplierFormEditData = {
   rating?: number;
   status?: SupplierStatus;
   purchaseOrgCode?: string;
+  registrationNo?: string;
+  taxEntityTin?: string;
+  sstRegNo?: string;
+  currency?: string;
+  bankAccount?: string;
 };
 
 export function SupplierFormDialog({
@@ -80,11 +94,22 @@ export function SupplierFormDialog({
   // edit; default new suppliers to a neutral 3-star rating. Operators can
   // adjust ratings later via a dedicated path when that workflow exists.
   const rating = editData?.rating ?? 3;
+  const [registrationNo, setRegistrationNo] = useState(editData?.registrationNo || "");
+  const [finance, setFinance] = useState<PartyFinanceValue>({
+    tin: editData?.taxEntityTin || "",
+    sstRegNo: editData?.sstRegNo || "",
+    currency: editData?.currency || "MYR",
+    bankAccount: editData?.bankAccount || "",
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValidEmail(email)) return; // block save on a malformed email
-    onSave({ code, name, contactPerson, phone, email, address, paymentTerms, rating, status, purchaseOrgCode });
+    onSave({
+      code, name, contactPerson, phone, email, address, paymentTerms, rating, status, purchaseOrgCode,
+      registrationNo: registrationNo.trim(), taxEntityTin: finance.tin.trim(), sstRegNo: finance.sstRegNo.trim(),
+      currency: finance.currency || "MYR", bankAccount: finance.bankAccount.trim(),
+    });
   };
 
   // Close on Escape key — operators expect dialog dismissal even when
@@ -139,6 +164,11 @@ export function SupplierFormDialog({
             <label className="block text-sm font-medium text-[#374151] mb-1">Address</label>
             <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Full address" />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-[#374151] mb-1">Registration No. (SSM)</label>
+            <Input value={registrationNo} onChange={(e) => setRegistrationNo(e.target.value)} placeholder="e.g. 201901012345" />
+          </div>
+          <PartyFinanceFields value={finance} onChange={setFinance} labelClassName="block text-sm font-medium text-[#374151] mb-1" />
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1">
               Purchase Company
