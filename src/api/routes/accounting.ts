@@ -5178,7 +5178,10 @@ app.get("/other-party-aging", async (c) => {
   const obDateOpa = await getOpeningDate(c.var.DB);
   const bills = rows
     .filter((r) => !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening)) // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01
-    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: r.amt }));
+    // `mo` = the calendar-month bucket /aging gives an invoice (same helpers),
+    // so Debtor / Creditor Aging can list an other party's bills in the trade
+    // rows' columns (owner 2026-10-17, Finance v2).
+    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: r.amt, mo: agingBucketIdx(monthsOverdue(r.billDate)) }));
   const today = new Date().toISOString().slice(0, 10);
   return c.json({ success: true, data: { aging: bucketAging(bills, today), bills } });
 });
