@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: plan 6 parts A (#938) and B (#939) prod-verified, plan 6 closed; plan 7 part B (Forecast P&L) added to its entry.
 > **Last verified: 2026-10-17**: branch `feat/finance-v2-forecasting` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: plan 6 part B (Setup) built on branch `feat/finance-v2-setup`.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 (#937) prod-verified; plan 5 closed.
@@ -211,14 +212,14 @@ design/mobile-home-dashboard
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-forecasting.md`. Kept as today (owner rules): a new month starts from the previous month's percentages; Forecast P&L is desktop only.
 
 1. 🔵 Part A — Financial Dashboard: visible y-axis and clearer labels; the tooltip in three aligned columns (stack order, a bold Total on stacked charts, lines under a rule and never totalled); chart tabs as the v2 switch; the tables in the v2 list look with the period header as the table head and the first column pinned.
-2. ⚪ Part B — Forecast P&L: one month control (picking a month adds it), a confirm before a month is removed, arrow / Enter movement between cells, the unsaved-changes banner and leave guard, calmer cells, names without account numbers.
+2. 🔵 Part B — Forecast P&L: one month control (picking a month adds it), a confirm before a month is removed, arrow / Enter movement between cells, the unsaved-changes banner and leave guard, calmer cells, names without account numbers.
 
-## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
 
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-einvoice-setup.md`. Not built here (deferred or against an owner rule): e-Invoice submission tracking, the Chart of Accounts form rework, Currency & FX monthly rates (owner chose per-document rates), Change Year End with closed-year locks, SST tax codes, adding pre-opening invoices one at a time.
 
-1. 🔵 Part A — e-Invoice: the tab strip as the v2 switch (Generate shows how many are ready), the four status figures as KPI cards, both lists in the v2 list look; the LHDN notice and every write unchanged.
-2. 🔵 Part B — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row (Post keeps its guard and label), Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted), the Audit Log's repeated heading gone; Settings cards keep their own buttons; the shared virtual-scroll spacer rows never lift.
+1. ✅ Part A (#938 0965c3e6) — e-Invoice: the tab strip as the v2 switch (Generate shows how many are ready), the four status figures as KPI cards, both lists in the v2 list look; the LHDN notice and every write unchanged. Prod check (read-only): prod holds no e-invoices yet (measured), the four cards read 0, Generate's count equals the API's invoices that are neither draft nor cancelled, its list opens in the v2 look with the spacer row not lifting, the notice is there.
+2. ✅ Part B (#939 eb9c74a8) — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row (Post keeps its guard and label), Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted), the Audit Log's repeated heading gone; Settings cards keep their own buttons; the shared virtual-scroll spacer rows never lift. Prod check (read-only, nothing pressed): Add Account, both Saves and Re-post opening balance sit on the title row (Re-post enabled, not pressed); the opening balance strip reads Balanced ✓ with Total DR = Total CR equal to the grid's TOTAL row, every grid row stays put; Stock Mapping's 23 rows and Opening Stock's rows stay put; the Audit Log lists the API's rows with no repeated heading; Settings keeps its Saves in the cards.
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2, plan 5: Debtors / Creditors, look only (owner「继续做」; the five open questions for this group are not built)(branch `feat/finance-v2-debtors-creditors` → `main`)
 
