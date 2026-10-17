@@ -51,7 +51,7 @@ import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "..
 import { projectedLabourByDept } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
 import { loadPreparedProduction, mytDay } from "../lib/production-stock";
-import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
+import { productionStockDetailAt, costedWipRows, completedPriceSen, costRatio, type PreparedProduction, type PsWipRow } from "../../lib/production-stock";
 import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
@@ -6863,60 +6863,56 @@ app.get("/cost-by-line", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// WIP DETAIL (Phase 4.3, 2026-06) — WIP is already valued as issued
-// materials + posted labour − completed (RM_ISSUE fires at FAB_CUT, not
-// at PO completion, so an in-progress order already carries its material
-// part). This surfaces that valuation per open production order so it's
-// auditable: materialSen + labourSen − completedSen = wipSen, listed for
-// every order still carrying WIP.
+// WIP BY PRODUCTION ORDER (finance backlog item 12, the design's "WIP total =
+// sum of WIP by PO, and it feeds the Balance Sheet WIP line"). The orders that
+// make up Stock Summary's WORK IN PROGRESS line for month `asOf` (YYYY-MM;
+// default the running month) — the line the Balance Sheet's WIP account
+// carries (src/lib/bs-stock.ts). One valuation, liveStockFor:
+//   · basis "production-orders" — the Stock Take has no WIP for the month: the
+//     line IS the orders' total (`lineSen` = `totalSen` = Σ rows.wipSen);
+//   · basis "stock-take" — WIP keyed for the month: the line is the keyed
+//     figure; the orders are listed for comparison;
+//   · basis "none" — a month the orders don't value (before the books, the
+//     opening seed month, ahead of today): the line, no orders.
+// (Replaces the 2026-06 cost-ledger list — issued materials + posted labour −
+// completed — which no longer fed anything: since #829 an unkeyed month's WIP
+// is the production-order valuation.)
 // ---------------------------------------------------------------------------
 app.get("/wip-detail", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const asOf = c.req.query("asOf") || ""; // YYYY-MM cutoff, optional
-  const [clRes, poRes] = await Promise.all([
-    c.var.DB
-      .prepare(
-        `SELECT type, itemId, refType, refId, totalCostSen, date
-           FROM cost_ledger WHERE type IN ('RM_ISSUE','LABOR_POSTED','FG_COMPLETED')`,
-      )
-      .all<{ type: string; itemId: string; refType: string | null; refId: string | null; totalCostSen: number; date: string }>(),
-    // `poNo`, not `poNumber`: production_orders stores it as po_no. The
-    // rename map DOES carry poNumber → po_number, but that column lives on
-    // grns / goods_in_transit / three_way_matches — so this SELECT rewrote
-    // cleanly and then 500'd on a column production_orders never had.
-    c.var.DB.prepare("SELECT id, poNo, itemCategory, status FROM production_orders").all<{ id: string; poNo: string | null; itemCategory: string | null; status: string | null }>(),
-  ]);
-  const po = new Map<string, { poNumber: string; category: string; status: string }>();
-  for (const p of poRes.results ?? []) po.set(p.id, { poNumber: p.poNo ?? p.id, category: String(p.itemCategory ?? "").toUpperCase(), status: p.status ?? "" });
-  type Wip = { poId: string; poNumber: string; category: string; status: string; materialSen: number; labourSen: number; completedSen: number };
-  const byPo = new Map<string, Wip>();
-  const ensure = (poId: string): Wip => {
-    let w = byPo.get(poId);
-    if (!w) {
-      const meta = po.get(poId);
-      w = { poId, poNumber: meta?.poNumber ?? poId, category: meta?.category ?? "", status: meta?.status ?? "", materialSen: 0, labourSen: 0, completedSen: 0 };
-      byPo.set(poId, w);
-    }
-    return w;
-  };
-  for (const l of clRes.results ?? []) {
-    if (asOf && String(l.date ?? "").slice(0, 7) > asOf) continue;
-    const v = Number(l.totalCostSen) || 0;
-    // RM_ISSUE → refId is the PO; LABOR_POSTED → itemId is PO; FG_COMPLETED → refId is PO.
-    const poId = l.type === "LABOR_POSTED" ? l.itemId : l.refId;
-    if (!poId) continue;
-    const w = ensure(poId);
-    if (l.type === "RM_ISSUE") w.materialSen += v;
-    else if (l.type === "LABOR_POSTED") w.labourSen += v;
-    else w.completedSen += v;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const q = c.req.query("asOf") || "";
+  const ym = /^\d{4}-\d{2}$/.test(q) ? q : runningMonthYm();
+  const data = await loadMaterialCostData(db, orgId, ym);
+  const openingDate = await getOpeningDate(db);
+  // The line as the Stock Summary would show it without the orders: the
+  // keyed figure, else the material window's own.
+  const windowSen = materialWindow(data, ym, ym).wipCloseSen;
+  const keyed = !!data.stockTakeByGroupYm.get("WIP")?.has(ym);
+  const none = { asOf: ym, basis: keyed ? "stock-take" : "none", asOfDate: null, ratio: null, lineSen: windowSen, rows: [], totalSen: 0 };
+  if (!productionValuedMonth(ym, data, openingDate)) return c.json({ success: true, data: none });
+  let live: LiveStock;
+  try {
+    const [dc, override] = await Promise.all([loadDocDateResolver(db), getPnlSectionMap(db)]);
+    live = await liveStockFor(db, orgId, ym, data, dc, override);
+  } catch {
+    return c.json({ success: true, data: none }); // unreadable → the line as the Stock Summary falls back to
   }
-  const rows = [...byPo.values()]
-    .map((w) => ({ ...w, wipSen: w.materialSen + w.labourSen - w.completedSen }))
-    .filter((w) => Math.round(w.wipSen) !== 0)
-    .sort((a, b) => b.wipSen - a.wipSen);
-  const totalSen = rows.reduce((s, w) => s + w.wipSen, 0);
-  return c.json({ success: true, data: { asOf: asOf || null, rows, totalSen } });
+  const rows = [...live.wipRows].sort((x, y) => String(x.poNo ?? x.orderId).localeCompare(String(y.poNo ?? y.orderId)));
+  return c.json({
+    success: true,
+    data: {
+      asOf: ym,
+      basis: keyed ? "stock-take" : "production-orders",
+      asOfDate: live.asOf,
+      ratio: live.ratio,
+      lineSen: keyed ? windowSen : live.wipSen,
+      rows,
+      totalSen: live.wipSen,
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -7011,7 +7007,7 @@ interface DocDateCtx {
   // Per-request memo for the production-order FG / WIP valuation (2026-10-13):
   // the loaded production data once, each month's figures once (key = ym).
   prodStock?: Promise<PreparedProduction>;
-  liveStockMemo?: Map<string, Promise<{ fgSen: number; wipSen: number; ratio: number }>>;
+  liveStockMemo?: Map<string, Promise<LiveStock>>;
   // Per-request memo for the running month's recurring-cost estimates
   // (2026-10-13, runningMonthEstimates; key = the running month).
   estimateMemo?: Map<string, Promise<Map<string, { sen: number; fromYm: string }>>>;
@@ -8190,6 +8186,11 @@ const lastDayIso = (ym: string): string => {
 // Cost ratio = last month's materials ÷ last month's completed goods at selling
 // price + this month's direct labour ÷ this month's completed goods (owner:
 // 「人工用这个月的」), no factory overhead (「先不加工厂费用」).
+// The production-order valuation of month `ym`: FG and WIP at cost, the cost
+// ratio, the day it is valued as of, and WIP's orders (finance backlog item
+// 12) — their `wipSen` add up to `wipSen` to the sen.
+type LiveStock = { fgSen: number; wipSen: number; ratio: number; asOf: string; wipRows: (PsWipRow & { wipSen: number })[] };
+
 async function liveStockFor(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -8197,7 +8198,7 @@ async function liveStockFor(
   matData: MaterialCostData,
   dc: DocDateCtx,
   override: Record<string, string>,
-): Promise<{ fgSen: number; wipSen: number; ratio: number }> {
+): Promise<LiveStock> {
   dc.liveStockMemo ??= new Map();
   const hit = dc.liveStockMemo.get(ym);
   if (hit) return hit;
@@ -8232,8 +8233,9 @@ async function liveStockFor(
       labourSen: labourOf(glThis),
       completedSen: completedPriceSen(prepared, `${ym}-01`, asOf),
     });
-    const at = productionStockAt(prepared, asOf);
-    return { fgSen: Math.round(at.fgPriceSen * ratio), wipSen: Math.round(at.wipPriceSen * ratio), ratio };
+    const { at, wipRows } = productionStockDetailAt(prepared, asOf);
+    const wip = costedWipRows(wipRows, ratio, splitByLargestRemainder);
+    return { fgSen: Math.round(at.fgPriceSen * ratio), wipSen: wip.totalSen, ratio, asOf, wipRows: wip.rows };
   })();
   dc.liveStockMemo.set(ym, run);
   return run;
@@ -8249,13 +8251,23 @@ function blankStockParts(
   matData: MaterialCostData,
   openingDate: string | null,
 ): { wipBlank: boolean; fgBlank: boolean } | null {
-  if (!ym) return null;
-  const openingYm = openingDate ? openingDate.slice(0, 7) : null;
-  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return null;
-  if (matData.fgSeedYm && ym <= matData.fgSeedYm) return null;
+  if (!productionValuedMonth(ym, matData, openingDate)) return null;
   const wipBlank = !matData.stockTakeByGroupYm.get("WIP")?.has(ym);
   const fgBlank = matData.fgValuationMode === "stock_take_only" && !matData.stockTakeByGroupYm.get("FG")?.has(ym);
   return wipBlank || fgBlank ? { wipBlank, fgBlank } : null;
+}
+
+// Whether month-end `ym` can be valued from the production orders at all:
+// the opening month up to the running month, after the opening seed.
+function productionValuedMonth(
+  ym: string | null,
+  matData: MaterialCostData,
+  openingDate: string | null,
+): ym is string {
+  if (!ym) return false;
+  const openingYm = openingDate ? openingDate.slice(0, 7) : null;
+  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return false;
+  return !(matData.fgSeedYm && ym <= matData.fgSeedYm);
 }
 
 // The month-end FG / WIP to use at `ym` where the Stock Take is blank — the

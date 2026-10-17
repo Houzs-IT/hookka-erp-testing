@@ -99,8 +99,9 @@ test("the P&L takes FG / WIP from the production orders only where the Stock Tak
   // Typed months keep theirs; FG only under "stock take only"; no months before the books or ahead; not the seed month.
   assert.match(API, /const wipBlank = !matData\.stockTakeByGroupYm\.get\("WIP"\)\?\.has\(ym\);/);
   assert.match(API, /const fgBlank = matData\.fgValuationMode === "stock_take_only" && !matData\.stockTakeByGroupYm\.get\("FG"\)\?\.has\(ym\);/);
-  assert.match(API, /if \(!openingYm \|\| ym < openingYm \|\| ym > runningMonthYm\(\)\) return null;/);
-  assert.match(API, /if \(matData\.fgSeedYm && ym <= matData\.fgSeedYm\) return null;/);
+  // (one month-range rule, shared with GET /wip-detail since item 12 — tests/wip-by-production-order.test.mjs)
+  assert.match(API, /if \(!productionValuedMonth\(ym, matData, openingDate\)\) return null;/);
+  assert.match(API, /if \(!openingYm \|\| ym < openingYm \|\| ym > runningMonthYm\(\)\) return false;\n\s*return !\(matData\.fgSeedYm && ym <= matData\.fgSeedYm\);/);
 });
 
 test("the Stock Summary (page and closing-stock post) carries the same blank-month FG / WIP (owner「Stock Summary 也一起改」)", () => {
