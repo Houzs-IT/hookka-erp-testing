@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: BUG-2026-10-17-308 (#945) prod-verified; plan 8 closed.
 > **Last verified: 2026-10-17**: plan 8 part C (#944) prod-checked — Daily Cash Position verified, the Finance Dashboard's month bug (BUG-2026-10-17-308) found and fixed on branch `fix/m-dashboard-anchor-month`.
 > **Last verified: 2026-10-17**: plan 8 parts A (#942) and B (#943) prod-verified; part C (Finance Dashboard, Daily Cash Position) added to its entry, branch `feat/finance-v2-mobile-c`.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 (#941) prod-verified; plan 8 part B (the four reports on the phone) added to its entry.
@@ -212,14 +213,14 @@ design/mobile-home-dashboard
 
 
 
-## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 8: mobile Finance (/m/finance) (owner「继续做」; the owner's 2026-10-14 gate decision)(branch `feat/finance-v2-mobile` → `main`; shipped in parts)
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 8: mobile Finance (/m/finance) (owner「继续做」; the owner's 2026-10-14 gate decision)(branch `feat/finance-v2-mobile` → `main`; shipped in parts)
 
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-mobile.md`. Not here: aging as at a month-end (deferred), Forecast P&L on the phone (desktop only), voucher / receipt entry.
 
 1. ✅ Part A (#942 7ce032fb) — the Finance menu (three sections, rows gated like their desktop pages, no permission = no row, a refused deep link says No access), the Finance row in More, Receivables gated like Debtor Aging; Debtor / Creditor Aging (Outstanding card and bucket chips summed from the rows, stacked bar, search, parties opening to their documents). Prod check (read-only): More shows Finance; the menu lists the built screens only; Debtor and Creditor Aging's Outstanding and all five bucket chips equal sums over `/aging`, one row per party; an unbuilt screen says "Not on the phone yet".
 2. ✅ Part B (#943 196941b7) — Overview (3 / 6 / 12 months, five cards with the desktop's own shares), P&L (month stepper, Overall / Sofa / Bedframe, Gross / Net Profit from the statement's result rows, the folded statement), Cash Flow (the month's own column or "No cash flow"), Balance Sheet (the desktop arrangement and two-sides check). Prod check (read-only): the P&L cards equal the statement's Gross / Net Profit rows; the Balance Sheet's two sides equal sums over the API and read Balanced ✓; the Cash Flow shows every engine row and the month's Bank c/f equals the API; the Overview's latest invoices and gross profit equal the trend.
 3. ✅ Part C (#944 b430c3b1) — Finance Dashboard (one Income Statement line at a time, gap to forecast, last four months; a cash-flow card) and Daily Cash Position (day stepper, cash available and after repay & receive, awaiting approval, banks collapsed, share as image — the desktop's own drawing, now in `src/lib/cash-position-image.ts`); a Finance entry on the fold rail. Prod check (read-only, nothing shared or saved): Daily Cash Position — cash available equals the API, "after repay & receive" equals available − repay + receive over the months before this one, every bank's Available equals the API; the desktop Get image still opens its picture (the drawing moved, same output). The Finance Dashboard showed a month ahead with no figures → BUG-2026-10-17-308 (item 4).
-4. 🔵 BUG-2026-10-17-308 — the phone's Finance Dashboard anchored on the API's last row, a forecast-only month ahead; it now anchors on the latest month with actuals (branch `fix/m-dashboard-anchor-month`).
+4. ✅ BUG-2026-10-17-308 (#945 acebb8dc) — the phone's Finance Dashboard anchored on the API's last row, a forecast-only month ahead; it now anchors on the latest month with actuals. Prod check (read-only): the running month with its still-running note; Revenue, the gap to forecast, Net Profit and the cash-flow lines equal `/dashboard`; four bars ending at the running month.
 
 ## 2026-10-17 — ✅ BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
 
