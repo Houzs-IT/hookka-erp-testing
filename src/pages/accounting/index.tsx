@@ -18,6 +18,7 @@ import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
 import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
+import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
@@ -2774,16 +2775,40 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({
-    code: "",
+  // The New Account form (backlog item 15, owner 2026-10-17 「可以，但前提不要
+  // 碰现在的」): section chips, the parent first (only existing groups — a new
+  // account never turns an existing posting account into a group), a
+  // suggested next free code, the reporting block. Existing accounts keep
+  // their own edit / move / rename paths below, unchanged.
+  const blankForm = (section = "EXP") => ({
+    code: nextFreeCode(accounts, section, ""),
+    codeAuto: true,
     name: "",
     // Owner: the create form offers the same NINE sections as the tree —
     // the section maps onto a DB type + code band on submit (handleAdd).
-    section: "NCA",
+    section,
     parentCode: "",
-    cashFlowCategory: "" as "" | "O" | "I" | "F",
+    cashFlowCategory: defaultCashFlowFor(section) as "" | "O" | "I" | "F",
     specialAccountType: "",
     pnlCategory: "" as "" | "FIXED" | "VARIABLE" | "OTHERS",
+  });
+  const [formData, setFormData] = useState(() => blankForm());
+  const openNewForm = () => { if (showForm) { setShowForm(false); return; } setFormData(blankForm()); setShowForm(true); };
+  const setSection = (section: string) => setFormData((f) => ({
+    ...f, section, parentCode: "",
+    cashFlowCategory: defaultCashFlowFor(section),
+    pnlCategory: isPnlType(COA_SECTIONS.find((x) => x.key === section)?.type ?? "EXPENSE") ? f.pnlCategory : "",
+    ...(f.codeAuto ? { code: nextFreeCode(accounts, section, "") } : {}),
+  }));
+  // Picking a parent carries its cash-flow and P&L category over.
+  const setParent = (parentCode: string) => setFormData((f) => {
+    const p = accounts.find((a) => a.code === parentCode);
+    return {
+      ...f, parentCode,
+      cashFlowCategory: p?.cashFlowCategory ?? f.cashFlowCategory,
+      pnlCategory: p?.pnlCategory ?? f.pnlCategory,
+      ...(f.codeAuto ? { code: nextFreeCode(accounts, f.section, parentCode) } : {}),
+    };
   });
   const [editCode, setEditCode] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -2794,47 +2819,10 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   //   LIABILITY 480-489 (hire purchase) → Non-Current; else Current
   //   REVENUE ≥530 (forex gain, discount received) → Other Income
   //   COST → Cost of Goods Sold · EXPENSE → Expenses · EQUITY → Equity
-  const SECTIONS = [
-    { key: "NCA", label: "Non-Current Assets", type: "ASSET" as const },
-    { key: "CA", label: "Current Assets", type: "ASSET" as const },
-    { key: "CL", label: "Current Liabilities", type: "LIABILITY" as const },
-    { key: "NCL", label: "Non-Current Liabilities", type: "LIABILITY" as const },
-    { key: "EQ", label: "Equity", type: "EQUITY" as const },
-    { key: "REV", label: "Revenue", type: "REVENUE" as const },
-    { key: "COGS", label: "Cost of Goods Sold", type: "COST" as const },
-    { key: "OI", label: "Other Income", type: "REVENUE" as const },
-    { key: "EXP", label: "Expenses", type: "EXPENSE" as const },
-  ];
-  const sectionOf = (a: ChartOfAccount): string => {
-    const p = parseInt(a.code.split("-")[0], 10) || 0;
-    switch (a.type) {
-      case "ASSET":
-        return p < 300 ? "NCA" : "CA";
-      case "LIABILITY":
-        return p >= 480 && p < 490 ? "NCL" : "CL";
-      case "EQUITY":
-        return "EQ";
-      case "REVENUE":
-        return p >= 530 ? "OI" : "REV";
-      case "COST":
-        return "COGS";
-      default:
-        return "EXP";
-    }
-  };
-  // Code bands per section (mirrors sectionOf) — placeholder example +
-  // the rejection hint when a new account's code lands outside its section.
-  const SECTION_CODE_BAND: Record<string, { example: string; hint: string }> = {
-    NCA: { example: "200-1000", hint: "below 300" },
-    CA: { example: "330-5000", hint: "300 and above" },
-    CL: { example: "440-0000", hint: "outside 480–489" },
-    NCL: { example: "480-0050", hint: "480–489" },
-    EQ: { example: "100-0005", hint: "any band" },
-    REV: { example: "500-0040", hint: "below 530" },
-    OI: { example: "530-0010", hint: "530 and above" },
-    COGS: { example: "701-0040", hint: "any band" },
-    EXP: { example: "900-A001", hint: "any band" },
-  };
+  // The nine sections and their code bands live in src/lib/coa-form.ts (one
+  // definition for the tree and the New Account form).
+  const SECTIONS = COA_SECTIONS;
+  const sectionOf = (a: ChartOfAccount): string => coaSectionOf(a.code, a.type);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(
     Object.fromEntries(SECTIONS.map((s) => [s.key, true])),
   );
@@ -2920,40 +2908,29 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
     const sec = SECTIONS.find((s) => s.key === formData.section);
     if (!sec) return;
     const code = formData.code.trim();
-    if (!code || !formData.name.trim()) {
-      toast.error("Code and name are required");
-      return;
-    }
     // The nine sections map onto six DB types + a code band (sectionOf) —
-    // refuse a code outside the chosen section's band, or the new account
-    // would silently render under a different section of the tree.
-    const landing = sectionOf({ code, type: sec.type } as ChartOfAccount);
-    if (landing !== sec.key) {
-      const other = SECTIONS.find((s) => s.key === landing);
-      toast.error(
-        `Code ${code} lands in ${other?.label ?? landing} — ${sec.label} uses codes ${SECTION_CODE_BAND[sec.key].hint}`,
-      );
-      return;
-    }
-    const { section: _section, ...rest } = formData;
-    void _section;
+    // a code outside the chosen section's band would silently render under
+    // a different section of the tree; a taken code is refused here too.
+    const chk = codeCheck(code, accounts, sec.key, formData.codeAuto);
+    if (chk.tone === "err") { toast.error(chk.text); return; }
+    if (!formData.name.trim()) { toast.error("Name is required"); return; }
     const res = await fetch("/api/accounting/coa", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...rest, code, name: formData.name.trim(), type: sec.type }),
+      body: JSON.stringify({
+        code,
+        name: formData.name.trim(),
+        type: sec.type,
+        parentCode: formData.parentCode,
+        cashFlowCategory: formData.cashFlowCategory,
+        specialAccountType: formData.specialAccountType,
+        pnlCategory: isPnlType(sec.type) ? formData.pnlCategory : "",
+      }),
     });
     const data = asMutationResponse(await res.json());
     if (data?.success) {
+      toast.success(`Added ${code}`);
       setShowForm(false);
-      setFormData({
-        code: "",
-        name: "",
-        section: "NCA",
-        parentCode: "",
-        cashFlowCategory: "",
-        specialAccountType: "",
-        pnlCategory: "",
-      });
       onRefresh();
     } else {
       toast.error(data?.error || "Failed to create account");
@@ -3027,138 +3004,107 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
       {confirmDialog}
       <FinanceTitleActions>
         <ReportToolbar>
-          <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
+          <Button variant="primary" size="sm" onClick={openNewForm}>
             <Plus className="h-4 w-4" /> Add Account
           </Button>
         </ReportToolbar>
       </FinanceTitleActions>
 
-      {showForm && (
-        <Card>
-          <CardContent className="p-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+      {showForm && (() => {
+        const sec = SECTIONS.find((x) => x.key === formData.section) ?? SECTIONS[SECTIONS.length - 1];
+        const chk = codeCheck(formData.code, accounts, sec.key, formData.codeAuto);
+        const groups = groupParentsIn(accounts, sec.key);
+        const pnl = isPnlType(sec.type);
+        const inputCls = "w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]";
+        const seg = <K extends string>(value: K, opts: [K, string][], set: (v: K) => void) => (
+          <div className="inline-flex overflow-hidden rounded-md border border-[#D9D3CA]">
+            {opts.map(([v, l], i) => (
+              <button key={v || "none"} type="button" onClick={() => set(v)} className={`px-3 py-1.5 text-xs font-medium cursor-pointer ${i ? "border-l border-[#D9D3CA]" : ""} ${value === v ? "bg-[#1F1D1B] text-white" : "bg-white text-[#374151] hover:bg-[#F7F5F2]"}`}>{l}</button>
+            ))}
+          </div>
+        );
+        return (
+          <Card>
+            <CardContent className="p-4 space-y-4">
+              <div className="text-sm font-semibold text-[#1F1D1B]">New Account</div>
               <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Code</label>
-                <input
-                  type="text"
-                  placeholder={`e.g. ${SECTION_CODE_BAND[formData.section].example}`}
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Name</label>
-                <input
-                  type="text"
-                  placeholder="Account Name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Section</label>
-                <select
-                  value={formData.section}
-                  onChange={(e) => setFormData({ ...formData, section: e.target.value, parentCode: "" })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  {SECTIONS.map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
+                <label className="text-xs font-medium text-[#6B7280] mb-1.5 block">Section</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {SECTIONS.map((x) => (
+                    <button key={x.key} type="button" onClick={() => setSection(x.key)} className={`rounded-full border px-3 py-1 text-xs font-medium cursor-pointer ${formData.section === x.key ? "border-[#1F1D1B] bg-[#1F1D1B] text-white" : "border-[#D9D3CA] bg-white text-[#374151] hover:border-[#1F1D1B]"}`}>{x.label}</button>
                   ))}
-                </select>
+                </div>
+                <p className="mt-1.5 text-[11px] text-[#6B7280]">Normal balance: {normalBalanceOf(sec.type)} · shows on the {pnl ? "P&L" : "Balance Sheet"}</p>
               </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Parent Code</label>
-                <select
-                  value={formData.parentCode}
-                  onChange={(e) => setFormData({ ...formData, parentCode: e.target.value })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None - Top Level)</option>
-                  {accounts
-                    .filter((a) => sectionOf(a) === formData.section)
-                    .map((a) => (
-                      <option key={a.code} value={a.code}>
-                        {a.code} - {a.name}
-                      </option>
-                    ))}
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                <div>
+                  <label className="text-xs font-medium text-[#6B7280] mb-1 block">Parent</label>
+                  <select value={formData.parentCode} onChange={(e) => setParent(e.target.value)} className={inputCls}>
+                    <option value="">(None — top level)</option>
+                    {groups.map((g) => <option key={g.code} value={g.code}>{g.code} · {g.name}</option>)}
+                  </select>
+                  <p className="mt-1 text-[11px] text-[#9CA3AF]">Only existing groups — a posting account is never turned into a group.</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6B7280] mb-1 block">Code</label>
+                  <input
+                    type="text"
+                    placeholder={`e.g. ${COA_SECTION_BAND[sec.key].example}`}
+                    value={formData.code}
+                    onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase(), codeAuto: false })}
+                    className={inputCls}
+                  />
+                  <p className={`mt-1 text-[11px] ${chk.tone === "err" ? "text-[#9A3A2D]" : chk.tone === "ok" ? "text-[#27500A]" : "text-[#9CA3AF]"}`}>{chk.text}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6B7280] mb-1 block">Name</label>
+                  <input type="text" placeholder="Account name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className={inputCls} />
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Cash Flow</label>
-                <select
-                  value={formData.cashFlowCategory}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      cashFlowCategory: e.target.value as "" | "O" | "I" | "F",
-                    })
-                  }
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None)</option>
-                  <option value="O">Operating</option>
-                  <option value="I">Investing</option>
-                  <option value="F">Financing</option>
-                </select>
+              <div className="rounded-md border border-[#EAE5DE] bg-[#FAF9F7] p-3 space-y-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">Reporting</div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-24 text-xs text-[#6B7280]">Cash flow</span>
+                  {seg(formData.cashFlowCategory, [["", "None"], ["O", "Operating"], ["I", "Investing"], ["F", "Financing"]], (v) => setFormData({ ...formData, cashFlowCategory: v }))}
+                </div>
+                {pnl && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="w-24 text-xs text-[#6B7280]">P&amp;L category</span>
+                    {seg(formData.pnlCategory, [["", "None"], ["FIXED", "Fixed"], ["VARIABLE", "Variable"], ["OTHERS", "Others"]], (v) => setFormData({ ...formData, pnlCategory: v }))}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-24 text-xs text-[#6B7280]">Special type</span>
+                  {/* Only the values the posting/report code consumes (or is
+                      committed to): SDC drives AR Control + customer
+                      control-account checks, SCC drives AP Control, SOS/SCS
+                      feed the Manufacturing P&L opening/closing stock lines,
+                      SBK/SCA gate the Phase-3 Payment/Expense paying-account
+                      picker. Anything else is inert, so free text only
+                      invited typos. */}
+                  <select value={formData.specialAccountType} onChange={(e) => setFormData({ ...formData, specialAccountType: e.target.value })} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm">
+                    <option value="">(None)</option>
+                    <option value="SDC">SDC — Debtor Control (AR)</option>
+                    <option value="SCC">SCC — Creditor Control (AP)</option>
+                    <option value="SBK">SBK — Bank Account (Payment)</option>
+                    <option value="SCH">SCH — Cash Account (Payment)</option>
+                    <option value="SOS">SOS — Opening Stock (Mfg P&amp;L)</option>
+                    <option value="SCS">SCS — Closing Stock (Mfg P&amp;L)</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Special Type</label>
-                {/* Only the values the posting/report code consumes (or is
-                    committed to): SDC drives AR Control + customer
-                    control-account checks, SCC drives AP Control, SOS/SCS
-                    feed the Manufacturing P&L opening/closing stock lines,
-                    SBK/SCA gate the Phase-3 Payment/Expense paying-account
-                    picker. Anything else is inert, so free text only
-                    invited typos. */}
-                <select
-                  value={formData.specialAccountType}
-                  onChange={(e) =>
-                    setFormData({ ...formData, specialAccountType: e.target.value })
-                  }
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None)</option>
-                  <option value="SDC">SDC — Debtor Control (AR)</option>
-                  <option value="SCC">SCC — Creditor Control (AP)</option>
-                  <option value="SBK">SBK — Bank Account (Payment)</option>
-                  <option value="SCH">SCH — Cash Account (Payment)</option>
-                  <option value="SOS">SOS — Opening Stock (Mfg P&L)</option>
-                  <option value="SCS">SCS — Closing Stock (Mfg P&L)</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">P&L Category</label>
-                <select
-                  value={formData.pnlCategory}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      pnlCategory: e.target.value as "" | "FIXED" | "VARIABLE" | "OTHERS",
-                    })
-                  }
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None)</option>
-                  <option value="FIXED">Fixed</option>
-                  <option value="VARIABLE">Variable</option>
-                  <option value="OTHERS">Others</option>
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="primary" size="sm" onClick={handleAdd}>
+              <div className="flex gap-2 pt-1">
+                <Button variant="primary" size="sm" disabled={chk.tone === "err" || !formData.name.trim()} onClick={handleAdd}>
                   Save
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>
                   Cancel
                 </Button>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {SECTIONS.map((section) => {
         const type = section.type;
