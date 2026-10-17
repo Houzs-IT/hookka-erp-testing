@@ -47,14 +47,15 @@ test("/other-party-aging gives each bill the /aging month bucket", () => {
   const api = read("src/api/routes/accounting.ts");
   const at = api.indexOf('app.get("/other-party-aging"');
   const body = api.slice(at, api.indexOf("\n});\n", at));
-  assert.match(body, /outstandingSen: r\.amt, mo: agingBucketIdx\(monthsOverdue\(r\.billDate\)\) \}\)\);/);
+  // As at a past date (2026-10-17) the bill is rolled back and aged at the date.
+  assert.match(body, /outstandingSen: owedAt\(r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\), mo: agingBucketIdx\(monthsOverdue\(r\.billDate, asOf \? asAtNow\(asOf\) : undefined\)\) \}\)\)/);
 });
 
 test("Debtor Aging lists trade customers and other debtors, chips and sections, and the other-debtor card", () => {
   const ui = read("src/pages/accounting/index.tsx");
   const a = ui.indexOf("function ARTab(");
   const ar = ui.slice(a, ui.indexOf("\n}\n", a));
-  assert.match(ar, /fetch\("\/api\/accounting\/other-party-aging\?type=DEBTOR"\)/);
+  assert.match(ar, /fetch\(`\/api\/accounting\/other-party-aging\?type=DEBTOR\$\{at\.isPast \? `&asOf=\$\{at\.asOf\}` : ""\}`\)/);
   assert.match(ar, /\{ key: "trade", label: "Trade customers", rows: tradeList \},\n\s*\{ key: "other", label: "Other debtors", rows: otherList \},/);
   assert.match(ar, /\{ key: "other", label: "Other debtors", count: otherList\.length \},/);
   assert.match(ar, /label: "Other debtors · 305-0000",/);

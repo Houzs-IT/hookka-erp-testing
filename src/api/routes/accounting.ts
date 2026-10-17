@@ -28,6 +28,7 @@ import { getFyeMonth, fyWindowFor } from "../lib/fiscal";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
+import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf, tfAfterOf, tradeFinanceAfter } from "../lib/aging-as-at";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
@@ -57,7 +58,7 @@ import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, 
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
-import { tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
+import { drawAt, tfChargeKind, tfInterestDrawId, tfTotals, type TfDraw } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
@@ -546,9 +547,13 @@ app.get("/aging", async (c) => {
   // credit / debit note is its own Debtor Aging line; "|code" (2026-10-17) —
   // every row carries its party's code.
   const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due|notes|code` : "|due|notes|code";
-  const data = await withSnapshot(
-    c.var.DB,
-    {
+  // As at a past date (owner 2026-10-17): ?asOf=YYYY-MM-DD before today rolls
+  // every item back from today (src/api/lib/aging-as-at.ts) — built fresh,
+  // never cached. Absent / today / later = today's aging, cached as before.
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const nowRef = asOf ? asAtNow(asOf) : undefined;
+  const snapshotConfig = {
       tableName: "accounting_aging_snapshot",
       // kv_config so the snapshot rebuilds when opening_date (the pre-opening
       // floor) is saved — not just when invoices/PIs change.
@@ -565,9 +570,8 @@ app.get("/aging", async (c) => {
         // must rebuild the snapshot (kv_config above covers the Setup save).
         "trade_finance_draws", "trade_finance_repay_allocs",
       ],
-    },
-    orgId,
-    async () => {
+  };
+  const buildAging = async () => {
       const [invRes, piRes, cnAgRes, dnAgRes, custCodeRes, supCodeRes] = await Promise.all([
         c.var.DB.prepare(
           `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
@@ -615,6 +619,10 @@ app.get("/aging", async (c) => {
       ]);
       const custCode = new Map((custCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
       const supCode = new Map((supCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+      // As at a past date: what was settled after it, to roll each item back.
+      const [arBack, notesBack, apBack] = asOf
+        ? await Promise.all([receiptsAfter(c.var.DB, asOf), notesAfter(c.var.DB, asOf), supplierPaymentsAfter(c.var.DB, orgId, asOf)])
+        : [null, null, null];
       // Issued notes per invoice — each becomes its own Debtor Aging line
       // (owner 2026-10-17), bucketed on its own date like an advance.
       const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
@@ -623,6 +631,7 @@ app.get("/aging", async (c) => {
           const invId = String(n.invoiceId ?? n.invoice_id ?? "");
           const amt = Math.round(Number(n.totalAmount ?? n.total_amount) || 0);
           if (!invId || amt <= 0) continue;
+          if (asOf && String(n.date ?? "").slice(0, 10) > asOf) continue; // issued after the as-at date
           const list = agingNotes.get(invId) ?? [];
           list.push({
             no: `${String(n.noteNumber ?? n.note_number ?? "")} · ${kind === "CN" ? "Credit note" : "Debit note"}`,
@@ -638,9 +647,14 @@ app.get("/aging", async (c) => {
       const arMap = new Map<string, ArAgingRow>();
       for (const i of invRes.results ?? []) {
         if (rowBeforeOpening(i.invoiceDate, obDateAg, i.isOpening)) continue; // pre-opening: not extracted
-        if (["DRAFT", "CANCELLED", "PAID"].includes(i.status)) continue;
-        const outstanding =
-          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0);
+        // As at a past date a PAID invoice may still have been open then, and
+        // one dated after it did not exist yet.
+        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(i.status)) continue;
+        if (asOf && String(i.invoiceDate ?? "").slice(0, 10) > asOf) continue;
+        const outstanding = owedAt(
+          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0),
+          (arBack?.get(i.id) ?? 0) + (notesBack?.get(i.id) ?? 0),
+        );
         if (outstanding <= 0) continue;
         let row = arMap.get(i.customerId);
         if (!row) {
@@ -657,7 +671,7 @@ app.get("/aging", async (c) => {
           };
           arMap.set(i.customerId, row);
         }
-        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate);
+        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate, nowRef);
         // A credit / debit note on the invoice is its own line: the invoice
         // shows what was owed before its notes, each note its own amount on
         // its own date. A debit note already paid would leave the invoice line
@@ -677,7 +691,7 @@ app.get("/aging", async (c) => {
         }
         if (split) {
           for (const n of notesAr) {
-            const moN = monthsOverdue(n.date || null);
+            const moN = monthsOverdue(n.date || null, nowRef);
             addToBucket(row, moN, n.sen);
             row.docs.push({ no: n.no, date: n.date, mo: agingBucketIdx(moN), amountSen: n.sen });
           }
@@ -688,12 +702,16 @@ app.get("/aging", async (c) => {
       for (const p of piRes.results ?? []) {
         // Pre-opening PIs count as opening by default; only excluded ones drop.
         if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateAg, apExclAg)) continue;
-        if (["DRAFT", "CANCELLED", "PAID"].includes(p.status)) continue;
+        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(p.status)) continue;
+        if (asOf && String(p.invoiceDate ?? "").slice(0, 10) > asOf) continue;
         // Net outstanding = face − paid (BUG-2026-07-05-001: this tab showed the
         // FULL face amount for partially-paid PIs — the AR loop above always
-        // netted, the AP loop didn't).
-        const outstanding =
-          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
+        // netted, the AP loop didn't); as at a past date, plus what was paid
+        // on it after.
+        const outstanding = owedAt(
+          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0),
+          apBack?.get(p.id) ?? 0,
+        );
         if (outstanding <= 0) continue;
         let row = apMap.get(p.supplierId);
         if (!row) {
@@ -710,7 +728,7 @@ app.get("/aging", async (c) => {
           };
           apMap.set(p.supplierId, row);
         }
-        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate);
+        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate, nowRef);
         addToBucket(row, moAp, outstanding);
         row.docs.push({
           no: String(p.piNo ?? p.pi_no ?? ""),
@@ -723,7 +741,20 @@ app.get("/aging", async (c) => {
       // Unapplied supplier advances → NEGATIVE current-bucket rows (owner rule
       // 2026-07-05), so the AP aging total ties the 400-0000 control exactly.
       // Each advance also joins the expandable detail as its own negative doc.
-      for (const [supplierId, adv] of await loadUnappliedSupplierAdvances(c.var.DB, orgId)) {
+      // As at a past date, money paid ahead of a bill dated after it was on
+      // account then — an advance at the date (src/api/lib/aging-as-at.ts).
+      const supAdv = await loadUnappliedSupplierAdvances(c.var.DB, orgId);
+      if (asOf) {
+        const piDate = new Map((piRes.results ?? []).map((p) => [p.id, String(p.invoiceDate ?? "").slice(0, 10)] as const));
+        for (const [id, a] of await supplierPaymentsAheadOf(c.var.DB, orgId, asOf, piDate)) {
+          const cur = supAdv.get(id) ?? { supplierName: a.name, sen: 0, items: [] };
+          for (const it of a.items) { cur.items.push({ paymentNo: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+          supAdv.set(id, cur);
+        }
+      }
+      for (const [supplierId, adv] of supAdv) {
+        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+        if (!advItems.length) continue;
         let row = apMap.get(supplierId);
         if (!row) {
           row = {
@@ -742,8 +773,8 @@ app.get("/aging", async (c) => {
         // Bucket each advance by ITS payment date (owner 2026-07-08: a May
         // advance belongs in the May column, not Current) — same month-based
         // bucketing as the bills above.
-        for (const it of adv.items) {
-          const moAdv = monthsOverdue(it.date || null);
+        for (const it of advItems) {
+          const moAdv = monthsOverdue(it.date || null, nowRef);
           addToBucket(row, moAdv, -it.sen);
           row.docs.push({
             no: `${it.paymentNo} · Advance`,
@@ -755,7 +786,19 @@ app.get("/aging", async (c) => {
       }
       // Unapplied customer advances → NEGATIVE rows, the mirror of the supplier
       // block above, so the AR aging total ties the 300-0000 control exactly.
-      for (const [customerId, adv] of await loadUnappliedCustomerAdvances(c.var.DB, orgId)) {
+      // The customer mirror: received ahead of an invoice dated after it.
+      const custAdv = await loadUnappliedCustomerAdvances(c.var.DB, orgId);
+      if (asOf) {
+        const invDate = new Map((invRes.results ?? []).map((i) => [i.id, String(i.invoiceDate ?? "").slice(0, 10)] as const));
+        for (const [id, a] of await receiptsAheadOf(c.var.DB, asOf, invDate)) {
+          const cur = custAdv.get(id) ?? { customerName: a.name, sen: 0, items: [] };
+          for (const it of a.items) { cur.items.push({ receiptNumber: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+          custAdv.set(id, cur);
+        }
+      }
+      for (const [customerId, adv] of custAdv) {
+        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+        if (!advItems.length) continue;
         let row = arMap.get(customerId);
         if (!row) {
           row = {
@@ -771,8 +814,8 @@ app.get("/aging", async (c) => {
           };
           arMap.set(customerId, row);
         }
-        for (const it of adv.items) {
-          const moAdv = monthsOverdue(it.date || null);
+        for (const it of advItems) {
+          const moAdv = monthsOverdue(it.date || null, nowRef);
           addToBucket(row, moAdv, -it.sen);
           row.docs.push({
             no: `${it.receiptNumber} · Advance`,
@@ -798,8 +841,13 @@ app.get("/aging", async (c) => {
           const acctRow = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
             .bind(s.accountCode).first<{ name: string }>();
           const derived = await loadTfDraws(c.var.DB, s);
+          // As at a past date: each draw as it stood then (src/lib/trade-finance.ts drawAt).
+          const tfBack = asOf ? await tradeFinanceAfter(c.var.DB, s.accountCode, asOf) : null;
+          const drawsAt = asOf && tfBack
+            ? derived.draws.map((d) => drawAt(d, asOf, tfAfterOf(tfBack, d.drawSourceId))).filter((d): d is TfDraw => d !== null && d.outstandingSen > 0)
+            : derived.draws;
           const tfDraws = [];
-          for (const d of derived.draws) {
+          for (const d of drawsAt) {
             let paidSupplier = "";
             try {
               const rs = await c.var.DB.prepare(
@@ -819,7 +867,7 @@ app.get("/aging", async (c) => {
             tenorDays: s.tenorDays,
             accountNetSen: derived.accountNetSen,
             unallocatedSen: derived.unallocatedSen,
-            totals: tfTotals(derived.draws, todayIsoTf),
+            totals: tfTotals(drawsAt, asOf ?? todayIsoTf),
             draws: tfDraws,
           });
         }
@@ -838,10 +886,11 @@ app.get("/aging", async (c) => {
           tf: tfSection,
         },
       };
-    },
-    cacheKey,
-  );
-  return c.json({ success: true, ...data });
+  };
+  const data = asOf
+    ? await buildAging()
+    : await withSnapshot(c.var.DB, snapshotConfig, orgId, buildAging, cacheKey);
+  return c.json({ success: true, ...data, ...(asOf ? { asOf } : {}) });
 });
 
 app.post("/aging", async (c) => {
@@ -5232,20 +5281,25 @@ app.get("/other-party-aging", async (c) => {
   if (type !== "DEBTOR" && type !== "CREDITOR") {
     return c.json({ success: false, error: "type must be DEBTOR or CREDITOR" }, 400);
   }
+  // As at a past date (owner 2026-10-17): bills dated by then, each rolled
+  // back by the payments made on it after (src/api/lib/aging-as-at.ts).
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const paidBack = asOf ? await otherPartyPaymentsAfter(c.var.DB, orgId, asOf) : null;
   const rows =
     (
       await c.var.DB.prepare(
-        `SELECT b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
+        `SELECT b.id AS id, b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
                 (b.totalSen - b.paidAmountSen) AS amt, b.is_opening AS is_opening
            FROM other_party_bills b
            LEFT JOIN document_lifecycle dl
              ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
-          WHERE b.orgId = ? AND b.partyType = ? AND (b.totalSen - b.paidAmountSen) > 0
+          WHERE b.orgId = ? AND b.partyType = ? AND (${asOf ? "b.billDate <= ?" : "(b.totalSen - b.paidAmountSen) > 0"})
             AND (dl.state IS NULL OR dl.state NOT IN ('DELETED','VOID'))
           ORDER BY b.billDate ASC`,
       )
-        .bind(orgId, type)
-        .all<{ partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
+        .bind(orgId, type, ...(asOf ? [asOf] : []))
+        .all<{ id: string; partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
     ).results ?? [];
   const obDateOpa = await getOpeningDate(c.var.DB);
   const bills = rows
@@ -5253,9 +5307,10 @@ app.get("/other-party-aging", async (c) => {
     // `mo` = the calendar-month bucket /aging gives an invoice (same helpers),
     // so Debtor / Creditor Aging can list an other party's bills in the trade
     // rows' columns (owner 2026-10-17, Finance v2).
-    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: r.amt, mo: agingBucketIdx(monthsOverdue(r.billDate)) }));
-  const today = new Date().toISOString().slice(0, 10);
-  return c.json({ success: true, data: { aging: bucketAging(bills, today), bills } });
+    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) }))
+    .filter((b) => b.outstandingSen > 0);
+  const today = asOf ?? new Date().toISOString().slice(0, 10);
+  return c.json({ success: true, data: { aging: bucketAging(bills, today), bills, ...(asOf ? { asOf } : {}) } });
 });
 
 // Shared internal builder (NOT a route): used by both the rewired /void
@@ -13932,12 +13987,20 @@ app.get("/trade-finance", async (c) => {
   if (denied) return denied;
   try {
     const sources = await getTfSources(c.var.DB);
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // As at a past date (owner 2026-10-17, Creditor Aging as at a month-end):
+    // each draw as it stood then; absent = today, unchanged.
+    const asOfQ = c.req.query("asOf") ?? "";
+    const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+    const todayIso = asOf ?? new Date().toISOString().slice(0, 10);
     const out = [];
     for (const s of sources) {
       const acct = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
         .bind(s.accountCode).first<{ name: string }>();
-      const derived = await loadTfDraws(c.var.DB, s);
+      const derivedNow = await loadTfDraws(c.var.DB, s);
+      const tfBack = asOf ? await tradeFinanceAfter(c.var.DB, s.accountCode, asOf) : null;
+      const derived = asOf && tfBack
+        ? { ...derivedNow, draws: derivedNow.draws.map((d) => drawAt(d, asOf, tfAfterOf(tfBack, d.drawSourceId))).filter((d): d is TfDraw => d !== null) }
+        : derivedNow;
       const draws = [];
       for (const d of derived.draws) {
         // Which supplier(s) the lender paid for us on this draw — the payment's

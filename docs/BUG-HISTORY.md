@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-318 flipped to 🟢 after the #956 / #959 prod check.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-318 gains its follow-up (branch `fix/delivery-return-cn-blocked`, to main): the return's page says why no credit note can be raised.
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-318 (branch `fix/delivery-return-cn-status`, to main).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-317 (branch `feat/finance-notes-post`, to main); BUG-2026-10-17-314 flipped to 🟢 after the #954 prod check.
@@ -147,9 +148,9 @@ Entries themselves stay newest-first.
 
 Fix = forward-only rule `canAdvanceToReadyToShip` (CONFIRMED / IN_PRODUCTION only; `src/api/lib/ready-to-ship-guard.ts`) on all four forward cascades, also inside the UPDATE's WHERE; dispatch now ships an SO still IN_PRODUCTION / CONFIRMED. Data = `scripts/fix-ready-to-ship-backslide-2026-10-17.mjs` (dry run by default; each SO goes to the status its own documents prove — invoices → INVOICED / CLOSED, all units delivered → DELIVERED, all units out → SHIPPED — with an audit row and a restore file). Regression: `tests/ready-to-ship-guard.test.mjs`.
 
-## BUG-2026-10-17-318 — A delivery return read "CN issued" with no credit note behind it `delivery` `finance` 🟡
+## BUG-2026-10-17-318 — A delivery return read "CN issued" with no credit note behind it `delivery` `finance` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Fixed and verified on prod 2026-10-17** (#956, #959): the reported return lists as "Awaiting credit note" and counts as open; its page says its invoice is fully paid, so no credit note can go against it — no button.
 
 **Symptom.** Reported by the owner 2026-10-17 (DR-2608-001): the return's status chip said "CN issued", and no credit note existed for it.
 

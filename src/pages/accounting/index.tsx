@@ -4065,6 +4065,42 @@ type ArControlData = {
   driftControlVsInvoicesSen: number;
   driftCounterVsInvoicesSen: number;
 };
+// Aging as at a month-end (owner 2026-10-17, Finance v2): the running month
+// reads today; an earlier month reads as at its last day, rebuilt from the
+// documents by the server (`?asOf=`). `pastKey` changes with the date and the
+// company, so a reply for an older pick is never shown for a newer one.
+function useAgingAsAt() {
+  const today = todayYmdMY();
+  const [ym, setYm] = useState(() => today.slice(0, 7));
+  const asOf = asAtDate(ym, today);
+  const isPast = asOf < today;
+  const ymOptions = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
+  return { today, ym, setYm, asOf, isPast, ymOptions };
+}
+
+/** Control-account balances as at a past date, from the trial balance — the
+ *  books' side of the aging check. Debit-normal (AR) or credit-normal (AP). */
+function useControlsAsAt(asOf: string | null, codes: string[], company: string, side: "debit" | "credit") {
+  const [tb, setTb] = useState<{ key: string; rows: TbRow[] } | null>(null);
+  const key = `${asOf}|${company}`;
+  useEffect(() => {
+    if (!asOf) return;
+    let stale = false;
+    fetch(`/api/accounting/trial-balance?asOf=${asOf}${orgIdParam(company)}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { rows: TbRow[] } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setTb({ key: `${asOf}|${company}`, rows: j.data.rows }); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [asOf, company]);
+  if (!asOf || tb?.key !== key) return null;
+  const bal = new Map<string, number>();
+  for (const code of codes) {
+    const r = tb.rows.find((x) => x.accountCode === code);
+    bal.set(code, r ? (side === "debit" ? r.debitSen - r.creditSen : r.creditSen - r.debitSen) : 0);
+  }
+  return bal;
+}
+
 function useArControl(company: string) {
   const [data, setData] = useState<ArControlData | null>(null);
   // Multi-company (Phase 2): scope the control reconciliation to the selected
@@ -4420,21 +4456,37 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
       .catch(() => {});
     return () => { stale = true; };
   }, [company]);
-  const rows = company ? (scopedAr ?? []) : arData;
+  // As at a past month-end: the server rolls every invoice back (?asOf=).
+  const at = useAgingAsAt();
+  const pastKey = `${at.asOf}|${company}`;
+  const [pastAr, setPastAr] = useState<{ key: string; rows: ARAgingEntry[] } | null>(null);
+  useEffect(() => {
+    if (!at.isPast) return;
+    let stale = false;
+    fetch(`/api/accounting/aging?asOf=${at.asOf}${company ? `&orgId=${encodeURIComponent(company)}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ar: ARAgingEntry[] } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setPastAr({ key: `${at.asOf}|${company}`, rows: j.data.ar ?? [] }); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [at.isPast, at.asOf, company]);
+  const pastLoading = at.isPast && pastAr?.key !== pastKey;
+  const rows = at.isPast ? (pastAr?.key === pastKey ? pastAr.rows : []) : company ? (scopedAr ?? []) : arData;
 
   // Other debtors (owner 2026-10-17, Finance v2: "Debtor Aging includes
   // other-debtor aging"): their open bills from /other-party-aging, bucketed
   // by the same calendar-month rule as the invoices (`mo`), listed after the
   // trade customers. They are not split by company (an other party has none).
-  const [odBills, setOdBills] = useState<OtherPartyAgingBill[] | null>(null);
+  const [odState, setOdState] = useState<{ key: string; bills: OtherPartyAgingBill[] } | null>(null);
   useEffect(() => {
     let stale = false;
-    fetch("/api/accounting/other-party-aging?type=DEBTOR")
+    const k = at.isPast ? at.asOf : "";
+    fetch(`/api/accounting/other-party-aging?type=DEBTOR${at.isPast ? `&asOf=${at.asOf}` : ""}`)
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { bills?: OtherPartyAgingBill[] } }>)
-      .then((j) => { if (!stale) setOdBills(j?.success ? (j.data?.bills ?? []) : []); })
-      .catch(() => { if (!stale) setOdBills([]); });
+      .then((j) => { if (!stale) setOdState({ key: k, bills: j?.success ? (j.data?.bills ?? []) : [] }); })
+      .catch(() => { if (!stale) setOdState({ key: k, bills: [] }); });
     return () => { stale = true; };
-  }, []);
+  }, [at.isPast, at.asOf]);
+  const odBills = odState?.key === (at.isPast ? at.asOf : "") ? odState.bills : null;
   const [show, setShow] = useState<AgingShow>("all");
   const tradeList: AgingListRow[] = rows.map((a) => ({
     key: `t:${a.customerId}`, kind: "trade", name: a.customerName, code: a.customerCode,
@@ -4464,10 +4516,14 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   const otherTotal = otherList.reduce((s, a) => s + agingListTotal(a), 0);
   const ctl = useArControl(company);
   const odControl = ctl.data?.controls.find((x) => x.code === "305-0000");
+  // As at a past date the control cards read the trial balance as at then.
+  const arCodes = (ctl.data?.controls ?? []).map((x) => x.code);
+  const pastCtl = useControlsAsAt(at.isPast ? at.asOf : null, arCodes, company, "debit");
+  const tradeList0 = tradeList.reduce((s, a) => s + agingListTotal(a), 0);
 
   // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
   // only (owner), from the same aging builder.
-  const asAt = todayYmdMY();
+  const asAt = at.asOf;
   const fileBase = `debtor-aging-${asAt}${company ? `-${company}` : ""}`;
   const buildAging = () => buildGroupedAgingExportAoa("Customer", groups.map((g) => ({ label: g.label, parties: g.rows })));
   const downloads = [
@@ -4484,8 +4540,9 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
     <div className="space-y-4">
       <FinanceTitleActions>
         <ReportToolbar>
+          <PeriodStepper value={at.ym} options={at.ymOptions} onChange={at.setYm} today={at.today} />
           <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
-          {ctl.data && (
+          {ctl.data && !at.isPast && (
             <Button variant="outline" size="sm" onClick={() => void ctl.rebuildCounter()} disabled={ctl.rebuilding} title="Reset every customer's counter to its invoice-derived outstanding (audited)">
               {ctl.rebuilding ? "Recalculating…" : "Recalculate counter"}
             </Button>
@@ -4493,8 +4550,27 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
           <DownloadMenu items={downloads} />
         </ReportToolbar>
       </FinanceTitleActions>
+      {at.isPast && (
+        <StatusBanner done={false} title={"As at " + formatDateDMY(at.asOf)} sub={pastLoading ? "Loading…" : "Every invoice rolled back from today by what was received or noted after that date."} />
+      )}
       <KpiCards
-        items={[
+        items={at.isPast ? [
+          ...(ctl.data ? [{
+            label: `Debtor control · ${ctl.data.controls.filter((x) => x.code !== "305-0000").map((x) => x.code).join(", ")}`,
+            value: pastCtl ? formatCurrency(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0)) : "—",
+            tone: "info" as const,
+            note: pastCtl && !pastLoading
+              ? <>per ledger as at {formatDateDMY(at.asOf)} · {controlDriftNote(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0) - tradeList0)}</>
+              : "per ledger",
+          }] : []),
+          {
+            label: "Other debtors · 305-0000",
+            value: odBills === null ? "—" : formatCurrency(otherTotal),
+            tone: "info" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{pastCtl?.has("305-0000") ? <> · {controlDriftNote((pastCtl.get("305-0000") ?? 0) - otherTotal)}</> : null}</>,
+          },
+          { label: "Total outstanding", value: pastLoading ? "—" : formatCurrency(totalOutstanding), tone: "warn" as const, note: `as at ${formatDateDMY(at.asOf)}` },
+        ] : [
           ...(ctl.data ? [
             { label: `Debtor control · ${ctl.data.controls.filter((x) => x.code !== "305-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.data.tradeControlSen), tone: "info" as const, note: "per ledger" },
             { label: "Outstanding from invoices", value: formatCurrency(ctl.data.invoiceOutstandingSen), note: <>gross · {controlDriftNote(ctl.data.driftControlVsInvoicesSen)}</> },
@@ -5265,7 +5341,21 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       .catch(() => {});
     return () => { stale = true; };
   }, [company]);
-  const rows = company ? (scopedAp ?? []) : apData;
+  // As at a past month-end: the server rolls every bill back (?asOf=).
+  const at = useAgingAsAt();
+  const pastKey = `${at.asOf}|${company}`;
+  const [pastAp, setPastAp] = useState<{ key: string; rows: APAgingEntry[] } | null>(null);
+  useEffect(() => {
+    if (!at.isPast) return;
+    let stale = false;
+    fetch(`/api/accounting/aging?asOf=${at.asOf}${company ? `&orgId=${encodeURIComponent(company)}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ap: APAgingEntry[] } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setPastAp({ key: `${at.asOf}|${company}`, rows: j.data.ap ?? [] }); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [at.isPast, at.asOf, company]);
+  const pastLoading = at.isPast && pastAp?.key !== pastKey;
+  const rows = at.isPast ? (pastAp?.key === pastKey ? pastAp.rows : []) : company ? (scopedAp ?? []) : apData;
 
   // Other creditors and trade-finance draws (owner 2026-10-17, Finance v2:
   // "Groups: Trade Suppliers / Other Creditors / Trade Finance, where Trade
@@ -5273,21 +5363,26 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   // column). Each kind is its own section, never mixed into the supplier
   // rows; the Trade Finance block below stays where draws are managed (owner
   // 2026-08-11 / 2026-10-16). A draw ages by its draw date like any bill.
-  const [ocBills, setOcBills] = useState<OtherPartyAgingBill[] | null>(null);
-  const [tfSources, setTfSources] = useState<TfAgingSource[] | null>(null);
+  const [ocState, setOcState] = useState<{ key: string; bills: OtherPartyAgingBill[] } | null>(null);
+  const [tfState, setTfState] = useState<{ key: string; sources: TfAgingSource[] } | null>(null);
   useEffect(() => {
     let stale = false;
-    fetch("/api/accounting/other-party-aging?type=CREDITOR")
+    const k = at.isPast ? at.asOf : "";
+    const q = at.isPast ? `asOf=${at.asOf}` : "";
+    fetch(`/api/accounting/other-party-aging?type=CREDITOR${q ? `&${q}` : ""}`)
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { bills?: OtherPartyAgingBill[] } }>)
-      .then((j) => { if (!stale) setOcBills(j?.success ? (j.data?.bills ?? []) : []); })
-      .catch(() => { if (!stale) setOcBills([]); });
-    fetch("/api/accounting/trade-finance", { cache: "no-store" })
+      .then((j) => { if (!stale) setOcState({ key: k, bills: j?.success ? (j.data?.bills ?? []) : [] }); })
+      .catch(() => { if (!stale) setOcState({ key: k, bills: [] }); });
+    fetch(`/api/accounting/trade-finance${q ? `?${q}` : ""}`, { cache: "no-store" })
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: TfAgingSource[] } }>)
-      .then((j) => { if (!stale) setTfSources(j?.success ? (j.data?.sources ?? []) : []); })
-      .catch(() => { if (!stale) setTfSources([]); });
+      .then((j) => { if (!stale) setTfState({ key: k, sources: j?.success ? (j.data?.sources ?? []) : [] }); })
+      .catch(() => { if (!stale) setTfState({ key: k, sources: [] }); });
     return () => { stale = true; };
-  }, []);
-  const today = todayYmdMY();
+  }, [at.isPast, at.asOf]);
+  const ocBills = ocState?.key === (at.isPast ? at.asOf : "") ? ocState.bills : null;
+  const tfSources = tfState?.key === (at.isPast ? at.asOf : "") ? tfState.sources : null;
+  // Ages, Next Due and Overdue are measured at the as-at date.
+  const today = at.asOf;
   const [show, setShow] = useState<AgingShow>("all");
   const supplierList: AgingListRow[] = rows.map((a) => ({
     key: `s:${a.supplierId}`, kind: "trade", name: a.supplierName, code: a.supplierCode,
@@ -5343,10 +5438,15 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 
   const ctl = useApControl(company);
   const ocControl = ctl?.controls.find((x) => x.code === "405-0000");
+  // As at a past date the control cards read the trial balance as at then.
+  const apCodes = (ctl?.controls ?? []).map((x) => x.code);
+  const pastCtl = useControlsAsAt(at.isPast ? at.asOf : null, apCodes, company, "credit");
+  const supplierTotal = supplierList.reduce((s, a) => s + agingListTotal(a), 0);
+  const pastTradeCtl = ctl && pastCtl ? ctl.controls.filter((x) => x.code !== "405-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0) : null;
 
   // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
   // only (owner), from the same aging builder.
-  const asAt = todayYmdMY();
+  const asAt = at.asOf;
   const fileBase = `creditor-aging-${asAt}${company ? `-${company}` : ""}`;
   const buildAging = () => buildGroupedAgingExportAoa("Creditor", groups.map((g) => ({
     label: g.label, parties: g.rows.map((r) => ({ ...r, name: r.sub ? `${r.name} (${r.sub})` : r.name })),
@@ -5365,12 +5465,31 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
     <div className="space-y-4">
       <FinanceTitleActions>
         <ReportToolbar>
+          <PeriodStepper value={at.ym} options={at.ymOptions} onChange={at.setYm} today={at.today} />
           <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
           <DownloadMenu items={downloads} />
         </ReportToolbar>
       </FinanceTitleActions>
+      {at.isPast && (
+        <StatusBanner done={false} title={"As at " + formatDateDMY(at.asOf)} sub={pastLoading ? "Loading…" : "Every bill and drawdown rolled back from today by what was paid or repaid after that date."} />
+      )}
       <KpiCards
-        items={[
+        items={at.isPast ? [
+          ...(ctl ? [{
+            label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`,
+            value: pastTradeCtl === null ? "—" : formatCurrency(pastTradeCtl),
+            tone: "err" as const,
+            note: pastTradeCtl !== null && !pastLoading ? <>per ledger as at {formatDateDMY(at.asOf)} · {controlDriftNote(pastTradeCtl - supplierTotal)}</> : "per ledger",
+          }] : []),
+          {
+            label: "Other creditors · 405-0000",
+            value: ocBills === null ? "—" : formatCurrency(ocTotal),
+            tone: "err" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{pastCtl?.has("405-0000") ? <> · {controlDriftNote((pastCtl.get("405-0000") ?? 0) - ocTotal)}</> : null}</>,
+          },
+          { label: "Overdue", value: pastLoading ? "—" : formatCurrency(overdue), tone: "err" as const, note: `past the due date at ${formatDateDMY(at.asOf)}` },
+          { label: "Total outstanding", value: pastLoading ? "—" : formatCurrency(totalOutstanding), tone: "info" as const, note: `as at ${formatDateDMY(at.asOf)}` },
+        ] : [
           ...(ctl ? [
             { label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.tradeControlSen), tone: "err" as const, note: "per ledger" },
             {

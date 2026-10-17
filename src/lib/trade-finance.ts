@@ -101,6 +101,27 @@ export function deriveDraws(
   return { draws, accountNetSen, unallocatedSen };
 }
 
+/** A draw as it stood at `asOf` (aging as at a month-end, owner 2026-10-17):
+ *  null when it was drawn after; otherwise today's draw with the repayments
+ *  and the interest / bank charges dated after `asOf` taken back out. */
+export function drawAt(
+  d: TfDraw,
+  asOf: string,
+  after: { repaidSen: number; interestSen: number; bankChargeSen: number },
+): TfDraw | null {
+  if (d.drawDate && d.drawDate > asOf) return null;
+  const amountSen = d.amountSen - after.interestSen - after.bankChargeSen;
+  const repaidSen = Math.max(0, d.repaidSen - after.repaidSen);
+  return {
+    ...d,
+    amountSen,
+    interestSen: d.interestSen - after.interestSen,
+    bankChargeSen: d.bankChargeSen - after.bankChargeSen,
+    repaidSen,
+    outstandingSen: amountSen - repaidSen,
+  };
+}
+
 export function tfBucketOf(dueDate: string, todayIso: string): "notDue" | "d1_30" | "d31_60" | "d61_90" | "over90" {
   if (!dueDate || dueDate >= todayIso) return "notDue";
   const days = Math.round((Date.parse(`${todayIso}T00:00:00Z`) - Date.parse(`${dueDate}T00:00:00Z`)) / 86400000);
