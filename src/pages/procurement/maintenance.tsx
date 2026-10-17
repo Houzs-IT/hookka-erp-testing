@@ -872,7 +872,8 @@ export default function SupplierMaintenancePage() {
   // for optimistic UI.
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierSearch, setSupplierSearch] = useState("");
-  const [showSupplierForm, setShowSupplierForm] = useState(false);
+  // Finance › Creditor List (2026-10-17): ?new=1 opens the Add form.
+  const [showSupplierForm, setShowSupplierForm] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   // Batch edit (multi-select → set ONE safe shared field on all selected).
   const [selectedSuppliers, setSelectedSuppliers] = useState<Supplier[]>([]);

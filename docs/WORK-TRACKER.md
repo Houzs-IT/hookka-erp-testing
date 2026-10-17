@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: item 6 prod-verified (#961); item 5 merged (#962); item 7 in progress on branch `feat/finance-party-lists`.
 > **Last verified: 2026-10-17**: items 13 (#960) and 19 (#956, #959) prod-verified; item 6 merged (#961); item 5 in progress on branch `feat/aging-as-at`.
 > **Last verified: 2026-10-17**: item 13 merged (#960); item 19 prod-checked (#956); item 6 in progress on branch `feat/aging-code-column`.
 > **Last verified: 2026-10-17**: item 19 follow-up merged (#959); item 13 in progress on branch `feat/cash-position-tf-due`.
@@ -234,9 +235,9 @@ Now:
 2. ✅ (#955, BUG-2026-10-17-315 / -316 / -317; prod read-side check: the new routes answer, statement = debtor ledger, aging buckets = lines, print data carries the adjustment — Post itself is the owner's to press) Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines. Production had no credit or debit notes (measured 2026-10-17), so nothing existing moves.
 3. 🔵 (#958, prod check pending) Scan Bills reads every bill in a multi-bill PDF (today only the first). Other Creditor / Debtor Bills: the form fills with bill 1 of N, Save & Post moves to the next, Skip / Stop offered; the Payment Voucher scan already took every bill.
 4. ⚪ Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail).
-5. 🔵 (branch `feat/aging-as-at`) Aging as at a chosen month-end. A month stepper on Debtor / Creditor Aging; a past month rolls every item back from today by what was settled after its last day (receipts, supplier payments incl. credit-note knock-offs, other-party payments, trade-finance repayments and charges, notes); money paid ahead of a later document shows as an advance; the control cards read the trial balance as at that date.
-6. 🔵 (#961, prod check pending) A Code column on Debtor / Creditor Aging. Trade rows show the debtor / creditor code, a trade-finance draw its TF account, an other party "—" (its register has no code); the Excel / PDF prints the code before the name.
-7. ⚪ Debtor List / Creditor List pages (customers and other parties together).
+5. 🔵 (#962, prod check pending) Aging as at a chosen month-end. A month stepper on Debtor / Creditor Aging; a past month rolls every item back from today by what was settled after its last day (receipts, supplier payments incl. credit-note knock-offs, other-party payments, trade-finance repayments and charges, notes); money paid ahead of a later document shows as an advance; the control cards read the trial balance as at that date.
+6. ✅ (#961, prod-verified: 7 / 7 customers and 15 / 15 suppliers carry their register code; draws their TF account; other parties "—") A Code column on Debtor / Creditor Aging. Trade rows show the debtor / creditor code, a trade-finance draw its TF account, an other party "—" (its register has no code); the Excel / PDF prints the code before the name.
+7. 🔵 (branch `feat/finance-party-lists`) Debtor List / Creditor List pages (customers and other parties together). `?tab=debtors` / `?tab=creditors` under Debtors / Creditors: code, name, type, terms / what for, credit limit (debtors), outstanding (= the aging row), phone, email, status; chips; double-click opens the record where it is kept (customer edit form, supplier page, other-party form); + New buttons land on those forms.
 8. ⚪ A per-company Balance Sheet (every ledger entry has to carry its company first).
 9. ⚪ Month / Quarter / Financial Year pickers, Change Year End, closed-year locks.
 10. ⚪ A full audit log of every change.
