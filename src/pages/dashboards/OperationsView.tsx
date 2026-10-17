@@ -135,6 +135,18 @@ export function OperationsView({
     [production?.productionCost?.byDay, period],
   );
 
+  // On-time completion follows the period like every other card (it listed
+  // the whole book: April orders under "Oct 2026").
+  const pvaRows = useMemo(() => (production?.planVsActual?.rows ?? []).filter((r) => inPeriod(period, r.actual)), [production?.planVsActual, period]);
+  const pvaOnTime = pvaRows.filter((r) => r.varianceDays <= 0).length;
+  // Real shortages are NEGATIVE balances; a zero balance is mostly an item not
+  // in use (old colours, maintenance parts) — 3 of the 284 "at zero /
+  // negative" were actually short in Oct 2026.
+  const shortage = useMemo(() => {
+    const all = [...(inventory?.materialShortage ?? [])].sort((a, b) => a.balanceQty - b.balanceQty);
+    return { all, negative: all.filter((m) => m.balanceQty < 0).length, zero: all.filter((m) => m.balanceQty === 0).length };
+  }, [inventory?.materialShortage]);
+
   if (loading) {
     return <div className="py-16 text-center text-sm text-[#6B7280]">Loading…</div>;
   }
@@ -206,7 +218,7 @@ export function OperationsView({
               <div>
                 <Card>
                   <CardContent className="p-3">
-                    <p className="text-xs text-[#6B7280] truncate">Plan vs Actual · stages done on every open order</p>
+                    <p className="text-xs text-[#6B7280] truncate">Open orders · stages done</p>
                     <p className="mt-1 font-bold truncate tabular-nums text-2xl text-[#1F1D1B]">
                       {stageCompletion.pct == null ? "—" : `${stageCompletion.pct.toFixed(1)}%`}
                     </p>
@@ -230,9 +242,10 @@ export function OperationsView({
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#6B7280]">Materials &amp; cost</p>
               <div className="grid grid-cols-2 gap-3">
               <Kpi
-                label="Material Shortage"
-                value={fmtN((inventory?.materialShortage ?? []).length)}
-                sub="at zero/negative stock"
+                label="Materials below zero"
+                value={fmtN(shortage.negative)}
+                sub={`${fmtN(shortage.zero)} more at exactly zero (mostly not in use)`}
+                valueColorClass={shortage.negative ? "text-[#9A3A2D]" : undefined}
               />
               <Kpi
                 label={`Production cost · finished batches, ${periodLabel(period)}`}
@@ -300,7 +313,7 @@ export function OperationsView({
                         </tr>
                       </thead>
                       <tbody>
-                        {(pva?.rows ?? []).slice(0, 100).map((r, i) => (
+                        {pvaRows.slice(0, 100).map((r, i) => (
                           <tr key={r.poNo ?? i} className="border-b border-[#E2DDD8]">
                             <td className="px-3 py-1.5 font-mono text-[#1F1D1B]">{r.poNo ?? "—"}</td>
                             <td className="px-3 py-1.5 tabular-nums text-[#6B7280]">{r.plan}</td>
@@ -310,7 +323,7 @@ export function OperationsView({
                             </td>
                           </tr>
                         ))}
-                        {(pva?.rows ?? []).length === 0 && (
+                        {pvaRows.length === 0 && (
                           <tr><td colSpan={4} className="px-3 py-5 text-center text-[#6B7280]">No completed order carries both dates.</td></tr>
                         )}
                       </tbody>
@@ -318,7 +331,7 @@ export function OperationsView({
                   </div>
                   {pva && (
                     <p className="px-3 pb-2 pt-1.5 text-[11px] text-[#6B7280]">
-                      {pva.onTime} / {pva.withBothDates} on time, of {pva.completedTotal} completed orders total.
+                      {fmtN(pvaOnTime)} / {fmtN(pvaRows.length)} on time · orders finished in {periodLabel(period)} that carry both dates.
                     </p>
                   )}
                 </CardContent>
@@ -382,7 +395,7 @@ export function OperationsView({
                       </tr>
                     </thead>
                     <tbody>
-                      {(inventory?.materialShortage ?? []).map((m, i) => (
+                      {shortage.all.map((m, i) => (
                         <tr key={m.code ?? i} className="border-b border-[#E2DDD8]">
                           <td className="px-4 py-2 font-mono text-[#1F1D1B]">{m.code ?? "—"}</td>
                           <td className="px-4 py-2 text-[#6B7280]">{m.description ?? "—"}</td>

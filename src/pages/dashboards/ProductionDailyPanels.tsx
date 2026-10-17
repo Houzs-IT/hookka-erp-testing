@@ -1,3 +1,4 @@
+import { deptName } from "./ops-floor-lib";
 import { useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
@@ -111,7 +112,7 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
             <tbody>
               {rows.map((r) => (
                 <tr key={r.dept} className="border-b border-[#E2DDD8]">
-                  <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{r.dept}</td>
+                  <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{deptName(r.dept)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.people.size)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(r.working)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(r.prod)}</td>
@@ -258,8 +259,8 @@ export function ProductionDailyPanels({
       {sub === "plan" && (!lim ? missingSlice("Plan vs Actual") : (
         <>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Kpi label="Planned (orders)" value={fmtN(planTotals.po)} sub={`${fmtN(planTotals.pu)} units`} />
-            <Kpi label="Completed (orders)" value={fmtN(planTotals.ao)} sub={`${fmtN(planTotals.au)} units`} valueColorClass="text-[#4F7C3A]" />
+            <Kpi label="Planned production orders" value={fmtN(planTotals.po)} sub={`${fmtN(planTotals.pu)} units`} />
+            <Kpi label="Completed production orders" value={fmtN(planTotals.ao)} sub={`${fmtN(planTotals.au)} units`} valueColorClass="text-[#4F7C3A]" />
             <Kpi label="Variance (orders)" value={`${planTotals.ao - planTotals.po > 0 ? "+" : ""}${fmtN(planTotals.ao - planTotals.po)}`} sub="completed − planned" valueColorClass={planTotals.ao >= planTotals.po ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
             <Kpi label="Variance (units)" value={`${planTotals.au - planTotals.pu > 0 ? "+" : ""}${fmtN(planTotals.au - planTotals.pu)}`} sub="completed − planned" valueColorClass={planTotals.au >= planTotals.pu ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
           </div>
@@ -307,7 +308,7 @@ export function ProductionDailyPanels({
                   <tbody>
                     {stageRows.map((r) => (
                       <tr key={r.dept} className="border-b border-[#E2DDD8]">
-                        <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{r.dept}</td>
+                        <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{deptName(r.dept)}</td>
                         <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.plan)}</td>
                         <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.actual)}</td>
                         <td className="px-4 py-2.5 text-right font-mono">{variance(r.plan, r.actual)}</td>

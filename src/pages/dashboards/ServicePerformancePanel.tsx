@@ -5,7 +5,7 @@ import {
   TAUPE, TEAL, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN,
   inPeriod, inFocus, periodLabel, previousPeriod, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
-import { ServiceIssuesPanel, TallyList } from "./ServiceIssuesPanel";
+import { TallyList } from "./ServiceIssuesPanel";
 import { ServiceCaseNo } from "./ServiceCaseLink";
 import { useServiceCaseLinks } from "./use-service-case-links";
 import {
@@ -183,10 +183,8 @@ export function ServicePerformancePanel({
         </CardContent>
       </Card>
 
-      <div>
-        <h3 className="text-sm font-semibold text-[#1F1D1B] mb-2">Category and root cause</h3>
-        <ServiceIssuesPanel cases={openedInFocus} period={period} onPickCause={() => {}} causeOnly />
-      </div>
+      {/* Category / root cause render once, below the case list (the full
+          ServiceIssuesPanel in ServiceView) — this copy duplicated it. */}
 
       <Card>
         <CardHeader className="pb-1">

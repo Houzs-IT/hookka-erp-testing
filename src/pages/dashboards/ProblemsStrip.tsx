@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
+import { deptName } from "./ops-floor-lib";
+import { CUR_YM, type Overview } from "./dashboard-widgets-lib";
 
 // ---------------------------------------------------------------------------
 // "Today's problems" (owner 2026-10-17): management opens the dashboard every
@@ -17,7 +19,7 @@ type Feed = {
     bottleneck?: { dept: string; cards: number; orders: number } | null;
   } | null;
   service?: { cases: { daysOverdue: number; approvalStatus: string | null }[] } | null;
-  inventory?: { materialShortage?: unknown[] } | null;
+  inventory?: { materialShortage?: { balanceQty: number }[] } | null;
   employee?: { performance?: { byDay?: { date: string; workers?: { workerId: string; workingMinutes: number; productionMinutes: number }[] }[] } } | null;
 };
 
@@ -35,6 +37,12 @@ const LOW_EFF_PCT = 75;
 
 export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly string[]; onOpen: (tab: string, sub?: string, anchor?: string) => void }) {
   const { data } = useCachedJson<Feed>("/api/dashboard/prototype");
+  // Bottleneck = the department with the most DAYS of queue (backlog ÷ its
+  // own daily capacity), the Command Center's Department Backlog definition —
+  // the card count alone named Fabric Sewing while Department Backlog put
+  // Webbing first (owner 2026-10-17 review). Backlog is live state, so the
+  // current month's payload carries it.
+  const { data: ov } = useCachedJson<Overview>(`/api/dashboard/overview?period=${CUR_YM}`);
   const tiles = useMemo<Tile[]>(() => {
     if (!data) return [];
     const out: Tile[] = [];
@@ -42,7 +50,7 @@ export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly s
     if (prod?.overdueByDept) {
       const n = prod.overdueByDept.reduce((a, d) => a + d.count, 0);
       const worst = prod.overdueByDept[0];
-      out.push({ key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(n), label: "Production orders overdue", hint: n && worst ? `most at ${worst.department} (${worst.count})` : "none", tone: n ? "bad" : "ok" });
+      out.push({ key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(n), label: "Production orders overdue", hint: n && worst ? `most at ${deptName(worst.department)} (${worst.count})` : "none", tone: n ? "bad" : "ok" });
     }
     if (prod?.dueSoon3Days) {
       const today = prod.dueSoon3Days.filter((o) => o.daysToDD === 0).length;
@@ -64,14 +72,17 @@ export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly s
       }
     }
     if (data.inventory?.materialShortage) {
-      const n = data.inventory.materialShortage.length;
-      out.push({ key: "short", tab: "operations", sub: "production", anchor: "ops-shortage", value: String(n), label: "Materials at zero / negative", tone: n ? "bad" : "ok" });
+      const n = data.inventory.materialShortage.filter((m) => m.balanceQty < 0).length;
+      const zero = data.inventory.materialShortage.filter((m) => m.balanceQty === 0).length;
+      out.push({ key: "short", tab: "operations", sub: "production", anchor: "ops-shortage", value: String(n), label: "Materials below zero", hint: `${zero} more at zero`, tone: n ? "bad" : "ok" });
     }
-    if (prod?.bottleneck?.dept) {
-      out.push({ key: "neck", tab: "operations", sub: "overview", value: prod.bottleneck.dept, label: "Bottleneck department", hint: `${prod.bottleneck.cards} cards waiting`, tone: "info" });
+    const backlog = ov?.production?.backlogByDept ?? [];
+    const neck = [...backlog].filter((d) => d.backlogDays != null).sort((a, b) => (b.backlogDays ?? 0) - (a.backlogDays ?? 0))[0];
+    if (neck) {
+      out.push({ key: "neck", tab: "operations", sub: "overview", value: deptName(neck.dept), label: "Bottleneck department", hint: `${neck.backlogDays?.toFixed(1)} days of queue`, tone: (neck.backlogDays ?? 0) > 12 ? "bad" : "info" });
     }
     return out.filter((t) => visibleTabs.includes(t.tab));
-  }, [data, visibleTabs]);
+  }, [data, ov, visibleTabs]);
 
   if (tiles.length === 0) return null;
   return (

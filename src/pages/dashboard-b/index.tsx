@@ -742,8 +742,12 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
     subtitle?: string;
     node: React.ReactNode;
   } | null>(null);
+  // Embedded (merged dashboard): fetch only what the shown sections draw. A
+  // tab used to embed this page several times and every copy fetched — and
+  // crunched — the whole Command Center (owner 2026-10-17: "哪里卡顿").
+  const needs = (...secs: CommandCenterSection[]) => secs.some(show);
   const { data: soRaw, loading: soL } =
-    useCachedJson<SoStats>("/api/sales-orders/stats");
+    useCachedJson<SoStats>(needs("kpis", "pipeline") ? "/api/sales-orders/stats" : null);
   const { data: ovRaw, loading: ovL } = useCachedJson<Overview>(
     `/api/dashboard/overview?period=${period}`,
   );
@@ -751,7 +755,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
   // 2026-10-15). Separate, fresh endpoint: the overview payload above is
   // snapshotted / frozen per month and has no split.
   const { data: splitRaw, loading: splitL } = useCachedJson<RevenueSplitResp>(
-    `/api/dashboard/overview/revenue-split?period=${period}`,
+    needs("revenue", "deptRevenue") ? `/api/dashboard/overview/revenue-split?period=${period}` : null,
   );
   const [revCat, setRevCat] = useState<RevCat>("all");
   // Pending Delivery money — ONE small server-computed number.
@@ -767,13 +771,13 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
   // page's Pending-Delivery tab lists) and returns just the sen total, so the
   // browser downloads a few dozen bytes instead of megabytes.
   const { data: pendingRaw, loading: pendingL } =
-    useCachedJson<PendingValueResp>("/api/delivery-orders/pending-value");
+    useCachedJson<PendingValueResp>(needs("kpis", "pipeline") ? "/api/delivery-orders/pending-value" : null);
   // Whole-dataset per-status value sums (valueByStatus) — the SAME aggregate
   // the Delivery list page reads. The dispatch-chain KPIs (pending-dispatch /
   // in-transit) sum from this so they reflect ALL DOs, not the 200-row page.
   const { data: doStatsRaw } = useCachedJson<{
     valueByStatus?: Record<string, number>;
-  }>("/api/delivery-orders/stats");
+  }>(needs("kpis", "pipeline") ? "/api/delivery-orders/stats" : null);
   // Worker-Efficiency window follows the selected month: a specific month →
   // [1st .. month end] (capped at today for the current month); All-time →
   // the rolling last 7 working days (unchanged).
@@ -782,10 +786,10 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
     return monthWindow(period);
   }, [period]);
   const { data: jcSumRaw, loading: jcSumL } = useCachedJson<JcSummaryResp>(
-    `/api/job-cards/summary?from=${effWin.from}&to=${effWin.to}`,
+    needs("efficiency") ? `/api/job-cards/summary?from=${effWin.from}&to=${effWin.to}` : null,
   );
   const { data: wheSumRaw, loading: wheSumL } = useCachedJson<WheSummaryResp>(
-    `/api/working-hour-entries/summary?from=${effWin.from}&to=${effWin.to}`,
+    needs("efficiency") ? `/api/working-hour-entries/summary?from=${effWin.from}&to=${effWin.to}` : null,
   );
   // Daily Report summary — independent fetch (own loading state), so it paints
   // the instant its data lands without blocking the rest of the dashboard.
@@ -794,7 +798,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
     loading: compL,
     failure: compFailure,
     refresh: compRefresh,
-  } = useCachedJson<ComplianceResp>("/api/reports/compliance.json");
+  } = useCachedJson<ComplianceResp>(needs("dailyReport") ? "/api/reports/compliance.json" : null);
   const compCounts = compRaw?.data?.counts;
   // A dead read must not become a green "All clear". `compCounts?.total ?? 0`
   // printed a large green 0 under "All clear — nothing flagged today" whenever
@@ -1055,6 +1059,8 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
   // and fast. While it resolves, show a layout-shaped skeleton instead of a
   // bare centred string, so the page never flashes empty.
   if (overviewLoading) {
+    // Embedded: one card-sized placeholder, not a whole-page skeleton per embed.
+    if (embed) return <Skeleton className="h-40 w-full rounded-xl" />;
     return (
       <div className="space-y-5">
         <p className="sr-only">Loading Dashboard</p>

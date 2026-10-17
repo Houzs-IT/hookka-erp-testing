@@ -9,6 +9,7 @@ import { dropIdleSundays } from "@/lib/idle-sundays";
 import type { PayRuleVersion } from "@/lib/pay-rules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AttendanceLogCard } from "./AttendanceLogCard";
+import { deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import type { RevenueSplitResp } from "../dashboard-b/revenue-split";
 import {
@@ -265,7 +266,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                   <tr key={r.id} className="border-b border-[#F0ECE6]">
                     <td className="px-3 py-1.5 tabular-nums text-[#6B7280]">{i + 1}</td>
                     <td className="px-3 py-1.5 text-[#1F1D1B]">{r.name}</td>
-                    <td className="px-3 py-1.5 text-[#6B7280]">{r.dept}</td>
+                    <td className="px-3 py-1.5 text-[#6B7280]">{deptName(r.dept)}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)} / {hrs(r.work)}</td>
                     <td className="px-3 py-1.5 text-right font-semibold tabular-nums" style={{ color: tone === "top" ? GREEN : effColor(v, target) }}>{pct(v)}</td>
                   </tr>
@@ -282,10 +283,10 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Tile label={`Working now · ${latest || "—"}`} value={`${fmtN(totals.workingToday)} / ${fmtN(roster)}`} sub="clocked hours that day / headcount" />
+        <Tile label={`Worked on ${latest || "—"} (latest day)`} value={`${fmtN(totals.workingToday)} / ${fmtN(roster)}`} sub="clocked hours that day / headcount" />
         <Tile label={`Overall salary · ${toDate}`} value={money(totals.cost)} sub="logged hours at the Labor Cost rate" color={CHART_INK} />
         <Tile label="Avg labour cost / person" value={money(totals.paid ? Math.round(totals.cost / totals.paid) : 0)} sub={`${toDate} · ${fmtN(totals.paid)} people logged hours`} />
-        <Tile label="Avg production revenue / person" value={productionRevenueSen == null ? "…" : formatCurrency(totals.producers ? Math.round(productionRevenueSen / totals.producers) : 0)} sub={`${toDate} · Upholstery output ÷ ${fmtN(totals.producers)} producers`} color={GREEN} />
+        <Tile label="Avg production revenue / person" value={productionRevenueSen == null ? "…" : formatCurrency(totals.paid ? Math.round(productionRevenueSen / totals.paid) : 0)} sub={`${toDate} · Upholstery output ÷ ${fmtN(totals.paid)} people`} color={GREEN} />
         <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working`} color={effColor(eff(totals.prod, totals.work), target)} />
       </div>
 
@@ -330,7 +331,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           <Seg value={win} options={[["day", "Day"], ["7d", "7 days"], ["period", "Whole period"]] as const} onChange={setWin} />
           <select value={dept} onChange={(e) => setDept(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1 text-xs text-[#1F1D1B]" aria-label="Department">
             <option value="ALL">All departments</option>
-            {depts.map((d) => <option key={d} value={d}>{d}</option>)}
+            {depts.map((d) => <option key={d} value={d}>{deptName(d)}</option>)}
           </select>
         </div>
       </div>
@@ -348,7 +349,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                   const v = eff(r.prod, r.work);
                   return (
                     <tr key={r.dept} className="border-b border-[#F0ECE6]">
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.dept}</td>
+                      <td className="px-3 py-1.5 text-[#1F1D1B]">{deptName(r.dept)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(r.people.size)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
@@ -388,7 +389,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     <Fragment key={r.id}>
                       <tr className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => setOpen(isOpen ? null : r.id)}>
                         <td className="px-3 py-1.5 text-[#1F1D1B]">{isOpen ? "▾" : "▸"} {r.name}</td>
-                        <td className="px-3 py-1.5 text-[#6B7280]">{r.dept}</td>
+                        <td className="px-3 py-1.5 text-[#6B7280]">{deptName(r.dept)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(r.daysWorked)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
