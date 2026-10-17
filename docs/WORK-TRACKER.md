@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: items 13 (#960) and 19 (#956, #959) prod-verified; item 6 merged (#961); item 5 in progress on branch `feat/aging-as-at`.
 > **Last verified: 2026-10-17**: item 13 merged (#960); item 19 prod-checked (#956); item 6 in progress on branch `feat/aging-code-column`.
 > **Last verified: 2026-10-17**: item 19 follow-up merged (#959); item 13 in progress on branch `feat/cash-position-tf-due`.
 > **Last verified: 2026-10-17**: item 3 merged (#958); item 19 follow-up on branch `fix/delivery-return-cn-blocked`.
@@ -233,21 +234,21 @@ Now:
 2. ✅ (#955, BUG-2026-10-17-315 / -316 / -317; prod read-side check: the new routes answer, statement = debtor ledger, aging buckets = lines, print data carries the adjustment — Post itself is the owner's to press) Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines. Production had no credit or debit notes (measured 2026-10-17), so nothing existing moves.
 3. 🔵 (#958, prod check pending) Scan Bills reads every bill in a multi-bill PDF (today only the first). Other Creditor / Debtor Bills: the form fills with bill 1 of N, Save & Post moves to the next, Skip / Stop offered; the Payment Voucher scan already took every bill.
 4. ⚪ Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail).
-5. ⚪ Aging as at a chosen month-end.
-6. 🔵 (branch `feat/aging-code-column`) A Code column on Debtor / Creditor Aging. Trade rows show the debtor / creditor code, a trade-finance draw its TF account, an other party "—" (its register has no code); the Excel / PDF prints the code before the name.
+5. 🔵 (branch `feat/aging-as-at`) Aging as at a chosen month-end. A month stepper on Debtor / Creditor Aging; a past month rolls every item back from today by what was settled after its last day (receipts, supplier payments incl. credit-note knock-offs, other-party payments, trade-finance repayments and charges, notes); money paid ahead of a later document shows as an advance; the control cards read the trial balance as at that date.
+6. 🔵 (#961, prod check pending) A Code column on Debtor / Creditor Aging. Trade rows show the debtor / creditor code, a trade-finance draw its TF account, an other party "—" (its register has no code); the Excel / PDF prints the code before the name.
 7. ⚪ Debtor List / Creditor List pages (customers and other parties together).
 8. ⚪ A per-company Balance Sheet (every ledger entry has to carry its company first).
 9. ⚪ Month / Quarter / Financial Year pickers, Change Year End, closed-year locks.
 10. ⚪ A full audit log of every change.
 11. ⚪ "Add New Asset" when a payment voucher / AP Invoice uses a fixed-asset account.
 12. ⚪ WIP by production order feeding the Balance Sheet.
-13. 🔵 (#960, prod check pending) Daily Cash Position's TO REPAY lists Trade Finance due dates. Each draw still owed (as Creditor Aging lists them) under TO REPAY, due by month end by default ⇄ all; "Cash after repay & receive" takes it off — desktop, share image and phone alike.
+13. ✅ (#960, prod-verified: 3 draws = Creditor Aging's trade finance, bottom line recomputed to the sen) Daily Cash Position's TO REPAY lists Trade Finance due dates. Each draw still owed (as Creditor Aging lists them) under TO REPAY, due by month end by default ⇄ all; "Cash after repay & receive" takes it off — desktop, share image and phone alike.
 14. ⚪ An Official Receipt can be edited.
 15. ⚪ The New Account form reworked (section chips, parent first, next free code) — existing accounts untouched.
 16. ⚪ Cash Book bank matching by pick list.
 17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns). Owner 2026-10-17: interest is recorded at drawdown (「提款时就记」).
 18. ✅ Monthly P&L column order — owner 2026-10-17: keep it as it is, cumulative first and the newest month first (「照现在」). Nothing to build.
-19. 🔵 (#956 + #959, BUG-2026-10-17-318, prod check pending) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when one can be raised; when the invoice is fully paid or was never raised, the page says so instead); stored data untouched. The reported return's invoice is fully paid, so a credit note cannot go against it under the current rule — the owner decides what happens to it.
+19. ✅ (#956 + #959, BUG-2026-10-17-318, prod-verified) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when one can be raised; when the invoice is fully paid or was never raised, the page says so instead); stored data untouched. The reported return's invoice is fully paid, so a credit note cannot go against it under the current rule — the owner decides what happens to it.
 
 Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
 

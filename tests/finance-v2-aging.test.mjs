@@ -61,7 +61,9 @@ test("the download is the same aging builder: Excel and a printable PDF", () => 
   for (const body of [ar, ap]) {
     assert.match(body, /\{ \.\.\.AGING_PDF, print: true \}/);
     assert.match(body, /\{ moneyFormat: true \}/, "Excel keeps real numbers formatted as money");
-    assert.match(body, /const asAt = todayYmdMY\(\);/, "dated in Malaysia time");
+    // Dated by the as-at month (2026-10-17): today in Malaysia time for the
+    // running month (useAgingAsAt → asAtDate(ym, todayYmdMY())).
+    assert.match(body, /const asAt = at\.asOf;/, "dated as at the chosen month");
   }
 });
 

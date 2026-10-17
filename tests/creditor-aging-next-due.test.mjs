@@ -63,8 +63,9 @@ test("Creditor Aging: three sections in the design's order, Trade Finance by due
   const ui = read("src/pages/accounting/index.tsx");
   const a = ui.indexOf("function APTab(");
   const ap = ui.slice(a, ui.indexOf("\n}\n", a));
-  assert.match(ap, /fetch\("\/api\/accounting\/other-party-aging\?type=CREDITOR"\)/);
-  assert.match(ap, /fetch\("\/api\/accounting\/trade-finance", \{ cache: "no-store" \}\)/);
+  // As at a past month-end (2026-10-17) both reads carry the date.
+  assert.match(ap, /fetch\(`\/api\/accounting\/other-party-aging\?type=CREDITOR\$\{q \? `&\$\{q\}` : ""\}`\)/);
+  assert.match(ap, /fetch\(`\/api\/accounting\/trade-finance\$\{q \? `\?\$\{q\}` : ""\}`, \{ cache: "no-store" \}\)/);
   assert.match(ap, /\{ key: "tf", label: "Trade finance", rows: tfList \},\n\s*\{ key: "trade", label: "Trade suppliers", rows: supplierList \},\n\s*\{ key: "other", label: "Other creditors", rows: otherList \},/);
   assert.match(ap, /src\.draws\.filter\(\(d\) => d\.outstandingSen > 0\)/, "one row per OPEN draw");
   assert.match(ap, /\.sort\(\(a, b\) => \(a\.nextDue \?\? ""\)\.localeCompare\(b\.nextDue \?\? ""\)\);/, "by due date");
