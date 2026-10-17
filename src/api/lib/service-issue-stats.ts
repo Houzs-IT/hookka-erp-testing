@@ -351,3 +351,54 @@ export function dayBuckets(from: string, to: string): string[] {
 export function monthBuckets(year: number, throughMonth: number): string[] {
   return Array.from({ length: Math.max(1, Math.min(12, throughMonth)) }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
 }
+
+/**
+ * Product categories (BEDFRAME / SOFA / ACCESSORY) of a case's affected
+ * products, resolved through the products table by id or code. Defect rate by
+ * category (owner 2026-10-17) needs them; [] = no product recorded.
+ */
+export function productCategoriesOf(
+  raw: unknown,
+  byId: ReadonlyMap<string, string>,
+  byCode: ReadonlyMap<string, string>,
+): string[] {
+  const arr = parseJson(raw);
+  if (!Array.isArray(arr)) return [];
+  const out = new Set<string>();
+  for (const e of arr) {
+    if (typeof e === "string") { const c = byCode.get(e.trim().toUpperCase()); if (c) out.add(c); continue; }
+    if (!e || typeof e !== "object") continue;
+    const { code, productId } = e as Record<string, unknown>;
+    const c = (typeof productId === "string" && byId.get(productId)) || (typeof code === "string" && byCode.get(code.trim().toUpperCase())) || "";
+    if (c) out.add(c);
+  }
+  return [...out];
+}
+
+/**
+ * Defect rate per category for a set of months: cases logged ÷ units shipped.
+ * A case counts once under each category of its affected products; a case with
+ * no product recorded counts under "UNSPECIFIED" (shipped 0 there, so no rate).
+ */
+export function defectRates(
+  cases: readonly { createdDate: string; productCategories?: string[] | null }[],
+  shipped: readonly { ym: string; category: string; units: number }[],
+  months: readonly string[],
+): { category: string; cases: number; units: number; rate: number | null }[] {
+  const inM = (d: string) => months.includes(d.slice(0, 7));
+  const cats = ["BEDFRAME", "SOFA", "ACCESSORY"];
+  const caseN = new Map<string, number>();
+  for (const c of cases) {
+    if (!inM(c.createdDate)) continue;
+    const cs = c.productCategories?.length ? c.productCategories : ["UNSPECIFIED"];
+    for (const k of cs) caseN.set(k, (caseN.get(k) ?? 0) + 1);
+  }
+  const unitN = new Map<string, number>();
+  for (const r of shipped) if (months.includes(r.ym)) unitN.set(r.category, (unitN.get(r.category) ?? 0) + r.units);
+  const rows = [...cats, "UNSPECIFIED"].map((k) => {
+    const n = caseN.get(k) ?? 0;
+    const u = unitN.get(k) ?? 0;
+    return { category: k, cases: n, units: u, rate: u > 0 ? (n / u) * 100 : null };
+  });
+  return rows.filter((r) => r.cases > 0 || r.units > 0);
+}

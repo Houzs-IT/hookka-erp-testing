@@ -327,7 +327,7 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v3`, 60, async () => {
+  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v4`, 60, async () => {
   // ---- Sales ------------------------------------------------------------
   // Whole book, not a window: the prototype owns the month picker, so it
   // needs every month that exists. ~1,500 rows of seven columns is small
