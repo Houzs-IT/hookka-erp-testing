@@ -15,9 +15,17 @@ import { usePermissions } from "@/lib/use-permission";
 import { allowedFinanceMenu, financeRowFor, type FinanceScreen } from "../../finance-menu";
 import { FinanceNoAccess, FinanceNote, FinanceSectionLabel } from "./finance-shell";
 import { AgingScreen } from "./AgingScreen";
+import { OverviewScreen } from "./OverviewScreen";
+import { PlScreen } from "./PlScreen";
+import { CashFlowScreen } from "./CashFlowScreen";
+import { BalanceSheetScreen } from "./BalanceSheetScreen";
 
 // The screens the phone has so far; the menu shows these only.
 const SCREENS: Partial<Record<FinanceScreen, () => ReactNode>> = {
+  overview: () => <OverviewScreen />,
+  pl: () => <PlScreen />,
+  cashflow: () => <CashFlowScreen />,
+  bs: () => <BalanceSheetScreen />,
   debtors: () => <AgingScreen side="debtor" />,
   creditors: () => <AgingScreen side="creditor" />,
 };

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: BUG-2026-10-17-307 (#941) prod-verified; plan 8 part B (the four reports on the phone) added to its entry.
 > **Last verified: 2026-10-17**: plan 7 (#940) prod-verified and closed; branch `feat/finance-v2-mobile` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 (the phone's Receivables at RM 0.00) added as a new entry, branch `fix/m-receivables-aging-total`.
 > **Last verified: 2026-10-17**: plan 6 parts A (#938) and B (#939) prod-verified, plan 6 closed; plan 7 part B (Forecast P&L) added to its entry.
@@ -214,12 +215,12 @@ design/mobile-home-dashboard
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-mobile.md`. Not here: aging as at a month-end (deferred), Forecast P&L on the phone (desktop only), voucher / receipt entry.
 
 1. 🔵 Part A — the Finance menu (three sections, rows gated like their desktop pages, no permission = no row, a refused deep link says No access), the Finance row in More, Receivables gated like Debtor Aging; Debtor / Creditor Aging (Outstanding card and bucket chips summed from the rows, stacked bar, search, parties opening to their documents).
-2. ⚪ Part B — Overview, P&L, Cash Flow, Balance Sheet.
+2. 🔵 Part B — Overview (3 / 6 / 12 months, five cards with the desktop's own shares), P&L (month stepper, Overall / Sofa / Bedframe, Gross / Net Profit from the statement's result rows, the folded statement), Cash Flow (the month's own column or "No cash flow"), Balance Sheet (the desktop arrangement and two-sides check).
 3. ⚪ Part C — Finance Dashboard, Daily Cash Position (share as image).
 
-## 2026-10-17 — 🔵 BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
+## 2026-10-17 — ✅ BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
 
-1. 🔵 `receivablesConfig` read a `total` the aging API never sends; it now sums the five aging buckets (the desktop Debtor Aging's Total). Regression `tests/m-receivables-aging-total.test.mjs`.
+1. ✅ (#941 111946af) `receivablesConfig` read a `total` the aging API never sends; it now sums the five aging buckets (the desktop Debtor Aging's Total). Regression `tests/m-receivables-aging-total.test.mjs`. Prod check (read-only): /m/receivables shows each of the 7 debtors at the sum of its five buckets, none at RM 0.00, and they add up to the desktop Debtor Aging's total.
 
 ## 2026-10-17 — ✅ Finance & Forecasting v2, plan 7: Forecasting — Financial Dashboard + Forecast P&L (owner「继续做」)(branch `feat/finance-v2-forecasting` → `main`; shipped in parts)
 

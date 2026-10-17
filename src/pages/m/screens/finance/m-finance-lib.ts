@@ -42,3 +42,40 @@ export function fmtMoney(sen: number): string {
   const s = (Math.abs(sen) / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return sen < 0 ? `(${s})` : s;
 }
+
+/** The P&L statement's two headline figures and their % of sales, read off
+ *  the statement's own result rows (nothing recomputed). */
+export function plHeadline<R extends { kind: string; label: string; periodSen?: number }>(
+  rows: R[],
+  netSalesSen: number,
+): { gross: { sen: number; pct: number | null } | null; net: { sen: number; pct: number | null } | null } {
+  const pick = (re: RegExp) => {
+    const r = rows.find((x) => x.kind === "grandtotal" && re.test(x.label));
+    if (!r || r.periodSen === undefined) return null;
+    return { sen: r.periodSen, pct: netSalesSen > 0 ? (r.periodSen / netSalesSen) * 100 : null };
+  };
+  return { gross: pick(/GROSS PROFIT/i), net: pick(/NET PROFIT/i) };
+}
+
+/** The Balance Sheet's two sides in the desktop arrangement (owner
+ *  2026-10-17): Fixed Assets + Current Assets − Current Liabilities against
+ *  Equity + Non-Current Liabilities. */
+export function bsSides(entries: { category: string; balance: number }[]) {
+  const sum = (c: string) => entries.filter((e) => e.category === c).reduce((s, e) => s + e.balance, 0);
+  const fixed = sum("FIXED_ASSET");
+  const current = sum("CURRENT_ASSET");
+  const currentLiab = sum("CURRENT_LIABILITY");
+  const longLiab = sum("LONG_TERM_LIABILITY");
+  const equity = sum("EQUITY");
+  const netCurrent = current - currentLiab;
+  const left = fixed + netCurrent;
+  const right = equity + longLiab;
+  return { fixed, current, currentLiab, longLiab, equity, netCurrent, left, right, diff: left - right };
+}
+
+/** Which Cash Flow column is the month asked for (the engine keys month
+ *  columns "YYYY-MM" and also sends an Accumulated column); -1 when the month
+ *  is not there — the screen then says so rather than show another month. */
+export function cfColumnIndex(columns: { key: string; accum?: boolean }[], period: string): number {
+  return columns.findIndex((c) => c.key === period && !c.accum);
+}

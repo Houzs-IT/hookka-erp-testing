@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-307 flipped to 🟢 after the #941 prod check (branch `feat/finance-v2-mobile-b`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-307 (branch `fix/m-receivables-aging-total`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 flipped to 🟢 after the #937 prod check (branch `feat/finance-v2-einvoice`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-306 (branch `fix/ap-invoices-cancelled-outstanding`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -130,9 +131,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-307 — The phone's Receivables list showed every debtor owing RM 0.00 `mobile` `accounting` 🟡
+## BUG-2026-10-17-307 — The phone's Receivables list showed every debtor owing RM 0.00 `mobile` `accounting` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Shipped and verified** (#941, 111946af). Prod check 2026-10-17 (read-only): /m/receivables shows each of the 7 debtors at the sum of its five aging buckets, none at RM 0.00, and they add up to the desktop Debtor Aging's total.
 
 **Symptom.** Found 2026-10-17 while surveying the phone app for the finance v2 mobile plan. On prod, /m/receivables listed all 7 debtors with "Outstanding RM 0.00", while the desktop Debtor Aging showed their real balances. Sorting by Outstanding sorted nothing.
 
