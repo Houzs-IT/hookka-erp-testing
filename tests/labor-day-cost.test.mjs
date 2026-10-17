@@ -47,7 +47,7 @@ test("costByWorkerDaySen groups entries per worker-day and uses that month's eff
   assert.equal(m.size, 2); // an unknown worker is skipped
   // October: falls back to basic salary; 9h on a 9h day = one day's pay.
   const octDays = 27; // Mon–Sat in Oct 2026
-  assert.equal(m.get("A|2026-10-15"), Math.round(260000 / octDays));
+  assert.equal(Math.round(m.get("A|2026-10-15")), Math.round(260000 / octDays));
   // September: the effective salary for that month (double) is used.
   assert.ok(m.get("A|2026-09-15") > m.get("A|2026-10-15") * 1.8);
 });

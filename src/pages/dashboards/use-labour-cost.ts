@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { cachedFetchJson, useCachedJson } from "@/lib/cached-fetch";
-import { costByWorkerDaySen, type CostWorker } from "@/lib/labor-day-cost";
+import { costByWorkerDaySen, costByWorkerDayDeptSen, type CostWorker } from "@/lib/labor-day-cost";
 import type { PayRuleVersion } from "@/lib/pay-rules";
 
 // Logged labour cost by the Labor Cost rule over a date range, one entry per
 // worker-day (`workerId|date` → sen). Used by the merged dashboard's Employees
 // tab and the Output & Cost ratios so both print the same labour figure.
 // Fetches nothing unless `enabled` (callers pass the payroll permission).
-type Entry = { workerId: string; date: string; hours: number | string };
+type Entry = { workerId: string; date: string; hours: number | string; departmentCode?: string | null };
 
 function monthsBetween(from: string, to: string): string[] {
   const out: string[] = [];
@@ -23,7 +23,7 @@ function monthsBetween(from: string, to: string): string[] {
   return out;
 }
 
-export function useLabourCost(from: string, to: string, enabled: boolean): { byWorkerDay: Map<string, number>; ready: boolean } {
+export function useLabourCost(from: string, to: string, enabled: boolean): { byWorkerDay: Map<string, number>; byWorkerDayDept: Map<string, number>; entries: Entry[]; ready: boolean } {
   const on = enabled && !!from && !!to;
   const { data: workersResp } = useCachedJson<{ data?: (CostWorker & { id: string })[] }>(on ? "/api/workers" : null);
   const { data: entriesResp } = useCachedJson<{ data?: Entry[] }>(on ? `/api/working-hour-entries?from=${from}&to=${to}` : null);
@@ -58,5 +58,18 @@ export function useLabourCost(from: string, to: string, enabled: boolean): { byW
       payRuleVersions: rulesResp?.data?.versions ?? [],
     });
   }, [on, eff, monthsKey, workersResp, entriesResp, holResp, rulesResp]);
-  return { byWorkerDay, ready: byWorkerDay.size > 0 };
+  const byWorkerDayDept = useMemo(() => {
+    const workers = workersResp?.data ?? [];
+    const entries = entriesResp?.data ?? [];
+    if (!on || !eff || eff.key !== monthsKey || workers.length === 0 || entries.length === 0) return new Map<string, number>();
+    return costByWorkerDayDeptSen({
+      workers,
+      entries,
+      effSalaryByMonth: eff.byMonth,
+      holidays: Array.isArray(holResp?.data) ? holResp!.data! : [],
+      payRuleVersions: rulesResp?.data?.versions ?? [],
+    });
+  }, [on, eff, monthsKey, workersResp, entriesResp, holResp, rulesResp]);
+  const entries = useMemo(() => entriesResp?.data ?? [], [entriesResp]);
+  return { byWorkerDay, byWorkerDayDept, entries, ready: byWorkerDay.size > 0 };
 }
