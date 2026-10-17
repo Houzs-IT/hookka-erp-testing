@@ -18,10 +18,8 @@ import {
   receiptsAheadOf,
   supplierPaymentsAfter,
   supplierPaymentsAheadOf,
-  tfAfterOf,
-  tradeFinanceAfter,
 } from "../src/api/lib/aging-as-at.ts";
-import { drawAt } from "../src/lib/trade-finance.ts";
+import { loadTfDrawsAt } from "../src/api/lib/trade-finance.ts";
 import { monthsOverdue } from "../src/lib/terms.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
@@ -87,7 +85,8 @@ test("supplier payments after the date: the booked amount per bill (a credit-not
   ]]]);
   const m = await supplierPaymentsAfter(db, "org", "2026-09-30");
   assert.deepEqual([...m], [["p-1", 22092], ["p-2", 9000], ["p-3", 400]]);
-  assert.match(db.calls[0].sql, /sp\.purchase_invoice_id IS NOT NULL AND sp\.date > \?/);
+  assert.match(db.calls[0].sql, /LEFT JOIN purchase_credit_notes pcn ON sp\.method = 'CREDIT_NOTE' AND pcn\.note_number = sp\.payment_no/);
+  assert.match(db.calls[0].sql, /sp\.purchase_invoice_id IS NOT NULL AND COALESCE\(pcn\.date, sp\.date\) > \?/, "a credit note's knock-off is dated by the note");
   assert.match(db.calls[0].sql, /dl\.source_type = 'supplier_payment' AND dl\.source_id = sp\.payment_no AND dl\.state <> 'ACTIVE'/);
 });
 
@@ -98,33 +97,42 @@ test("other-party payments after the date, per bill", async () => {
   assert.match(db.calls[0].sql, /dl\.sourceType = 'other_party_payment' AND dl\.sourceId = pp\.paymentNo/);
 });
 
-test("trade finance after the date: repayments by their payment's date, charges by the date in their source id", async () => {
+test("trade finance as at the date: the draws rebuilt from the ledger lines dated by then", async () => {
+  // D-1 drawn 10/09 (31,000), interest 4.50 charged 02/09 on D-1 and 5.00 on 02/10,
+  // repaid 10,000 on 05/10 (after) and 3,000 on 20/09 (before). An interest
+  // line of 3.20 sat on P-6 at the date and was moved onto D-2 on 05/10.
   const db = fakeDb([
-    [/FROM trade_finance_repay_allocs/, () => [
-      { repay_payment_no: "R-1", draw_source_id: "D-1", amount_sen: 10000 }, // repaid after
-      { repay_payment_no: "R-2", draw_source_id: "D-1", amount_sen: 3000 },  // repaid before
-      { repay_payment_no: "R-9", draw_source_id: "D-2", amount_sen: 999 },   // no known date → before
-    ]],
-    [/FROM supplier_payments WHERE payment_no IN/, () => [{ payment_no: "R-1", pay_date: "2026-10-05" }, { payment_no: "R-2", pay_date: "2026-09-20" }]],
     [/FROM ledger_journal_entries/, () => [
-      { sourceType: "tf_interest", sourceId: "tfint-2026-10-02-D-1", debitSen: 0, creditSen: 500 },
-      { sourceType: "tf_interest", sourceId: "tfint-2026-09-02-D-1", debitSen: 0, creditSen: 450 },
-      { sourceType: "tf_bank_charge", sourceId: "tfbc-2026-10-02-D-2", debitSen: 0, creditSen: 50 },
+      { sourceType: "supplier_payment", sourceId: "D-1", debitSen: 0, creditSen: 3100000, postedAt: "2026-09-10" },
+      { sourceType: "tf_interest", sourceId: "tfint-2026-09-02-D-1", debitSen: 0, creditSen: 450, postedAt: "2026-09-02" },
+      { sourceType: "tf_interest", sourceId: "tfint-2026-10-02-D-1", debitSen: 0, creditSen: 500, postedAt: "2026-10-02" },
+      { sourceType: "supplier_payment", sourceId: "D-2", debitSen: 0, creditSen: 3000000, postedAt: "2026-09-14" },
+      { sourceType: "tf_interest", sourceId: "tfint-2026-09-15-P-6", debitSen: 0, creditSen: 320, postedAt: "2026-09-15" },
+      { sourceType: "tf_interest", sourceId: "tfint-2026-10-05-P-6", debitSen: 320, creditSen: 0, postedAt: "2026-10-05" },
+      { sourceType: "tf_interest", sourceId: "tfint-2026-10-05-D-2", debitSen: 0, creditSen: 320, postedAt: "2026-10-05" },
+      { sourceType: "supplier_payment", sourceId: "D-3", debitSen: 0, creditSen: 999, postedAt: "2026-10-03" }, // drawn after
+      { sourceType: "supplier_payment", sourceId: "R-1", debitSen: 1000000, creditSen: 0, postedAt: "2026-10-05" },
+      { sourceType: "supplier_payment", sourceId: "R-2", debitSen: 300000, creditSen: 0, postedAt: "2026-09-20" },
     ]],
+    [/FROM trade_finance_repay_allocs/, () => [
+      { repay_payment_no: "R-1", draw_source_id: "D-1", amount_sen: 1000000 },
+      { repay_payment_no: "R-2", draw_source_id: "D-1", amount_sen: 300000 },
+    ]],
+    [/FROM supplier_payments WHERE payment_no IN/, () => [
+      { payment_no: "D-1", pay_date: "2026-09-10" }, { payment_no: "D-2", pay_date: "2026-09-14" }, { payment_no: "D-3", pay_date: "2026-10-03" },
+      { payment_no: "R-1", pay_date: "2026-10-05" }, { payment_no: "R-2", pay_date: "2026-09-20" },
+    ]],
+    [/FROM trade_finance_draws/, () => [{ draw_source_id: "D-1", draw_date: "2026-09-10", due_date: "2026-12-09" }]],
+    [/SELECT DISTINCT paymentNo FROM supplier_payments WHERE method = 'TF_REPAYMENT'/, () => [{ paymentNo: "R-1" }, { paymentNo: "R-2" }]],
   ]);
-  const back = await tradeFinanceAfter(db, "TF-ACCT", "2026-09-30");
-  assert.deepEqual(tfAfterOf(back, "D-1"), { repaidSen: 10000, interestSen: 500, bankChargeSen: 0 });
-  assert.deepEqual(tfAfterOf(back, "D-2"), { repaidSen: 0, interestSen: 0, bankChargeSen: 50 });
-});
-
-test("a draw as at the date: drawn after = left out; repayments and charges after = taken back out", () => {
-  const d = { drawSourceId: "D-1", drawDate: "2026-09-10", dueDate: "2026-12-09", amountSen: 31000, interestSen: 1000, bankChargeSen: 0, repaidSen: 20000, outstandingSen: 11000 };
-  assert.equal(drawAt({ ...d, drawDate: "2026-10-01" }, "2026-09-30", { repaidSen: 0, interestSen: 0, bankChargeSen: 0 }), null);
-  const at = drawAt(d, "2026-09-30", { repaidSen: 20000, interestSen: 500, bankChargeSen: 0 });
-  assert.deepEqual(
-    { amountSen: at.amountSen, interestSen: at.interestSen, repaidSen: at.repaidSen, outstandingSen: at.outstandingSen },
-    { amountSen: 30500, interestSen: 500, repaidSen: 0, outstandingSen: 30500 },
-  );
+  db.prepare = ((orig) => (sql) => { const st = orig(sql); st.run = async () => ({}); return st; })(db.prepare);
+  const at = await loadTfDrawsAt(db, { accountCode: "TF", lenderName: "L", tenorDays: 90 }, "2026-09-30");
+  const by = new Map(at.draws.map((d) => [d.drawSourceId, d]));
+  assert.equal(by.get("D-1").outstandingSen, 3100000 + 450 - 300000, "the October interest and repayment are not in yet");
+  assert.equal(by.get("D-2").outstandingSen, 3000000, "the moved interest is not on D-2 yet");
+  assert.equal(by.get("P-6").outstandingSen, 320, "…it sat on P-6 at the date, as the ledger has it");
+  assert.equal(by.has("D-3"), false, "drawn after the date");
+  assert.equal(at.accountNetSen, 3100000 + 450 + 3000000 + 320 - 300000, "the account as at the date");
 });
 
 test("/aging: a past asOf builds fresh; PAID items count, later items don't; ages measured at the date", () => {
@@ -140,11 +148,12 @@ test("/aging: a past asOf builds fresh; PAID items count, later items don't; age
   assert.match(block, /monthsOverdue\(i\.invoiceDate \?\? i\.dueDate, nowRef\)/);
   assert.match(block, /monthsOverdue\(p\.invoiceDate \?\? p\.dueDate, nowRef\)/);
   assert.match(block, /if \(asOf && String\(n\.date \?\? ""\)\.slice\(0, 10\) > asOf\) continue;/);
-  assert.match(block, /drawAt\(d, asOf, tfAfterOf\(tfBack, d\.drawSourceId\)\)/);
+  assert.match(block, /const derived = asOf \? await loadTfDrawsAt\(c\.var\.DB, s, asOf\) : await loadTfDraws\(c\.var\.DB, s\);/);
   // The other two reads the aging page makes take the date too.
-  assert.match(api, /owedAt\(r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\)/);
+  assert.match(api, /owedAt\(pre \? 0 : r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\)/, "a pre-opening bill counts for what was paid after the date");
+  assert.match(api, /\.filter\(\(r\) => asOf \|\| !rowBeforeOpening\(r\.billDate, obDateOpa, r\.isOpening \?\? r\.is_opening\)\)/);
   assert.match(api, /b\.billDate <= \?/);
-  assert.match(api, /const derived = asOf && tfBack\n\s*\? \{ \.\.\.derivedNow, draws: derivedNow\.draws\.map/);
+  assert.equal((api.match(/const derived = asOf \? await loadTfDrawsAt\(c\.var\.DB, s, asOf\) : await loadTfDraws\(c\.var\.DB, s\);/g) ?? []).length, 2, "/aging and /trade-finance");
 });
 
 test("the pages: a month stepper; a past month reads ?asOf= and the trial balance as at then", () => {

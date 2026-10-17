@@ -28,7 +28,7 @@ import { getFyeMonth, fyWindowFor } from "../lib/fiscal";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
-import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf, tfAfterOf, tradeFinanceAfter } from "../lib/aging-as-at";
+import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
@@ -56,9 +56,9 @@ import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDri
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
-import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
+import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
-import { drawAt, tfChargeKind, tfInterestDrawId, tfTotals, type TfDraw } from "../../lib/trade-finance";
+import { tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
@@ -840,12 +840,10 @@ app.get("/aging", async (c) => {
         for (const s of tfSrcs) {
           const acctRow = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
             .bind(s.accountCode).first<{ name: string }>();
-          const derived = await loadTfDraws(c.var.DB, s);
-          // As at a past date: each draw as it stood then (src/lib/trade-finance.ts drawAt).
-          const tfBack = asOf ? await tradeFinanceAfter(c.var.DB, s.accountCode, asOf) : null;
-          const drawsAt = asOf && tfBack
-            ? derived.draws.map((d) => drawAt(d, asOf, tfAfterOf(tfBack, d.drawSourceId))).filter((d): d is TfDraw => d !== null && d.outstandingSen > 0)
-            : derived.draws;
+          // As at a past date: the draws rebuilt from the ledger lines dated by
+          // then (loadTfDrawsAt).
+          const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
+          const drawsAt = derived.draws;
           const tfDraws = [];
           for (const d of drawsAt) {
             let paidSupplier = "";
@@ -5303,11 +5301,18 @@ app.get("/other-party-aging", async (c) => {
     ).results ?? [];
   const obDateOpa = await getOpeningDate(c.var.DB);
   const bills = rows
-    .filter((r) => !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening)) // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01
+    // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01.
+    // As at a past date a pre-opening bill still counts for what was paid on
+    // it AFTER the date: the opening balance held that much then (what it owes
+    // now stays with the opening balance, exactly as today's view leaves it).
+    .filter((r) => asOf || !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening))
     // `mo` = the calendar-month bucket /aging gives an invoice (same helpers),
     // so Debtor / Creditor Aging can list an other party's bills in the trade
     // rows' columns (owner 2026-10-17, Finance v2).
-    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) }))
+    .map((r) => {
+      const pre = rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening);
+      return { partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(pre ? 0 : r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) };
+    })
     .filter((b) => b.outstandingSen > 0);
   const today = asOf ?? new Date().toISOString().slice(0, 10);
   return c.json({ success: true, data: { aging: bucketAging(bills, today), bills, ...(asOf ? { asOf } : {}) } });
@@ -13996,11 +14001,7 @@ app.get("/trade-finance", async (c) => {
     for (const s of sources) {
       const acct = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
         .bind(s.accountCode).first<{ name: string }>();
-      const derivedNow = await loadTfDraws(c.var.DB, s);
-      const tfBack = asOf ? await tradeFinanceAfter(c.var.DB, s.accountCode, asOf) : null;
-      const derived = asOf && tfBack
-        ? { ...derivedNow, draws: derivedNow.draws.map((d) => drawAt(d, asOf, tfAfterOf(tfBack, d.drawSourceId))).filter((d): d is TfDraw => d !== null) }
-        : derivedNow;
+      const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
       const draws = [];
       for (const d of derived.draws) {
         // Which supplier(s) the lender paid for us on this draw — the payment's
