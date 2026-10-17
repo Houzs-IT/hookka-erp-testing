@@ -1909,6 +1909,7 @@ export async function buildDoDeliveredSoAndInvoice(
       db,
       orgId,
       autoLegs,
+      { docDate: invoiceDate },
     );
     statements.push(...ledgerStmts);
     // SOs were advanced to DELIVERED above; now that they're billed, bump to

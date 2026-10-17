@@ -1536,6 +1536,11 @@ app.onError((err, c) => {
   if (err && (err as { name?: string }).name === "OrgIdRequiredError") {
     return c.json({ success: false, error: "Unauthorized" }, 401);
   }
+  // A change to a document dated in a closed financial year (finance item 9,
+  // ClosedYearError in src/api/lib/fiscal.ts): a refusal with its reason.
+  if (err && (err as { name?: string }).name === "ClosedYearError") {
+    return c.json({ success: false, error: (err as Error).message }, 400);
+  }
   const url = (() => {
     try {
       return new URL(c.req.url).pathname + new URL(c.req.url).search;

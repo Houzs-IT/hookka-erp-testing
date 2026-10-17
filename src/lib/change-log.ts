@@ -401,6 +401,7 @@ const SETTING_LABEL: Record<string, string> = {
   bs_section_map: "Balance sheet sections",
   bank_reco_strict_lock: "Bank month lock",
   fye_changes: "Financial year end",
+  fy_locked_ends: "Financial year",
 };
 
 // What an audit action is called in the list (the standard ones read as
@@ -441,6 +442,8 @@ export const ACTION_LABEL: Record<string, string> = {
   "draw-interest": "Interest recorded",
   "draw-bank-charge": "Bank charge recorded",
   "draw-due-edit": "Due date changed",
+  "close-year": "Year closed",
+  "reopen-year": "Year reopened",
 };
 
 export function actionLabel(e: Pick<ChangeEvent, "kind" | "source" | "action">): string {

@@ -18,12 +18,15 @@
 // is exactly what fyWindowFor gave.
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
-import { fyFor, isYm, type FyeChange, type FySchedule } from "../../lib/fiscal-year";
+import { closedYearMessage, fyFor, isYm, lockedYearFor, type FyeChange, type FySchedule } from "../../lib/fiscal-year";
 
 type Db = Env["Variables"]["DB"];
 
 export const FYE_KV_KEY = "fye_month";
 export const FYE_CHANGES_KV_KEY = "fye_changes";
+/** The last months (YYYY-MM) of the financial years that are closed and
+ *  locked (Close Year adds one, Reopen takes it out) — item 9 part B. */
+export const FY_LOCKED_KV_KEY = "fy_locked_ends";
 
 /** The year end before any Change Year End (kv `fye_month`; default 12). */
 export async function getBaseFyeMonth(db: Db): Promise<number> {
@@ -109,4 +112,46 @@ export function fyWindowAt(
   const m = Number(fy.endYm.slice(5, 7));
   const endDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return { startIso: `${fy.startYm}-01`, endIso: `${fy.endYm}-${String(endDay).padStart(2, "0")}`, label: fy.name };
+}
+
+// ---- closed-year lock (finance backlog item 9 part B) ----------------------------
+
+/** A change refused because its document is dated in a closed year. */
+export class ClosedYearError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClosedYearError";
+  }
+}
+
+/** The locked years' last months (unreadable → none). */
+export async function getFyLockedEnds(db: Db): Promise<Set<string>> {
+  try {
+    const row = await db.prepare("SELECT value FROM kv_config WHERE key = ?").bind(FY_LOCKED_KV_KEY).first<{ value: string | null }>();
+    const v = JSON.parse(row?.value ?? "[]") as unknown;
+    return new Set(Array.isArray(v) ? v.filter(isYm) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Why a change dated `dates` is refused (null = every date is in an open
+ *  year). A date may be a day or a month; null / "" dates are skipped. */
+export async function closedYearError(db: Db, dates: string | null | readonly (string | null)[]): Promise<string | null> {
+  const list = (Array.isArray(dates) ? dates : [dates]).filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}/.test(d));
+  if (!list.length) return null;
+  const locked = await getFyLockedEnds(db);
+  if (!locked.size) return null;
+  const sched = await getFySchedule(db);
+  for (const d of list) {
+    const fy = lockedYearFor(d, sched, locked);
+    if (fy) return closedYearMessage(fy);
+  }
+  return null;
+}
+
+/** closedYearError, thrown — for code paths that answer by throwing. */
+export async function assertYearOpen(db: Db, dates: string | null | readonly (string | null)[]): Promise<void> {
+  const err = await closedYearError(db, dates);
+  if (err) throw new ClosedYearError(err);
 }

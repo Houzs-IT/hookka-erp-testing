@@ -16925,7 +16925,7 @@ function YearCloseCard() {
     if (!preview) return;
     if (!(await confirm({
       title: "Close financial year?",
-      message: `Close FY ended ${preview.fyEnd}?\n\nNet ${preview.netSen >= 0 ? "profit" : "loss"} of ${formatCurrency(Math.abs(preview.netSen))} across ${preview.accountCount} P&L accounts will be posted to 150-0000 RETAINED EARNING. This writes immutable ledger entries.`,
+      message: `Close FY ended ${preview.fyEnd}?\n\nNet ${preview.netSen >= 0 ? "profit" : "loss"} of ${formatCurrency(Math.abs(preview.netSen))} across ${preview.accountCount} P&L accounts will be posted to 150-0000 RETAINED EARNING. This writes immutable ledger entries, and the year is locked: nothing dated in it can be posted or changed until a Super Admin reopens it (Settings › Financial Years).`,
       danger: false,
     }))) return;
     setPosting(true);

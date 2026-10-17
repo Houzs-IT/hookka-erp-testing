@@ -249,7 +249,7 @@ export async function buildNoteUnpostStatements(
   db: Db,
   orgId: string,
   kind: NoteKind,
-  note: { id: string; noteNumber: string },
+  note: { id: string; noteNumber: string; date: string | null },
   actorUserId: string | null,
 ) {
   const live = ((await db
@@ -271,7 +271,7 @@ export async function buildNoteUnpostStatements(
     actorUserId,
     orgId,
   }));
-  const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+  const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: note.date ?? null });
   return [
     ...statements,
     db.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE orgId = ? AND sourceId = ? AND sourceType LIKE ?`)

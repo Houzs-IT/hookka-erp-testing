@@ -38,6 +38,7 @@ import {
   ledgerHasSource,
   type LedgerEntryInput,
 } from "../lib/journal-hash";
+import { ClosedYearError } from "../lib/fiscal";
 import { getOpeningDate } from "./accounting";
 import { getOrgId } from "../lib/tenant";
 import { loadSoLinePriceIndex } from "../lib/do-value";
@@ -633,7 +634,10 @@ async function buildCancelReversalStatements(
     });
   }
   if (legs.length === 0) return { statements: [], reversedNetSen: 0 };
-  const { statements } = await buildJournalEntryStatements(db, legOrg ?? fallbackOrgId, legs);
+  // The invoice's own date — a closed financial year takes no reversal (item 9).
+  const invRow = await db.prepare("SELECT invoice_date FROM invoices WHERE id = ?").bind(invoiceId).first<Record<string, unknown>>().catch(() => null);
+  const invDate = String(invRow?.invoiceDate ?? invRow?.invoice_date ?? "").slice(0, 10) || null;
+  const { statements } = await buildJournalEntryStatements(db, legOrg ?? fallbackOrgId, legs, { docDate: invDate });
   return { statements, reversedNetSen };
 }
 
@@ -2985,7 +2989,7 @@ app.put("/:id", async (c) => {
                 await buildJournalEntryStatements(c.var.DB, orgId, [
                   ...revLegs,
                   ...postLegs,
-                ]);
+                ], { docDate: existing.invoiceDate });
               statements.push(...jeStmts);
               // Collapse the restate in the GL: hide the original invoice legs,
               // the reversal just posted, and any prior restate legs — leave ONLY
@@ -3013,6 +3017,7 @@ app.put("/:id", async (c) => {
               if (auditStmt) statements.push(auditStmt);
             }
           } catch (e) {
+            if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
             // Phase 1 (2026-06) — abort instead of silently saving a price
             // edit whose GL restatement failed to build (ledger would keep
             // the OLD amounts while the invoice shows the new ones).
@@ -3164,10 +3169,11 @@ app.put("/:id", async (c) => {
             existing.taxSen ?? 0,
           );
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: existing.invoiceDate });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         // Phase 1 (2026-06) — abort: an invoice must never flip to SENT
         // without its DR debtor / CR sales / CR tax legs in the ledger.
         console.error(

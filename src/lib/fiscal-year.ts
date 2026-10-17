@@ -148,3 +148,20 @@ export function yearEndChangeError(
 export function withYearEndChange(s: FySchedule, change: FyeChange): FySchedule {
   return { fyeMonth: s.fyeMonth, changes: [...validChanges(s).filter((c) => c.from < change.from), change] };
 }
+
+// ---- closed-year lock (item 9 part B) -------------------------------------------
+
+/** The locked financial year holding `date` (YYYY-MM-DD or YYYY-MM), or null:
+ *  a year is locked once it is closed (Close Year) and until it is reopened —
+ *  `lockedEnds` holds the last months (YYYY-MM) of the locked years. */
+export function lockedYearFor(date: string, s: FySchedule, lockedEnds: ReadonlySet<string>): FyPeriod | null {
+  const ym = String(date ?? "").slice(0, 7);
+  if (!isYm(ym) || lockedEnds.size === 0) return null;
+  const fy = fyFor(ym, s);
+  return lockedEnds.has(fy.endYm) ? fy : null;
+}
+
+/** What a refused change says. */
+export function closedYearMessage(fy: Pick<FyPeriod, "name">): string {
+  return `${fy.name} is closed — documents dated in it can't be posted or changed. A Super Admin can reopen it in Settings › Financial Years.`;
+}

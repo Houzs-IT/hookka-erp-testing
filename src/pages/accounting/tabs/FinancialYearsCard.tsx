@@ -5,7 +5,8 @@
 //
 // The years the books run in — name, start, end, months, status (Closed =
 // its year-end close is posted, Current, Future, Open = over but not closed)
-// — and, for a Super Admin, Change Year End: pick the year the change starts
+// — Close Year (posts the year-end close and locks the year) / Reopen (Super
+// Admin), and, for a Super Admin, Change Year End: pick the year the change starts
 // from (the current one or a later one) and the new year-end month; the
 // transition years that allows (1–18 months) are offered, and the years that
 // follow are previewed before Save. Replaces the old one-box year-end editor,
@@ -33,6 +34,7 @@ const endText = (ym: string) => {
 
 const STATUS: Record<FiscalYearRow["status"], { tone: FinTone; label: string }> = {
   closed: { tone: "neutral", label: "Closed" },
+  reopened: { tone: "warn", label: "Reopened — not locked" },
   current: { tone: "ok", label: "Current" },
   future: { tone: "faint", label: "Future" },
   open: { tone: "warn", label: "Open — not closed" },
@@ -102,6 +104,41 @@ export function FinancialYearsCard() {
     }
   };
 
+  // Close Year / Reopen (item 9 part B; the design's "The P&L moves into
+  // Retained Earnings and the year is locked").
+  const yearAction = async (y: FiscalYearRow, kind: "close" | "reopen") => {
+    const ok = await confirm(kind === "close"
+      ? {
+          title: `Close ${y.name}?`,
+          message: `The P&L to ${endText(y.endYm)} moves into retained earnings (what was added since an earlier close, if it was reopened) and the year is locked: nothing dated in it can be posted, edited, voided or restored, and its stock take can't change. A Super Admin can reopen it.`,
+          danger: true,
+        }
+      : {
+          title: `Reopen ${y.name}?`,
+          message: `Documents dated in ${y.name} can be posted and changed again. The year-end close entry stays; closing the year again posts only what was added since.`,
+          danger: false,
+        });
+    if (!ok) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounting/fiscal-years/${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endYm: y.endYm }),
+      });
+      const j = asMutationResponse(await res.json());
+      if (j?.success) {
+        toast.success(kind === "close" ? `${y.name} closed` : `${y.name} reopened`);
+        setReload((n) => n + 1);
+      } else toast.error(j?.error || (kind === "close" ? "Close Year failed" : "Reopen failed"));
+    } catch {
+      toast.error(kind === "close" ? "Close Year failed" : "Reopen failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+  // "open" / "reopened" years have ended (the server says which).
+
   const label = "text-xs font-medium text-[#6B7280] mb-1 block";
   const select = "rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]";
 
@@ -129,6 +166,7 @@ export function FinancialYearsCard() {
               <th className="px-3 py-2">Ends</th>
               <th className="px-3 py-2 text-right">Months</th>
               <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2" />
             </tr>
           </thead>
           <tbody>
@@ -139,11 +177,19 @@ export function FinancialYearsCard() {
                 <td className="px-3 py-1.5 text-[#6B7280]">{endText(y.endYm)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{y.months}</td>
                 <td className="px-3 py-1.5"><FinPill tone={STATUS[y.status].tone}>{STATUS[y.status].label}</FinPill></td>
+                <td className="px-3 py-1.5 text-right">
+                  {(y.status === "open" || y.status === "reopened") && data?.canCloseYear && (
+                    <Button variant="outline" size="sm" disabled={saving} onClick={() => void yearAction(y, "close")}>Close Year</Button>
+                  )}
+                  {y.status === "closed" && data?.canReopenYear && (
+                    <Button variant="outline" size="sm" disabled={saving} onClick={() => void yearAction(y, "reopen")}>Reopen</Button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <p className="text-[11px] text-[#9CA3AF]">A year closes when its year-end close is posted (Balance Sheet › Year-End Close).</p>
+        <p className="text-[11px] text-[#9CA3AF]">Close Year posts the year-end close and locks the year — nothing dated in it can be posted, edited, voided or restored until a Super Admin reopens it.</p>
 
         {form && (
           <div className="space-y-3 rounded-[10px] border border-[#E2DDD8] bg-[#FBFAF8] p-3">

@@ -14,6 +14,7 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { buildJournalEntryStatements } from "../lib/journal-hash";
+import { ClosedYearError } from "../lib/fiscal";
 import {
   buildCreditNoteLedgerLegs,
   buildNoteUnpostStatements,
@@ -542,10 +543,11 @@ app.post("/", async (c) => {
             sourceType,
           );
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: date });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] CN ${id} GL build failed — aborting:`, e);
         return c.json(
           {
@@ -745,10 +747,11 @@ app.put("/:id", async (c) => {
             sourceType,
           );
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: existing.date ?? null });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] CN ${id} GL build failed — aborting:`, e);
         return c.json(
           {
@@ -859,11 +862,12 @@ app.post("/:id/unpost", async (c) => {
         c.var.DB,
         orgId,
         "credit_note",
-        { id, noteNumber: existing.noteNumber },
+        { id, noteNumber: existing.noteNumber, date: existing.date ?? null },
         actorUserId,
       )),
     );
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error(`[ledger] CN ${id} back-to-draft GL build failed — aborting:`, e);
     return c.json(
       {

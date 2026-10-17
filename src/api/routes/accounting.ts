@@ -16,7 +16,7 @@ import { Hono } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
-import { requirePermission, requireFinance } from "../lib/rbac";
+import { requirePermission, requireFinance, hasPermission } from "../lib/rbac";
 import { monthsOverdue, nextMonthDueDate } from "../../lib/terms";
 import { getOrgId, companyFilter } from "../lib/tenant";
 import {
@@ -24,8 +24,8 @@ import {
   ledgerHasSource,
   type LedgerEntryInput,
 } from "../lib/journal-hash";
-import { FYE_CHANGES_KV_KEY, getFySchedule, fyWindowAt } from "../lib/fiscal";
-import { addMonths as addFyMonths, fyFor, fyPeriods, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
+import { ClosedYearError, FYE_CHANGES_KV_KEY, FY_LOCKED_KV_KEY, closedYearError, getFyLockedEnds, getFySchedule, fyWindowAt } from "../lib/fiscal";
+import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
@@ -1593,10 +1593,11 @@ app.put("/journals/:id", async (c) => {
             orgId,
           }));
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: [entry.date, typeof body.date === "string" ? body.date : null] });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] JV ${id} GL build failed — aborting:`, e);
         return c.json(
           {
@@ -1666,7 +1667,7 @@ app.put("/journals/:id", async (c) => {
             orgId,
           }));
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: entry.date });
           statements.push(...ledgerStmts);
         }
         // T5d (correctness): legacy reverse rolls back balanceSen + creates the
@@ -1691,6 +1692,7 @@ app.put("/journals/:id", async (c) => {
           ).bind(id, orgId),
         );
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(
           `[ledger] JV ${id} reversal GL build failed — aborting:`,
           e,
@@ -1796,7 +1798,7 @@ app.post("/journals/:id/lifecycle", async (c) => {
   if (!["void", "delete", "unvoid"].includes(action)) return c.json({ success: false, error: "action must be void|delete|unvoid" }, 400);
 
   // Entry-point read → tenant-scoped (BUG-2026-08-13-083).
-  const entry = await c.var.DB.prepare("SELECT id, entryNo, status FROM journal_entries WHERE id = ? AND orgId = ?").bind(id, orgId).first<{ id: string; entryNo: string; status: string }>();
+  const entry = await c.var.DB.prepare("SELECT id, entryNo, date, status FROM journal_entries WHERE id = ? AND orgId = ?").bind(id, orgId).first<{ id: string; entryNo: string; date: string | null; status: string }>();
   if (!entry) return c.json({ success: false, error: "Journal entry not found" }, 404);
   // A DRAFT JV has no ledger posting — there is nothing to void/delete/unvoid.
   if (entry.status === "DRAFT") {
@@ -1807,7 +1809,7 @@ app.post("/journals/:id/lifecycle", async (c) => {
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   let lc: { statements: D1PreparedStatement[]; newState: string; prevState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["manual"], voidSourceType: "manual_reversal", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · JV ${entry.entryNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: entry.date, baseSourceTypes: ["manual"], voidSourceType: "manual_reversal", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · JV ${entry.entryNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // Boundary-aware: only adjust balanceSen when crossing the ACTIVE boundary.
@@ -2466,10 +2468,12 @@ app.put("/purchase-credit-notes/:id", async (c) => {
           c.var.DB,
           orgId,
           legs,
+          { docDate: existing.date ?? null },
         );
         statements.push(...ledgerStmts);
       }
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       console.error(`[ledger] PCN ${id} GL build failed — aborting:`, e);
       return c.json(
         {
@@ -2782,6 +2786,7 @@ app.post("/purchase-credit-notes/:id/restate", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: [existing.date ?? null, cnDate] },
     );
     statements.push(...ledgerStmts);
     statements.push(
@@ -2799,6 +2804,7 @@ app.post("/purchase-credit-notes/:id/restate", async (c) => {
       .first<PcnRow>();
     return c.json({ success: true, data: rowToPcn(updated!) });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error(`[ledger] PCN ${id} restate failed:`, e);
     return c.json(
       {
@@ -2883,6 +2889,7 @@ app.post("/purchase-credit-notes/:id/void", async (c) => {
       c.var.DB,
       orgId,
       revLegs,
+      { docDate: existing.date ?? null },
     );
     statements.push(...ls);
     statements.push(
@@ -4318,9 +4325,10 @@ app.post("/other-party-bills", async (c) => {
         actorUserId,
         orgId,
       }));
-      const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: billDate });
       statements.push(...ledgerStmts);
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       console.error(`[ledger] other_party_bill ${billNo} GL build failed — aborting:`, e);
       return c.json({ success: false, error: "Failed to build the ledger posting — nothing was saved. Retry, and report if it persists." }, 500);
     }
@@ -4467,7 +4475,7 @@ app.put("/other-party-bills/:billNo", async (c) => {
         orgId,
       });
     });
-    const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: [bill.billDate, billDate] });
     statements.push(...ledgerStmts);
     statements.push(
       c.var.DB.prepare(
@@ -4486,6 +4494,7 @@ app.put("/other-party-bills/:billNo", async (c) => {
     });
     return c.json({ success: true, data: { billNo, totalSen, status: st.status } });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[PUT /other-party-bills/:billNo] failed:", e);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -4509,12 +4518,12 @@ export async function sweepOtherPartyBillGl(
   const orgIdOb = defaultOrgId;
   const actorUserId: string | null = null;
   const billsRes = await db.prepare(
-    `SELECT b.id, b.billNo, b.partyType, b.partyName, b.taxSen, b.orgId
+    `SELECT b.id, b.billNo, b.billDate, b.partyType, b.partyName, b.taxSen, b.orgId
        FROM other_party_bills b
        LEFT JOIN document_lifecycle dl
          ON dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo AND dl.orgId = b.orgId
       WHERE (dl.state IS NULL OR dl.state = 'ACTIVE')`,
-  ).all<{ id: string; billNo: string; partyType: string; partyName: string; taxSen: number; orgId?: string | null }>();
+  ).all<{ id: string; billNo: string; billDate?: string | null; partyType: string; partyName: string; taxSen: number; orgId?: string | null }>();
   const fixed: { billNo: string; totalSen: number }[] = [];
   const skippedOb: { billNo: string; reason: string }[] = [];
   const statements: D1PreparedStatement[] = [];
@@ -4553,7 +4562,7 @@ export async function sweepOtherPartyBillGl(
         orgId: String(b.orgId ?? orgIdOb),
       }));
       const totalSen = legs.reduce((s, l) => s + l.debitSen, 0);
-      const { statements: ls } = await buildJournalEntryStatements(db, String(b.orgId ?? orgIdOb), legs);
+      const { statements: ls } = await buildJournalEntryStatements(db, String(b.orgId ?? orgIdOb), legs, { docDate: b.billDate ?? null });
       statements.push(...ls);
       fixed.push({ billNo: b.billNo, totalSen });
     } catch (e) {
@@ -4909,7 +4918,7 @@ app.delete("/other-party-bills/:billNo", async (c) => {
   // Soft delete: keep the row, build the reversal + state=DELETED via the lifecycle helper.
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action: "delete", actorUserId, descriptionTag: `DELETE · ${billNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: bill.billDate, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action: "delete", actorUserId, descriptionTag: `DELETE · ${billNo}` });
   } catch (e) {
     console.error(`[ledger] other_party_bill ${billNo} delete lifecycle build failed — aborting:`, e);
     return c.json({ success: false, error: (e as Error).message }, 400);
@@ -4967,7 +4976,7 @@ app.post("/other-party-bills/:billNo/lifecycle", async (c) => {
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${billNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: bill.billDate, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${billNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // No status-column change: other_party_bills.status carries payment progress
@@ -5049,7 +5058,7 @@ async function buildOtherPartyPaymentCreate(
     id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "other_party_payment", sourceId: payNo,
     legNo: l.legNo, accountCode: l.accountCode, debitSen: l.debitSen, creditSen: l.creditSen, description: l.description, actorUserId, orgId,
   }));
-  const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs);
+  const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs, { docDate: date });
   statements.push(...ledgerStmts);
   return statements;
 }
@@ -5105,6 +5114,7 @@ app.post("/other-party-payments", async (c) => {
           orgId, actorUserId, party, bankAccount, date, reference: body.reference ?? null, allocs, paymentNo: payNo,
         });
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] other_party_payment ${payNo} GL build failed — aborting:`, e);
         return c.json({ success: false, error: "Failed to build the ledger posting — nothing was saved." }, 500);
       }
@@ -5576,7 +5586,7 @@ async function buildOtherPartyPaymentLifecycle(
   if (rows.length === 0) throw new Error("PAYMENT_NOT_FOUND");
 
   const lc = await applyLifecycle(db, {
-    orgId, baseSourceTypes: ["other_party_payment"], voidSourceType: "other_party_payment_void",
+    orgId, docDate: rows[0].date, baseSourceTypes: ["other_party_payment"], voidSourceType: "other_party_payment_void",
     sourceId: paymentNo, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${paymentNo}`,
   });
   const statements = [...lc.statements];
@@ -5754,7 +5764,7 @@ async function buildOtherPartyPaymentRestate(
   const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [
     ...revLegs,
     ...postLegs,
-  ]);
+  ], { docDate: [first.date, date] });
   statements.push(...jeStmts);
   statements.push(
     db
@@ -6411,18 +6421,18 @@ app.get("/fiscal-years", async (c) => {
   if (denied) return denied;
   const db = c.var.DB;
   const orgId = getOrgId(c);
-  const [sched, openingDate, closed] = await Promise.all([getFySchedule(db), getOpeningDate(db), closedFyEndYms(db, orgId)]);
+  const [sched, openingDate, posted, locked] = await Promise.all([getFySchedule(db), getOpeningDate(db), closedFyEndYms(db, orgId), getFyLockedEnds(db)]);
   const todayYm = runningMonthYm();
   const current = fyFor(todayYm, sched);
   const fromYm = openingDate ? openingDate.slice(0, 7) : addFyMonths(todayYm, -24);
   const years = fyPeriods(sched, fromYm < current.startYm ? fromYm : current.startYm, addFyMonths(current.endYm, 12)).map((y) => ({
     ...y,
-    status: closed.has(y.endYm) ? "closed" : y.startYm <= todayYm && todayYm <= y.endYm ? "current" : y.startYm > todayYm ? "future" : "open",
+    status: locked.has(y.endYm) ? "closed" : posted.has(y.endYm) ? "reopened" : y.startYm <= todayYm && todayYm <= y.endYm ? "current" : y.startYm > todayYm ? "future" : "open",
   }));
   const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
   return c.json({
     success: true,
-    data: { fyeMonth: sched.fyeMonth, currentFyeMonth: Number(current.endYm.slice(5, 7)), changes: sched.changes, years, canChangeYearEnd: role === "SUPER_ADMIN" },
+    data: { fyeMonth: sched.fyeMonth, currentFyeMonth: Number(current.endYm.slice(5, 7)), changes: sched.changes, years, canChangeYearEnd: role === "SUPER_ADMIN", canCloseYear: await hasPermission(c, "accounting", "create"), canReopenYear: role === "SUPER_ADMIN" },
   });
 });
 
@@ -6434,7 +6444,8 @@ app.put("/fiscal-years/year-end", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { from?: unknown; to?: unknown };
   const change = { from: String(body.from ?? ""), to: String(body.to ?? "") };
   const db = c.var.DB;
-  const [sched, closed] = await Promise.all([getFySchedule(db), closedFyEndYms(db, getOrgId(c))]);
+  const [sched, posted, locked] = await Promise.all([getFySchedule(db), closedFyEndYms(db, getOrgId(c)), getFyLockedEnds(db)]);
+  const closed = new Set([...posted, ...locked]);
   const err = yearEndChangeError(sched, change, closed, runningMonthYm());
   if (err) return c.json({ success: false, error: err }, 400);
   const next = withYearEndChange(sched, change);
@@ -6446,7 +6457,82 @@ app.put("/fiscal-years/year-end", async (c) => {
   return c.json({ success: true, data: { changes: next.changes } });
 });
 
+// The year-end close entry for the year ending `fyEndIso` under `sourceId`:
+// every P&L account's residual to that day flipped into retained earnings
+// (prior closes included, so a close after a reopen posts only what was added
+// since). legs [] = nothing left to close.
+async function yearCloseLegs(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  fyEndIso: string,
+  sourceId: string,
+  actorUserId: string | null,
+): Promise<{ ok: true; legs: LedgerEntryInput[]; netSen: number; accountCount: number } | { ok: false; error: string; status: 400 | 500 }> {
+  const re = await db.prepare("SELECT code FROM chart_of_accounts WHERE code = ?").bind(RETAINED_EARNINGS_ACCT).first<{ code: string }>();
+  if (!re) return { ok: false, error: `Retained-earnings account ${RETAINED_EARNINGS_ACCT} not found in the chart of accounts.`, status: 500 };
+  const { accounts, netSen } = await computeUnclosedAsOf(db, fyEndIso);
+  const legs: LedgerEntryInput[] = [];
+  let legNo = 1;
+  let totalDr = 0;
+  let totalCr = 0;
+  for (const a of accounts) {
+    // Flip the residual: a credit-normal residual is DEBITED away and
+    // vice versa. Negative residuals flip the flip.
+    const closesAsDebit = a.type === "REVENUE" ? a.residualSen > 0 : a.residualSen < 0;
+    const amt = Math.abs(a.residualSen);
+    legs.push({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: "year_close",
+      sourceId,
+      legNo: legNo++,
+      accountCode: a.code,
+      debitSen: closesAsDebit ? amt : 0,
+      creditSen: closesAsDebit ? 0 : amt,
+      description: `Year-end close · FY ended ${fyEndIso}`,
+      actorUserId,
+      orgId,
+    });
+    totalDr += closesAsDebit ? amt : 0;
+    totalCr += closesAsDebit ? 0 : amt;
+  }
+  if (accounts.length && netSen !== 0) {
+    legs.push({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: "year_close",
+      sourceId,
+      legNo: legNo++,
+      accountCode: RETAINED_EARNINGS_ACCT,
+      debitSen: netSen < 0 ? Math.abs(netSen) : 0,
+      creditSen: netSen > 0 ? netSen : 0,
+      description: `Year-end close · FY ended ${fyEndIso} · net ${netSen > 0 ? "profit" : "loss"}`,
+      actorUserId,
+      orgId,
+    });
+    totalDr += netSen < 0 ? Math.abs(netSen) : 0;
+    totalCr += netSen > 0 ? netSen : 0;
+  }
+  if (totalDr !== totalCr) return { ok: false, error: `Close legs do not balance (DR ${totalDr} vs CR ${totalCr}) — aborted, nothing posted.`, status: 500 };
+  return { ok: true, legs, netSen, accountCount: accounts.length };
+}
+
+// Lock / unlock a financial year by its last month (kv fy_locked_ends).
+async function setFyLocked(db: Env["Variables"]["DB"], endYm: string, locked: boolean): Promise<string[]> {
+  const cur = await getFyLockedEnds(db);
+  if (locked) cur.add(endYm);
+  else cur.delete(endYm);
+  const list = [...cur].sort();
+  await db.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(FY_LOCKED_KV_KEY, JSON.stringify(list), new Date().toISOString()).run();
+  return list;
+}
+
+const lastDayOfYm = (ym: string) => `${ym}-${String(new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0)).getUTCDate()).padStart(2, "0")}`;
+
 // POST /api/accounting/year-close  { fyEnd?: "YYYY-MM-DD" }
+// (The Balance Sheet's Year-End Close. Since item 9 part B the year is also
+// locked once its close is posted — the same as Close Year in Settings.)
 app.post("/year-close", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
@@ -6476,96 +6562,33 @@ app.post("/year-close", async (c) => {
         400,
       );
     }
-    const re = await c.var.DB.prepare(
-      "SELECT code FROM chart_of_accounts WHERE code = ?",
-    )
-      .bind(RETAINED_EARNINGS_ACCT)
-      .first<{ code: string }>();
-    if (!re) {
-      return c.json(
-        {
-          success: false,
-          error: `Retained-earnings account ${RETAINED_EARNINGS_ACCT} not found in the chart of accounts.`,
-        },
-        500,
-      );
-    }
-    const { accounts, netSen } = await computeUnclosedAsOf(
-      c.var.DB,
-      fyEndIso,
-    );
-    if (accounts.length === 0) {
+    const actorUserId =
+      (c as unknown as { get: (k: string) => string | undefined }).get(
+        "userId",
+      ) ?? null;
+    const built = await yearCloseLegs(c.var.DB, orgId, fyEndIso, sourceId, actorUserId);
+    if (!built.ok) return c.json({ success: false, error: built.error }, built.status);
+    if (built.legs.length === 0) {
       return c.json(
         { success: false, error: "Nothing to close — all P&L accounts are at zero as of that date." },
         400,
       );
     }
-    const actorUserId =
-      (c as unknown as { get: (k: string) => string | undefined }).get(
-        "userId",
-      ) ?? null;
-    const legs: LedgerEntryInput[] = [];
-    let legNo = 1;
-    let totalDr = 0;
-    let totalCr = 0;
-    for (const a of accounts) {
-      // Flip the residual: a credit-normal residual is DEBITED away and
-      // vice versa. Negative residuals flip the flip.
-      const closesAsDebit =
-        a.type === "REVENUE" ? a.residualSen > 0 : a.residualSen < 0;
-      const amt = Math.abs(a.residualSen);
-      legs.push({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "year_close",
-        sourceId,
-        legNo: legNo++,
-        accountCode: a.code,
-        debitSen: closesAsDebit ? amt : 0,
-        creditSen: closesAsDebit ? 0 : amt,
-        description: `Year-end close · FY ended ${fyEndIso}`,
-        actorUserId,
-        orgId,
-      });
-      totalDr += closesAsDebit ? amt : 0;
-      totalCr += closesAsDebit ? 0 : amt;
-    }
-    if (netSen !== 0) {
-      legs.push({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "year_close",
-        sourceId,
-        legNo: legNo++,
-        accountCode: RETAINED_EARNINGS_ACCT,
-        debitSen: netSen < 0 ? Math.abs(netSen) : 0,
-        creditSen: netSen > 0 ? netSen : 0,
-        description: `Year-end close · FY ended ${fyEndIso} · net ${netSen > 0 ? "profit" : "loss"}`,
-        actorUserId,
-        orgId,
-      });
-      totalDr += netSen < 0 ? Math.abs(netSen) : 0;
-      totalCr += netSen > 0 ? netSen : 0;
-    }
-    if (totalDr !== totalCr) {
-      return c.json(
-        {
-          success: false,
-          error: `Close legs do not balance (DR ${totalDr} vs CR ${totalCr}) — aborted, nothing posted.`,
-        },
-        500,
-      );
-    }
     const { statements } = await buildJournalEntryStatements(
       c.var.DB,
       orgId,
-      legs,
+      built.legs,
+      { docDate: null },
     );
     await c.var.DB.batch(statements);
+    await setFyLocked(c.var.DB, fyEndIso.slice(0, 7), true);
+    await emitAudit(c, { resource: "finance-settings", resourceId: FY_LOCKED_KV_KEY, action: "close-year", after: { yearEnd: fyEndIso } });
     return c.json({
       success: true,
       data: {
         fyEnd: fyEndIso,
-        netSen,
-        legCount: legs.length,
+        netSen: built.netSen,
+        legCount: built.legs.length,
         retainedAccount: RETAINED_EARNINGS_ACCT,
       },
     });
@@ -6576,6 +6599,63 @@ app.post("/year-close", async (c) => {
       500,
     );
   }
+});
+
+// POST /fiscal-years/close { endYm } — Close Year (item 9 part B; the design's
+// "The P&L moves into Retained Earnings and the year is locked"): posts the
+// year-end close (after a reopen, only what was added since — the first
+// close is `fyclose-<end>`, later ones `fyclose-<end>-r<n>`), then locks the
+// year: nothing dated in it can be posted, edited, voided or restored.
+app.post("/fiscal-years/close", async (c) => {
+  const denied = await requirePermission(c, "accounting", "create");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const body = (await c.req.json().catch(() => ({}))) as { endYm?: unknown };
+  const endYm = String(body.endYm ?? "");
+  const sched = await getFySchedule(db);
+  const fy = isYm(endYm) ? fyPeriods(sched, endYm, endYm).find((y) => y.endYm === endYm) : undefined;
+  if (!fy) return c.json({ success: false, error: "Pick the financial year to close." }, 400);
+  if (fy.endYm >= runningMonthYm()) return c.json({ success: false, error: `${fy.name} has not ended yet.` }, 400);
+  if ((await getFyLockedEnds(db)).has(fy.endYm)) return c.json({ success: false, error: `${fy.name} is already closed.` }, 400);
+  const fyEndIso = lastDayOfYm(fy.endYm);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  try {
+    const prior = await db.prepare(
+      "SELECT COUNT(DISTINCT sourceId) AS n FROM ledger_journal_entries WHERE orgId = ? AND sourceType = 'year_close' AND (sourceId = ? OR sourceId LIKE ?)",
+    ).bind(orgId, `fyclose-${fyEndIso}`, `fyclose-${fyEndIso}-r%`).first<Record<string, unknown>>();
+    const n = Number(prior?.n) || 0;
+    const sourceId = n === 0 ? `fyclose-${fyEndIso}` : `fyclose-${fyEndIso}-r${n + 1}`;
+    const built = await yearCloseLegs(db, orgId, fyEndIso, sourceId, actorUserId);
+    if (!built.ok) return c.json({ success: false, error: built.error }, built.status);
+    if (built.legs.length) {
+      const { statements } = await buildJournalEntryStatements(db, orgId, built.legs, { docDate: null });
+      await db.batch(statements);
+    }
+    const locked = await setFyLocked(db, fy.endYm, true);
+    await emitAudit(c, { resource: "finance-settings", resourceId: FY_LOCKED_KV_KEY, action: "close-year", after: { year: fy.name, yearEnd: fyEndIso, closeEntry: built.legs.length ? sourceId : null } });
+    return c.json({ success: true, data: { name: fy.name, netSen: built.netSen, posted: built.legs.length, locked } });
+  } catch (e) {
+    console.error("[fiscal-years/close] failed:", e);
+    return c.json({ success: false, error: "Close Year failed — nothing was posted or locked." }, 500);
+  }
+});
+
+// POST /fiscal-years/reopen { endYm } — Super Admin: takes the lock off; the
+// close entry stays (a later Close Year posts only what was added since).
+app.post("/fiscal-years/reopen", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
+  if (role !== "SUPER_ADMIN") return c.json({ success: false, error: "Only a Super Admin can reopen a closed year." }, 403);
+  const db = c.var.DB;
+  const body = (await c.req.json().catch(() => ({}))) as { endYm?: unknown };
+  const endYm = String(body.endYm ?? "");
+  if (!(await getFyLockedEnds(db)).has(endYm)) return c.json({ success: false, error: "That year is not closed." }, 400);
+  const fy = fyPeriods(await getFySchedule(db), endYm, endYm).find((y) => y.endYm === endYm);
+  const locked = await setFyLocked(db, endYm, false);
+  await emitAudit(c, { resource: "finance-settings", resourceId: FY_LOCKED_KV_KEY, action: "reopen-year", after: { year: fy?.name ?? endYm } });
+  return c.json({ success: true, data: { locked } });
 });
 
 // ---------------------------------------------------------------------------
@@ -7035,7 +7115,7 @@ app.post("/stock/close-post", async (c) => {
       return c.json({ success: false, error: `No stock movements for ${month} — nothing to post.` }, 400);
     }
     legs.push(...freshLegs);
-    const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: month });
     await db.batch(statements);
     await emitAudit(c, {
       resource: "accounting",
@@ -7044,7 +7124,8 @@ app.post("/stock/close-post", async (c) => {
       after: { month, closingTotalSen },
     });
     return c.json({ success: true, data: { month, closingTotalSen } });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -11277,6 +11358,8 @@ const PV_DRAFT_PREFIX = "DRAFT-";
 
 type PvHeaderForPost = {
   id: string; pvNo: string; payee: string | null; description: string | null;
+  /** The voucher's date — a closed financial year takes no posting (item 9). */
+  date: string | null;
   accrued: number; accrualAccount: string | null; payFrom: string | null; totalSen: number;
 };
 // The ONE place a voucher's ledger legs are built — used by the legacy
@@ -11313,7 +11396,7 @@ async function pvPostingStatements(
     actorUserId,
     orgId,
   });
-  const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+  const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: pv.date });
   return statements;
 }
 
@@ -12290,7 +12373,7 @@ app.post("/payment-vouchers", async (c) => {
     ];
     if (!asDraft) {
       statements.push(...await pvPostingStatements(c.var.DB, orgId, actorUserId, {
-        id, pvNo, payee: isTransfer ? "" : String(body.payee ?? ""), description: String(body.description ?? ""),
+        id, pvNo, date, payee: isTransfer ? "" : String(body.payee ?? ""), description: String(body.description ?? ""),
         accrued: accrued ? 1 : 0, accrualAccount, payFrom, totalSen: v.totalSen,
       }, v.lines));
     }
@@ -12497,7 +12580,7 @@ async function pvApprovalCore(
   if (!lines.length) return fail("This voucher has no lines");
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
   const posting = await pvPostingStatements(db, orgId, actorUserId, {
-    id, pvNo, payee: String(pv.payee ?? ""), description: String(pv.description ?? ""),
+    id, pvNo, date: String(pv.date ?? "").slice(0, 10) || null, payee: String(pv.payee ?? ""), description: String(pv.description ?? ""),
     accrued: Number(pv.accrued) === 1 ? 1 : 0,
     accrualAccount: (pv.accrualAccount ?? pv.accrual_account) as string | null,
     payFrom: (pv.payFrom ?? pv.pay_from) as string | null,
@@ -12631,6 +12714,7 @@ app.post("/payment-vouchers/:id/settle", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }, // settled today
     );
     await c.var.DB.batch([
       c.var.DB.prepare(
@@ -12640,7 +12724,8 @@ app.post("/payment-vouchers/:id/settle", async (c) => {
     ]);
     await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "settle" });
     return c.json({ success: true });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -12656,7 +12741,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
 
   await ensurePvApprovalCols(c.var.DB);
   await ensurePvApColumns(c.var.DB);
-  const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state, pv_kind, party_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; status: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null; party_kind?: string | null; partyKind?: string | null }>();
+  const pv = await c.var.DB.prepare("SELECT id, pvNo, date, status, approval_state, pv_kind, party_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; date?: string | null; status: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null; party_kind?: string | null; partyKind?: string | null }>();
   if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
 
   // A draft-road voucher that never reached APPROVE has no ledger legs —
@@ -12734,7 +12819,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
 
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["payment_voucher", "payment_voucher_settle"], voidSourceType: "payment_voucher_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${pv.pvNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: pv.date ?? null, baseSourceTypes: ["payment_voucher", "payment_voucher_settle"], voidSourceType: "payment_voucher_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${pv.pvNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // doc-specific side effect: sync status column (lifecycle state is source of truth; this is for UI)
@@ -12770,7 +12855,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
   try {
     await ensurePvApprovalCols(c.var.DB);
     await ensurePvApColumns(c.var.DB);
-    const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; status: string | null; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
+    const pv = await c.var.DB.prepare("SELECT id, pvNo, date, status, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; date?: string | null; status: string | null; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
     if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
     // A cancelled voucher's legs are hidden; editing it would post live ones
     // under a VOID voucher (the screen never offers it — the server refuses too).
@@ -12833,7 +12918,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     // The bank side follows the re-posted bank leg, or the edit is refused (C31).
     const carry = await planEditBankCarry(c.var.DB, cur, newLegs, "voucher");
     if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
-    const { statements: jeStmts } = await buildJournalEntryStatements(c.var.DB, orgId, [...revLegs, ...newLegs]);
+    const { statements: jeStmts } = await buildJournalEntryStatements(c.var.DB, orgId, [...revLegs, ...newLegs], { docDate: [pv.date ?? null, date] });
     statements.push(...jeStmts, ...carry.statements);
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
@@ -12846,6 +12931,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     await c.var.DB.batch(statements);
     return c.json({ success: true, data: { id, pvNo: pv.pvNo } });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[pv] restate failed:", e);
     return c.json({ success: false, error: "Failed to update the payment voucher" }, 400);
   }
@@ -13060,6 +13146,7 @@ app.post("/official-receipts", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: v.date },
     );
     await c.var.DB.batch([
       c.var.DB.prepare(
@@ -13082,6 +13169,7 @@ app.post("/official-receipts", async (c) => {
     ]);
     return c.json({ success: true, data: { id, orNo } }, 201);
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[or] create failed:", e);
     return c.json(
       { success: false, error: "Failed to save the receipt — is migration 0159 applied?" },
@@ -13134,7 +13222,7 @@ app.post("/official-receipts/:id/restate", async (c) => {
     // The bank side follows the re-posted bank leg, or the edit is refused.
     const carry = await planEditBankCarry(db, cur, newLegs, "receipt");
     if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
-    const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
+    const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs], { docDate: [String(or.date ?? "").slice(0, 10) || null, v.date] });
     const statements: D1PreparedStatement[] = [...jeStmts];
     statements.push(db.prepare(
       `UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%' AND sourceType <> ?`,
@@ -13161,6 +13249,7 @@ app.post("/official-receipts/:id/restate", async (c) => {
     });
     return c.json({ success: true, data: { id, orNo, bankMatchMoved: carry.moved > 0 } });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[or] restate failed:", e);
     return c.json({ success: false, error: "Failed to update the receipt" }, 400);
   }
@@ -13175,14 +13264,14 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
   try { action = ((await c.req.json()) as { action: string }).action as typeof action; } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
   if (!["void", "delete", "unvoid"].includes(action)) return c.json({ success: false, error: "action must be void|delete|unvoid" }, 400);
 
-  const orRow = await c.var.DB.prepare("SELECT id, orNo, status FROM official_receipts WHERE id = ?").bind(id).first<{ id: string; orNo: string; status: string }>();
+  const orRow = await c.var.DB.prepare("SELECT id, orNo, date, status FROM official_receipts WHERE id = ?").bind(id).first<{ id: string; orNo: string; date: string | null; status: string }>();
   if (!orRow) return c.json({ success: false, error: "Receipt not found" }, 404);
 
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["official_receipt"], voidSourceType: "official_receipt_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${orRow.orNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: orRow.date, baseSourceTypes: ["official_receipt"], voidSourceType: "official_receipt_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${orRow.orNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // doc-specific side effect: sync status column (lifecycle state is source of truth; this is for UI)
@@ -13293,9 +13382,10 @@ app.post("/fund-transfers", async (c) => {
   ];
 
   try {
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: date });
     await c.var.DB.batch(statements);
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[fund-transfer] GL post failed:", e);
     return c.json({ success: false, error: "Failed to post fund transfer to ledger" }, 500);
   }
@@ -13437,9 +13527,11 @@ app.post("/fund-transfers/:no/lifecycle", async (c) => {
 
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  // The transfer's own date (fund_transfers; a transfer from before that table has none).
+  const ftDate = await c.var.DB.prepare("SELECT date FROM fund_transfers WHERE transfer_no = ?").bind(no).first<{ date: string | null }>().catch(() => null);
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["fund_transfer"], voidSourceType: "fund_transfer_void", sourceId: no, action, actorUserId, descriptionTag: `${action.toUpperCase()} · FT ${no}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: ftDate?.date ?? null, baseSourceTypes: ["fund_transfer"], voidSourceType: "fund_transfer_void", sourceId: no, action, actorUserId, descriptionTag: `${action.toUpperCase()} · FT ${no}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // No status column to sync (ledger-only document): just run the lifecycle statements.
@@ -13712,7 +13804,7 @@ app.post("/contra", async (c) => {
         orgId,
       },
     ];
-    const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs, { docDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }); // a contra is dated the day it is made
     statements.push(...ledgerStmts);
     await db.batch(statements);
     await emitAudit(c, {
@@ -13722,7 +13814,8 @@ app.post("/contra", async (c) => {
       after: { contraSen: totalSen, customerId, piIds },
     });
     return c.json({ success: true, data: { totalSen, pis: pis.length } });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -14218,7 +14311,7 @@ app.post("/labor/post", async (c) => {
         orgId,
       });
     }
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: month });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "accounting",
@@ -14228,6 +14321,7 @@ app.post("/labor/post", async (c) => {
     });
     return c.json({ success: true, data: { month, totalSen, accounts: legs.length - 1} });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     // NOT "Invalid request body". That blanket message wrapped the whole
     // handler, so a UNIQUE(orgId, sourceType, sourceId, legNo) violation on a
     // re-post read as a malformed request and cost an hour to find. Say what
@@ -14285,7 +14379,7 @@ app.post("/labor/unpost", async (c) => {
         orgId,
       });
     }
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: month });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "accounting",
@@ -14296,6 +14390,7 @@ app.post("/labor/unpost", async (c) => {
     });
     return c.json({ success: true, data: { month, reversedLegs: legs.length } });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[POST /labor/unpost] failed:", msg);
     return c.json({ success: false, error: `Labour unpost failed: ${msg}` }, 400);
@@ -14795,7 +14890,7 @@ app.put("/trade-finance/draw-interest", async (c) => {
     const interestSourceId = `tfint-${chargeDate}-${drawSourceId}`;
     const legNoBase = await nextLegNo(c.var.DB, orgId, "tf_interest", interestSourceId);
     const legs = tfInterestLegs({ drawSourceId, accountCode, chargeDate, deltaSen, legNoBase, actorUserId, orgId });
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: chargeDate });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "trade-finance",
@@ -14806,6 +14901,7 @@ app.put("/trade-finance/draw-interest", async (c) => {
     });
     return c.json({ success: true, data: { drawSourceId, interestSen: targetSen } });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     console.error("[PUT /trade-finance/draw-interest] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Interest update failed" }, 400);
   }
@@ -14863,7 +14959,7 @@ app.put("/trade-finance/draw-bank-charge", async (c) => {
           { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase, accountCode: accountCode, debitSen: abs, creditSen: 0, description: `TF bank charges adjust · ${drawSourceId}`, actorUserId, orgId },
           { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase + 1, accountCode: TF_BANK_CHARGE_ACCT.code, debitSen: 0, creditSen: abs, description: `TF bank charges adjust · ${drawSourceId}`, actorUserId, orgId },
         ];
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: chargeDate });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "trade-finance",
@@ -14874,6 +14970,7 @@ app.put("/trade-finance/draw-bank-charge", async (c) => {
     });
     return c.json({ success: true, data: { drawSourceId, bankChargeSen: targetSen } });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     console.error("[PUT /trade-finance/draw-bank-charge] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Bank charge update failed" }, 400);
   }
@@ -16399,6 +16496,7 @@ app.post("/fixed-assets/depreciation-run", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: month },
     );
     const now = new Date().toISOString();
     await c.var.DB.batch([
@@ -16418,7 +16516,8 @@ app.post("/fixed-assets/depreciation-run", async (c) => {
         totalSen: rows.reduce((s, r) => s + r.amountSen, 0),
       },
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Run failed — is migration 0161 applied?" }, 400);
   }
 });
@@ -17253,7 +17352,7 @@ app.post("/bank-reco/book-line", async (c) => {
         { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "payment_voucher", sourceId: docId, legNo: 1, accountCode: v.lines[0].accountCode, debitSen: v.totalSen, creditSen: 0, description: `${docNo} · ${desc || "Payment"}`, actorUserId, orgId },
         { id: bankLegId, sourceType: "payment_voucher", sourceId: docId, legNo: 2, accountCode: line.accountCode, debitSen: 0, creditSen: v.totalSen, description: `${docNo} · ${party ? `to ${party}` : "Payment"} · booked from bank line`, actorUserId, orgId },
       ];
-      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: line.txnDate });
       statements.push(...ledger);
     } else {
       statements.push(
@@ -17270,7 +17369,7 @@ app.post("/bank-reco/book-line", async (c) => {
         { id: bankLegId, sourceType: "official_receipt", sourceId: docId, legNo: 1, accountCode: line.accountCode, debitSen: v.totalSen, creditSen: 0, description: `${docNo} · ${party ? `from ${party}` : "Receipt"} · booked from bank line`, actorUserId, orgId },
         { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "official_receipt", sourceId: docId, legNo: 2, accountCode: v.lines[0].accountCode, debitSen: 0, creditSen: v.totalSen, description: `${docNo} · ${desc || "Receipt"}`, actorUserId, orgId },
       ];
-      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: line.txnDate });
       statements.push(...ledger);
     }
     // Match the new bank leg to the line in the same batch.
@@ -17282,6 +17381,7 @@ app.post("/bank-reco/book-line", async (c) => {
     await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "book-line", after: { amountSen: line.amountSen, docNo } });
     return c.json({ success: true, data: { docId, docNo, kind: isOut ? "PV" : "OR" } }, 201);
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[bank-reco] book-line failed:", e);
     return c.json({ success: false, error: "Could not book this line" }, 400);
   }
@@ -19059,7 +19159,7 @@ app.post("/opening-balance/post", async (c) => {
         orgId,
       });
     }
-    const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: openingDate });
     statements.push(
       db
         .prepare(
@@ -19082,7 +19182,8 @@ app.post("/opening-balance/post", async (c) => {
       success: true,
       data: { openingDate, lines: cleaned.length, totalSen: totalDr },
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -19338,6 +19439,9 @@ app.put("/stock-take", async (c) => {
     const ym = String(body.ym ?? "").slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ success: false, error: "ym must be 'YYYY-MM'" }, 400);
     if (!Array.isArray(body.rows)) return c.json({ success: false, error: "rows[] is required" }, 400);
+    // A closed year's stock take is part of its closed figures (item 9 part B).
+    const lockedYear = await closedYearError(c.var.DB, ym);
+    if (lockedYear) return c.json({ success: false, error: lockedYear }, 400);
     const now = new Date().toISOString();
     // The month's figures before this save, for the audit trail (item 10).
     const stBefore: Record<string, string> = {};

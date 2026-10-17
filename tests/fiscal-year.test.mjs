@@ -116,7 +116,8 @@ test("server: every year window follows the schedule; the years and Change Year 
   assert.doesNotMatch(cs, /new Array\(12\)|i < 12/, "a transition year is not twelve months");
   assert.match(api, /const fk = parseFyKey\(period\); \/\/ "fy:2025-09\.\.2026-08" \/ "fyq:…:Q1" \(item 9\)\n\s*if \(fk\) return fk\.endYm;/);
   const get = slice(api, 'app.get("/fiscal-years"', 'app.put("/fiscal-years/year-end"');
-  assert.match(get, /status: closed\.has\(y\.endYm\) \? "closed" : y\.startYm <= todayYm && todayYm <= y\.endYm \? "current" : y\.startYm > todayYm \? "future" : "open",/);
+  // Closed = locked (item 9 part B, tests/fiscal-year-lock.test.mjs); a posted close since reopened = reopened.
+  assert.match(get, /status: locked\.has\(y\.endYm\) \? "closed" : posted\.has\(y\.endYm\) \? "reopened" : y\.startYm <= todayYm && todayYm <= y\.endYm \? "current" : y\.startYm > todayYm \? "future" : "open",/);
   assert.match(get, /canChangeYearEnd: role === "SUPER_ADMIN"/);
   const put = slice(api, 'app.put("/fiscal-years/year-end"', "// POST /api/accounting/year-close");
   assert.match(put, /if \(role !== "SUPER_ADMIN"\) return c\.json\(\{ success: false, error: "Only a Super Admin can change the financial year end\." \}, 403\);/);

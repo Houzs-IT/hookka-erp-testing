@@ -1,6 +1,7 @@
 import type { Env } from "../worker";
 import { reverseLegs } from "../../lib/other-party-bill";
 import { buildJournalEntryStatements, ledgerHasSource, type LedgerEntryInput } from "./journal-hash";
+import { assertYearOpen } from "./fiscal";
 import { nextState, hiddenTargets, needsReversal, liveFamiliesAfterEdit, type DocState, type LifecycleAction } from "../../lib/lifecycle-machine";
 
 export async function getDocState(
@@ -43,9 +44,13 @@ export async function applyLifecycle(
     action: LifecycleAction;
     actorUserId: string | null;
     descriptionTag: string;
+    /** The document's date: a void, restore or delete of a document dated
+     *  in a closed financial year is refused (item 9 part B). */
+    docDate: string | null;
   },
 ): Promise<{ statements: D1PreparedStatement[]; newState: DocState; prevState: DocState }> {
-  const { orgId, baseSourceTypes, voidSourceType, sourceId, action, actorUserId, descriptionTag } = opts;
+  const { orgId, baseSourceTypes, voidSourceType, sourceId, action, actorUserId, descriptionTag, docDate } = opts;
+  await assertYearOpen(db, docDate);
   const primarySourceType = baseSourceTypes[0];
   const cur = await getDocState(db, orgId, primarySourceType, sourceId);
   const target = nextState(cur, action);
@@ -88,7 +93,7 @@ export async function applyLifecycle(
       actorUserId,
       orgId,
     }));
-    const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs, { docDate });
     statements.push(...ls);
   }
 

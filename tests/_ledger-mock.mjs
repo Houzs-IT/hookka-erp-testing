@@ -75,6 +75,8 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
       return [...new Set(st.supplierPayments.filter((p) => p.method === "TF_REPAYMENT").map((p) => p.paymentNo))].map((paymentNo) => ({ paymentNo }));
     }
     if (/^SELECT date FROM supplier_payments WHERE paymentNo = \? LIMIT 1$/.test(sql)) return st.supplierPayments.find((p) => p.paymentNo === a[0]) ?? null;
+    if (/^SELECT date FROM supplier_payments WHERE payment_no = \? LIMIT 1$/.test(sql)) return st.supplierPayments.find((p) => p.paymentNo === a[0]) ?? null;
+    if (/^SELECT date FROM fund_transfers WHERE transfer_no = \?$/.test(sql)) return null;
     if (/^SELECT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN \(/.test(sql)) {
       return st.supplierPayments.filter((p) => a.includes(p.paymentNo)).map((p) => ({ paymentNo: p.paymentNo, supplierName: p.supplierName }));
     }
@@ -191,7 +193,7 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
       st.lines.push({ id, receiptId, accountCode, description, amountSen, lineOrder });
       return null;
     }
-    if (/^SELECT \* FROM official_receipts WHERE id = \?$/.test(sql) || /^SELECT id, orNo, status FROM official_receipts WHERE id = \?$/.test(sql)) {
+    if (/^SELECT \* FROM official_receipts WHERE id = \?$/.test(sql) || /^SELECT id, orNo, (date, )?status FROM official_receipts WHERE id = \?$/.test(sql)) {
       return st.receipts.find((r) => r.id === a[0]) ?? null;
     }
     if (/^UPDATE official_receipts SET date = \?, receivedFrom = \?, description = \?, payTo = \?, totalSen = \?, updated_at = \? WHERE id = \?$/.test(sql)) {
@@ -206,9 +208,9 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
     }
     if (/^SELECT \* FROM official_receipt_lines ORDER BY lineOrder$/.test(sql)) return [...st.lines].sort((x, y) => x.lineOrder - y.lineOrder);
     // ── payment vouchers
-    if (/^SELECT id, pvNo, status, approval_state, pv_kind(, party_kind)? FROM payment_vouchers WHERE id = \?$/.test(sql)) {
+    if (/^SELECT id, pvNo, (date, )?status, approval_state, pv_kind(, party_kind)? FROM payment_vouchers WHERE id = \?$/.test(sql)) {
       const v = st.vouchers.find((x) => x.id === a[0]);
-      return v ? { id: v.id, pvNo: v.pvNo, status: v.status, approvalState: v.approvalState, pvKind: v.pvKind ?? null, partyKind: null } : null;
+      return v ? { id: v.id, pvNo: v.pvNo, date: v.date ?? null, status: v.status, approvalState: v.approvalState, pvKind: v.pvKind ?? null, partyKind: null } : null;
     }
     if (/^UPDATE payment_vouchers SET date = \?, payee = \?, description = \?, payFrom = \?, accrued = \?, accrualAccount = \?, settledAt = NULL, productLine = \?, totalSen = \?, notes = \?, bill_no = \?, bill_date = \?, status = 'POSTED', updated_at = \? WHERE id = \?$/.test(sql)) {
       Object.assign(st.vouchers.find((x) => x.id === a[12]), { date: a[0], payee: a[1], description: a[2], payFrom: a[3], totalSen: a[7] });
