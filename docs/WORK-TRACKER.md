@@ -6448,3 +6448,17 @@ Asks, in order:
 - WANNA HLAING October hours after the 2026-09-30 resignation: resolve it.
 - Quarter / Year periods: build it (backend change).
 - WANNA HLAING: resignation date 2026-09-30 is deliberate (October unpaid). Data left alone; Labor Cost rule now prices days after resignedAt at 0 (effective salary still returned the full month).
+
+### 2026-10-17 owner review, round 3
+22. Day option only on Employees (Sales / Operations / Service / Finance: no Day).
+23. Completed popup: no chart, no best day; average per day for Bedframe and Sofa separately. (done)
+24. Materials used: Sept / Oct don't match the P&L — derive cost the way the P&L gets GP and cost.
+25. Purchasing card: optimise, add supporting data.
+26. Plan vs actual is hard to read; cost trend chart — optimise.
+27. Working vs production hours chart — clearer / prettier.
+28. Department efficiency revenue: use the department PROGRESSIVE revenue (costing share),
+    not the full order value; department revenue stays the supply / demand balance view.
+29. Outsourced workers are not counted as working people.
+30. Attendance log: how to view a whole month.
+31. Service: average case closing — check the calculation and the presentation; pull the
+    "Issues by category" summary up.

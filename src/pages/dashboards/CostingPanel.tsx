@@ -18,7 +18,18 @@ import { CC_AXIS_LINE, CC_TICK, fmtRMAxis, inPeriod, monthLabel, shiftMonth, ymd
 //   Production revenue — the Upholstery row of Department Revenue (an order's
 //     value on the day its Upholstery cards complete), the same number the
 //     Command Center and Employees use.
-//   Materials used — material cost of finished batches (fg_batches).
+//   Materials used — THE P&L's raw materials line (owner 2026-10-17: "我的
+//     September 跟 October 不是这样子算的, 你去看一下我的 P&L"): opening stock
+//     + purchases − closing stock, per month, from GET /api/accounting/
+//     cost-structure (the same window the P&L uses; closing stock = the
+//     month's stock-take import). A month whose stock take is not in yet —
+//     always the running month — has no closing figure, so its materials are
+//     ESTIMATED at the last finished month's materials ÷ production revenue,
+//     the same carry-forward the P&L uses to value live WIP / FG. The system's
+//     own stock balances are not used: valued at purchase price they come to
+//     ~RM 7.8m against a RM 56k stock take (2026-10-17), so "purchases −
+//     balance" would be noise until the balances are reconciled. A day gets
+//     its month's materials ratio × its production revenue.
 //   Labour — logged working hours at the Labor Cost rate (payroll only).
 //   Cost % = (materials used + labour) ÷ production revenue.
 //   Purchases — supplier invoices by invoice date. Shown for reference, NOT
@@ -29,6 +40,7 @@ import { CC_AXIS_LINE, CC_TICK, fmtRMAxis, inPeriod, monthLabel, shiftMonth, ymd
 // ---------------------------------------------------------------------------
 
 type CostDay = { date: string; materialSen: number; laborSen: number; totalSen: number };
+type CostStructure = { data?: { cols?: string[]; groups?: { months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
 type Pi = { invoiceDate: string | null; amountSen: number | string | null; status: string };
 type Bucket = { revenue: number; material: number; labour: number; purchases: number };
 
@@ -69,12 +81,52 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
   const revByDay = prodRev?.byDay ?? null;
   const { byWorkerDay, ready: labourReady } = useLabourCost(from, to, canLabour);
   const { data: piResp } = useCachedJson<{ data?: Pi[] }>("/api/purchase-invoices");
+  // P&L raw materials by month: this financial year, and the one before when
+  // the 3-month window reaches back into it.
+  const { data: csNow } = useCachedJson<CostStructure>("/api/accounting/cost-structure");
+  const firstFyCol = csNow?.data?.cols?.[0] ?? "";
+  const needPrevFy = !!firstFyCol && months[0] < firstFyCol;
+  const { data: csPrev } = useCachedJson<CostStructure>(needPrevFy ? `/api/accounting/cost-structure?fy=${Number(firstFyCol.slice(0, 4)) - 1}` : null);
+  const pnlMaterials = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const cs of [csPrev, csNow]) {
+      const cols = cs?.data?.cols ?? [];
+      cols.forEach((ym, i) => {
+        // The running month has no closing stock yet — estimated below.
+        if (ym >= today.slice(0, 7)) return;
+        let used = 0;
+        let any = false;
+        for (const g of cs?.data?.groups ?? []) {
+          const m = g.months?.[i];
+          if (!m) continue;
+          any = true;
+          used += (m.opening ?? 0) + (m.purchase ?? 0) - (m.closing ?? 0);
+        }
+        if (any) out.set(ym, used);
+      });
+    }
+    return out;
+  }, [csNow, csPrev, today]);
 
   // Everything per day, then rolled up per month.
   const byDay = useMemo(() => {
     const m = new Map<string, Bucket>();
     for (const [d, v] of revByDay ?? []) if (d >= from && d <= to) addTo(m, d, "revenue", v.total);
-    for (const c of costByDay) if (c.date >= from && c.date <= to) addTo(m, c.date, "material", c.materialSen);
+    // Materials: each month's P&L figure spread over its days by production
+    // revenue; a month without one (the running month) at the last finished
+    // month's ratio.
+    const revByMonth = new Map<string, number>();
+    for (const [d, v] of revByDay ?? []) revByMonth.set(d.slice(0, 7), (revByMonth.get(d.slice(0, 7)) ?? 0) + v.total);
+    const finished = [...pnlMaterials.keys()].sort();
+    const ratioOf = (ym: string) => {
+      const known = pnlMaterials.get(ym);
+      const r = revByMonth.get(ym) ?? 0;
+      if (known != null) return r > 0 ? known / r : 0;
+      const last = [...finished].reverse().find((f) => f < ym && (revByMonth.get(f) ?? 0) > 0);
+      return last ? (pnlMaterials.get(last) ?? 0) / (revByMonth.get(last) ?? 1) : 0;
+    };
+    for (const [d, v] of revByDay ?? []) if (d >= from && d <= to) addTo(m, d, "material", v.total * ratioOf(d.slice(0, 7)));
+    void costByDay;
     for (const [k, v] of byWorkerDay) {
       const d = k.slice(k.indexOf("|") + 1);
       addTo(m, d, "labour", v);
@@ -85,14 +137,15 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       addTo(m, d, "purchases", Number(p.amountSen) || 0);
     }
     return m;
-  }, [revByDay, costByDay, byWorkerDay, piResp, from, to]);
+  }, [revByDay, costByDay, byWorkerDay, piResp, from, to, pnlMaterials]);
   const byMonth = useMemo(() => {
     const m = new Map<string, Bucket>();
     for (const [d, b] of byDay) for (const k of Object.keys(b) as (keyof Bucket)[]) addTo(m, d.slice(0, 7), k, b[k]);
     return m;
   }, [byDay]);
 
-  const loading = revByDay == null || (canLabour && !labourReady);
+  const loading = revByDay == null || (canLabour && !labourReady) || !csNow;
+  const estimated = (ym: string) => !pnlMaterials.has(ym);
   const cost = (b: Bucket) => b.material + (canLabour ? b.labour : 0);
 
   // Summary columns: [the day], the focus month, last month, the 3 months before.
@@ -102,7 +155,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
   const isCurrent = focusMonth === today.slice(0, 7);
   const cols: { label: string; sub: string; b: Bucket; avg?: boolean }[] = [
     ...(period.day ? [{ label: period.day.slice(5).replace("-", "/"), sub: "the selected day", b: byDay.get(period.day) ?? ZERO }] : []),
-    { label: monthLabel(focusMonth), sub: isCurrent ? "to date · live" : "whole month", b: byMonth.get(focusMonth) ?? ZERO },
+    { label: monthLabel(focusMonth), sub: isCurrent ? `to date · live${estimated(focusMonth) ? " · materials est." : ""}` : `whole month${estimated(focusMonth) ? " · materials est." : ""}`, b: byMonth.get(focusMonth) ?? ZERO },
     { label: monthLabel(prev), sub: "last month", b: byMonth.get(prev) ?? ZERO },
     { label: "3-month avg", sub: `${monthLabel(shiftMonth(focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: threeSum.revenue / 3, material: threeSum.material / 3, labour: threeSum.labour / 3, purchases: threeSum.purchases / 3 }, avg: true },
   ];
@@ -186,7 +239,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
               </thead>
               <tbody>
                 {row("Production revenue", (b) => b.revenue, { strong: true })}
-                {row("Materials used", (b) => b.material, { pct: true })}
+                {row("Materials used (P&L)", (b) => b.material, { pct: true })}
                 {row("Labour", (b) => (canLabour ? b.labour : null), { pct: true })}
                 {row("Total cost", (b) => cost(b), { pct: true, strong: true })}
                 {row("Purchases (supplier invoices)", (b) => b.purchases, { pct: true, muted: true })}
@@ -194,7 +247,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
             </table>
           </div>
           <p className="mt-2 text-[11px] text-[#9CA3AF]">
-            Purchases are stock bought, not cost used — shown for reference, not added to total cost.
+            Materials used = the P&L's raw materials (opening stock + purchases − closing stock from the stock take). A month without its stock take yet is estimated at the last finished month's rate. Purchases are stock bought, not used — reference only, not added to cost.
             {!canLabour && " Labour needs payroll access, so cost here is materials only."}
           </p>
         </CardContent>

@@ -7,6 +7,7 @@ import { DueSoonWorklist, type ProdOrderSummary } from "./OverdueCards";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import { ProductionDailyPanels } from "./ProductionDailyPanels";
 import { CostingPanel } from "./CostingPanel";
+import { PurchasingPanel } from "./PurchasingPanel";
 import { DashModal } from "./DashModal";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { OverdueOrdersList } from "./OverdueOrdersList";
@@ -139,7 +140,8 @@ export function OperationsView({
         <>
           <CostingPanel period={period} costByDay={production?.productionCost?.byDay ?? []} onPeriodChange={onPeriodChange} />
           <ProductionDailyPanels period={period} sub="plan" onPeriodChange={onPeriodChange} />
-          <CommandCenterSections period={period} sections={["fabric", "purchasing"]} />
+          <PurchasingPanel period={period} />
+          <CommandCenterSections period={period} sections={["fabric"]} />
           <button
             id="ops-shortage"
             type="button"

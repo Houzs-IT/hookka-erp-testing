@@ -48,11 +48,14 @@ test("fmtRM2 truncates to whole sen; fmtHM truncates minutes", () => {
   assert.equal(fmtHM(null), "0h 0m");
 });
 
-test("widgetPeriod: YTD reads all-time, anything else its month", () => {
-  assert.equal(widgetPeriod({ mode: "ytd", month: "2026-09" }), "all");
+test("widgetPeriod: a year reads that year, a calendar quarter its quarter, anything else its month", () => {
+  // YTD used to read ALL-TIME, so year views showed every month ever (2026-10-17).
+  assert.equal(widgetPeriod({ mode: "ytd", month: "2026-09" }), "2026");
   assert.equal(widgetPeriod({ mode: "monthly", month: "2026-09", day: "2026-09-23" }), "2026-09");
   assert.equal(widgetPeriod({ mode: "range", month: "2026-08", from: "2026-08-01", to: "2026-08-07" }), "2026-08");
-  assert.equal(widgetPeriodLabel({ mode: "ytd", month: "2026-09" }), "All-time");
+  assert.equal(widgetPeriod({ mode: "range", month: "2026-10", from: "2026-10-01", to: "2026-12-31", label: "Q4 2026" }), "2026-Q4");
+  assert.equal(widgetPeriodLabel({ mode: "ytd", month: "2026-09" }), "2026");
+  assert.equal(widgetPeriodLabel({ mode: "range", month: "2026-10", from: "2026-10-01", to: "2026-12-31" }), "Q4 2026");
   assert.equal(widgetPeriodLabel({ mode: "monthly", month: "2026-09" }), "Sep 2026");
 });
 

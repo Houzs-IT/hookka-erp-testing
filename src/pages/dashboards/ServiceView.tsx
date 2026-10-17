@@ -142,7 +142,18 @@ export function ServiceView({
               numbers and one opened-vs-closed chart, from the performance
               panel; the old "of those logged" status row and its duplicate
               chart are gone. */}
-          <ServicePerformancePanel slice={slice} period={period} onPeriodChange={onPeriodChange} />
+          <ServicePerformancePanel
+            slice={slice}
+            period={period}
+            onPeriodChange={onPeriodChange}
+            afterKpis={
+              <ServiceIssuesPanel
+                cases={logged}
+                period={period}
+                onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); document.getElementById("svc-cases")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+              />
+            }
+          />
 
         </>
       )}
@@ -203,11 +214,6 @@ export function ServiceView({
           cards on top, rows of detail at the bottom). */}
       {sub === "overview" && (
         <>
-        <ServiceIssuesPanel
-          cases={logged}
-          period={period}
-          onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); document.getElementById("svc-cases")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-        />
         <div id="svc-cases" className="scroll-mt-48">
           <Card>
             <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3 flex-wrap">

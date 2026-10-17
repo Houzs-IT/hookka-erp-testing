@@ -65,12 +65,54 @@ export function fmtHM(min: number | null | undefined): string {
   const m = Math.max(0, Math.trunc(min ?? 0));
   return `${Math.floor(m / 60).toLocaleString("en-MY")}h ${m % 60}m`;
 }
-/** /dashboard's `period` query value: YTD reads all-time, else the month. */
+// ---- Quarter (owner 2026-10-17: 季度与年) -----------------------------------
+// A quarter is a range Period spanning the quarter's calendar days, labelled
+// "Q4 2026". It needs no new mode: inPeriod already handles ranges, and the
+// URL already carries from/to/lbl.
+export function quarterKeyOf(month: string): string {
+  return `${month.slice(0, 4)}-Q${Math.floor((Number(month.slice(5, 7)) - 1) / 3) + 1}`;
+}
+export function quarterPeriod(key: string, today: string): Period {
+  const y = Number(key.slice(0, 4));
+  const q = Number(key.slice(6));
+  const m1 = (q - 1) * 3 + 1;
+  const from = ymd(new Date(y, m1 - 1, 1));
+  const to = ymd(new Date(y, m1 + 2, 0));
+  const lastYm = to.slice(0, 7);
+  const month = lastYm < today.slice(0, 7) ? lastYm : today.slice(0, 7) < from.slice(0, 7) ? from.slice(0, 7) : today.slice(0, 7);
+  return { mode: "range", month, from, to, label: `Q${q} ${y}` };
+}
+/** The quarter key ("2026-Q4") when the period is exactly a calendar quarter, else null. */
+export function quarterOfPeriod(p: Period): string | null {
+  if (p.mode !== "range" || !p.from || !p.to || p.day) return null;
+  const key = quarterKeyOf(p.from.slice(0, 7));
+  const q = quarterPeriod(key, "9999-12-31");
+  return q.from === p.from && q.to === p.to ? key : null;
+}
+export function stepQuarter(key: string, dir: -1 | 1, today: string): string | null {
+  let y = Number(key.slice(0, 4));
+  let q = Number(key.slice(6)) + dir;
+  if (q === 0) { q = 4; y -= 1; }
+  if (q === 5) { q = 1; y += 1; }
+  const next = `${y}-Q${q}`;
+  return next > quarterKeyOf(today.slice(0, 7)) ? null : next;
+}
+
+/**
+ * /dashboard's `period` query value: the month, the quarter ("2026-Q4") or
+ * the year ("2026"). YTD used to read ALL-TIME here, so the Command Center
+ * cards showed every month ever under a year label (fixed 2026-10-17).
+ */
 export function widgetPeriod(p: Period): string {
-  return p.mode === "ytd" ? "all" : p.month;
+  if (p.mode === "ytd") return p.month.slice(0, 4);
+  return quarterOfPeriod(p) ?? p.month;
 }
 export function widgetPeriodLabel(p: Period): string {
-  return widgetPeriod(p) === "all" ? "All-time" : monthLabel(p.month);
+  const w = widgetPeriod(p);
+  if (w === "all") return "All-time";
+  if (/^\d{4}$/.test(w)) return w;
+  if (/Q/.test(w)) return `Q${w.slice(6)} ${w.slice(0, 4)}`;
+  return monthLabel(p.month);
 }
 
 // ---------------------------------------------------------------------------
@@ -503,4 +545,14 @@ export function auditTier(effPct: number, low = 90): AuditTier | null {
   const over = OVER_TIERS.find((t) => effPct > t);
   if (over) return over;
   return effPct < low ? "low" : null;
+}
+
+/**
+ * Outsourced labour (owner 2026-10-17: "outsourced 不应该算是一个工作的人"):
+ * employee no. OSC-… or a name starting "OUTSOURCE". Their hours and cost stay
+ * in the totals; they are not counted as people (headcount, present / not in,
+ * per-person averages, the ranking).
+ */
+export function isOutsourced(w: { empNo?: string | null; name?: string | null } | null | undefined): boolean {
+  return !!w && (/^OSC/i.test(w.empNo ?? "") || /^OUTSOURCE/i.test((w.name ?? "").trim()));
 }

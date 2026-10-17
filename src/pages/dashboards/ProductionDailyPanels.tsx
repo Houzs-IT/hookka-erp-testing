@@ -1,14 +1,14 @@
 import { deptName } from "./ops-floor-lib";
 import { useSeriesToggle } from "./use-series-toggle";
 import { useMemo, useState } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { Area, BarChart, Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import {
   TAUPE, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN, fmtRMAxis, inPeriod, inFocus,
-  dayLabel, periodLabel, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  dayLabel, periodLabel, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
@@ -148,6 +148,7 @@ export function ProductionDailyPanels({
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
   const [metric, setMetric] = useState<"units" | "orders">("units");
   const tPlan = useSeriesToggle();
+  const tCum = useSeriesToggle();
 
   const lim = data?.lim ?? null;
 
@@ -174,6 +175,25 @@ export function ProductionDailyPanels({
       })),
     [lim, period, metric],
   );
+  // Cumulative (owner 2026-10-17: the daily bars were hard to read): how many
+  // orders were due BY each day vs how many were finished by then. The gap
+  // between the two lines is how far behind plan the floor is.
+  const [todayIso] = useState(() => ymd(new Date()));
+  const planCum = useMemo(() => {
+    const out: { iso: string; date: string; "Due (cumulative)": number; "Completed (cumulative)": number | null }[] = [];
+    let p = 0;
+    let a = 0;
+    for (const d of planChart) {
+      p += d.Plan;
+      a += d.Actual;
+      out.push({ iso: d.iso, date: d.date, "Due (cumulative)": p, "Completed (cumulative)": d.iso > todayIso ? null : a });
+    }
+    return out;
+  }, [planChart, todayIso]);
+  const dueToDate = [...planCum].reverse().find((r) => r.iso <= todayIso)?.["Due (cumulative)"] ?? 0;
+  const doneToDate = [...planCum].reverse().find((r) => r["Completed (cumulative)"] != null)?.["Completed (cumulative)"] ?? 0;
+  const dueTotal = planCum[planCum.length - 1]?.["Due (cumulative)"] ?? 0;
+  const [planView, setPlanView] = useState<"cumulative" | "daily">("cumulative");
   const planTotals = useMemo(() => {
     const rows = (lim?.orders.byDay ?? []).filter((d) => inFocus(period, d.date));
     return rows.reduce(
@@ -186,12 +206,14 @@ export function ProductionDailyPanels({
     for (const r of lim?.stages.byDay ?? []) {
       if (!inFocus(period, r.date)) continue;
       const e = m.get(r.dept) ?? { dept: r.dept, plan: 0, actual: 0 };
-      e.plan += r.plan;
+      // Plan counts only cards due BY TODAY — a card due next week is not
+      // late yet (it made every department look behind).
+      if (r.date <= todayIso) e.plan += r.plan;
       e.actual += r.actual;
       m.set(r.dept, e);
     }
     return [...m.values()].sort((a, b) => a.dept.localeCompare(b.dept));
-  }, [lim, period]);
+  }, [lim, period, todayIso]);
 
   // ---- Production revenue ---------------------------------------------------
   const revChart = useMemo(
@@ -268,34 +290,60 @@ export function ProductionDailyPanels({
           <Card className="xl:col-span-3">
             <CardHeader className="pb-2 flex flex-row items-start justify-between gap-3 flex-wrap">
               <div>
-                <CardTitle>Production plan vs actual · by {unit}</CardTitle>
+                <CardTitle>Are we keeping up with the plan? · {periodLabel(period)}</CardTitle>
                 <p className="mt-0.5 text-xs text-[#9CA3AF]">
-                  Plan = production orders due that {unit} · Actual = completed that {unit}
-                  {sameUnits ? " · every production order is one piece, so units = orders" : metric === "units" ? " · units = pieces" : " · orders = production orders"}
+                  {planView === "cumulative"
+                    ? "Running totals: orders due by each day (target date) vs orders finished by then — the gap is how far behind plan we are"
+                    : `Orders due each ${unit} vs finished that ${unit}`}
+                  {sameUnits ? " · one production order = one piece" : metric === "units" ? " · units = pieces" : " · orders = production orders"}
                 </p>
               </div>
               <div className="flex items-center gap-4 text-right">
-                {[
-                  ["Planned", fmtN(metric === "units" ? planTotals.pu : planTotals.po), "#1F1D1B"],
-                  ["Completed", fmtN(metric === "units" ? planTotals.au : planTotals.ao), "#4F7C3A"],
-                  ["Variance", (() => { const v = metric === "units" ? planTotals.au - planTotals.pu : planTotals.ao - planTotals.po; return `${v > 0 ? "+" : ""}${fmtN(v)}`; })(), (metric === "units" ? planTotals.au >= planTotals.pu : planTotals.ao >= planTotals.po) ? "#4F7C3A" : "#9A3A2D"],
-                ].map(([l, v, c]) => (
+                {(planView === "cumulative" && unit === "day"
+                  ? [
+                      ["Due by today", fmtN(dueToDate), "#1F1D1B"],
+                      ["Finished", fmtN(doneToDate), "#4F7C3A"],
+                      [doneToDate >= dueToDate ? "Ahead" : "Behind", fmtN(Math.abs(doneToDate - dueToDate)), doneToDate >= dueToDate ? "#4F7C3A" : "#9A3A2D"],
+                      ["Still due this month", fmtN(Math.max(0, dueTotal - dueToDate)), "#6B7280"],
+                    ]
+                  : [
+                      ["Planned", fmtN(metric === "units" ? planTotals.pu : planTotals.po), "#1F1D1B"],
+                      ["Completed", fmtN(metric === "units" ? planTotals.au : planTotals.ao), "#4F7C3A"],
+                      ["Variance", (() => { const v = metric === "units" ? planTotals.au - planTotals.pu : planTotals.ao - planTotals.po; return `${v > 0 ? "+" : ""}${fmtN(v)}`; })(), (metric === "units" ? planTotals.au >= planTotals.pu : planTotals.ao >= planTotals.po) ? "#4F7C3A" : "#9A3A2D"],
+                    ]
+                ).map(([l, v, c]) => (
                   <div key={l}>
                     <p className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">{l}</p>
                     <p className="text-lg font-bold tabular-nums" style={{ color: c }}>{v}</p>
                   </div>
                 ))}
+                <Tabs tabs={[{ key: "cumulative", label: "Running total" }, { key: "daily", label: "Per day" }]} value={planView} onChange={setPlanView} variant="pill" scrollable />
                 {!sameUnits && <Tabs tabs={[{ key: "units", label: "Units" }, { key: "orders", label: "Orders" }]} value={metric} onChange={setMetric} variant="pill" scrollable />}
               </div>
             </CardHeader>
             <CardContent>
-              {barChart(planChart, (
+              {planView === "daily" ? barChart(planChart, (
                 <>
                   <Legend {...tPlan.legend} />
                   <Bar dataKey="Plan" hide={tPlan.hide("Plan")} fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="Actual" hide={tPlan.hide("Actual")} fill={TAUPE} radius={[3, 3, 0, 0]} />
                 </>
-              ))}
+              )) : (
+                <div className={CHART_WRAP} style={{ width: "100%", height: 260 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={planCum} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="#F0ECE6" />
+                      <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                      <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP} />
+                      <Legend {...tCum.legend} />
+                      <Area type="monotone" dataKey="Due (cumulative)" hide={tCum.hide("Due (cumulative)")} stroke={CHART_GOLD} strokeWidth={2} fill={CHART_GOLD} fillOpacity={0.15} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="Completed (cumulative)" hide={tCum.hide("Completed (cumulative)")} stroke={TAUPE} strokeWidth={2.5} dot={false} connectNulls={false} isAnimationActive={false} />
+                      {unit === "day" && <ReferenceLine x={todayIso.slice(5)} stroke="#9CA3AF" strokeDasharray="3 3" label={{ value: "today", position: "insideTopLeft", fill: "#9CA3AF", fontSize: 10 }} />}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
               <p className="mt-2 text-[11px] text-[#9CA3AF]">
                 Click a bar to focus that {unit === "month" ? "month" : "day"} · cancelled orders excluded · {fmtN(lim.orders.withoutTarget)} orders have no target date.
               </p>
@@ -305,7 +353,7 @@ export function ProductionDailyPanels({
           <Card className="xl:col-span-2">
             <CardHeader className="pb-2">
               <CardTitle>By department · {period.day ? dayLabel(period.day) : periodLabel(period)}</CardTitle>
-              <p className="mt-0.5 text-xs text-[#9CA3AF]">Job cards (one card = one stage of one order) · Plan = due · Actual = done</p>
+              <p className="mt-0.5 text-xs text-[#9CA3AF]">Job cards (one card = one stage of one order) · Plan = due by today · Actual = done</p>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">

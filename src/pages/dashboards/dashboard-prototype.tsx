@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { PeriodPicker } from "./dashboard-shared";
-import { resolvePeriod, opensOnToday, ymd, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
+import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
 import { useDashboardUrlState } from "./use-dashboard-url-state";
 import { FinanceView } from "./FinanceView";
@@ -128,10 +128,16 @@ export default function DashboardPrototypePage() {
   // DERIVED, not synced with an effect (a setState-in-effect here caused a
   // cascading re-render on every load). A bare URL opens on TODAY - see
   // resolvePeriod - except Overview and Sales, which open on the month.
-  const effectivePeriod = useMemo<Period>(
-    () => resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab)),
-    [period, months, tab],
-  );
+  // Only Employees has a Day view (owner 2026-10-17: Sales / Operations /
+  // Service figures are the same whichever day you pick) — elsewhere a picked
+  // day or a non-quarter range falls back to its month.
+  const dayTab = tab === "people";
+  const effectivePeriod = useMemo<Period>(() => {
+    const p = resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab));
+    if (dayTab) return p;
+    if (p.mode === "range" && !quarterOfPeriod(p)) return { mode: "monthly", month: p.month };
+    return p.day ? { ...p, day: undefined } : p;
+  }, [period, months, tab, dayTab]);
 
   // A "Today's problems" tile opens its tab and scrolls to the list behind the
   // number (owner 2026-10-17: "我在上面点一下的时候，它就会跳下来"). The list
@@ -212,6 +218,7 @@ export default function DashboardPrototypePage() {
                 months={months}
                 latestDay={latestDay}
                 onChange={setPeriod}
+                allowDay={dayTab}
               />
             </div>
           )}

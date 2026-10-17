@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { MUTED, inFocus, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
+import { MUTED, inFocus, isOutsourced, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
 // Attendance log: latest recorded day per employee inside the period (or the
@@ -41,6 +41,45 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
   const [pick, setPick] = useState<{ day: string; pageKey: string } | null>(null);
   const override = pick?.pageKey === pageKey ? pick.day : undefined;
   const period = useMemo(() => (override ? { ...pagePeriod, day: override } : pagePeriod), [pagePeriod, override]);
+  // "This month" (owner 2026-10-17: "如果我要看这个月的，该怎么看"): one row per
+  // person for the month — days in, days not in, times late, minutes late —
+  // most absent first, then most late.
+  const [monthPick, setMonthPick] = useState<string | null>(null);
+  const monthOn = monthPick === pageKey;
+  const monthYm = (pagePeriod.day ?? pagePeriod.month ?? today).slice(0, 7);
+  const monthRows = useMemo(() => {
+    if (!monthOn) return null;
+    const recs = employee.attendance.filter((r) => (r.date ?? "").startsWith(monthYm) && (r.clockIn || r.clockOut));
+    const workDays = [...new Set(recs.map((r) => r.date as string))].sort();
+    const byName = new Map(employee.workers.map((w) => [(w.name ?? "").trim().toLowerCase(), w.id]));
+    const byWorker = new Map<string, typeof recs>();
+    for (const r of recs) {
+      const id = r.employeeId ?? byName.get((r.employeeName ?? "").trim().toLowerCase()) ?? null;
+      if (!id) continue;
+      byWorker.set(id, [...(byWorker.get(id) ?? []), r]);
+    }
+    const rows = employee.workers
+      .filter((w) => w.countsToHeadcount && !isOutsourced(w))
+      .map((w) => {
+        const mine = byWorker.get(w.id) ?? [];
+        const inDays = new Set(mine.map((r) => r.date));
+        const lates = mine.map((r) => lateMin(r.clockIn)).filter((m) => m > 0);
+        // Days before the person's first clock-in this month are not counted
+        // as absences (a mid-month joiner).
+        const first = [...inDays].sort()[0] ?? workDays[0];
+        const expected = workDays.filter((d) => d >= (first ?? ""));
+        return {
+          id: w.id,
+          name: w.name ?? w.id,
+          daysIn: inDays.size,
+          notIn: Math.max(0, expected.length - inDays.size),
+          late: lates.length,
+          lateMin: lates.reduce((a, b) => a + b, 0),
+        };
+      })
+      .sort((a, b) => b.notIn - a.notIn || b.late - a.late || b.lateMin - a.lateMin || a.name.localeCompare(b.name));
+    return { rows, workDays: workDays.length };
+  }, [monthOn, employee, monthYm]);
 
   const log = useMemo(() => {
     const byId = new Set(employee.workers.map((w) => w.id));
@@ -81,7 +120,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     if (period.day && !perDay) {
       const seen = new Set([...byEmp.values()].map((v) => v.workerId).filter(Boolean));
       for (const w of employee.workers) {
-        if (!w.countsToHeadcount || seen.has(w.id)) continue;
+        if (!w.countsToHeadcount || isOutsourced(w) || seen.has(w.id)) continue;
         rows.push({
           key: `absent|${w.id}`,
           last: { employeeId: w.id, employeeName: w.name, dept: w.dept, date: period.day, clockIn: null, clockOut: null, workingMinutes: 0, productionMinutes: 0, overtimeMinutes: 0, efficiencyPct: null },
@@ -112,7 +151,9 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
         <CardTitle>
           Attendance log{" "}
           <span className="ml-2 max-md:ml-0 max-md:block text-[11px] font-normal text-[#6B7280]">
-            {perDay
+            {monthRows
+              ? `${monthYm} · ${monthRows.workDays} working days so far · ${monthRows.rows.filter((r) => r.notIn > 0).length} people missed a day · ${monthRows.rows.filter((r) => r.late > 0).length} were late`
+              : perDay
               ? `${log.days} days · ${who} · ${periodLabel(period)}`
               : period.day
                 ? `${periodLabel(period)} · ${log.absent} not in · ${log.late} late · ${log.rows.length - log.absent - log.late} on time`
@@ -122,13 +163,13 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
         {/* Same segmented look as the page's Day / Month / YTD toggle (PeriodPicker). */}
         <div role="group" aria-label="Attendance day" className="flex gap-0.5 rounded-lg border border-[#E2DDD8] bg-[#F7F5F3] p-0.5">
           {days.map(([label, d]) => {
-            const on = period.day === d;
+            const on = !monthOn && period.day === d;
             return (
               <button
                 key={label}
                 type="button"
                 aria-pressed={on}
-                onClick={() => setPick(on ? null : { day: d, pageKey })}
+                onClick={() => { setMonthPick(null); setPick(on ? null : { day: d, pageKey }); }}
                 className={
                   "px-3 py-1 max-md:h-11 max-md:text-sm text-xs font-medium rounded-md border transition-colors " +
                   (on
@@ -140,9 +181,54 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
               </button>
             );
           })}
+          <button
+            type="button"
+            aria-pressed={monthOn}
+            onClick={() => setMonthPick(monthOn ? null : pageKey)}
+            className={
+              "px-3 py-1 max-md:h-11 max-md:text-sm text-xs font-medium rounded-md border transition-colors " +
+              (monthOn ? "bg-white border-[#6B5C32] text-[#1F1D1B] shadow-sm" : "bg-transparent border-transparent text-[#6B7280] hover:bg-white/60")
+            }
+          >
+            This month
+          </button>
         </div>
       </CardHeader>
       <CardContent className="p-0">
+        {monthRows ? (
+          <div className="overflow-x-auto" style={{ maxHeight: 460, overflowY: "auto" }}>
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E2DDD8,inset_0_-1px_0_#E2DDD8]">
+                  {["Employee", "Days in", "Not in", "Times late", "Minutes late", "Status"].map((t, i) => (
+                    <th key={t} className={`px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap ${i >= 1 && i <= 4 ? "text-right" : "text-left"}`}>{t}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {monthRows.rows.map((r) => (
+                  <tr key={r.id} className={`border-b border-[#E2DDD8] ${r.notIn > 0 ? "bg-[#FDF3F1]" : ""}`}>
+                    <td className={`px-3 py-2 ${r.notIn > 0 ? "font-semibold text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{r.name}</td>
+                    <td className="px-3 py-2 text-right font-mono">{r.daysIn}</td>
+                    <td className={`px-3 py-2 text-right font-mono ${r.notIn > 0 ? "font-semibold text-[#9A3A2D]" : "text-[#9CA3AF]"}`}>{r.notIn}</td>
+                    <td className={`px-3 py-2 text-right font-mono ${r.late > 0 ? "text-[#9C6F1E]" : "text-[#9CA3AF]"}`}>{r.late}</td>
+                    <td className={`px-3 py-2 text-right font-mono ${r.lateMin > 0 ? "text-[#9C6F1E]" : "text-[#9CA3AF]"}`}>{r.lateMin}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                        style={r.notIn > 0 ? { background: "#FBE7E3", color: "#9A3A2D" } : r.late > 0 ? { background: "#FBF0DC", color: "#9C6F1E" } : { background: "#EEF3E4", color: "#4F7C3A" }}
+                      >
+                        {r.notIn > 0 ? `${r.notIn} day${r.notIn > 1 ? "s" : ""} not in` : r.late > 0 ? `Late ${r.late}×` : "Every day on time"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="px-3 py-2 text-[11px] text-[#6B7280]">Working days = days anyone clocked in this month. Days before a person's first clock-in this month are not counted against them. Outsourced workers are not listed.</p>
+          </div>
+        ) : (
+        <>
         <div className="overflow-x-auto" style={{ maxHeight: 460, overflowY: "auto" }}>
           <table className="w-full text-[12.5px]">
             {/* Sticky + background + borders live on the CELLS, not the <tr>: under Tailwind's
@@ -206,6 +292,8 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
         <p className="px-3 py-2 text-[11px] text-[#6B7280]">
           "—" means no work-hour entry exists for that person on that day, so there is nothing to compute from.
         </p>
+        </>
+        )}
       </CardContent>
     </Card>
     {below?.(period)}

@@ -1,16 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useSeriesToggle } from "./use-series-toggle";
-import { BarChart, Bar, ComposedChart, CartesianGrid, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { BarChart, Bar, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   TAUPE, TEAL, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN,
-  inPeriod, inFocus, periodLabel, previousPeriod, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  inPeriod, inFocus, monthLabel, periodLabel, previousPeriod, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import { TallyList } from "./ServiceIssuesPanel";
 import { ServiceCaseNo } from "./ServiceCaseLink";
 import { useServiceCaseLinks } from "./use-service-case-links";
 import {
-  byPrevention, avgClose, closeTrend, openedVsClosed, agingSplit, preventionNotDone, causeLabel,
+  byPrevention, avgClose, daysToClose, openedVsClosed, agingSplit, preventionNotDone, causeLabel,
   type IssueCase,
 } from "../../api/lib/service-issue-stats";
 
@@ -42,8 +42,8 @@ function delta(cur: number | null, prev: number | null, lowerIsBetter: boolean) 
 }
 
 export function ServicePerformancePanel({
-  slice, period, onPeriodChange,
-}: { slice: ServicePerformanceSlice | null | undefined; period: Period; onPeriodChange: (p: Period) => void }) {
+  slice, period, onPeriodChange, afterKpis,
+}: { slice: ServicePerformanceSlice | null | undefined; period: Period; onPeriodChange: (p: Period) => void; afterKpis?: ReactNode }) {
   const cases = useMemo(() => slice?.cases ?? [], [slice]);
   const threshold = slice?.overdueAfterDays ?? 0;
   const ytd = period.mode === "ytd";
@@ -67,38 +67,43 @@ export function ServicePerformancePanel({
   const closeNow = avgClose(closedNow);
   const closePrev = avgClose(closedPrev);
   const dl = delta(closeNow.avg, closePrev.n ? closePrev.avg : null, true);
-  const trend = useMemo(
-    () => closeTrend(cases.filter((c) => c.status === "CLOSED" && inPeriod(period, c.closedDate)), bucketOf),
-    [cases, period], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  // Every day (YTD: every month) of the window up to today, not only the days
-  // something closed (owner 2026-10-17: "怎么不是每一天"). Bars = cases closed
-  // that day (a quiet day is a real 0); line = running average closing days of
-  // everything closed in the period so far, so it is continuous.
-  const closeSeries = useMemo(() => {
-    const today = ymd(new Date());
-    const buckets: string[] = [];
-    if (ytd) {
-      const y = period.month.slice(0, 4);
-      for (let m = 1; m <= 12; m++) {
-        const b = `${y}-${String(m).padStart(2, "0")}`;
-        if (b <= today.slice(0, 7)) buckets.push(b);
-      }
-    } else {
-      const from = period.mode === "range" && period.from ? period.from : `${period.month}-01`;
-      const last = period.mode === "range" && period.to ? period.to : ymd(new Date(Number(period.month.slice(0, 4)), Number(period.month.slice(5, 7)), 0));
-      const end = last < today ? last : today;
-      for (let d = new Date(`${from}T00:00:00`); ymd(d) <= end; d.setDate(d.getDate() + 1)) buckets.push(ymd(d));
+  // Average case closing, presented two ways (owner 2026-10-17: "average case
+  // closing 怎么去计算 … 怎么呈现会比较好"). Days = whole days from logged to
+  // closed, over cases CLOSED in the period (any logged date):
+  //   • how long they took — closed cases split into day bands, so one very
+  //     old case shows as one bar instead of dragging an average line;
+  //   • the monthly average over the last 6 months, to see the trend.
+  const closeBands = useMemo(() => {
+    const bands = [
+      { label: "Same / next day", lo: 0, hi: 1 },
+      { label: "2–3 days", lo: 2, hi: 3 },
+      { label: "4–7 days", lo: 4, hi: 7 },
+      { label: "8–14 days", lo: 8, hi: 14 },
+      { label: "15+ days", lo: 15, hi: Infinity },
+    ].map((b) => ({ ...b, count: 0 }));
+    const ds: number[] = [];
+    for (const c of closedNow) {
+      const d = daysToClose(c);
+      if (d == null) continue;
+      ds.push(d);
+      const band = bands.find((b) => d >= b.lo && d <= b.hi);
+      if (band) band.count += 1;
     }
-    const hit = new Map(trend.map((t) => [t.bucket, t]));
-    let sum = 0;
-    let n = 0;
-    return buckets.map((b) => {
-      const t = hit.get(b);
-      if (t && t.avg !== null) { sum += t.avg * t.closed; n += t.closed; }
-      return { date: ytd ? b : b.slice(5), Closed: t?.closed ?? 0, "Avg days (running)": n ? Math.round((sum / n) * 10) / 10 : null };
-    });
-  }, [trend, period, ytd]);
+    ds.sort((x, y) => x - y);
+    const median = ds.length ? (ds.length % 2 ? ds[(ds.length - 1) / 2] : (ds[ds.length / 2 - 1] + ds[ds.length / 2]) / 2) : null;
+    return { bands, median, max: Math.max(1, ...bands.map((b) => b.count)) };
+  }, [closedNow]);
+  const closeMonthly = useMemo(() => {
+    const end = (period.mode === "range" ? (period.to ?? "") : period.month).slice(0, 7) || ymd(new Date()).slice(0, 7);
+    const out: { m: string; ym: string; "Avg days": number | null; Closed: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(Number(end.slice(0, 4)), Number(end.slice(5, 7)) - 1 - i, 1);
+      const ym = ymd(d).slice(0, 7);
+      const cs = cases.filter((c) => c.status === "CLOSED" && (c.closedDate ?? "").startsWith(ym));
+      out.push({ m: monthLabel(ym).slice(0, 3), ym, "Avg days": avgClose(cs).avg, Closed: cs.length });
+    }
+    return out;
+  }, [cases, period]);
 
   const open = useMemo(() => cases.filter((c) => OPEN.has(c.status)), [cases]);
   const openedInFocus = useMemo(() => cases.filter((c) => inFocus(period, c.createdDate)), [cases, period]);
@@ -144,6 +149,9 @@ export function ServicePerformancePanel({
         <Kpi label="Avg case closing" value={closeNow.avg === null ? "—" : `${closeNow.avg} d`} sub={`${fmtN(closeNow.n)} closed · ${dl ? dl.text : "no previous-period comparison"}`} valueColorClass={dl?.good == null ? undefined : dl.good ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
       </div>
 
+      {/* Issues by category sits right under the numbers (owner 2026-10-17). */}
+      {afterKpis}
+
       {/* The two charts share a row (less scrolling on layer 1). */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <Card>
@@ -151,26 +159,44 @@ export function ServicePerformancePanel({
           <CardTitle>Average case closing</CardTitle>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Average whole days from the case being logged to it being closed, over cases <b>closed</b> in {win}
-            {period.day ? " (no previous-period comparison for a single day)" : ""}. Bars = cases closed each {ytd ? "month" : "day"}; line = running average closing days so far.
+            {period.day ? " (no previous-period comparison for a single day)" : ""}. Left: the closed cases by how many days they took. Right: the monthly average, to see the trend.
           </p>
         </CardHeader>
         <CardContent>
-          <div className={CHART_WRAP} style={{ width: "100%", height: 220 }}>
-            {trend.length === 0 ? (
+          <div className={CHART_WRAP} style={{ width: "100%", height: 240 }}>
+            {closedNow.length === 0 ? (
               <div className="flex items-center justify-center h-full text-xs text-[#6B7280]">No cases closed in this period.</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={closeSeries} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#F0ECE6" />
-                  <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
-                  <YAxis yAxisId="n" tick={CC_TICK} axisLine={false} tickLine={false} width={28} allowDecimals={false} />
-                  <YAxis yAxisId="d" orientation="right" tick={CC_TICK} axisLine={false} tickLine={false} width={36} tickFormatter={(v) => `${v} d`} />
-                  <Tooltip contentStyle={TOOLTIP} cursor={{ fill: "rgba(107,92,50,0.06)" }} />
-                  <Legend {...tClose.legend} />
-                  <Bar yAxisId="n" dataKey="Closed" hide={tClose.hide("Closed")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={false} />
-                  <Line yAxisId="d" type="monotone" dataKey="Avg days (running)" hide={tClose.hide("Avg days (running)")} stroke={TAUPE} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
+              <div className="grid h-full grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col justify-center">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">How long they took · {fmtN(closedNow.length)} closed</p>
+                  {closeBands.bands.map((b, i) => (
+                    <div key={b.label} className="grid grid-cols-[96px_1fr_28px] items-center gap-2 border-t border-[#F0ECE6] py-1.5 text-[12.5px]">
+                      <span className="text-[#1F1D1B]">{b.label}</span>
+                      <span className="h-3 rounded-sm bg-[#F0ECE6]">
+                        <span className="block h-3 rounded-sm" style={{ width: `${(b.count / closeBands.max) * 100}%`, background: i <= 1 ? GREEN : i === 2 ? CHART_GOLD : i === 3 ? AMBER : RED }} />
+                      </span>
+                      <span className="text-right font-semibold tabular-nums">{b.count}</span>
+                    </div>
+                  ))}
+                  <p className="mt-1 text-[11px] text-[#6B7280]">
+                    Average <b>{closeNow.avg ?? "—"} d</b> · median <b>{closeBands.median ?? "—"} d</b> — the median is the typical case; a few very old cases pull the average up.
+                  </p>
+                </div>
+                <div className="min-h-[180px]">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">Average days to close · last 6 months</p>
+                  <ResponsiveContainer width="100%" height="88%">
+                    <ComposedChart data={closeMonthly} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="#F0ECE6" />
+                      <XAxis dataKey="m" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                      <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={32} tickFormatter={(v) => `${v}d`} />
+                      <Tooltip contentStyle={TOOLTIP} formatter={(v, n) => (n === "Avg days" ? [`${v} d`, n] : [v, n])} />
+                      <Legend {...tClose.legend} />
+                      <Bar dataKey="Avg days" hide={tClose.hide("Avg days")} fill={TAUPE} radius={[4, 4, 0, 0]} maxBarSize={26} isAnimationActive={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             )}
           </div>
         </CardContent>

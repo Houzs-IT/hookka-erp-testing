@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSeriesToggle } from "./use-series-toggle";
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { formatCurrency } from "@/lib/utils";
@@ -14,7 +14,7 @@ import { deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
   BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, MUTED, RED, TEAL,
-  fmtN, inPeriod, periodLabel, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  fmtN, inPeriod, isOutsourced, periodLabel, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 
 // ---------------------------------------------------------------------------
 // Employees, merged dashboard (owner 2026-10-17). One page, no sub-tabs: "a
@@ -104,7 +104,8 @@ export function EmployeesDashboard({ period }: { period: Period }) {
 
   const workers = useMemo(() => employee?.workers ?? [], [employee]);
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
-  const roster = useMemo(() => workers.filter((w) => w.countsToHeadcount), [workers]);
+  const roster = useMemo(() => workers.filter((w) => w.countsToHeadcount && !isOutsourced(w)), [workers]);
+  const outsourced = useMemo(() => new Set(workers.filter(isOutsourced).map((w) => w.id)), [workers]);
 
   // Per worker per day, the period's working / production minutes.
   const allDays = useMemo(() => [...(employee?.performance.byDay ?? [])].sort((a, b) => (a.date < b.date ? -1 : 1)), [employee]);
@@ -137,6 +138,30 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const { byWorkerDay: prevCost } = useLabourCost(prevYm ? `${prevYm}-01` : "", prevTo, canSalary);
   const revMonths = useMemo(() => [...new Set([...(prevYm ? [prevYm] : []), ...monthsOf(period, today)])].sort(), [prevYm, period, today]);
   const prodRev = useProductionRevenue(revMonths);
+  // Department PROGRESSIVE revenue (owner 2026-10-17): each department earns
+  // its minute-weighted slice of an order's price when its own job card
+  // completes — the Labor Cost report's Category Revenue
+  // (GET /api/working-hour-entries/production-revenue). Slices add up to the
+  // order, so salary ÷ slice is that department's real labour share.
+  // (Department Revenue — every department booking the full order — stays the
+  // supply / demand balance view on Operations.)
+  const winFrom = useMemo(() => [...winDates].sort()[0] ?? "", [winDates]);
+  const winTo = useMemo(() => [...winDates].sort().pop() ?? "", [winDates]);
+  const { data: progResp } = useCachedJson<{ data?: { byDeptCategory?: Record<string, number> } }>(
+    winFrom ? `/api/working-hour-entries/production-revenue?from=${winFrom}&to=${winTo}` : null,
+  );
+  const progByDept = useMemo(() => {
+    const m = new Map<string, { bf: number; sofa: number; other: number }>();
+    for (const [k, v] of Object.entries(progResp?.data?.byDeptCategory ?? {})) {
+      const [dept, cat] = k.split("|");
+      const r = m.get(dept) ?? { bf: 0, sofa: 0, other: 0 };
+      if (cat === "BEDFRAME") r.bf += v;
+      else if (cat === "SOFA") r.sofa += v;
+      else r.other += v;
+      m.set(dept, r);
+    }
+    return m;
+  }, [progResp]);
 
   // ---- Headline numbers over the window -------------------------------------
   const sumWindow = (has: (d: string) => boolean, cost: Map<string, number>) => {
@@ -148,7 +173,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       let any = false;
       for (const x of d.workers ?? []) {
         sen += cost.get(`${x.workerId}|${d.date}`) ?? 0;
-        if (x.workingMinutes > 0) { workerDays += 1; any = true; }
+        if (x.workingMinutes > 0 && !outsourced.has(x.workerId)) { workerDays += 1; any = true; }
       }
       if (any) workingDays += 1;
     }
@@ -199,11 +224,12 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   }, [days, winDates, workerById, dept, costByWorkerDay]);
   // One ranking, split in halves (owner 2026-10-17: top 10 / bottom 10 /
   // every worker were the same people three times — "从上面 list 下来分一半").
-  const ranked = rows.filter((r) => r.work >= MIN_RANK_MIN);
+  const ranked = rows.filter((r) => r.work >= MIN_RANK_MIN && !outsourced.has(r.id));
+  const outsourcedRows = rows.filter((r) => outsourced.has(r.id));
   const half = Math.ceil(ranked.length / 2);
   const upper = ranked.slice(0, half);
   const lower = ranked.slice(half);
-  const unranked = rows.filter((r) => r.work < MIN_RANK_MIN);
+  const unranked = rows.filter((r) => r.work < MIN_RANK_MIN && !outsourced.has(r.id));
   const depts = useMemo(() => [...new Set(workers.map((w) => w.dept).filter((d): d is string => !!d))].sort(), [workers]);
 
   const deptRows = useMemo(() => {
@@ -213,7 +239,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       for (const x of d.workers ?? []) {
         const key = workerById.get(x.workerId)?.dept ?? "—";
         const r = m.get(key) ?? { dept: key, people: new Set<string>(), work: 0, prod: 0, cost: 0, bf: 0, sofa: 0 };
-        if (x.workingMinutes > 0) r.people.add(x.workerId);
+        if (x.workingMinutes > 0 && !outsourced.has(x.workerId)) r.people.add(x.workerId);
         r.work += x.workingMinutes;
         r.prod += x.productionMinutes;
         r.cost += costByWorkerDay.get(`${x.workerId}|${d.date}`) ?? 0;
@@ -221,14 +247,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       }
     }
     for (const r of m.values()) {
-      for (const [day, v] of prodRev?.dept.get(r.dept) ?? []) {
-        if (!winDates.has(day)) continue;
-        r.bf += v.bedframe;
-        r.sofa += v.sofa;
-      }
+      const pr = progByDept.get(r.dept);
+      if (pr) { r.bf = pr.bf; r.sofa = pr.sofa + pr.other; }
     }
     return [...m.values()].filter((r) => r.work > 0).sort((a, b) => (eff(b.prod, b.work) ?? 0) - (eff(a.prod, a.work) ?? 0));
-  }, [days, winDates, workerById, costByWorkerDay, prodRev]);
+  }, [days, winDates, workerById, costByWorkerDay, progByDept, outsourced]);
 
   const chart = useMemo(
     () =>
@@ -319,7 +342,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Working vs production hours · efficiency · {periodLabel(period)}</CardTitle>
-          <p className="text-xs text-[#9CA3AF]">Bars: hours per day · line: production ÷ working (target {target}%) · hover a day for its salary · idle Sundays left out</p>
+          <p className="text-xs text-[#9CA3AF]">Shaded = hours clocked · bar = production hours earned · line = efficiency (dots green at target, amber close, red well under) · hover a day for its salary · idle Sundays left out</p>
         </CardHeader>
         <CardContent>
           <div className="select-none [&_*]:outline-none" style={{ width: "100%", height: 280 }}>
@@ -341,9 +364,28 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     }}
                   />
                   <Legend {...tHours.legend} />
-                  <Bar yAxisId="h" dataKey="Working" hide={tHours.hide("Working")} fill="#CFC6BA" radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
-                  <Bar yAxisId="h" dataKey="Production" hide={tHours.hide("Production")} fill={CHART_INK} radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
-                  <Line yAxisId="p" type="monotone" dataKey="Efficiency" hide={tHours.hide("Efficiency")} stroke={CHART_GOLD} strokeWidth={2.5} dot={{ r: 2.5 }} isAnimationActive={false} connectNulls />
+                  {/* Working = the shaded band (hours clocked); Production = the
+                      bar inside it (standard hours earned). A bar above the band
+                      = beat the standard; below = time not producing. Efficiency
+                      on the right axis, against the target line. */}
+                  <Area yAxisId="h" type="monotone" dataKey="Working" hide={tHours.hide("Working")} stroke="#B9AE9F" strokeWidth={1.5} fill="#E9E3DA" fillOpacity={0.9} isAnimationActive={false} />
+                  <Bar yAxisId="h" dataKey="Production" hide={tHours.hide("Production")} fill={CHART_INK} radius={[3, 3, 0, 0]} maxBarSize={16} isAnimationActive={false} />
+                  <ReferenceLine yAxisId="p" y={target} stroke={GREEN} strokeDasharray="4 3" strokeOpacity={0.7} label={{ value: `target ${target}%`, position: "insideTopRight", fill: GREEN, fontSize: 10 }} />
+                  <Line
+                    yAxisId="p"
+                    type="monotone"
+                    dataKey="Efficiency"
+                    hide={tHours.hide("Efficiency")}
+                    stroke={CHART_GOLD}
+                    strokeWidth={2.5}
+                    isAnimationActive={false}
+                    connectNulls
+                    dot={(props: { cx?: number; cy?: number; payload?: { Efficiency: number | null }; index?: number }) => {
+                      const v = props.payload?.Efficiency;
+                      if (props.cx == null || props.cy == null || v == null) return <g key={props.index} />;
+                      return <circle key={props.index} cx={props.cx} cy={props.cy} r={3.5} fill="#FFFFFF" stroke={v >= target ? GREEN : v >= target * 0.85 ? "#9C6F1E" : RED} strokeWidth={2} />;
+                    }}
+                  />
                   {dayLine && <ReferenceLine yAxisId="h" x={dayLine} stroke="#9C6F1E" strokeWidth={2} />}
                 </ComposedChart>
               </ResponsiveContainer>
@@ -370,7 +412,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Department efficiency · {winLabel}</CardTitle>
-          <p className="mt-0.5 text-xs text-[#9CA3AF]">Output = the department's own production revenue (an order's value when its cards there complete), split Bedframe / Sofa{canSalary ? " · labour % = salary ÷ output" : ""}</p>
+          <p className="mt-0.5 text-xs text-[#9CA3AF]">Output = the department's progressive revenue: its minute-weighted share of each order's price, earned when its own job card completes (Labor Cost report's Category Revenue){canSalary ? " · labour % = salary ÷ that share" : ""}</p>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -391,11 +433,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
                       <td className="px-3 py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{prodRev ? formatCurrency(Math.round(r.bf)) : "…"}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{prodRev ? formatCurrency(Math.round(r.sofa)) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(r.bf / 100) * 100) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(r.sofa / 100) * 100) : "…"}</td>
                       {canSalary && <>
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.cost)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && prodRev ? pct(lp) : "…"}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && progResp ? pct(lp) : "…"}</td>
                       </>}
                     </tr>
                   );
@@ -414,6 +456,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
         Ranked by efficiency over {winLabel}; click a worker for each day's hours{canSalary ? ", efficiency and salary" : " and efficiency"}.
         {unranked.length > 0 && ` ${unranked.length} with under an hour clocked are not ranked.`}
+        {outsourcedRows.length > 0 && ` Outsourced, not ranked or counted as people: ${outsourcedRows.map((r) => r.name).join(", ")}.`}
       </p>
 
       {/* Attendance log: opens on the picked day (or the latest day with hours);

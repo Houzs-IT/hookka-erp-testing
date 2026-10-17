@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   CHART_AXIS, monthLabel, periodLabel, ymd, stepPeriod, stepDay, yearsWithData, periodPresets, presetActive,
-  calendarCells, shiftMonth,
+  calendarCells, shiftMonth, quarterOfPeriod, quarterPeriod, quarterKeyOf, stepQuarter,
   type Period,
 } from "./dashboard-shared-lib";
 
@@ -413,11 +413,14 @@ export function PeriodPicker({
   months,
   latestDay,
   onChange,
+  allowDay = true,
 }: {
   period: Period;
   months: string[];
   latestDay?: string;
   onChange: (p: Period) => void;
+  /** false hides the Day view (only Employees has one). */
+  allowDay?: boolean;
 }) {
   const todayIso = ymd(new Date());
   const phone = useMediaQuery("(max-width: 767px)");
@@ -425,12 +428,15 @@ export function PeriodPicker({
   // Which of the three views the CURRENT period reads as. A range preset
   // (Last 7 Days) has no calendar identity of its own to hold a tab for - it
   // displays and steps like a specific dated window, closest to Day.
-  const view: "day" | "month" | "ytd" =
-    period.mode === "ytd" ? "ytd" : period.mode === "range" || period.day ? "day" : "month";
+  // Quarter (2026-10-17) is a range that is exactly a calendar quarter.
+  const quarterKey = quarterOfPeriod(period);
+  const view: "day" | "month" | "quarter" | "ytd" =
+    period.mode === "ytd" ? "ytd" : quarterKey ? "quarter" : period.mode === "range" || period.day ? "day" : "month";
 
-  const setView = (v: "day" | "month" | "ytd") => {
+  const setView = (v: "day" | "month" | "quarter" | "ytd") => {
     if (v === view) return;
     if (v === "ytd") { onChange({ mode: "ytd", month: period.month }); return; }
+    if (v === "quarter") { onChange(quarterPeriod(quarterKeyOf(period.month), todayIso)); return; }
     if (v === "month") { onChange({ mode: "monthly", month: period.month, day: undefined }); return; }
     const day = period.day ?? todayIso;
     onChange({ mode: "monthly", month: day.slice(0, 7), day });
@@ -442,16 +448,22 @@ export function PeriodPicker({
   // YTD are unchanged - they step by whatever they measure, bounded to the
   // months/years the book actually has.
   const singleDay = view === "day" && period.mode === "monthly" && !!period.day;
-  const prev = singleDay ? dayNeighbour(period.day, -1, todayIso) : stepPeriod(period, months, -1);
-  const next = singleDay ? dayNeighbour(period.day, 1, todayIso) : stepPeriod(period, months, 1);
+  const stepQ = (dir: -1 | 1) => {
+    const k = quarterKey ? stepQuarter(quarterKey, dir, todayIso) : null;
+    return k ? quarterPeriod(k, todayIso) : null;
+  };
+  const prev = quarterKey ? stepQ(-1) : singleDay ? dayNeighbour(period.day, -1, todayIso) : stepPeriod(period, months, -1);
+  const next = quarterKey ? stepQ(1) : singleDay ? dayNeighbour(period.day, 1, todayIso) : stepPeriod(period, months, 1);
 
-  const trigger = (controls: ReactNode) => (
+  const trigger = (controls: ReactNode) => view === "quarter" && !phone ? (
+    <span className="px-2 text-sm font-semibold tabular-nums text-[#1F1D1B]">{periodLabel(period)}</span>
+  ) : (
     <DateTrigger
       period={period}
       months={months}
       latestDay={latestDay}
       todayIso={todayIso}
-      view={view}
+      view={view === "quarter" ? "day" : view}
       onChange={onChange}
       phone={phone}
       controls={controls}
@@ -472,8 +484,8 @@ export function PeriodPicker({
   // which view is on is readable at a glance — a background tint alone was too
   // faint to tell apart on this cream page.
   const modes = (
-    <div className="flex gap-0.5 rounded-lg border border-[#E2DDD8] bg-[#F7F5F3] p-0.5 max-md:grid max-md:grid-cols-3">
-      {(["day", "month", "ytd"] as const).map((v) => (
+    <div className="flex gap-0.5 rounded-lg border border-[#E2DDD8] bg-[#F7F5F3] p-0.5 max-md:grid max-md:grid-cols-4">
+      {(allowDay ? (["day", "month", "quarter", "ytd"] as const) : (["month", "quarter", "ytd"] as const)).map((v) => (
         <button
           key={v}
           type="button"
@@ -486,7 +498,7 @@ export function PeriodPicker({
               : "bg-transparent border-transparent text-[#6B7280] hover:bg-white/60")
           }
         >
-          {v === "day" ? "Day" : v === "month" ? "Month" : "YTD"}
+          {v === "day" ? "Day" : v === "month" ? "Month" : v === "quarter" ? "Quarter" : "Year"}
         </button>
       ))}
     </div>

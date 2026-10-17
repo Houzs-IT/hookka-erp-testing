@@ -10,6 +10,7 @@
 // ===========================================================================
 import { lazy, Suspense, useMemo, useState } from "react";
 import { CompletedDrill } from "./CompletedDrill";
+import { parseDashPeriod } from "../../api/lib/dash-period";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
@@ -324,17 +325,16 @@ function last7WorkingDays(): { from: string; to: string } {
 }
 // Date range for a selected "YYYY-MM": [1st .. month end]. The current
 // month is capped at today; a past month runs to its last calendar day.
-function monthWindow(ym: string): { from: string; to: string } {
+function monthWindow(key: string): { from: string; to: string } {
+  // A month, quarter (YYYY-Qn) or year (YYYY): first day .. last day, capped
+  // at today (owner 2026-10-17: quarter and year periods).
+  const dp = parseDashPeriod(key);
   const iso = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const yr = Number(ym.slice(0, 4));
-  const mo = Number(ym.slice(5, 7)); // 1-12
-  const from = iso(new Date(yr, mo - 1, 1));
-  const lastDay = new Date(yr, mo, 0); // day 0 of next month
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const to = ym === CUR_YM && today < lastDay ? iso(today) : iso(lastDay);
-  return { from, to };
+  const today = iso(new Date());
+  const from = dp.startISO || today;
+  const last = dp.lastDayISO || today;
+  return { from, to: last > today ? today : last };
 }
 
 // ---------- helpers (same tokens as /dashboard) ----------
