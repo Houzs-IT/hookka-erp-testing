@@ -140,6 +140,12 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-17-319 — Production finishing pulled shipped and invoiced orders back to READY_TO_SHIP `production` `sales-orders` 🟡
+
+🟡 Code fixed; data correction script ready, run after deploy. Both production-completion cascades (Upholstery-done and PO-COMPLETED, SO and CO twins in `production-orders/_helpers.ts`) set READY_TO_SHIP whenever the order was "not already READY_TO_SHIP" — so an order that had shipped, been delivered, invoiced or even closed went BACK to READY_TO_SHIP when its last job card was scanned after the goods left. The dispatch cascade only flipped READY_TO_SHIP → SHIPPED, so goods sent before the last scan left the SO in production, and finishing then parked it at READY_TO_SHIP for good. Found from the merged dashboard's Order Pipeline (owner 2026-10-17: READY_TO_SHIP 823 SOs / RM 999k against Pending Delivery ~RM 54k). Read-only check on prod, 830 SOs: 98 already invoiced (RM 141k), 688 with every finished-goods unit DELIVERED, 3 fully loaded/delivered, 8 part shipped, 32 genuinely in the warehouse, 1 with a draft DO. Example: SO 400 — DO dispatched and invoiced 10-09, back to READY_TO_SHIP 10-14.
+
+Fix = forward-only rule `canAdvanceToReadyToShip` (CONFIRMED / IN_PRODUCTION only; `src/api/lib/ready-to-ship-guard.ts`) on all four forward cascades, also inside the UPDATE's WHERE; dispatch now ships an SO still IN_PRODUCTION / CONFIRMED. Data = `scripts/fix-ready-to-ship-backslide-2026-10-17.mjs` (dry run by default; each SO goes to the status its own documents prove — invoices → INVOICED / CLOSED, all units delivered → DELIVERED, all units out → SHIPPED — with an audit row and a restore file). Regression: `tests/ready-to-ship-guard.test.mjs`.
+
 ## BUG-2026-10-17-318 — A delivery return read "CN issued" with no credit note behind it `delivery` `finance` 🟡
 
 🟡 **Fixed on its branch; prod check pending.**
