@@ -36,7 +36,7 @@ test("one order for screen, image and print: receipts first, then payments", () 
   assert.match(tab, /const ticked = pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => p\.ticked\)\);/);
   // Get image draws through the shared module since finance v2 mobile (the
   // phone shares the same picture).
-  assert.match(tab, /drawCashPositionImage\(cur, \{ netAfterSen, repayShownSen, recvShownSen \}\)/);
+  assert.match(tab, /drawCashPositionImage\(cur, \{ netAfterSen, repayShownSen, recvShownSen, tfShownSen \}\)/);
   assert.match(read("src/lib/cash-position-image.ts"), /rows: pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\)/, "Get image");
   assert.match(tab, /\$\{pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\)\s*\n?\s*\.map\(/, "Print");
 });
