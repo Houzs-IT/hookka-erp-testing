@@ -72,16 +72,32 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
           prod: p?.prod ?? null,
           nonProd: p ? Math.max(0, p.all - p.working) : null,
           eff: p && p.working > 0 ? (p.prod / p.working) * 100 : null,
+          absent: false,
         };
-      })
-      .sort((a, b) => perDay
-        ? (b.last.date ?? "").localeCompare(a.last.date ?? "")
-        : (a.last.employeeName ?? "").localeCompare(b.last.employeeName ?? ""));
+      });
+    // One day in focus: every headcount worker with no clock record that day
+    // is listed as NOT IN (owner 2026-10-17: "没来的一定要显示"), and the list
+    // reads not in → late → on time, so the problems are on top.
+    if (period.day && !perDay) {
+      const seen = new Set([...byEmp.values()].map((v) => v.workerId).filter(Boolean));
+      for (const w of employee.workers) {
+        if (!w.countsToHeadcount || seen.has(w.id)) continue;
+        rows.push({
+          key: `absent|${w.id}`,
+          last: { employeeId: w.id, employeeName: w.name, dept: w.dept, date: period.day, clockIn: null, clockOut: null, workingMinutes: 0, productionMinutes: 0, overtimeMinutes: 0, efficiencyPct: null },
+          days: 0, working: null, prod: null, nonProd: null, eff: null, absent: true,
+        });
+      }
+    }
+    const rank = (r: (typeof rows)[number]) => (r.absent ? 0 : lateMin(r.last.clockIn) > 0 ? 1 : 2);
+    rows.sort((a, b) => perDay
+      ? (b.last.date ?? "").localeCompare(a.last.date ?? "")
+      : rank(a) - rank(b) || (a.last.employeeName ?? "").localeCompare(b.last.employeeName ?? ""));
 
     const sum = (f: (r: (typeof rows)[number]) => number | null) => rows.reduce((a, r) => a + (f(r) ?? 0), 0);
     const working = sum((r) => r.working);
     const prod = sum((r) => r.prod);
-    return { rows, working, prod, nonProd: sum((r) => r.nonProd), days: sum((r) => r.days), eff: working > 0 ? (prod / working) * 100 : null };
+    return { rows, working, prod, nonProd: sum((r) => r.nonProd), days: sum((r) => r.days), eff: working > 0 ? (prod / working) * 100 : null, absent: rows.filter((r) => r.absent).length, late: rows.filter((r) => !r.absent && lateMin(r.last.clockIn) > 0).length };
   }, [employee, period, perDay]);
 
   const H = ["Employee", "Date", "Clock in", "Clock out", "Production time", "Prod hours", "Non-prod hours", "Efficiency", ...(perDay ? [] : ["Total days"]), "Status"];
@@ -98,7 +114,9 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
           <span className="ml-2 max-md:ml-0 max-md:block text-[11px] font-normal text-[#6B7280]">
             {perDay
               ? `${log.days} days · ${who} · ${periodLabel(period)}`
-              : `${log.rows.length} employees · latest recorded day each · ${periodLabel(period)}`}
+              : period.day
+                ? `${periodLabel(period)} · ${log.absent} not in · ${log.late} late · ${log.rows.length - log.absent - log.late} on time`
+                : `${log.rows.length} employees · latest recorded day each · ${periodLabel(period)}`}
           </span>
         </CardTitle>
         {/* Same segmented look as the page's Day / Month / YTD toggle (PeriodPicker). */}
@@ -141,8 +159,8 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
               {log.rows.map((r) => {
                 const late = lateMin(r.last.clockIn);
                 return (
-                  <tr key={r.key} className="border-b border-[#E2DDD8]">
-                    <td className="px-3 py-2 text-[#1F1D1B]">{r.last.employeeName ?? "—"}</td>
+                  <tr key={r.key} className={`border-b border-[#E2DDD8] ${r.absent ? "bg-[#FDF3F1]" : ""}`}>
+                    <td className={`px-3 py-2 ${r.absent ? "font-semibold text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{r.last.employeeName ?? "—"}</td>
                     <td className="px-3 py-2 text-[#6B7280] whitespace-nowrap">
                       {r.last.date ? `${Number(r.last.date.slice(8))} ${new Date(r.last.date).toLocaleString("en", { month: "short" })}` : "—"}
                     </td>
@@ -154,13 +172,13 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
                     <td className="px-3 py-2 text-right font-mono font-semibold" style={{ color: r.eff == null ? MUTED : r.eff >= 90 ? "#4F7C3A" : "#B5701A" }}>
                       {r.eff == null ? "—" : `${r.eff.toFixed(1)}%`}
                     </td>
-                    {!perDay && <td className="px-3 py-2 text-right font-mono">{r.days}</td>}
+                    {!perDay && <td className="px-3 py-2 text-right font-mono">{r.absent ? "—" : r.days}</td>}
                     <td className="px-3 py-2">
                       <span
                         className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold"
-                        style={late ? { background: "#F0ECE9", color: "#6B5C32" } : { background: "#EEF3E4", color: "#4F7C3A" }}
+                        style={r.absent ? { background: "#FBE7E3", color: "#9A3A2D" } : late ? { background: "#FBF0DC", color: "#9C6F1E" } : { background: "#EEF3E4", color: "#4F7C3A" }}
                       >
-                        {late ? `Late ${late}m` : "On time"}
+                        {r.absent ? "Not in" : late ? `Late ${late}m` : "On time"}
                       </span>
                     </td>
                   </tr>

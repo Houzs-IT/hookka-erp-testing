@@ -144,57 +144,6 @@ export function ServiceView({
               chart are gone. */}
           <ServicePerformancePanel slice={slice} period={period} onPeriodChange={onPeriodChange} />
 
-          <Card>
-            <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3 flex-wrap">
-              <CardTitle>Service cases logged ({fmtN(listRows.length)})</CardTitle>
-              <select
-                aria-label="Category"
-                value={causeFilter ?? ""}
-                onChange={(e) => setCauseFilter(e.target.value || null)}
-                className="h-8 max-md:h-10 max-md:w-full rounded-md border border-[#E2DDD8] bg-white px-2 text-xs max-md:text-sm text-[#1F1D1B] focus:outline-none"
-              >
-                <option value="">All categories</option>
-                {causeOptions.map((r) => (
-                  <option key={r.key} value={r.key}>{r.label} ({fmtN(r.count)})</option>
-                ))}
-              </select>
-              <div className="relative w-full max-w-[220px] max-md:max-w-none">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#9CA3AF]" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search case, customer, issue…" className="h-8 max-md:h-10 pl-8 text-xs max-md:text-sm" />
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto" style={{ maxHeight: 420, overflowY: "auto" }}>
-                <table className="w-full text-[12.5px]">
-                  <thead>
-                    <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E2DDD8,inset_0_-1px_0_#E2DDD8]">
-                      {["Case", "Customer", "Issue", "Category", "Logged", "Status", "Approval"].map((h) => (
-                        <th key={h} className="text-left px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280]">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {listRows.map((c) => (
-                      <tr key={c.id} {...rowProps(c.id, "border-b border-[#E2DDD8]")}>
-                        <td className="px-3 py-2 font-mono text-[#1F1D1B] whitespace-nowrap"><ServiceCaseNo id={c.id} caseNo={c.caseNo} canOpen={canOpen} /></td>
-                        <td className="px-3 py-2 text-[#1F1D1B]">{c.customer ?? "—"}</td>
-                        <td className="px-3 py-2 text-[#6B7280] max-w-[320px] truncate">{c.issue || "—"}</td>
-                        <td className="px-3 py-2 text-[#6B7280]">{c.causes?.length ? c.causes.map(causeLabel).join(", ") : "—"}</td>
-                        <td className="px-3 py-2 text-[#6B7280] whitespace-nowrap">{dayLabel(c.createdDate)}</td>
-                        <td className="px-3 py-2 whitespace-nowrap"><StatusPill status={c.status} /></td>
-                        <td className="px-3 py-2 whitespace-nowrap text-[11.5px] font-semibold" style={{ color: APPROVAL_STYLE[c.approvalStatus ?? ""] ?? MUTED }}>
-                          {c.approvalStatus ? statusLabel(c.approvalStatus) : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                    {listRows.length === 0 && (
-                      <tr><td colSpan={7} className="px-4 py-6 text-center text-[#6B7280]">No cases match.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
         </>
       )}
 
@@ -250,12 +199,69 @@ export function ServiceView({
 
       {sub === "overdue" && <ServiceApprovalsPanel />}
 
+      {/* Summary first, the long case list last (owner 2026-10-17: dashboard
+          cards on top, rows of detail at the bottom). */}
       {sub === "overview" && (
+        <>
         <ServiceIssuesPanel
           cases={logged}
           period={period}
-          onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); }}
+          onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); document.getElementById("svc-cases")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
         />
+        <div id="svc-cases" className="scroll-mt-48">
+          <Card>
+            <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3 flex-wrap">
+              <CardTitle>Service cases logged ({fmtN(listRows.length)})</CardTitle>
+              <select
+                aria-label="Category"
+                value={causeFilter ?? ""}
+                onChange={(e) => setCauseFilter(e.target.value || null)}
+                className="h-8 max-md:h-10 max-md:w-full rounded-md border border-[#E2DDD8] bg-white px-2 text-xs max-md:text-sm text-[#1F1D1B] focus:outline-none"
+              >
+                <option value="">All categories</option>
+                {causeOptions.map((r) => (
+                  <option key={r.key} value={r.key}>{r.label} ({fmtN(r.count)})</option>
+                ))}
+              </select>
+              <div className="relative w-full max-w-[220px] max-md:max-w-none">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#9CA3AF]" />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search case, customer, issue…" className="h-8 max-md:h-10 pl-8 text-xs max-md:text-sm" />
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto" style={{ maxHeight: 420, overflowY: "auto" }}>
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E2DDD8,inset_0_-1px_0_#E2DDD8]">
+                      {["Case", "Customer", "Issue", "Category", "Logged", "Status", "Approval"].map((h) => (
+                        <th key={h} className="text-left px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280]">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listRows.map((c) => (
+                      <tr key={c.id} {...rowProps(c.id, "border-b border-[#E2DDD8]")}>
+                        <td className="px-3 py-2 font-mono text-[#1F1D1B] whitespace-nowrap"><ServiceCaseNo id={c.id} caseNo={c.caseNo} canOpen={canOpen} /></td>
+                        <td className="px-3 py-2 text-[#1F1D1B]">{c.customer ?? "—"}</td>
+                        <td className="px-3 py-2 text-[#6B7280] max-w-[320px] truncate">{c.issue || "—"}</td>
+                        <td className="px-3 py-2 text-[#6B7280]">{c.causes?.length ? c.causes.map(causeLabel).join(", ") : "—"}</td>
+                        <td className="px-3 py-2 text-[#6B7280] whitespace-nowrap">{dayLabel(c.createdDate)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap"><StatusPill status={c.status} /></td>
+                        <td className="px-3 py-2 whitespace-nowrap text-[11.5px] font-semibold" style={{ color: APPROVAL_STYLE[c.approvalStatus ?? ""] ?? MUTED }}>
+                          {c.approvalStatus ? statusLabel(c.approvalStatus) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                    {listRows.length === 0 && (
+                      <tr><td colSpan={7} className="px-4 py-6 text-center text-[#6B7280]">No cases match.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        </>
       )}
     </div>
   );

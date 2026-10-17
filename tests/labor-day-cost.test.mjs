@@ -3,7 +3,7 @@
 // dashboard's Employees tab (owner 2026-10-17: 「看我们的 labor cost 计算方式」).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { workerDayEntryCostsSen, dayTypedOt } from "../src/lib/labor-day-cost.ts";
+import { workerDayEntryCostsSen, dayTypedOt, costByWorkerDaySen } from "../src/lib/labor-day-cost.ts";
 
 const w = { basicSalarySen: 260000, workingHoursPerDay: 9, workingDaysPerMonth: 26, otMultiplier: 1.5 };
 const base = { worker: w, effSalarySen: 260000, actualWorkingDays: 26, holidays: [], payRuleVersions: [] };
@@ -33,4 +33,21 @@ test("a monthly worker with no salary costs nothing; a per-day worker costs the 
   const daily = { ...w, basicSalarySen: 0, payMode: "DAILY", dailyRateSen: 8500 };
   const costs = workerDayEntryCostsSen({ ...base, worker: daily, date: "2026-10-15", entryHours: [4, 4] });
   assert.equal(Math.round(costs[0] + costs[1]), 8500);
+});
+
+test("costByWorkerDaySen groups entries per worker-day and uses that month's effective salary", () => {
+  const workers = [{ id: "A", ...w }];
+  const entries = [
+    { workerId: "A", date: "2026-10-15", hours: 4 },
+    { workerId: "A", date: "2026-10-15", hours: "5" },
+    { workerId: "A", date: "2026-09-15", hours: 9 },
+    { workerId: "GONE", date: "2026-10-15", hours: 9 },
+  ];
+  const m = costByWorkerDaySen({ workers, entries, effSalaryByMonth: { "2026-09": { A: 520000 } }, holidays: [], payRuleVersions: [] });
+  assert.equal(m.size, 2); // an unknown worker is skipped
+  // October: falls back to basic salary; 9h on a 9h day = one day's pay.
+  const octDays = 27; // Mon–Sat in Oct 2026
+  assert.equal(m.get("A|2026-10-15"), Math.round(260000 / octDays));
+  // September: the effective salary for that month (double) is used.
+  assert.ok(m.get("A|2026-09-15") > m.get("A|2026-10-15") * 1.8);
 });

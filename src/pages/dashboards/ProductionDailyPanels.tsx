@@ -1,4 +1,5 @@
 import { deptName } from "./ops-floor-lib";
+import { useSeriesToggle } from "./use-series-toggle";
 import { useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
@@ -7,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import {
   TAUPE, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN, fmtRMAxis, inPeriod, inFocus,
-  dayLabel, periodLabel, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+  dayLabel, periodLabel, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
@@ -146,6 +147,7 @@ export function ProductionDailyPanels({
 }: { period: Period; sub: "plan" | "revenue"; onPeriodChange: (p: Period) => void }) {
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
   const [metric, setMetric] = useState<"units" | "orders">("units");
+  const tPlan = useSeriesToggle();
 
   const lim = data?.lim ?? null;
 
@@ -253,53 +255,57 @@ export function ProductionDailyPanels({
     </div>
   );
   const unit = period.mode === "ytd" ? "month" : "day";
+  const sameUnits = planTotals.pu === planTotals.po && planTotals.au === planTotals.ao;
 
   return (
     <>
       {sub === "plan" && (!lim ? missingSlice("Plan vs Actual") : (
         <>
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Kpi label="Planned production orders" value={fmtN(planTotals.po)} sub={`${fmtN(planTotals.pu)} units`} />
-            <Kpi label="Completed production orders" value={fmtN(planTotals.ao)} sub={`${fmtN(planTotals.au)} units`} valueColorClass="text-[#4F7C3A]" />
-            <Kpi label="Variance (orders)" value={`${planTotals.ao - planTotals.po > 0 ? "+" : ""}${fmtN(planTotals.ao - planTotals.po)}`} sub="completed − planned" valueColorClass={planTotals.ao >= planTotals.po ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
-            <Kpi label="Variance (units)" value={`${planTotals.au - planTotals.pu > 0 ? "+" : ""}${fmtN(planTotals.au - planTotals.pu)}`} sub="completed − planned" valueColorClass={planTotals.au >= planTotals.pu ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
-          </div>
 
-          <Card>
-            <CardHeader className="pb-3 flex flex-row items-start justify-between gap-3 flex-wrap">
+          {/* One row (owner 2026-10-17: "combine 成一排, 占用空间太大"): the
+              chart and the per-department table side by side. */}
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-5 items-stretch">
+          <Card className="xl:col-span-3">
+            <CardHeader className="pb-2 flex flex-row items-start justify-between gap-3 flex-wrap">
               <div>
                 <CardTitle>Production plan vs actual · by {unit}</CardTitle>
-                <p className="text-xs text-[#6B7280] mt-1 max-w-3xl">
-                  {periodLabel(period)}. <b>Plan</b> = production orders whose target end date falls on the {unit};{" "}
-                  <b>Actual</b> = orders marked COMPLETED with that completion date. Two separate tallies by date — an order
-                  finished late counts as actual on the day it finished and as plan on the day it was due. Cancelled orders excluded.
+                <p className="mt-0.5 text-xs text-[#9CA3AF]">
+                  Plan = production orders due that {unit} · Actual = completed that {unit}
+                  {sameUnits ? " · every production order is one piece, so units = orders" : metric === "units" ? " · units = pieces" : " · orders = production orders"}
                 </p>
               </div>
-              <Tabs tabs={[{ key: "units", label: "Units" }, { key: "orders", label: "Orders" }]} value={metric} onChange={setMetric} variant="pill" scrollable />
+              <div className="flex items-center gap-4 text-right">
+                {[
+                  ["Planned", fmtN(metric === "units" ? planTotals.pu : planTotals.po), "#1F1D1B"],
+                  ["Completed", fmtN(metric === "units" ? planTotals.au : planTotals.ao), "#4F7C3A"],
+                  ["Variance", (() => { const v = metric === "units" ? planTotals.au - planTotals.pu : planTotals.ao - planTotals.po; return `${v > 0 ? "+" : ""}${fmtN(v)}`; })(), (metric === "units" ? planTotals.au >= planTotals.pu : planTotals.ao >= planTotals.po) ? "#4F7C3A" : "#9A3A2D"],
+                ].map(([l, v, c]) => (
+                  <div key={l}>
+                    <p className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">{l}</p>
+                    <p className="text-lg font-bold tabular-nums" style={{ color: c }}>{v}</p>
+                  </div>
+                ))}
+                {!sameUnits && <Tabs tabs={[{ key: "units", label: "Units" }, { key: "orders", label: "Orders" }]} value={metric} onChange={setMetric} variant="pill" scrollable />}
+              </div>
             </CardHeader>
             <CardContent>
               {barChart(planChart, (
                 <>
-                  <Legend {...CC_LEGEND} />
-                  <Bar dataKey="Plan" fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="Actual" fill={TAUPE} radius={[3, 3, 0, 0]} />
+                  <Legend {...tPlan.legend} />
+                  <Bar dataKey="Plan" hide={tPlan.hide("Plan")} fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Actual" hide={tPlan.hide("Actual")} fill={TAUPE} radius={[3, 3, 0, 0]} />
                 </>
               ))}
-              <p className="mt-2 text-[11px] text-[#6B7280]">
-                Click a bar to focus that {unit === "month" ? "month" : "day"}. {fmtN(lim.orders.withoutTarget)} non-cancelled orders
-                have no target end date and cannot appear in Plan; {fmtN(lim.orders.completedTotal)} orders are COMPLETED in total.
+              <p className="mt-2 text-[11px] text-[#9CA3AF]">
+                Click a bar to focus that {unit === "month" ? "month" : "day"} · cancelled orders excluded · {fmtN(lim.orders.withoutTarget)} orders have no target date.
               </p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>By department (stage) · {period.day ? dayLabel(period.day) : periodLabel(period)}</CardTitle>
-              <p className="text-xs text-[#6B7280] max-w-3xl">
-                Counted in job cards (one card = one department stage of one order; cards carry no unit count in the feed).
-                <b> Plan</b> = cards due in the window, <b>Actual</b> = cards completed/transferred in the window. A day with 0 actual
-                can mean nothing was recorded rather than nothing was done; {fmtN(lim.stages.cardsWithoutDue)} cards have no due date and are not in Plan.
-              </p>
+          <Card className="xl:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle>By department · {period.day ? dayLabel(period.day) : periodLabel(period)}</CardTitle>
+              <p className="mt-0.5 text-xs text-[#9CA3AF]">Job cards (one card = one stage of one order) · Plan = due · Actual = done</p>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -307,11 +313,11 @@ export function ProductionDailyPanels({
                   <thead><tr className="border-t border-b border-[#E2DDD8]">{th("Department", false)}{th("Plan", true)}{th("Actual", true)}{th("Variance", true)}</tr></thead>
                   <tbody>
                     {stageRows.map((r) => (
-                      <tr key={r.dept} className="border-b border-[#E2DDD8]">
-                        <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{deptName(r.dept)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.plan)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.actual)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{variance(r.plan, r.actual)}</td>
+                      <tr key={r.dept} className="border-b border-[#F0ECE6]">
+                        <td className="px-4 py-2 font-medium text-[#1F1D1B]">{deptName(r.dept)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{fmtN(r.plan)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{fmtN(r.actual)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{variance(r.plan, r.actual)}</td>
                       </tr>
                     ))}
                     {stageRows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-[#6B7280]">No stage plan or completion in this window.</td></tr>}
@@ -320,6 +326,7 @@ export function ProductionDailyPanels({
               </div>
             </CardContent>
           </Card>
+          </div>
         </>
       ))}
 

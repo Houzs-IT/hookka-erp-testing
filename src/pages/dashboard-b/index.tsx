@@ -9,6 +9,7 @@
 // the /dashboard-b route line, and the sidebar line to remove it.
 // ===========================================================================
 import { lazy, Suspense, useMemo, useState } from "react";
+import { CompletedDrill } from "./CompletedDrill";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
@@ -1631,17 +1632,10 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     subtitle:
                       "Production finished per day (last upholstery completed)",
                     node: (
-                      <MiniTable
-                        cols={["Date", "Bedframe units", "Sofa sets"]}
-                        rows={dropIdleSundays(
-                          prod.completedLast7,
-                          (d) => d.date,
-                          (d) => [d.bedframeUnits, d.sofaSets],
-                        ).map((d) => [
-                          d.date,
-                          d.bedframeUnits.toLocaleString(),
-                          d.sofaSets.toLocaleString(),
-                        ])}
+                      <CompletedDrill
+                        days={prod.completedLast7}
+                        totalBf={completedHeadBf}
+                        totalSofa={completedHeadSofa}
                       />
                     ),
                   })

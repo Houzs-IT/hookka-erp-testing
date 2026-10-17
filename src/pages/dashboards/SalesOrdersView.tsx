@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSeriesToggle } from "./use-series-toggle";
 import {
   CartesianGrid,
   ComposedChart,
@@ -150,33 +151,77 @@ export function SalesOrdersView({
   // actual >= that rolling target. Future months carry the last known target
   // forward as a projection and have no actual, so they draw as empty slots
   // rather than as zero — a zero would read as "sold nothing".
+  // The current month is IN PROGRESS (owner 2026-10-17: "forecast 看起来不对"):
+  // half a month against a full-month target always read "missed", and it
+  // dragged the projection down. It is now kept out of the rolling maths —
+  // target and projection come from finished months only — and drawn as
+  // "so far" plus a run-rate estimate (so far ÷ working days elapsed × working
+  // days in the month; Sundays are not working days, matching idle-Sunday
+  // handling elsewhere). Its hit/miss is judged on the estimate.
+  const tFc = useSeriesToggle();
   const forecast = useMemo(() => {
+    const curYm = todayYmd.slice(0, 7);
     const byMonth = new Map<string, number>();
     for (const d of allByDay) {
       const m = d.date.slice(0, 7);
       byMonth.set(m, (byMonth.get(m) ?? 0) + d.revenueSen);
     }
-    const { actual, projected } = rollingForecast([...byMonth.entries()], 6);
-    const out = actual.map((r) => ({
-      month: `${r.ym.slice(5)} ${r.ym.slice(2, 4)}`,
+    const curSen = byMonth.get(curYm) ?? 0;
+    byMonth.delete(curYm);
+    const done = [...byMonth.entries()].filter(([m]) => m < curYm);
+    const { actual, projected } = rollingForecast(done, 7);
+    const label = (ym: string) => `${ym.slice(5)} ${ym.slice(2, 4)}`;
+    const out: {
+      month: string; iso: string; actualSen: number; Actual: number | null; Estimate: number | null;
+      Target: number | null; hit: boolean | null; projected: boolean; inProgress: boolean;
+    }[] = actual.map((r) => ({
+      month: label(r.ym),
       iso: r.ym,
       actualSen: r.sen,
       Actual: Math.round(r.sen / 100),
+      Estimate: null,
       Target: r.targetSen === null ? null : Math.round(r.targetSen / 100),
       hit: r.hit,
       projected: false,
+      inProgress: false,
     }));
-    // Carry the trend forward: each projected month's target is the rolling
-    // average of the last three known actuals.
-    for (const p of projected) {
+    const tail = done.slice(-3).map(([, v]) => v);
+    const curTarget = tail.length === 3 ? tail.reduce((a, v) => a + v, 0) / 3 : null;
+    const [y, mo, day] = todayYmd.split("-").map(Number);
+    const dim = new Date(y, mo, 0).getDate();
+    let elapsed = 0;
+    let total = 0;
+    for (let dd = 1; dd <= dim; dd++) {
+      if (new Date(y, mo - 1, dd).getDay() === 0) continue;
+      total++;
+      if (dd <= day) elapsed++;
+    }
+    const estSen = elapsed ? (curSen / elapsed) * total : curSen;
+    out.push({
+      month: label(curYm),
+      iso: curYm,
+      actualSen: curSen,
+      Actual: Math.round(curSen / 100),
+      Estimate: Math.max(0, Math.round((estSen - curSen) / 100)),
+      Target: curTarget === null ? null : Math.round(curTarget / 100),
+      hit: curTarget === null ? null : estSen >= curTarget,
+      projected: false,
+      inProgress: true,
+    });
+    // Projection carries the average of the last three FINISHED months
+    // forward; the first projected slot would be the current month, already
+    // drawn above.
+    for (const p of projected.filter((x) => x.ym > curYm).slice(0, 6)) {
       out.push({
-        month: `${p.ym.slice(5)} ${p.ym.slice(2, 4)}`,
+        month: label(p.ym),
         iso: p.ym,
         actualSen: 0,
-        Actual: null as unknown as number,
+        Actual: null,
+        Estimate: null,
         Target: Math.round(p.sen / 100),
         hit: null,
         projected: true,
+        inProgress: false,
       });
     }
     return out;
@@ -281,90 +326,79 @@ export function SalesOrdersView({
           prototype pairs them. */}
       <div className="grid gap-3 xl:grid-cols-2 items-start">
         <CommandCenterSections period={period} sections={["pipeline"]} />
-        <Card className="bg-white border-[#E5E0D8]">
-          <CardHeader className="pb-3">
+        <Card>
+          <CardHeader className="pb-2">
             <CardTitle>Sales forecast</CardTitle>
-            <p className="text-xs" style={{ color: CHART_AXIS }}>
-              Target is the 3-month rolling average of the preceding months —
-              this book sets no explicit revenue target, so none is invented.
-              Greyed months are projected and have no actual yet.
+            <p className="mt-0.5 text-xs text-[#9CA3AF]">
+              Target = average of the 3 finished months before · {forecast.find((r) => r.inProgress)?.month ?? "this month"} is in progress: so far + run-rate estimate
             </p>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap items-center gap-3 pb-2 text-[11px]" style={{ color: CHART_AXIS }}>
+            <div className="flex flex-wrap items-center justify-end gap-3 pb-2 text-xs text-[#6B7280]">
               {([
-                { label: "Hit target", color: GREEN, line: false },
-                { label: "Missed target", color: AMBER, line: false },
-                { label: "Projected", color: "#E3DED5", line: false },
-                { label: "Target", color: TEAL, line: true },
-              ] as const).map((l) => (
-                <span key={l.label} className="inline-flex items-center gap-1.5">
-                  {l.line ? (
-                    <span
-                      className="inline-block w-4"
-                      style={{ borderTop: `2px dashed ${l.color}` }}
-                    />
-                  ) : (
-                    <span
-                      className="inline-block h-2.5 w-2.5 rounded-sm"
-                      style={{ background: l.color }}
-                    />
-                  )}
-                  {l.label}
-                </span>
-              ))}
+                { key: "Actual", label: "Actual (green = hit, amber = missed)", color: GREEN, line: false },
+                { key: "Estimate", label: "Estimate (rest of month)", color: "#D9D3C7", line: false },
+                { key: "Target", label: "Target", color: TEAL, line: true },
+              ] as const).map((l) => {
+                const off = tFc.hide(l.key);
+                return (
+                  <button key={l.key} type="button" onClick={() => tFc.toggle(l.key)} className="inline-flex items-center gap-1.5" style={{ color: off ? "#C9C4BA" : undefined, textDecoration: off ? "line-through" : undefined }}>
+                    {l.line ? (
+                      <span className="inline-block w-4" style={{ borderTop: `2px dashed ${l.color}` }} />
+                    ) : (
+                      <span className="inline-block h-[7px] w-[7px] rounded-full" style={{ background: l.color }} />
+                    )}
+                    {l.label}
+                  </button>
+                );
+              })}
             </div>
             <div style={{ width: "100%", height: 260 }}>
               {forecast.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-xs" style={{ color: CHART_AXIS }}>
-                  No dated revenue.
-                </div>
+                <div className="flex items-center justify-center h-full text-xs text-[#9CA3AF]">No dated revenue.</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={forecast} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
-                    <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                    <XAxis
-                      dataKey="month"
-                      tick={CC_TICK}
-                      axisLine={CC_AXIS_LINE}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={CC_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      width={56}
-                      tickFormatter={(v) => fmtRMAxis(Number(v))}
-                    />
+                    <CartesianGrid vertical={false} stroke="#F0ECE6" />
+                    <XAxis dataKey="month" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                    <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={44} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                     <Tooltip
-                      contentStyle={{
-                        background: CARD_BG,
-                        border: `1px solid ${CARD_BORDER}`,
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(value, name) => {
-                        const n = typeof value === "number" ? value : Number(value);
-                        return [formatCurrency(n * 100), name];
+                      cursor={{ fill: "rgba(107,92,50,0.06)" }}
+                      content={({ active, payload }) => {
+                        const r = active ? (payload?.[0]?.payload as (typeof forecast)[number] | undefined) : undefined;
+                        if (!r) return null;
+                        const rm = (n: number | null) => (n == null ? "—" : formatCurrency(n * 100));
+                        return (
+                          <div className="rounded-lg border border-[#E2DDD8] bg-white px-3 py-2 text-xs shadow-md">
+                            <p className="mb-1 font-semibold text-[#1F1D1B]">
+                              {r.iso}
+                              {r.inProgress ? " · in progress" : r.projected ? " · projected" : ""}
+                            </p>
+                            {!r.projected && <p>{r.inProgress ? "So far" : "Actual"}: <b>{rm(r.Actual)}</b></p>}
+                            {r.inProgress && <p>Estimate for the month: <b>{rm((r.Actual ?? 0) + (r.Estimate ?? 0))}</b></p>}
+                            <p>{r.projected ? "Projected" : "Target"}: <b>{rm(r.Target)}</b></p>
+                            {r.hit !== null && (
+                              <p style={{ color: r.hit ? GREEN : AMBER }}>{r.hit ? "On / above target" : "Below target"}{r.inProgress ? " (on estimate)" : ""}</p>
+                            )}
+                          </div>
+                        );
                       }}
                     />
-                    <Bar
-                      dataKey="Actual"
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={26}
-                      isAnimationActive={false}
-                      activeBar={{ fillOpacity: 1 }}
-                    >
+                    <Bar dataKey="Actual" hide={tFc.hide("Actual")} stackId="m" maxBarSize={26} isAnimationActive={false}>
                       {forecast.map((r) => (
                         <Cell
                           key={r.iso}
                           fill={r.hit === null ? "#E3DED5" : r.hit ? GREEN : AMBER}
+                          // the bar's top corners are rounded only when no estimate sits on it
+                          radius={(r.inProgress && r.Estimate ? [0, 0, 0, 0] : [4, 4, 0, 0]) as unknown as number}
                         />
                       ))}
                     </Bar>
+                    <Bar dataKey="Estimate" hide={tFc.hide("Estimate")} stackId="m" maxBarSize={26} isAnimationActive={false} fill="#D9D3C7" radius={[4, 4, 0, 0]} />
                     <Line
                       type="monotone"
                       dataKey="Target"
+                      hide={tFc.hide("Target")}
                       stroke={TEAL}
                       strokeWidth={2}
                       strokeDasharray="5 4"

@@ -6406,3 +6406,37 @@ unapplied advances 0.00.
 **Next:** Houzs and The Conts openings (the Carress playbook, written into the
 checkpoint); the 18 Carress ghosts await a void ruling; the 10 CN/DN invoices;
 SUNMAT K26050470; May labour unposted.
+
+## 2026-10-17 — merged dashboard, owner review round (localhost only)
+Asks, in order:
+1. Why do 823 SOs sit at READY_TO_SHIP? — answered: production-completion cascade
+   pulls shipped/invoiced SOs back (no forward guard); ~720 have no DO/invoice at all.
+   Fix + data cleanup await owner approval.
+2. Sales forecast looked wrong — current (partial) month now kept out of target /
+   projection, drawn as so-far + run-rate estimate. UI restyled to Command Center.
+3. Department Backlog leaves empty space beside Plant Load — even the heights.
+4. ~~Combine overdue + due-within-3-days~~ — owner: keep them as they are.
+5. "Open orders · stages done" is unclear — explain or replace.
+6. Purchasing: show purchase cost % of revenue; labour cost % this month (live) vs
+   last month vs 3 months; tidy the Output & Cost section and its chart.
+7. Is "not in" really 5 people? How are joiners / leavers prorated in avg labour per
+   person? Are non-production departments in Employees?
+8. Merge Top 10 / Bottom 10 / every-worker into one ranked list split in halves.
+9. Attendance log: keep it, but absent first, late second, on time third; show
+   today and yesterday absentees.
+10. Service "Average case closing" only plots the 4 closing days — show every day.
+11. Layout rule for every tab: summary / chart cards on top, long detail tables
+    (case list, worker lists, order lists) at the bottom.
+12. Plan vs actual chart + By department table: put on one row (too much space).
+13. Remove "On-time completion · by order".
+14. Layer 1 / layer 2 rule: layer 1 as simple as possible; detail opens in a popup.
+    Remove "Completed per day" + "Completed" cards from Output & Cost — put the chart
+    inside the Plant Load "Completed · view days" popup instead.
+15. Costing: this month vs last month, with % of revenue beside each number.
+16. Employees: avg labour cost / person with its % beside it.
+17. Every chart: click a legend item to show / hide that series.
+18. Day view shows month data (e.g. Employees) — make Day / Month / Quarter / Year all correct on every tab (add Quarter).
+19. Department efficiency table: show the Sofa / Bedframe split.
+20. Production Cost trend: cost % of production revenue per day / month (material +
+    labour ÷ production revenue), drawn nicely.
+21. Plan vs actual: explain Units vs Orders on the card.

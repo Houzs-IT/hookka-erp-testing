@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSeriesToggle } from "./use-series-toggle";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Cell, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -6,7 +7,7 @@ import { formatCurrency } from "@/lib/utils";
 import type { FinancePayload, Yoy, PeVariant } from "@/api/lib/dashboard-finance";
 import {
   AMBER, BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, RED, TEAL,
-  fmtRMAxis, monthLabel, periodLabel, type FinSub, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+  fmtRMAxis, monthLabel, periodLabel, type FinSub, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import { AgingRatiosCard } from "./DashboardWidgets";
 
@@ -107,6 +108,7 @@ export function FinanceView({
 // ---------------------------------------------------------------------------
 function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; kind: "money" | "ratio"; higherBetter: boolean | null }[]; chart: boolean }) {
   const noPrior = !d.coverage.priorHasData;
+  const tYoy = useSeriesToggle();
   const money = (n: number) => formatCurrency(n);
   const ratioFmt = (n: number) => `${(n * 100).toFixed(1)}%`;
   const chartData = d.yoyChart.map((r) => ({ name: r.name, "This period": Math.round(r.current / 100), "Same period last year": r.prior === null ? null : Math.round(r.prior / 100) }));
@@ -169,9 +171,9 @@ function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; k
                 <XAxis dataKey="name" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
                 <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                 <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                <Legend {...CC_LEGEND} />
-                <Bar dataKey="This period" fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
-                <Bar dataKey="Same period last year" fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                <Legend {...tYoy.legend} />
+                <Bar dataKey="This period" hide={tYoy.hide("This period")} fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                <Bar dataKey="Same period last year" hide={tYoy.hide("Same period last year")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -184,6 +186,7 @@ function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; k
 // ---------------------------------------------------------------------------
 function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
   const p = d.perHead;
+  const tHead = useSeriesToggle();
   const data = p.trend.map((t) => ({
     ym: t.ym,
     label: monthLabel(t.ym),
@@ -223,9 +226,9 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
                   <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
                   <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                  <Legend {...CC_LEGEND} />
-                  <Bar dataKey="Revenue / head" fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
-                  <Bar dataKey="Labour cost / head" fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
+                  <Legend {...tHead.legend} />
+                  <Bar dataKey="Revenue / head" hide={tHead.hide("Revenue / head")} fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
+                  <Bar dataKey="Labour cost / head" hide={tHead.hide("Labour cost / head")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -329,6 +332,7 @@ function PeCell({ v }: { v: PeVariant }) {
 
 function Outlook({ d, onSaved }: { d: Resp; onSaved: () => void }) {
   const f = d.forecast;
+  const tOut = useSeriesToggle();
   const chartData = f.points.map((p) => ({
     label: monthLabel(p.ym),
     projected: p.projected,
@@ -384,11 +388,11 @@ function Outlook({ d, onSaved }: { d: Resp; onSaved: () => void }) {
                   <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
                   <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                  <Legend {...CC_LEGEND} />
-                  <Bar dataKey="Revenue" radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} fill={CHART_INK}>
+                  <Legend {...tOut.legend} />
+                  <Bar dataKey="Revenue" hide={tOut.hide("Revenue")} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} fill={CHART_INK}>
                     {chartData.map((r) => <Cell key={r.label} fill={r.projected ? "#E3DED5" : CHART_INK} />)}
                   </Bar>
-                  <Line type="monotone" dataKey="Net profit" stroke={TEAL} strokeWidth={2} strokeDasharray="5 4" connectNulls isAnimationActive={false} dot={{ r: 2.5, fill: "#FFFFFF", stroke: TEAL, strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="Net profit" hide={tOut.hide("Net profit")} stroke={TEAL} strokeWidth={2} strokeDasharray="5 4" connectNulls isAnimationActive={false} dot={{ r: 2.5, fill: "#FFFFFF", stroke: TEAL, strokeWidth: 2 }} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
