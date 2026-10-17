@@ -28,6 +28,7 @@ import type { Context } from "hono";
 import type { Env } from "../worker";
 import type { AnthropicTool } from "./anthropic-client";
 import { getOrgId } from "./tenant";
+import { hasPermission } from "./rbac";
 import { emitAudit } from "./audit";
 import {
   lookupAttachments,
@@ -6719,6 +6720,11 @@ const listScheduleProposalsTool: ToolDefinition = {
     },
   },
   execute: async (c, args) => {
+    // HK-0033: same gate as GET /api/planning/proposals (production-orders:read),
+    // so a PIC who can see the Planning tab can see the queue in chat too.
+    if (!isSuperAdmin(c) && !(await hasPermission(c, "production-orders", "read"))) {
+      return { ok: false, error: "You do not have permission to view schedule proposals." };
+    }
     const db = c.var.DB;
     await ensureProposalTables(db);
     const status = (strOrNull(args.status) ?? "PENDING").toUpperCase();
@@ -6771,7 +6777,7 @@ const decideScheduleProposalsTool: ToolDefinition = {
   schema: {
     name: "decide_schedule_proposals",
     description:
-      "SUPER_ADMIN ONLY — approve or reject specific schedule proposals BY ID, same effect as the Planning tab buttons: approve writes each proposal's new due date onto its still-open job card and stores one rollbackable batch snapshot; reject changes nothing on the cards. HARD CONSENT RULE: call ONLY after you have SHOWN the user the exact proposals (list_schedule_proposals) and they explicitly said yes in THIS conversation — then pass confirmed:true. Never invent ids. If the user wants specific calendar dates the proposals don't match, do NOT approve — explain the agent computes dates from capacity and offer to regenerate or point to Planning.",
+      "Needs the production-orders update permission (SUPER_ADMIN always has it) — approve or reject specific schedule proposals BY ID, same effect as the Planning tab buttons: approve writes each proposal's new due date onto its still-open job card and stores one rollbackable batch snapshot; reject changes nothing on the cards. HARD CONSENT RULE: call ONLY after you have SHOWN the user the exact proposals (list_schedule_proposals) and they explicitly said yes in THIS conversation — then pass confirmed:true. Never invent ids. If the user wants specific calendar dates the proposals don't match, do NOT approve — explain the agent computes dates from capacity and offer to regenerate or point to Planning.",
     input_schema: {
       type: "object",
       properties: {
@@ -6791,8 +6797,11 @@ const decideScheduleProposalsTool: ToolDefinition = {
     },
   },
   execute: async (c, args) => {
-    if (!isSuperAdmin(c)) {
-      return { ok: false, error: "Only the SUPER_ADMIN can decide schedule proposals. Ask the boss." };
+    // HK-0033: same gate as POST /api/planning/proposals/approve and /reject
+    // (production-orders:update) — chat must not be stricter than the Planning
+    // tab buttons it mirrors, or a PIC can regenerate but never decide.
+    if (!isSuperAdmin(c) && !(await hasPermission(c, "production-orders", "update"))) {
+      return { ok: false, error: "You need the production-orders update permission to decide schedule proposals. Ask the boss." };
     }
     if (args.confirmed !== true) {
       return {

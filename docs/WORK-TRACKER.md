@@ -381,6 +381,12 @@ Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TE
 3. ❓ "Assign to individual workers within that department": not built, on purpose. Owner decision 2026-10-06 (DEV-36): holders are office login accounts, not floor workers; `9af643c9` removed the floor-worker half. The people list is every login, with no department filter. OWNER QUESTION: keep it so (close HK-0052 as delivered), or should the people list narrow to accounts linked to the chosen department? If the latter, which field links a login account to a department is not decided.
 4. ⬜ Violet / Laphii: say what failed when Laphii reopened it; the ticket carries no comment.
 
+## 2026-10-15 — 🔵 Chat approve / reject schedule proposals for the person in charge (HK-0033, branch `fix/hk0033-pic-decide-proposals-chat` → `main`, PR #861)
+
+1. 🔵 Both proposal tools on the staff tool list; gated by production-orders read / update.
+   Review fixes: prompt text says production-orders read / update (super admin always), no longer SUPER_ADMIN; the per-tool-call audit row now runs after dispatch and records outcome ok / refused. ADMIN reaching the tools is intended: `requirePermission` and `hasPermission` both let ADMIN through, so chat now matches the Planning tab buttons. Behavioural gate tests added.
+2. ⬜ Owner decision: should the agent be allowed to create packing lists? (v1 red line today.)
+
 ## 2026-10-15 — 🔵 SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(branch `feat/hk0094-so-customer-edit` → `main`)
 ## 2026-10-15 — 🔵 Dashboard: idle Sundays out of every per-day chart and average (branch `feat/hide-idle-sundays` → `main`)
 
