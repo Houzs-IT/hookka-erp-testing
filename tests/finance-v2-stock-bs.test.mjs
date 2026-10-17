@@ -34,7 +34,7 @@ test("Stock Summary: month stepper and download on the title row, the frame", ()
   assert.match(bar, /<PeriodStepper value=\{month\} options=\{monthOpts\}/);
   assert.match(bar, /\{data && <DownloadMenu items=\{downloads\} \/>\}/);
   assert.match(stock, /<ReportFrame\n\s*company=\{COMPANY\.HOOKKA\.name\}/);
-  assert.match(stock, /<WipDetailCard month=\{month\} reloadKey=\{0\} \/>/, "the WIP card is unchanged");
+  assert.match(stock, /<WipDetailCard month=\{month\} reloadKey=\{0\} \/>/, "the WIP card stays under the summary (by production order since item 12 — tests/wip-by-production-order.test.mjs)");
 });
 
 test("Balance Sheet: the design's arrangement (owner 2026-10-17) from the same call and sections", () => {

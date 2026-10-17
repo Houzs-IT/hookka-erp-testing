@@ -13586,51 +13586,120 @@ function StockSummaryTab() {
   );
 }
 
-// Phase 4.3 — WIP per open production order: material + labour − completed.
+// Work in progress by production order (finance backlog item 12): the orders
+// that make up the WORK IN PROGRESS line above — the line the Balance Sheet
+// carries. GET /api/accounting/wip-detail; the server spreads the line over
+// the orders to the sen, so TOTAL is the line itself. A month whose WIP is
+// keyed in Stock Take lists the orders for comparison, with the difference.
+type WipDetail = {
+  asOf: string;
+  basis: "production-orders" | "stock-take" | "none";
+  asOfDate: string | null;
+  ratio: number | null;
+  lineSen: number;
+  rows: { orderId: string; poNo: string | null; productCode: string | null; productName: string | null; itemCategory: string | null; qty: number; completion: number; unitPriceSen: number; valueAtPriceSen: number; wipSen: number }[];
+  totalSen: number;
+};
+
+const wipLineLabel = (cat: string | null) => {
+  const c = String(cat ?? "").trim();
+  return c ? c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() : "—";
+};
+
 function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number }) {
-  const [wip, setWip] = useState<{ rows: { poId: string; poNumber: string; category: string; status: string; materialSen: number; labourSen: number; completedSen: number; wipSen: number }[]; totalSen: number } | null>(null);
+  const today = todayYmdMY();
+  const [wip, setWip] = useState<WipDetail | null>(null);
   useEffect(() => {
     let stale = false;
     fetch(`/api/accounting/wip-detail?asOf=${month}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: NonNullable<typeof wip> }>)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: WipDetail }>)
       .then((j) => { if (!stale && j?.success && j.data) setWip(j.data); })
       .catch(() => {});
     return () => { stale = true; };
   }, [month, reloadKey]);
-  if (!wip || wip.rows.length === 0) return null;
+  // A month still loading shows nothing rather than the last month's orders.
+  if (!wip || wip.asOf !== month || wip.basis === "none") return null;
+  const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
+  const atPriceSen = Math.round(wip.rows.reduce((s, r) => s + r.valueAtPriceSen, 0));
+  const keyed = wip.basis === "stock-take";
   return (
-    <Card>
-      <CardContent className="p-0 overflow-x-auto">
-        <table className="w-full text-sm">
+    <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+      <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+        <span className="text-[15px] font-bold text-[#1F1D1B]">Work in Progress by Production Order</span>
+        <span className="text-[12px] text-[#9CA3AF]">
+          {periodLabel(month, today)}{wip.asOfDate ? ` · as of ${formatDateDMY(wip.asOfDate)}` : ""} · {wip.rows.length} order{wip.rows.length === 1 ? "" : "s"} · all figures RM
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table data-fin-report className="min-w-[760px]">
           <thead>
-            <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-              <th className="px-3 py-2 text-left">Work in progress — by production order (as of {month})</th>
-              <th className="px-3 py-2 text-left">Line</th>
-              <th className="px-3 py-2 text-right">Material</th>
-              <th className="px-3 py-2 text-right">Labour</th>
-              <th className="px-3 py-2 text-right">Completed</th>
-              <th className="px-3 py-2 text-right">WIP value</th>
+            <tr>
+              <th className="w-[130px]">PO No.</th>
+              <th>Product</th>
+              <th className="w-[100px]">Line</th>
+              <th data-cell="num" className="w-[60px]">Qty</th>
+              <th data-cell="num" className="w-[70px]">Done</th>
+              <th data-cell="num split" className="w-[150px]">At selling price</th>
+              <th data-cell="num" className="w-[150px]">WIP value</th>
             </tr>
           </thead>
           <tbody>
-            {wip.rows.slice(0, 200).map((w) => (
-              <tr key={w.poId} className="border-b border-[#F0ECE9]">
-                <td className="px-3 py-1.5 tabular-nums text-xs">{w.poNumber}{w.status ? <span className="text-[#9CA3AF]"> · {w.status}</span> : null}</td>
-                <td className="px-3 py-1.5 text-xs text-[#6B7280]">{w.category || "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(w.materialSen)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(w.labourSen)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-[#9CA3AF]">{w.completedSen ? formatCurrency(w.completedSen) : "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(w.wipSen)}</td>
+            {wip.rows.length === 0 && (
+              <tr data-row="line">
+                <td colSpan={7} className="text-center text-[#9CA3AF]">No production order is in progress{wip.asOfDate ? ` as of ${formatDateDMY(wip.asOfDate)}` : ""}.</td>
+              </tr>
+            )}
+            {wip.rows.map((r) => (
+              <tr key={r.orderId} data-row="line">
+                <td data-cell="code">{r.poNo || r.orderId}</td>
+                <td>{[r.productCode, r.productName].filter(Boolean).join(" · ") || "—"}</td>
+                <td>{wipLineLabel(r.itemCategory)}</td>
+                <td data-cell="num">{r.qty}</td>
+                <td data-cell="num">{Math.round(r.completion * 100)}%</td>
+                <td data-cell="num split">{amt(Math.round(r.valueAtPriceSen))}</td>
+                <td data-cell="num">{amt(r.wipSen)}</td>
               </tr>
             ))}
-            <tr className="bg-[#F0ECE9]/60 font-semibold">
-              <td className="px-3 py-2" colSpan={5}>TOTAL WIP{wip.rows.length > 200 ? ` (showing top 200 of ${wip.rows.length})` : ""}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(wip.totalSen)}</td>
-            </tr>
+            {keyed ? (
+              <>
+                <tr data-row="sub">
+                  <td />
+                  <td colSpan={4}>TOTAL BY PRODUCTION ORDER</td>
+                  <td data-cell="num split">{amt(atPriceSen)}</td>
+                  <td data-cell="num">{amt(wip.totalSen)}</td>
+                </tr>
+                <tr data-row="line">
+                  <td />
+                  <td colSpan={4}>WORK IN PROGRESS per Stock Take (the line above)</td>
+                  <td data-cell="num split" />
+                  <td data-cell="num">{amt(wip.lineSen)}</td>
+                </tr>
+                <tr data-row="fin">
+                  <td />
+                  <td colSpan={4}>DIFFERENCE (Stock Take − orders)</td>
+                  <td data-cell="num split" />
+                  <td data-cell="num" data-neg={wip.lineSen - wip.totalSen < 0 ? "" : undefined}>{amt(wip.lineSen - wip.totalSen)}</td>
+                </tr>
+              </>
+            ) : (
+              <tr data-row="fin">
+                <td />
+                <td colSpan={4}>TOTAL — WORK IN PROGRESS</td>
+                <td data-cell="num split">{amt(atPriceSen)}</td>
+                <td data-cell="num">{amt(wip.lineSen)}</td>
+              </tr>
+            )}
           </tbody>
         </table>
-      </CardContent>
-    </Card>
+      </div>
+      <p className="border-t border-[#E2DDD8] px-4 py-2 text-[11px] text-[#6B7280]">
+        {keyed
+          ? "This month's WIP is the Stock Take figure — the P&L and the Balance Sheet use it. The orders are the production-order valuation, for comparison."
+          : "TOTAL is the WORK IN PROGRESS closing above, the same figure the P&L closes on and the Balance Sheet's work-in-progress line."}
+        {" "}At selling price = the order's selling price × qty × the share of its job-card minutes done; WIP value = that × the cost ratio
+        {wip.ratio !== null ? ` ${wip.ratio.toFixed(4)}` : ""} (last month's materials ÷ last month's completed goods + this month's direct labour ÷ this month's completed goods, both at selling price), spread over the orders to the sen.
+      </p>
+    </div>
   );
 }
 
