@@ -52,6 +52,8 @@ interface DeliveryReturn {
   status: string;
   serviceOrderId: string;
   creditNoteId: string;
+  /** The note's number when one was raised from this return (2026-10-17). */
+  creditNoteNo?: string;
   reason: string;
   items: DRItem[];
 }
@@ -248,7 +250,7 @@ export default function DeliveryReturnDetail() {
             <p className="mt-3 text-xs text-[#6B7280]">Service order: <span className="font-mono text-[#6B5C32]">{dr.serviceOrderId}</span></p>
           )}
           {dr.creditNoteId && (
-            <p className="mt-1 text-xs text-[#6B7280]">Credit note: <span className="font-mono text-[#6B5C32]">{dr.creditNoteId}</span></p>
+            <p className="mt-1 text-xs text-[#6B7280]">Credit note: <Link to="/invoices/credit-notes" className="font-mono text-[#6B5C32] underline decoration-dotted">{dr.creditNoteNo || dr.creditNoteId}</Link></p>
           )}
 
           <div className="flex gap-2 flex-wrap pt-4 mt-4 border-t border-[#E2DDD8]">

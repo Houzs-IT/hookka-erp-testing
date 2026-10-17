@@ -197,7 +197,15 @@ app.get("/:id", async (c) => {
     .first<ReturnHeaderRow>();
   if (!h) return c.json({ success: false, error: "Delivery return not found" }, 404);
   const items = await loadItems(c.var.DB, id);
-  return c.json({ success: true, data: rowToReturn(h, items) });
+  // The credit note raised from this return (2026-10-17) by its number, so
+  // the page names it instead of showing an id.
+  let creditNoteNo = "";
+  if (h.creditNoteId) {
+    const cn = await c.var.DB.prepare("SELECT * FROM credit_notes WHERE id = ?").bind(h.creditNoteId)
+      .first<Record<string, unknown>>().catch(() => null);
+    creditNoteNo = String((cn?.noteNumber ?? cn?.note_number) ?? "");
+  }
+  return c.json({ success: true, data: { ...rowToReturn(h, items), creditNoteNo } });
 });
 
 // -- POST / — create a return from a delivered DO's problem lines -----------
