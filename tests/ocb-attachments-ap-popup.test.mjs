@@ -66,7 +66,8 @@ test("New AP Payment is a popup like the voucher form; fields and rules unchange
   assert.match(ap, /<div className="fixed inset-0 z-40 bg-black\/40 overflow-y-auto p-4" role="dialog" aria-modal="true">/);
   assert.match(ap, /: "New AP payment"\}/);
   assert.match(ap, /<div className=\{sectionHead\}><span>Header<\/span><\/div>/);
-  assert.match(ap, /<span>Bills to pay\{apBills\?\.partyName \?/);
+  // "Drawdowns to repay" for a trade-finance lender (2026-10-17, backlog item 17).
+  assert.match(ap, /<span>\{apTfLender \? "Drawdowns to repay" : "Bills to pay"\}\{apBills\?\.partyName \?/);
   for (const label of ["PV #", "Payment date *", "Paid from (credit) *", "Reference / remarks"]) assert.ok(ap.includes(`>${label}</label>`), `field ${label}`);
   assert.match(ap, /const cannot = saving \|\| apTotalSen <= 0 \|\| !!apMoneyError \|\| !!apOverAlloc \|\| !apForm\.partyId/, "the same save rule");
   assert.match(ap, /onClick=\{\(\) => void handleSaveAp\("draft"\)\}/);

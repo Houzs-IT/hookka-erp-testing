@@ -25,8 +25,14 @@ test("repayment branch never bumps purchase_invoices", () => {
   assert.notEqual(end, -1);
   const branch = src.slice(start, end);
   assert.doesNotMatch(branch, /UPDATE purchase_invoices/);
-  assert.match(branch, /trade_finance_repay_allocs/);
-  assert.match(branch, /'TF_REPAYMENT'/);
+  // Since 2026-10-17 (finance backlog item 17) the branch runs the shared
+  // validator + statement builder that the AP Payment voucher uses too.
+  assert.match(branch, /await validateTfRepayment\(c\.var\.DB, lenderCfg, tfAllocations\)/);
+  assert.match(branch, /await tfRepaymentStatements\(c\.var\.DB, \{/);
+  const b = src.slice(src.indexOf("export async function tfRepaymentStatements("), src.indexOf("export async function buildSupplierPaymentCreate("));
+  assert.doesNotMatch(b, /UPDATE purchase_invoices/);
+  assert.match(b, /trade_finance_repay_allocs/);
+  assert.match(b, /'TF_REPAYMENT'/);
 });
 
 test("lifecycle core carries both TF guards and releases allocations on void", () => {

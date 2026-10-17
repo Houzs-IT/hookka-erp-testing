@@ -10504,7 +10504,8 @@ type PvRow = {
   // loads on expand; print bundle = voucher + every attachment.
   attachmentCount?: number;
 };
-type PvAllocOut = { docKind: "PI" | "AP"; docId: string; docNo: string; docRef: string; amountSen: number };
+// TF = a trade-finance drawdown repaid by an AP Payment to the lender (item 17).
+type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; docRef: string; amountSen: number };
 // The voucher form (owner 2026-10-01, the layout he showed): Payment = expense
 // lines; Transfer = money between our own bank / cash accounts.
 type PvFormState = {
@@ -10596,10 +10597,15 @@ async function attachmentToPages(a: PvAttachment): Promise<string[]> {
   throw new Error(`${a.filename}: ${a.contentType} cannot be printed`);
 }
 type PvOpenBill = {
-  docKind: "PI" | "AP"; id: string; no: string; ref: string; date: string; dueDate: string | null;
+  docKind: "PI" | "AP" | "TF"; id: string; no: string; ref: string; date: string; dueDate: string | null;
   totalSen: number; paidSen: number; outstandingSen: number; reservedSen: number; reservedBy: string[]; availableSen: number;
   currency: string; foreign: boolean; opening: boolean;
+  /** A drawdown (docKind TF): the interest in its balance. */
+  interestSen?: number;
 };
+// The supplier picked on an AP Payment is a trade-finance lender: its lines are
+// drawdowns and the voucher repays them (finance backlog item 17).
+type PvTfLender = { accountCode: string; lenderName: string };
 type PvStatusChip = "ALL" | "DRAFT" | "PREPARED" | "CHECKED" | "APPROVED" | "ADVANCE_OPEN" | "CANCELLED";
 const PV_STATUS_CHIPS: { key: PvStatusChip; label: string }[] = [
   { key: "ALL", label: "All" }, { key: "DRAFT", label: "Draft" }, { key: "PREPARED", label: "Prepared" }, { key: "CHECKED", label: "Checked" },
@@ -10959,7 +10965,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   });
   const [apAlloc, setApAlloc] = useState<Record<string, string>>({});
   // apBills carries the key it was loaded for; a key mismatch = loading.
-  const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[] } | null>(null);
+  const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } | null>(null);
   const [suppliers, setSuppliers] = useState<{ id: string; code?: string | null; name: string; isActive?: boolean }[]>([]);
   const [otherCreditors, setOtherCreditors] = useState<{ id: string; name: string; type: string; isActive?: boolean }[]>([]);
   // The deep-linked bill gets ticked in full once the creditor's list is here.
@@ -10983,7 +10989,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const [partyKind, partyId, exclude] = apBillsKey.split("|");
     let dead = false;
     fetch(`/api/accounting/payment-vouchers/open-bills?partyKind=${partyKind}&partyId=${encodeURIComponent(partyId)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: { partyName: string; advanceOpenSen: number; bills: PvOpenBill[] } }>)
+      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: { partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } }>)
       .then((j) => {
         if (dead) return;
         if (j?.success && j.data) {
@@ -11180,13 +11186,14 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // unreadable cell is refused by handleSaveAp before any figure is sent.
   const apSen = (v: string) => moneyFieldToSen(v) ?? 0;
   const apAllocSen = apTicked.reduce((s, b) => s + apSen(apAlloc[b.id] ?? ""), 0);
-  const apAdvanceSen = apSen(apForm.advance);
+  const apTfLender = apBills?.tfLender ?? null;
+  const apAdvanceSen = apTfLender ? 0 : apSen(apForm.advance);
   const apTotalSen = apAllocSen + apAdvanceSen;
   const apOverAlloc = apTicked.find((b) => apSen(apAlloc[b.id] ?? "") > b.availableSen);
   const handleSaveAp = async (mode: "draft" | "post") => {
     if (apMoneyError) { toast.error(apMoneyError); return; }
     if (apOverAlloc) { toast.error(`${apOverAlloc.no}: more than the ${formatCurrency(apOverAlloc.availableSen)} still payable`); return; }
-    if (apTotalSen <= 0) { toast.error("Tick at least one bill (or enter an advance)"); return; }
+    if (apTotalSen <= 0) { toast.error(apTfLender ? "Tick at least one drawdown to repay" : "Tick at least one bill (or enter an advance)"); return; }
     const body = {
       kind: "AP",
       date: apForm.date,
@@ -11207,7 +11214,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       });
       const j = asMutationResponse(await res.json());
       if (j?.success) {
-        toast.success(editingId ? "AP payment updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : "AP payment posted — bills knocked off");
+        toast.success(editingId ? "AP payment updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : apTfLender ? "Trade-finance repayment posted" : "AP payment posted — bills knocked off");
         resetForm();
         load();
       } else toast.error(j?.error || "Save failed");
@@ -11806,7 +11813,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
                 <section className="rounded-md border border-[#E2DDD8] bg-white">
                   <div className={sectionHead}>
-                    <span>Bills to pay{apBills?.partyName ? ` · ${apBills.partyName}` : ""}</span>
+                    <span>{apTfLender ? "Drawdowns to repay" : "Bills to pay"}{apBills?.partyName ? ` · ${apBills.partyName}` : ""}</span>
                     <span className="normal-case font-normal text-[#6B7280] tracking-normal">total {apMoneyError ? "—" : formatCurrency(apTotalSen)}</span>
                   </div>
                   <div className="p-4 space-y-3">
@@ -11815,6 +11822,57 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   <div className="text-xs text-[#9CA3AF] border border-dashed border-[#E2DDD8] rounded-md px-3 py-4">Pick the creditor first — its unpaid bills appear here.</div>
                 ) : apBillsLoading || apBills === null ? (
                   <div className="text-xs text-[#9CA3AF] px-3 py-4">Loading bills…</div>
+                ) : apTfLender && apBills.bills.length === 0 ? (
+                  <div className="text-xs text-[#9CA3AF] border border-dashed border-[#E2DDD8] rounded-md px-3 py-4">No open drawdowns on this trade-finance line.</div>
+                ) : apTfLender ? (
+                  <div className="space-y-2">
+                    <div className="text-[11px] text-[#6B7280]">Repays trade finance: DR {apTfLender.accountCode} · CR Paid from. Tick a drawdown to repay it in full, or type a part payment. The interest was recorded at drawdown and is part of the balance.</div>
+                    <div className="border border-[#E2DDD8] rounded-md overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-[#FAF8F5] text-[11px] font-medium text-[#9CA3AF]">
+                            <th className="px-2.5 py-1.5 w-8" />
+                            <th className="px-2.5 py-1.5 text-left">Drawdown</th>
+                            <th className="px-2.5 py-1.5 text-left">For</th>
+                            <th className="px-2.5 py-1.5 text-left">Drawn</th>
+                            <th className="px-2.5 py-1.5 text-left">Due</th>
+                            <th className="px-2.5 py-1.5 text-right">Balance</th>
+                            <th className="px-2.5 py-1.5 text-right">Interest (at drawdown)</th>
+                            <th className="px-2.5 py-1.5 text-right">Repay (RM)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {apBills.bills.map((b) => {
+                            const ticked = (apAlloc[b.id] ?? "") !== "";
+                            const over = ticked && apSen(apAlloc[b.id] ?? "") > b.availableSen;
+                            return (
+                              <tr key={b.id} className="border-t border-[#F0ECE9]">
+                                <td className="px-2.5 py-1">
+                                  <input type="checkbox" checked={ticked} disabled={b.availableSen <= 0}
+                                    onChange={(e) => setAmt(b.id, e.target.checked ? (b.availableSen / 100).toFixed(2) : "")}
+                                    className="h-3.5 w-3.5 accent-[#6B5C32]" title="Tick = repay in full; edit the amount for a part payment" />
+                                </td>
+                                <td className="px-2.5 py-1 whitespace-nowrap tabular-nums font-semibold">{b.no}</td>
+                                <td className="px-2.5 py-1 text-[#6B7280]">{b.ref || "—"}</td>
+                                <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.date ? fmtDocDate(b.date) : "—"}</td>
+                                <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.dueDate ? fmtDocDate(b.dueDate) : "—"}</td>
+                                <td className="px-2.5 py-1 text-right tabular-nums">
+                                  {formatCurrency(b.outstandingSen)}
+                                  {b.reservedSen > 0 && <div className="text-[10px] text-[#9A3A2D]" title={`Already ticked on ${b.reservedBy.join(", ")}`}>−{formatCurrency(b.reservedSen)} on {b.reservedBy.join(", ")}</div>}
+                                </td>
+                                <td className="px-2.5 py-1 text-right tabular-nums text-[#6B7280]">{b.interestSen ? formatCurrency(b.interestSen) : "—"}</td>
+                                <td className="px-2.5 py-1 text-right">
+                                  <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={b.availableSen <= 0}
+                                    onChange={(e) => setAmt(b.id, e.target.value)}
+                                    className={`w-28 rounded border border-[#E2DDD8] bg-white px-2 py-1 text-right tabular-nums text-xs ${over || isUnreadableMoney(apAlloc[b.id] ?? "") ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 ) : apBills.bills.length === 0 ? (
                   <div className="text-xs text-[#9CA3AF] border border-dashed border-[#E2DDD8] rounded-md px-3 py-4">No open bills for this creditor.{apForm.partyKind === "SUPPLIER" ? " You can still pay an advance below." : ""}</div>
                 ) : (
@@ -11872,7 +11930,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               </div>
 
               <div className="flex flex-wrap items-end justify-between gap-3">
-                {apForm.partyKind === "SUPPLIER" ? (
+                {apForm.partyKind === "SUPPLIER" && !apTfLender ? (
                   <div>
                     <label className="text-xs font-medium text-[#6B7280] mb-1 block">Advance / unallocated (RM) <span className="ml-1 text-[#B4B2A9] cursor-help" title="Paid on top of the bills — sits as a prepayment on this supplier's ledger; knock it off later on the Supplier Payment page">ⓘ</span></label>
                     <input type="text" placeholder="0.00" value={apForm.advance} onChange={(e) => setApForm({ ...apForm, advance: e.target.value })} className={`${selCls} w-40 text-right tabular-nums ${isUnreadableMoney(apForm.advance) ? "text-[#9A3A2D]" : ""}`} />
@@ -12280,7 +12338,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Bill</th><th className="text-left px-3 py-1.5 font-medium">Ref</th><th className="text-right px-3 py-1.5 font-medium">Paid</th></tr></thead>
                       <tbody>
                         {(r.allocs ?? []).map((a, i) => (
-                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
+                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : a.docKind === "TF" ? "trade-finance drawdown" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
                         ))}
                         {(r.advanceSen ?? 0) > 0 && <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5">Advance / unallocated{(r.advanceOpenSen ?? 0) > 0 && isPosted(r) ? <span className="ml-1 text-[10px] text-[#7A5B12]">· {formatCurrency(r.advanceOpenSen ?? 0)} still unapplied</span> : null}</td><td /><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.advanceSen ?? 0)}</td></tr>}
                         <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>

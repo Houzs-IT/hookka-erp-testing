@@ -30,11 +30,13 @@ export const DEFAULT_COA = [
   { code: "900-0002", type: "EXPENSE", specialAccountType: null, isPostable: 1 },
 ];
 
-export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [] } = {}) {
+export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) {
   const st = {
     coa, aliases,
     receipts: [], lines: [], vouchers: [], pvLines: [],
     legs: [], lifecycle: [], stmt: [], splits: [], ticks: [], counter: 1, seq: 0,
+    // Trade finance (tests/tf-repay-from-ap-payment.test.mjs).
+    kv: new Map(Object.entries(kv)), suppliers: [], supplierPayments: [], tfDraws: [], tfAllocs: [], pvAllocs: [],
   };
   const like = (v, pat) => String(v).startsWith(String(pat).replace(/%$/, ""));
   const exec = (rawSql, a, mode) => {
@@ -44,7 +46,49 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [] } = {}) {
     if (/^(ALTER TABLE|CREATE (TABLE|INDEX)|UPDATE payment_vouchers SET approval_state = 'APPROVED' WHERE approval_state IS NULL)/.test(sql)) return null;
     if (/^SELECT code, type, specialAccountType, .* FROM chart_of_accounts$/.test(sql)) return st.coa;
     if (/^SELECT oldCode, newCode FROM account_aliases$/.test(sql)) return st.aliases;
+    if (/^SELECT value FROM kv_config WHERE key = \?$/.test(sql)) return st.kv.has(a[0]) ? { value: st.kv.get(a[0]) } : null;
+    if (/^INSERT INTO kv_config \(key, value, updated_at\)/.test(sql)) {
+      // The supplier-payments rev bump names its key in the SQL; others bind it.
+      if (/VALUES \('supplier_payments_rev'/.test(sql)) st.kv.set("supplier_payments_rev", a[0]); else st.kv.set(a[0], a[1]);
+      return null;
+    }
     if (/FROM kv_config/.test(sql)) return mode === "all" ? [] : null;
+    // ── trade finance
+    if (/^SELECT sourceType, sourceId, debitSen, creditSen FROM ledger_journal_entries WHERE accountCode = \? AND hidden = 0$/.test(sql)) {
+      return st.legs.filter((l) => l.accountCode === a[0] && l.hidden === 0);
+    }
+    if (/^SELECT draw_source_id, draw_date, due_date FROM trade_finance_draws WHERE account_code = \?$/.test(sql)) {
+      return st.tfDraws.filter((d) => d.account_code === a[0]).map((d) => ({ drawSourceId: d.draw_source_id, drawDate: d.draw_date, dueDate: d.due_date }));
+    }
+    if (/^INSERT INTO trade_finance_draws \(draw_source_id, account_code, draw_date, due_date(, org_id)?\)/.test(sql)) {
+      if (!st.tfDraws.some((d) => d.draw_source_id === a[0])) st.tfDraws.push({ draw_source_id: a[0], account_code: a[1], draw_date: a[2], due_date: a[3] });
+      return null;
+    }
+    if (/^SELECT repay_payment_no, draw_source_id, amount_sen FROM trade_finance_repay_allocs$/.test(sql)) {
+      return st.tfAllocs.map((x) => ({ repayPaymentNo: x.repay_payment_no, drawSourceId: x.draw_source_id, amountSen: x.amount_sen }));
+    }
+    if (/^INSERT INTO trade_finance_repay_allocs \(id, repay_payment_no, draw_source_id, amount_sen, org_id\)/.test(sql)) {
+      st.tfAllocs.push({ id: a[0], repay_payment_no: a[1], draw_source_id: a[2], amount_sen: a[3] });
+      return null;
+    }
+    if (/^SELECT DISTINCT paymentNo FROM supplier_payments WHERE method = 'TF_REPAYMENT'$/.test(sql)) {
+      return [...new Set(st.supplierPayments.filter((p) => p.method === "TF_REPAYMENT").map((p) => p.paymentNo))].map((paymentNo) => ({ paymentNo }));
+    }
+    if (/^SELECT date FROM supplier_payments WHERE paymentNo = \? LIMIT 1$/.test(sql)) return st.supplierPayments.find((p) => p.paymentNo === a[0]) ?? null;
+    if (/^SELECT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN \(/.test(sql)) {
+      return st.supplierPayments.filter((p) => a.includes(p.paymentNo)).map((p) => ({ paymentNo: p.paymentNo, supplierName: p.supplierName }));
+    }
+    if (/^INSERT INTO supplier_payments \( id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference, notes, orgId \) VALUES \(\?, \?, \?, \?, NULL, \?, \?, \?, NULL, NULL, 'TF_REPAYMENT', \?, \?, \?\)$/.test(sql)) {
+      const [id, paymentNo, supplierId, supplierName, date, amountSen, bookedSen, reference] = a;
+      st.supplierPayments.push({ id, paymentNo, supplierId, supplierName, purchaseInvoiceId: null, date, amountSen, bookedSen, method: "TF_REPAYMENT", reference });
+      return null;
+    }
+    if (/^SELECT id, name FROM suppliers WHERE id = \?$/.test(sql)) return st.suppliers.find((x) => x.id === a[0]) ?? null;
+    if (/^SELECT a\.voucher_id, a\.doc_kind, a\.doc_id, a\.amount_sen, v\.pvNo FROM payment_voucher_allocs a JOIN payment_vouchers v ON v\.id = a\.voucher_id WHERE v\.status <> 'VOID' AND COALESCE\(v\.approval_state, 'APPROVED'\) <> 'APPROVED'$/.test(sql)) {
+      return st.pvAllocs.map((x) => ({ ...x, v: st.vouchers.find((v) => v.id === x.voucher_id) }))
+        .filter((x) => x.v && x.v.status !== "VOID" && (x.v.approvalState ?? "APPROVED") !== "APPROVED")
+        .map((x) => ({ voucherId: x.voucher_id, docKind: x.doc_kind, docId: x.doc_id, amountSen: x.amount_sen, pvNo: x.v.pvNo }));
+    }
     if (/^INSERT INTO doc_no_counters/.test(sql)) { st.counter += 1; return { next_no: st.counter }; }
     if (/^INSERT INTO audit_events/.test(sql) || /^SELECT displayName FROM users/.test(sql)) return null;
     // ── ledger
