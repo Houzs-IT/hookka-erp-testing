@@ -25,9 +25,9 @@ test("virtual-scroll spacer rows never lift (both shared hooks)", () => {
   }
 });
 
-test("Chart of Accounts: Add Account on the title row, same toggle", () => {
+test("Chart of Accounts: Add Account on the title row (opens the New Account form, tests/coa-new-account-form.test.mjs)", () => {
   const coa = fn("COATab");
-  assert.match(bar(coa), /<Button variant="primary" size="sm" onClick=\{\(\) => setShowForm\(!showForm\)\}>\n\s*<Plus className="h-4 w-4" \/> Add Account/);
+  assert.match(bar(coa), /<Button variant="primary" size="sm" onClick=\{openNewForm\}>\n\s*<Plus className="h-4 w-4" \/> Add Account/);
   assert.doesNotMatch(coa, /<span aria-hidden="true" \/>/, "the empty spacer beside the old button is gone");
 });
 
