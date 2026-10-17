@@ -36,7 +36,7 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
     receipts: [], lines: [], vouchers: [], pvLines: [],
     legs: [], lifecycle: [], stmt: [], splits: [], ticks: [], counter: 1, seq: 0,
     // Trade finance (tests/tf-repay-from-ap-payment.test.mjs).
-    kv: new Map(Object.entries(kv)), suppliers: [], supplierPayments: [], tfDraws: [], tfAllocs: [], pvAllocs: [],
+    kv: new Map(Object.entries(kv)), suppliers: [], supplierPayments: [], tfDraws: [], tfAllocs: [], pvAllocs: [], pis: [],
   };
   const like = (v, pat) => String(v).startsWith(String(pat).replace(/%$/, ""));
   const exec = (rawSql, a, mode) => {
@@ -84,6 +84,37 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
       return null;
     }
     if (/^SELECT id, name FROM suppliers WHERE id = \?$/.test(sql)) return st.suppliers.find((x) => x.id === a[0]) ?? null;
+    if (/^SELECT name FROM suppliers WHERE id = \?$/.test(sql)) return st.suppliers.find((x) => x.id === a[0]) ?? null;
+    // ── purchase invoices (a supplier payment that settles them)
+    if (/^SELECT id, pi_no, amount_sen, paid_amount_sen, status, currency, fx_rate, supplier_id, supplier_name FROM purchase_invoices WHERE id = \?$/.test(sql)) {
+      return st.pis.find((p) => p.id === a[0]) ?? null;
+    }
+    if (/^SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening FROM purchase_invoices WHERE supplier_id = \? AND status IN \('CONFIRMED','APPROVED','PARTIAL_PAID'\) ORDER BY invoice_date ASC, pi_no ASC$/.test(sql)) {
+      return st.pis.filter((p) => p.supplier_id === a[0] && ["CONFIRMED", "APPROVED", "PARTIAL_PAID"].includes(p.status));
+    }
+    if (/^SELECT COALESCE\(SUM\(sp\.amount_sen\), 0\) AS adv_sen FROM supplier_payments sp/.test(sql)) return { adv_sen: 0 };
+    if (/^UPDATE purchase_invoices SET paid_amount_sen = paid_amount_sen \+ \?, status = CASE/.test(sql)) {
+      const p = st.pis.find((x) => x.id === a[3]);
+      p.paid_amount_sen += a[0];
+      p.status = p.paid_amount_sen >= p.amount_sen ? "PAID" : p.paid_amount_sen > 0 ? "PARTIAL_PAID" : p.status;
+      return null;
+    }
+    if (/^INSERT INTO supplier_payments \( id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference, notes, orgId \) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\)$/.test(sql)) {
+      const [id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, , , method, reference] = a;
+      st.supplierPayments.push({ id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, method, reference });
+      return null;
+    }
+    if (/^INSERT INTO supplier_payments \( id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference, notes, orgId \) VALUES \(\?, \?, \?, \?, NULL, \?, \?, \?, NULL, NULL, \?, \?, \?, \?\)$/.test(sql)) {
+      const [id, paymentNo, supplierId, supplierName, date, amountSen, bookedSen, method, reference] = a;
+      st.supplierPayments.push({ id, paymentNo, supplierId, supplierName, purchaseInvoiceId: null, date, amountSen, bookedSen, method, reference });
+      return null;
+    }
+    // ── chart of accounts (an account created on first use)
+    if (/^INSERT INTO chart_of_accounts \(code, name, type, parentCode, balanceSen, isActive, cashFlowCategory, specialAccountType, pnlCategory, isPostable\) VALUES \(\?, \?, 'EXPENSE', \?, 0, 1, NULL, NULL, NULL, 1\) ON CONFLICT \(code\) DO NOTHING$/.test(sql)) {
+      if (!st.coa.some((x) => x.code === a[0])) st.coa.push({ code: a[0], name: a[1], type: "EXPENSE", specialAccountType: null, isPostable: 1, parentCode: a[2] });
+      return null;
+    }
+    if (/^SELECT name FROM chart_of_accounts WHERE code = \?$/.test(sql)) { const x = st.coa.find((c) => c.code === a[0]); return x ? { name: x.name ?? "" } : null; }
     if (/^SELECT a\.voucher_id, a\.doc_kind, a\.doc_id, a\.amount_sen, v\.pvNo FROM payment_voucher_allocs a JOIN payment_vouchers v ON v\.id = a\.voucher_id WHERE v\.status <> 'VOID' AND COALESCE\(v\.approval_state, 'APPROVED'\) <> 'APPROVED'$/.test(sql)) {
       return st.pvAllocs.map((x) => ({ ...x, v: st.vouchers.find((v) => v.id === x.voucher_id) }))
         .filter((x) => x.v && x.v.status !== "VOID" && (x.v.approvalState ?? "APPROVED") !== "APPROVED")

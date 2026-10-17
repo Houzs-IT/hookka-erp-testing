@@ -100,7 +100,8 @@ const ui = readFileSync("src/pages/accounting/index.tsx", "utf8").replace(/\r\n/
 const api = readFileSync("src/api/routes/accounting.ts", "utf8").replace(/\r\n/g, "\n");
 
 test("screen: the lender's AP Payment lists drawdowns to repay, with no advance box", () => {
-  assert.match(ui, /const apTfLender = apBills\?\.tfLender \?\? null;\n\s*const apAdvanceSen = apTfLender \? 0 : apSen\(apForm\.advance\);/);
+  assert.match(ui, /const apTfLender = apBills\?\.tfLender \?\? null;/);
+  assert.match(ui, /const apAdvanceSen = apTfLender \? 0 : apSen\(apForm\.advance\);/);
   assert.match(ui, /\{apTfLender \? "Drawdowns to repay" : "Bills to pay"\}/);
   for (const h of ["Drawdown", "For", "Drawn", "Due", "Balance", "Interest (at drawdown)", "Repay (RM)"]) {
     assert.ok(ui.includes(`<th className="px-2.5 py-1.5 text-left">${h}</th>`) || ui.includes(`<th className="px-2.5 py-1.5 text-right">${h}</th>`), h);

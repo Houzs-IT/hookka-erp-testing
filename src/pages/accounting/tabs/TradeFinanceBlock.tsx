@@ -84,7 +84,10 @@ export function TradeFinanceBlock() {
   // server delta-posts DR INTEREST ON TRADE FINANCE or BANK CHARGES / CR the
   // TF account under this draw, so outstanding + the identity include it.
   // Same figure twice = no-op.
-  const saveCharge = async (kind: "interest" | "bankCharge", drawSourceId: string, rmStr: string) => {
+  // Interest is recorded AT DRAWDOWN (owner 2026-10-17 「提款时就记」): a figure
+  // keyed here later is still dated on the drawdown day, so it lands in the
+  // drawdown's month. Bank charges keep the day they are keyed.
+  const saveCharge = async (kind: "interest" | "bankCharge", drawSourceId: string, rmStr: string, drawDate?: string) => {
     const label = kind === "interest" ? "Interest" : "Bank charges";
     // BUG-2026-08-13-095 — the interest cell is a free-text input, so the
     // bank's "1,250.00" reached `parseFloat` whole and posted RM 1.00 of
@@ -98,7 +101,9 @@ export function TradeFinanceBlock() {
     const res = await fetch(`/api/accounting/trade-finance/${kind === "interest" ? "draw-interest" : "draw-bank-charge"}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(kind === "interest" ? { drawSourceId, interestSen: sen } : { drawSourceId, bankChargeSen: sen }),
+      body: JSON.stringify(kind === "interest"
+        ? { drawSourceId, interestSen: sen, ...(drawDate && /^\d{4}-\d{2}-\d{2}$/.test(drawDate) ? { date: drawDate } : {}) }
+        : { drawSourceId, bankChargeSen: sen }),
     }).catch(() => null);
     const j = (await res?.json().catch(() => null)) as { success?: boolean; error?: string; data?: { unchanged?: boolean } } | null;
     if (j?.success) { if (!j.data?.unchanged) { toast.success(`${label} posted`); } load(); }
@@ -193,7 +198,7 @@ export function TradeFinanceBlock() {
                           placeholder="0.00"
                           onBlur={(e) => {
                             const cur = d.interestSen ? (d.interestSen / 100).toFixed(2) : "";
-                            if (e.target.value !== cur && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value);
+                            if (e.target.value !== cur && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value, d.drawDate);
                           }}
                           className="w-24 rounded border border-[#E2DDD8] px-1.5 py-0.5 text-[12px] text-right tabular-nums bg-white"
                         />

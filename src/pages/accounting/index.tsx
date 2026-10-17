@@ -20,6 +20,7 @@ import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } fr
 import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
 import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
 import { clearFaQueue, faRemarkFor, fixedAssetPrefills, putFaQueue, readFaQueue, withoutRegistered, type FaPrefill } from "@/lib/fixed-asset-prompt";
+import { addDays as tfAddDays } from "@/lib/trade-finance";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
@@ -10498,6 +10499,9 @@ type PvRow = {
   partyKind?: "SUPPLIER" | "OTHER" | null;
   partyId?: string | null;
   advanceSen?: number;
+  // An AP Payment that draws on trade finance (finance backlog item 17).
+  tfDueDate?: string | null; tf_due_date?: string | null;
+  tfInterestSen?: number | null; tf_interest_sen?: number | null;
   advanceOpenSen?: number;
   allocs?: PvAllocOut[];
   // Evidence on file (Houzs adoption 2026-09-22): count on the row, the list
@@ -10962,7 +10966,13 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     partyId: initialPay?.partyId ?? "",
     reference: "",
     advance: "",
+    // Paid from a trade-finance line (a drawdown): its due date (blank =
+    // the payment date + the line's tenor) and the interest at drawdown.
+    tfDue: "",
+    tfInterest: "",
   });
+  // The trade-finance lines (GET /trade-finance): Paid from may draw on one.
+  const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[]>([]);
   const [apAlloc, setApAlloc] = useState<Record<string, string>>({});
   // apBills carries the key it was loaded for; a key mismatch = loading.
   const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } | null>(null);
@@ -10977,6 +10987,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       .catch(() => {});
     fetch("/api/accounting/other-parties").then((r) => r.json() as Promise<{ success?: boolean; data?: typeof otherCreditors }>)
       .then((j) => { if (!dead && j?.success) setOtherCreditors((j.data ?? []).filter((p) => p.type === "CREDITOR" && p.isActive !== false)); })
+      .catch(() => {});
+    fetch("/api/accounting/trade-finance").then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: { accountCode: string; accountName?: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[] } }>)
+      .then((j) => { if (!dead && j?.success) setTfLines((j.data?.sources ?? []).map((t) => ({ accountCode: t.accountCode, accountName: t.accountName ?? "", lenderName: t.lenderName, lenderSupplierId: t.lenderSupplierId, tenorDays: Number(t.tenorDays) || 90 }))); })
       .catch(() => {});
     return () => { dead = true; };
   }, []);
@@ -11165,7 +11178,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setPendingScanFiles([]);
     setForm(blankPvForm());
     setLines([{ accountCode: "", description: "", amount: "" }]);
-    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", advance: "" });
+    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", advance: "", tfDue: "", tfInterest: "" });
     setApAlloc({});
     setApBills(null);
   };
@@ -11178,15 +11191,20 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // AP form derived figures. Unreadable amounts stop the save (same money
   // parser as the expense lines — BUG-2026-08-13-095).
   const apTicked = (apBills?.bills ?? []).filter((b) => (apAlloc[b.id] ?? "").trim() !== "");
+  const apTfLender = apBills?.tfLender ?? null;
+  // Paid from a trade-finance line = a drawdown (an ordinary supplier only).
+  const apTfDraw = !apTfLender && apForm.partyKind === "SUPPLIER"
+    ? tfLines.find((t) => t.accountCode === apForm.payFrom && t.lenderSupplierId !== apForm.partyId) ?? null
+    : null;
   const apMoneyError = firstMoneyFieldError([
     ...apTicked.map((b) => ({ label: `${b.no} amount`, value: apAlloc[b.id] ?? "" })),
     ...(apForm.advance.trim() ? [{ label: "Advance", value: apForm.advance }] : []),
+    ...(apTfDraw && apForm.tfInterest.trim() ? [{ label: "Interest at drawdown", value: apForm.tfInterest }] : []),
   ]);
   // One parser for the AP form's money cells (display + payload); an
   // unreadable cell is refused by handleSaveAp before any figure is sent.
   const apSen = (v: string) => moneyFieldToSen(v) ?? 0;
   const apAllocSen = apTicked.reduce((s, b) => s + apSen(apAlloc[b.id] ?? ""), 0);
-  const apTfLender = apBills?.tfLender ?? null;
   const apAdvanceSen = apTfLender ? 0 : apSen(apForm.advance);
   const apTotalSen = apAllocSen + apAdvanceSen;
   const apOverAlloc = apTicked.find((b) => apSen(apAlloc[b.id] ?? "") > b.availableSen);
@@ -11203,6 +11221,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       description: apForm.reference,
       advanceSen: apForm.partyKind === "SUPPLIER" ? apAdvanceSen : 0,
       allocations: apTicked.map((b) => ({ docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") })).filter((a) => a.amountSen > 0),
+      ...(apTfDraw ? { tfDueDate: apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays), tfInterestSen: apSen(apForm.tfInterest) } : {}),
       saveAs: mode === "draft" && !editingId ? "draft" : undefined,
     };
     setSaving(true);
@@ -11214,7 +11233,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       });
       const j = asMutationResponse(await res.json());
       if (j?.success) {
-        toast.success(editingId ? "AP payment updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : apTfLender ? "Trade-finance repayment posted" : "AP payment posted — bills knocked off");
+        toast.success(editingId ? "AP payment updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : apTfLender ? "Trade-finance repayment posted" : apTfDraw ? "Drawdown posted — the bills are paid through trade finance" : "AP payment posted — bills knocked off");
         resetForm();
         load();
       } else toast.error(j?.error || "Save failed");
@@ -11518,6 +11537,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       const af = {
         date: r.date, payFrom: r.payFrom ?? "", partyKind: (r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER", partyId: r.partyId ?? "",
         reference: r.description ?? "", advance: (r.advanceSen ?? 0) > 0 ? ((r.advanceSen ?? 0) / 100).toFixed(2) : "",
+        tfDue: String(r.tfDueDate ?? r.tf_due_date ?? "").slice(0, 10),
+        tfInterest: (Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) > 0 ? ((Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) / 100).toFixed(2) : "",
       };
       const alloc: Record<string, string> = Object.fromEntries((r.allocs ?? []).map((a) => [a.docId, (a.amountSen / 100).toFixed(2)]));
       setFormKind("AP");
@@ -11801,11 +11822,32 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <select value={apForm.payFrom || defaultBankCode(bankCash)} onChange={(e) => setApForm({ ...apForm, payFrom: e.target.value })} className={`${selCls} w-full`}>
                           <option value="">— pick bank / cash —</option>
                           {bankCash.map((a) => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}
+                          {apForm.partyKind === "SUPPLIER" && !apTfLender && tfLines.filter((t) => t.lenderSupplierId !== apForm.partyId).map((t) => (
+                            <option key={t.accountCode} value={t.accountCode}>{t.accountCode} · {t.accountName || t.lenderName} · trade finance</option>
+                          ))}
                         </select>
                       </div>
+                      {apTfDraw && (
+                        <div className="sm:col-span-2 rounded-md border border-[#C9D4E5] bg-[#EEF2FB] p-3 space-y-2">
+                          <div className="text-[11px] text-[#2C4170]">
+                            <span className="font-semibold">Drawing on trade finance</span> — {apTfDraw.lenderName} pays the supplier for us: DR creditor control · CR {apTfDraw.accountCode}. No bank money moves now; the drawdown shows in Creditor Aging and Daily Cash Position until it is repaid. The interest is recorded at drawdown: DR 900-I004 · CR {apTfDraw.accountCode}, dated the payment date.
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className={fieldLabel}>Due date *</label>
+                              <input type="date" value={apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays)} onChange={(e) => setApForm({ ...apForm, tfDue: e.target.value })} className={`${selCls} w-full`} />
+                              <div className="mt-1 text-[10px] text-[#6B7280]">default: payment date + {apTfDraw.tenorDays} days</div>
+                            </div>
+                            <div>
+                              <label className={fieldLabel}>Interest at drawdown (RM)</label>
+                              <input type="text" placeholder="0.00" value={apForm.tfInterest} onChange={(e) => setApForm({ ...apForm, tfInterest: e.target.value })} className={`${selCls} w-full text-right tabular-nums ${isUnreadableMoney(apForm.tfInterest) ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <div className="sm:col-span-2">
                         <label className={fieldLabel}>Reference / remarks</label>
-                        <input type="text" placeholder="e.g. TT ref, cheque no" value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
+                        <input type="text" placeholder={apTfDraw ? "Bank's drawdown no." : "e.g. TT ref, cheque no"} value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
                       </div>
                     </div>
                   </div>
