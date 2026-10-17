@@ -16,7 +16,8 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
-import { monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
+import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
+import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
@@ -14961,18 +14962,25 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (j?.success) { setStrictLock(on); toast.success(on ? "Strict lock ON" : "Strict lock off"); }
     else toast.error(j?.error || "Failed");
   };
-  // Reverse combo: one bank line → several book legs (2026-09-22).
-  const [splitFor, setSplitFor] = useState<{ id: string; amountSen: number; legIds: Set<string> } | null>(null);
-  const handleSplitMatch = async () => {
-    if (!splitFor || splitFor.legIds.size < 2) return;
+  // The Pick list (finance backlog item 16, owner 2026-10-17): one bank line,
+  // the book entries it paid — one with the same amount (a plain match) or
+  // several adding up to it exactly (a split match, 2026-09-22's reverse
+  // combo). Replaces the old per-line drop-down and the separate split panel.
+  const [pickFor, setPickFor] = useState<{ id: string; legIds: Set<string>; q: string } | null>(null);
+  const handlePickMatch = async (lineId: string, legIds: string[]) => {
+    if (legIds.length === 1) {
+      if (await handleMatch(lineId, legIds[0])) setPickFor(null);
+      return;
+    }
+    if (legIds.length < 2) return;
     setBusy(true);
     try {
       const res = await fetch("/api/accounting/bank-reco/match-split", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ statementLineId: splitFor.id, legIds: [...splitFor.legIds] }),
+        body: JSON.stringify({ statementLineId: lineId, legIds }),
       });
       const j = (await res.json()) as { success?: boolean; error?: string; data?: { legs: number } };
-      if (j?.success) { toast.success(`Bank line split across ${j.data?.legs} book entries`); setSplitFor(null); load(); }
+      if (j?.success) { toast.success(`Bank line split across ${j.data?.legs} book entries`); setPickFor(null); load(); }
       else toast.error(j?.error || "Split match failed");
     } finally { setBusy(false); }
   };
@@ -15189,16 +15197,17 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     }
   };
 
-  const handleMatch = async (lineId: string, legId: string) => {
-    if (!legId) return;
+  const handleMatch = async (lineId: string, legId: string): Promise<boolean> => {
+    if (!legId) return false;
     const res = await fetch("/api/accounting/bank-reco/match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ statementLineId: lineId, legId }),
     });
     const j = asMutationResponse(await res.json());
-    if (j?.success) load();
-    else toast.error(j?.error || "Match failed");
+    if (j?.success) { load(); return true; }
+    toast.error(j?.error || "Match failed");
+    return false;
   };
 
   const handleUnmatch = async (lineId: string) => {
@@ -15695,21 +15704,24 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 // Combo bar: several bank lines that together paid ONE book
                 // payment (HPV-2607-024: 32.00 + 879.00 = 911.00).
                 const sel = unmatchedStmt.filter((s) => comboSel.has(s.id));
-                if (sel.length < 2) return null;
+                if (sel.length === 0) return null;
                 const sum = sel.reduce((t, s) => t + s.amountSen, 0);
-                const cands = unmatchedLegs.filter((l) => l.amountSen === sum);
+                const cands = comboCandidates(sel, unmatchedLegs);
                 return (
                   <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-[#FBF3E4] border-b border-[#E0C989] text-xs">
-                    <span className="font-semibold text-[#7A5B12]">{sel.length} lines selected · {formatCurrency(Math.abs(sum))} {sum < 0 ? "out" : "in"}</span>
-                    {cands.length > 0 ? (
-                      <select defaultValue="" onChange={(e) => { void handleGroupMatch(e.target.value); e.currentTarget.value = ""; }} className="rounded border border-[#E0C989] bg-white px-1 py-0.5 text-[11px] max-w-72">
-                        <option value="">combine &amp; match to…</option>
-                        {cands.map((l) => <option key={l.id} value={l.id}>{l.day} {l.description.slice(0, 40)}</option>)}
-                      </select>
+                    <span className="font-semibold text-[#7A5B12]">
+                      {sel.length === 1 ? "Tick another line to combine them into one book entry" : `${sel.length} ticked · ${formatCurrency(Math.abs(sum))} ${sum < 0 ? "out" : "in"}`}
+                    </span>
+                    {sel.length >= 2 && (cands.length > 0 ? (
+                      cands.map((l) => (
+                        <Button key={l.id} variant="primary" size="sm" disabled={busy} onClick={() => void handleGroupMatch(l.id)} title={l.description}>
+                          Combine &amp; match to {docNoFromDescription(l.description) ?? l.day}
+                        </Button>
+                      ))
                     ) : (
-                      <span className="text-[#9A3A2D]">no single book entry equals this total</span>
-                    )}
-                    <button onClick={() => setComboSel(new Set())} className="ml-auto underline decoration-dotted text-[#9CA3AF] hover:text-[#1F1D1B] cursor-pointer">clear</button>
+                      <span className="text-[#9A3A2D]">no book entry of this amount</span>
+                    ))}
+                    <button onClick={() => setComboSel(new Set())} className="ml-auto underline decoration-dotted text-[#9CA3AF] hover:text-[#1F1D1B] cursor-pointer">Clear ticks</button>
                   </div>
                 );
               })()}
@@ -15719,12 +15731,13 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     <th className="px-3 py-2 text-left" colSpan={2}>Bank statement — to match ({unmatchedStmt.length})</th>
                     <th className="px-3 py-2 text-right">In</th>
                     <th className="px-3 py-2 text-right">Out</th>
+                    <th className="px-3 py-2 text-left">Suggested book entry</th>
                     <th className="px-3 py-2 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {unmatchedStmt.map((s) => {
-                    const candidates = unmatchedLegs.filter((l) => l.amountSen === s.amountSen);
+                    const sug = suggestionFor(s, unmatchedLegs);
                     const earlier = s.txnDate.slice(0, 7) < month;
                     return (
                       <Fragment key={s.id}>
@@ -15739,40 +15752,47 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <td className="px-3 py-1.5 text-xs w-full max-w-0"><div className="truncate" title={s.description ?? ""}>{s.description}</div></td>
                         <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{tdIn(s.amountSen)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{tdOut(s.amountSen)}</td>
+                        <td className="px-3 py-1.5 text-xs min-w-[12rem] max-w-[16rem]">
+                          {sug.kind === "one" ? (
+                            <div className="leading-tight">
+                              <div className="font-semibold text-[#1F1D1B] whitespace-nowrap">{docNoFromDescription(sug.leg.description) ?? fmtDocDate(sug.leg.day)}</div>
+                              <div className="truncate text-[11px] text-[#6B7280]" title={sug.leg.description}>{sug.leg.description}</div>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-[#9CA3AF]">{sug.kind === "several" ? `${sug.n} same-amount entries — use Pick` : "None with the same amount — use Pick or Book"}</span>
+                          )}
+                        </td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
                           {isFinalMonth(s.txnDate) ? (
                             <span className="text-[11px] text-[#9CA3AF]" title="Month finalised — re-open it on the report card to change anything">🔒 finalised</span>
                           ) : (
-                            <>
-                              {candidates.length > 0 ? (
-                                <select defaultValue="" onChange={(e) => handleMatch(s.id, e.target.value)} className="rounded border border-[#E2DDD8] bg-white px-1 py-0.5 text-[11px] max-w-40">
-                                  <option value="">match to…</option>
-                                  {candidates.map((l) => (
-                                    <option key={l.id} value={l.id}>{l.day} {l.description.slice(0, 30)}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="text-[11px] text-[#9A3A2D]">not in book</span>
-                              )}
+                            <div className="inline-flex items-center gap-1.5">
+                              <Button
+                                variant={sug.kind === "one" ? "primary" : "outline"}
+                                size="sm"
+                                disabled={sug.kind !== "one" || busy}
+                                onClick={() => { if (sug.kind === "one") void handleMatch(s.id, sug.leg.id); }}
+                                title={sug.kind === "one" ? `Match to ${docNoFromDescription(sug.leg.description) ?? sug.leg.description}` : "No single same-amount entry — use Pick"}
+                              >
+                                Match
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={() => setPickFor(pickFor?.id === s.id ? null : { id: s.id, legIds: new Set(), q: "" })} title="Tick the book entry this bank line paid — or several that add up to it">
+                                {pickFor?.id === s.id ? "Close" : "Pick"}
+                              </Button>
                               {s.txnDate >= (data.openingDate ?? "") && (
-                                <button onClick={() => setBookLine(bookLine?.id === s.id ? null : { id: s.id, amountSen: s.amountSen, txnDate: s.txnDate, description: s.description ?? "", accountCode: "", party: "", note: "" })} className={`ml-2 text-[11px] font-semibold cursor-pointer ${bookLine?.id === s.id ? "text-[#1F1D1B]" : "text-[#27500A] hover:text-[#1F1D1B]"}`} title={s.amountSen < 0 ? "Record this as a payment voucher and match it here" : "Record this as a receipt and match it here"}>
-                                {s.amountSen < 0 ? "book as expense" : "book as receipt"}
-                              </button>
+                                <Button variant="outline" size="sm" onClick={() => setBookLine(bookLine?.id === s.id ? null : { id: s.id, amountSen: s.amountSen, txnDate: s.txnDate, description: s.description ?? "", accountCode: "", party: "", note: "" })} title={s.amountSen < 0 ? "Not in the book yet — record it as a payment voucher and match it here" : "Not in the book yet — record it as a receipt and match it here"}>
+                                  Book
+                                </Button>
                               )}
-                              {unmatchedLegs.filter((l) => Math.sign(l.amountSen) === Math.sign(s.amountSen) && Math.abs(l.amountSen) < Math.abs(s.amountSen)).length >= 2 && (
-                                <button onClick={() => setSplitFor(splitFor?.id === s.id ? null : { id: s.id, amountSen: s.amountSen, legIds: new Set() })} className={`ml-2 text-[11px] font-semibold cursor-pointer ${splitFor?.id === s.id ? "text-[#1F1D1B]" : "text-[#2C4170] hover:text-[#1F1D1B]"}`} title="This ONE bank line paid several book entries — pick them">
-                                  split across…
-                                </button>
-                              )}
-                              <button onClick={() => handleIgnore(s.id, true)} className="ml-2 text-[#9CA3AF] hover:text-[#1F1D1B] text-[11px] underline decoration-dotted cursor-pointer" title="Leave this line out of the reconciliation">ignore</button>
-                              <button onClick={() => handleDeleteLine(s.id)} className="ml-1.5 text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer">del</button>
-                            </>
+                              <Button variant="outline" size="sm" onClick={() => handleIgnore(s.id, true)} title="Leave this line out of the reconciliation">Ignore</Button>
+                              <button onClick={() => handleDeleteLine(s.id)} className="ml-0.5 text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer" title="Delete this imported line">del</button>
+                            </div>
                           )}
                         </td>
                       </tr>
                       {bookLine?.id === s.id && (
                         <tr className="border-b border-[#F0ECE9] bg-[#EAF3DE]/40">
-                          <td colSpan={5} className="px-3 py-2">
+                          <td colSpan={6} className="px-3 py-2">
                             <div className="flex flex-wrap items-end gap-2 text-xs">
                               <span className="font-semibold text-[#27500A] mr-1">
                                 {s.amountSen < 0 ? "Book as expense" : "Book as receipt"} · {formatCurrency(Math.abs(s.amountSen))} on {s.txnDate}
@@ -15795,29 +15815,57 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           </td>
                         </tr>
                       )}
-                      {splitFor?.id === s.id && (() => {
-                        const cands = unmatchedLegs.filter((l) => Math.sign(l.amountSen) === Math.sign(s.amountSen) && Math.abs(l.amountSen) < Math.abs(s.amountSen));
-                        const picked = cands.filter((l) => splitFor.legIds.has(l.id));
-                        const sum = picked.reduce((t, l) => t + l.amountSen, 0);
-                        const exact = picked.length >= 2 && sum === s.amountSen;
+                      {pickFor?.id === s.id && (() => {
+                        const cands = pickCandidates(s, unmatchedLegs);
+                        const q = pickFor.q.trim().toLowerCase();
+                        const shown = q
+                          ? cands.filter((l) => l.description.toLowerCase().includes(q) || l.day.includes(q) || formatCurrency(Math.abs(l.amountSen)).toLowerCase().includes(q) || (Math.abs(l.amountSen) / 100).toFixed(2).includes(q))
+                          : cands;
+                        const picked = cands.filter((l) => pickFor.legIds.has(l.id));
+                        const ps = pickState(s, picked);
+                        const act = pickAction(picked);
+                        const toggle = (id: string) => setPickFor((cur) => { if (!cur) return cur; const n = new Set(cur.legIds); if (n.has(id)) n.delete(id); else n.add(id); return { ...cur, legIds: n }; });
                         return (
-                          <tr className="border-b border-[#F0ECE9] bg-[#EEF2FB]/50">
-                            <td colSpan={5} className="px-3 py-2 text-xs">
-                              <div className="flex flex-wrap items-center gap-2 mb-1">
-                                <span className="font-semibold text-[#2C4170]">Split {formatCurrency(Math.abs(s.amountSen))} across book entries · picked {formatCurrency(Math.abs(sum))}{exact ? " ✓ exact" : picked.length ? ` (${formatCurrency(Math.abs(s.amountSen - sum))} to go)` : ""}</span>
-                                <Button variant="primary" size="sm" disabled={!exact || busy} onClick={() => void handleSplitMatch()}>Match all {picked.length}</Button>
-                                <Button variant="outline" size="sm" onClick={() => setSplitFor(null)}>Cancel</Button>
+                          <tr className="border-b border-[#F0ECE9] bg-[#F4EFE6]">
+                            <td colSpan={6} className="px-3 py-2 text-xs">
+                              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                                <span className="font-semibold text-[#1F1D1B]">Tick the book entries this bank line paid</span>
+                                <span className="text-[#6B7280] tabular-nums">picked {formatCurrency(Math.abs(picked.reduce((t, l) => t + l.amountSen, 0)))} of {formatCurrency(Math.abs(s.amountSen))}</span>
+                                {picked.length > 0 && (
+                                  <span className={ps.exact ? "font-semibold text-[#27500A]" : "font-semibold text-[#9A3A2D]"}>
+                                    {ps.exact ? "Exact ✓" : `${ps.diffSen > 0 ? "Short" : "Over"} ${formatCurrency(Math.abs(ps.diffSen))}`}
+                                  </span>
+                                )}
+                                {picked.length > PICK_MAX && <span className="text-[#9A3A2D]">at most {PICK_MAX} entries per bank line</span>}
+                                <input
+                                  type="text"
+                                  value={pickFor.q}
+                                  onChange={(e) => setPickFor((cur) => (cur ? { ...cur, q: e.target.value } : cur))}
+                                  placeholder="Filter by ref, name, date or amount"
+                                  className="ml-auto rounded border border-[#E2DDD8] bg-white px-2 py-1 text-xs w-64"
+                                />
+                                <Button variant="outline" size="sm" onClick={() => setPickFor(null)}>Cancel</Button>
+                                <Button variant="primary" size="sm" disabled={!ps.exact || !act || busy} onClick={() => void handlePickMatch(s.id, picked.map((l) => l.id))}>
+                                  {picked.length > 1 ? `Match ${picked.length} entries` : "Match"}
+                                </Button>
                               </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-                                {cands.map((l) => (
-                                  <label key={l.id} className="flex items-center gap-2 py-0.5 cursor-pointer">
-                                    <input type="checkbox" checked={splitFor.legIds.has(l.id)} onChange={() => setSplitFor((cur) => { if (!cur) return cur; const n = new Set(cur.legIds); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return { ...cur, legIds: n }; })} />
-                                    <span className="text-[#6B7280] whitespace-nowrap">{l.day}</span>
-                                    <span className="truncate flex-1" title={l.description}>{l.description}</span>
-                                    <span className="tabular-nums whitespace-nowrap">{formatCurrency(Math.abs(l.amountSen))}</span>
-                                  </label>
-                                ))}
-                              </div>
+                              {cands.length === 0 ? (
+                                <div className="py-2 text-[#9CA3AF]">No open book entry {s.amountSen < 0 ? "paying out" : "coming in"} up to this amount — use Book to record it.</div>
+                              ) : (
+                                <div className="max-h-72 overflow-y-auto rounded border border-[#E2DDD8] bg-white">
+                                  {shown.map((l) => (
+                                    <label key={l.id} className={`flex items-center gap-2 px-2 py-1 border-b border-[#F0ECE9] last:border-b-0 cursor-pointer ${pickFor.legIds.has(l.id) ? "bg-[#F7F5F2]" : ""}`}>
+                                      <input type="checkbox" checked={pickFor.legIds.has(l.id)} onChange={() => toggle(l.id)} className="accent-[#6B5C32]" />
+                                      <span className="text-[#6B7280] whitespace-nowrap w-24">{fmtDocDate(l.day)}</span>
+                                      <span className="font-semibold whitespace-nowrap w-28">{docNoFromDescription(l.description) ?? ""}</span>
+                                      <span className="truncate flex-1" title={l.description}>{l.description}</span>
+                                      {l.amountSen === s.amountSen && <span className="rounded bg-[#EAF3DE] px-1.5 py-0.5 text-[10px] font-semibold text-[#27500A]">same amount</span>}
+                                      <span className="tabular-nums whitespace-nowrap w-28 text-right">{formatCurrency(Math.abs(l.amountSen))}</span>
+                                    </label>
+                                  ))}
+                                  {shown.length === 0 && <div className="px-2 py-2 text-[#9CA3AF]">Nothing matches the filter</div>}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -15827,7 +15875,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   })}
                   {unmatchedStmt.length === 0 && (
                     <tr>
-                      <td className="px-3 py-8 text-center text-sm text-[#9CA3AF]" colSpan={5}>
+                      <td className="px-3 py-8 text-center text-sm text-[#9CA3AF]" colSpan={6}>
                         {stmt.length === 0 ? "No statement lines yet — Upload bank PDF above" : "Every statement line is matched ✓"}
                       </td>
                     </tr>
