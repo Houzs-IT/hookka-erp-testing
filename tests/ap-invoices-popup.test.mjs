@@ -86,7 +86,8 @@ test("AP Invoices: New AP bill → popup form; the duplicate list below is gone"
 });
 
 test("AP Invoices: double-click an AP bill → detail popup with Print / Edit / Copy / Void", () => {
-  assert.match(ap, /else setDetailBillNo\(r\.no\); \}\}/);
+  assert.match(ap, /else setDetailBillNo\(r\.no\); \};/);
+  assert.match(ap, /onDoubleClick=\{openApInv\}/);
   assert.match(ap, /<button type="button" onClick=\{\(\) => setDetailBillNo\(r\.no\)\}/);
   assert.match(ap, /fetch\("\/api\/accounting\/other-party-bills\?type=CREDITOR"\)/);
   assert.match(ap, /const b = bills\.find\(\(x\) => x\.billNo === detailBillNo\);/, "resolved from the reloaded list so it refreshes after actions");

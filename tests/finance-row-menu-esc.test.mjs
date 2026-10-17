@@ -130,8 +130,13 @@ test("the finance lists carry no action links — each row opens its menu", () =
   const rc = slice(ui, "function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER");
   assert.match(rc, /contextMenuItems=\{\(r\) => rowMenuItems\(receiptRowMenu\(r\)\)\}/);
   assert.doesNotMatch(rc, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, "Receipts: no inline print link");
+  // Fund Transfer and AP Invoices are DataGrids too (2026-10-17): the grid's
+  // own context menu shows the row menu.
+  const ft = slice(ui, "function FundTransferTab(", "// =============== TAB: STOCK SUMMARY");
+  assert.match(ft, /contextMenuItems=\{\(r\) => rowMenuItems\(ftRowMenu\(r\)\)\}/);
+  const apInv = slice(ui, "function ApInvoicesTab(", "function DocDetailModal(");
+  assert.match(apInv, /contextMenuItems=\{\(r\) => rowMenuItems\(apInvRowMenu\(r\)\)\}/);
   const lists = [
-    ["function FundTransferTab(", "// =============== TAB: STOCK SUMMARY", ["ftRowMenu(r)"]],
     ["function OtherPartyBillsManager(", "function OtherPartyPaymentForm(", ["billRowMenu(b)"]],
     ["function OtherPartyPaymentsManager(", "// =============== TAB: GENERAL LEDGER", ["opayRowMenu(g)"]],
   ];

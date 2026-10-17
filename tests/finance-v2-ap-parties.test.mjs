@@ -38,9 +38,11 @@ test("AP Invoices: the shared chips with counts; the list in the v2 look", () =>
   assert.match(ap, /<SegmentedChips\n\s*options=\{AP_KIND_CHIPS\.map/);
   assert.match(ap, /<SegmentedChips\n\s*options=\{AP_STATUS_CHIPS\.map/);
   assert.doesNotMatch(ap, /const chipBtn =/);
-  assert.match(ap, /<table data-fin-list className="w-full text-sm">/);
-  assert.match(ap, /<tr data-fin-nolift=""><td colSpan=\{10\}[^>]*>Nothing matches<\/td><\/tr>/);
-  assert.match(ap, /\{rows\.length\} shown · outstanding <span className="font-semibold tabular-nums text-\[#1F1D1B\]">\{formatCurrency\(shownSen\)\}<\/span>/);
+  // Since 2026-10-17 the list is the Payment Vouchers table (DataGrid); the
+  // outstanding total is its sticky total row (cancelled not counted).
+  assert.match(ap, /gridId="accounting-ap-invoices"/);
+  assert.match(ap, /emptyMessage="Nothing matches"/);
+  assert.match(ap, /key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: \(list\) => liveSum\(list, \(r\) => r\.outstandingSen\)/);
 });
 
 test("Supplier Discount: v2 lists; rows holding inputs stay put; writes unchanged", () => {

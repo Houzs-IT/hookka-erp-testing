@@ -8009,7 +8009,6 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [kind, setKind] = useState<"ALL" | "AP" | "PI">("ALL");
   // Owner 2026-09-22: default ALL (the mirror is for looking things up, not only chasing).
   const [status, setStatus] = useState<"OPEN" | "PAID" | "CANCELLED" | "ALL">("ALL");
-  const [q, setQ] = useState("");
   // One load of everything, then every filter is client-side: the chips can
   // carry counts, and a supplier picker narrows without a round-trip.
   const [supplier, setSupplier] = useState("");
@@ -8026,17 +8025,60 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (skip !== "kind" && kind !== "ALL" && r.kind !== kind) return false;
     if (skip !== "status" && status !== "ALL" && r.status !== status) return false;
     if (supplier && r.supplier !== supplier) return false;
-    if (q.trim()) { const kw = q.toLowerCase(); if (![r.no, r.supplier, r.supplierRef, r.description].some((s) => s.toLowerCase().includes(kw))) return false; }
     return true;
   };
-  const rows = all.filter((r) => passes(r));
+  // Rows for the grid (owner 2026-10-17: every finance list behaves like the
+  // Payment Vouchers table): a key per document; free-text search is the
+  // grid's own (no / supplier / ref / description).
+  const rows = useMemo(() => all.filter((r) => passes(r)).map((r) => ({ ...r, key: `${r.kind}-${r.id}` })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads exactly these
+    [all, kind, status, supplier]);
   // Each chip counts what it would show given the OTHER filters.
   const kindCount = (k: typeof kind) => all.filter((r) => passes(r, "kind") && (k === "ALL" || r.kind === k)).length;
   const statusCount = (s: typeof status) => all.filter((r) => passes(r, "status") && (s === "ALL" || r.status === s)).length;
   const supplierOpts = [...new Set(all.map((r) => r.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((s) => ({ value: s, label: s }));
-  const shownSen = rows.reduce((s, r) => s + r.outstandingSen, 0);
   const chip = (r: ApInvRow) =>
     r.status === "PAID" ? "bg-[#EAF3DE] text-[#27500A]" : r.status === "CANCELLED" ? "bg-[#F0ECE9] text-[#9CA3AF]" : "bg-[#FBF3E4] text-[#7A5B12]";
+  // Owner 2026-09-29 「直接点开 invoice，而不是跳去 purchase invoice list」: a PI
+  // opens ITS OWN detail page; an AP bill its detail popup.
+  const openApInv = (r: ApInvRow) => { if (r.kind === "PI") navigate(`/procurement/pi/${r.id}`); else setDetailBillNo(r.no); };
+  const payHref = (r: ApInvRow) => `/accounting?tab=payments&pay=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId ?? "")}`;
+  const apInvRowMenu = (r: ApInvRow): RowMenuGroups => [
+    [{ label: r.kind === "PI" ? "Open the purchase invoice" : "Open the bill", action: () => openApInv(r) }],
+    r.status === "OPEN" && r.partyId ? [{ label: "Pay", action: () => navigate(payHref(r)) }] : [],
+  ];
+  const liveSum = (list: ApInvRow[], pick: (r: ApInvRow) => number) => list.filter((r) => r.status !== "CANCELLED").reduce((t, r) => t + pick(r), 0);
+  const apInvColumns = useMemo<Column<ApInvRow & { key: string }>[]>(() => [
+    {
+      key: "kind", label: "Kind", width: "90px",
+      render: (_v, r) => <><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${r.kind === "PI" ? "bg-[#EEF2FB] text-[#2C4170]" : "bg-[#F6F1E7] text-[#6B5C32]"}`}>{r.kind}</span>{r.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}</>,
+    },
+    {
+      key: "no", label: "No.", type: "docno", width: "130px", noFilter: true,
+      render: (_v, r) => (r.kind === "PI"
+        ? <Link to={`/procurement/pi/${r.id}`} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32]" title="Open this purchase invoice">{r.no}</Link>
+        : <button type="button" onClick={() => setDetailBillNo(r.no)} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32] cursor-pointer" title="Open this bill">{r.no}</button>),
+    },
+    { key: "supplier", label: "Supplier", width: "220px" },
+    { key: "supplierRef", label: "Supplier ref", width: "140px", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.supplierRef}</span> },
+    { key: "date", label: "Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.date}</span> },
+    { key: "dueDate", label: "Due", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.totalSen) },
+    { key: "paidSen", label: "Paid", type: "currency", align: "right", width: "120px", total: (list) => liveSum(list, (r) => r.paidSen), render: (_v, r) => <span className="tabular-nums text-[#6B7280]">{r.paidSen ? formatCurrency(r.paidSen) : "—"}</span> },
+    { key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.outstandingSen), render: (_v, r) => <span className="tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</span> },
+    {
+      key: "status", label: "Status", width: "120px",
+      render: (_v, r) => (
+        <span className="whitespace-nowrap">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{r.status}</span>
+          {r.status === "OPEN" && r.partyId && (
+            // Houzs "Record payment": opens New AP Payment with this creditor picked and the bill ticked.
+            <Link to={payHref(r)} className="ml-2 text-[11px] underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B]">pay</Link>
+          )}
+        </span>
+      ),
+    },
+  ], []);
   return (
     <div className="space-y-4">
       <FinanceTitleActions>
@@ -8069,60 +8111,27 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
         <div className="w-64">
           <SearchableSelect value={supplier} onChange={setSupplier} options={supplierOpts} placeholder="All suppliers" allowClear />
         </div>
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search no / supplier / ref" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-56" />
-        <span className="ml-auto text-xs text-[#6B7280]">{rows.length} shown · outstanding <span className="font-semibold tabular-nums text-[#1F1D1B]">{formatCurrency(shownSen)}</span></span>
       </div>
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {data === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table data-fin-list className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Kind</th>
-                  <th className="px-3 py-2 text-left">No.</th>
-                  <th className="px-3 py-2 text-left">Supplier</th>
-                  <th className="px-3 py-2 text-left">Supplier ref</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Due</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-right">Paid</th>
-                  <th className="px-3 py-2 text-right">Outstanding</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} className={`border-b border-[#F0ECE9] hover:bg-[#FAF8F5] ${r.status === "CANCELLED" ? "opacity-50" : ""}`}
-                    // Owner 2026-09-29 「直接点开 invoice，而不是跳去 purchase invoice list」:
-                    // a PI opens ITS OWN detail page, not the list.
-                    onDoubleClick={() => { if (r.kind === "PI") navigate(`/procurement/pi/${r.id}`); else setDetailBillNo(r.no); }}
-                    title={r.kind === "PI" ? "Double-click: open this purchase invoice" : "Double-click: open the bill editor below"}>
-                    <td className="px-3 py-1.5"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${r.kind === "PI" ? "bg-[#EEF2FB] text-[#2C4170]" : "bg-[#F6F1E7] text-[#6B5C32]"}`}>{r.kind}</span>{r.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap">
-                      {r.kind === "PI" ? <Link to={`/procurement/pi/${r.id}`} className="underline decoration-dotted text-[#6B5C32]" title="Open this purchase invoice">{r.no}</Link> : <button type="button" onClick={() => setDetailBillNo(r.no)} className="underline decoration-dotted text-[#6B5C32] cursor-pointer" title="Open this bill">{r.no}</button>}
-                    </td>
-                    <td className="px-3 py-1.5">{r.supplier}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.supplierRef}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{r.paidSen ? formatCurrency(r.paidSen) : "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</td>
-                    <td className="px-3 py-1.5 whitespace-nowrap">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{r.status}</span>
-                      {r.status === "OPEN" && r.partyId && (
-                        // Houzs "Record payment": opens New AP Payment with this creditor picked and the bill ticked.
-                        <Link to={`/accounting?tab=payments&pay=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId)}`} className="ml-2 text-[11px] underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B]">pay</Link>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && <tr data-fin-nolift=""><td colSpan={10} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">Nothing matches</td></tr>}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={apInvColumns}
+            data={rows}
+            keyField="key"
+            gridId="accounting-ap-invoices"
+            onDoubleClick={openApInv}
+            contextMenuItems={(r) => rowMenuItems(apInvRowMenu(r))}
+            rowClassName={(r) => (r.status === "CANCELLED" ? "opacity-50" : "")}
+            searchPlaceholder="Search no / supplier / ref / description"
+            alwaysSearchKeys={["no", "supplier", "supplierRef", "description"]}
+            headerMenu
+            reorderableHeaders
+            exportName="AP Invoices"
+            footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">of {all.length} · cancelled not counted</span></>}
+            emptyMessage="Nothing matches"
+            loading={data === null}
+            maxHeight="calc(100vh - 320px)"
+          />
         </CardContent>
       </Card>
 
@@ -12950,7 +12959,10 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<FtRow[] | null>(null);
-  const ftSel = useRowSelection(rows ?? [], (t) => t.no);
+  // Ticked rows (the grid owns the boxes; owner 2026-10-17: every finance list
+  // behaves like the Payment Vouchers table).
+  const [ftPicked, setFtPicked] = useState<FtRow[]>([]);
+  const [ftClearToken, setFtClearToken] = useState(0);
 
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
 
@@ -13027,7 +13039,35 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02). A transfer's
   // description can be edited (owner 「我要可以edit, 因为我发现description 少了」);
   // its accounts, amount and date are voided and posted again.
-  const rowMenu = useRowMenu();
+  // The list's columns (DataGrid, the Payment Vouchers table's features;
+  // memoised — BUG-CLASSES C24). The total counts active transfers only.
+  const ftColumns = useMemo<Column<FtRow>[]>(() => [
+    { key: "no", label: "No", type: "docno", width: "130px", noFilter: true, render: (_v, r) => <span className="tabular-nums text-xs">{r.no}</span> },
+    { key: "date", label: "Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{fmtDocDate(r.date)}</span> },
+    {
+      key: "fromAccount", label: "From", width: "220px",
+      filterAccessor: (r) => `${r.fromAccount} ${r.fromName}`, exportValue: (r) => `${r.fromAccount} ${r.fromName}`,
+      render: (_v, r) => <span className="text-xs">{r.fromAccount} {r.fromName}</span>,
+    },
+    {
+      key: "toAccount", label: "To", width: "220px",
+      filterAccessor: (r) => `${r.toAccount} ${r.toName}`, exportValue: (r) => `${r.toAccount} ${r.toName}`,
+      render: (_v, r) => <span className="text-xs">{r.toAccount} {r.toName}</span>,
+    },
+    {
+      key: "amountSen", label: "Amount", type: "currency", align: "right", width: "140px",
+      total: (list) => activeTotalSen(list.map((r) => ({ state: r.lifecycleState ?? "ACTIVE", totalSen: r.amountSen }))),
+    },
+    { key: "description", label: "Description", width: "260px", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.description ?? ""}</span> },
+    {
+      key: "lifecycleState", label: "Status", width: "110px",
+      filterAccessor: (r) => ((r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : String(r.lifecycleState)),
+      exportValue: (r) => ((r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : String(r.lifecycleState)),
+      // Owner 2026-08-28 「fund transfer 没有办法 print out voucher」— every row
+      // prints from its right-click / ⋮ menu.
+      render: (_v, r) => <FinPill tone={(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "ok" : "faint"}>{(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : r.lifecycleState}</FinPill>,
+    },
+  ], []);
   const ftRowMenu = (r: FtRow): RowMenuGroups => [
     [{ label: "Open", action: () => setDetailFt(r.no) }],
     [
@@ -13043,8 +13083,6 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      {rowMenu.element}
-
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-end gap-3">
@@ -13101,13 +13139,13 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
       </Card>
 
       <BatchActionsBar
-        count={ftSel.count}
-        onClear={ftSel.clear}
-        onPrint={() => printVouchers(ftSel.selectedRows.map((t) => buildFundTransferVoucher(t, accounts)))}
+        count={ftPicked.length}
+        onClear={() => setFtClearToken((n) => n + 1)}
+        onPrint={() => printVouchers(ftPicked.map((t) => buildFundTransferVoucher(t, accounts)))}
         exportName="fund-transfers"
         exportAoa={() => [
           ["No", "Date", "From", "To", "Status", "Description", "Amount (RM)"],
-          ...ftSel.selectedRows.map((t) => [
+          ...ftPicked.map((t) => [
             t.no,
             formatDateDMY(t.date),
             accountLabel(accounts, t.fromAccount),
@@ -13120,63 +13158,28 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
       />
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {rows === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table data-fin-list className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={ftSel.allSelected} onChange={ftSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
-                  <th className="px-3 py-2 text-left">No</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">From</th>
-                  <th className="px-3 py-2 text-center">→</th>
-                  <th className="px-3 py-2 text-left">To</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
-                  <th className="px-3 py-2 text-left">Description</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.no} className={`border-b border-[#F0ECE9] ${rowMenu.openKey === r.no ? "bg-[#F0ECE9]" : ""} ${(r.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : ""}`} onDoubleClick={() => setDetailFt(r.no)} onContextMenu={rowMenu.onContextMenu(r.no, () => ftRowMenu(r))} title="Double-click to open · right-click for actions">
-                    <td className="px-3 py-1.5 w-8" onDoubleClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={ftSel.isSelected(r.no)} onChange={() => ftSel.toggle(r.no)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
-                    </td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs">{r.no}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{fmtDocDate(r.date)}</td>
-                    <td className="px-3 py-1.5 text-xs">{r.fromAccount} {r.fromName}</td>
-                    <td className="px-3 py-1.5 text-center text-[#6B7280]">→</td>
-                    <td className="px-3 py-1.5 text-xs">{r.toAccount} {r.toName}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.description ?? ""}</td>
-                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                      {/* Owner 2026-08-28 「fund transfer 没有办法 print out
-                          voucher」— every row prints: since 2026-10-02 from its
-                          right-click / ⋮ menu, as the JV grid's does. */}
-                      <span className="mr-2">
-                        <FinPill tone={(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "ok" : "faint"}>{(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : r.lifecycleState}</FinPill>
-                      </span>
-                      {rowMenu.button(r.no, () => ftRowMenu(r))}
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && (
-                  <tr data-fin-nolift><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No transfers yet</td></tr>
-                )}
-              </tbody>
-              {rows.length > 0 && (
-                <tfoot>
-                  <tr>
-                    <td colSpan={6} className="px-3 py-2 text-xs">Total · {rows.length} shown <span className="text-[11px] font-normal text-[#6B7280]">· active transfers only</span></td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(activeTotalSen(rows.map((r) => ({ state: r.lifecycleState ?? "ACTIVE", totalSen: r.amountSen }))))}</td>
-                    <td colSpan={2} />
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={ftColumns}
+            data={rows ?? []}
+            keyField="no"
+            gridId="accounting-fund-transfers"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setFtPicked}
+            clearSelectionToken={ftClearToken}
+            onDoubleClick={(r) => setDetailFt(r.no)}
+            contextMenuItems={(r) => rowMenuItems(ftRowMenu(r))}
+            rowClassName={(r) => ((r.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : "")}
+            searchPlaceholder="Search no / account / description"
+            headerMenu
+            reorderableHeaders
+            exportName="Fund Transfers"
+            footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">· active transfers only</span></>}
+            emptyMessage="No transfers yet"
+            loading={rows === null}
+            maxHeight="calc(100vh - 320px)"
+          />
         </CardContent>
       </Card>
 
