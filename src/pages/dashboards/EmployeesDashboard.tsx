@@ -10,6 +10,7 @@ import { dropIdleSundays } from "@/lib/idle-sundays";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AttendanceLogCard } from "./AttendanceLogCard";
 import { DashModal } from "./DashModal";
+import { NonProdHoursCard } from "./NonProdHoursCard";
 import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
@@ -545,6 +546,8 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         {unranked.length > 0 && ` ${unranked.length} with under an hour clocked are not ranked.`}
         {outsourcedRows.length > 0 && ` Outsourced, not ranked or counted as people: ${outsourcedRows.map((r) => r.name).join(", ")}.`}
       </p>
+
+      <NonProdHoursCard days={days} winDates={winDates} winLabel={winLabel} workerById={workerById} entries={hourEntries} />
 
       {/* Attendance log: opens on the picked day (or the latest day with hours);
           not in first, late second, on time last. */}

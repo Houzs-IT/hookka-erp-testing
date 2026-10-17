@@ -156,7 +156,7 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const data = await cached(c, `dashboard:overview:${orgId}:v25:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:overview:${orgId}:v26:${period}`, 60, async () => {
     const db = c.var.DB;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -596,7 +596,8 @@ app.get("/", async (c) => {
                   COALESCE(SUM(cl.qty),0) AS "meters",
                   COALESCE(SUM(CASE
                     WHEN substr(po.created_at::text, 1, 7) < substr(cl.date::text, 1, 7)
-                    THEN cl.qty ELSE 0 END), 0) AS "lateMeters"
+                    THEN cl.qty ELSE 0 END), 0) AS "lateMeters",
+                  COALESCE(SUM(cl.totalCostSen),0) AS "costSen"
              FROM cost_ledger cl
              JOIN raw_materials rm ON rm.id = cl.itemId
              JOIN production_orders po ON po.id = cl.refId
@@ -607,7 +608,7 @@ app.get("/", async (c) => {
             GROUP BY po.itemCategory, substr(cl.date::text, 1, 7)`,
         )
         .bind(orgId)
-        .all<{ cat: string; ym: string | null; meters: number; lateMeters: number }>(),
+        .all<{ cat: string; ym: string | null; meters: number; lateMeters: number; costSen: number }>(),
       // Invoiced per month — by invoiceDate, every invoice except
       // CANCELLED (incl. DRAFT, per Wei Siang: all current invoices are
       // still DRAFT, so excluding them would leave the line empty).
@@ -1767,7 +1768,8 @@ app.get("/", async (c) => {
       cm.set(cust, ce);
     }
     const topSellers = {
-      BEDFRAME: bfList.sort(byQty).slice(0, 5),
+      // Top 10 (owner 2026-10-17: "放 10 个出来, 要看占 sales 的多少 %").
+      BEDFRAME: bfList.sort(byQty).slice(0, 10),
       SOFA: [...sofaModelMap.entries()]
         .map(([model, e]) => ({
           model,
@@ -1775,7 +1777,7 @@ app.get("/", async (c) => {
           valueSen: e.valueSen,
         }))
         .sort((a, b) => b.setsSold - a.setsSold)
-        .slice(0, 5),
+        .slice(0, 10),
     };
     // Customer breakdown for the Top-Seller click-through (shown keys
     // only — keeps the payload small).
@@ -1960,6 +1962,8 @@ app.get("/", async (c) => {
           meters: Number(r.meters) || 0,
           /** Of those meters, how many belong to an EARLIER month's orders. */
           lateMeters: Number(r.lateMeters) || 0,
+          /** Issue cost that month ÷ meters = the month's average cost / m (owner 2026-10-17). */
+          costSen: Number(r.costSen) || 0,
         }))
         .sort((a, b) => a.month.localeCompare(b.month))
         .slice(-12);

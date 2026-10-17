@@ -143,6 +143,10 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-17-324 — Dashboard overstated overdue production and money owed to suppliers `dashboard` `production` `accounting` 🟢
+
+🟢 Fixed in the merged-dashboard audit (owner 2026-10-17: 「确保每个数据源是准确的」). (1) "Production orders overdue" counted every open order past its date — 10 of the 68 had every stage finished (status simply not closed), so they were not late on the floor; the count is now orders still being made, the finished ones listed apart, and orders over 60 days late flagged (13, mostly pillows at Packing 2/3 since May–June — likely shipped but never scanned out). (2) Purchasing "We owe suppliers" summed unpaid purchase invoices (RM 377,297) while the ledger's trade-creditors control, net of advances, was RM 346,998 — the sum missed RM 22,725 of advances; it now reads `/api/accounting/ap-control` and its aging (past due RM 147,307, was RM 170,860). Everything else checked against an independent source matched to the sen: Sales KPI = customer total = state × category = RM 365,670.06 (service orders included everywhere); invoices RM 263,561.04; service 115 cases / 20 opened / 25 closed / 8 open / 2 overdue; department table totals = the efficiency and salary tiles.
+
 ## BUG-2026-10-17-323 — Editing an official receipt showed an empty account for a line whose code the chart had renamed `finance` 🟡
 
 🟡 **Fixed on its branch; prod check pending.**
