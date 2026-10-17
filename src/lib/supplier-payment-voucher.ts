@@ -60,7 +60,7 @@ export function buildSupplierPaymentVoucher(p: SupplierPaymentVoucherInput, deta
     date: formatDateDMY(p.date),
     partyLabel: "Pay To (Supplier)",
     partyName: p.supplierName ?? "",
-    partyDetails: [{ label: "Paid from", value: p.bankLabel ?? "" }],
+    partyDetails: [{ label: "Payee bank", value: detail?.payeeBank ?? "" }, { label: "Paid from", value: p.bankLabel ?? "" }],
     amountBox: { label: "Amount paid", value: formatCurrency(p.totalBankSen) },
     columns: bills ? bills.columns : [{ label: "Purchase Invoice" }, { label: "Supplier Inv No" }, { label: "Amount", align: "right" }],
     lines: bills ? bills.lines : lines,

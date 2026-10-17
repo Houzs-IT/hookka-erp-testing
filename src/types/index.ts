@@ -78,6 +78,9 @@ export type Customer = {
   customerStage?: "POTENTIAL" | "CONFIRMED";
   /** users.id of the salesperson who owns this account ('' = unassigned). */
   salespersonUserId?: string;
+  /** Finance v2 party fields (2026-10-17): recorded only, no conversion. TIN / SST live in the KYC block. */
+  currency?: string;
+  bankAccount?: string;
 };
 
 // --- BOM Types ---
@@ -582,6 +585,13 @@ export type Supplier = {
   // our group companies (pairs with Customer.groupOrgCode). Setting it makes a
   // HOOKKA PO to this supplier auto-raise a mirror SO under that sister company.
   groupOrgCode?: string;
+  // Finance v2 party fields (2026-10-17) — the API has always returned the
+  // first three; the type now says so. Currency is recorded only.
+  registrationNo?: string;
+  taxEntityTin?: string;
+  currency?: string;
+  sstRegNo?: string;
+  bankAccount?: string;
 };
 
 export type POItem = {

@@ -8,17 +8,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { ShieldCheck, Send, Check } from "lucide-react";
 
+// The driver camelCases every column, so the row arrives as tinNumber etc.;
+// reading only the snake_case keys left the panel blank after every reload, and
+// the next save wrote those blanks over the record (BUG-2026-10-17-313).
 type Onboarding = {
-  tin_number: string | null;
-  einvoice_id: string | null;
-  consent_received: number | null;
-  consent_date: string | null;
-  docs_requested_at: string | null;
-  notes: string | null;
+  tinNumber?: string | null; tin_number?: string | null;
+  sstRegNo?: string | null; sst_reg_no?: string | null;
+  einvoiceId?: string | null; einvoice_id?: string | null;
+  consentReceived?: number | null; consent_received?: number | null;
+  consentDate?: string | null; consent_date?: string | null;
+  docsRequestedAt?: string | null; docs_requested_at?: string | null;
+  notes?: string | null;
 } | null;
 
 export function KycPanel({ customerId }: { customerId: string }) {
-  const [form, setForm] = useState({ tinNumber: "", einvoiceId: "", consentReceived: false, consentDate: "", notes: "" });
+  const [form, setForm] = useState({ tinNumber: "", sstRegNo: "", einvoiceId: "", consentReceived: false, consentDate: "", notes: "" });
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
@@ -30,13 +34,14 @@ export function KycPanel({ customerId }: { customerId: string }) {
       const d = j.data;
       if (d) {
         setForm({
-          tinNumber: d.tin_number ?? "",
-          einvoiceId: d.einvoice_id ?? "",
-          consentReceived: !!d.consent_received,
-          consentDate: d.consent_date ?? "",
+          tinNumber: d.tinNumber ?? d.tin_number ?? "",
+          sstRegNo: d.sstRegNo ?? d.sst_reg_no ?? "",
+          einvoiceId: d.einvoiceId ?? d.einvoice_id ?? "",
+          consentReceived: !!(d.consentReceived ?? d.consent_received),
+          consentDate: d.consentDate ?? d.consent_date ?? "",
           notes: d.notes ?? "",
         });
-        setRequestedAt(d.docs_requested_at ?? null);
+        setRequestedAt(d.docsRequestedAt ?? d.docs_requested_at ?? null);
       }
     } catch {
       /* ignore */
@@ -55,7 +60,9 @@ export function KycPanel({ customerId }: { customerId: string }) {
       await fetch("/api/customer-crm/onboarding", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customerId, ...form, ...extra }),
+        // The stored "docs requested" date rides along — a plain Save used to
+        // send none and the upsert wrote null over it (BUG-2026-10-17-313).
+        body: JSON.stringify({ customerId, ...form, docsRequestedAt: requestedAt, ...extra }),
       });
       if (extra?.docsRequestedAt) setRequestedAt(extra.docsRequestedAt);
       setSavedTick(true);
@@ -84,6 +91,10 @@ export function KycPanel({ customerId }: { customerId: string }) {
         <label className="text-xs text-[#6B7280] flex flex-col gap-1">
           TIN number
           <input className={inputCls} value={form.tinNumber} onChange={(e) => setForm({ ...form, tinNumber: e.target.value })} placeholder="C1234567890" />
+        </label>
+        <label className="text-xs text-[#6B7280] flex flex-col gap-1">
+          SST Reg. No.
+          <input className={inputCls} value={form.sstRegNo} onChange={(e) => setForm({ ...form, sstRegNo: e.target.value })} placeholder="if registered" />
         </label>
         <label className="text-xs text-[#6B7280] flex flex-col gap-1">
           e-Invoice ID
