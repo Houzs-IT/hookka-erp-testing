@@ -19,7 +19,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
   CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
-  inPeriod, inFocus, periodLabel, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  inPeriod, inFocus, periodLabel, monthLabel, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { LiveBadge } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { rollingForecast } from "@/lib/revenue-forecast";
@@ -330,7 +330,7 @@ export function SalesOrdersView({
           <CardHeader className="pb-2">
             <CardTitle>Sales forecast</CardTitle>
             <p className="mt-0.5 text-xs text-[#9CA3AF]">
-              Target = average of the 3 finished months before · {forecast.find((r) => r.inProgress)?.month ?? "this month"} is in progress: so far + run-rate estimate
+              Target = average of the 3 finished months before · {(() => { const r = forecast.find((x) => x.inProgress); return r ? monthLabel(r.iso) : "This month"; })()} is in progress: so far + run-rate estimate
             </p>
           </CardHeader>
           <CardContent>
