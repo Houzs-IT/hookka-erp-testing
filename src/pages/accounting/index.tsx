@@ -92,6 +92,9 @@ import { buildSupplierPaymentVoucher } from "@/lib/supplier-payment-voucher";
 import type { SupplierPaymentGroup } from "@/lib/supplier-payment-alloc";
 import type { PaymentRecord } from "@/types";
 import { AuditLogTab } from "./tabs/AuditLogTab";
+import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
+import { useFiscalYears } from "./use-fiscal-years";
+import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
 import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
 import { PartyListTab } from "./tabs/PartyListTab";
 import { bestMatch } from "@/lib/party-fuzzy-match";
@@ -759,7 +762,7 @@ export default function AccountingPage() {
           {tab === "maint" && (
             <div className="space-y-4">
               <GstRateCard />
-              <FyeCard />
+              <FinancialYearsCard />
               <CleanupReportCard />
               <LandedCostCard />
               <DocNumberingCard accounts={accounts} />
@@ -1271,88 +1274,6 @@ function GstRateCard() {
   );
 }
 
-// Operator-configurable financial year end (kv_config key `fye_month`).
-// Phase 1 (2026-06): every fiscal-year-aware report (P&L YTD window,
-// quarter/half buckets, year-end profit close, cost-structure pages)
-// reads this single setting.
-function FyeCard() {
-  const { toast } = useToast();
-  const [month, setMonth] = useState<number>(12);
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const MONTHS = [
-    "31 Jan", "28/29 Feb", "31 Mar", "30 Apr", "31 May", "30 Jun",
-    "31 Jul", "31 Aug", "30 Sep", "31 Oct", "30 Nov", "31 Dec",
-  ];
-  useEffect(() => {
-    fetch("/api/kv-config/fye_month")
-      .then((r) => r.json() as Promise<{ data?: { month?: number } | null }>)
-      .then((j) => {
-        const v = (j?.data as { month?: number } | null)?.month;
-        if (typeof v === "number" && v >= 1 && v <= 12) setMonth(v);
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
-  }, []);
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch("/api/kv-config/fye_month", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month }),
-      });
-      const j = (await res.json()) as { success?: boolean; error?: string };
-      if (j?.success) toast.success(`Financial year end saved: ${MONTHS[month - 1]}`);
-      else toast.error(j?.error || "Failed to save FYE");
-    } catch {
-      toast.error("Failed to save FYE");
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <Card className="mb-4">
-      <CardContent className="p-4 flex flex-wrap items-end gap-4">
-        <div>
-          <label className="text-xs font-medium text-[#6B7280] mb-1 block">
-            Financial Year End (FYE)
-          </label>
-          <select
-            value={month}
-            disabled={!loaded}
-            onChange={(e) => setMonth(Number(e.target.value))}
-            className="w-36 rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-          >
-            {MONTHS.map((label, i) => (
-              <option key={i + 1} value={i + 1}>{label}</option>
-            ))}
-          </select>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={save}
-          disabled={saving || !loaded}
-        >
-          {saving ? "Saving…" : "Save"}
-        </Button>
-        <p className="text-[11px] text-[#9CA3AF] max-w-sm">
-          Sets the FY window for YTD figures, quarter/half buckets, the
-          year-end profit close and cost-structure pages. Changing it after
-          posting re-bases historical YTD groupings — set once at go-live.
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Maintenance — AutoCount-style stock-group account grid (owner request
-// 2026-06-12: the raw JSON textarea was unusable). One row per raw-material
-// stock group with editable Purchase / Balance Stock / Opening / Closing
-// account cells, plus Default / WIP / FG rows. Loads the EFFECTIVE mapping
-// (kv overrides over built-in defaults) and saves the full grid back to
-// the same kv key the posting + manufacturing reports already read.
 function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   type Entry = { stock: string; opening: string; closing: string; purchase?: string };
@@ -6500,7 +6421,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
 
   // Export: every row (indented by depth), with both money columns.
   const buildExport = (): Aoa => {
-    const aoa: Aoa = [["ITEM", "FY YTD (RM)", "YTD %", `${data?.periodLabel ?? period} (RM)`, "%"]];
+    const aoa: Aoa = [["ITEM", "FY YTD (RM)", "YTD %", `${periodLabel(period, "")} (RM)`, "%"]];
     for (const r of rows) {
       if (r.kind === "gap") { aoa.push(["", "", "", "", ""]); continue; }
       const indent = "  ".repeat(r.depth) + (r.kind === "group" ? "› " : "");
@@ -6516,23 +6437,29 @@ function PLStatementTab({ line }: { line: PlLine }) {
   };
   const lineName = line === "all" ? "Overall" : line === "sofa" ? "Sofa" : "Bedframe";
   const exportTitle = `P&L ${lineName}`;
-  const exportSub = `Period: ${data?.periodLabel ?? period} · ${data?.fyLabel ?? ""}`;
-  const fileBase = `PL-${line}-${period}`;
+  // The period's own words (a financial-year key reads "Q1 FY 2026/27"),
+  // and a file name without the key's ":" (item 9).
+  const exportSub = `Period: ${periodLabel(period, "")} · ${data?.fyLabel ?? ""}`;
+  const fileBase = `PL-${line}-${period.replace(/[^0-9A-Za-z-]+/g, "_")}`;
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
     { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, exportSub, buildExport(), { print: true }); } },
   ];
 
-  // The periods /pl-statement reads: 18 months, the calendar quarters and
-  // years of this year and last (as the old grouped selector offered).
+  // The periods /pl-statement reads: 18 months, and the financial years —
+  // this one and the one before — with their quarters so far (item 9: the
+  // years follow the year end and its changes, GET /fiscal-years).
+  const fiscal = useFiscalYears();
   const periodOptions = useMemo(() => {
-    const yr = Number(today.slice(0, 4));
+    const ym = today.slice(0, 7);
+    const months = monthOptions(ym, 18);
+    const recent = (fiscal?.years ?? []).filter((y) => y.startYm <= ym).slice(-2);
     return [
-      ...monthOptions(today.slice(0, 7), 18),
-      ...[yr, yr - 1].flatMap((y) => [1, 2, 3, 4].map((q) => `${y}-Q${q}`)),
-      String(yr), String(yr - 1),
+      ...months,
+      ...recent.flatMap((y) => fyQuarters(y).filter((q) => q.startYm <= ym).map((q) => fyqKey(y, q.q))),
+      ...recent.map((y) => fyKey(y)),
     ];
-  }, [today]);
+  }, [today, fiscal]);
 
   const matWarn = data?.materialWarnings;
   const negCount = matWarn?.negatives.length ?? 0;

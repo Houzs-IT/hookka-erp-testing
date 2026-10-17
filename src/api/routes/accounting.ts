@@ -24,7 +24,8 @@ import {
   ledgerHasSource,
   type LedgerEntryInput,
 } from "../lib/journal-hash";
-import { getFyeMonth, fyWindowFor } from "../lib/fiscal";
+import { FYE_CHANGES_KV_KEY, getFySchedule, fyWindowAt } from "../lib/fiscal";
+import { addMonths as addFyMonths, fyFor, fyPeriods, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
@@ -6271,8 +6272,8 @@ app.get("/gl", async (c) => {
 const RETAINED_EARNINGS_ACCT = "150-0000";
 
 // Most recent FYE date strictly before `today`.
-function lastEndedFyeIso(today: Date, fyeMonth: number): string {
-  const win = fyWindowFor(today, fyeMonth);
+function lastEndedFyeIso(today: Date, sched: FySchedule): string {
+  const win = fyWindowAt(today, sched);
   const start = new Date(`${win.startIso}T00:00:00Z`);
   return new Date(start.getTime() - 86400000).toISOString().slice(0, 10);
 }
@@ -6355,9 +6356,10 @@ async function computeUnclosedAsOf(
 app.get("/year-close/preview", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const fyeMonth = await getFyeMonth(c.var.DB);
+  const fySched = await getFySchedule(c.var.DB);
   const fyEndIso =
-    c.req.query("fyEnd") || lastEndedFyeIso(new Date(), fyeMonth);
+    c.req.query("fyEnd") || lastEndedFyeIso(new Date(), fySched);
+  const fyeMonth = Number(fyEndIso.slice(5, 7));
   const orgId = getOrgId(c);
   const alreadyClosed = await ledgerHasSource(
     c.var.DB,
@@ -6380,6 +6382,70 @@ app.get("/year-close/preview", async (c) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The financial years (finance backlog item 9; the design's Settings ›
+// Financial Year End — "Change Year End is Super Admin only, closed years
+// are locked, transition-year preview"; src/lib/fiscal-year.ts).
+// GET /fiscal-years: every year from the one holding the books' opening to
+// the one after this — name, months, transition, status (Closed = its
+// year-end close is posted, Current, Future, Open = over but not closed) —
+// the year end before any change, the saved changes, and whether this user
+// may change the year end.
+// PUT /fiscal-years/year-end { from, to } (Super Admin): the year starting
+// `from` becomes a transition year ending `to`, 1–18 months; a closed year
+// or one already over cannot change (yearEndChangeError).
+// ---------------------------------------------------------------------------
+async function closedFyEndYms(db: Env["Variables"]["DB"], orgId: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  const res = await db.prepare("SELECT DISTINCT sourceId FROM ledger_journal_entries WHERE orgId = ? AND sourceType = 'year_close'")
+    .bind(orgId).all<Record<string, unknown>>();
+  for (const r of res.results ?? []) {
+    const m = /^fyclose-(\d{4}-\d{2})-\d{2}$/.exec(String(r.sourceId ?? r.source_id ?? ""));
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+app.get("/fiscal-years", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const [sched, openingDate, closed] = await Promise.all([getFySchedule(db), getOpeningDate(db), closedFyEndYms(db, orgId)]);
+  const todayYm = runningMonthYm();
+  const current = fyFor(todayYm, sched);
+  const fromYm = openingDate ? openingDate.slice(0, 7) : addFyMonths(todayYm, -24);
+  const years = fyPeriods(sched, fromYm < current.startYm ? fromYm : current.startYm, addFyMonths(current.endYm, 12)).map((y) => ({
+    ...y,
+    status: closed.has(y.endYm) ? "closed" : y.startYm <= todayYm && todayYm <= y.endYm ? "current" : y.startYm > todayYm ? "future" : "open",
+  }));
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
+  return c.json({
+    success: true,
+    data: { fyeMonth: sched.fyeMonth, currentFyeMonth: Number(current.endYm.slice(5, 7)), changes: sched.changes, years, canChangeYearEnd: role === "SUPER_ADMIN" },
+  });
+});
+
+app.put("/fiscal-years/year-end", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
+  if (role !== "SUPER_ADMIN") return c.json({ success: false, error: "Only a Super Admin can change the financial year end." }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as { from?: unknown; to?: unknown };
+  const change = { from: String(body.from ?? ""), to: String(body.to ?? "") };
+  const db = c.var.DB;
+  const [sched, closed] = await Promise.all([getFySchedule(db), closedFyEndYms(db, getOrgId(c))]);
+  const err = yearEndChangeError(sched, change, closed, runningMonthYm());
+  if (err) return c.json({ success: false, error: err }, 400);
+  const next = withYearEndChange(sched, change);
+  await db.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(FYE_CHANGES_KV_KEY, JSON.stringify(next.changes), new Date().toISOString()).run();
+  await emitAudit(c, { resource: "finance-settings", resourceId: FYE_CHANGES_KV_KEY, action: "update", before: { changes: sched.changes }, after: { changes: next.changes } });
+  return c.json({ success: true, data: { changes: next.changes } });
+});
+
 // POST /api/accounting/year-close  { fyEnd?: "YYYY-MM-DD" }
 app.post("/year-close", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
@@ -6388,8 +6454,7 @@ app.post("/year-close", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as {
       fyEnd?: string;
     };
-    const fyeMonth = await getFyeMonth(c.var.DB);
-    const fyEndIso = body.fyEnd || lastEndedFyeIso(new Date(), fyeMonth);
+    const fyEndIso = body.fyEnd || lastEndedFyeIso(new Date(), await getFySchedule(c.var.DB));
     const today = new Date().toISOString().slice(0, 10);
     if (fyEndIso >= today) {
       return c.json(
@@ -6534,6 +6599,8 @@ function ymInPeriod(ym: string, period?: string): boolean {
 // Last YYYY-MM covered by the period (for as-of balance-sheet cutoff).
 function periodEndYm(period?: string): string | null {
   if (!period || period === "all") return null;
+  const fk = parseFyKey(period); // "fy:2025-09..2026-08" / "fyq:…:Q1" (item 9)
+  if (fk) return fk.endYm;
   if (period.includes("Q")) {
     const [year, q] = period.split("-Q");
     const end = (parseInt(q, 10) - 1) * 3 + 3;
@@ -6545,6 +6612,8 @@ function periodEndYm(period?: string): string | null {
 // First YYYY-MM of the period (null = since the beginning of time).
 function periodStartYm(period?: string): string | null {
   if (!period || period === "all") return null;
+  const fk = parseFyKey(period);
+  if (fk) return fk.startYm;
   if (period.includes("Q")) {
     const [year, q] = period.split("-Q");
     const start = (parseInt(q, 10) - 1) * 3 + 1;
@@ -8992,15 +9061,15 @@ app.get("/cost-structure", async (c) => {
   if (denied) return denied;
   const db = c.var.DB;
   const fyParam = c.req.query("fy");
-  const fyeMonth = await getFyeMonth(db);
-  const anchorDate = fyParam ? new Date(Date.UTC(parseInt(fyParam, 10), fyeMonth % 12, 15)) : new Date();
-  const fyWin = fyWindowFor(anchorDate, fyeMonth);
+  const fySched = await getFySchedule(db);
+  // ?fy=YYYY = the financial year starting in that year (the first, if two).
+  const fyStartPick = fyParam && /^\d{4}$/.test(fyParam)
+    ? fyPeriods(fySched, `${fyParam}-01`, `${fyParam}-12`).find((f) => f.startYm.startsWith(fyParam))?.startYm ?? null
+    : null;
+  const fyWin = fyWindowAt(fyStartPick ?? new Date(), fySched);
   const startYm = fyWin.startIso.slice(0, 7);
   const cols: string[] = [];
-  {
-    let [y, m] = startYm.split("-").map((n) => parseInt(n, 10));
-    for (let i = 0; i < 12; i++) { cols.push(`${y}-${String(m).padStart(2, "0")}`); m += 1; if (m > 12) { m = 1; y += 1; } }
-  }
+  for (let ym = startYm; ym <= fyWin.endIso.slice(0, 7); ym = addFyMonths(ym, 1)) cols.push(ym);
   // Owner rule 2026-07-28 (「cost structure 其实就和 P&L 一样拿数据」): this
   // report now takes every month's numbers from THE SAME per-month window the
   // P&L uses — GL purchases by purchase account, engine/stock-take inventory,
@@ -9028,10 +9097,10 @@ app.get("/cost-structure", async (c) => {
     if (!g) { g = { description: desc, months: cols.map(() => ({ opening: 0, purchase: 0, closing: 0, spend: 0 })) }; groups.set(code, g); }
     return g;
   };
-  const salesSofa = new Array(12).fill(0);
-  const salesBed = new Array(12).fill(0);
+  const salesSofa = new Array(cols.length).fill(0);
+  const salesBed = new Array(cols.length).fill(0);
   const CS_BEDFRAME_SALES_CODE = "500-0000";
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < cols.length; i++) {
     const ym = cols[i];
     if (ym > nowYm) continue; // future months stay blank
     const hist = selectHistoricalWindow(historicalCs, openingMonthCs, ym, "all");
@@ -9071,21 +9140,16 @@ app.get("/cost-expense-classes", async (c) => {
   if (denied) return denied;
   const db = c.var.DB;
   const fyParam = c.req.query("fy"); // YYYY (FY start year) optional
-  const fyeMonth = await getFyeMonth(db);
-  const anchorDate = fyParam
-    ? new Date(Date.UTC(parseInt(fyParam, 10), fyeMonth % 12, 15))
-    : new Date();
-  const fyWin = fyWindowFor(anchorDate, fyeMonth);
+  const fySched = await getFySchedule(db);
+  // ?fy=YYYY = the financial year starting in that year (the first, if two).
+  const fyStartPick = fyParam && /^\d{4}$/.test(fyParam)
+    ? fyPeriods(fySched, `${fyParam}-01`, `${fyParam}-12`).find((f) => f.startYm.startsWith(fyParam))?.startYm ?? null
+    : null;
+  const fyWin = fyWindowAt(fyStartPick ?? new Date(), fySched);
   const startYm = fyWin.startIso.slice(0, 7);
   const endYm = fyWin.endIso.slice(0, 7);
   const cols: string[] = [];
-  {
-    let [y, m] = startYm.split("-").map((n) => parseInt(n, 10));
-    for (let i = 0; i < 12; i++) {
-      cols.push(`${y}-${String(m).padStart(2, "0")}`);
-      m += 1; if (m > 12) { m = 1; y += 1; }
-    }
-  }
+  for (let ym = startYm; ym <= endYm; ym = addFyMonths(ym, 1)) cols.push(ym);
   const [legRes, coaRes] = await Promise.all([
     db.prepare("SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0").all<{ accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string }>(),
     db.prepare("SELECT code, name, type, pnlCategory FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"]; pnlCategory: string | null }>(),
@@ -9115,7 +9179,7 @@ app.get("/cost-expense-classes", async (c) => {
     const idx = cols.indexOf(ym);
     if (idx < 0) continue;
     let arr = byAcct.get(code);
-    if (!arr) { arr = new Array(12).fill(0); byAcct.set(code, arr); }
+    if (!arr) { arr = new Array(cols.length).fill(0); byAcct.set(code, arr); }
     arr[idx] += (Number(l.debitSen) || 0) - (Number(l.creditSen) || 0);
   }
   // Report-layer labour — same rule as glWindowSigned (owner 2026-08-31):
@@ -9136,7 +9200,7 @@ app.get("/cost-expense-classes", async (c) => {
       for (const { account, sen } of await labourInjectionLines(db, getOrgId(c), ym, injMemo)) {
         if (recorded?.has(account)) continue;
         let arr = byAcct.get(account);
-        if (!arr) { arr = new Array(12).fill(0); byAcct.set(account, arr); }
+        if (!arr) { arr = new Array(cols.length).fill(0); byAcct.set(account, arr); }
         arr[idx] += sen;
       }
     }
@@ -9154,7 +9218,7 @@ app.get("/cost-expense-classes", async (c) => {
     });
     for (const [code, v] of sliceNet) {
       let arr = byAcct.get(code);
-      if (!arr) { arr = new Array(12).fill(0); byAcct.set(code, arr); }
+      if (!arr) { arr = new Array(cols.length).fill(0); byAcct.set(code, arr); }
       arr[obIdxCec] += v;
     }
   }
@@ -9234,9 +9298,8 @@ app.get("/pl-statement", async (c) => {
   const startYm = periodStartYm(period);
   const endYm = periodEndYm(period);
   // FY-YTD window = FY start (per fye_month) → period end.
-  const fyeMonth = await getFyeMonth(c.var.DB);
   const endForFy = new Date(`${endYm ?? new Date().toISOString().slice(0, 7)}-15T00:00:00Z`);
-  const fyWin = fyWindowFor(endForFy, fyeMonth);
+  const fyWin = fyWindowAt(endForFy, await getFySchedule(c.var.DB));
   const fyStartYm = fyWin.startIso.slice(0, 7);
   const orgId = getOrgId(c);
   // FIFO checkpoints once — period end is the latest month either window needs.
@@ -9765,10 +9828,9 @@ app.get("/pl-monthly", async (c) => {
   const line: "all" | "sofa" | "bedframe" = lineParam === "sofa" || lineParam === "bedframe" ? lineParam : "all";
   const anchor = c.req.query("anchor");
 
-  const fyeMonth = await getFyeMonth(c.var.DB);
   const anchorYm = /^\d{4}-\d{2}$/.test(anchor ?? "") ? (anchor as string) : new Date().toISOString().slice(0, 7);
   const anchorDate = new Date(`${anchorYm}-01T00:00:00Z`);
-  const fy = fyWindowFor(anchorDate, fyeMonth);
+  const fy = fyWindowAt(anchorDate, await getFySchedule(c.var.DB));
   const fyStartYm = fy.startIso.slice(0, 7);
   const fyEndYm = fy.endIso.slice(0, 7);
   const lastYm = anchorYm < fyEndYm ? anchorYm : fyEndYm;
@@ -10076,7 +10138,9 @@ async function computeCashflowStatement(
   // Local alias so the extracted body reads exactly as it did in the route.
   const c: { var: { DB: Env["Variables"]["DB"] } } = { var: { DB: db } };
   const resolveAcct = await loadAccountResolver(c.var.DB);
-  const fyeMonth = await getFyeMonth(c.var.DB);
+  const cfFy = /^\d{4}-\d{2}$/.test(period) ? fyWindowAt(period, await getFySchedule(c.var.DB)) : null;
+  const fyeMonth = cfFy ? Number(cfFy.endIso.slice(5, 7)) : 12;
+  const fyStartYm = cfFy ? cfFy.startIso.slice(0, 7) : undefined;
   const { docDate, openingDate: obDate } = await loadDocDateResolver(c.var.DB);
 
   const coaRes = await c.var.DB.prepare(
@@ -10493,7 +10557,7 @@ async function computeCashflowStatement(
   }
   const statement = buildStatement({
     classified, bankLegs, coa, map, rmSplit, deptSplit, stockGroupOverride: sgOverride,
-    supplierCategory, fyeMonth, period, editable, trace: !!opts?.traceKey,
+    supplierCategory, fyeMonth, fyStartYm, period, editable, trace: !!opts?.traceKey,
   });
   let drill: CfDrill | undefined;
   if (opts?.traceKey) {
@@ -15369,10 +15433,10 @@ app.get("/dashboard", async (c) => {
   >();
   {
     const fyKeys = new Map<string, string>(); // fy label → an anchor month
-    const fyeM = await getFyeMonth(db);
+    const fySchedD = await getFySchedule(db);
     for (const ym of allMonths) {
       if (ym > nowYm) continue;
-      const w = fyWindowFor(new Date(`${ym}-15T00:00:00Z`), fyeM);
+      const w = fyWindowAt(ym, fySchedD);
       fyKeys.set(w.startIso, ym);
     }
     const rowVal = (

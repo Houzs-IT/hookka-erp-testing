@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-18**: BUG-2026-10-18-325 (#980) and -326 (#982) flipped to 🟢 after their prod checks.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-326 (branch `feat/finance-change-log-2`, to main); BUG-2026-10-18-325 stays 🟡 until its prod check.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-325 (branch `fix/wip-card-no-ratio`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-322 and -323 flipped to 🟢 after the #970 prod check; -320 / -321 stay 🟡 (deployed, nothing on production to exercise without a write).
@@ -146,9 +147,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-18-326 — Audit Log "What changed" doubled every account of an edit `finance` 🟡
+## BUG-2026-10-18-326 — Audit Log "What changed" doubled every account of an edit `finance` 🟢
 
-🟡 Fixed on branch `feat/finance-change-log-2`, prod check pending.
+🟢 **Fixed and verified on prod 2026-10-18** (#982, read-only): the two edits it was found on now read "Same amount and accounts"; purchase-invoice edits list only the fields they sent.
 
 **Symptom.** Found verifying #981 on production (read-only): an edited supplier payment that moved no account read "Accounts: 400-0000 +608.00, 310-0010 −608.00" (twice its amount, opposite signs), and an edited bill listed its accounts at double their amounts.
 
@@ -158,9 +159,9 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/change-log.test.mjs` ("what changed" case: an unchanged edit reads "Same amount and accounts"). Class: none (a display of correct ledger rows).
 
-## BUG-2026-10-18-325 — WIP by production order showed every order at 0 and a full "difference" in the books' first month `finance` 🟡
+## BUG-2026-10-18-325 — WIP by production order showed every order at 0 and a full "difference" in the books' first month `finance` 🟢
 
-🟡 Fixed on branch `fix/wip-card-no-ratio`, prod check pending.
+🟢 **Fixed and verified on prod 2026-10-18** (#980, read-only): the books' first month shows its orders at selling price with no DIFFERENCE row and the note saying why.
 
 **Symptom.** Found verifying #978 on production (read-only): Stock Summary for May 2026, the books' first month, listed 205 orders in progress, each with a WIP value of 0, and "DIFFERENCE (Stock Take − orders)" equal to the whole keyed WIP figure — as if the orders were worth nothing.
 

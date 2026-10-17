@@ -230,9 +230,12 @@ test("the Cash Flow tab offers only YYYY-MM periods", () => {
   // Cash-Flow-only. Finance v2 (2026-10-16): the P&L's period is a stepper fed
   // the same keys (YYYY-MM, YYYY-Qn, YYYY).
   const pl = src.slice(src.indexOf("function PLStatementTab("), src.indexOf("\nfunction ", src.indexOf("function PLStatementTab(") + 10));
+  // Since item 9 (2026-10-18) those are FINANCIAL-year quarters and years
+  // ("fyq:" / "fy:" keys, which periodStartYm / periodEndYm read) —
+  // tests/fiscal-year.test.mjs.
   assert.ok(
-    /\[yr, yr - 1\]\.flatMap\(\(y\) => \[1, 2, 3, 4\]\.map\(\(q\) => `\$\{y\}-Q\$\{q\}`\)\)/.test(pl) &&
-      /String\(yr\), String\(yr - 1\),/.test(pl),
+    /\.\.\.recent\.flatMap\(\(y\) => fyQuarters\(y\)/.test(pl) &&
+      /\.\.\.recent\.map\(\(y\) => fyKey\(y\)\),/.test(pl),
     "the P&L Statement's quarter / full-year periods were removed too; /pl-statement handles quarters and years correctly",
   );
 });

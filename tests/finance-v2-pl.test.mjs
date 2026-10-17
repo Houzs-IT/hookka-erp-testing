@@ -72,8 +72,9 @@ test("an open group's figure sits on its total line (the design's statement)", (
   assert.match(css, /tr\[data-row="res"\]\[data-fin-double\] > td \{\n  border-bottom: 3px double #1F1D1B;/);
 });
 
-test("periods: months, calendar quarters and years — the keys /pl-statement reads", () => {
-  assert.match(st, /\.\.\.monthOptions\(today\.slice\(0, 7\), 18\),/);
+test("periods: months, the financial years' quarters and the years — the keys /pl-statement reads", () => {
+  // Financial years since item 9 (2026-10-18; tests/fiscal-year.test.mjs).
+  assert.match(st, /const months = monthOptions\(ym, 18\);/);
   assert.match(st, /<PeriodStepper value=\{period\} options=\{periodOptions\} onChange=\{setPeriod\} today=\{today\} \/>/);
 });
 

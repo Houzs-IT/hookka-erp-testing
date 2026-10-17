@@ -400,6 +400,7 @@ const SETTING_LABEL: Record<string, string> = {
   pnl_section_map: "P&L sections",
   bs_section_map: "Balance sheet sections",
   bank_reco_strict_lock: "Bank month lock",
+  fye_changes: "Financial year end",
 };
 
 // What an audit action is called in the list (the standard ones read as
