@@ -6462,3 +6462,14 @@ Asks, in order:
 30. Attendance log: how to view a whole month.
 31. Service: average case closing — check the calculation and the presentation; pull the
     "Issues by category" summary up.
+32. Mobile /m: owner said adjust it too — align with the merged desktop (in progress).
+33. Sales forecast: October estimate looks wrong (run-rate 660k); forecast and Order Pipeline
+    "by status" must follow Month / Quarter / Year.
+34. Top Sellers: move to the bottom of Sales, show 10, add % of sales.
+35. Purchasing: "Waiting to arrive" → Outstanding POs.
+36. Purchasing spend vs a forecast built from production revenue (so a low / high month reads fairly).
+37. Fabric cards: show each month's average cost per metre.
+38. Today's problems: only overdue orders, people not in, efficiency, service overdue. (done locally)
+39. Service defect rate = cases ÷ units shipped, by category.
+40. Question: is Hookka Report open to everyone?
+41. Owner: merge the dashboard to prod — menu label "Dashboard" with the Dashboard icon (one entry).
