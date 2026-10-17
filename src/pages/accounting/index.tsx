@@ -19,6 +19,7 @@ import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils
 import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
 import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
+import { clearFaQueue, faRemarkFor, fixedAssetPrefills, putFaQueue, readFaQueue, withoutRegistered, type FaPrefill } from "@/lib/fixed-asset-prompt";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
@@ -172,6 +173,19 @@ const VOUCHER_COMPANY: VoucherSpec["company"] = {
 
 // "<code> · <name>" using the already-loaded chart of accounts; falls back to
 // the bare code if the account isn't in the COA (deleted / not yet synced).
+// The browser's per-tab storage, or null when the browser refuses it.
+const sessionStore = (): Storage | null => { try { return window.sessionStorage; } catch { return null; } };
+// The fixed-asset register as it stands (empty when it cannot be read — the
+// Add New Asset prompt then simply asks for every fixed-asset line).
+const fetchFaRegister = async (): Promise<{ remarks?: string | null; assetAccount: string; costSen: number }[]> => {
+  try {
+    const j = (await (await fetch("/api/accounting/fixed-assets")).json()) as { success?: boolean; data?: { remarks?: string | null; assetAccount: string; costSen: number }[] };
+    return j?.success ? j.data ?? [] : [];
+  } catch {
+    return [];
+  }
+};
+
 function accountLabel(accounts: ChartOfAccount[], code: string): string {
   const nm = accounts.find((a) => a.code === code)?.name;
   return nm ? `${code} · ${nm}` : code;
@@ -8332,6 +8346,7 @@ function billFormFrom(b: OtherPartyBill, mode: "edit" | "copy", today: string) {
 }
 
 function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties: OtherParty[]; accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR"; formOnly?: BillPopupSpec }) {
+  const navigate = useNavigate();
   const { toast } = useToast();
   const { confirm } = useConfirm();
   const [bills, setBills] = useState<OtherPartyBill[] | null>(null);
@@ -8444,12 +8459,26 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       }
       setScannedPartyName(null);
       forgetScanMemory();
+      // An AP bill with a line on a fixed-asset account → the Fixed Assets
+      // page opens Add New Asset filled in from it (backlog item 11). Not in
+      // the middle of a multi-bill scan.
+      const faPrefills = side === "CREDITOR" && !keepOpen ? fixedAssetPrefills({
+        ref: newBillNo ?? editingBillNo ?? "",
+        date: form.billDate,
+        description: form.description,
+        lines: items.map((i) => ({ accountCode: i.counterAccount, description: i.description, amountSen: i.amountSen })),
+      }, accounts) : [];
       setEditingBillNo(null);
       setForm({ partyId: "", billDate: today, referenceNo: "", description: "", taxStr: "", lines: [blankLine()], isOpening: false });
       load();
       if (!keepOpen) {
         setShowForm(false);
         formOnly?.onDone();
+      }
+      const faFresh = faPrefills.length ? withoutRegistered(faPrefills, await fetchFaRegister()) : [];
+      if (putFaQueue(sessionStore(), faFresh)) {
+        toast.info(`${faFresh.length} line${faFresh.length === 1 ? "" : "s"} went to a fixed-asset account — add the asset to the register.`);
+        navigate("/accounting?tab=assets");
       }
       return true;
     }
@@ -11229,9 +11258,17 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const raw = (await res.json()) as { data?: { id?: string } };
+      const raw = (await res.json()) as { data?: { id?: string; pvNo?: string } };
       const j = asMutationResponse(raw);
       if (j?.success) {
+        // A line on a fixed-asset account → the Fixed Assets page opens Add
+        // New Asset filled in from it (backlog item 11, owner 2026-10-17).
+        const faPrefills = isTransfer ? [] : fixedAssetPrefills({
+          ref: raw?.data?.pvNo ?? (rows ?? []).find((x) => x.id === editingId)?.pvNo ?? "",
+          date: form.date,
+          description: form.description || form.payee,
+          lines: postableLines.map((l) => ({ accountCode: l.accountCode, description: l.description, amountSen: toSen(l.amount) })),
+        }, accounts);
         // Scan Receipt → the scanned file rides along as the new voucher's evidence.
         const newId = !editingId ? raw?.data?.id : undefined;
         if (newId) {
@@ -11245,6 +11282,11 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         toast.success(editingId ? "Voucher updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : isTransfer ? "Transfer posted" : "Payment posted");
         resetForm();
         load();
+        const faFresh = faPrefills.length ? withoutRegistered(faPrefills, await fetchFaRegister()) : [];
+        if (putFaQueue(sessionStore(), faFresh)) {
+          toast.info(`${faFresh.length} line${faFresh.length === 1 ? "" : "s"} went to a fixed-asset account — add the asset to the register.`);
+          navigate("/accounting?tab=assets");
+        }
       } else toast.error(j?.error || (editingId ? "Update failed" : "Save failed"));
     } finally {
       setSaving(false);
@@ -13818,40 +13860,22 @@ type FaRow = {
   accumSen: number; lastMonth: string | null;
 };
 
-function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
+// The Add Asset form — one component for a manual add and for Add New Asset
+// from a saved voucher / AP bill (backlog item 11). It starts from `initial`
+// (the parent keys it, so each waiting line gets a fresh form) and records
+// "From <document>" as the asset's remark.
+function FixedAssetAddForm({ accounts, initial, left, onSaved, onCancel }: {
+  accounts: ChartOfAccount[]; initial: FaPrefill | null; left: number; onSaved: () => void; onCancel: () => void;
+}) {
   const { toast } = useToast();
-  const { confirm } = useConfirm();
-  const [rows, setRows] = useState<FaRow[] | null>(null);
-  const [migrationMissing, setMigrationMissing] = useState(false);
-  const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({
-    name: "", assetAccount: "", accumAccount: "", expenseAccount: "",
-    purchaseDate: "", cost: "", residual: "", lifeMonths: "", openingAccum: "",
-  });
-  const today = todayYmdMY();
-  const [runMonth, setRunMonth] = useState(() => today.slice(0, 7));
-  // Re-read the month's preview after a run (finance v2: the preview loads
-  // with the month — a read; Post stays the owner's click).
-  const [previewKey, setPreviewKey] = useState(0);
-  const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
-  const [posting, setPosting] = useState(false);
-
+  const [form, setForm] = useState(() => ({
+    name: initial?.name ?? "", assetAccount: initial?.assetAccount ?? "", accumAccount: initial?.accumAccount ?? "",
+    expenseAccount: initial?.expenseAccount ?? "", purchaseDate: initial?.purchaseDate ?? "",
+    cost: initial ? (initial.costSen / 100).toFixed(2) : "", residual: "", lifeMonths: "", openingAccum: "",
+  }));
   const ncaAccounts = accounts.filter((a) => a.type === "ASSET" && a.isPostable !== false);
   const expAccounts = accounts.filter((a) => (a.type === "EXPENSE" || a.type === "COST") && a.isPostable !== false);
-
-  const load = useCallback(() => {
-    fetch("/api/accounting/fixed-assets")
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: FaRow[]; migrationMissing?: boolean }>)
-      .then((j) => {
-        if (j?.success) {
-          setRows(j.data ?? []);
-          setMigrationMissing(!!j.migrationMissing);
-        }
-      })
-      .catch(() => {});
-  }, []);
-  useEffect(() => { load(); }, [load]);
 
   // BUG-2026-08-13-095 — THE reported instance. Cost / residual / opening
   // accumulated are `type="text"` inputs; an asset entered as "12,000" was
@@ -13882,19 +13906,115 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           residualSen: toSen(form.residual),
           usefulLifeMonths: parseInt(form.lifeMonths, 10) || 0,
           openingAccumSen: toSen(form.openingAccum),
+          ...(initial ? { remarks: faRemarkFor(initial.sourceRef) } : {}),
         }),
       });
       const j = asMutationResponse(await res.json());
       if (j?.success) {
         toast.success("Asset added");
-        setShowForm(false);
-        setForm({ name: "", assetAccount: "", accumAccount: "", expenseAccount: "", purchaseDate: "", cost: "", residual: "", lifeMonths: "", openingAccum: "" });
-        load();
+        onSaved();
       } else toast.error(j?.error || "Save failed");
     } finally {
       setSaving(false);
     }
   };
+
+  const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        {initial && (
+          <div className="rounded-md border border-[#E0C989] bg-[#FBF3E4] px-3 py-2 text-xs text-[#7A5B12]">
+            <span className="font-semibold">Add New Asset</span> — from {initial.sourceRef || "the document just saved"}: this payment went to a fixed-asset account. Check the details, enter the useful life, and add it to the register.
+            {left > 0 && <span className="ml-1 font-semibold">{left} more after this one.</span>}
+          </div>
+        )}
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset name</label>
+            <input type="text" placeholder="e.g. CNC Cutting Machine" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={`${selCls} w-64`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Purchase date</label>
+            <input type="date" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} className={selCls} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Cost (RM)</label>
+            <input type="text" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.cost) ? "border-[#9A3A2D]" : ""}`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Residual (RM)</label>
+            <input type="text" placeholder="0" value={form.residual} onChange={(e) => setForm({ ...form, residual: e.target.value })} className={`${selCls} w-24 text-right tabular-nums ${isUnreadableMoney(form.residual) ? "border-[#9A3A2D]" : ""}`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Life (months)</label>
+            <input type="text" placeholder="e.g. 60" value={form.lifeMonths} onChange={(e) => setForm({ ...form, lifeMonths: e.target.value })} className={`${selCls} w-20 text-center`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accum. depn b/f (RM)</label>
+            <input type="text" placeholder="0" value={form.openingAccum} onChange={(e) => setForm({ ...form, openingAccum: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.openingAccum) ? "border-[#9A3A2D]" : ""}`} title="Depreciation already taken before the opening date" />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-72">
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset (cost) account</label>
+            <AccountPicker accounts={ncaAccounts} value={form.assetAccount} onChange={(code) => setForm({ ...form, assetAccount: code })} placeholder="e.g. 200-1001…" />
+          </div>
+          <div className="w-72">
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accumulated depn account</label>
+            <AccountPicker accounts={ncaAccounts} value={form.accumAccount} onChange={(code) => setForm({ ...form, accumAccount: code })} placeholder="e.g. 200-1005…" />
+          </div>
+          <div className="w-72">
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Depreciation expense account</label>
+            <AccountPicker accounts={expAccounts} value={form.expenseAccount} onChange={(code) => setForm({ ...form, expenseAccount: code })} placeholder="780-0080 / 780-0090 / 900-D001…" />
+          </div>
+          <Button variant="primary" size="sm" disabled={saving || !!faMoneyError} onClick={handleAdd}>{saving ? "Saving…" : "Save asset"}</Button>
+          {faMoneyError && <span className="text-[11px] text-[#9A3A2D] self-center">{faMoneyError}</span>}
+          <Button variant="outline" size="sm" onClick={onCancel}>{initial ? "Skip for now" : "Cancel"}</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  const [rows, setRows] = useState<FaRow[] | null>(null);
+  const [migrationMissing, setMigrationMissing] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const today = todayYmdMY();
+  const [runMonth, setRunMonth] = useState(() => today.slice(0, 7));
+  // Re-read the month's preview after a run (finance v2: the preview loads
+  // with the month — a read; Post stays the owner's click).
+  const [previewKey, setPreviewKey] = useState(0);
+  const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
+  const [posting, setPosting] = useState(false);
+  // Add New Asset from a saved voucher / AP bill (backlog item 11): the lines
+  // the saving page left waiting, opened one at a time (each a fresh form,
+  // keyed by its place in the queue); read once, cleared after mounting.
+  const [faQueue] = useState<FaPrefill[]>(() => readFaQueue(sessionStore()));
+  useEffect(() => { clearFaQueue(sessionStore()); }, []);
+  const [faAt, setFaAt] = useState(0);
+  const faCurrent = faQueue[faAt] ?? null;
+  const skipFromDoc = async () => {
+    if (!faCurrent) return;
+    if (!(await confirm({ title: "Skip this asset?", message: `${faCurrent.sourceRef || "The document"} stays as it is — you can add the asset later with Add Asset.`, danger: false }))) return;
+    setFaAt((i) => i + 1);
+  };
+
+  const load = useCallback(() => {
+    fetch("/api/accounting/fixed-assets")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: FaRow[]; migrationMissing?: boolean }>)
+      .then((j) => {
+        if (j?.success) {
+          setRows(j.data ?? []);
+          setMigrationMissing(!!j.migrationMissing);
+        }
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const handleDispose = async (row: FaRow) => {
     if (!(await confirm({ title: "Dispose asset?", message: `Dispose ${row.name}? Depreciation stops; the disposal gain/loss entry stays a manual JV for now.`, danger: true }))) return;
@@ -13945,7 +14065,6 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     }
   };
 
-  const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
   const nbv = (r: FaRow) => r.costSen - r.accumSen;
 
   // Finance v2: the register and this month's run grouped by the asset (cost)
@@ -14013,54 +14132,15 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         <Card><CardContent className="p-4 text-sm text-[#9A3A2D]">Migration 0161 not applied yet — run the paste-version SQL first.</CardContent></Card>
       )}
 
-      {showForm && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset name</label>
-                <input type="text" placeholder="e.g. CNC Cutting Machine" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={`${selCls} w-64`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Purchase date</label>
-                <input type="date" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} className={selCls} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Cost (RM)</label>
-                <input type="text" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.cost) ? "border-[#9A3A2D]" : ""}`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Residual (RM)</label>
-                <input type="text" placeholder="0" value={form.residual} onChange={(e) => setForm({ ...form, residual: e.target.value })} className={`${selCls} w-24 text-right tabular-nums ${isUnreadableMoney(form.residual) ? "border-[#9A3A2D]" : ""}`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Life (months)</label>
-                <input type="text" placeholder="e.g. 60" value={form.lifeMonths} onChange={(e) => setForm({ ...form, lifeMonths: e.target.value })} className={`${selCls} w-20 text-center`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accum. depn b/f (RM)</label>
-                <input type="text" placeholder="0" value={form.openingAccum} onChange={(e) => setForm({ ...form, openingAccum: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.openingAccum) ? "border-[#9A3A2D]" : ""}`} title="Depreciation already taken before the opening date" />
-              </div>
-            </div>
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="w-72">
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset (cost) account</label>
-                <AccountPicker accounts={ncaAccounts} value={form.assetAccount} onChange={(code) => setForm({ ...form, assetAccount: code })} placeholder="e.g. 200-1001…" />
-              </div>
-              <div className="w-72">
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accumulated depn account</label>
-                <AccountPicker accounts={ncaAccounts} value={form.accumAccount} onChange={(code) => setForm({ ...form, accumAccount: code })} placeholder="e.g. 200-1005…" />
-              </div>
-              <div className="w-72">
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Depreciation expense account</label>
-                <AccountPicker accounts={expAccounts} value={form.expenseAccount} onChange={(code) => setForm({ ...form, expenseAccount: code })} placeholder="780-0080 / 780-0090 / 900-D001…" />
-              </div>
-              <Button variant="primary" size="sm" disabled={saving || !!faMoneyError} onClick={handleAdd}>{saving ? "Saving…" : "Save asset"}</Button>
-              {faMoneyError && <span className="text-[11px] text-[#9A3A2D] self-center">{faMoneyError}</span>}
-              <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
-            </div>
-          </CardContent>
-        </Card>
+      {(faCurrent || showForm) && (
+        <FixedAssetAddForm
+          key={faCurrent ? `doc-${faAt}` : "manual"}
+          accounts={accounts}
+          initial={faCurrent}
+          left={faCurrent ? faQueue.length - faAt - 1 : 0}
+          onSaved={() => { load(); if (faCurrent) setFaAt((i) => i + 1); else setShowForm(false); }}
+          onCancel={() => { if (faCurrent) void skipFromDoc(); else setShowForm(false); }}
+        />
       )}
 
       {runState !== "loading" && runState !== "none" && (

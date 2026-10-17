@@ -14,6 +14,9 @@ const ui = read("src/pages/accounting/index.tsx");
 const body = (sig) => { const a = ui.indexOf(sig); return ui.slice(a, ui.indexOf("\n}\n", a)); };
 const lab = body("function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {");
 const fa = body("function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {");
+// The Add Asset form is its own component since 2026-10-17 (backlog item 11,
+// tests/fixed-asset-from-voucher.test.mjs); the tab renders it.
+const faForm = body("function FixedAssetAddForm(");
 
 test("Labour: Post / Unpost unchanged and on the title row", () => {
   assert.match(lab, /fetch\("\/api\/accounting\/labor\/post", \{\n\s*method: "POST",/);
@@ -33,7 +36,8 @@ test("Labour: the banner and cards read the preview's posted flag and totals", (
 });
 
 test("Fixed Assets: Save / dispose / del / Post unchanged; the preview is a read with the month", () => {
-  assert.match(fa, /fetch\("\/api\/accounting\/fixed-assets", \{\n\s*method: "POST",/);
+  assert.match(faForm, /fetch\("\/api\/accounting\/fixed-assets", \{\n\s*method: "POST",/);
+  assert.match(fa, /<FixedAssetAddForm\n/);
   assert.match(fa, /method: "PUT",\n\s*headers: \{ "Content-Type": "application\/json" \},\n\s*body: JSON\.stringify\(\{ dispose: true \}\),/);
   assert.match(fa, /fetch\(`\/api\/accounting\/fixed-assets\/\$\{row\.id\}`, \{ method: "DELETE" \}\)/);
   assert.match(fa, /fetch\("\/api\/accounting\/fixed-assets\/depreciation-run", \{\n\s*method: "POST",/);
