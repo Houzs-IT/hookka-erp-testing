@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: plan 8 parts A (#942) and B (#943) prod-verified; part C (Finance Dashboard, Daily Cash Position) added to its entry, branch `feat/finance-v2-mobile-c`.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 (#941) prod-verified; plan 8 part B (the four reports on the phone) added to its entry.
 > **Last verified: 2026-10-17**: plan 7 (#940) prod-verified and closed; branch `feat/finance-v2-mobile` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 (the phone's Receivables at RM 0.00) added as a new entry, branch `fix/m-receivables-aging-total`.
@@ -214,9 +215,9 @@ design/mobile-home-dashboard
 
 Plan: `docs/superpowers/plans/2026-10-17-finance-v2-mobile.md`. Not here: aging as at a month-end (deferred), Forecast P&L on the phone (desktop only), voucher / receipt entry.
 
-1. 🔵 Part A — the Finance menu (three sections, rows gated like their desktop pages, no permission = no row, a refused deep link says No access), the Finance row in More, Receivables gated like Debtor Aging; Debtor / Creditor Aging (Outstanding card and bucket chips summed from the rows, stacked bar, search, parties opening to their documents).
-2. 🔵 Part B — Overview (3 / 6 / 12 months, five cards with the desktop's own shares), P&L (month stepper, Overall / Sofa / Bedframe, Gross / Net Profit from the statement's result rows, the folded statement), Cash Flow (the month's own column or "No cash flow"), Balance Sheet (the desktop arrangement and two-sides check).
-3. ⚪ Part C — Finance Dashboard, Daily Cash Position (share as image).
+1. ✅ Part A (#942 7ce032fb) — the Finance menu (three sections, rows gated like their desktop pages, no permission = no row, a refused deep link says No access), the Finance row in More, Receivables gated like Debtor Aging; Debtor / Creditor Aging (Outstanding card and bucket chips summed from the rows, stacked bar, search, parties opening to their documents). Prod check (read-only): More shows Finance; the menu lists the built screens only; Debtor and Creditor Aging's Outstanding and all five bucket chips equal sums over `/aging`, one row per party; an unbuilt screen says "Not on the phone yet".
+2. ✅ Part B (#943 196941b7) — Overview (3 / 6 / 12 months, five cards with the desktop's own shares), P&L (month stepper, Overall / Sofa / Bedframe, Gross / Net Profit from the statement's result rows, the folded statement), Cash Flow (the month's own column or "No cash flow"), Balance Sheet (the desktop arrangement and two-sides check). Prod check (read-only): the P&L cards equal the statement's Gross / Net Profit rows; the Balance Sheet's two sides equal sums over the API and read Balanced ✓; the Cash Flow shows every engine row and the month's Bank c/f equals the API; the Overview's latest invoices and gross profit equal the trend.
+3. 🔵 Part C — Finance Dashboard (one Income Statement line at a time, gap to forecast, last four months; a cash-flow card) and Daily Cash Position (day stepper, cash available and after repay & receive, awaiting approval, banks collapsed, share as image — the desktop's own drawing, now in `src/lib/cash-position-image.ts`); a Finance entry on the fold rail.
 
 ## 2026-10-17 — ✅ BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
 

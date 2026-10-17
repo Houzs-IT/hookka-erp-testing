@@ -79,3 +79,28 @@ export function bsSides(entries: { category: string; balance: number }[]) {
 export function cfColumnIndex(columns: { key: string; accum?: boolean }[], period: string): number {
   return columns.findIndex((c) => c.key === period && !c.accum);
 }
+
+/** The desktop Financial Dashboard's Income Statement lines, in its order
+ *  (PL_TABS in src/pages/finance-dashboard.tsx — a test keeps the two equal). */
+export const FIN_DASH_LINES = [
+  { key: "sales", label: "Revenue" },
+  { key: "cogs", label: "COGS" },
+  { key: "materials", label: "Raw Material" },
+  { key: "labour", label: "Production Salary" },
+  { key: "overhead", label: "Factory Overhead" },
+  { key: "stockMovement", label: "Stock Movement" },
+  { key: "gross", label: "Gross Profit" },
+  { key: "staffCost", label: "Staff Cost" },
+  { key: "otherOpex", label: "Other Expenses" },
+  { key: "net", label: "Net Profit" },
+] as const;
+export type DashLine = (typeof FIN_DASH_LINES)[number]["key"];
+
+const DASH_INCOME: ReadonlySet<DashLine> = new Set<DashLine>(["sales", "gross", "net"]);
+
+/** A line's gap to its forecast; "bad" = income under plan or a cost over it. */
+export function dashGap(line: DashLine, actual: number | null, forecast: number | null): { sen: number; bad: boolean } | null {
+  if (actual === null || forecast === null) return null;
+  const sen = actual - forecast;
+  return { sen, bad: DASH_INCOME.has(line) ? sen < 0 : sen > 0 };
+}
