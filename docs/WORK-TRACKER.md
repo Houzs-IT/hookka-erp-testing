@@ -6440,3 +6440,11 @@ Asks, in order:
 20. Production Cost trend: cost % of production revenue per day / month (material +
     labour ÷ production revenue), drawn nicely.
 21. Plan vs actual: explain Units vs Orders on the card.
+
+### 2026-10-17 owner decisions on the data findings
+- READY_TO_SHIP: owner says these orders have normally already shipped — correct each
+  SO's status from its own documents (Delivered / Invoiced …) AND fix the cascade bug.
+- "OUTSOURCE - CHAU" / "OUTSOURCE - OHN MAR SHEIN": opened on purpose — leave them.
+- WANNA HLAING October hours after the 2026-09-30 resignation: resolve it.
+- Quarter / Year periods: build it (backend change).
+- WANNA HLAING: resignation date 2026-09-30 is deliberate (October unpaid). Data left alone; Labor Cost rule now prices days after resignedAt at 0 (effective salary still returned the full month).

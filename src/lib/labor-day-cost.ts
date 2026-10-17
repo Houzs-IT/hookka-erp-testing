@@ -44,6 +44,7 @@ export type CostWorker = Parameters<typeof isDailyPaidWorker>[0] & {
   workingHoursPerDay: number;
   workingDaysPerMonth: number;
   otMultiplier?: number | null;
+  resignedAt?: string | null;
 };
 
 /**
@@ -63,6 +64,12 @@ export function workerDayEntryCostsSen(args: {
 }): number[] {
   const { worker: w, effSalarySen, date, entryHours, actualWorkingDays, holidays, payRuleVersions } = args;
   const dayHours = entryHours.reduce((s, h) => s + (Number(h) || 0), 0);
+  // Hours logged after the resignation date are not paid (owner 2026-10-17:
+  // the date is set to the last PAID day on purpose — "提早走不给他工钱"),
+  // so they cost nothing; the effective-salary endpoint still returns the
+  // full month for such a worker.
+  const resigned = String(w.resignedAt ?? "").slice(0, 10);
+  if (resigned && date > resigned) return entryHours.map(() => 0);
   if (isDailyPaidWorker(w)) {
     return entryHours.map((h) => dailyPaidEntryCostSen(w, Number(h) || 0, dayHours));
   }

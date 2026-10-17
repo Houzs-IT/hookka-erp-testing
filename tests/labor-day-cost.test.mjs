@@ -51,3 +51,10 @@ test("costByWorkerDaySen groups entries per worker-day and uses that month's eff
   // September: the effective salary for that month (double) is used.
   assert.ok(m.get("A|2026-09-15") > m.get("A|2026-10-15") * 1.8);
 });
+
+test("hours logged after the resignation date cost nothing (unpaid by design)", () => {
+  const leaver = { ...w, resignedAt: "2026-09-30" };
+  assert.deepEqual(workerDayEntryCostsSen({ ...base, worker: leaver, date: "2026-10-03", entryHours: [9] }), [0]);
+  const [c] = workerDayEntryCostsSen({ ...base, worker: leaver, date: "2026-09-30", entryHours: [9] });
+  assert.equal(Math.round(c), 10000); // the last day itself is still paid
+});
