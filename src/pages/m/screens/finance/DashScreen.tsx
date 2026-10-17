@@ -13,7 +13,7 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { MobileCard } from "../../components";
 import { M } from "../../theme";
 import { FinanceHeader, FinanceNote } from "./finance-shell";
-import { FIN_DASH_LINES, dashGap, type DashLine, fmtMoney } from "./m-finance-lib";
+import { FIN_DASH_LINES, dashAnchorIndex, dashGap, dashMonthLabel, type DashLine, fmtMoney } from "./m-finance-lib";
 
 type Slice = Record<DashLine, number>;
 type DashRow = {
@@ -38,7 +38,11 @@ export function DashScreen() {
     "/api/accounting/dashboard?granularity=month&periods=12",
   );
   const rows = resp?.success ? resp.data?.rows ?? [] : [];
-  const last = rows[rows.length - 1];
+  // The latest month with actual figures — the rows after it are the months
+  // ahead that carry only a forecast (BUG-2026-10-17-308).
+  const at = dashAnchorIndex(rows);
+  const last = at >= 0 ? rows[at] : undefined;
+  const monthName = last ? dashMonthLabel(last.key, true) : "";
   const failed = !!error || resp?.success === false;
   const label = FIN_DASH_LINES.find((l) => l.key === line)?.label ?? line;
   const actual = last?.actual ? last.actual[line] : null;
@@ -46,8 +50,8 @@ export function DashScreen() {
   const gap = dashGap(line, actual, forecast);
   const sales = last?.actual?.sales ?? null;
   const pctOfRevenue = actual !== null && sales ? (actual / sales) * 100 : null;
-  const chart = rows.slice(-4).map((r) => ({
-    label: `${r.label.split(" ")[0]}${r.partial ? "*" : ""}`,
+  const chart = rows.slice(Math.max(0, at - 3), at + 1).map((r) => ({
+    label: `${dashMonthLabel(r.key, false)}${r.partial ? "*" : ""}`,
     actual: r.actual ? r.actual[line] / 100 : null,
     forecast: r.forecast ? r.forecast[line] / 100 : null,
     partial: r.partial,
@@ -65,7 +69,7 @@ export function DashScreen() {
           <FinanceNote>No months to show.</FinanceNote>
         ) : (
           <>
-            {last.partial && <div style={{ fontSize: 12.5, color: "#7A5B12" }}>* {last.label} is still running — figures are so far.</div>}
+            {last.partial && <div style={{ fontSize: 12.5, color: "#7A5B12" }}>* {monthName} is still running — figures are so far.</div>}
             <MobileCard>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin }}>Income Statement</span>
@@ -82,7 +86,7 @@ export function DashScreen() {
                   {FIN_DASH_LINES.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
                 </select>
               </label>
-              <div style={{ fontSize: 12, color: M.muted, marginTop: 12 }}>{label} · {last.label}{last.partial ? " *" : ""}</div>
+              <div style={{ fontSize: 12, color: M.muted, marginTop: 12 }}>{label} · {monthName}{last.partial ? " *" : ""}</div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                 <span data-m-fin="dash-actual" style={{ fontSize: 26, fontWeight: 700, color: (actual ?? 0) < 0 ? "#9A3A2D" : M.raisin, fontVariantNumeric: "tabular-nums" }}>
                   {actual === null ? "—" : fmtMoney(actual)}
@@ -115,7 +119,7 @@ export function DashScreen() {
             </MobileCard>
 
             <MobileCard>
-              <div style={{ fontSize: 15, fontWeight: 700, color: M.raisin }}>Cash Flow · {last.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: M.raisin }}>Cash Flow · {monthName}</div>
               {(
                 [
                   ["Operating", last.cashFlow.operating],

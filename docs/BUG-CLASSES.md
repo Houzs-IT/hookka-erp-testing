@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-17**: branch `fix/m-dashboard-anchor-month`, to `main`, adds **C21 row 16** (the phone's Finance Dashboard took the API's last row as the latest month, BUG-2026-10-17-308). Nothing else re-checked.
+
 > **Last verified: 2026-10-17**: branch `fix/m-receivables-aging-total`, to `main`, adds **C16 row 9** (the phone's Receivables read a total the aging row does not carry, BUG-2026-10-17-307). Nothing else re-checked.
 
 > **Last verified: 2026-10-17**: branch `fix/ap-invoices-cancelled-outstanding`, to `main`, adds **C15 row 46** (AP Invoices counted cancelled documents as outstanding, BUG-2026-10-17-306). Nothing else re-checked.
@@ -1493,6 +1495,7 @@ IDENTITY or MONEY.
 | 13 | UI selection defaults — `default-bank.ts:12`, `bom.tsx` ×6, `procurement/{create,detail,index}.tsx` + `pi/create.tsx` (`bindings.find(isMainSupplier) ?? bindings[0]`), `employees.tsx:5376`, `finance-dashboard.tsx:549`, `leads/index.tsx:402`, `m/FormSheet.tsx:527`, `m/ModuleListScreen.tsx:220-221`, `mail-center/index.tsx:3301`, `maintenance/sofa-combos.tsx:1212`, `inventory/index.tsx:2607`, `scan-supplier-modal.tsx` ×4 (`activeOrgs[0]?.code ?? "HOOKKA"`) | a **pre-filled** value the user sees and can change before saving | ✅ benign — see "Not every `[0]` is this class" above |
 | 14 | `accounting.ts:11043` (`others[0]` + `"+N"`), `delivery-orders.ts:2274` (error text) | display only, and the truncation is visible | ✅ benign |
 | 15 | grep false positives — `web-push.ts:107` (`pub[0] !== 0x04`, a byte), `do-component-breakdown.ts:102` (`a[0]`/`b[0]`, Map-entry tuples in a comparator), `sales/index.tsx:250-251` (`_flStatus[0]`, "any filter active?") | nothing | ✅ not this class |
+| 16 | the phone's Finance Dashboard — `rows[rows.length - 1]` read as "the latest month" | `src/pages/m/screens/finance/DashScreen.tsx` (#944) | the LAST-one-wins twin: `/api/accounting/dashboard` appends the months ahead that carry only a forecast, so the last row is never the running month; the screen showed "—", charted future months and gave a month with no books | ✅ 2026-10-17 (-308) — `dashAnchorIndex` picks the latest row with actuals; `tests/m-dashboard-anchor-month.test.mjs` |
 
 **Enforced by** `tests/first-one-wins-refusal.test.mjs` — 8 behavioural assertions driving
 the pure resolver with adversarial fixtures (two orders with the SAME line count, so a

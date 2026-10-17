@@ -104,3 +104,18 @@ export function dashGap(line: DashLine, actual: number | null, forecast: number 
   const sen = actual - forecast;
   return { sen, bad: DASH_INCOME.has(line) ? sen < 0 : sen > 0 };
 }
+
+/** The dashboard's month to show: the latest row with actual figures. The
+ *  endpoint also sends the months ahead that carry only a forecast
+ *  (BUG-2026-10-17-308); -1 when no month has actuals. */
+export function dashAnchorIndex(rows: { actual: unknown }[]): number {
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].actual) return i;
+  return -1;
+}
+
+/** A dashboard month key in words: "2026-10" → "Oct" / "Oct 2026"; any other
+ *  key (a quarter) is returned as it is. */
+export function dashMonthLabel(key: string, long: boolean): string {
+  if (!/^\d{4}-\d{2}$/.test(key)) return key;
+  return new Date(`${key}-01T00:00:00Z`).toLocaleString("en-GB", long ? { month: "short", year: "numeric", timeZone: "UTC" } : { month: "short", timeZone: "UTC" });
+}
