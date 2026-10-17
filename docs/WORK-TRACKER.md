@@ -6527,3 +6527,70 @@ unapplied advances 0.00.
 **Next:** Houzs and The Conts openings (the Carress playbook, written into the
 checkpoint); the 18 Carress ghosts await a void ruling; the 10 CN/DN invoices;
 SUNMAT K26050470; May labour unposted.
+
+## 2026-10-17 — merged dashboard, owner review round (localhost only)
+Asks, in order:
+1. Why do 823 SOs sit at READY_TO_SHIP? — answered: production-completion cascade
+   pulls shipped/invoiced SOs back (no forward guard); ~720 have no DO/invoice at all.
+   Fix + data cleanup await owner approval.
+2. Sales forecast looked wrong — current (partial) month now kept out of target /
+   projection, drawn as so-far + run-rate estimate. UI restyled to Command Center.
+3. Department Backlog leaves empty space beside Plant Load — even the heights.
+4. ~~Combine overdue + due-within-3-days~~ — owner: keep them as they are.
+5. "Open orders · stages done" is unclear — explain or replace.
+6. Purchasing: show purchase cost % of revenue; labour cost % this month (live) vs
+   last month vs 3 months; tidy the Output & Cost section and its chart.
+7. Is "not in" really 5 people? How are joiners / leavers prorated in avg labour per
+   person? Are non-production departments in Employees?
+8. Merge Top 10 / Bottom 10 / every-worker into one ranked list split in halves.
+9. Attendance log: keep it, but absent first, late second, on time third; show
+   today and yesterday absentees.
+10. Service "Average case closing" only plots the 4 closing days — show every day.
+11. Layout rule for every tab: summary / chart cards on top, long detail tables
+    (case list, worker lists, order lists) at the bottom.
+12. Plan vs actual chart + By department table: put on one row (too much space).
+13. Remove "On-time completion · by order".
+14. Layer 1 / layer 2 rule: layer 1 as simple as possible; detail opens in a popup.
+    Remove "Completed per day" + "Completed" cards from Output & Cost — put the chart
+    inside the Plant Load "Completed · view days" popup instead.
+15. Costing: this month vs last month, with % of revenue beside each number.
+16. Employees: avg labour cost / person with its % beside it.
+17. Every chart: click a legend item to show / hide that series.
+18. Day view shows month data (e.g. Employees) — make Day / Month / Quarter / Year all correct on every tab (add Quarter).
+19. Department efficiency table: show the Sofa / Bedframe split.
+20. Production Cost trend: cost % of production revenue per day / month (material +
+    labour ÷ production revenue), drawn nicely.
+21. Plan vs actual: explain Units vs Orders on the card.
+
+### 2026-10-17 owner decisions on the data findings
+- READY_TO_SHIP: owner says these orders have normally already shipped — correct each
+  SO's status from its own documents (Delivered / Invoiced …) AND fix the cascade bug.
+- "OUTSOURCE - CHAU" / "OUTSOURCE - OHN MAR SHEIN": opened on purpose — leave them.
+- WANNA HLAING October hours after the 2026-09-30 resignation: resolve it.
+- Quarter / Year periods: build it (backend change).
+- WANNA HLAING: resignation date 2026-09-30 is deliberate (October unpaid). Data left alone; Labor Cost rule now prices days after resignedAt at 0 (effective salary still returned the full month).
+
+### 2026-10-17 owner review, round 3
+22. Day option only on Employees (Sales / Operations / Service / Finance: no Day).
+23. Completed popup: no chart, no best day; average per day for Bedframe and Sofa separately. (done)
+24. Materials used: Sept / Oct don't match the P&L — derive cost the way the P&L gets GP and cost.
+25. Purchasing card: optimise, add supporting data.
+26. Plan vs actual is hard to read; cost trend chart — optimise.
+27. Working vs production hours chart — clearer / prettier.
+28. Department efficiency revenue: use the department PROGRESSIVE revenue (costing share),
+    not the full order value; department revenue stays the supply / demand balance view.
+29. Outsourced workers are not counted as working people.
+30. Attendance log: how to view a whole month.
+31. Service: average case closing — check the calculation and the presentation; pull the
+    "Issues by category" summary up.
+32. Mobile /m: owner said adjust it too — align with the merged desktop (in progress).
+33. Sales forecast: October estimate looks wrong (run-rate 660k); forecast and Order Pipeline
+    "by status" must follow Month / Quarter / Year.
+34. Top Sellers: move to the bottom of Sales, show 10, add % of sales.
+35. Purchasing: "Waiting to arrive" → Outstanding POs.
+36. Purchasing spend vs a forecast built from production revenue (so a low / high month reads fairly).
+37. Fabric cards: show each month's average cost per metre.
+38. Today's problems: only overdue orders, people not in, efficiency, service overdue. (done locally)
+39. Service defect rate = cases ÷ units shipped, by category.
+40. Question: is Hookka Report open to everyone?
+41. Owner: merge the dashboard to prod — menu label "Dashboard" with the Dashboard icon (one entry).

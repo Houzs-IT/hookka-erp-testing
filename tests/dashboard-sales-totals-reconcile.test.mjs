@@ -29,6 +29,7 @@ test("Sales by state / Top SKUs: SO date, confirmed only, whole total spread ove
   assert.match(src, /so\.totalSen \* Math\.max\(0, num\(it\.lineTotalSen\)\)\) \/ lineSum/);
 });
 
-test("Revenue trend orders use the SO date", () => {
+test("Revenue trend orders and the Sales tab's order scope use the SO date", () => {
   assert.match(read("src/api/routes/dashboard-prototype.ts"), /const k = dayKey\(r\.companySODate\) \?\? dayKey\(r\.createdAt\);/);
+  assert.match(read("src/pages/dashboards/SalesOrdersView.tsx"), /inPeriod\(period, o\.soDate \?\? o\.createdAt\)/);
 });

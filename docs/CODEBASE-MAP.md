@@ -273,6 +273,8 @@
 
 > **Last verified: 2026-09-22 on branch `fix/scan-queue-client-driven`** — the Scan-queue rows only (`scan-queue.ts` row, its route table, its Internals paragraph): re-anchored after BUG-2026-09-22-178 made the OCR browser-driven; the machine gate `check-codebase-map.mjs` exits 0 (its only errors were these rows); its 17 advisories about unmapped `src/pages/m/**` and production-component files predate this branch and are unchanged.
 
+> **2026-10-17 (branch `feat/dashboard-merge`, localhost only):** merged dashboard rework — `ProblemsStrip.tsx` ("Today's problems" above every tab), `CommandCenterSections.tsx` (Command Center cards embedded by section, fetches gated per section), `CostingPanel.tsx` (cost % of production revenue, this month vs last vs 3-month), `EmployeesDashboard.tsx` (one-page Employees; per person = full-time equivalents), `DashModal.tsx` (layer-2 popups), `use-series-toggle.tsx` (click a legend to hide a series), `use-labour-cost.ts` + `src/lib/labor-day-cost.ts` `costByWorkerDaySen` (Labor Cost rule shared with Employees › Labor Cost), `use-production-revenue.ts` (revenue-split by month), `dashboard-b/CompletedDrill.tsx` (Plant Load › Completed popup).
+
 > **Last verified: 2026-09-25** (dashboard-shared-lib.ts row: `warnDays` / `dayList`) / 2026-09-24 (dashboard-prototype.tsx / OperationsView.tsx rows: Departments folded into Efficiency, Operations > Overview re-layout) / 2026-09-22 (dashboard-prototype.tsx / dashboard-shared.tsx / dashboard-shared-lib.ts rows: Day/Month/YTD nav redesign) / 2026-09-21 (URL navigation state) / 2026-08-14 — re-checked mechanically by `node scripts/check-codebase-map.mjs`,
 > which validates that every cited path resolves, every `file:LINE` is in range, and every symbol
 > named beside a line ref is really defined near it. Exit 0 on this revision. Coverage gap is now
@@ -2644,7 +2646,7 @@ deliberately not dropped.
 **This field is NOT the tenant boundary, and never was.** `getOrgId(c)`
 (`src/api/lib/tenant.ts:109`) resolves the request's org from the session's `users.orgId`
 and never reads `inter_company_config`, so switching company has never rescoped a single
-query — despite `switchOrg` in `sidebar.tsx:457` doing a full `window.location.reload()`,
+query — despite `switchOrg` in `sidebar.tsx:470` doing a full `window.location.reload()`,
 which reads as though it should. `activeOrgId` drives exactly two things: the switcher's
 label + tick (`sidebar.tsx:894`/`:949`) and the highlight ring on Settings → Organisations
 (`settings/organisations.tsx:329`). **Open owner question:** `PUT /api/organisations` is

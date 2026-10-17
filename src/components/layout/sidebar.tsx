@@ -53,7 +53,6 @@ import {
   Box,
   Receipt,
   List,
-  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -79,8 +78,11 @@ const navigationGroups: NavGroup[] = [
   {
     label: "OVERVIEW",
     items: [
-      { name: "Dashboard Experimental", href: "/dashboard-experimental", icon: FlaskConical },
-      { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      // One dashboard (owner 2026-10-17): the merged page, under the name and
+      // icon of the old one. Every role that could read /dashboard also holds
+      // dashboard-experimental:read (role-policy withDashboardAccess), so no
+      // viewer loses it; /dashboard now redirects here.
+      { name: "Dashboard", href: "/dashboard-experimental", icon: LayoutDashboard },
       { name: "Hookka Report", href: "/daily-report", icon: ClipboardCheck },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "Announcements", href: "/announcements", icon: Megaphone },

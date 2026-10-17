@@ -36,18 +36,30 @@ export const TAB_SUBS: Record<string, readonly { key: string; label: string }[]>
 // the value keeps the sub from the URL.
 export const LEGACY: Record<string, [tab: string, sub?: string]> = {
   siti: ["operations"],
+  "siti:cost": ["operations", "production"],
+  "siti:materials": ["operations", "production"],
+  "siti:plan": ["operations", "production"],
+  overview: ["sales"],
   employee: ["people"],
   department: ["people", "efficiency"],
   "people:departments": ["people", "efficiency"],
   lim: ["people", "efficiency"],
-  "lim:plan": ["operations", "plan"],
-  "lim:revenue": ["operations", "cost"],
+  "lim:plan": ["operations", "production"],
+  "lim:revenue": ["operations", "production"],
   "lim:overdue": ["operations", "overview"],
   "lim:attendance": ["people", "time"],
-  "lim:service": ["service", "performance"],
+  "lim:service": ["service", "overview"],
+  // Sub-tabs folded together by the merged dashboard (2026-10-16).
+  "people:overview": ["people", "efficiency"],
+  "operations:plan": ["operations", "production"],
+  "operations:materials": ["operations", "production"],
+  "operations:cost": ["operations", "production"],
+  "service:performance": ["service", "overview"],
+  "service:issues": ["service", "overview"],
+  "service:approvals": ["service", "overdue"],
 };
 
-export const DEFAULT_TAB = "overview";
+export const DEFAULT_TAB = "sales";
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export function isYmd(s: string | null | undefined): s is string {

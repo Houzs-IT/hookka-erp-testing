@@ -43,11 +43,11 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:689` | Main component: staged fetches, useMemos, all JSX |
-| `KTile` | `src/pages/dashboard-b/index.tsx:424` | The KPI card used by the four Command Center cards |
-| `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:379 / 406` | Sparkline + delta-% chip |
-| `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:506` | Per-section loading placeholder |
-| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:607 / 535 / 582` | Presentational helpers |
+| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:716` | Main component: staged fetches, useMemos, all JSX |
+| `KTile` | `src/pages/dashboard-b/index.tsx:439` | The KPI card used by the four Command Center cards |
+| `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:394 / 421` | Sparkline + delta-% chip |
+| `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:521` | Per-section loading placeholder |
+| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:650 / 578 / 625` | Presentational helpers |
 | KPI rail JSX | `src/pages/dashboard-b/index.tsx:1117` | Sales · Invoices · Pending Delivery · Outstanding cards |
 | Revenue chart + Plant Load JSX | `src/pages/dashboard-b/index.tsx:1374` | Area chart + backlog-vs-capacity gauge |
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |

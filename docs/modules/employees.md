@@ -65,15 +65,15 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11858` | 9-tab admin host (default export, at file tail) |
-| `WorkingHoursTab` | `src/pages/employees.tsx:1032` | Tab 1 — flat working-hours grid |
-| `EmployeeMasterTab` | `src/pages/employees.tsx:2427` | Tab 2 — worker master + salary |
-| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3886` | Tab 3 — efficiency overview |
-| `DepartmentLaborTab` | `src/pages/employees.tsx:4451` | Dept labor cost breakdown |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11831` | 9-tab admin host (default export, at file tail) |
+| `WorkingHoursTab` | `src/pages/employees.tsx:1013` | Tab 1 — flat working-hours grid |
+| `EmployeeMasterTab` | `src/pages/employees.tsx:2408` | Tab 2 — worker master + salary |
+| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3867` | Tab 3 — efficiency overview |
+| `DepartmentLaborTab` | `src/pages/employees.tsx:4432` | Dept labor cost breakdown |
 | `EmployeeDetailTab` | `src/pages/employees.tsx:5430` | Tab 4 — guard-unmounted detail |
-| `PayrollTab` | `src/pages/employees.tsx:6810` | Tab 5 — payroll drafts |
-| `LaborCostTab` | `src/pages/employees.tsx:8755` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10492 / 11626` | Leave + attendance tabs |
+| `PayrollTab` | `src/pages/employees.tsx:6789` | Tab 5 — payroll drafts |
+| `LaborCostTab` | `src/pages/employees.tsx:8734` | Tab 5b — labor cost + DepartmentsManager |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10465 / 11626` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |

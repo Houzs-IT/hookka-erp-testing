@@ -114,7 +114,13 @@ export function DeptRevenueCard({
               Production) · equal rows = balanced output · click a department to hide its line
             </p>
           </div>
-          <CatToggle value={cat} onChange={setCat} />
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Hide / show every line at once (owner 2026-10-17: clicking one
+                department at a time could not clear them all). */}
+            <button type="button" onClick={() => setHidden(new Set())} className="rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">Show all</button>
+            <button type="button" onClick={() => setHidden(new Set(depts.map((d) => d.code)))} className="rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">Hide all</button>
+            <CatToggle value={cat} onChange={setCat} />
+          </div>
         </div>
 
         {loading && !data ? (
