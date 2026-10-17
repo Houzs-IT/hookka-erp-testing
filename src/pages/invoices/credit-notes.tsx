@@ -26,6 +26,7 @@ import { parseMoneyInput } from "@/lib/parse-money";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
+import { returnCandidateBlock, type ReturnCreditCandidate } from "@/lib/cn-from-return";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
 
@@ -81,28 +82,6 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
   };
 }
 
-// One row of GET /api/credit-notes/from-returns.
-type ReturnCreditCandidate = {
-  id: string;
-  returnNo: string;
-  date: string;
-  customerId: string;
-  customerName: string;
-  status: string;
-  invoice: { id: string; invoiceNo: string; outstandingSen: number } | null;
-  lines: { description: string; quantity: number; unitPriceSen: number | null }[];
-  valueSen: number;
-  unpriced: number;
-  creditNote: { id: string; noteNumber: string } | null;
-};
-// Why a return cannot be used ("" = it can): already has a note, was never
-// invoiced, or its invoice is settled (a note may not exceed what is owed).
-function returnCandidateBlock(d: ReturnCreditCandidate): string {
-  if (d.creditNote) return `CN issued · ${d.creditNote.noteNumber}`;
-  if (!d.invoice) return "Not invoiced";
-  if (d.invoice.outstandingSen <= 0) return "Invoice settled";
-  return "";
-}
 
 export default function CreditNotesPage() {
   const { data: cnResp, loading, refresh: refreshCreditNotes } = useCachedJson<{ success?: boolean; data?: CreditNote[] }>("/api/credit-notes");

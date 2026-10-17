@@ -77,7 +77,11 @@ test("the Credit Notes page: From Delivery Return picker, priced prefill, the li
   assert.match(ui, /fetch\(`\/api\/credit-notes\/from-returns\?returnId=\$\{encodeURIComponent\(fromReturn\)\}`\)/, "a return's own page lands on the same prefill");
   assert.match(ui, /unitPriceSen: l\.unitPriceSen \?\? 0,\n\s*priceStr: l\.unitPriceSen != null \? \(l\.unitPriceSen \/ 100\)\.toFixed\(2\) : "",/);
   assert.match(ui, /\.\.\.\(fromReturnDraft \? \{ deliveryReturnId: fromReturnDraft\.id \} : \{\}\),/);
-  const block = ui.slice(ui.indexOf("function returnCandidateBlock("), ui.indexOf("export default function CreditNotesPage"));
+  // The block reasons live in the shared lib (2026-10-17): the return's own
+  // page asks the same question before offering the form.
+  assert.match(ui, /import \{ returnCandidateBlock, type ReturnCreditCandidate \} from "@\/lib\/cn-from-return";/);
+  const lib = read("src/lib/cn-from-return.ts");
+  const block = lib.slice(lib.indexOf("export function returnCandidateBlock("));
   assert.match(block, /if \(d\.creditNote\) return `CN issued · \$\{d\.creditNote\.noteNumber\}`;/);
   assert.match(block, /if \(!d\.invoice\) return "Not invoiced";/);
   assert.match(block, /if \(d\.invoice\.outstandingSen <= 0\) return "Invoice settled";/);

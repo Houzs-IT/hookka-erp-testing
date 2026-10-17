@@ -2235,7 +2235,7 @@ note showed its raw id and RM 0.00. Both sources in `src/pages/m/config/modules.
 | `GET /do-items?doId=` | `:213` | enrichment for the picker — **unreachable, see below** |
 | `POST /` | `:227` | delegates to `createDeliveryReturnRecord` so the office flow and the driver "Not received" flow write an identical record |
 | `POST /:id/return-to-stock` | `:340` | reverses COGS + flags `fg_units` RETURNED + status |
-| `POST /:id/set-outcome` | `:387` | `PURE_RETURN` also runs the restock half, and sets `CN_ISSUED` BEFORE any credit note exists (the note is raised on the next screen and can be abandoned) — so both pages label the return from the linked note's own status (`creditNoteStatus` in `HEADER_COLS`, `src/lib/delivery-return-status.ts`; BUG-2026-10-17-318) |
+| `POST /:id/set-outcome` | `:387` | `PURE_RETURN` also runs the restock half, and sets `CN_ISSUED` BEFORE any credit note exists (the note is raised on the next screen and can be abandoned) — so both pages label the return from the linked note's own status (`creditNoteStatus` in `HEADER_COLS`, `src/lib/delivery-return-status.ts`; BUG-2026-10-17-318); while it waits, the detail page asks `GET /api/credit-notes/from-returns?returnId=` and `returnCandidateBlock` (`src/lib/cn-from-return.ts`, shared with the Credit Notes picker) whether a note can be raised |
 | `POST /:id/mark-redelivered` | `:444` | |
 | `POST /:id/cancel` | `:460` | refuses CLOSED / REDELIVERED / CN_ISSUED |
 
