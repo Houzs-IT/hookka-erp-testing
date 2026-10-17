@@ -28,12 +28,13 @@ test("toolbar: months-only stepper, Edit Layout, L1–L3 (hidden while editing),
   assert.match(cf, /<PeriodStepper value=\{period\} options=\{periodOpts\} onChange=\{setPeriod\} today=\{today\} \/>/);
   assert.match(cf, /<EditLayoutToggle on=\{edit\}/);
   assert.match(cf, /\{!edit && <DetailLevels levels=\{\[1, 2, 3\]\} value=\{level\} onChange=\{applyLevel\} \/>\}/);
-  for (const l of ["Export to Excel", "Print / PDF", "Export to CSV"]) assert.ok(cf.includes(`label: "${l}"`), l);
+  for (const l of ["Export to Excel", "Print / PDF"]) assert.ok(cf.includes(`label: "${l}"`), l);
+  assert.doesNotMatch(cf, /CSV/, "no CSV (owner 2026-10-17)");
   assert.match(cf, /<EditLayoutBanner>/);
 });
 
-test("the frame keeps the company line the statement printed; content width; Accumulated shaded", () => {
-  assert.match(cf, /company="HOOKKA INDUSTRIES SDN\. BHD\."/);
+test("the frame carries the legal name; content width; Accumulated shaded", () => {
+  assert.match(cf, /company=\{COMPANY\.HOOKKA\.name\}/, "owner 2026-10-17: HOOKKA INDUSTRIES SDN BHD");
   assert.match(cf, /title="Statement Of Cash Flow"/);
   assert.match(cf, /<table data-col-resize="first" data-fin-report data-fin-fit>/);
   assert.match(cf, /<th key=\{c\.key\} data-cell=\{`num split\$\{c\.accum \? " acc" : ""\}`\}>\{c\.label\}<\/th>/);

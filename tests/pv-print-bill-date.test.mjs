@@ -20,8 +20,10 @@ test("the voucher printout adds the bill date when it is a YYYY-MM-DD date", () 
   const at = src.indexOf("function buildPvVoucher(");
   assert.ok(at >= 0, "buildPvVoucher is gone");
   const body = src.slice(at, at + 4000);
-  const line = body.split("\n").find((l) => l.includes("const billText"));
-  assert.ok(line, "the bill text line is gone");
+  // Since the 1a print layout (2026-10-17) the bill no. / date print as facts
+  // under the payee; the date check moved with them.
+  const line = body.split("\n").find((l) => l.includes("const billDateText"));
+  assert.ok(line, "the bill date line is gone");
   assert.ok(line.includes("/^\\d{4}-\\d{2}-\\d{2}$/.test(billDate)"), `bill date check: ${line.trim()}`);
   // The pattern itself: a real date passes, the letters it used to match do not.
   const re = /^\d{4}-\d{2}-\d{2}$/;

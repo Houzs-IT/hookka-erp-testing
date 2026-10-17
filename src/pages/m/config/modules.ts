@@ -801,16 +801,17 @@ const creditNotesSource: DataSource = {
   select: selectData,
   toVM: (r): RowVM => ({
     id: str(r, "id", "cnNo"),
-    code: str(r, "cnNo", "creditNoteNo") || str(r, "id"),
+    // The API returns noteNumber / totalAmount (sen); the old keys read blank.
+    code: str(r, "noteNumber", "cnNo", "creditNoteNo") || str(r, "id"),
     title: str(r, "customerName") || str(r, "reason") || "—",
     subLine: str(r, "reason") || undefined,
     meta1: { label: "Order Date", value: dateOnly(r, "date", "createdAt") || "—" },
-    meta2: { label: "Amount", value: money(num(r, "totalSen")) },
+    meta2: { label: "Amount", value: money(num(r, "totalAmount", "totalSen")) },
   }),
   columns: [
-    textCol("cnNo", "Reference", (r) => str(r, "cnNo", "creditNoteNo")),
+    textCol("cnNo", "Reference", (r) => str(r, "noteNumber", "cnNo", "creditNoteNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen")),
+    numCol("amount", "Amount", (r) => num(r, "totalAmount", "totalSen")),
     dateCol("date", "Order Date", (r) => dateOnly(r, "date", "createdAt")),
   ],
   defaultSort: { key: "date", dir: "desc" },
@@ -822,16 +823,17 @@ const debitNotesSource: DataSource = {
   select: selectData,
   toVM: (r): RowVM => ({
     id: str(r, "id", "dnNo"),
-    code: str(r, "dnNo", "debitNoteNo") || str(r, "id"),
+    // The API returns noteNumber / totalAmount (sen); the old keys read blank.
+    code: str(r, "noteNumber", "dnNo", "debitNoteNo") || str(r, "id"),
     title: str(r, "customerName") || str(r, "reason") || "—",
     subLine: str(r, "reason") || undefined,
     meta1: { label: "Order Date", value: dateOnly(r, "date", "createdAt") || "—" },
-    meta2: { label: "Amount", value: money(num(r, "totalSen")) },
+    meta2: { label: "Amount", value: money(num(r, "totalAmount", "totalSen")) },
   }),
   columns: [
-    textCol("dnNo", "Reference", (r) => str(r, "dnNo", "debitNoteNo")),
+    textCol("dnNo", "Reference", (r) => str(r, "noteNumber", "dnNo", "debitNoteNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen")),
+    numCol("amount", "Amount", (r) => num(r, "totalAmount", "totalSen")),
     dateCol("date", "Order Date", (r) => dateOnly(r, "date", "createdAt")),
   ],
   defaultSort: { key: "date", dir: "desc" },
@@ -3237,7 +3239,11 @@ const supplierDetail: DetailConfig = {
     fld("State", (d) => str(d, "state")),
     fld("Currency", (d) => str(d, "currency")),
     fld("Payment Terms", (d) => str(d, "paymentTerms")),
-    fld("Tax ID", (d) => str(d, "taxId")),
+    // The API sends the TIN as taxEntityTin (it never sent "taxId", so this row
+    // was always blank); SST Reg. No. and the bank arrived with the Finance v2
+    // party fields (2026-10-17).
+    fld("TIN", (d) => str(d, "taxEntityTin")),
+    fld("SST Reg. No.", (d) => str(d, "sstRegNo")),
     fld("Bank Account", (d) => str(d, "bankAccount")),
     fld("Address", (d) => str(d, "address"), true),
   ],
@@ -3378,6 +3384,12 @@ export const suppliersConfig: ModuleConfig = {
   ],
 };
 
+// A debtor's outstanding on the AR aging row. The API sends the five buckets
+// and no total (BUG-2026-10-17-307: this list read a `total` that was never
+// there, so every debtor showed RM 0.00).
+const agingTotalSen = (r: RawRow) =>
+  num(r, "currentSen") + num(r, "days30Sen") + num(r, "days60Sen") + num(r, "days90Sen") + num(r, "over90Sen");
+
 export const receivablesConfig: ModuleConfig = {
   slug: "receivables",
   title: "Receivables",
@@ -3392,11 +3404,11 @@ export const receivablesConfig: ModuleConfig = {
         code: str(r, "debtorCode", "customerCode") || "AR",
         title: str(r, "customerName") || "—",
         subLine: undefined,
-        meta1: { label: "Outstanding", value: money(num(r, "total", "totalSen")) },
+        meta1: { label: "Outstanding", value: money(agingTotalSen(r)) },
       }),
       columns: [
         textCol("customer", "Customer", (r) => str(r, "customerName")),
-        numCol("total", "Outstanding", (r) => num(r, "total", "totalSen")),
+        numCol("total", "Outstanding", agingTotalSen),
       ],
       defaultSort: { key: "total", dir: "desc" },
       subTabs: [{ key: "ar", label: "Receivables", match: () => true }],

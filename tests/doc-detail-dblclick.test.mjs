@@ -48,16 +48,22 @@ test("Receipts hub: double-click opens the popup, which shows the receipt's deta
 
 test("Fund Transfer, Other Party Bills / Payments, AP Invoices open on double-click too", () => {
   const ft = block("function FundTransferTab(", "// =============== TAB: STOCK SUMMARY");
-  assert.match(ft, /onDoubleClick=\{\(\) => setDetailFt\(r\.no\)\}/);
+  assert.match(ft, /onDoubleClick=\{\(r\) => setDetailFt\(r\.no\)\}/);
   assert.match(ft, /title=\{`Fund Transfer \$\{r\.no\}`\}/);
   const bills = block("function OtherPartyBillsManager(", "function OtherPartyPaymentForm(");
-  assert.match(bills, /onDoubleClick=\{\(\) => setOpenBill\(openBill === b\.id \? null : b\.id\)\}/);
+  // A DataGrid since 2026-10-17: double-click opens the bill's popup (the
+  // card that used to unfold under the row).
+  assert.match(bills, /onDoubleClick=\{\(b\) => setDetailBillId\(b\.id\)\}/);
+  assert.match(bills, /<OtherPartyBillCard b=\{b\} accounts=\{accounts\} onChanged=\{load\} \/>/);
   const pays = block("function OtherPartyPaymentsManager(", "// =============== TAB: GENERAL LEDGER");
-  assert.match(pays, /onDoubleClick=\{\(\) => setDetail\(g\)\}/);
+  assert.match(pays, /onDoubleClick=\{\(g\) => setDetail\(g\)\}/);
   const ap = block("function ApInvoicesTab(", "function DocDetailModal(");
   // Owner 2026-09-29: a PI opens its own detail page, not the list.
-  assert.match(ap, /onDoubleClick=\{\(\) => \{ if \(r\.kind === "PI"\) navigate\(`\/procurement\/pi\/\$\{r\.id\}`\); else setDetailBillNo\(r\.no\); \}\}/);
+  assert.match(ap, /const openApInv = \(r: ApInvRow\) => \{ if \(r\.kind === "PI"\) navigate\(`\/procurement\/pi\/\$\{r\.id\}`\); else setDetailBillNo\(r\.no\); \};/);
+  assert.match(ap, /onDoubleClick=\{openApInv\}/);
   // The checkbox cell never lets a double-click on it open the record.
-  assert.match(ft, /<td className="px-3 py-1\.5 w-8" onDoubleClick=\{\(e\) => e\.stopPropagation\(\)\}>/);
-  assert.match(bills, /<td className="px-3 py-1\.5 w-8" onDoubleClick=\{\(e\) => e\.stopPropagation\(\)\}>/);
+  // Fund Transfer is a DataGrid since 2026-10-17: its tick column is the
+  // grid's own (checkboxSelectOnly — a tick never opens the record).
+  assert.match(ft, /selectable\n\s*checkboxSelectOnly/);
+  assert.match(bills, /selectable\n\s*checkboxSelectOnly/);
 });

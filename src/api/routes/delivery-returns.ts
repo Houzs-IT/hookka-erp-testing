@@ -48,6 +48,7 @@ type ReturnHeaderRow = {
   serviceCaseId: string | null;
   serviceOrderId: string | null;
   creditNoteId: string | null;
+  creditNoteStatus?: string | null;
   reason: string | null;
   notes: string | null;
   returnedAt: string | null;
@@ -85,6 +86,7 @@ const HEADER_COLS = `id, return_no AS "returnNo", delivery_order_id AS "delivery
   customer_id AS "customerId", customer_name AS "customerName", customer_po_id AS "customerPOId",
   return_type AS "returnType", status, service_case_id AS "serviceCaseId",
   service_order_id AS "serviceOrderId", credit_note_id AS "creditNoteId",
+  (SELECT cn.status FROM credit_notes cn WHERE cn.id = delivery_returns.credit_note_id) AS "creditNoteStatus",
   reason, notes, returned_at AS "returnedAt", created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 const ITEM_COLS = `id, delivery_return_id AS "deliveryReturnId", production_order_id AS "productionOrderId",
@@ -138,6 +140,10 @@ function rowToReturn(h: ReturnHeaderRow, items: ReturnItemRow[] = []) {
     serviceCaseId: h.serviceCaseId ?? "",
     serviceOrderId: h.serviceOrderId ?? "",
     creditNoteId: h.creditNoteId ?? "",
+    // The linked note's own status: CN_ISSUED is set when "Return to stock"
+    // is pressed, before any note exists (BUG-2026-10-17-318), so the pages
+    // label the return from this (src/lib/delivery-return-status.ts).
+    creditNoteStatus: h.creditNoteStatus ?? "",
     reason: h.reason ?? "",
     notes: h.notes ?? "",
     returnedAt: h.returnedAt ?? "",
@@ -197,7 +203,15 @@ app.get("/:id", async (c) => {
     .first<ReturnHeaderRow>();
   if (!h) return c.json({ success: false, error: "Delivery return not found" }, 404);
   const items = await loadItems(c.var.DB, id);
-  return c.json({ success: true, data: rowToReturn(h, items) });
+  // The credit note raised from this return (2026-10-17) by its number, so
+  // the page names it instead of showing an id.
+  let creditNoteNo = "";
+  if (h.creditNoteId) {
+    const cn = await c.var.DB.prepare("SELECT * FROM credit_notes WHERE id = ?").bind(h.creditNoteId)
+      .first<Record<string, unknown>>().catch(() => null);
+    creditNoteNo = String((cn?.noteNumber ?? cn?.note_number) ?? "");
+  }
+  return c.json({ success: true, data: { ...rowToReturn(h, items), creditNoteNo } });
 });
 
 // -- POST / — create a return from a delivered DO's problem lines -----------

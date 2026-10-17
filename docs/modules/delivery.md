@@ -1,5 +1,6 @@
 # Delivery & Consignment — Module Guide
 
+> **Last verified: 2026-10-17** (branch `feat/finance-notes-post`): `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2104` (the void-and-reissue backfill above it now skips invoices with an issued credit / debit note). Nothing else re-checked.
 > **Last verified: 2026-10-15** (review fixes on `fix/bug06-do-duplicate-guard-main`): `createDeliveryOrderForPOs` production-order lookup is org-scoped and refuses lines whose `productionOrderId` is missing or not among the loaded orders. Nothing else re-checked.
 > **Last verified: 2026-10-07** (branch `fix/bug06-do-duplicate-guard-main`, BUG-2026-09-30-223): `validateDoComposition` `_helpers.ts:2094` and `createDeliveryOrderForPOs` `:2223` re-derived; create now guards every production order in `productionOrderIds` and `items`; the Consignment page's Transfer-to-DO is now "Create Consignment Note". Nothing else re-checked.
 > **Last verified: 2026-09-22** (branch `fix/delivery-loading-gate-po-paging`, BUG-2026-09-22-004) — the page's
@@ -115,7 +116,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | `applyDeliveryOrderUpdate` | `delivery-orders/_helpers.ts:4194` | DO edit + transition apply |
 | `buildDoDeliveredSoAndInvoice` / `computeDoInvoiceLines` | `delivery-orders/_helpers.ts:1558 / 1342` | DELIVERED→INVOICED SO + invoice build |
 | `queueDoCustomerNotice` | `delivery-orders/_helpers.ts:3637` | Recipient chain + idempotent email claim |
-| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2093` | PL-first auto-split create |
+| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2104` | PL-first auto-split create |
 | `createPackingListCore` | `src/api/routes/packing-lists.ts:628` | Truck-run packing-list build |
 | `collectDeliveryBrief` / `generateDeliveryProposals` | `src/api/lib/delivery-agent.ts:633 / 868` | Agent brief + proposals |
 | `cheapestForState` / `loadStateRateCard` | `src/api/lib/delivery-agent.ts` | Cheapest-3PL routing |

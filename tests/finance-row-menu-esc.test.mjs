@@ -130,20 +130,21 @@ test("the finance lists carry no action links — each row opens its menu", () =
   const rc = slice(ui, "function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER");
   assert.match(rc, /contextMenuItems=\{\(r\) => rowMenuItems\(receiptRowMenu\(r\)\)\}/);
   assert.doesNotMatch(rc, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, "Receipts: no inline print link");
-  const lists = [
-    ["function FundTransferTab(", "// =============== TAB: STOCK SUMMARY", ["ftRowMenu(r)"]],
-    ["function OtherPartyBillsManager(", "function OtherPartyPaymentForm(", ["billRowMenu(b)"]],
-    ["function OtherPartyPaymentsManager(", "// =============== TAB: GENERAL LEDGER", ["opayRowMenu(g)"]],
-  ];
-  for (const [from, to, builders] of lists) {
-    const src = slice(ui, from, to);
-    assert.match(src, /const rowMenu = useRowMenu\(\);/, from);
-    assert.match(src, /\{rowMenu\.element\}/, from);
-    for (const b of builders) {
-      assert.ok(src.includes(`onContextMenu={rowMenu.onContextMenu(`) && src.includes(`, () => ${b})}`), `${from} right-click → ${b}`);
-      assert.ok(src.includes(`{rowMenu.button(`) && src.includes(`() => ${b})}`), `${from} ⋮ → ${b}`);
-    }
-    assert.doesNotMatch(src, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, `${from}: no inline print link`);
+  // Fund Transfer and AP Invoices are DataGrids too (2026-10-17): the grid's
+  // own context menu shows the row menu.
+  const ft = slice(ui, "function FundTransferTab(", "// =============== TAB: STOCK SUMMARY");
+  assert.match(ft, /contextMenuItems=\{\(r\) => rowMenuItems\(ftRowMenu\(r\)\)\}/);
+  const apInv = slice(ui, "function ApInvoicesTab(", "function DocDetailModal(");
+  assert.match(apInv, /contextMenuItems=\{\(r\) => rowMenuItems\(apInvRowMenu\(r\)\)\}/);
+  // The other-party bills and payments lists too (2026-10-17).
+  const billsMgr = slice(ui, "function OtherPartyBillsManager(", "function OtherPartyPaymentForm(");
+  assert.match(billsMgr, /contextMenuItems=\{\(b\) => rowMenuItems\(billRowMenu\(b\)\)\}/);
+  assert.doesNotMatch(billsMgr, /useRowMenu\(\)/, "the grid draws the menu");
+  const paysMgr = slice(ui, "function OtherPartyPaymentsManager(", "// =============== TAB: GENERAL LEDGER");
+  assert.match(paysMgr, /contextMenuItems=\{\(g\) => rowMenuItems\(opayRowMenu\(g\)\)\}/);
+  assert.doesNotMatch(paysMgr, /useRowMenu\(\)/);
+  for (const src of [billsMgr, paysMgr]) {
+    assert.doesNotMatch(src, /decoration-dotted cursor-pointer mr-3"><Printer className="h-3 w-3" \/>print/, "no inline print link");
   }
   assert.match(sp, /onContextMenu=\{rowMenu\.onContextMenu\(p\.paymentNo, \(\) => payRowMenu\(p\)\)\}/);
   assert.match(sp, /\{rowMenu\.button\(p\.paymentNo, \(\) => payRowMenu\(p\)\)\}/);

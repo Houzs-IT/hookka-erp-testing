@@ -27,6 +27,8 @@ import {
 import { getFyeMonth, fyWindowFor } from "../lib/fiscal";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
+import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
+import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
@@ -37,6 +39,8 @@ import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { ensureFinanceOrgColumns } from "../lib/ensure-finance-org";
 import { apRowBeforeOpening, legBeforeOpening, rowBeforeOpening } from "../../lib/opening-floor";
+import { billOutstandingBefore, statementBalanceBefore, type ApPrintBill as ApPrintBillOut, type BillSettlement } from "../../lib/ap-payment-print";
+import { normalisePartyCurrency, partyText } from "../../lib/party-finance";
 import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
@@ -52,7 +56,7 @@ import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDri
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
-import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
+import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
 import { tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
@@ -85,6 +89,8 @@ import { buildInventoryOpeningSeed, applyOpeningSeed, type InventoryOpeningRow }
 import { bucketAging } from "../../lib/other-party-aging";
 import { applyLifecycle, getDocState } from "../lib/document-lifecycle";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
+import { liveRestatePostType } from "../../lib/lifecycle-machine";
+import { orBankCarry } from "../../lib/official-receipt-edit";
 import {
   computeMaterialCheckpoints,
   windowFromCheckpoints,
@@ -159,11 +165,14 @@ type JournalLineRow = {
 // each open document under its party, amount in its aging column). `mo` is
 // the bucket index 0..4 (current / 1 / 2 / 3 / 3+ months); advances appear
 // as negative current-bucket docs.
-type AgingDocRow = { no: string; date: string; mo: number; amountSen: number };
+// `due`: a purchase invoice's due date (Creditor Aging's Next Due, 2026-10-17).
+type AgingDocRow = { no: string; date: string; mo: number; amountSen: number; due?: string };
 
 type ArAgingRow = {
   customerId: string;
   customerName: string;
+  /** The debtor code (owner 2026-10-17: a Code column on Debtor Aging). */
+  customerCode: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -175,6 +184,8 @@ type ArAgingRow = {
 type ApAgingRow = {
   supplierId: string;
   supplierName: string;
+  /** The creditor code (owner 2026-10-17: a Code column on Creditor Aging). */
+  supplierCode: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -532,10 +543,19 @@ app.get("/aging", async (c) => {
   // cacheKey partitions the consolidated ("") result from each per-company
   // ("company:<orgId>") result so a filtered request never poisons the
   // default cache — the default read stays byte-identical to today.
-  const cacheKey = coFilter.active ? `company:${coFilter.orgId}` : "";
-  const data = await withSnapshot(
-    c.var.DB,
-    {
+  // The suffix versions the cached shape so a snapshot built before a shape
+  // change is never served: "|due" (2026-10-17) — purchase-invoice docs carry
+  // their due date (Creditor Aging's Next Due); "|notes" (2026-10-17) — a
+  // credit / debit note is its own Debtor Aging line; "|code" (2026-10-17) —
+  // every row carries its party's code.
+  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due|notes|code` : "|due|notes|code";
+  // As at a past date (owner 2026-10-17): ?asOf=YYYY-MM-DD before today rolls
+  // every item back from today (src/api/lib/aging-as-at.ts) — built fresh,
+  // never cached. Absent / today / later = today's aging, cached as before.
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const nowRef = asOf ? asAtNow(asOf) : undefined;
+  const snapshotConfig = {
       tableName: "accounting_aging_snapshot",
       // kv_config so the snapshot rebuilds when opening_date (the pre-opening
       // floor) is saved — not just when invoices/PIs change.
@@ -543,19 +563,24 @@ app.get("/aging", async (c) => {
       // snapshot (advances appear as negative rows below).
       sourceTables: [
         "invoices", "purchase_invoices", "supplier_payments", "kv_config", "opening_ap_excludes",
+        // Credit / debit notes are their own Debtor Aging lines (a post or a
+        // Back to Draft also touches its invoice, which rebuilds it anyway).
+        "credit_notes", "debit_notes",
+        // A party's code shows on its row.
+        "customers", "suppliers",
         // Trade-finance section: a repayment allocation or a due-date edit
         // must rebuild the snapshot (kv_config above covers the Setup save).
         "trade_finance_draws", "trade_finance_repay_allocs",
       ],
-    },
-    orgId,
-    async () => {
-      const [invRes, piRes] = await Promise.all([
+  };
+  const buildAging = async () => {
+      const [invRes, piRes, cnAgRes, dnAgRes, custCodeRes, supCodeRes] = await Promise.all([
         c.var.DB.prepare(
-          `SELECT customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
+          `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
         )
           .bind(...(coFilter.active ? [coFilter.param] : []))
           .all<{
+          id: string;
           customerId: string;
           customerName: string;
           invoiceNo?: string | null;
@@ -585,22 +610,60 @@ app.get("/aging", async (c) => {
           invoiceDate: string | null;
           isOpening: number | null;
         }>(),
+        c.var.DB.prepare(
+          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')",
+        ).all<Record<string, unknown>>(),
+        c.var.DB.prepare(
+          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'",
+        ).all<Record<string, unknown>>(),
+        c.var.DB.prepare("SELECT id, code FROM customers").all<{ id: string; code: string | null }>(),
+        c.var.DB.prepare("SELECT id, code FROM suppliers").all<{ id: string; code: string | null }>(),
       ]);
+      const custCode = new Map((custCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+      const supCode = new Map((supCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+      // As at a past date: what was settled after it, to roll each item back.
+      const [arBack, notesBack, apBack] = asOf
+        ? await Promise.all([receiptsAfter(c.var.DB, asOf), notesAfter(c.var.DB, asOf), supplierPaymentsAfter(c.var.DB, orgId, asOf)])
+        : [null, null, null];
+      // Issued notes per invoice — each becomes its own Debtor Aging line
+      // (owner 2026-10-17), bucketed on its own date like an advance.
+      const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
+      for (const [rows, kind] of [[cnAgRes.results ?? [], "CN"], [dnAgRes.results ?? [], "DN"]] as const) {
+        for (const n of rows) {
+          const invId = String(n.invoiceId ?? n.invoice_id ?? "");
+          const amt = Math.round(Number(n.totalAmount ?? n.total_amount) || 0);
+          if (!invId || amt <= 0) continue;
+          if (asOf && String(n.date ?? "").slice(0, 10) > asOf) continue; // issued after the as-at date
+          const list = agingNotes.get(invId) ?? [];
+          list.push({
+            no: `${String(n.noteNumber ?? n.note_number ?? "")} · ${kind === "CN" ? "Credit note" : "Debit note"}`,
+            date: String(n.date ?? "").slice(0, 10),
+            sen: kind === "CN" ? -amt : amt,
+          });
+          agingNotes.set(invId, list);
+        }
+      }
       const obDateAg = await getOpeningDate(c.var.DB);
       const apExclAg = await loadOpeningApExcludes(c.var.DB);
 
       const arMap = new Map<string, ArAgingRow>();
       for (const i of invRes.results ?? []) {
         if (rowBeforeOpening(i.invoiceDate, obDateAg, i.isOpening)) continue; // pre-opening: not extracted
-        if (["DRAFT", "CANCELLED", "PAID"].includes(i.status)) continue;
-        const outstanding =
-          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0);
+        // As at a past date a PAID invoice may still have been open then, and
+        // one dated after it did not exist yet.
+        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(i.status)) continue;
+        if (asOf && String(i.invoiceDate ?? "").slice(0, 10) > asOf) continue;
+        const outstanding = owedAt(
+          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0),
+          (arBack?.get(i.id) ?? 0) + (notesBack?.get(i.id) ?? 0),
+        );
         if (outstanding <= 0) continue;
         let row = arMap.get(i.customerId);
         if (!row) {
           row = {
             customerId: i.customerId,
             customerName: i.customerName || "Unknown",
+            customerCode: custCode.get(i.customerId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -610,32 +673,54 @@ app.get("/aging", async (c) => {
           };
           arMap.set(i.customerId, row);
         }
-        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate);
-        addToBucket(row, moAr, outstanding);
-        row.docs.push({
-          no: String(i.invoiceNo ?? i.invoice_no ?? ""),
-          date: String(i.invoiceDate ?? "").slice(0, 10),
-          mo: agingBucketIdx(moAr),
-          amountSen: outstanding,
-        });
+        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate, nowRef);
+        // A credit / debit note on the invoice is its own line: the invoice
+        // shows what was owed before its notes, each note its own amount on
+        // its own date. A debit note already paid would leave the invoice line
+        // negative — that invoice keeps its one combined line.
+        const notesAr = agingNotes.get(i.id) ?? [];
+        const invoiceSen = notesAr.length ? splitOutstandingByNotes(outstanding, notesAr) : null;
+        const split = invoiceSen !== null;
+        const ownSen = split ? invoiceSen : outstanding;
+        if (ownSen !== 0) {
+          addToBucket(row, moAr, ownSen);
+          row.docs.push({
+            no: String(i.invoiceNo ?? i.invoice_no ?? ""),
+            date: String(i.invoiceDate ?? "").slice(0, 10),
+            mo: agingBucketIdx(moAr),
+            amountSen: ownSen,
+          });
+        }
+        if (split) {
+          for (const n of notesAr) {
+            const moN = monthsOverdue(n.date || null, nowRef);
+            addToBucket(row, moN, n.sen);
+            row.docs.push({ no: n.no, date: n.date, mo: agingBucketIdx(moN), amountSen: n.sen });
+          }
+        }
       }
 
       const apMap = new Map<string, ApAgingRow>();
       for (const p of piRes.results ?? []) {
         // Pre-opening PIs count as opening by default; only excluded ones drop.
         if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateAg, apExclAg)) continue;
-        if (["DRAFT", "CANCELLED", "PAID"].includes(p.status)) continue;
+        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(p.status)) continue;
+        if (asOf && String(p.invoiceDate ?? "").slice(0, 10) > asOf) continue;
         // Net outstanding = face − paid (BUG-2026-07-05-001: this tab showed the
         // FULL face amount for partially-paid PIs — the AR loop above always
-        // netted, the AP loop didn't).
-        const outstanding =
-          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
+        // netted, the AP loop didn't); as at a past date, plus what was paid
+        // on it after.
+        const outstanding = owedAt(
+          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0),
+          apBack?.get(p.id) ?? 0,
+        );
         if (outstanding <= 0) continue;
         let row = apMap.get(p.supplierId);
         if (!row) {
           row = {
             supplierId: p.supplierId,
             supplierName: p.supplierName || "Unknown",
+            supplierCode: supCode.get(p.supplierId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -645,24 +730,39 @@ app.get("/aging", async (c) => {
           };
           apMap.set(p.supplierId, row);
         }
-        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate);
+        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate, nowRef);
         addToBucket(row, moAp, outstanding);
         row.docs.push({
           no: String(p.piNo ?? p.pi_no ?? ""),
           date: String(p.invoiceDate ?? "").slice(0, 10),
           mo: agingBucketIdx(moAp),
           amountSen: outstanding,
+          due: String(p.dueDate ?? "").slice(0, 10),
         });
       }
       // Unapplied supplier advances → NEGATIVE current-bucket rows (owner rule
       // 2026-07-05), so the AP aging total ties the 400-0000 control exactly.
       // Each advance also joins the expandable detail as its own negative doc.
-      for (const [supplierId, adv] of await loadUnappliedSupplierAdvances(c.var.DB, orgId)) {
+      // As at a past date, money paid ahead of a bill dated after it was on
+      // account then — an advance at the date (src/api/lib/aging-as-at.ts).
+      const supAdv = await loadUnappliedSupplierAdvances(c.var.DB, orgId);
+      if (asOf) {
+        const piDate = new Map((piRes.results ?? []).map((p) => [p.id, String(p.invoiceDate ?? "").slice(0, 10)] as const));
+        for (const [id, a] of await supplierPaymentsAheadOf(c.var.DB, orgId, asOf, piDate)) {
+          const cur = supAdv.get(id) ?? { supplierName: a.name, sen: 0, items: [] };
+          for (const it of a.items) { cur.items.push({ paymentNo: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+          supAdv.set(id, cur);
+        }
+      }
+      for (const [supplierId, adv] of supAdv) {
+        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+        if (!advItems.length) continue;
         let row = apMap.get(supplierId);
         if (!row) {
           row = {
             supplierId,
             supplierName: adv.supplierName || "Unknown",
+            supplierCode: supCode.get(supplierId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -675,8 +775,8 @@ app.get("/aging", async (c) => {
         // Bucket each advance by ITS payment date (owner 2026-07-08: a May
         // advance belongs in the May column, not Current) — same month-based
         // bucketing as the bills above.
-        for (const it of adv.items) {
-          const moAdv = monthsOverdue(it.date || null);
+        for (const it of advItems) {
+          const moAdv = monthsOverdue(it.date || null, nowRef);
           addToBucket(row, moAdv, -it.sen);
           row.docs.push({
             no: `${it.paymentNo} · Advance`,
@@ -688,12 +788,25 @@ app.get("/aging", async (c) => {
       }
       // Unapplied customer advances → NEGATIVE rows, the mirror of the supplier
       // block above, so the AR aging total ties the 300-0000 control exactly.
-      for (const [customerId, adv] of await loadUnappliedCustomerAdvances(c.var.DB, orgId)) {
+      // The customer mirror: received ahead of an invoice dated after it.
+      const custAdv = await loadUnappliedCustomerAdvances(c.var.DB, orgId);
+      if (asOf) {
+        const invDate = new Map((invRes.results ?? []).map((i) => [i.id, String(i.invoiceDate ?? "").slice(0, 10)] as const));
+        for (const [id, a] of await receiptsAheadOf(c.var.DB, asOf, invDate)) {
+          const cur = custAdv.get(id) ?? { customerName: a.name, sen: 0, items: [] };
+          for (const it of a.items) { cur.items.push({ receiptNumber: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+          custAdv.set(id, cur);
+        }
+      }
+      for (const [customerId, adv] of custAdv) {
+        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+        if (!advItems.length) continue;
         let row = arMap.get(customerId);
         if (!row) {
           row = {
             customerId,
             customerName: adv.customerName || "Unknown",
+            customerCode: custCode.get(customerId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -703,8 +816,8 @@ app.get("/aging", async (c) => {
           };
           arMap.set(customerId, row);
         }
-        for (const it of adv.items) {
-          const moAdv = monthsOverdue(it.date || null);
+        for (const it of advItems) {
+          const moAdv = monthsOverdue(it.date || null, nowRef);
           addToBucket(row, moAdv, -it.sen);
           row.docs.push({
             no: `${it.receiptNumber} · Advance`,
@@ -729,9 +842,12 @@ app.get("/aging", async (c) => {
         for (const s of tfSrcs) {
           const acctRow = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
             .bind(s.accountCode).first<{ name: string }>();
-          const derived = await loadTfDraws(c.var.DB, s);
+          // As at a past date: the draws rebuilt from the ledger lines dated by
+          // then (loadTfDrawsAt).
+          const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
+          const drawsAt = derived.draws;
           const tfDraws = [];
-          for (const d of derived.draws) {
+          for (const d of drawsAt) {
             let paidSupplier = "";
             try {
               const rs = await c.var.DB.prepare(
@@ -751,7 +867,7 @@ app.get("/aging", async (c) => {
             tenorDays: s.tenorDays,
             accountNetSen: derived.accountNetSen,
             unallocatedSen: derived.unallocatedSen,
-            totals: tfTotals(derived.draws, todayIsoTf),
+            totals: tfTotals(drawsAt, asOf ?? todayIsoTf),
             draws: tfDraws,
           });
         }
@@ -770,10 +886,11 @@ app.get("/aging", async (c) => {
           tf: tfSection,
         },
       };
-    },
-    cacheKey,
-  );
-  return c.json({ success: true, ...data });
+  };
+  const data = asOf
+    ? await buildAging()
+    : await withSnapshot(c.var.DB, snapshotConfig, orgId, buildAging, cacheKey);
+  return c.json({ success: true, ...data, ...(asOf ? { asOf } : {}) });
 });
 
 app.post("/aging", async (c) => {
@@ -1943,11 +2060,11 @@ app.get("/customer-statement", async (c) => {
       .bind(customerId)
       .first<{ id: string; name: string; code: string; outstandingSen: number }>(),
     c.var.DB.prepare(
-      `SELECT invoiceNo, invoiceDate, totalSen, status, isOpening FROM invoices
+      `SELECT id, invoiceNo, invoiceDate, totalSen, status, isOpening FROM invoices
         WHERE customerId = ? AND status NOT IN ('DRAFT','CANCELLED')`,
     )
       .bind(customerId)
-      .all<{ invoiceNo: string; invoiceDate: string; totalSen: number; status: string; isOpening: number | null }>(),
+      .all<{ id: string; invoiceNo: string; invoiceDate: string; totalSen: number; status: string; isOpening: number | null }>(),
     c.var.DB.prepare(
       // VOID/DELETED receipts are excluded, exactly as /debtor-ledger does it
       // (BUG-2026-08-13-080). The two build the SAME line model — this query was
@@ -1960,17 +2077,17 @@ app.get("/customer-statement", async (c) => {
       .bind(customerId)
       .all<{ receiptNumber: string; date: string; amount: number; status: string; method: string }>(),
     c.var.DB.prepare(
-      `SELECT noteNumber, date, totalAmount, status FROM credit_notes
+      `SELECT noteNumber, invoiceId, date, totalAmount, status FROM credit_notes
         WHERE customerId = ? AND status IN ('APPROVED','POSTED')`,
     )
       .bind(customerId)
-      .all<{ noteNumber: string; date: string; totalAmount: number; status: string }>(),
+      .all<{ noteNumber: string; invoiceId: string | null; date: string; totalAmount: number; status: string }>(),
     c.var.DB.prepare(
-      `SELECT noteNumber, date, totalAmount, status FROM debit_notes
+      `SELECT noteNumber, invoiceId, date, totalAmount, status FROM debit_notes
         WHERE customerId = ? AND status = 'POSTED'`,
     )
       .bind(customerId)
-      .all<{ noteNumber: string; date: string; totalAmount: number; status: string }>(),
+      .all<{ noteNumber: string; invoiceId: string | null; date: string; totalAmount: number; status: string }>(),
   ]);
   if (!cust) {
     return c.json({ success: false, error: "Customer not found" }, 404);
@@ -1984,12 +2101,15 @@ app.get("/customer-statement", async (c) => {
     isOpening?: number | null;
   };
   const lines: Line[] = [];
+  // The notes are their own lines below, so each invoice shows the amount it
+  // was issued at — its stored total already carries them (BUG-2026-10-17-315).
+  const noteSums = sumIssuedNotesByInvoice(cnRes.results ?? [], dnRes.results ?? []);
   for (const i of invRes.results ?? [])
     lines.push({
       date: i.invoiceDate ?? "",
       ref: i.invoiceNo,
       type: "INVOICE",
-      debitSen: Number(i.totalSen) || 0,
+      debitSen: invoiceIssuedSen(Number(i.totalSen) || 0, noteSums.get(i.id)),
       creditSen: 0,
       isOpening: i.isOpening,
     });
@@ -3554,20 +3674,27 @@ app.post("/ap-control/rebuild-counter", async (c) => {
   });
 });
 
-app.get("/supplier-statement", async (c) => {
-  const denied = await requirePermission(c, "accounting", "read");
-  if (denied) return denied;
-  const supplierId = c.req.query("supplierId");
-  if (!supplierId) {
-    return c.json({ success: false, error: "supplierId is required" }, 400);
-  }
-  const from = c.req.query("from") || "";
-  const to = c.req.query("to") || "9999-12-31";
+// The supplier statement's line model, shared by /supplier-statement and
+// /ap-payment-print (a printed AP payment's "supplier balance before" is this
+// statement's balance — owner 2026-10-17, print design 1a). Credit-normal:
+// what we still owe = credits − debits.
+type SupplierStmtLine = {
+  date: string;
+  ref: string;
+  type: string;
+  debitSen: number;
+  creditSen: number;
+  isOpening?: number | null;
+};
+async function supplierStatementLines(
+  db: Env["Variables"]["DB"],
+  supplierId: string,
+): Promise<{ sup: { id: string; name: string } | null; lines: SupplierStmtLine[] }> {
   const [sup, piRes, payRes, pcnStmtRes] = await Promise.all([
-    c.var.DB.prepare("SELECT id, name FROM suppliers WHERE id = ?")
+    db.prepare("SELECT id, name FROM suppliers WHERE id = ?")
       .bind(supplierId)
       .first<{ id: string; name: string }>(),
-    c.var.DB.prepare(
+    db.prepare(
       // Include PARTIAL_PAID (a partly-paid PI still owes money — its full
       // amount is a credit here, the payment a debit; omitting it would drop
       // the credit leg and unbalance the statement). Matches /creditor-ledger.
@@ -3576,7 +3703,7 @@ app.get("/supplier-statement", async (c) => {
     )
       .bind(supplierId)
       .all<{ id: string; piNo: string; invoiceDate: string; amountSen: number; status: string; isOpening: number | null }>(),
-    c.var.DB.prepare(
+    db.prepare(
       // Exclude #6 supplier-discount markers (method='CREDIT_NOTE', amountSen=0,
       // no GL leg) — they'd render as 0.00 PAYMENT noise rows; the CN itself
       // already appears via the purchase_credit_notes query below.
@@ -3596,29 +3723,19 @@ app.get("/supplier-statement", async (c) => {
     )
       .bind(supplierId)
       .all<{ paymentNo: string; date: string; amountSen: number }>(),
-    c.var.DB.prepare(
+    db.prepare(
       `SELECT noteNumber, date, totalAmount FROM purchase_credit_notes
         WHERE supplierId = ? AND status = 'POSTED'`,
     )
       .bind(supplierId)
       .all<{ noteNumber: string; date: string; totalAmount: number }>(),
   ]);
-  if (!sup) {
-    return c.json({ success: false, error: "Supplier not found" }, 404);
-  }
-  type Line = {
-    date: string;
-    ref: string;
-    type: string;
-    debitSen: number;
-    creditSen: number;
-    isOpening?: number | null;
-  };
-  const lines: Line[] = [];
+  if (!sup) return { sup: null, lines: [] };
+  const lines: SupplierStmtLine[] = [];
   // Pre-opening PIs count as opening by default (owner rule 2026-07-02) — mark
   // every non-excluded PI floor-exempt here. Harmless for post-opening rows
   // (the floor only consults the flag for pre-opening dates).
-  const apExclSs = await loadOpeningApExcludes(c.var.DB);
+  const apExclSs = await loadOpeningApExcludes(db);
   for (const pi of piRes.results ?? [])
     lines.push({
       date: pi.invoiceDate ?? "",
@@ -3647,10 +3764,26 @@ app.get("/supplier-statement", async (c) => {
   lines.sort((a, b) =>
     a.date === b.date ? a.ref.localeCompare(b.ref) : a.date.localeCompare(b.date),
   );
+  return { sup, lines };
+}
+
+app.get("/supplier-statement", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const supplierId = c.req.query("supplierId");
+  if (!supplierId) {
+    return c.json({ success: false, error: "supplierId is required" }, 400);
+  }
+  const from = c.req.query("from") || "";
+  const to = c.req.query("to") || "9999-12-31";
+  const { sup, lines } = await supplierStatementLines(c.var.DB, supplierId);
+  if (!sup) {
+    return c.json({ success: false, error: "Supplier not found" }, 404);
+  }
   // AP balance is credit-normal: what we still owe = credits − debits.
   const obDateSs = await getOpeningDate(c.var.DB);
   let openingSen = 0;
-  const rows: (Line & { runningSen: number })[] = [];
+  const rows: (SupplierStmtLine & { runningSen: number })[] = [];
   let running = 0;
   for (const l of lines) {
     if (rowBeforeOpening(l.date, obDateSs, l.isOpening)) continue; // pre-opening: not extracted (not even into B/F)
@@ -3691,14 +3824,17 @@ app.get("/debtor-ledger", async (c) => {
   const to = c.req.query("to") || "9999-12-31";
   const [custRes, invRes, payRes, cnRes, dnRes] = await Promise.all([
     c.var.DB.prepare("SELECT id, name, code FROM customers").all<{ id: string; name: string; code: string }>(),
-    c.var.DB.prepare(`SELECT customerId, invoiceNo, invoiceDate, totalSen, isOpening FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`).all<{ customerId: string; invoiceNo: string; invoiceDate: string; totalSen: number; isOpening: number | null }>(),
+    c.var.DB.prepare(`SELECT id, customerId, invoiceNo, invoiceDate, totalSen, isOpening FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`).all<{ id: string; customerId: string; invoiceNo: string; invoiceDate: string; totalSen: number; isOpening: number | null }>(),
     c.var.DB.prepare(`SELECT customerId, receiptNumber, date, amount, status FROM payment_records WHERE id NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'payment' AND state IN ('VOID','DELETED'))`).all<{ customerId: string; receiptNumber: string; date: string; amount: number; status: string }>(),
-    c.var.DB.prepare(`SELECT customerId, noteNumber, date, totalAmount FROM credit_notes WHERE status IN ('APPROVED','POSTED')`).all<{ customerId: string; noteNumber: string; date: string; totalAmount: number }>(),
-    c.var.DB.prepare(`SELECT customerId, noteNumber, date, totalAmount FROM debit_notes WHERE status = 'POSTED'`).all<{ customerId: string; noteNumber: string; date: string; totalAmount: number }>(),
+    c.var.DB.prepare(`SELECT customerId, invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')`).all<{ customerId: string; invoiceId: string | null; noteNumber: string; date: string; totalAmount: number; status: string }>(),
+    c.var.DB.prepare(`SELECT customerId, invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'`).all<{ customerId: string; invoiceId: string | null; noteNumber: string; date: string; totalAmount: number; status: string }>(),
   ]);
   const byParty = new Map<string, LedgerLine[]>();
   const push = (id: string, l: LedgerLine) => { if (!id) return; const arr = byParty.get(id) ?? []; arr.push(l); byParty.set(id, arr); };
-  for (const i of invRes.results ?? []) push(i.customerId, { date: i.invoiceDate ?? "", ref: i.invoiceNo, type: "INVOICE", debitSen: Number(i.totalSen) || 0, creditSen: 0, isOpening: i.isOpening });
+  // Invoices at the amount they were issued at — the notes are their own lines
+  // (BUG-2026-10-17-315), as on the customer statement.
+  const noteSumsDl = sumIssuedNotesByInvoice(cnRes.results ?? [], dnRes.results ?? []);
+  for (const i of invRes.results ?? []) push(i.customerId, { date: i.invoiceDate ?? "", ref: i.invoiceNo, type: "INVOICE", debitSen: invoiceIssuedSen(Number(i.totalSen) || 0, noteSumsDl.get(i.id)), creditSen: 0, isOpening: i.isOpening });
   for (const p of payRes.results ?? []) {
     push(p.customerId, { date: p.date ?? "", ref: p.receiptNumber, type: "RECEIPT", debitSen: 0, creditSen: Number(p.amount) || 0 });
     if (p.status === "BOUNCED") push(p.customerId, { date: p.date ?? "", ref: p.receiptNumber, type: "BOUNCED", debitSen: Number(p.amount) || 0, creditSen: 0 });
@@ -3796,6 +3932,13 @@ type OtherPartyRow = {
   address: string | null;
   notes: string | null;
   isActive: number;
+  // Finance v2 party fields (2026-10-17). Dual-keyed read; absent until the
+  // first write self-applies them.
+  sstRegNo?: string | null;
+  sst_reg_no?: string | null;
+  currency?: string | null;
+  bankAccount?: string | null;
+  bank_account?: string | null;
 };
 
 function rowToOtherParty(r: OtherPartyRow) {
@@ -3811,7 +3954,27 @@ function rowToOtherParty(r: OtherPartyRow) {
     address: r.address ?? "",
     notes: r.notes ?? "",
     isActive: r.isActive === 1,
+    sstRegNo: (r.sstRegNo ?? r.sst_reg_no ?? "").trim(),
+    currency: normalisePartyCurrency(r.currency),
+    bankAccount: (r.bankAccount ?? r.bank_account ?? "").trim(),
   };
+}
+
+// Finance v2 party fields (owner 2026-10-17): SST Reg. No., currency and the
+// bank & account no. on an other debtor / creditor (TIN and SSM were already
+// here). snake_case, runtime self-applied before the first write; the flag is
+// set only once all three exist (C9).
+let otherPartyFinanceColsEnsured = false;
+async function ensureOtherPartyFinanceColumns(db: Env["Variables"]["DB"]): Promise<void> {
+  if (otherPartyFinanceColsEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS sst_reg_no TEXT NOT NULL DEFAULT ''").run();
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'MYR'").run();
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS bank_account TEXT NOT NULL DEFAULT ''").run();
+    otherPartyFinanceColsEnsured = true;
+  } catch (err) {
+    console.warn("[accounting] ensureOtherPartyFinanceColumns:", err instanceof Error ? err.message : err);
+  }
 }
 
 type OtherPartyBillRow = {
@@ -3874,6 +4037,7 @@ app.get("/other-parties", async (c) => {
 app.post("/other-parties", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
+  await ensureOtherPartyFinanceColumns(c.var.DB);
   try {
     const body = (await c.req.json()) as {
       type?: string;
@@ -3885,6 +4049,9 @@ app.post("/other-parties", async (c) => {
       registrationNo?: string;
       address?: string;
       notes?: string;
+      sstRegNo?: string;
+      currency?: string;
+      bankAccount?: string;
     };
     if (body.type !== "DEBTOR" && body.type !== "CREDITOR") {
       return c.json(
@@ -3901,8 +4068,9 @@ app.post("/other-parties", async (c) => {
     const now = new Date().toISOString();
     await c.var.DB.prepare(
       `INSERT INTO other_parties
-         (id, type, name, contactPerson, phone, email, tin, registrationNo, address, notes, isActive, orgId, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         (id, type, name, contactPerson, phone, email, tin, registrationNo, address, notes, isActive, orgId, createdAt,
+          sst_reg_no, currency, bank_account)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -3917,6 +4085,9 @@ app.post("/other-parties", async (c) => {
         body.notes ?? null,
         orgId,
         now,
+        partyText(body.sstRegNo),
+        normalisePartyCurrency(body.currency),
+        partyText(body.bankAccount),
       )
       .run();
     const created = await c.var.DB.prepare(
@@ -3933,6 +4104,7 @@ app.post("/other-parties", async (c) => {
 app.put("/other-parties/:id", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  await ensureOtherPartyFinanceColumns(c.var.DB);
   try {
     const id = c.req.param("id");
     const existing = await c.var.DB.prepare(
@@ -3954,6 +4126,9 @@ app.put("/other-parties/:id", async (c) => {
       notes: string;
       isActive: boolean;
       type: string;
+      sstRegNo: string;
+      currency: string;
+      bankAccount: string;
     }>;
     if (body.type !== undefined && body.type !== existing.type) {
       // Switching DEBTOR↔CREDITOR retroactively moves the party between
@@ -3976,13 +4151,18 @@ app.put("/other-parties/:id", async (c) => {
       notes: body.notes !== undefined ? body.notes : existing.notes,
       isActive:
         body.isActive === undefined ? existing.isActive : body.isActive ? 1 : 0,
+      // Finance v2 party fields — only change when the body sends them.
+      sstRegNo: body.sstRegNo !== undefined ? partyText(body.sstRegNo) : (existing.sstRegNo ?? existing.sst_reg_no ?? ""),
+      currency: body.currency !== undefined ? normalisePartyCurrency(body.currency) : normalisePartyCurrency(existing.currency),
+      bankAccount: body.bankAccount !== undefined ? partyText(body.bankAccount) : (existing.bankAccount ?? existing.bank_account ?? ""),
     };
     if (!merged.name) {
       return c.json({ success: false, error: "name cannot be empty" }, 400);
     }
     await c.var.DB.prepare(
       `UPDATE other_parties
-          SET name = ?, contactPerson = ?, phone = ?, email = ?, tin = ?, registrationNo = ?, address = ?, notes = ?, isActive = ?, updatedAt = ?
+          SET name = ?, contactPerson = ?, phone = ?, email = ?, tin = ?, registrationNo = ?, address = ?, notes = ?, isActive = ?, updatedAt = ?,
+              sst_reg_no = ?, currency = ?, bank_account = ?
         WHERE id = ?`,
     )
       .bind(
@@ -3996,6 +4176,9 @@ app.put("/other-parties/:id", async (c) => {
         merged.notes,
         merged.isActive,
         new Date().toISOString(),
+        merged.sstRegNo,
+        merged.currency,
+        merged.bankAccount,
         id,
       )
       .run();
@@ -4681,12 +4864,15 @@ app.get("/ap-invoices", async (c) => {
     const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
     const lc = String(b.lifecycleState ?? b.lifecycle_state ?? "ACTIVE");
     const st = String(b.status ?? "");
+    const rowStatus = lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN";
     rows.push({
       kind: "AP", id: String(b.id), no: String(b.billNo ?? b.bill_no ?? ""), supplier: String(b.partyName ?? b.party_name ?? ""),
       partyId: String(b.partyId ?? b.party_id ?? ""),
       supplierRef: String(b.referenceNo ?? b.reference_no ?? ""), date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null,
-      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: total - paid,
-      status: lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN",
+      // Only an open bill still owes anything (BUG-2026-10-17-306: a cancelled
+      // bill kept its face amount as "outstanding" and the All view added it in).
+      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0,
+      status: rowStatus,
       opening: false,
     });
   }
@@ -4694,13 +4880,15 @@ app.get("/ap-invoices", async (c) => {
     const total = Math.round(Number(p.amountSen ?? p.amount_sen) || 0);
     const paid = Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
     const st = String(p.status ?? "");
+    const rowStatus = st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN";
     rows.push({
       kind: "PI", id: String(p.id), no: String(p.piNo ?? p.pi_no ?? ""), supplier: String(p.supplierName ?? p.supplier_name ?? ""),
       partyId: String(p.supplierId ?? p.supplier_id ?? ""),
       supplierRef: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""), date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
       dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
-      description: "", totalSen: total, paidSen: paid, outstandingSen: total - paid,
-      status: st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN",
+      // Same rule as the bills: a cancelled or paid invoice owes nothing (BUG-2026-10-17-306).
+      description: "", totalSen: total, paidSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0,
+      status: rowStatus,
       opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
     });
   }
@@ -5093,27 +5281,43 @@ app.get("/other-party-aging", async (c) => {
   if (type !== "DEBTOR" && type !== "CREDITOR") {
     return c.json({ success: false, error: "type must be DEBTOR or CREDITOR" }, 400);
   }
+  // As at a past date (owner 2026-10-17): bills dated by then, each rolled
+  // back by the payments made on it after (src/api/lib/aging-as-at.ts).
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const paidBack = asOf ? await otherPartyPaymentsAfter(c.var.DB, orgId, asOf) : null;
   const rows =
     (
       await c.var.DB.prepare(
-        `SELECT b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
+        `SELECT b.id AS id, b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
                 (b.totalSen - b.paidAmountSen) AS amt, b.is_opening AS is_opening
            FROM other_party_bills b
            LEFT JOIN document_lifecycle dl
              ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
-          WHERE b.orgId = ? AND b.partyType = ? AND (b.totalSen - b.paidAmountSen) > 0
+          WHERE b.orgId = ? AND b.partyType = ? AND (${asOf ? "b.billDate <= ?" : "(b.totalSen - b.paidAmountSen) > 0"})
             AND (dl.state IS NULL OR dl.state NOT IN ('DELETED','VOID'))
           ORDER BY b.billDate ASC`,
       )
-        .bind(orgId, type)
-        .all<{ partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
+        .bind(orgId, type, ...(asOf ? [asOf] : []))
+        .all<{ id: string; partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
     ).results ?? [];
   const obDateOpa = await getOpeningDate(c.var.DB);
   const bills = rows
-    .filter((r) => !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening)) // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01
-    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: r.amt }));
-  const today = new Date().toISOString().slice(0, 10);
-  return c.json({ success: true, data: { aging: bucketAging(bills, today), bills } });
+    // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01.
+    // As at a past date a pre-opening bill still counts for what was paid on
+    // it AFTER the date: the opening balance held that much then (what it owes
+    // now stays with the opening balance, exactly as today's view leaves it).
+    .filter((r) => asOf || !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening))
+    // `mo` = the calendar-month bucket /aging gives an invoice (same helpers),
+    // so Debtor / Creditor Aging can list an other party's bills in the trade
+    // rows' columns (owner 2026-10-17, Finance v2).
+    .map((r) => {
+      const pre = rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening);
+      return { partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(pre ? 0 : r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) };
+    })
+    .filter((b) => b.outstandingSen > 0);
+  const today = asOf ?? new Date().toISOString().slice(0, 10);
+  return c.json({ success: true, data: { aging: bucketAging(bills, today), bills, ...(asOf ? { asOf } : {}) } });
 });
 
 // Shared internal builder (NOT a route): used by both the rewired /void
@@ -11108,6 +11312,201 @@ app.get("/payment-vouchers/open-bills", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /ap-payment-print?paymentNo= — what a printed AP payment shows beyond its
+// own row (owner 2026-10-17, print design 1a): per bill paid, the supplier's
+// invoice no., bill date, due date, the bill's balance just BEFORE this payment
+// and what this payment put on it; the advance; and the party's balance before.
+// One read for all three doors that pay creditors' bills: an AP Payment voucher
+// (by its PV number — allocations, posted or not), a Supplier Payment and an
+// Other Creditor Payment (by payment number). Read-only.
+//
+// "Before" is anchored on today's paid amount: a bill's balance before = what
+// it owes now + what this payment put on it + what payments dated AFTER this
+// one put on it (void / deleted payments excluded — their amounts were already
+// given back). A same-day payment counts as before. The supplier's balance is
+// the supplier statement's balance at the payment date with this payment's own
+// rows added back; an other creditor's is the sum of its bills' balances before.
+// ---------------------------------------------------------------------------
+app.get("/ap-payment-print", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const paymentNo = String(c.req.query("paymentNo") ?? "").trim();
+  if (!paymentNo) return c.json({ success: false, error: "paymentNo required" }, 400);
+  const data = await loadApPaymentPrint(c.var.DB, getOrgId(c), paymentNo);
+  if (!data) return c.json({ success: false, error: "No creditor payment with that number" }, 404);
+  return c.json({ success: true, data });
+});
+
+type ApPrintSource = {
+  partyKind: PvPartyKind;
+  partyId: string;
+  date: string;
+  allocs: { docKind: PvAllocDocKind; docId: string; paidSen: number }[];
+  advanceSen: number;
+  tfRepaySen: number;
+};
+
+async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentNo: string): Promise<ApPrintSource | null> {
+  await ensurePvApColumns(db).catch(() => {});
+  const pv = await db.prepare(
+    "SELECT id, date, pv_kind, party_kind, party_id, advance_sen FROM payment_vouchers WHERE pvNo = ?",
+  ).bind(paymentNo).first<Record<string, unknown>>().catch(() => null);
+  if (pv && String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
+    const allocs = await loadPvAllocs(db, String(pv.id));
+    return {
+      partyKind: String(pv.partyKind ?? pv.party_kind ?? "") === "OTHER" ? "OTHER" : "SUPPLIER",
+      partyId: String(pv.partyId ?? pv.party_id ?? ""),
+      date: String(pv.date ?? "").slice(0, 10),
+      allocs: allocs.map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen })),
+      advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
+      tfRepaySen: 0,
+    };
+  }
+  const sp = await db.prepare(
+    `SELECT supplier_id, purchase_invoice_id, date, amount_sen, method FROM supplier_payments
+      WHERE payment_no = ? AND org_id = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'`,
+  ).bind(paymentNo, orgId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const spRows = sp.results ?? [];
+  if (spRows.length) {
+    const out: ApPrintSource = {
+      partyKind: "SUPPLIER", partyId: String(spRows[0].supplierId ?? spRows[0].supplier_id ?? ""),
+      date: String(spRows[0].date ?? "").slice(0, 10), allocs: [], advanceSen: 0, tfRepaySen: 0,
+    };
+    for (const r of spRows) {
+      const sen = Math.round(Number(r.amountSen ?? r.amount_sen) || 0);
+      const pi = (r.purchaseInvoiceId ?? r.purchase_invoice_id) as string | null;
+      if (pi) out.allocs.push({ docKind: "PI", docId: String(pi), paidSen: sen });
+      else if (String(r.method ?? "") === "TF_REPAYMENT") out.tfRepaySen += sen;
+      else out.advanceSen += sen;
+    }
+    return out;
+  }
+  const op = await db.prepare(
+    `SELECT partyId, partyType, billId, date, amountSen FROM other_party_payments WHERE paymentNo = ? AND orgId = ?`,
+  ).bind(paymentNo, orgId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const opRows = (op.results ?? []).filter((r) => String(r.partyType ?? r.party_type ?? "") === "CREDITOR");
+  if (!opRows.length) return null;
+  return {
+    partyKind: "OTHER", partyId: String(opRows[0].partyId ?? opRows[0].party_id ?? ""),
+    date: String(opRows[0].date ?? "").slice(0, 10),
+    allocs: opRows.map((r) => ({ docKind: "AP" as const, docId: String(r.billId ?? r.bill_id ?? ""), paidSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0) })),
+    advanceSen: 0, tfRepaySen: 0,
+  };
+}
+
+async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, paymentNo: string) {
+  const src = await apPrintSource(db, orgId, paymentNo);
+  if (!src) return null;
+  const inList = (n: number) => Array.from({ length: n }, () => "?").join(",");
+  const bills: ApPrintBillOut[] = [];
+  let balanceBeforeSen: number | null = null;
+
+  if (src.partyKind === "SUPPLIER") {
+    const piIds = [...new Set(src.allocs.map((a) => a.docId))];
+    const [piRes, setRes] = piIds.length
+      ? await Promise.all([
+          db.prepare(
+            `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen
+               FROM purchase_invoices WHERE id IN (${inList(piIds.length)})`,
+          ).bind(...piIds).all<Record<string, unknown>>(),
+          db.prepare(
+            `SELECT payment_no, purchase_invoice_id, date, COALESCE(booked_sen, amount_sen) AS sen FROM supplier_payments
+              WHERE purchase_invoice_id IN (${inList(piIds.length)}) AND org_id = ?
+                AND payment_no NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'supplier_payment' AND state IN ('VOID','DELETED'))`,
+          ).bind(...piIds, orgId).all<Record<string, unknown>>(),
+        ])
+      : [{ results: [] as Record<string, unknown>[] }, { results: [] as Record<string, unknown>[] }];
+    const piById = new Map((piRes.results ?? []).map((p) => [String(p.id), p]));
+    const setsByPi = new Map<string, BillSettlement[]>();
+    for (const r of setRes.results ?? []) {
+      const k = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? "");
+      const list = setsByPi.get(k) ?? [];
+      list.push({ paymentNo: String(r.paymentNo ?? r.payment_no ?? ""), date: String(r.date ?? "").slice(0, 10), sen: Math.round(Number(r.sen) || 0) });
+      setsByPi.set(k, list);
+    }
+    for (const a of src.allocs) {
+      const p = piById.get(a.docId);
+      if (!p) { bills.push({ docNo: "", supplierInvNo: "", billDate: "", dueDate: "", outstandingBeforeSen: null, paidSen: a.paidSen }); continue; }
+      bills.push({
+        docNo: String(p.piNo ?? p.pi_no ?? ""),
+        supplierInvNo: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""),
+        billDate: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
+        dueDate: String(p.dueDate ?? p.due_date ?? "").slice(0, 10),
+        outstandingBeforeSen: billOutstandingBefore(
+          { totalSen: Math.round(Number(p.amountSen ?? p.amount_sen) || 0), paidSen: Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0) },
+          setsByPi.get(a.docId) ?? [], paymentNo, src.date,
+        ),
+        paidSen: a.paidSen,
+      });
+    }
+    if (src.partyId) {
+      const { sup, lines } = await supplierStatementLines(db, src.partyId);
+      if (sup) {
+        const obDate = await getOpeningDate(db);
+        balanceBeforeSen = statementBalanceBefore(
+          lines.filter((l) => !rowBeforeOpening(l.date, obDate, l.isOpening)),
+          paymentNo, src.date,
+        );
+      }
+    }
+  } else {
+    // An other creditor: every live bill of the party, so the balance covers
+    // the bills this payment did not touch too.
+    const billRes = await db.prepare(
+      `SELECT b.id, b.billNo, b.billDate, b.referenceNo, b.totalSen, b.paidAmountSen
+         FROM other_party_bills b
+         LEFT JOIN document_lifecycle dl ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
+        WHERE b.orgId = ? AND b.partyId = ? AND b.partyType = 'CREDITOR' AND (dl.state IS NULL OR dl.state = 'ACTIVE')`,
+    ).bind(orgId, src.partyId).all<Record<string, unknown>>();
+    const setRes = await db.prepare(
+      `SELECT p.paymentNo, p.billId, p.date, p.amountSen FROM other_party_payments p
+         LEFT JOIN document_lifecycle dl ON dl.orgId = p.orgId AND dl.sourceType = 'other_party_payment' AND dl.sourceId = p.paymentNo
+        WHERE p.orgId = ? AND p.partyId = ? AND (dl.state IS NULL OR dl.state = 'ACTIVE')`,
+    ).bind(orgId, src.partyId).all<Record<string, unknown>>();
+    const setsByBill = new Map<string, BillSettlement[]>();
+    for (const r of setRes.results ?? []) {
+      const k = String(r.billId ?? r.bill_id ?? "");
+      const list = setsByBill.get(k) ?? [];
+      list.push({ paymentNo: String(r.paymentNo ?? r.payment_no ?? ""), date: String(r.date ?? "").slice(0, 10), sen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0) });
+      setsByBill.set(k, list);
+    }
+    const beforeOf = (b: Record<string, unknown>) => billOutstandingBefore(
+      { totalSen: Math.round(Number(b.totalSen ?? b.total_sen) || 0), paidSen: Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0) },
+      setsByBill.get(String(b.id)) ?? [], paymentNo, src.date,
+    );
+    const billById = new Map((billRes.results ?? []).map((b) => [String(b.id), b]));
+    for (const a of src.allocs) {
+      const b = billById.get(a.docId);
+      if (!b) { bills.push({ docNo: "", supplierInvNo: "", billDate: "", dueDate: "", outstandingBeforeSen: null, paidSen: a.paidSen }); continue; }
+      bills.push({
+        docNo: String(b.billNo ?? b.bill_no ?? ""),
+        supplierInvNo: String(b.referenceNo ?? b.reference_no ?? ""),
+        billDate: String(b.billDate ?? b.bill_date ?? "").slice(0, 10),
+        dueDate: "",
+        outstandingBeforeSen: beforeOf(b),
+        paidSen: a.paidSen,
+      });
+    }
+    balanceBeforeSen = (billRes.results ?? [])
+      .filter((b) => String(b.billDate ?? b.bill_date ?? "").slice(0, 10) <= src.date)
+      .reduce((t, b) => t + beforeOf(b), 0);
+  }
+  // The payee's bank from its master (Finance v2 party fields). SELECT * so a
+  // party table that has not grown the column yet still answers.
+  let payeeBank = "";
+  if (src.partyId) {
+    const party = await db.prepare(
+      src.partyKind === "SUPPLIER" ? "SELECT * FROM suppliers WHERE id = ?" : "SELECT * FROM other_parties WHERE id = ?",
+    ).bind(src.partyId).first<Record<string, unknown>>().catch(() => null);
+    payeeBank = String((party?.bankAccount ?? party?.bank_account) ?? "").trim();
+  }
+  return {
+    paymentNo, partyKind: src.partyKind, partyId: src.partyId, date: src.date,
+    bills, advanceSen: src.advanceSen, tfRepaySen: src.tfRepaySen, balanceBeforeSen, payeeBank,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // PV attachments (owner 2026-09-22, Houzs: 「附件：Cancelled 的不收；Checked 之后
 // 不能删（证据锁）」). Files live in the generic store under
 // resourceType 'payment_voucher' / resourceId = voucher id; these routes only
@@ -11298,7 +11697,9 @@ app.get("/payment-vouchers", async (c) => {
         ...(v as object),
         status: apVoided ? "VOID" : r.status,
         lifecycleState: isAp ? (String(r.approvalState ?? r.approval_state ?? "APPROVED") === "APPROVED" ? (settlementState ?? "ACTIVE") : (r.status === "VOID" ? "VOID" : "ACTIVE")) : (r.lifecycleState ?? r.lifecycle_state ?? null),
-        pvKind: isAp ? PV_KIND_AP : "EXPENSE",
+        // A transfer keeps its kind (BUG-2026-10-17-309: it was read back as
+        // EXPENSE, so a transfer printed, listed and edited as a payment).
+        pvKind: isAp ? PV_KIND_AP : String(r.pvKind ?? r.pv_kind ?? "") === PV_KIND_TRANSFER ? PV_KIND_TRANSFER : "EXPENSE",
         partyKind: (r.partyKind ?? r.party_kind ?? null) as string | null,
         partyId: (r.partyId ?? r.party_id ?? null) as string | null,
         advanceSen: Math.round(Number(r.advanceSen ?? r.advance_sen) || 0),
@@ -12093,65 +12494,90 @@ app.get("/official-receipts", async (c) => {
   }
 });
 
+// One validation for posting AND editing an official receipt: the date, the
+// income lines, and the bank / cash account the money went into.
+type OfficialReceiptInput = {
+  date: string; payTo: string; receivedFrom: string; description: string;
+  lines: { accountCode: string; description: string; amountSen: number }[]; totalSen: number;
+};
+async function validateOfficialReceipt(
+  db: Env["Variables"]["DB"],
+  body: Record<string, unknown>,
+): Promise<{ ok: true; v: OfficialReceiptInput } | { ok: false; error: string }> {
+  const date = String(body.date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "date must be YYYY-MM-DD" };
+  const coaRes = await db.prepare(
+    `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
+  ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
+  const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
+  const lv = validateDocLines(coa, body.lines);
+  if (!lv.ok) return { ok: false, error: lv.error };
+  const payTo = String(body.payTo || "");
+  const payToAcct = coa.get(payTo);
+  if (!payToAcct || (payToAcct.specialAccountType !== "SBK" && payToAcct.specialAccountType !== "SCH")) {
+    return { ok: false, error: "Deposit To must be a bank (SBK) or cash (SCH) account" };
+  }
+  return {
+    ok: true,
+    v: { date, payTo, receivedFrom: String(body.receivedFrom ?? ""), description: String(body.description ?? ""), lines: lv.lines, totalSen: lv.totalSen },
+  };
+}
+
+// A receipt's legs: DR the bank / cash account (leg 1, its id chosen by the
+// caller so an edit can move a bank match onto it), CR each line.
+function officialReceiptLegs(
+  v: OfficialReceiptInput,
+  doc: { id: string; orNo: string; sourceType: string; bankLegId: string },
+  actorUserId: string | null,
+  orgId: string,
+): LedgerEntryInput[] {
+  return [
+    {
+      id: doc.bankLegId,
+      sourceType: doc.sourceType,
+      sourceId: doc.id,
+      legNo: 1,
+      accountCode: v.payTo,
+      debitSen: v.totalSen,
+      creditSen: 0,
+      description: `${doc.orNo} · ${v.receivedFrom ? `from ${v.receivedFrom}` : "Receipt"}`,
+      actorUserId,
+      orgId,
+    },
+    ...v.lines.map((l, idx) => ({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: doc.sourceType,
+      sourceId: doc.id,
+      legNo: idx + 2,
+      accountCode: l.accountCode,
+      debitSen: 0,
+      creditSen: l.amountSen,
+      description: `${doc.orNo} · ${l.description || v.description || "Receipt"}`,
+      actorUserId,
+      orgId,
+    })),
+  ];
+}
+
 app.post("/official-receipts", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
   try {
     const body = await c.req.json();
-    const date = String(body.date || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
-    }
-    const coaRes = await c.var.DB.prepare(
-      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
-    ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
-    const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
-    const v = validateDocLines(coa, body.lines);
-    if (!v.ok) return c.json({ success: false, error: v.error }, 400);
-    const payTo = String(body.payTo || "");
-    const payToAcct = coa.get(payTo);
-    if (!payToAcct || (payToAcct.specialAccountType !== "SBK" && payToAcct.specialAccountType !== "SCH")) {
-      return c.json(
-        { success: false, error: "Deposit To must be a bank (SBK) or cash (SCH) account" },
-        400,
-      );
-    }
+    const ok = await validateOfficialReceipt(c.var.DB, body as Record<string, unknown>);
+    if (!ok.ok) return c.json({ success: false, error: ok.error }, 400);
+    const v = ok.v;
     const id = `or-${crypto.randomUUID().slice(0, 8)}`;
     const orNo = await issueDocNumber(c.var.DB, {
-      bankAccountCode: payTo,
+      bankAccountCode: v.payTo,
       direction: "in",
-      dateIso: date,
+      dateIso: v.date,
     });
     const now = new Date().toISOString();
     const orgId = getOrgId(c);
     const actorUserId =
       (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
-    const legs: LedgerEntryInput[] = [
-      {
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "official_receipt",
-        sourceId: id,
-        legNo: 1,
-        accountCode: payTo,
-        debitSen: v.totalSen,
-        creditSen: 0,
-        description: `${orNo} · ${body.receivedFrom ? `from ${body.receivedFrom}` : "Receipt"}`,
-        actorUserId,
-        orgId,
-      },
-      ...v.lines.map((l, idx) => ({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "official_receipt",
-        sourceId: id,
-        legNo: idx + 2,
-        accountCode: l.accountCode,
-        debitSen: 0,
-        creditSen: l.amountSen,
-        description: `${orNo} · ${l.description || body.description || "Receipt"}`,
-        actorUserId,
-        orgId,
-      })),
-    ];
+    const legs = officialReceiptLegs(v, { id, orNo, sourceType: "official_receipt", bankLegId: `lje-${crypto.randomUUID().slice(0, 12)}` }, actorUserId, orgId);
     const { statements: ledgerStmts } = await buildJournalEntryStatements(
       c.var.DB,
       orgId,
@@ -12164,9 +12590,9 @@ app.post("/official-receipts", async (c) => {
            status, createdBy, created_at, updated_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?)`,
       ).bind(
-        id, orNo, date,
-        String(body.receivedFrom ?? ""), String(body.description ?? ""),
-        payTo, v.totalSen, actorUserId, now, now,
+        id, orNo, v.date,
+        v.receivedFrom, v.description,
+        v.payTo, v.totalSen, actorUserId, now, now,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12183,6 +12609,106 @@ app.post("/official-receipts", async (c) => {
       { success: false, error: "Failed to save the receipt — is migration 0159 applied?" },
       400,
     );
+  }
+});
+
+// Edit a POSTED official receipt IN PLACE (owner 2026-10-17 「可以」) — same
+// OR number. Reverses the live legs, re-posts the edited ones
+// (official_receipt_restate_rev/post:<stamp>) and hides every older family —
+// the payment-voucher restate. A bank match (or the cash board's daily tick)
+// on the old bank leg moves to the new one when the bank account and amount
+// are unchanged; a matched receipt cannot change them (orBankCarry).
+app.post("/official-receipts/:id/restate", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const id = c.req.param("id");
+  try {
+    const db = c.var.DB;
+    const or = await db.prepare("SELECT * FROM official_receipts WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    if (!or) return c.json({ success: false, error: "Receipt not found" }, 404);
+    const orNo = String(or.orNo ?? or.or_no ?? "");
+    const state = await getDocState(db, orgId, "official_receipt", id);
+    if (state !== "ACTIVE" || String(or.status ?? "") === "VOID") {
+      return c.json({ success: false, error: "This receipt is cancelled — restore it before editing." }, 400);
+    }
+    const body = await c.req.json();
+    const ok = await validateOfficialReceipt(db, body as Record<string, unknown>);
+    if (!ok.ok) return c.json({ success: false, error: ok.error }, 400);
+    const v = ok.v;
+
+    // The live set: the original legs, or the newest restate.
+    const cur = (await db.prepare(
+      `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
+        WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'official_receipt%'`,
+    ).bind(id, orgId).all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
+    // What on the bank side points at those legs.
+    const curIds = cur.map((l) => l.id);
+    const matched = new Set<string>();
+    const ticked = new Set<string>();
+    let splitHeld = false;
+    if (curIds.length > 0) {
+      const marks = curIds.map(() => "?").join(", ");
+      for (const r of (await db.prepare(`SELECT matchedLegId FROM bank_statement_lines WHERE matchedLegId IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
+        matched.add(String(r.matchedLegId ?? r.matched_leg_id ?? ""));
+      }
+      for (const r of (await db.prepare(`SELECT leg_id FROM bank_line_leg_splits WHERE leg_id IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
+        matched.add(String(r.legId ?? r.leg_id ?? ""));
+        splitHeld = true;
+      }
+      for (const r of (await db.prepare(`SELECT leg_id FROM bank_board_cleared WHERE leg_id IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
+        ticked.add(String(r.legId ?? r.leg_id ?? ""));
+      }
+    }
+    const carry = orBankCarry(cur, { matched, ticked }, { payTo: v.payTo, totalSen: v.totalSen });
+    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
+
+    const now = new Date().toISOString();
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const stamp = Date.now();
+    const postSource = `official_receipt_restate_post:${stamp}`;
+    const bankLegId = `lje-${crypto.randomUUID().slice(0, 12)}`;
+    const revLegs: LedgerEntryInput[] = cur.map((l, i) => ({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: `official_receipt_restate_rev:${stamp}`, sourceId: id, legNo: i + 1,
+      accountCode: l.accountCode, debitSen: Number(l.creditSen) || 0, creditSen: Number(l.debitSen) || 0, description: `Restate rev · ${orNo}`, actorUserId, orgId,
+    }));
+    const newLegs = officialReceiptLegs(v, { id, orNo, sourceType: postSource, bankLegId }, actorUserId, orgId);
+    const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
+    const statements: D1PreparedStatement[] = [...jeStmts];
+    statements.push(db.prepare(
+      `UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%' AND sourceType <> ?`,
+    ).bind(id, orgId, postSource));
+    // The bank match / split / daily tick follow the re-posted bank leg.
+    if (carry.carryFrom) {
+      if (matched.has(carry.carryFrom)) {
+        statements.push(db.prepare("UPDATE bank_statement_lines SET matchedLegId = ? WHERE matchedLegId = ?").bind(bankLegId, carry.carryFrom));
+      }
+      if (splitHeld) statements.push(db.prepare("UPDATE bank_line_leg_splits SET leg_id = ? WHERE leg_id = ?").bind(bankLegId, carry.carryFrom));
+      if (ticked.has(carry.carryFrom)) statements.push(db.prepare("UPDATE bank_board_cleared SET leg_id = ? WHERE leg_id = ?").bind(bankLegId, carry.carryFrom));
+    }
+    statements.push(db.prepare(
+      "UPDATE official_receipts SET date = ?, receivedFrom = ?, description = ?, payTo = ?, totalSen = ?, updated_at = ? WHERE id = ?",
+    ).bind(v.date, v.receivedFrom, v.description, v.payTo, v.totalSen, now, id));
+    statements.push(db.prepare("DELETE FROM official_receipt_lines WHERE receiptId = ?").bind(id));
+    v.lines.forEach((l, idx) => {
+      statements.push(db.prepare(
+        `INSERT INTO official_receipt_lines (id, receiptId, accountCode, description, amountSen, lineOrder)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(`orl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));
+    });
+    const beforeLines = (await db.prepare("SELECT accountCode, description, amountSen FROM official_receipt_lines WHERE receiptId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>()).results ?? [];
+    await db.batch(statements);
+    await emitAudit(c, {
+      resource: "accounting",
+      resourceId: orNo,
+      action: "update",
+      before: { date: or.date, payTo: or.payTo ?? or.pay_to, receivedFrom: or.receivedFrom ?? or.received_from, description: or.description, totalSen: or.totalSen ?? or.total_sen, lines: beforeLines },
+      after: { date: v.date, payTo: v.payTo, receivedFrom: v.receivedFrom, description: v.description, totalSen: v.totalSen, lines: v.lines },
+    });
+    return c.json({ success: true, data: { id, orNo, bankMatchMoved: !!carry.carryFrom } });
+  } catch (e) {
+    console.error("[or] restate failed:", e);
+    return c.json({ success: false, error: "Failed to update the receipt" }, 400);
   }
 });
 
@@ -12211,6 +12737,26 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
     ...lc.statements,
     c.var.DB.prepare("UPDATE official_receipts SET status = ?, updated_at = ? WHERE id = ?").bind(docStatus, new Date().toISOString(), id),
   ];
+  // An EDITED receipt's live legs are its newest official_receipt_restate_post
+  // family, which applyLifecycle's exact match on "official_receipt" misses
+  // (class C5). Void / delete hide the whole family so the GL nets to zero;
+  // unvoid then restores THAT family, not the pre-edit original.
+  if (lc.newState !== "ACTIVE") {
+    statements.push(
+      c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
+    );
+  } else {
+    const fams = (await c.var.DB.prepare(
+      `SELECT DISTINCT sourceType FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt_restate_post:%'`,
+    ).bind(id, orgId).all<{ sourceType: string }>()).results ?? [];
+    const live = liveRestatePostType(fams.map((f) => String(f.sourceType)), "official_receipt");
+    if (live) {
+      statements.push(
+        c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
+        c.var.DB.prepare("UPDATE ledger_journal_entries SET hidden = 0 WHERE sourceId = ? AND orgId = ? AND sourceType = ?").bind(id, orgId, live),
+      );
+    }
+  }
   await c.var.DB.batch(statements);
   return c.json({ success: true, data: { state: lc.newState } });
 });
@@ -13593,12 +14139,16 @@ app.get("/trade-finance", async (c) => {
   if (denied) return denied;
   try {
     const sources = await getTfSources(c.var.DB);
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // As at a past date (owner 2026-10-17, Creditor Aging as at a month-end):
+    // each draw as it stood then; absent = today, unchanged.
+    const asOfQ = c.req.query("asOf") ?? "";
+    const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+    const todayIso = asOf ?? new Date().toISOString().slice(0, 10);
     const out = [];
     for (const s of sources) {
       const acct = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
         .bind(s.accountCode).first<{ name: string }>();
-      const derived = await loadTfDraws(c.var.DB, s);
+      const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
       const draws = [];
       for (const d of derived.draws) {
         // Which supplier(s) the lender paid for us on this draw — the payment's
@@ -16934,9 +17484,31 @@ app.get("/cash-position", async (c) => {
     state: String(v.approvalState ?? v.approval_state ?? "DRAFT") as "DRAFT" | "PREPARED" | "CHECKED",
   }));
   const awaitingCheckedSen = awaitingApproval.filter((v) => v.state === "CHECKED").reduce((s, v) => s + v.amountSen, 0);
+  // Trade finance to repay, by due date (owner 2026-10-17, Finance v2): every
+  // draw still owed — the same draws Creditor Aging's Trade Finance section
+  // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
+  const tradeFinance: { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number }[] = [];
+  try {
+    for (const s of await getTfSources(c.var.DB)) {
+      const derived = await loadTfDraws(c.var.DB, s);
+      for (const d of derived.draws) {
+        if (d.outstandingSen <= 0) continue;
+        let paidFor = "";
+        try {
+          const rs = await c.var.DB.prepare("SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?")
+            .bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
+          paidFor = [...new Set((rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean))].join(", ");
+        } catch { /* leave blank */ }
+        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender: s.lenderName, ref: d.drawSourceId, paidFor, outstandingSen: d.outstandingSen });
+      }
+    }
+  } catch {
+    /* trade finance not set up → nothing to repay there */
+  }
+  tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, tradeFinance },
   });
 });
 

@@ -41,7 +41,7 @@ import {
 import { getOpeningDate } from "./accounting";
 import { getOrgId } from "../lib/tenant";
 import { loadSoLinePriceIndex } from "../lib/do-value";
-import { checkInvoiceLocked, lockedResponse } from "../lib/lock-helpers";
+import { checkInvoiceLocked, issuedNotesLockMessage, issuedNotesOnInvoice, lockedResponse } from "../lib/lock-helpers";
 import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
 import { parseDebtorCode } from "../../lib/debtor";
 import { nextMonthDueDate } from "../../lib/terms";
@@ -1754,6 +1754,29 @@ app.post("/import-line-prices", async (c) => {
     }
   }
 
+  // Issued credit / debit notes lock their invoice's prices (owner 2026-10-17).
+  const noteInvIds = [...new Set([...current.values()].map((l) => l.invoiceId).filter(Boolean))];
+  for (let i = 0; i < noteInvIds.length; i += 100) {
+    const chunk = noteInvIds.slice(i, i + 100);
+    const ph = chunk.map(() => "?").join(",");
+    const res = await c.var.DB.prepare(
+      `SELECT invoiceId, noteNumber FROM credit_notes WHERE status IN ('APPROVED','POSTED') AND invoiceId IN (${ph})
+       UNION ALL
+       SELECT invoiceId, noteNumber FROM debit_notes WHERE status = 'POSTED' AND invoiceId IN (${ph})`,
+    )
+      .bind(...chunk, ...chunk)
+      .all<Record<string, unknown>>();
+    const byInv = new Map<string, string[]>();
+    for (const r of res.results ?? []) {
+      const inv = String(r.invoiceId ?? r.invoice_id ?? "");
+      byInv.set(inv, [...(byInv.get(inv) ?? []), String(r.noteNumber ?? r.note_number ?? "")]);
+    }
+    for (const l of current.values()) {
+      const notes = byInv.get(l.invoiceId);
+      if (notes) l.invoiceNotes = notes;
+    }
+  }
+
   const plan = planInvoicePriceImport(rows, current);
 
   if (!execute) {
@@ -2430,6 +2453,13 @@ app.put("/:id", async (c) => {
       if (nextStatus === "CANCELLED" && existing.status !== "CANCELLED") {
         const denied = await requirePermission(c, "invoices", "void");
         if (denied) return denied;
+        // An issued credit / debit note has moved this invoice's total; the
+        // cancel would reverse the invoice at the moved figure and leave the
+        // note's own legs standing (owner 2026-10-17, notes can be posted).
+        const notes = await issuedNotesOnInvoice(c.var.DB, id);
+        if (notes.length) {
+          return c.json({ success: false, error: issuedNotesLockMessage("cancel", existing.invoiceNo, notes) }, 409);
+        }
       }
     }
 

@@ -3,8 +3,8 @@
 // (plan 2026-10-16-finance-v2-reports Task 5). One switch for the view and one
 // for the product line on the title row (the three views share the line); the
 // statement keeps its data call, figures and drag-to-reclassify, and gets the
-// period stepper, Edit Layout, DETAIL L1–L4, one download (CSV kept until the
-// owner decides), the amber negative-stock warning with View / Hide, the
+// period stepper, Edit Layout, DETAIL L1–L4, one download (Excel and PDF only;
+// owner 2026-10-17), the amber negative-stock warning with View / Hide, the
 // framed two-row-header table, and "Open In GL →" in the drill's total.
 // Made-up figures only (the repo is public).
 // ---------------------------------------------------------------------------
@@ -77,10 +77,11 @@ test("periods: months, calendar quarters and years — the keys /pl-statement re
   assert.match(st, /<PeriodStepper value=\{period\} options=\{periodOptions\} onChange=\{setPeriod\} today=\{today\} \/>/);
 });
 
-test("toolbar: Edit Layout, DETAIL L1–L4 (hidden while editing), one download with CSV kept", () => {
+test("toolbar: Edit Layout, DETAIL L1–L4 (hidden while editing), one download — Excel and PDF only", () => {
   assert.match(st, /<EditLayoutToggle on=\{edit\}/);
   assert.match(st, /\{!edit && <DetailLevels levels=\{\[1, 2, 3, 4\]\} value=\{level\} onChange=\{\(L\) => applyLevel\(rows, L\)\} \/>\}/);
-  for (const l of ["Export to Excel", "Print / PDF", "Export to CSV"]) assert.ok(st.includes(`label: "${l}"`), l);
+  for (const l of ["Export to Excel", "Print / PDF"]) assert.ok(st.includes(`label: "${l}"`), l);
+  assert.doesNotMatch(st, /CSV/, "no CSV (owner 2026-10-17)");
   assert.match(st, /<EditLayoutBanner>/);
 });
 
@@ -91,8 +92,9 @@ test("the amber negative-stock warning opens with View and closes with Hide", ()
 });
 
 test("the frame and the two-row header (period over RM | %), first column frozen", () => {
-  assert.match(st, /company=\{PL_COMPANY\}/);
-  assert.match(ui, /const PL_COMPANY = "HOOKKA MANUFACTURING SDN BHD";/, "the printed name stays until the owner confirms the legal name");
+  // Owner 2026-10-17: the legal name, HOOKKA INDUSTRIES SDN BHD, on every report.
+  assert.match(st, /company=\{COMPANY\.HOOKKA\.name\}/);
+  assert.doesNotMatch(ui, /PL_COMPANY|MANUFACTURING SDN/);
   assert.match(st, /maxHeight="calc\(100vh - 300px\)"/);
   assert.match(st, /<th rowSpan=\{2\} data-cell="stick" className="min-w-\[280px\]">Item<\/th>/);
   assert.match(st, /<tr data-row="h2">/);

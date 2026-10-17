@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
+import { KpiCards } from "@/components/finance/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
@@ -10,7 +11,6 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Plus,
-  FileX,
   X,
   Trash2,
 } from "lucide-react";
@@ -23,6 +23,10 @@ import { amountInWords } from "@/lib/amount-in-words";
 import { printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
+import { getCurrentUser } from "@/lib/auth";
+import { returnCandidateBlock, type ReturnCreditCandidate } from "@/lib/cn-from-return";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
 
@@ -61,6 +65,8 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
     date: formatDateDMY(cn.date),
     partyLabel: "Customer",
     partyName: cn.customerName ?? "",
+    amountBox: { label: "Credit amount", value: formatCurrency(cn.totalAmount) },
+    facts: [{ label: "Against invoice", value: cn.invoiceNumber || "—" }],
     columns: [
       { label: "Description" },
       { label: "Qty", align: "right" },
@@ -69,13 +75,13 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
     ],
     lines,
     totalCells: ["", "", "Total", formatCurrency(cn.totalAmount)],
-    footerNote: `Against Invoice: ${cn.invoiceNumber || "—"}`,
     remarks,
     amountWords: amountInWords(cn.totalAmount),
     signatures: [{ label: "Issued by" }, { label: "Approved by" }],
     printedOn: formatDateDMY(new Date()),
   };
 }
+
 
 export default function CreditNotesPage() {
   const { data: cnResp, loading, refresh: refreshCreditNotes } = useCachedJson<{ success?: boolean; data?: CreditNote[] }>("/api/credit-notes");
@@ -120,82 +126,77 @@ export default function CreditNotesPage() {
   const [items, setItems] = useState<CreditNoteItemRow[]>([newCNItem()]);
   const [creating, setCreating] = useState(false);
 
-  // Pure return → land here PRE-FILLED (owner 2026-07-15): open the New CN modal
-  // with reason=RETURN, one line per returned item, and (best-effort) the
-  // customer + the DO's invoice pre-selected, so the operator only confirms the
-  // refund amount instead of starting from a blank list.
+  // A note from a delivery return (owner 2026-07-15 → priced 2026-10-17,
+  // Finance v2 "create a Credit Note from a Delivery Return"): the New CN form
+  // opens with the customer, the invoice that billed the return's delivery
+  // order, reason RETURN and one line per returned item at that invoice's
+  // price per unit (GET /api/credit-notes/from-returns). Reached from the
+  // "From Delivery Return" picker on this page or from a return's own page
+  // (?fromReturn=<id>). The note remembers its return (deliveryReturnId).
   const [searchParams, setSearchParams] = useSearchParams();
   const fromReturn = searchParams.get("fromReturn") || "";
-  // customer + invoice captured from the DR; applied to the selects once the
-  // invoices list has loaded (it loads lazily when the modal opens).
-  const pendingPrefill = useRef<{ customerId: string; invoiceNo: string } | null>(null);
+  const [fromReturnDraft, setFromReturnDraft] = useState<ReturnCreditCandidate | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [candidates, setCandidates] = useState<ReturnCreditCandidate[] | null>(null);
+  // The invoice is applied once the invoices list has loaded (it loads lazily
+  // when the modal opens).
+  const pendingInvoiceId = useRef<string>("");
   const prefillRan = useRef(false);
+
+  const applyReturn = (d: ReturnCreditCandidate) => {
+    setFromReturnDraft(d);
+    setSelectedCustomerId(d.customerId);
+    pendingInvoiceId.current = d.invoice?.id ?? "";
+    setSelectedInvoiceId(d.invoice?.id ?? "");
+    setReason("RETURN");
+    setReasonDetail(`Delivery Return ${d.returnNo}`.trim());
+    setItems(d.lines.map((l) => ({
+      _uid: crypto.randomUUID(),
+      description: l.description,
+      quantity: l.quantity,
+      unitPriceSen: l.unitPriceSen ?? 0,
+      priceStr: l.unitPriceSen != null ? (l.unitPriceSen / 100).toFixed(2) : "",
+    })));
+    setPickOpen(false);
+    refreshInvoices();
+    setShowCreateModal(true);
+  };
 
   useEffect(() => {
     if (!fromReturn || prefillRan.current) return;
     prefillRan.current = true;
     void (async () => {
       try {
-        const drRes = await fetch(
-          `/api/delivery-returns/${encodeURIComponent(fromReturn)}`,
-        );
-        const drJson = (await drRes.json()) as {
-          data?: {
-            returnNo?: string;
-            customerId?: string;
-            deliveryOrderId?: string;
-            items?: Array<{ productCode?: string; productName?: string; quantity?: number }>;
-          };
-        };
-        const dr = drJson?.data;
-        if (!dr) return;
-        setReason("RETURN");
-        setReasonDetail(`Delivery Return ${dr.returnNo ?? ""}`.trim());
-        setItems(
-          (dr.items ?? []).map((it) => ({
-            _uid: crypto.randomUUID(),
-            description: [it.productCode, it.productName].filter(Boolean).join(" "),
-            quantity: Number(it.quantity ?? 1),
-            unitPriceSen: 0,
-          })),
-        );
-        let invoiceNo = "";
-        if (dr.deliveryOrderId) {
-          try {
-            const doRes = await fetch(
-              `/api/delivery-orders/${encodeURIComponent(dr.deliveryOrderId)}`,
-            );
-            const doJson = (await doRes.json()) as { data?: { invoiceNo?: string } };
-            invoiceNo = doJson?.data?.invoiceNo ?? "";
-          } catch {
-            /* best-effort — operator can pick the invoice manually */
-          }
-        }
-        pendingPrefill.current = { customerId: dr.customerId ?? "", invoiceNo };
-        setShowCreateModal(true);
+        const res = await fetch(`/api/credit-notes/from-returns?returnId=${encodeURIComponent(fromReturn)}`);
+        const j = (await res.json()) as { success?: boolean; data?: ReturnCreditCandidate[] };
+        const d = j?.success ? j.data?.[0] : undefined;
+        if (d) applyReturn(d);
       } catch {
-        /* best-effort */
+        /* best-effort — the operator can still use the picker */
+      } finally {
+        setSearchParams({});
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot, ref-guarded
   }, [fromReturn]);
 
-  // Once the invoices list is loaded, apply the pending customer + invoice.
+  // Once the invoices list is loaded, apply the pending invoice (the select
+  // only offers invoices it has loaded).
   useEffect(() => {
-    const p = pendingPrefill.current;
-    if (!p || invoices.length === 0) return;
-    if (p.customerId) setSelectedCustomerId(p.customerId);
-    if (p.invoiceNo) {
-      const inv = invoices.find((i) => {
-        const r = i as { invoiceNo?: string; invoiceNumber?: string };
-        return r.invoiceNo === p.invoiceNo || r.invoiceNumber === p.invoiceNo;
-      });
-      if (inv) setSelectedInvoiceId(inv.id);
-    }
-    pendingPrefill.current = null;
-    if (fromReturn) setSearchParams({});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply once invoices arrive
+    const id = pendingInvoiceId.current;
+    if (!id || invoices.length === 0) return;
+    if (invoices.some((i) => i.id === id)) setSelectedInvoiceId(id);
+    pendingInvoiceId.current = "";
   }, [invoices]);
+
+  const openPicker = () => {
+    setPickOpen(true);
+    setCandidates(null);
+    fetch("/api/credit-notes/from-returns")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ReturnCreditCandidate[] }>)
+      .then((j) => setCandidates(j?.success ? (j.data ?? []) : []))
+      .catch(() => setCandidates([]));
+  };
 
   // Ticked rows for the batch actions bar (print vouchers + Excel/CSV export).
   const [selectedCreditNotes, setSelectedCreditNotes] = useState<CreditNote[]>([]);
@@ -237,10 +238,12 @@ export default function CreditNotesPage() {
           reason,
           reasonDetail,
           items: payloadItems,
+          ...(fromReturnDraft ? { deliveryReturnId: fromReturnDraft.id } : {}),
         },
       });
       if (data.success) {
         setShowCreateModal(false);
+        setFromReturnDraft(null);
         setSelectedInvoiceId("");
         setReason("RETURN");
         setReasonDetail("");
@@ -255,7 +258,7 @@ export default function CreditNotesPage() {
     setCreating(false);
   };
 
-  const columns: Column<CreditNote>[] = [
+  const columns = useMemo<Column<CreditNote>[]>(() => [
     {
       key: "noteNumber",
       label: "CN Number",
@@ -309,23 +312,73 @@ export default function CreditNotesPage() {
         </Badge>
       ),
     },
-  ];
+  ], []);
 
-  const contextMenuItems: ContextMenuItem[] = [
+  // Post / Back to Draft (owner 2026-10-17, Finance v2). Posting applies the
+  // note — the customer owes less, the invoice's total drops, the books take
+  // the entries; Back to Draft undoes all three in one go.
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
+  const afterNoteChange = () => {
+    invalidateCachePrefix("/api/credit-notes");
+    invalidateCachePrefix("/api/invoices");
+    invalidateCachePrefix("/api/accounting");
+    refreshCreditNotes();
+  };
+  const sendNote = async (url: string, init: RequestInit, done: string, failed: string) => {
+    try {
+      const res = await fetch(url, init);
+      const j = (await res.json()) as { success?: boolean; error?: string };
+      if (res.ok && j.success) {
+        toast.success(done);
+        afterNoteChange();
+      } else toast.error(j.error || failed);
+    } catch {
+      toast.error(failed);
+    }
+  };
+  const postNote = async (cn: CreditNote) => {
+    if (!(await confirm({
+      title: `Post ${cn.noteNumber}?`,
+      message: `${formatCurrency(cn.totalAmount)} comes off invoice ${cn.invoiceNumber || "—"} and off what ${cn.customerName} owes, and goes into the books.`,
+      confirmLabel: "Post",
+    }))) return;
+    await sendNote(`/api/credit-notes/${encodeURIComponent(cn.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "POSTED", approvedBy: getCurrentUser()?.displayName?.trim() || undefined }),
+    }, `${cn.noteNumber} posted`, "Could not post the credit note");
+  };
+  const unpostNote = async (cn: CreditNote) => {
+    if (!(await confirm({
+      title: `Put ${cn.noteNumber} back to draft?`,
+      message: `${formatCurrency(cn.totalAmount)} goes back on invoice ${cn.invoiceNumber || "—"} and on what ${cn.customerName} owes, and its entries come out of the books. You can post it again later.`,
+      confirmLabel: "Back to Draft",
+      danger: true,
+    }))) return;
+    await sendNote(`/api/credit-notes/${encodeURIComponent(cn.id)}/unpost`, { method: "POST" },
+      `${cn.noteNumber} is a draft again`, "Could not put the credit note back to draft");
+  };
+
+  const contextMenuItems = (row: CreditNote): ContextMenuItem[] => [
     {
       label: "Print PDF",
-      action: async (row) => {
+      action: async (r: CreditNote) => {
         try {
           const { generateCreditNotePdf } = await import("@/lib/generate-credit-note-pdf");
-          generateCreditNotePdf(row);
+          generateCreditNotePdf(r);
         } catch {
           /* generator handles its own draw; nothing to surface here */
         }
       },
     },
+    ...(row.status === "DRAFT"
+      ? [{ label: "Post", action: (r: CreditNote) => void postNote(r) }]
+      : [{ label: "Back to Draft", danger: true, action: (r: CreditNote) => void unpostNote(r) }]),
     {
       label: "Refresh",
-      action: (_row) => refreshCreditNotes(),
+      separator: true,
+      action: () => refreshCreditNotes(),
     },
   ];
 
@@ -352,102 +405,146 @@ export default function CreditNotesPage() {
         title="Credit Notes"
         explain="Credit notes for returns, price adjustments and damages."
         actions={
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-2" /> New Credit Note
-          </Button>
+          <>
+            <Button variant="outline" onClick={openPicker}>From Delivery Return</Button>
+            <Button onClick={() => { setFromReturnDraft(null); openCreate(); }}>
+              <Plus className="h-4 w-4 mr-2" /> New Credit Note
+            </Button>
+          </>
         }
       />
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Summary (finance v2: KPI cards, same figures) */}
+      <KpiCards
+        items={[
+          { label: "Total CN value", value: `-${formatCurrency(totalCNValue)}`, tone: "err", note: `${creditNotes.length} note${creditNotes.length === 1 ? "" : "s"}` },
+          { label: "Draft", value: String(draftCount) },
+          { label: "Posted", value: String(postedCount) },
+        ]}
+      />
+
+      {/* Data Grid */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h3 className="text-[14px] font-semibold text-[#1F1D1B]">All Credit Notes</h3>
+          <span className="text-[12px] text-[#6B7280]">{creditNotes.length} note{creditNotes.length === 1 ? "" : "s"}</span>
+        </div>
+        <BatchActionsBar
+          count={selectedCreditNotes.length}
+          onPrint={() => printVouchers(selectedCreditNotes.map(buildCreditNoteVoucher))}
+          exportName="credit-notes"
+          exportAoa={() => [
+            ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
+            ...selectedCreditNotes.flatMap((cn) =>
+              cn.items.map((item) => [
+                cn.noteNumber,
+                formatDateDMY(cn.date),
+                cn.customerName ?? "",
+                cn.status ?? "ACTIVE",
+                cn.invoiceNumber ?? "",
+                cn.reason ?? "",
+                (Number(cn.totalAmount ?? 0) / 100).toFixed(2),
+                item.description ?? "",
+                String(item.quantity ?? ""),
+                (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
+                (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
+              ]),
+            ),
+          ]}
+        />
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500">Total CN Value</p>
-                <p className="text-xl font-bold text-[#9A3A2D] truncate">-{formatCurrency(totalCNValue)}</p>
-              </div>
-              <FileX className="h-8 w-8 text-[#9A3A2D] shrink-0" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Draft</p>
-                <p className="text-2xl font-bold">{draftCount}</p>
-              </div>
-              <Badge variant="status" status="DRAFT">DRAFT</Badge>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Posted</p>
-                <p className="text-2xl font-bold">{postedCount}</p>
-              </div>
-              <Badge variant="status" status="POSTED">POSTED</Badge>
-            </div>
+          <CardContent className="p-0">
+            <DataGrid
+              columns={columns}
+              data={creditNotes}
+              keyField="id"
+              virtualize
+              gridId="credit-notes"
+              selectable
+              onSelectionChange={setSelectedCreditNotes}
+              contextMenuItems={contextMenuItems}
+              headerMenu
+              reorderableHeaders
+              exportName="Credit Notes"
+            />
           </CardContent>
         </Card>
       </div>
 
-      {/* Data Grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle>All Credit Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <BatchActionsBar
-            count={selectedCreditNotes.length}
-            onPrint={() => printVouchers(selectedCreditNotes.map(buildCreditNoteVoucher))}
-            exportName="credit-notes"
-            exportAoa={() => [
-              ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
-              ...selectedCreditNotes.flatMap((cn) =>
-                cn.items.map((item) => [
-                  cn.noteNumber,
-                  formatDateDMY(cn.date),
-                  cn.customerName ?? "",
-                  cn.status ?? "ACTIVE",
-                  cn.invoiceNumber ?? "",
-                  cn.reason ?? "",
-                  (Number(cn.totalAmount ?? 0) / 100).toFixed(2),
-                  item.description ?? "",
-                  String(item.quantity ?? ""),
-                  (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
-                  (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
-                ]),
-              ),
-            ]}
-          />
-          <DataGrid
-            columns={columns}
-            data={creditNotes}
-            keyField="id"
-            virtualize
-            gridId="credit-notes"
-            selectable
-            onSelectionChange={setSelectedCreditNotes}
-            contextMenuItems={contextMenuItems}
-          />
-        </CardContent>
-      </Card>
+      {/* From Delivery Return — pick a return, the form fills in. */}
+      {pickOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onMouseDown={(e) => { if (e.target === e.currentTarget) setPickOpen(false); }}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[85vh] overflow-y-auto" data-cn-return-picker="">
+            <div className="flex items-center justify-between p-5 border-b">
+              <div>
+                <h2 className="text-lg font-semibold">Credit Note from Delivery Return</h2>
+                <p className="text-[12px] text-[#6B7280]">Pick a return — customer, invoice and returned items fill in at the invoice's prices; check them, then save.</p>
+              </div>
+              <button onClick={() => setPickOpen(false)} aria-label="Close"><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <div className="p-4">
+              {candidates === null ? (
+                <p className="py-8 text-center text-sm text-[#6B7280]">Loading…</p>
+              ) : candidates.length === 0 ? (
+                <p className="py-8 text-center text-sm text-[#6B7280]">No delivery returns yet.</p>
+              ) : (
+                <table data-fin-list className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="px-3 py-2 text-left">Return No</th>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Invoice</th>
+                      <th className="px-3 py-2 text-right">Items</th>
+                      <th className="px-3 py-2 text-right">Value</th>
+                      <th className="px-3 py-2 text-right"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidates.map((d) => {
+                      const why = returnCandidateBlock(d);
+                      return (
+                        <tr
+                          key={d.id}
+                          data-fin-nolift={why ? "" : undefined}
+                          className={why ? "bg-[#F7F5F1] text-[#9CA3AF]" : "cursor-pointer"}
+                          onClick={why ? undefined : () => applyReturn(d)}
+                          title={why || "Fill a new credit note from this return"}
+                        >
+                          <td className="px-3 py-2 font-mono">{d.returnNo}</td>
+                          <td className="px-3 py-2">{d.date ? formatDateDMY(d.date) : "-"}</td>
+                          <td className="px-3 py-2">{d.customerName}</td>
+                          <td className="px-3 py-2">{d.invoice?.invoiceNo ?? "-"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{d.lines.reduce((s, l) => s + l.quantity, 0)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{d.invoice ? formatRM(d.valueSen) : "-"}{d.unpriced ? <span className="block text-[11px] text-[#9C6F1E]">{d.unpriced} unpriced</span> : null}</td>
+                          <td className="px-3 py-2 text-right text-[12px]">{why ? <span className={d.creditNote ? "text-[#27500A]" : ""}>{why}</span> : <span className="text-[#6B5C32]">Use →</span>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-lg font-semibold">Create Credit Note</h2>
-              <button onClick={() => setShowCreateModal(false)}>
+              <h2 className="text-lg font-semibold">Create Credit Note{fromReturnDraft ? <span className="ml-2 text-sm font-normal text-[#6B7280]">from {fromReturnDraft.returnNo}</span> : null}</h2>
+              <button onClick={() => { setShowCreateModal(false); setFromReturnDraft(null); }}>
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
             <div className="p-6 space-y-4">
+              {fromReturnDraft && fromReturnDraft.unpriced > 0 && (
+                <p className="rounded-md border border-[#F2D9A6] bg-[#FBF3E4] px-3 py-2 text-[12px] text-[#7A5B12]" data-cn-unpriced="">
+                  {fromReturnDraft.unpriced} returned line{fromReturnDraft.unpriced === 1 ? " was" : "s were"} not on the invoice — enter {fromReturnDraft.unpriced === 1 ? "its" : "their"} price.
+                </p>
+              )}
               {/* #5: Customer first → only their not-yet-settled invoices. */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Customer</label>

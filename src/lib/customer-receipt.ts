@@ -38,10 +38,15 @@ export function hasUnallocated(p: PaymentRecord): boolean {
   return (p.lifecycleState ?? "ACTIVE") === "ACTIVE" && unallocatedSen(p) > 0;
 }
 
+const RECEIPT_METHOD: Record<string, string> = {
+  BANK_TRANSFER: "Bank transfer", CHEQUE: "Cheque", CASH: "Cash", CREDIT_CARD: "Credit card",
+};
+
 // One customer receipt → a PAYMENT RECEIPT voucher: one line per invoice the
-// receipt cleared (Invoice No · amount), total = the receipt amount. Money
-// stays integer sen, formatted with formatCurrency. The customer twin of
-// buildSupplierPaymentVoucher in supplier-payments.tsx.
+// receipt cleared (Invoice No · amount), plus what is still on account, total =
+// the receipt amount, boxed beside the customer (print design 1a). Money stays
+// integer sen, formatted with formatCurrency. The customer twin of
+// buildSupplierPaymentVoucher in src/lib/supplier-payment-voucher.ts.
 export function buildCustomerPaymentVoucher(p: PaymentRecord): VoucherSpec {
   const active = (p.lifecycleState ?? "ACTIVE") === "ACTIVE";
   // Date first on the printed receipt too — the customer matches it against
@@ -49,6 +54,8 @@ export function buildCustomerPaymentVoucher(p: PaymentRecord): VoucherSpec {
   const lines: VoucherLine[] = p.allocations.map((a) => ({
     cells: [a.invoiceDate ? formatDateDMY(a.invoiceDate) : "", a.invoiceNumber, formatCurrency(a.amount)],
   }));
+  const onAccount = unallocatedSen(p);
+  if (onAccount > 0) lines.push({ cells: ["", "On account (not yet against an invoice)", formatCurrency(onAccount)] });
   return {
     title: active ? "PAYMENT RECEIPT" : "PAYMENT RECEIPT — VOID",
     company: VOUCHER_COMPANY,
@@ -56,6 +63,8 @@ export function buildCustomerPaymentVoucher(p: PaymentRecord): VoucherSpec {
     date: formatDateDMY(p.date),
     partyLabel: "Received From",
     partyName: p.customerName ?? "",
+    partyDetails: [{ label: "Method", value: RECEIPT_METHOD[p.method] ?? String(p.method ?? "") }],
+    amountBox: { label: "Amount received", value: formatCurrency(p.amount) },
     columns: [{ label: "Date" }, { label: "Invoice" }, { label: "Amount", align: "right" }],
     lines,
     totalCells: ["", "Total", formatCurrency(p.amount)],

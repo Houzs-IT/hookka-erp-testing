@@ -1,4 +1,19 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-318 flipped to 🟢 after the #956 / #959 prod check.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-318 gains its follow-up (branch `fix/delivery-return-cn-blocked`, to main): the return's page says why no credit note can be raised.
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-318 (branch `fix/delivery-return-cn-status`, to main).
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-317 (branch `feat/finance-notes-post`, to main); BUG-2026-10-17-314 flipped to 🟢 after the #954 prod check.
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-314 (branch `fix/finance-report-gap-rows`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-312 and -313 flipped to 🟢 after the #949 prod check.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-309 to -311 flipped to 🟢 after the #948 prod check.
+> **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-312 and -313 (branch `feat/finance-v2-party-fields`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-309 to -311 (branch `feat/finance-v2-print-1a`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-308 flipped to 🟢 after the #945 prod check (branch `docs/finance-v2-plan8-close`).
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-308 (branch `fix/m-dashboard-anchor-month`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-307 flipped to 🟢 after the #941 prod check (branch `feat/finance-v2-mobile-b`).
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-307 (branch `fix/m-receivables-aging-total`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-306 flipped to 🟢 after the #937 prod check (branch `feat/finance-v2-einvoice`).
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-306 (branch `fix/ap-invoices-cancelled-outstanding`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-305 flipped to 🟢 after the #927 prod check (branch `feat/finance-v2-reports-5`).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-305 (branch `feat/finance-v2-reports-4`, to main; 304 is taken on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-303 flipped to 🟢 after the #910 prod check (branch `feat/finance-v2-foundation`).
@@ -126,6 +141,170 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-319 — Production finishing pulled shipped and invoiced orders back to READY_TO_SHIP `production` `sales-orders` 🟡
+
+🟡 Code fixed; data correction script ready, run after deploy. Both production-completion cascades (Upholstery-done and PO-COMPLETED, SO and CO twins in `production-orders/_helpers.ts`) set READY_TO_SHIP whenever the order was "not already READY_TO_SHIP" — so an order that had shipped, been delivered, invoiced or even closed went BACK to READY_TO_SHIP when its last job card was scanned after the goods left. The dispatch cascade only flipped READY_TO_SHIP → SHIPPED, so goods sent before the last scan left the SO in production, and finishing then parked it at READY_TO_SHIP for good. Found from the merged dashboard's Order Pipeline (owner 2026-10-17: READY_TO_SHIP 823 SOs / RM 999k against Pending Delivery ~RM 54k). Read-only check on prod, 830 SOs: 98 already invoiced (RM 141k), 688 with every finished-goods unit DELIVERED, 3 fully loaded/delivered, 8 part shipped, 32 genuinely in the warehouse, 1 with a draft DO. Example: SO 400 — DO dispatched and invoiced 10-09, back to READY_TO_SHIP 10-14.
+
+Fix = forward-only rule `canAdvanceToReadyToShip` (CONFIRMED / IN_PRODUCTION only; `src/api/lib/ready-to-ship-guard.ts`) on all four forward cascades, also inside the UPDATE's WHERE; dispatch now ships an SO still IN_PRODUCTION / CONFIRMED. Data = `scripts/fix-ready-to-ship-backslide-2026-10-17.mjs` (dry run by default; each SO goes to the status its own documents prove — invoices → INVOICED / CLOSED, all units delivered → DELIVERED, all units out → SHIPPED — with an audit row and a restore file). Regression: `tests/ready-to-ship-guard.test.mjs`.
+
+## BUG-2026-10-17-318 — A delivery return read "CN issued" with no credit note behind it `delivery` `finance` 🟢
+
+🟢 **Fixed and verified on prod 2026-10-17** (#956, #959): the reported return lists as "Awaiting credit note" and counts as open; its page says its invoice is fully paid, so no credit note can go against it — no button.
+
+**Symptom.** Reported by the owner 2026-10-17 (DR-2608-001): the return's status chip said "CN issued", and no credit note existed for it.
+
+**Root cause.** "Return to stock" on an invoiced delivery order calls `POST /api/delivery-returns/:id/set-outcome` with `PURE_RETURN`, which sets the status to `CN_ISSUED` straight away and then opens the Credit Notes form pre-filled. The note is only linked when that form is saved; leaving the form left the return claiming a note that was never raised.
+
+**Fix.** The chip is worked from the note actually linked (`src/lib/delivery-return-status.ts`): no note → "Awaiting credit note" (amber, counted as open, and the return's page offers "Create credit note" pre-filled from the return); a draft note → "Credit note drafted"; an issued one → "CN issued". The API returns the linked note's status (`creditNoteStatus`). No stored data changed.
+
+**Follow-up (same day).** The return the owner reported was invoiced and that invoice is fully paid, so "Create credit note" led to a form that cannot be saved (a credit note may not exceed what is still owed — the Phase 1 cap). The return's page now asks the same question the Credit Notes picker asks (`returnCandidateBlock`, moved to `src/lib/cn-from-return.ts`) and says why instead: the invoice is fully paid, or the delivery was never invoiced. The button shows only when a note can be raised.
+
+**Regression.** `tests/delivery-return-cn-status.test.mjs`. Class: none.
+
+## BUG-2026-10-17-317 — The phone's Credit Notes / Debit Notes lists showed an id and RM 0.00 for every note `mobile` `finance` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (production had no credit or debit notes when this was found, measured 2026-10-17): on the phone, each note's number would have shown its internal id and its amount RM 0.00.
+
+**Root cause.** The list config read `cnNo` / `creditNoteNo` / `dnNo` / `debitNoteNo` and `totalSen`; the API returns `noteNumber` and `totalAmount` (sen).
+
+**Fix.** `src/pages/m/config/modules.ts` reads `noteNumber` and `totalAmount` first, the old keys after.
+
+**Regression.** `tests/finance-notes-post.test.mjs`. Class: C16 row 11.
+
+## BUG-2026-10-17-316 — A posted debit note could charge the customer twice through a status edit `finance` `receivables` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (no debit notes on production, measured 2026-10-17). `PUT /api/debit-notes/:id` with POSTED → APPROVED (or DRAFT) → POSTED fired the charge twice: the customer's balance and the invoice's total went up by the note's amount again. The GL legs were guarded; the subledger was not.
+
+**Root cause.** The credit-note route had refused a transition back out of an issued status since Phase 1 (2026-06); the debit-note route, its mirror, never got the same guard.
+
+**Fix.** The debit-note PUT refuses POSTED → anything else (409, pointing at Back to Draft). Back to Draft (`POST /api/debit-notes/:id/unpost`) reverses the charge, the invoice and the GL in one batch, and refuses a note the customer has already paid.
+
+**Regression.** `tests/finance-notes-post.test.mjs`. Class: none (the credit-note twin was already guarded).
+
+## BUG-2026-10-17-315 — A posted credit / debit note counted twice on the customer statement, the debtor ledger and the invoice page `finance` `receivables` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (production had no credit or debit notes when found, measured 2026-10-17 — there was no Post button). Posting a credit note of 200 on an invoice of 1,000 would have shown, on the customer statement and in the debtor ledger, the invoice at 800 AND the note as −200: the customer's balance short by 200. The invoice page's "Net of posted adjustments" read 600. A reprinted invoice would have printed a TOTAL of 800 under lines adding up to 1,000.
+
+**Root cause.** Posting a note moves its invoice's stored total (the cascade takes a credit note off `invoices.totalSen` and adds a debit note to it), so every "what is still owed" reader is right without knowing about notes. The statement, the ledger and the invoice page also list the notes as their own lines, so they took the note off a second time. The GL (and so the P&L / Balance Sheet) was right: the invoice legs post at the issued amount.
+
+**Fix.** `src/lib/invoice-notes.ts` works the issued amount back (stored total + issued credit notes − posted debit notes); the statement, the debtor ledger, the invoice page and the invoice print use it. Debtor Aging shows each note as its own line on its own date (owner 2026-10-17), the invoice at what was owed before its notes. An invoice with an issued note can no longer be edited, re-priced, cancelled or voided-and-reissued under it (Back to Draft the note first), and a note only posts against an issued invoice (on a draft the cut would land twice).
+
+**Regression.** `tests/finance-notes-post.test.mjs`. Class: none.
+
+## BUG-2026-10-17-314 — The P&L, Monthly P&L and Cash Flow showed an empty strip between sections `reports` `finance` 🟢
+
+🟢 **Fixed and verified on prod 2026-10-17** (#954): the P&L (2), Monthly P&L (2) and Cash Flow (4) gap rows are hidden and the next row carries the strong line; no 10px strip left on any of the three.
+
+**Symptom.** Reported by the owner 2026-10-17 with a screenshot of the P&L statement: under NET SALES the table broke for a white strip before COST OF GOODS SOLD, and "some places" showed the same. The three month-grid reports drew a 10px empty row between sections (after every subtotal), which interrupted the table's lines.
+
+**Root cause.** The report engines emit a `gap` row between sections (it also gives the Excel / PDF export its blank line), and the three on-screen renderers drew it as an empty 10px row. The Finance v2 design separates groups with a line, not an empty row.
+
+**Fix.** The gap row is kept in the DOM as a marker (`data-row="gap"`), hidden, and the row after it carries the strong 1.5px line. Exports unchanged.
+
+**Regression.** `tests/finance-report-gap-rows.test.mjs`. Class: none.
+
+## BUG-2026-10-17-313 — The customer KYC block came back blank and its next Save wiped it `customers` 🟢
+
+🟢 **Shipped and verified** (#949, b0111f86). Prod check 2026-10-17 (read-only): prod holds no KYC record for any of its customers (measured, `/api/customer-crm/onboarding` per customer), so nothing was lost; the panel now reads the API's keys.
+
+**Symptom.** Found 2026-10-17 by reading the code while adding the customer's SST Reg. No. next to its TIN (Finance v2 party fields). The Onboarding / KYC block on a customer (owner 2026-07-30: TIN, e-Invoice ID, consent letter, notes, "docs requested") showed empty fields after every reload, and an unticked consent box. Saving the block then — even to change one note — wrote those blanks over the stored TIN, e-Invoice ID and consent. A plain Save also wrote null over the "docs requested" date, because the form never sends it.
+
+**Root cause.** `GET /api/customer-crm/onboarding` returns `SELECT *`, and the database driver camelCases every column (`tinNumber`, `consentReceived`, `docsRequestedAt`). `KycPanel` read only the snake_case keys. The upsert sets every column from the body, so whatever the panel sends replaces the record.
+
+**Fix.** The panel reads camelCase first, snake_case second; a plain Save sends the stored "docs requested" date back. How many customers had a KYC record that was overwritten is UNMEASURED (the KYC table has no history).
+
+**Regression.** `tests/party-finance-fields.test.mjs`. Class: BUG-CLASSES C23 row 8.
+
+## BUG-2026-10-17-312 — A customer's default company always read blank, and an edit saved the blank `customers` 🟢
+
+🟢 **Shipped and verified** (#949). Prod check 2026-10-17 (read-only): with the read fixed, no customer on prod has a default company stored (measured over `/api/customers`), so the SO form's pre-fill is unchanged today and the next one set will stick.
+
+**Symptom.** Found 2026-10-17 by reading `src/api/routes/customers.ts` while adding the Finance v2 party fields. A customer's "Default Company (new orders)" (Multi-Company Phase 4) always came back as none, so a new sales order never pre-filled it. The customer edit form sends the whole record, so editing any field saved that blank over the stored company.
+
+**Root cause.** `rowToCustomer` and the PUT's merge read `row.default_company_code`. The driver returns the column as `defaultCompanyCode`, and the name is not in the rename map, so the snake_case key was always undefined.
+
+**Fix.** Both reads take `defaultCompanyCode` first, then `default_company_code`. How many customers have a stored default company is UNMEASURED before the deploy (the API hid it); the prod check counts them.
+
+**Regression.** `tests/party-finance-fields.test.mjs`. Class: BUG-CLASSES C23 row 9.
+
+## BUG-2026-10-17-311 — Batch print dropped an AP Payment voucher's bills `accounting` `print` 🟢
+
+🟢 **Shipped and verified** (#948, a546cf01). Prod check 2026-10-17 (read-only; the print captured, no dialog): ticking an other-creditor AP voucher and a supplier payment and pressing the batch Print gives two sheets, each with the six bill columns and the balance strip.
+
+**Symptom.** Found 2026-10-17 while building the voucher print in the Finance v2 layout. Printing one AP Payment voucher from Payment Vouchers listed the bills it paid. Ticking the same voucher and pressing the batch bar's Print gave a voucher whose table was empty except for the Total: an AP voucher has no expense lines, only bills.
+
+**Root cause.** Two paths printed the same voucher. The single print (`printPvWithDetail` → `pvPrintSpec`) added the bills; the batch print mapped the ticked rows through `payVoucherOf`, which called `buildPvVoucher(row.pv, accounts)` without them.
+
+**Fix.** `payVoucherOf` is async and prints a voucher through `pvPrintSpec`, the single print's own spec; supplier and other-creditor payments load the same print detail (`GET /api/accounting/ap-payment-print`) in a batch as on their own. The Supplier Payment and Other Creditor Payments pages print the same way.
+
+**Regression.** `tests/ap-payment-print.test.mjs` pins that every bill-paying door loads its detail before printing, batch included. Class: BUG-CLASSES C18 row 9.
+
+## BUG-2026-10-17-310 — An other debtor's receipt printed as a payment voucher `accounting` `print` 🟢
+
+🟢 **Shipped and verified** (#948). Prod check 2026-10-17 (read-only; the print captured): the one other-debtor receipt on prod prints "OTHER-PARTY RECEIPT", "Received From", "Deposited to <bank>", "Amount received" and the Received by / Issued by boxes.
+
+**Symptom.** Found 2026-10-17 by reading the print builders for the Finance v2 print layout. Printing money received from an other debtor (Receipts, or the Other Debtor Receipts page) gave "OTHER-PARTY PAYMENT VOUCHER" with "Paid from: <the bank it was paid into>" and payment signatures.
+
+**Root cause.** `buildOtherPartyPaymentVoucher` serves both sides of other-party payments and never looked at `partyType`.
+
+**Fix.** A DEBTOR payment prints "OTHER-PARTY RECEIPT", "Received From", "Deposited to", "Amount received" and the receipt's signatures; a CREDITOR payment keeps the payment wording.
+
+**Regression.** `tests/ap-payment-print.test.mjs` pins the side switch. Class: none — one builder shared by two kinds of document.
+
+## BUG-2026-10-17-309 — A transfer voucher was read back as a payment `accounting` 🟢
+
+🟢 **Shipped and verified** (#948). Prod check 2026-10-17 (read-only): prod holds one transfer voucher (cancelled); `GET /payment-vouchers` now returns it as TRANSFER and the list shows it with the TR door, "Transfer to <account>" and "→ <account>".
+
+**Symptom.** Found 2026-10-17 while building the voucher print. A Payment Voucher saved as a Transfer (owner 2026-10-01: money between our own bank / cash accounts) listed with the Payment Voucher door, printed "Pay To <payee>" instead of "Transfer To <receiving account>", opened its detail as a Payment and its edit form in Payment mode. Its lines also fed the scan's learned expense accounts.
+
+**Root cause.** `GET /payment-vouchers` maps each row with `pvKind: isAp ? "AP" : "EXPENSE"`, written for AP Payment (#465) before transfers existed. Transfers (`pv_kind = 'TRANSFER'`, 2026-10-01) were saved correctly and then overwritten on every read, so every `pvKind === "TRANSFER"` branch on the page was dead.
+
+**Fix.** The mapper keeps a stored TRANSFER kind; everything else reads as before.
+
+**Regression.** `tests/ap-payment-print.test.mjs` pins the mapper. Class: BUG-CLASSES C16 row 10.
+
+## BUG-2026-10-17-308 — The phone's Finance Dashboard showed a month ahead with no figures `mobile` `finance` 🟢
+
+🟢 **Shipped and verified** (#945, acebb8dc). Prod check 2026-10-17 (read-only): the screen anchors on the running month and says it is still running. Revenue, its gap to forecast, Net Profit and the five cash-flow lines equal that month in `/dashboard`, and the chart draws the four months ending there.
+
+**Symptom.** Found 2026-10-17 by the prod check of #944, the day it shipped and before anyone used it. The phone's Finance Dashboard showed "—" for the running month. Its chart showed four months ahead with no bars, and the cash card read a month with no books.
+
+**Root cause.** `DashScreen` took the endpoint's LAST row as "the latest month". `/api/accounting/dashboard` also sends the months ahead that carry only a forecast (`actual: null`), so on prod the last row was four months ahead. The desktop dashboard reads every row and was not affected.
+
+**Fix.** `dashAnchorIndex(rows)` picks the latest row with actual figures. The screen charts the four months ending there and names months from their keys (`dashMonthLabel`).
+
+**Regression.** `tests/m-dashboard-anchor-month.test.mjs` runs the helper over made-up rows ending in forecast-only months and asserts the screen never reads the API's last rows. It fails without the fix. Class: BUG-CLASSES C21 row 16.
+
+## BUG-2026-10-17-307 — The phone's Receivables list showed every debtor owing RM 0.00 `mobile` `accounting` 🟢
+
+🟢 **Shipped and verified** (#941, 111946af). Prod check 2026-10-17 (read-only): /m/receivables shows each of the 7 debtors at the sum of its five aging buckets, none at RM 0.00, and they add up to the desktop Debtor Aging's total.
+
+**Symptom.** Found 2026-10-17 while surveying the phone app for the finance v2 mobile plan. On prod, /m/receivables listed all 7 debtors with "Outstanding RM 0.00", while the desktop Debtor Aging showed their real balances. Sorting by Outstanding sorted nothing.
+
+**Root cause.** `receivablesConfig` (`src/pages/m/config/modules.ts`) read `total` / `totalSen` off each `/api/accounting/aging` AR row. The endpoint never sends a total: a row carries five buckets (`currentSen`, `days30Sen`, `days60Sen`, `days90Sen`, `over90Sen`). `num()` returns 0 for a missing key, so the money cell rendered RM 0.00 without any error.
+
+**Fix.** `agingTotalSen(r)` sums the five buckets, the same figure as the desktop aging's Total column. The row's Outstanding and the sort column both read it.
+
+**Regression.** `tests/m-receivables-aging-total.test.mjs` imports the real config. It runs `toVM` and the column over a made-up row and asserts the sum. Both tests fail without the fix. Class: BUG-CLASSES C16 row 9.
+
+## BUG-2026-10-17-306 — AP Invoices counted cancelled documents as outstanding `accounting` `reports` 🟢
+
+🟢 **Shipped and verified** (#937, 4243e19c). Prod check 2026-10-17 (read-only): the All view's "677 shown · outstanding" now equals the Open · all card to the sen, none of the 35 cancelled rows owes anything in the API, and their Outstanding cells read "—".
+
+**Symptom.** Found 2026-10-17 in the finance v2 prod check of AP Invoices (#936). The default All view's "N shown · outstanding" line sat above the "Open · all" card by the face value of every cancelled document. On prod that was 1 voided AP bill and 34 cancelled purchase invoices. Each of those rows also showed its face amount in the Outstanding column. The cards were right because they count OPEN rows only. The line predates finance v2: before, it read "Shown outstanding".
+
+**Root cause.** `GET /api/accounting/ap-invoices` set `outstandingSen = total − paid` on every row, whatever its status. The page sums `outstandingSen` over the rows it shows.
+
+**Fix.** A row owes `total − paid` only when its status is OPEN. Cancelled and paid rows carry 0. Total and Paid are unchanged. The cards, the per-row column and the All line now agree.
+
+**Regression.** `tests/ap-invoices-cancelled-outstanding.test.mjs` runs the route over a made-up voided bill, a cancelled invoice, open and paid ones. It asserts that cancelled and paid rows owe 0, that open rows owe total − paid, and that the All view's sum equals the open total. Both tests fail without the fix. Class: BUG-CLASSES C15 row 46.
 
 ## BUG-2026-10-16-305 — The P&L statement's year-to-date % was of one month's sales `accounting` `reports` 🟢
 

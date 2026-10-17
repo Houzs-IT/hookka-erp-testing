@@ -28,6 +28,7 @@ import {
   propagateSupplierName,
   backfillSupplierNames,
 } from "../lib/party-name-propagate";
+import { partyText } from "../../lib/party-finance";
 
 const app = new Hono<Env>();
 
@@ -78,7 +79,44 @@ type SupplierRow = {
   // companies (pairs with customers.group_org_code). Dual-keyed on read.
   groupOrgCode?: string | null;
   group_org_code?: string | null;
+  // Finance v2 party fields (2026-10-17; TIN = taxEntityTin, BRN =
+  // registrationNo and currency were already here). Dual-keyed read.
+  sstRegNo?: string | null;
+  sst_reg_no?: string | null;
+  bankAccount?: string | null;
+  bank_account?: string | null;
 };
+
+// Finance v2 party fields (owner 2026-10-17): the supplier's SST Reg. No. and
+// the bank & account no. we pay into. snake_case, runtime self-applied before
+// the first write (migration files are inert on deploy); the flag is set only
+// once both columns exist (C9).
+let supplierFinanceColsEnsured = false;
+async function ensureSupplierFinanceColumns(db: D1Database): Promise<void> {
+  if (supplierFinanceColsEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS sst_reg_no TEXT NOT NULL DEFAULT ''").run();
+    await db.prepare("ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS bank_account TEXT NOT NULL DEFAULT ''").run();
+    supplierFinanceColsEnsured = true;
+  } catch (err) {
+    console.warn("[suppliers] ensureSupplierFinanceColumns:", err instanceof Error ? err.message : err);
+  }
+}
+
+// The finance fields' write, in the same batch as the supplier's own insert /
+// update. On an edit a field the body does not send keeps its value; null =
+// nothing to write.
+function supplierFinanceStatement(
+  db: D1Database,
+  id: string,
+  body: Record<string, unknown>,
+  existing: SupplierRow | null,
+): D1PreparedStatement | null {
+  if (existing && body.sstRegNo === undefined && body.bankAccount === undefined) return null;
+  const sst = body.sstRegNo !== undefined ? partyText(body.sstRegNo) : (existing?.sstRegNo ?? existing?.sst_reg_no ?? "");
+  const bank = body.bankAccount !== undefined ? partyText(body.bankAccount) : (existing?.bankAccount ?? existing?.bank_account ?? "");
+  return db.prepare("UPDATE suppliers SET sst_reg_no = ?, bank_account = ? WHERE id = ?").bind(sst, bank, id);
+}
 
 type SupplierMaterialRow = {
   id: number;
@@ -143,6 +181,8 @@ function rowToSupplier(
     agent: row.agent ?? "",
     businessNature: row.businessNature ?? "",
     currency: row.currency ?? "MYR",
+    sstRegNo: (row.sstRegNo ?? row.sst_reg_no ?? "").trim(),
+    bankAccount: (row.bankAccount ?? row.bank_account ?? "").trim(),
     statementType: row.statementType ?? "OPEN_ITEM",
     agingOn: row.agingOn ?? "INVOICE_DATE",
     creditTerm: row.creditTerm ?? "C.O.D.",
@@ -292,6 +332,7 @@ app.get("/", async (c) => {
 app.post("/", async (c) => {
   const denied = await requirePermission(c, "suppliers", "create");
   if (denied) return denied;
+  await ensureSupplierFinanceColumns(c.var.DB);
   try {
     const body = await c.req.json();
     const { code, name } = body;
@@ -382,11 +423,13 @@ app.post("/", async (c) => {
         ),
       );
     }
+    const financeStmt = supplierFinanceStatement(c.var.DB, id, body, null);
+    const finance = financeStmt ? [financeStmt] : [];
     try {
-      await c.var.DB.batch([buildInsert(true), ...matStmts]);
+      await c.var.DB.batch([buildInsert(true), ...finance, ...matStmts]);
     } catch (e) {
       if (isMissingPurchaseOrgCol(e)) {
-        await c.var.DB.batch([buildInsert(false), ...matStmts]);
+        await c.var.DB.batch([buildInsert(false), ...finance, ...matStmts]);
       } else {
         throw e;
       }
@@ -474,6 +517,7 @@ app.post("/_backfill-snapshot-names", async (c) => {
 app.put("/:id", async (c) => {
   const denied = await requirePermission(c, "suppliers", "update");
   if (denied) return denied;
+  await ensureSupplierFinanceColumns(c.var.DB);
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare("SELECT * FROM suppliers WHERE id = ?")
     .bind(id)
@@ -613,6 +657,8 @@ app.put("/:id", async (c) => {
     }
 
     const statements: D1PreparedStatement[] = [buildUpdate(true)];
+    const financeStmt = supplierFinanceStatement(c.var.DB, id, body, existing);
+    if (financeStmt) statements.push(financeStmt);
 
     if (body.materials !== undefined) {
       const materials = sanitizeMaterials(body.materials);

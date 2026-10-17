@@ -32,6 +32,7 @@ import {
 // generateInvoicePdf is dynamic-imported at the click handler so the
 // 1MB jspdf vendor chunk only ships when the user actually downloads.
 import type { Invoice } from "@/types";
+import { invoiceIssuedSen, noteIsIssued } from "@/lib/invoice-notes";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { DiscountInput } from "@/components/ui/discount-input";
 // THE price rule (charge is authoritative, build-up is an explanation, an
@@ -496,11 +497,13 @@ export default function InvoiceDetailPage() {
   // Adjustments raised against this invoice — server-side reverse lookups.
   const linkedCreditNotes: LinkedNote[] = invResp?.linkedCreditNotes ?? [];
   const linkedDebitNotes: LinkedNote[] = invResp?.linkedDebitNotes ?? [];
+  // Issued notes only, by the cascades' own rules: a credit note once
+  // APPROVED / POSTED, a debit note once POSTED (src/lib/invoice-notes.ts).
   const creditedSen = linkedCreditNotes
-    .filter((n) => n.status !== "DRAFT")
+    .filter((n) => noteIsIssued("CN", n.status))
     .reduce((s, n) => s + (n.totalAmount || 0), 0);
   const debitedSen = linkedDebitNotes
-    .filter((n) => n.status !== "DRAFT")
+    .filter((n) => noteIsIssued("DN", n.status))
     .reduce((s, n) => s + (n.totalAmount || 0), 0);
   // Provenance line for CN-origin invoices (see the type above).
   const sourceCN = invResp?.sourceConsignmentNote ?? null;
@@ -1579,8 +1582,13 @@ export default function InvoiceDetailPage() {
                   ))}
                 </div>
               ))}
-            <p className="text-xs text-[#9CA3AF]">
-              Net of posted adjustments: {formatCurrency(invoice.totalSen - creditedSen + debitedSen)}
+            {/* The invoice's total already carries its issued notes (posting a
+                note moves it), so the issued amount is worked back from it;
+                taking the notes off again counted them twice
+                (BUG-2026-10-17-315). */}
+            <p className="text-xs text-[#9CA3AF]" data-invoice-notes-net="">
+              Invoice as issued {formatCurrency(invoiceIssuedSen(invoice.totalSen, { creditSen: creditedSen, debitSen: debitedSen }))}
+              {" · "}after posted notes {formatCurrency(invoice.totalSen)}
             </p>
           </CardContent>
         </Card>

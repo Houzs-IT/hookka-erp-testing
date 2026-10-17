@@ -6,16 +6,18 @@
 // are hidden from the normal document lists. Each sourceType maps to its
 // /lifecycle endpoint to repost the unvoid.
 //
-// Extracted verbatim from accounting/index.tsx (2026-07-04 file split). No
-// behaviour change — same fetch, same search, same table.
+// Extracted verbatim from accounting/index.tsx (2026-07-04 file split). Since
+// 2026-10-17 the list is the Payment Vouchers table (DataGrid: header menu,
+// filters, resize / reorder, Set as default, its own search); Unvoid is the
+// row's right-click / ⋮ menu and its double-click.
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { LifecycleBadge } from "@/components/accounting/lifecycle-actions";
-import { formatCurrency } from "@/lib/utils";
+import { DataGrid, type Column } from "@/components/ui/data-grid";
 import { asMutationResponse } from "../shared";
 
 type AuditRow = {
@@ -42,11 +44,13 @@ const AUDIT_DOC_MAP: Record<string, { label: string; base: string }> = {
   supplier_payment: { label: "Supplier Payment", base: "/api/supplier-payments" },
 };
 
+const typeLabel = (r: AuditRow) => AUDIT_DOC_MAP[r.sourceType]?.label ?? r.sourceType;
+const whenText = (r: AuditRow) => (r.actionAt ? r.actionAt.slice(0, 19).replace("T", " ") : "—");
+
 export function AuditLogTab() {
   const { toast } = useToast();
   const { confirm } = useConfirm();
   const [rows, setRows] = useState<AuditRow[] | null>(null);
-  const [query, setQuery] = useState("");
 
   const load = useCallback(() => {
     fetch("/api/accounting/audit-log")
@@ -70,80 +74,40 @@ export function AuditLogTab() {
     else toast.error(j?.error || "Restore failed");
   };
 
-  // Client-side search over the (≤1000) loaded rows — matches reference, party,
-  // who (actor), type and state (#10).
-  const q = query.trim().toLowerCase();
-  const filtered =
-    rows === null
-      ? null
-      : !q
-        ? rows
-        : rows.filter((r) =>
-            [
-              AUDIT_DOC_MAP[r.sourceType]?.label ?? r.sourceType,
-              r.reference ?? r.sourceId,
-              r.party,
-              r.actorName ?? r.actorUserId,
-              r.state,
-              r.docDate,
-            ].some((v) => (v ?? "").toLowerCase().includes(q)),
-          );
+  // The grid's search reads type, reference, party, who, state and date (#10).
+  const columns = useMemo<Column<AuditRow>[]>(() => [
+    { key: "actionAt", label: "When", width: "160px", sortAccessor: (r) => r.actionAt ?? "", filterAccessor: whenText, exportValue: whenText, render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{whenText(r)}</span> },
+    { key: "sourceType", label: "Type", width: "150px", filterAccessor: typeLabel, exportValue: typeLabel, render: (_v, r) => <span className="text-xs">{typeLabel(r)}</span> },
+    { key: "reference", label: "Reference", width: "150px", noFilter: true, filterAccessor: (r) => r.reference ?? r.sourceId, exportValue: (r) => r.reference ?? r.sourceId, render: (_v, r) => <span className="tabular-nums text-xs font-medium">{r.reference ?? r.sourceId}</span> },
+    { key: "docDate", label: "Doc Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.docDate || "—"}</span> },
+    { key: "party", label: "Party", width: "200px", render: (_v, r) => <span className="text-xs">{r.party || "—"}</span> },
+    { key: "amountSen", label: "Amount", type: "currency", align: "right", width: "130px" },
+    { key: "state", label: "State", width: "100px", render: (_v, r) => <LifecycleBadge state={r.state} /> },
+    { key: "actorName", label: "By", width: "150px", filterAccessor: (r) => r.actorName ?? r.actorUserId ?? "—", exportValue: (r) => r.actorName ?? r.actorUserId ?? "—", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.actorName ?? r.actorUserId ?? "—"}</span> },
+  ], []);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Audit Log</h2>
-          <p className="text-xs text-[#6B7280]">Voided &amp; deleted documents — the GL keeps every reversal; restore any of them here.</p>
-        </div>
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search reference / party / who…"
-          className="w-72 rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#6B5C32]"
-        />
-      </div>
+      {/* The page title and its (i) name the page (finance v2). */}
+      <p className="text-xs text-[#6B7280]">Voided &amp; deleted documents — the GL keeps every reversal; restore any of them here (right-click a row, or double-click it).</p>
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {rows === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (filtered ?? []).length === 0 ? (
-            <div className="py-12 text-center text-[#9CA3AF] text-sm">{q ? "No documents match your search." : "No voided or deleted documents."}</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">When</th>
-                  <th className="px-3 py-2 text-left">Type</th>
-                  <th className="px-3 py-2 text-left">Reference</th>
-                  <th className="px-3 py-2 text-left">Doc Date</th>
-                  <th className="px-3 py-2 text-left">Party</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
-                  <th className="px-3 py-2 text-left">State</th>
-                  <th className="px-3 py-2 text-left">By</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {(filtered ?? []).map((r) => (
-                  <tr key={r.id} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.actionAt ? r.actionAt.slice(0, 19).replace("T", " ") : "—"}</td>
-                    <td className="px-3 py-1.5 text-xs">{AUDIT_DOC_MAP[r.sourceType]?.label ?? r.sourceType}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs font-medium">{r.reference ?? r.sourceId}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.docDate || "—"}</td>
-                    <td className="px-3 py-1.5 text-xs">{r.party || "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-xs">{r.amountSen ? formatCurrency(r.amountSen) : "—"}</td>
-                    <td className="px-3 py-1.5"><LifecycleBadge state={r.state} /></td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.actorName ?? r.actorUserId ?? "—"}</td>
-                    <td className="px-3 py-1.5 text-right">
-                      <button onClick={() => unvoid(r)} className="text-[#4F7C3A] hover:text-[#3A5C29] text-xs underline decoration-dotted cursor-pointer">unvoid</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={columns}
+            data={rows ?? []}
+            keyField="id"
+            gridId="accounting-audit-log"
+            onDoubleClick={(r) => void unvoid(r)}
+            contextMenuItems={[{ label: "Unvoid — restore and repost", action: (r: AuditRow) => void unvoid(r) }]}
+            searchPlaceholder="Search reference / party / who…"
+            alwaysSearchKeys={["reference", "sourceId", "party", "actorName", "state", "docDate"]}
+            headerMenu
+            reorderableHeaders
+            exportName="Audit Log"
+            emptyMessage="No voided or deleted documents."
+            loading={rows === null}
+            maxHeight="calc(100vh - 260px)"
+          />
         </CardContent>
       </Card>
     </div>

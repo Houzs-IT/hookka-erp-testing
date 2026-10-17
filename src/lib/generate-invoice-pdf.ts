@@ -55,6 +55,9 @@ export type InvoicePrintExtras = {
   // build-up the Delivery Order resolves, so the invoice description and
   // price match the DO line for line.
   items?: Record<string, InvoiceLineExtra>;
+  /** Σ issued credit notes − Σ posted debit notes: the stored totals moved by
+   *  this when the notes posted; the print adds it back (BUG-2026-10-17-315). */
+  noteAdjustSen?: number;
 };
 
 const num = (v?: number | null) =>
@@ -200,6 +203,8 @@ function buildInvoiceDoc(
   const m = 14;
   const co = COMPANY.HOOKKA;
   const companyName = invoice.companyName || co.name;
+  // Issued notes moved the stored totals; print what the invoice was issued at.
+  const noteAdjustSen = Number(extras?.noteAdjustSen) || 0;
 
   const docDate = fmtDate(invoice.invoiceDate);
   const billAddress =
@@ -413,7 +418,7 @@ function buildInvoiceDoc(
         { content: "Subtotal", styles: { halign: "right" } },
         {
           content: fmtCurrency(
-            Number(invoice.subtotalSen) || Number(invoice.totalSen) || 0,
+            (Number(invoice.subtotalSen) || Number(invoice.totalSen) || 0) + noteAdjustSen,
           ),
           styles: { halign: "right" },
         },
@@ -521,7 +526,7 @@ function buildInvoiceDoc(
   const hasAdj =
     !!Number(invoice.taxSen) || !!Number(invoice.discountSen);
   if (hasAdj) {
-    sumLine("Subtotal", fmtRM(Number(invoice.subtotalSen) || 0), false);
+    sumLine("Subtotal", fmtRM((Number(invoice.subtotalSen) || 0) + noteAdjustSen), false);
     if (Number(invoice.taxSen)) {
       sumLine("Tax", fmtRM(Number(invoice.taxSen)), false);
     }
@@ -536,14 +541,14 @@ function buildInvoiceDoc(
   doc.setDrawColor(...RULE);
   doc.setLineWidth(0.4);
   doc.line(lblX - 2, y - 5.5, valX, y - 5.5);
-  sumLine("TOTAL", fmtRM(Number(invoice.totalSen) || 0), true, true);
+  sumLine("TOTAL", fmtRM((Number(invoice.totalSen) || 0) + noteAdjustSen), true, true);
 
   // Amount in words.
   doc.setFont("helvetica", "italic");
   doc.setFontSize(7.5);
   doc.setTextColor(...FAINT);
   const words = doc.splitTextToSize(
-    amountInWords(Number(invoice.totalSen) || 0),
+    amountInWords((Number(invoice.totalSen) || 0) + noteAdjustSen),
     pageW - m * 2,
   );
   doc.text(words, m, y);

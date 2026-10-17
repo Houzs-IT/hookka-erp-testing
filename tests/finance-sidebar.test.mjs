@@ -22,7 +22,7 @@ test("seven groups, one door per job", () => {
   assert.deepEqual(groups, ["Reports", "Daily", "Monthly", "Debtors", "Creditors", "Setup"]);
   assert.ok(names.includes("e-Invoice"));
   const leaves = names.filter((n) => !groups.includes(n));
-  assert.equal(leaves.length, 32, `expected 32 menu entries (Other Creditors back 2026-09-29, Fund Transfer folded into Payment Vouchers 2026-10-01), saw ${leaves.length}: ${leaves.join(", ")}`);
+  assert.equal(leaves.length, 34, `expected 34 menu entries (Other Creditors back 2026-09-29, Fund Transfer folded into Payment Vouchers 2026-10-01, Debtor List / Creditor List added 2026-10-17), saw ${leaves.length}: ${leaves.join(", ")}`);
   assert.ok(!names.includes("Fund Transfer"), "a transfer is a voucher now");
 });
 

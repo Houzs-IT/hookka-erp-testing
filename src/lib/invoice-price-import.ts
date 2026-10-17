@@ -55,6 +55,8 @@ export type CurrentLine = {
   invoiceId: string;
   invoiceStatus: string;
   invoicePaidSen: number;
+  /** Credit / debit notes issued against the invoice (owner 2026-10-17). */
+  invoiceNotes?: string[];
   quantity: number;
   unitPriceSen: number;
   basePriceSen: number;
@@ -170,6 +172,12 @@ export function planInvoicePriceImport(
     }
     if (line.invoiceStatus !== "DRAFT" && line.invoiceStatus !== "SENT") {
       reject(`The invoice is ${line.invoiceStatus}. Only a DRAFT or an unpaid SENT invoice can be repriced.`);
+      return;
+    }
+    // An issued note has already moved the invoice's total; repricing under
+    // it would post the invoice again at the moved figure.
+    if (line.invoiceNotes?.length) {
+      reject(`${line.invoiceNotes.join(", ")} has been issued against this invoice. Put the note back to draft first.`);
       return;
     }
 

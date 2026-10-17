@@ -31,8 +31,9 @@ test("Monthly P&L: same call, the server's columns in their order, figures and %
 test("Monthly P&L: toolbar, frame, Accumulated shaded, content width", () => {
   assert.match(mo, /<PeriodStepper value=\{anchor\} options=\{anchorOptions\} onChange=\{setAnchor\} today=\{today\} \/>/);
   assert.match(mo, /<DetailLevels levels=\{Array\.from\(\{ length: maxLevel \}, \(_, i\) => i \+ 1\)\} value=\{level \?\? -1\} onChange=\{applyLevel\} \/>/);
-  for (const l of ["Export to Excel", "Print / PDF", "Export to CSV"]) assert.ok(mo.includes(`label: "${l}"`), l);
-  assert.match(mo, /company=\{PL_COMPANY\}/);
+  for (const l of ["Export to Excel", "Print / PDF"]) assert.ok(mo.includes(`label: "${l}"`), l);
+  assert.doesNotMatch(mo, /CSV/, "no CSV (owner 2026-10-17)");
+  assert.match(mo, /company=\{COMPANY\.HOOKKA\.name\}/, "the legal name (owner 2026-10-17)");
   assert.match(mo, /<table data-col-resize="first" data-fin-report data-fin-fit>/);
   assert.match(mo, /data-cell=\{`split center\$\{c\.accum \? " acc" : ""\}`\}/);
   assert.match(css, /table\[data-fin-report\]\[data-fin-fit\] \{\n  width: auto;\n\}/);
@@ -53,5 +54,6 @@ test("Cost Structure: section frames, the server's months, a Total-to-date row",
   assert.match(cs, /<td data-cell="num">\{n\(g\.months\[last\]\.closing\)\}<\/td>/, "closing from the latest month");
   assert.match(cs, /<td data-cell="stick">Total to date<\/td>/);
   for (const t of ["Bedframe Cost Structure", "Sofa Cost Structure", "Shared / Common Materials"]) assert.ok(cs.includes(`"${t}"`), t);
-  for (const l of ["Export to Excel", "Print / PDF", "Export to CSV"]) assert.ok(cs.includes(`label: "${l}"`), l);
+  for (const l of ["Export to Excel", "Print / PDF"]) assert.ok(cs.includes(`label: "${l}"`), l);
+  assert.doesNotMatch(cs, /CSV/);
 });
