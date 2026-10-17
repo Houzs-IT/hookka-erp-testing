@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-307 (branch `fix/m-receivables-aging-total`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-306 flipped to 🟢 after the #937 prod check (branch `feat/finance-v2-einvoice`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-306 (branch `fix/ap-invoices-cancelled-outstanding`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-305 flipped to 🟢 after the #927 prod check (branch `feat/finance-v2-reports-5`).
@@ -128,6 +129,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-307 — The phone's Receivables list showed every debtor owing RM 0.00 `mobile` `accounting` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 while surveying the phone app for the finance v2 mobile plan. On prod, /m/receivables listed all 7 debtors with "Outstanding RM 0.00", while the desktop Debtor Aging showed their real balances. Sorting by Outstanding sorted nothing.
+
+**Root cause.** `receivablesConfig` (`src/pages/m/config/modules.ts`) read `total` / `totalSen` off each `/api/accounting/aging` AR row. The endpoint never sends a total: a row carries five buckets (`currentSen`, `days30Sen`, `days60Sen`, `days90Sen`, `over90Sen`). `num()` returns 0 for a missing key, so the money cell rendered RM 0.00 without any error.
+
+**Fix.** `agingTotalSen(r)` sums the five buckets, the same figure as the desktop aging's Total column. The row's Outstanding and the sort column both read it.
+
+**Regression.** `tests/m-receivables-aging-total.test.mjs` imports the real config. It runs `toVM` and the column over a made-up row and asserts the sum. Both tests fail without the fix. Class: BUG-CLASSES C16 row 9.
 
 ## BUG-2026-10-17-306 — AP Invoices counted cancelled documents as outstanding `accounting` `reports` 🟢
 

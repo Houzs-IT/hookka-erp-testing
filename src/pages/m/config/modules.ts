@@ -3378,6 +3378,12 @@ export const suppliersConfig: ModuleConfig = {
   ],
 };
 
+// A debtor's outstanding on the AR aging row. The API sends the five buckets
+// and no total (BUG-2026-10-17-307: this list read a `total` that was never
+// there, so every debtor showed RM 0.00).
+const agingTotalSen = (r: RawRow) =>
+  num(r, "currentSen") + num(r, "days30Sen") + num(r, "days60Sen") + num(r, "days90Sen") + num(r, "over90Sen");
+
 export const receivablesConfig: ModuleConfig = {
   slug: "receivables",
   title: "Receivables",
@@ -3392,11 +3398,11 @@ export const receivablesConfig: ModuleConfig = {
         code: str(r, "debtorCode", "customerCode") || "AR",
         title: str(r, "customerName") || "—",
         subLine: undefined,
-        meta1: { label: "Outstanding", value: money(num(r, "total", "totalSen")) },
+        meta1: { label: "Outstanding", value: money(agingTotalSen(r)) },
       }),
       columns: [
         textCol("customer", "Customer", (r) => str(r, "customerName")),
-        numCol("total", "Outstanding", (r) => num(r, "total", "totalSen")),
+        numCol("total", "Outstanding", agingTotalSen),
       ],
       defaultSort: { key: "total", dir: "desc" },
       subTabs: [{ key: "ar", label: "Receivables", match: () => true }],

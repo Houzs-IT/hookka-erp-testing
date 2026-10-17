@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: BUG-2026-10-17-307 (the phone's Receivables at RM 0.00) added as a new entry, branch `fix/m-receivables-aging-total`.
 > **Last verified: 2026-10-17**: plan 6 parts A (#938) and B (#939) prod-verified, plan 6 closed; plan 7 part B (Forecast P&L) added to its entry.
 > **Last verified: 2026-10-17**: branch `feat/finance-v2-forecasting` (to `main`) added below (its entry is the newest).
 > **Last verified: 2026-10-17**: plan 6 part B (Setup) built on branch `feat/finance-v2-setup`.
@@ -206,6 +207,10 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-17 — 🔵 BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
+
+1. 🔵 `receivablesConfig` read a `total` the aging API never sends; it now sums the five aging buckets (the desktop Debtor Aging's Total). Regression `tests/m-receivables-aging-total.test.mjs`.
 
 ## 2026-10-17 — 🔵 Finance & Forecasting v2, plan 7: Forecasting — Financial Dashboard + Forecast P&L (owner「继续做」)(branch `feat/finance-v2-forecasting` → `main`; shipped in parts)
 
