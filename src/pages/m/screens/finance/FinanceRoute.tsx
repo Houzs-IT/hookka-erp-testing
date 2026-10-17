@@ -19,9 +19,13 @@ import { OverviewScreen } from "./OverviewScreen";
 import { PlScreen } from "./PlScreen";
 import { CashFlowScreen } from "./CashFlowScreen";
 import { BalanceSheetScreen } from "./BalanceSheetScreen";
+import { DashScreen } from "./DashScreen";
+import { CashScreen } from "./CashScreen";
 
 // The screens the phone has so far; the menu shows these only.
 const SCREENS: Partial<Record<FinanceScreen, () => ReactNode>> = {
+  dashboard: () => <DashScreen />,
+  cash: () => <CashScreen />,
   overview: () => <OverviewScreen />,
   pl: () => <PlScreen />,
   cashflow: () => <CashFlowScreen />,

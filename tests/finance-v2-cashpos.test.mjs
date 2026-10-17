@@ -34,6 +34,9 @@ test("bank cards: a slate header, the pending table in the v2 list look, fold an
 test("one order for screen, image and print: receipts first, then payments", () => {
   assert.match(tab, /const open = pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\);/);
   assert.match(tab, /const ticked = pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => p\.ticked\)\);/);
-  assert.match(tab, /rows: pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\)/, "Get image");
+  // Get image draws through the shared module since finance v2 mobile (the
+  // phone shares the same picture).
+  assert.match(tab, /drawCashPositionImage\(cur, \{ netAfterSen, repayShownSen, recvShownSen \}\)/);
+  assert.match(read("src/lib/cash-position-image.ts"), /rows: pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\)/, "Get image");
   assert.match(tab, /\$\{pendingReceiptsFirst\(a\.pending\.filter\(\(p\) => !p\.ticked\)\)\s*\n?\s*\.map\(/, "Print");
 });
