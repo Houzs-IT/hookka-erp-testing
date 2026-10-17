@@ -23,12 +23,13 @@ import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type L
 // and a null the caller must refuse. See src/lib/parse-money.ts.
 import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/money-field";
 import { exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
-import { buildAgingExportAoa, agingRowKind } from "@/lib/aging-export";
+import { buildAgingExportAoa, buildGroupedAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
+import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party-aging-rows";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
@@ -68,6 +69,7 @@ import type {
   JournalLine,
   ARAgingEntry,
   APAgingEntry,
+  AgingDocDetail,
   BalanceSheetEntry,
 } from "@/types";
 // Shared helpers + per-tab components extracted from this file (2026-07-04
@@ -4247,6 +4249,139 @@ ${rows}
 // document columns left-aligned, fixed widths.
 const AGING_PDF: PdfExportOpts = { rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } };
 
+// One aging list for Debtor and Creditor Aging (Finance v2, owner 2026-10-17):
+// trade parties and other parties (and, on the creditor side, trade-finance
+// draws) in the same five calendar-month columns. Under "All" each kind is its
+// own section with a subtotal; a row opens to the documents behind it.
+type AgingShow = string;
+type AgingListRow = {
+  key: string;
+  kind: string;
+  name: string;
+  /** A second line under the name (a draw's lender, supplier and date). */
+  sub?: string;
+  /** "YYYY-MM-DD" — the earliest open due date (Creditor Aging's Next Due). */
+  nextDue?: string;
+  currentSen: number;
+  days30Sen: number;
+  days60Sen: number;
+  days90Sen: number;
+  over90Sen: number;
+  docs: AgingDocDetail[];
+};
+type AgingGroup = { key: string; label: string; rows: AgingListRow[] };
+const AGING_KEYS = ["currentSen", "days30Sen", "days60Sen", "days90Sen", "over90Sen"] as const;
+const agingListTotal = (r: AgingListRow) => AGING_KEYS.reduce((s, k) => s + r[k], 0);
+/** The groups a chip shows: every non-empty group under "all", else just its own. */
+function agingGroupsFor(show: AgingShow, all: AgingGroup[]): AgingGroup[] {
+  return show === "all" ? all.filter((g) => g.rows.length) : all.filter((g) => g.key === show);
+}
+const AGING_BUCKET_TONE = ["", "", "text-[#9C6F1E]", "text-[#B8601A] font-medium", "text-[#9A3A2D] font-medium"];
+
+function AgingListTable({
+  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue,
+}: {
+  partyHeader: string;
+  groups: AgingGroup[];
+  sectioned: boolean;
+  open: Set<string>;
+  onToggle: (key: string) => void;
+  typeLabel: Record<string, string>;
+  /** Renders the Next Due cell (Creditor Aging); omitted = no column. */
+  nextDue?: (r: AgingListRow) => ReactNode;
+}) {
+  const rows = groups.flatMap((g) => g.rows);
+  const cols = 8 + (nextDue ? 1 : 0);
+  const money = (v: number, i: number) => (
+    <td key={i} className={`py-3 px-4 text-right ${v < 0 ? "text-[#9A3A2D]" : v > 0 ? AGING_BUCKET_TONE[i] : ""}`}>{v !== 0 ? formatCurrency(v) : "-"}</td>
+  );
+  const sumOf = (list: AgingListRow[], k: (typeof AGING_KEYS)[number]) => list.reduce((s, r) => s + r[k], 0);
+  const renderRow = (r: AgingListRow) => {
+    const isOpen = open.has(r.key);
+    return (
+      <Fragment key={r.key}>
+        <tr data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
+          <td className="py-3 px-4 font-medium text-[#1F1D1B]">
+            <button className="inline-flex items-start gap-1.5 text-left" onClick={() => onToggle(r.key)} title="Show the documents behind this balance">
+              {isOpen ? <ChevronDownIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
+              <span>{r.name}{r.sub ? <span className="block text-[11px] font-normal text-[#6B7280]">{r.sub}</span> : null}</span>
+            </button>
+          </td>
+          <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${AGING_TYPE_TAG[r.kind] ?? AGING_TYPE_TAG.trade}`}>{typeLabel[r.kind] ?? r.kind}</span></td>
+          {nextDue ? <td className="py-3 px-4 whitespace-nowrap">{nextDue(r)}</td> : null}
+          {AGING_KEYS.map((k, i) => money(r[k], i))}
+          <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(agingListTotal(r))}</td>
+        </tr>
+        {isOpen && r.docs.map((d, i) => (
+          <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+            <td colSpan={nextDue ? 3 : 2} className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
+            {[0, 1, 2, 3, 4].map((b) => (
+              <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
+                {d.mo === b ? formatCurrency(d.amountSen) : ""}
+              </td>
+            ))}
+            <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
+          </tr>
+        ))}
+        {isOpen && !r.docs.length && (
+          <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+            <td colSpan={cols} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
+          </tr>
+        )}
+      </Fragment>
+    );
+  };
+  const subtotal = (g: AgingGroup) => (
+    <tr key={`s-${g.key}`} data-fin-nolift="" data-aging-subtotal={g.key} className="border-b border-[#E2DDD8] bg-[#F7F4EF] font-semibold">
+      <td colSpan={nextDue ? 3 : 2} className="py-2 px-4 text-[#1F1D1B]">{g.label} total</td>
+      {AGING_KEYS.map((k) => <td key={k} className="py-2 px-4 text-right">{formatCurrency(sumOf(g.rows, k))}</td>)}
+      <td className="py-2 px-4 text-right">{formatCurrency(g.rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
+    </tr>
+  );
+  return (
+    <table data-fin-list className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
+          <th className="py-3 px-4 text-left text-[#6B7280] font-medium">{partyHeader}</th>
+          <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Type</th>
+          {nextDue ? <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Next Due</th> : null}
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Current</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">1 mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">2 mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3 mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3+ mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr data-fin-nolift=""><td colSpan={cols} className="py-8 text-center text-[#9CA3AF]">Nothing outstanding.</td></tr>
+        ) : sectioned ? groups.map((g) => (
+          <Fragment key={g.key}>
+            <tr data-fin-nolift="" data-aging-section={g.key} className="bg-[#FAF8F5]">
+              <td colSpan={cols} className="py-2 px-4 text-[11px] font-semibold uppercase tracking-wide text-[#6B5C32]">{g.label} · {g.rows.length}</td>
+            </tr>
+            {g.rows.map(renderRow)}
+            {subtotal(g)}
+          </Fragment>
+        )) : rows.map(renderRow)}
+      </tbody>
+      <tfoot>
+        <tr className="bg-[#F0ECE9]/50 font-semibold">
+          <td colSpan={nextDue ? 3 : 2} className="py-3 px-4 text-[#1F1D1B]">Total</td>
+          {AGING_KEYS.map((k) => <td key={k} className="py-3 px-4 text-right">{formatCurrency(sumOf(rows, k))}</td>)}
+          <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+const AGING_TYPE_TAG: Record<string, string> = {
+  trade: "bg-[#EEF1F4] text-[#4B5563]",
+  other: "bg-[#F4EEE3] text-[#6B5C32]",
+  tf: "bg-[#E8EDF2] text-[#1F2A44]",
+};
+
 function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   // Expandable detail (owner 2026-07-08): click a row to show every open
   // document in its aging column — the old system's "Aging - Detail" layout.
@@ -4275,6 +4410,34 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   }, [company]);
   const rows = company ? (scopedAr ?? []) : arData;
 
+  // Other debtors (owner 2026-10-17, Finance v2: "Debtor Aging includes
+  // other-debtor aging"): their open bills from /other-party-aging, bucketed
+  // by the same calendar-month rule as the invoices (`mo`), listed after the
+  // trade customers. They are not split by company (an other party has none).
+  const [odBills, setOdBills] = useState<OtherPartyAgingBill[] | null>(null);
+  useEffect(() => {
+    let stale = false;
+    fetch("/api/accounting/other-party-aging?type=DEBTOR")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { bills?: OtherPartyAgingBill[] } }>)
+      .then((j) => { if (!stale) setOdBills(j?.success ? (j.data?.bills ?? []) : []); })
+      .catch(() => { if (!stale) setOdBills([]); });
+    return () => { stale = true; };
+  }, []);
+  const [show, setShow] = useState<AgingShow>("all");
+  const tradeList: AgingListRow[] = rows.map((a) => ({
+    key: `t:${a.customerId}`, kind: "trade", name: a.customerName,
+    currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs ?? [],
+  }));
+  const otherList: AgingListRow[] = otherPartyAgingRows(odBills ?? []).map((r) => ({
+    key: `o:${r.partyId}`, kind: "other", name: r.partyName,
+    currentSen: r.currentSen, days30Sen: r.days30Sen, days60Sen: r.days60Sen, days90Sen: r.days90Sen, over90Sen: r.over90Sen, docs: r.docs,
+  }));
+  const groups = agingGroupsFor(show, [
+    { key: "trade", label: "Trade customers", rows: tradeList },
+    { key: "other", label: "Other debtors", rows: otherList },
+  ]);
+  const shownList = groups.flatMap((g) => g.rows);
+
   // BUG-2026-08-13-090: there used to be a "Record Payment" button + form here
   // that POSTed to /api/accounting/aging. That endpoint UPDATEs the `ar_aging`
   // table, which this very screen does NOT read: GET /aging computes the aging
@@ -4285,20 +4448,16 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   // so even the 404 the dead table returns closed the form as if it had saved.
   // A control that cannot record a payment must not be offered; customer
   // receipts are recorded on /invoices/payments, which posts for real.
-  const totalOutstanding = rows.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
+  const totalOutstanding = shownList.reduce((s, a) => s + agingListTotal(a), 0);
+  const otherTotal = otherList.reduce((s, a) => s + agingListTotal(a), 0);
   const ctl = useArControl(company);
+  const odControl = ctl.data?.controls.find((x) => x.code === "305-0000");
 
   // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
   // only (owner), from the same aging builder.
   const asAt = todayYmdMY();
   const fileBase = `debtor-aging-${asAt}${company ? `-${company}` : ""}`;
-  const buildAging = () => buildAgingExportAoa("Customer", rows.map((a) => ({
-    name: a.customerName, currentSen: a.currentSen, days30Sen: a.days30Sen,
-    days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
-  })));
+  const buildAging = () => buildGroupedAgingExportAoa("Customer", groups.map((g) => ({ label: g.label, parties: g.rows })));
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Debtor Aging (AR)", buildAging(), { moneyFormat: true }); } },
     {
@@ -4329,82 +4488,43 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
             { label: "Outstanding from invoices", value: formatCurrency(ctl.data.invoiceOutstandingSen), note: <>gross · {controlDriftNote(ctl.data.driftControlVsInvoicesSen)}</> },
             { label: "Customer running counter", value: formatCurrency(ctl.data.customerCounterSen), note: controlDriftNote(ctl.data.driftCounterVsInvoicesSen) },
           ] : []),
-          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "warn" as const, note: "the aging below" },
+          {
+            label: "Other debtors · 305-0000",
+            value: odBills === null ? "—" : formatCurrency(otherTotal),
+            tone: "info" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{odControl ? <> · {controlDriftNote(odControl.balanceSen - otherTotal)}</> : null}</>,
+          },
+          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "warn" as const, note: show === "all" ? "trade + other debtors" : show === "trade" ? "trade customers" : "other debtors" },
         ]}
       />
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <h3 className="text-[14px] font-semibold text-[#1F1D1B]">By debtor</h3>
-        <span className="text-[12px] text-[#6B7280]">{rows.length} customer{rows.length === 1 ? "" : "s"}</span>
-        <span className="ml-auto text-[12px] text-[#9CA3AF]">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>.</span>
+        <span className="text-[12px] text-[#6B7280]">{tradeList.length} customer{tradeList.length === 1 ? "" : "s"} · {otherList.length} other debtor{otherList.length === 1 ? "" : "s"}</span>
+        <div className="ml-auto">
+          <SegmentedChips
+            options={[
+              { key: "all", label: "All", count: tradeList.length + otherList.length },
+              { key: "trade", label: "Trade", count: tradeList.length },
+              { key: "other", label: "Other debtors", count: otherList.length },
+            ]}
+            value={show}
+            onChange={(k) => setShow(k as AgingShow)}
+          />
+        </div>
       </div>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>, an other debtor's on <Link to="/accounting?tab=receipts" className="underline decoration-dotted text-[#6B5C32]">Receipts</Link>.</p>
 
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table data-fin-list className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                  <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Customer</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Current</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">1 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">2 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3+ mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((ar) => {
-                  const total = ar.currentSen + ar.days30Sen + ar.days60Sen + ar.days90Sen + ar.over90Sen;
-                  const open = openAging.has(ar.customerId);
-                  return (
-                    <Fragment key={ar.customerId}>
-                    <tr data-fin-nolift={open ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
-                      <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                        <button className="inline-flex items-center gap-1.5 text-left" onClick={() => toggleAging(ar.customerId)} title="Show the documents behind this balance">
-                          {open ? <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
-                          {ar.customerName}
-                        </button>
-                      </td>
-                      <td className={`py-3 px-4 text-right ${ar.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.currentSen !== 0 ? formatCurrency(ar.currentSen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.days30Sen !== 0 ? formatCurrency(ar.days30Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days60Sen < 0 ? "text-[#9A3A2D]" : ar.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ar.days60Sen !== 0 ? formatCurrency(ar.days60Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days90Sen < 0 ? "text-[#9A3A2D]" : ar.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ar.days90Sen !== 0 ? formatCurrency(ar.days90Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ar.over90Sen !== 0 ? formatCurrency(ar.over90Sen) : "-"}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
-                    </tr>
-                    {open && (ar.docs ?? []).map((d, i) => (
-                      <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
-                        {[0, 1, 2, 3, 4].map((b) => (
-                          <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
-                            {d.mo === b ? formatCurrency(d.amountSen) : ""}
-                          </td>
-                        ))}
-                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
-                      </tr>
-                    ))}
-                    {open && !(ar.docs ?? []).length && (
-                      <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td colSpan={7} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
-                      </tr>
-                    )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-[#F0ECE9]/50 font-semibold">
-                  <td className="py-3 px-4 text-[#1F1D1B]">Total</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.currentSen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days30Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days60Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.over90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(totalOutstanding)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            <AgingListTable
+              partyHeader="Customer"
+              groups={groups}
+              sectioned={show === "all"}
+              open={openAging}
+              onToggle={toggleAging}
+              typeLabel={{ trade: "Trade", other: "Other debtor" }}
+            />
           </div>
         </CardContent>
       </Card>

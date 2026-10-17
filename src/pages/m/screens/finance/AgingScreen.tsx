@@ -3,7 +3,8 @@
 // /api/accounting/aging — the desktop page's read — as at today (aging as at
 // a chosen month-end is deferred). The Outstanding card and the bucket chips
 // are sums of the rows' five buckets, the desktop Total; a tap opens a party's
-// documents.
+// documents. Debtor Aging also lists the other debtors (owner 2026-10-17,
+// Finance v2), from /other-party-aging, as the desktop page does.
 // ---------------------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
@@ -13,15 +14,18 @@ import { MobileCard } from "../../components";
 import { M } from "../../theme";
 import { FinanceHeader, FinanceNote } from "./finance-shell";
 import { AGING_BUCKETS, agingBarWidths, agingRowTotal, agingTotals, fmtMoney } from "./m-finance-lib";
+import { otherPartyAgingRows, type OtherPartyAgingBill, type OtherPartyAgingRow } from "@/lib/other-party-aging-rows";
 
 // The design's bucket colours: teal while current, warming to red as it ages.
 const BUCKET_COLOURS = ["#5AA49B", "#9AC9BF", "#F2B47E", "#E8A07C", "#D9704F"];
 
 type AgingResp = { success?: boolean; error?: string; data?: { ar?: ARAgingEntry[]; ap?: APAgingEntry[] } };
-type Party = { id: string; name: string; row: ARAgingEntry | APAgingEntry; total: number; docs: AgingDocDetail[] };
+type OtherResp = { success?: boolean; data?: { bills?: OtherPartyAgingBill[] } };
+type Party = { id: string; name: string; other: boolean; row: ARAgingEntry | APAgingEntry | OtherPartyAgingRow; total: number; docs: AgingDocDetail[] };
 
 export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
   const { data, loading, error } = useCachedJson<AgingResp>("/api/accounting/aging");
+  const { data: other } = useCachedJson<OtherResp>(side === "debtor" ? "/api/accounting/other-party-aging?type=DEBTOR" : null);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const title = side === "debtor" ? "Debtor Aging" : "Creditor Aging";
@@ -29,16 +33,20 @@ export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
 
   const parties: Party[] = useMemo(() => {
     const list: (ARAgingEntry | APAgingEntry)[] = (side === "debtor" ? data?.data?.ar : data?.data?.ap) ?? [];
-    return list
-      .map((r) => ({
-        id: "customerId" in r ? r.customerId : r.supplierId,
-        name: "customerName" in r ? r.customerName : r.supplierName,
-        row: r,
-        total: agingRowTotal(r),
-        docs: r.docs ?? [],
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [data, side]);
+    const trade: Party[] = list.map((r) => ({
+      id: "customerId" in r ? r.customerId : r.supplierId,
+      name: "customerName" in r ? r.customerName : r.supplierName,
+      other: false,
+      row: r,
+      total: agingRowTotal(r),
+      docs: r.docs ?? [],
+    }));
+    const others: Party[] = side === "debtor" && other?.success
+      ? otherPartyAgingRows(other.data?.bills ?? []).map((r) => ({ id: `o:${r.partyId}`, name: r.partyName, other: true, row: r, total: agingRowTotal(r), docs: r.docs }))
+      : [];
+    return [...trade, ...others].sort((a, b) => b.total - a.total);
+  }, [data, other, side]);
+  const otherCount = parties.filter((p) => p.other).length;
   const totals = useMemo(() => agingTotals(parties.map((p) => p.row)), [parties]);
   const widths = agingBarWidths(totals.buckets);
   const kw = q.trim().toLowerCase();
@@ -59,7 +67,8 @@ export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: M.raisin }}>Outstanding</span>
                 <span style={{ fontSize: 12, color: M.muted }}>
-                  {parties.length} {noun}{parties.length === 1 ? "" : "s"} · as at today
+                  {parties.length - otherCount} {noun}{parties.length - otherCount === 1 ? "" : "s"}
+                  {otherCount ? ` · ${otherCount} other debtor${otherCount === 1 ? "" : "s"}` : ""} · as at today
                 </span>
               </div>
               <div data-m-fin="outstanding" style={{ fontSize: 28, fontWeight: 700, color: M.raisin, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
@@ -110,7 +119,10 @@ export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
                         style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, minHeight: 50, padding: "12px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent" }}
                       >
                         {isOpen ? <ChevronDown size={16} color={M.taupe} /> : <ChevronRight size={16} color={M.faint} />}
-                        <span style={{ flex: 1, fontSize: 15, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                        <span style={{ flex: 1, fontSize: 15, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {p.name}
+                          {p.other ? <span data-m-fin="other-tag" style={{ marginLeft: 6, fontSize: 11, color: "#6B5C32", background: "#F4EEE3", borderRadius: 999, padding: "1px 7px" }}>Other debtor</span> : null}
+                        </span>
                         <span data-m-fin="party-total" style={{ fontSize: 15, fontWeight: 700, color: p.total < 0 ? "#9A3A2D" : M.raisin, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(p.total)}</span>
                       </button>
                       {isOpen && (
