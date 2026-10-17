@@ -35,7 +35,7 @@ import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
-import { useRowMenu, lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
+import { lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { amountInWords } from "@/lib/amount-in-words";
 import { COMPANY } from "@/lib/constants";
@@ -8396,8 +8396,11 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   const { confirm } = useConfirm();
   const [bills, setBills] = useState<OtherPartyBill[] | null>(null);
   const [showForm, setShowForm] = useState(!!formOnly);
-  const [q, setQ] = useState("");
-  const [openBill, setOpenBill] = useState<string | null>(null);
+  // The bill whose popup is open (double-click a row).
+  const [detailBillId, setDetailBillId] = useState<string | null>(null);
+  // Ticked rows (the grid owns the boxes) for batch print / export.
+  const [billPicked, setBillPicked] = useState<OtherPartyBill[]>([]);
+  const [billClearToken, setBillClearToken] = useState(0);
   // Edit-in-place (owner 2026-07-09): non-null = the form saves via PUT to
   // this bill number instead of creating a new bill.
   const [editingBillNo, setEditingBillNo] = useState<string | null>(formOnly?.mode === "edit" && formOnly.bill ? formOnly.bill.billNo : null);
@@ -8529,11 +8532,37 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
     setShowForm(true);
   };
 
-  const kw = q.trim().toLowerCase();
-  const visibleBills = (bills ?? []).filter((b) =>
-    !kw || [b.billNo, b.partyName, b.referenceNo, b.description].some((s) => (s ?? "").toLowerCase().includes(kw)),
-  );
-  const billSel = useRowSelection(visibleBills, (b) => b.billNo ?? b.id);
+  // The list's columns (DataGrid, the Payment Vouchers table's features;
+  // memoised — BUG-CLASSES C24). Totals leave voided bills out.
+  const liveBills = (list: OtherPartyBill[]) => list.filter((b) => (b.lifecycleState ?? "ACTIVE") === "ACTIVE");
+  const billColumns = useMemo<Column<OtherPartyBill>[]>(() => [
+    {
+      key: "billNo", label: "Bill No", type: "docno", width: "150px", noFilter: true,
+      render: (_v, b) => (
+        <span className="font-mono text-xs">
+          {b.billNo}
+          {(b.attachmentCount ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-[#6B7280] font-sans" title={`${b.attachmentCount} attachment${b.attachmentCount === 1 ? "" : "s"} — open the bill to see`}>📎{b.attachmentCount}</span>}
+        </span>
+      ),
+    },
+    { key: "partyName", label: "Party", width: "200px" },
+    {
+      key: "description", label: "Description", width: "260px",
+      filterAccessor: (b) => [b.referenceNo, b.description].filter(Boolean).join(" · "),
+      exportValue: (b) => [b.referenceNo, b.description].filter(Boolean).join(" · "),
+      render: (_v, b) => <span className="text-xs text-[#6B7280]">{[b.referenceNo, b.description].filter(Boolean).join(" · ")}</span>,
+    },
+    { key: "billDate", label: "Date", type: "date", width: "110px" },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "130px", total: (list) => liveBills(list).reduce((t, b) => t + b.totalSen, 0) },
+    { key: "paidAmountSen", label: "Paid", type: "currency", align: "right", width: "130px", total: (list) => liveBills(list).reduce((t, b) => t + b.paidAmountSen, 0) },
+    { key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: (list) => liveBills(list).reduce((t, b) => t + b.outstandingSen, 0), render: (_v, b) => <span className="tabular-nums font-medium">{formatCurrency(b.outstandingSen)}</span> },
+    {
+      key: "status", label: "Status", width: "120px",
+      filterAccessor: (b) => ((b.lifecycleState ?? "ACTIVE") === "ACTIVE" ? String(b.status ?? "") : String(b.lifecycleState)),
+      exportValue: (b) => ((b.lifecycleState ?? "ACTIVE") === "ACTIVE" ? String(b.status ?? "") : String(b.lifecycleState)),
+      render: (_v, b) => <span className="text-xs"><LifecycleBadge state={b.lifecycleState} />{(b.lifecycleState ?? "ACTIVE") === "ACTIVE" && b.status}</span>,
+    },
+  ], []);
 
   const handleLifecycle = async (billNo: string, action: "void" | "delete" | "unvoid") => {
     const verb = action === "unvoid" ? "Restore" : action === "delete" ? "Delete" : "Void";
@@ -8704,13 +8733,12 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       )
     : null;
 
-  // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
-  // links in the rows; double-click still opens the bill.
-  const rowMenu = useRowMenu();
+  // Row actions on right-click or the row's ⋮ (owner 2026-10-02; the grid's
+  // own menu since 2026-10-17) — double-click opens the bill.
   const billRowMenu = (b: OtherPartyBill): RowMenuGroups => {
     const active = (b.lifecycleState ?? "ACTIVE") === "ACTIVE";
     return [
-      [{ label: openBill === b.id ? "Close the bill" : "Open the bill", action: () => setOpenBill(openBill === b.id ? null : b.id) }],
+      [{ label: "Open the bill", action: () => setDetailBillId(b.id) }],
       [
         { label: "Print", action: () => printVoucher(buildOtherPartyBillVoucher(b, accounts)) },
         ...((b.attachmentCount ?? 0) > 0 ? [{ label: "Print + files", action: () => void printBillWithFiles(b, accounts).catch((e: Error) => toast.error(`Not printed — ${e.message}`)) }] : []),
@@ -8729,7 +8757,6 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
 
   return (
     <div className="space-y-3">
-      {rowMenu.element}
       <div className="flex flex-wrap items-center justify-end gap-3">
         {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} />}
         {!formOnly && <Button variant="primary" size="sm" onClick={() => {
@@ -8940,18 +8967,14 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       )}
 
       {!formOnly && (<>
-      <div className="flex items-center">
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search bill no / party / reference / description" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-80 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-      </div>
-
       <BatchActionsBar
-        count={billSel.count}
-        onClear={billSel.clear}
-        onPrint={() => printVouchers(billSel.selectedRows.map((b) => buildOtherPartyBillVoucher(b, accounts)))}
+        count={billPicked.length}
+        onClear={() => setBillClearToken((n) => n + 1)}
+        onPrint={() => printVouchers(billPicked.map((b) => buildOtherPartyBillVoucher(b, accounts)))}
         exportName="other-party-bills"
         exportAoa={() => [
           ["Bill No", "Date", "Party", "Status", "Reference No", "Voucher Total (RM)", "Account", "Description", "Amount (RM)"],
-          ...billSel.selectedRows.flatMap((b) =>
+          ...billPicked.flatMap((b) =>
             b.items.map((it) => [
               b.billNo,
               formatDateDMY(b.billDate),
@@ -8967,143 +8990,146 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
         ]}
       />
 
-      <Card><CardContent className="p-0 overflow-x-auto">
-        {bills === null ? (
-          <div className="py-10 text-center text-[#6B7280] text-sm">Loading…</div>
-        ) : bills.length === 0 ? (
-          <div className="py-10 text-center text-[#6B7280] text-sm">No bills yet.</div>
-        ) : (
-          <table data-fin-list className="w-full text-sm">
-            <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-              <th className="px-3 py-2 w-8"><input type="checkbox" checked={billSel.allSelected} onChange={billSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
-              <th className="px-4 py-2 text-left">Bill No</th><th className="px-4 py-2 text-left">Party</th>
-              <th className="px-4 py-2 text-left">Description</th>
-              <th className="px-4 py-2 text-left">Date</th><th className="px-4 py-2 text-right">Total</th>
-              <th className="px-4 py-2 text-right">Paid</th><th className="px-4 py-2 text-right">Outstanding</th>
-              <th className="px-4 py-2 text-center">Status</th><th className="px-4 py-2 text-right"></th>
-            </tr></thead>
-            <tbody>
-              {visibleBills.map((b) => (
-                <React.Fragment key={b.id}>
-                  <tr data-fin-nolift={openBill === b.id ? "" : undefined} className={`border-b border-[#F0ECE9] ${rowMenu.openKey === b.id ? "bg-[#F0ECE9]" : ""}`} onDoubleClick={() => setOpenBill(openBill === b.id ? null : b.id)} onContextMenu={rowMenu.onContextMenu(b.id, () => billRowMenu(b))} title="Double-click to open the full bill · right-click for actions">
-                    <td className="px-3 py-1.5 w-8" onDoubleClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={billSel.isSelected(b.billNo ?? b.id)} onChange={() => billSel.toggle(b.billNo ?? b.id)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
-                    </td>
-                    <td className="px-4 py-1.5 font-mono text-xs">
-                      <button onClick={() => setOpenBill(openBill === b.id ? null : b.id)} className="cursor-pointer hover:underline">{openBill === b.id ? "▾ " : "▸ "}{b.billNo}</button>
-                      {(b.attachmentCount ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-[#6B7280] font-sans" title={`${b.attachmentCount} attachment${b.attachmentCount === 1 ? "" : "s"} — open the bill to see`}>📎{b.attachmentCount}</span>}
-                    </td>
-                    <td className="px-4 py-1.5">{b.partyName}</td>
-                    <td className="px-4 py-1.5 text-xs text-[#6B7280] max-w-[16rem] truncate">{[b.referenceNo, b.description].filter(Boolean).join(" · ")}</td>
-                    <td className="px-4 py-1.5">{b.billDate}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(b.totalSen)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(b.paidAmountSen)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums font-medium">{formatCurrency(b.outstandingSen)}</td>
-                    <td className="px-4 py-1.5 text-center text-xs">
-                      <LifecycleBadge state={b.lifecycleState} />
-                      {(b.lifecycleState ?? "ACTIVE") === "ACTIVE" && b.status}
-                    </td>
-                    <td className="px-1 py-1 text-right w-8">{rowMenu.button(b.id, () => billRowMenu(b))}</td>
-                  </tr>
-                  {openBill === b.id && (
-                    /* Full bill detail (owner 2026-08-31: 「我要看bill 的全部
-                       detail」+「做好看一点」) — a voucher-style card: header
-                       strip with status pill, airy lines table with account
-                       NAMES, and a summary column for the money. */
-                    <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#FAF8F5]">
-                      <td colSpan={10} className="px-6 py-4">
-                        <div className="max-w-4xl rounded-lg border border-[#E2DDD8] bg-white shadow-sm overflow-hidden">
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 bg-[#F7F4EF] border-b border-[#E2DDD8]">
-                            <span className="font-mono text-sm font-semibold text-[#1F1D1B]">{b.billNo}</span>
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
-                              (b.lifecycleState ?? "ACTIVE") !== "ACTIVE"
-                                ? "bg-[#F0ECE9] text-[#6B7280]"
-                                : b.outstandingSen <= 0
-                                  ? "bg-[#EAF3DE] text-[#27500A]"
-                                  : "bg-[#FBEED9] text-[#9C6F1E]"
-                            }`}>
-                              {(b.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? b.lifecycleState : b.status}
-                            </span>
-                            {b.isOpening ? (
-                              <span className="rounded-full bg-[#F0ECE9] px-2 py-0.5 text-[10px] font-semibold tracking-wide text-[#6B7280]">OPENING</span>
-                            ) : null}
-                            <span className="text-sm font-medium text-[#1F1D1B]">{b.partyName}</span>
-                            <span className="ml-auto text-xs text-[#6B7280] tabular-nums">{b.billDate}</span>
-                          </div>
-                          {(b.referenceNo || b.description) && (
-                            <div className="flex flex-wrap gap-x-6 gap-y-0.5 px-4 py-2 text-xs text-[#5A5550] border-b border-[#F0ECE9]">
-                              {b.referenceNo ? <span><span className="text-[#9CA3AF] mr-1.5">Reference</span>{b.referenceNo}</span> : null}
-                              {b.description ? <span><span className="text-[#9CA3AF] mr-1.5">Description</span>{b.description}</span> : null}
-                            </div>
-                          )}
-                          <div className="flex flex-col md:flex-row">
-                            <table className="flex-1 text-xs">
-                              <thead>
-                                <tr className="text-[10px] uppercase tracking-wider text-[#6B5C32]">
-                                  <th className="px-4 py-2 text-left w-8 font-semibold">#</th>
-                                  <th className="px-3 py-2 text-left font-semibold">Account</th>
-                                  <th className="px-3 py-2 text-left font-semibold">Line description</th>
-                                  <th className="px-4 py-2 text-right w-32 font-semibold">Amount</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {b.items.map((it, i) => {
-                                  const acct = accounts.find((a) => a.code === it.counterAccount);
-                                  return (
-                                    <tr key={i} className={`border-t border-[#F0ECE9] ${i % 2 === 1 ? "bg-[#FBFAF8]" : ""}`}>
-                                      <td className="px-4 py-1.5 text-[#C7C1BA] tabular-nums">{i + 1}</td>
-                                      <td className="px-3 py-1.5 whitespace-nowrap">
-                                        <span className="font-mono text-[11px] text-[#9CA3AF] mr-1.5">{it.counterAccount}</span>
-                                        <span className="text-[#1F1D1B]">{acct?.name ?? ""}</span>
-                                      </td>
-                                      <td className="px-3 py-1.5 text-[#5A5550]">{it.description || <span className="text-[#C7C1BA]">—</span>}</td>
-                                      <td className="px-4 py-1.5 text-right tabular-nums font-medium text-[#1F1D1B]">{formatCurrency(it.amountSen)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                            <div className="md:w-60 shrink-0 border-t md:border-t-0 md:border-l border-[#E2DDD8] bg-[#FBFAF8] px-4 py-3 space-y-1.5 text-xs">
-                              {b.taxSen ? (
-                                <div className="flex justify-between text-[#6B7280]">
-                                  <span>Tax / SST</span>
-                                  <span className="tabular-nums">{formatCurrency(b.taxSen)}</span>
-                                </div>
-                              ) : null}
-                              <div className="flex justify-between font-semibold text-[#1F1D1B] border-b border-[#E2DDD8] pb-1.5">
-                                <span>Total</span>
-                                <span className="tabular-nums">{formatCurrency(b.totalSen)}</span>
-                              </div>
-                              <div className="flex justify-between text-[#6B7280]">
-                                <span>Paid</span>
-                                <span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span>
-                              </div>
-                              <div className={`flex justify-between font-semibold ${b.outstandingSen > 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
-                                <span>Outstanding</span>
-                                <span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="px-4 pb-3">
-                            <BillAttachmentsBlock bill={b} onChanged={load} />
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-              {visibleBills.length === 0 && (
-                <tr data-fin-nolift=""><td colSpan={10} className="px-4 py-8 text-center text-sm text-[#9CA3AF]">No bills match</td></tr>
-              )}
-            </tbody>
-          </table>
-        )}
+      <Card><CardContent className="p-0">
+        <DataGrid
+          columns={billColumns}
+          data={bills ?? []}
+          keyField="id"
+          gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-bills`}
+          selectable
+          checkboxSelectOnly
+          onSelectionChange={setBillPicked}
+          clearSelectionToken={billClearToken}
+          onDoubleClick={(b) => setDetailBillId(b.id)}
+          contextMenuItems={(b) => rowMenuItems(billRowMenu(b))}
+          rowClassName={(b) => ((b.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : "")}
+          searchPlaceholder="Search bill no / party / reference / description"
+          alwaysSearchKeys={["billNo", "partyName", "referenceNo", "description"]}
+          headerMenu
+          reorderableHeaders
+          exportName={side === "CREDITOR" ? "Other Creditor Bills" : "Other Debtor Bills"}
+          footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">· voided not counted</span></>}
+          emptyMessage="No bills yet"
+          loading={bills === null}
+          maxHeight="calc(100vh - 320px)"
+        />
       </CardContent></Card>
+
+      {detailBillId && (() => {
+        const b = (bills ?? []).find((x) => x.id === detailBillId);
+        if (!b) return null;
+        const close = () => setDetailBillId(null);
+        const active = (b.lifecycleState ?? "ACTIVE") === "ACTIVE";
+        return (
+          <DocDetailModal
+            title={`${side === "CREDITOR" ? "Other creditor" : "Other debtor"} bill ${b.billNo}`}
+            badges={<LifecycleBadge state={b.lifecycleState} />}
+            onClose={close}
+            wide
+            actions={<>
+              <Button variant="outline" size="sm" onClick={() => printVoucher(buildOtherPartyBillVoucher(b, accounts))}><Printer className="h-4 w-4" /> Print</Button>
+              {(b.attachmentCount ?? 0) > 0 && (
+                <Button variant="outline" size="sm" onClick={() => void printBillWithFiles(b, accounts).catch((e: Error) => toast.error(`Not printed — ${e.message}`))}><Printer className="h-4 w-4" /> Print + files</Button>
+              )}
+              {active && <Button variant="outline" size="sm" onClick={() => { close(); editBill(b); }}>Edit</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); copyBill(b); }}>Copy</Button>
+            </>}
+          >
+            <OtherPartyBillCard b={b} accounts={accounts} onChanged={load} />
+          </DocDetailModal>
+        );
+      })()}
       </>)}
     </div>
   );
 }
+
+// One other-party bill as a voucher-style card (owner 2026-08-31: 「我要看bill
+// 的全部 detail」+「做好看一点」): header strip with its status, the lines with
+// account NAMES, the money summary and its attachments. Shown in the bill's
+// popup — double-click a row (the list is the PV table since 2026-10-17, so
+// the card left the inline row).
+function OtherPartyBillCard({ b, accounts, onChanged }: { b: OtherPartyBill; accounts: ChartOfAccount[]; onChanged: () => void }) {
+  return (
+    <div className="max-w-4xl rounded-lg border border-[#E2DDD8] bg-white shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 bg-[#F7F4EF] border-b border-[#E2DDD8]">
+        <span className="font-mono text-sm font-semibold text-[#1F1D1B]">{b.billNo}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+          (b.lifecycleState ?? "ACTIVE") !== "ACTIVE"
+            ? "bg-[#F0ECE9] text-[#6B7280]"
+            : b.outstandingSen <= 0
+              ? "bg-[#EAF3DE] text-[#27500A]"
+              : "bg-[#FBEED9] text-[#9C6F1E]"
+        }`}>
+          {(b.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? b.lifecycleState : b.status}
+        </span>
+        {b.isOpening ? (
+          <span className="rounded-full bg-[#F0ECE9] px-2 py-0.5 text-[10px] font-semibold tracking-wide text-[#6B7280]">OPENING</span>
+        ) : null}
+        <span className="text-sm font-medium text-[#1F1D1B]">{b.partyName}</span>
+        <span className="ml-auto text-xs text-[#6B7280] tabular-nums">{b.billDate}</span>
+      </div>
+      {(b.referenceNo || b.description) && (
+        <div className="flex flex-wrap gap-x-6 gap-y-0.5 px-4 py-2 text-xs text-[#5A5550] border-b border-[#F0ECE9]">
+          {b.referenceNo ? <span><span className="text-[#9CA3AF] mr-1.5">Reference</span>{b.referenceNo}</span> : null}
+          {b.description ? <span><span className="text-[#9CA3AF] mr-1.5">Description</span>{b.description}</span> : null}
+        </div>
+      )}
+      <div className="flex flex-col md:flex-row">
+        <table className="flex-1 text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-[#6B5C32]">
+              <th className="px-4 py-2 text-left w-8 font-semibold">#</th>
+              <th className="px-3 py-2 text-left font-semibold">Account</th>
+              <th className="px-3 py-2 text-left font-semibold">Line description</th>
+              <th className="px-4 py-2 text-right w-32 font-semibold">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {b.items.map((it, i) => {
+              const acct = accounts.find((a) => a.code === it.counterAccount);
+              return (
+                <tr key={i} className={`border-t border-[#F0ECE9] ${i % 2 === 1 ? "bg-[#FBFAF8]" : ""}`}>
+                  <td className="px-4 py-1.5 text-[#C7C1BA] tabular-nums">{i + 1}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">
+                    <span className="font-mono text-[11px] text-[#9CA3AF] mr-1.5">{it.counterAccount}</span>
+                    <span className="text-[#1F1D1B]">{acct?.name ?? ""}</span>
+                  </td>
+                  <td className="px-3 py-1.5 text-[#5A5550]">{it.description || <span className="text-[#C7C1BA]">—</span>}</td>
+                  <td className="px-4 py-1.5 text-right tabular-nums font-medium text-[#1F1D1B]">{formatCurrency(it.amountSen)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="md:w-60 shrink-0 border-t md:border-t-0 md:border-l border-[#E2DDD8] bg-[#FBFAF8] px-4 py-3 space-y-1.5 text-xs">
+          {b.taxSen ? (
+            <div className="flex justify-between text-[#6B7280]">
+              <span>Tax / SST</span>
+              <span className="tabular-nums">{formatCurrency(b.taxSen)}</span>
+            </div>
+          ) : null}
+          <div className="flex justify-between font-semibold text-[#1F1D1B] border-b border-[#E2DDD8] pb-1.5">
+            <span>Total</span>
+            <span className="tabular-nums">{formatCurrency(b.totalSen)}</span>
+          </div>
+          <div className="flex justify-between text-[#6B7280]">
+            <span>Paid</span>
+            <span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span>
+          </div>
+          <div className={`flex justify-between font-semibold ${b.outstandingSen > 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
+            <span>Outstanding</span>
+            <span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="px-4 pb-3">
+        <BillAttachmentsBlock bill={b} onChanged={onChanged} />
+      </div>
+    </div>
+  );
+}
+
 
 type OpenBill = { id: string; billNo: string; outstandingSen: number };
 type PaymentGroup = {
@@ -9351,7 +9377,30 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
     setEditing(g);
   };
 
-  const opaySel = useRowSelection(history ?? [], (p) => p.paymentNo);
+  // Ticked rows (the grid owns the boxes) for batch print / export.
+  const [opayPicked, setOpayPicked] = useState<PaymentGroup[]>([]);
+  const [opayClearToken, setOpayClearToken] = useState(0);
+  // The list's columns (DataGrid, the Payment Vouchers table's features;
+  // memoised — BUG-CLASSES C24). The total leaves voided payments out.
+  const opayColumns = useMemo<Column<PaymentGroup>[]>(() => [
+    { key: "paymentNo", label: "No", type: "docno", width: "150px", noFilter: true, render: (_v, g) => <span className="font-mono text-xs">{g.paymentNo}</span> },
+    { key: "partyName", label: "Party", width: "220px" },
+    { key: "date", label: "Date", type: "date", width: "110px" },
+    {
+      key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px",
+      total: (list) => list.filter((g) => (g.lifecycleState ?? "ACTIVE") === "ACTIVE").reduce((t, g) => t + g.totalSen, 0),
+    },
+    {
+      key: "lines", label: "Bills", width: "80px", align: "center",
+      filterAccessor: (g) => g.lines.length, sortAccessor: (g) => g.lines.length, exportValue: (g) => g.lines.length,
+      render: (_v, g) => <span>{g.lines.length}</span>,
+    },
+    {
+      key: "lifecycleState", label: "Status", width: "110px",
+      filterAccessor: (g) => g.lifecycleState ?? "ACTIVE", exportValue: (g) => g.lifecycleState ?? "ACTIVE",
+      render: (_v, g) => <LifecycleBadge state={g.lifecycleState} />,
+    },
+  ], []);
   // A payment to an other creditor prints with its bills detail (dates,
   // balances before — print design 1a), loaded first; a receipt from an other
   // debtor needs none.
@@ -9360,9 +9409,8 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
     printVouchers(list.map((p, i) => buildOtherPartyPaymentVoucher(p, accounts, details[i] ?? undefined)));
   };
 
-  // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
-  // links in the rows; a click still opens the payment.
-  const rowMenu = useRowMenu();
+  // Row actions on right-click or the row's ⋮ (owner 2026-10-02; the grid's
+  // own menu since 2026-10-17) — double-click opens the payment.
   const opayRowMenu = (g: PaymentGroup): RowMenuGroups => [
     [{ label: "Open", action: () => setDetail(g) }],
     [
@@ -9378,7 +9426,6 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
 
   return (
     <div className="space-y-3">
-      {rowMenu.element}
       <OtherPartyPaymentForm
         key={editing?.paymentNo ?? "new"}
         parties={parties}
@@ -9390,13 +9437,13 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
       />
 
       <BatchActionsBar
-        count={opaySel.count}
-        onClear={opaySel.clear}
-        onPrint={() => void printOtherPayments(opaySel.selectedRows)}
+        count={opayPicked.length}
+        onClear={() => setOpayClearToken((n) => n + 1)}
+        onPrint={() => void printOtherPayments(opayPicked)}
         exportName="other-party-payments"
         exportAoa={() => [
           ["Payment No", "Date", "Party", "Status", "Voucher Total (RM)", "Bill No", "Amount (RM)"],
-          ...opaySel.selectedRows.flatMap((p) =>
+          ...opayPicked.flatMap((p) =>
             p.lines.map((l) => [
               p.paymentNo,
               formatDateDMY(p.date),
@@ -9410,38 +9457,28 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
         ]}
       />
 
-      <Card><CardContent className="p-0 overflow-x-auto">
-        {history === null ? (
-          <div className="py-8 text-center text-[#6B7280] text-sm">Loading…</div>
-        ) : history.length === 0 ? (
-          <div className="py-8 text-center text-[#6B7280] text-sm">No {verb.toLowerCase()}s yet.</div>
-        ) : (
-          <table data-fin-list className="w-full text-sm">
-            <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280] text-left">
-              <th className="px-3 py-2 w-8"><input type="checkbox" checked={opaySel.allSelected} onChange={opaySel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
-              <th className="px-4 py-2">No</th><th className="px-4 py-2">Party</th><th className="px-4 py-2">Date</th>
-              <th className="px-4 py-2 text-right">Total</th><th className="px-4 py-2 text-center">Bills</th><th className="px-4 py-2 text-right"></th>
-            </tr></thead>
-            <tbody>
-              {history.map((g) => (
-                <tr key={g.paymentNo} onClick={() => setDetail(g)} onDoubleClick={() => setDetail(g)} onContextMenu={rowMenu.onContextMenu(g.paymentNo, () => opayRowMenu(g))} title="Click to open · right-click for actions" className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === g.paymentNo ? "bg-[#F0ECE9]" : ""}`}>
-                  <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={opaySel.isSelected(g.paymentNo)} onChange={() => opaySel.toggle(g.paymentNo)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
-                  </td>
-                  <td className="px-4 py-1.5 font-mono text-xs">{g.paymentNo}</td>
-                  <td className="px-4 py-1.5">{g.partyName}</td>
-                  <td className="px-4 py-1.5">{g.date}</td>
-                  <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(g.totalSen)}</td>
-                  <td className="px-4 py-1.5 text-center">{g.lines.length}</td>
-                  <td className="px-4 py-1.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                    <span className="mr-2"><LifecycleBadge state={g.lifecycleState} /></span>
-                    {rowMenu.button(g.paymentNo, () => opayRowMenu(g))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <Card><CardContent className="p-0">
+        <DataGrid
+          columns={opayColumns}
+          data={history ?? []}
+          keyField="paymentNo"
+          gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-payments`}
+          selectable
+          checkboxSelectOnly
+          onSelectionChange={setOpayPicked}
+          clearSelectionToken={opayClearToken}
+          onDoubleClick={(g) => setDetail(g)}
+          contextMenuItems={(g) => rowMenuItems(opayRowMenu(g))}
+          rowClassName={(g) => ((g.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : "")}
+          searchPlaceholder="Search no / party"
+          headerMenu
+          reorderableHeaders
+          exportName={side === "CREDITOR" ? "Other Creditor Payments" : "Other Debtor Receipts"}
+          footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">· voided not counted</span></>}
+          emptyMessage={`No ${verb.toLowerCase()}s yet`}
+          loading={history === null}
+          maxHeight="calc(100vh - 320px)"
+        />
       </CardContent></Card>
 
       {detail && (

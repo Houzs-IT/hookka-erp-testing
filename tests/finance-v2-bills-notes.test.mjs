@@ -24,17 +24,18 @@ test("other-party aging: v2 list; an open party and its bills stay put; the tota
   assert.match(aging, /const grand = data\.aging\.reduce\(\(s, r\) => s \+ r\.totalSen, 0\);/);
 });
 
-test("bills list: v2 list; the open bill and its detail stay put; row menu and double-click unchanged", () => {
-  assert.match(bills, /<table data-fin-list className="w-full text-sm">/);
-  assert.match(bills, /<tr data-fin-nolift=\{openBill === b\.id \? "" : undefined\} className=\{`border-b border-\[#F0ECE9\]/);
-  assert.match(bills, /onDoubleClick=\{\(\) => setOpenBill\(openBill === b\.id \? null : b\.id\)\} onContextMenu=\{rowMenu\.onContextMenu\(b\.id, \(\) => billRowMenu\(b\)\)\}/);
-  assert.match(bills, /<tr data-fin-nolift="" className="border-b border-\[#F0ECE9\] bg-\[#FAF8F5\]">\n\s*<td colSpan=\{10\} className="px-6 py-4">/);
-  assert.match(bills, /<tr data-fin-nolift=""><td colSpan=\{10\}[^>]*>No bills match<\/td><\/tr>/);
+// Since 2026-10-17 both lists are the Payment Vouchers table (DataGrid).
+test("bills list: the PV-table grid; double-click opens the bill card in its popup; the row menu is the grid's", () => {
+  assert.match(bills, /columns=\{billColumns\}/);
+  assert.match(bills, /gridId=\{`accounting-\$\{side === "CREDITOR" \? "creditor" : "debtor"\}-bills`\}/);
+  assert.match(bills, /onDoubleClick=\{\(b\) => setDetailBillId\(b\.id\)\}\n\s*contextMenuItems=\{\(b\) => rowMenuItems\(billRowMenu\(b\)\)\}/);
+  assert.match(bills, /function OtherPartyBillCard\(\{ b, accounts, onChanged \}/);
+  assert.match(bills, /emptyMessage="No bills yet"/);
 });
 
-test("payments list: v2 list; click / double-click / right-click unchanged", () => {
-  assert.match(pays, /<table data-fin-list className="w-full text-sm">\n\s*<thead><tr className="border-b border-\[#E2DDD8\] text-xs text-\[#6B7280\] text-left">/);
-  assert.match(pays, /onClick=\{\(\) => setDetail\(g\)\} onDoubleClick=\{\(\) => setDetail\(g\)\} onContextMenu=\{rowMenu\.onContextMenu\(g\.paymentNo, \(\) => opayRowMenu\(g\)\)\}/);
+test("payments list: the PV-table grid; double-click / right-click as before", () => {
+  assert.match(pays, /columns=\{opayColumns\}/);
+  assert.match(pays, /onDoubleClick=\{\(g\) => setDetail\(g\)\}\n\s*contextMenuItems=\{\(g\) => rowMenuItems\(opayRowMenu\(g\)\)\}/);
 });
 
 for (const [file, kind, list, total, sign, sel, title] of [

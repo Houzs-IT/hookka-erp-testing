@@ -44,7 +44,9 @@ test("the bill's views show its files and print the bill with them", () => {
   assert.match(ap, /<BillAttachmentsBlock bill=\{b\} onChanged=\{\(\) => setVer\(\(v\) => v \+ 1\)\} \/>/);
   assert.match(ap, /Print \+ files<\/Button>/);
   const mgr = slice(ui, "function OtherPartyBillsManager(", "\ntype OpenBill = ");
-  assert.match(mgr, /<BillAttachmentsBlock bill=\{b\} onChanged=\{load\} \/>/);
+  // The bill card (its popup since 2026-10-17) reloads the list after a file change.
+  assert.match(mgr, /<BillAttachmentsBlock bill=\{b\} onChanged=\{onChanged\} \/>/);
+  assert.match(mgr, /<OtherPartyBillCard b=\{b\} accounts=\{accounts\} onChanged=\{load\} \/>/);
   // (2026-10-02: the list row's actions moved to its right-click menu.)
   assert.match(mgr, /\{ label: "Print \+ files", action: \(\) => void printBillWithFiles\(b, accounts\)/);
   assert.match(ui, /printVoucher\(\{ \.\.\.buildOtherPartyBillVoucher\(b, accounts\), appendix \}\);/);
