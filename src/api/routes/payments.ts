@@ -23,6 +23,7 @@ import {
   ledgerHasSource,
 } from "../lib/journal-hash";
 import { applyLifecycle, getDocState, restoreEditedFamilyStatements } from "../lib/document-lifecycle";
+import { ClosedYearError } from "../lib/fiscal";
 import { planEditBankCarry } from "../lib/bank-leg-carry";
 import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
@@ -103,6 +104,7 @@ async function buildCustomerPaymentLifecycle(
 
   const lc = await applyLifecycle(db, {
     orgId,
+    docDate: existing.date ?? null,
     baseSourceTypes: ["payment"],
     voidSourceType: "payment_void",
     sourceId: id,
@@ -370,7 +372,7 @@ async function buildCustomerPaymentRestate(
   const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [
     ...revLegs,
     ...postLegs,
-  ]);
+  ], { docDate: [existing.date ?? null, typeof body.date === "string" ? body.date : null] });
   statements.push(...jeStmts);
   statements.push(
     db
@@ -960,10 +962,12 @@ app.post("/", async (c) => {
               orgId,
             },
           ],
+          { docDate: date },
         );
         statements.push(...ledgerStmts);
       }
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       // Phase 1 (2026-06) — abort: a receipt must never apply its
       // paidAmount/outstanding cascade without DR bank / CR debtor legs.
       console.error(
@@ -1210,10 +1214,12 @@ app.put("/:id", async (c) => {
                 orgId,
               },
             ],
+            { docDate: existing.date ?? null },
           );
           statements.push(...revStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         // Phase 1 (2026-06) — abort: a bounce must reverse both the
         // subledger AND the GL or the bank/debtor accounts go stale.
         console.error(

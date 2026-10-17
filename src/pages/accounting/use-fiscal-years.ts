@@ -8,13 +8,16 @@
 import { useEffect, useState } from "react";
 import type { FyPeriod } from "@/lib/fiscal-year";
 
-export type FiscalYearRow = FyPeriod & { status: "closed" | "current" | "future" | "open" };
+export type FiscalYearRow = FyPeriod & { status: "closed" | "reopened" | "current" | "future" | "open" };
 export type FiscalYears = {
   fyeMonth: number;
   currentFyeMonth: number;
   changes: { from: string; to: string }[];
   years: FiscalYearRow[];
   canChangeYearEnd: boolean;
+  /** Close Year (accounting:create) / Reopen (Super Admin) — item 9 part B. */
+  canCloseYear?: boolean;
+  canReopenYear?: boolean;
 };
 
 export function useFiscalYears(reloadKey = 0): FiscalYears | null {

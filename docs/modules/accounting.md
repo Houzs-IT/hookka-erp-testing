@@ -1,5 +1,6 @@
 # Accounting & Invoicing — Module Guide
 
+> **Last verified: 2026-10-18** on branch `feat/fiscal-year-close-lock`: the `ledgerHasSource` anchor moved to `journal-hash.ts:125` (the posting context added above it); `buildJournalEntryStatements` now takes a required `{ docDate }` (closed-year lock, item 9). Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](../DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
@@ -86,7 +87,7 @@ read-only/append-only. Money is integer sen throughout.
 | `buildInvoiceLedgerLegs` | `invoices.ts:102` | Sales-invoice GL legs (debtor DR / revenue CR by category) |
 | PUT invoice (DRAFT→SENT post) | `invoices.ts:2024` | Posts invoice to GL on the SENT transition |
 | `buildPiApprovalLegs` | `src/lib/pi-posting.ts:35` | PI GL legs on APPROVED (idempotent) |
-| `ledgerHasSource` | `src/api/lib/journal-hash.ts:117` | GL posting idempotency guard |
+| `ledgerHasSource` | `src/api/lib/journal-hash.ts:125` | GL posting idempotency guard |
 | knock-off / un-knock PI | `supplier-payments.ts:572 / 733` | Apply / reverse supplier payment to PI |
 | `buildSupplierPaymentLifecycle` | `supplier-payments.ts:827` | Void/delete/unvoid shared core |
 | `GET /ar-control` · `/ap-control` | `accounting.ts:1672 · 2470` | Control-account totals + aging |
@@ -118,7 +119,7 @@ read-only/append-only. Money is integer sen throughout.
 
 ## Common tasks (mini-playbook)
 - **Add a money field to an invoice/PI** → snake_case column + runtime `ALTER … ADD COLUMN IF NOT EXISTS` before the INSERT (pattern `invoices.ts:1463`); add a `column-rename-map.json` entry; read dual-keyed `r.camelCase ?? r.snake_case`; store integer sen via `MoneyInput`/`roundSen`.
-- **Add a GL posting for a new document type** → build legs in a `src/lib/*-posting.ts` helper, guard with `ledgerHasSource` (`journal-hash.ts:117`), post on the status transition AND the create-as-final path (see `pi-posting.ts:35`); never mutate existing ledger rows.
+- **Add a GL posting for a new document type** → build legs in a `src/lib/*-posting.ts` helper, guard with `ledgerHasSource` (`journal-hash.ts:125`), post on the status transition AND the create-as-final path (see `pi-posting.ts:35`); never mutate existing ledger rows.
 - **Add a report tab** → new `TabKey` in `TABS` + a `{tab === "x" && <XTab/>}` branch in `AccountingPage` (`accounting/index.tsx:510`); back it with an `app.get("/x")` reading `ledger_journal_entries` (+ `computePnlWindow` if it needs material cost).
 - **Diagnose an AR/AP control-vs-subledger drift** → hit `GET /ap-reconciliation` (`accounting.ts:2704`) or `/ar-reconciliation` (**L2879**) BEFORE hand-reconciling; the itemized rows sum exactly to the drift (pure `src/lib/ap-recon.ts`).
 

@@ -20,6 +20,14 @@
 // authoritative until the immutability trigger flips at M3/W9.
 // ---------------------------------------------------------------------------
 
+import { assertYearOpen } from "./fiscal";
+
+/** Which document date(s) a posting is for (finance backlog item 9 part B):
+ *  a date inside a closed financial year is refused (ClosedYearError). An
+ *  edit passes the old date and the new one; a period posting its month; a
+ *  posting with no document date of its own (the year-end close) null. */
+export type PostingContext = { docDate: string | null | readonly (string | null)[] };
+
 export interface LedgerEntryInput {
   id: string;
   sourceType: string;       // 'invoice' | 'payment' | 'credit_note' | 'debit_note' | 'manual'
@@ -163,11 +171,14 @@ export async function buildJournalEntryStatements(
   db: DbLike,
   orgId: string,
   entries: LedgerEntryInput[],
+  ctx: PostingContext,
 ): Promise<{
   statements: D1PreparedStatement[];
   stamped: LedgerEntryRow[];
 }> {
   if (entries.length === 0) return { statements: [], stamped: [] };
+  // A closed financial year takes no new legs (item 9 part B).
+  await assertYearOpen(db as unknown as Parameters<typeof assertYearOpen>[0], ctx?.docDate ?? null);
 
   const head = await getLastJournalHash(db, orgId);
   const stamped: LedgerEntryRow[] = [];
@@ -263,11 +274,13 @@ export async function appendJournalEntries(
   db: DbLike,
   orgId: string,
   entries: LedgerEntryInput[],
+  ctx: PostingContext = { docDate: null },
 ): Promise<LedgerEntryRow[]> {
   const { statements, stamped } = await buildJournalEntryStatements(
     db,
     orgId,
     entries,
+    ctx,
   );
   if (statements.length === 0) return stamped;
   await db.batch(statements);

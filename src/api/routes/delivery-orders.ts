@@ -1656,6 +1656,7 @@ app.post("/backfill-void-reissue-underbilled", async (c) => {
             c.var.DB,
             orgId,
             legs,
+            { docDate: String((oldInv as { invoiceDate?: string | null }).invoiceDate ?? "").slice(0, 10) || null },
           );
           b1.push(...statements);
         }
@@ -1767,6 +1768,7 @@ app.post("/backfill-void-reissue-underbilled", async (c) => {
           c.var.DB,
           orgId,
           legs,
+          { docDate: invoiceDate },
         );
         await c.var.DB.batch(statements);
       }

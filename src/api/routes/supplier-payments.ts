@@ -464,7 +464,7 @@ export async function tfRepaymentStatements(
       actorUserId: o.actorUserId,
       orgId: o.orgId,
     },
-  ]);
+  ], { docDate: o.date });
   out.push(...legs);
   out.push(bumpSupplierPaymentsRev(db));
   return out;
@@ -659,7 +659,7 @@ export async function buildSupplierPaymentCreate(
     });
   }
   legs.push(...(input.extraLegs ?? []));
-  const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
+  const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs, { docDate: date });
   statements.push(...ls);
   statements.push(bumpSupplierPaymentsRev(db));
   return { ok: true, statements, totalBooked, totalBank, totalFx };
@@ -995,8 +995,11 @@ async function buildSupplierPaymentLifecycle(
     .first());
   if (isTfRepayment && action === "unvoid") throw new Error("TF_REPAYMENT_NO_UNVOID");
 
+  // The payment's own date — a closed financial year takes no void / restore (item 9).
+  const spDate = await db.prepare("SELECT date FROM supplier_payments WHERE payment_no = ? LIMIT 1").bind(paymentNo).first<{ date: string | null }>().catch(() => null);
   const lc = await applyLifecycle(db, {
     orgId,
+    docDate: spDate?.date ?? null,
     baseSourceTypes: ["supplier_payment"],
     voidSourceType: "supplier_payment_void",
     sourceId: paymentNo,
@@ -1150,9 +1153,9 @@ async function buildSupplierPaymentRestate(
       await db
         // Exclude #6 supplier-discount markers (method='CREDIT_NOTE') from the
         // rollback set — defensive against a future payment_no collision.
-        .prepare("SELECT purchaseInvoiceId, booked_sen, amount_sen, supplierId, supplierName FROM supplier_payments WHERE payment_no = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'")
+        .prepare("SELECT purchaseInvoiceId, booked_sen, amount_sen, supplierId, supplierName, date FROM supplier_payments WHERE payment_no = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'")
         .bind(paymentNo)
-        .all<{ purchaseInvoiceId: string | null; bookedSen: number | null; booked_sen: number | null; amountSen?: number | null; amount_sen?: number | null; supplierId?: string | null; supplier_id?: string | null; supplierName?: string | null; supplier_name?: string | null }>()
+        .all<{ date?: string | null; purchaseInvoiceId: string | null; bookedSen: number | null; booked_sen: number | null; amountSen?: number | null; amount_sen?: number | null; supplierId?: string | null; supplier_id?: string | null; supplierName?: string | null; supplier_name?: string | null }>()
     ).results ?? [];
   if (oldRows.length === 0) throw new Error("PAYMENT_NOT_FOUND");
 
@@ -1339,7 +1342,7 @@ async function buildSupplierPaymentRestate(
   // The bank side follows the re-posted bank leg, or the edit is refused (C31).
   const carry = await planEditBankCarry(db, cur, newLegs, "payment");
   if (!carry.ok) throw new BankMatchedEditRefused(carry.error);
-  const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
+  const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs], { docDate: [oldRows[0]?.date ?? null, date] });
   statements.push(...jeStmts);
   statements.push(
     db
