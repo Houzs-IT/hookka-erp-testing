@@ -56,7 +56,7 @@ test("title row: the company picker, Recalculate counter (debtors), one download
 test("the download is the same aging builder: Excel and a printable PDF", () => {
   // Since the other debtors joined (owner 2026-10-17) the export is grouped.
   assert.match(ar, /buildGroupedAgingExportAoa\("Customer", groups\.map\(\(g\) => \(\{ label: g\.label, parties: g\.rows \}\)\)\)/);
-  assert.match(ap, /buildAgingExportAoa\("Supplier", rows\.map/);
+  assert.match(ap, /buildGroupedAgingExportAoa\("Creditor", groups\.map\(\(g\) => \(\{/);
   assert.match(ui, /const AGING_PDF: PdfExportOpts = \{ rowKind: agingRowKind, leftCols: \[1, 2\], colWidths: \{ 0: 168,/);
   for (const body of [ar, ap]) {
     assert.match(body, /\{ \.\.\.AGING_PDF, print: true \}/);
@@ -88,14 +88,8 @@ test("the aging lists in the v2 list look; an open row and its documents stay pu
   assert.match(list, /<tr data-fin-nolift=\{isOpen \? "" : undefined\} className="border-b border-\[#F0ECE9\]/);
   assert.match(list, /\{isOpen && r\.docs\.map\(\(d, i\) => \(\n\s*<tr key=\{`d-\$\{i\}`\} data-fin-nolift=""/);
   assert.match(list, /\{AGING_KEYS\.map\(\(k\) => <td key=\{k\} className="py-3 px-4 text-right">\{formatCurrency\(sumOf\(rows, k\)\)\}<\/td>\)\}/);
-  for (const body of [ap]) {
-    assert.match(body, /<table data-fin-list className="w-full text-sm">/);
-    assert.match(body, /<tr data-fin-nolift=\{open \? "" : undefined\} className="border-b border-\[#F0ECE9\]/);
-    assert.match(body, /\.docs \?\? \[\]\)\.map\(\(d, i\) => \(\n\s*<tr key=\{`d-\$\{i\}`\} data-fin-nolift=""/);
-    // The totals are still the sums of the rows.
-    assert.match(body, /\{formatCurrency\(rows\.reduce\(\(s, a\) => s \+ a\.over90Sen, 0\)\)\}/);
-    assert.match(body, /<td className="py-3 px-4 text-right">\{formatCurrency\(totalOutstanding\)\}<\/td>/);
-  }
+  // Creditor Aging too (2026-10-17), with its Next Due column.
+  assert.match(ap, /<AgingListTable\n\s*partyHeader="Creditor"[\s\S]*?nextDue=\{nextDueCell\}/);
   assert.match(ar, /<h3 className="text-\[14px\] font-semibold text-\[#1F1D1B\]">By debtor<\/h3>/);
   assert.match(ap, /<h3 className="text-\[14px\] font-semibold text-\[#1F1D1B\]">By creditor<\/h3>/);
 });
@@ -115,7 +109,7 @@ test("statements: same reads and print; v2 list look with the closing balance as
 });
 
 test("Creditor Aging: the list first, then Trade Finance, Contra and the statement", () => {
-  const order = ["<KpiCards", "<table data-fin-list", "<TradeFinanceBlock />", "<ContraCard />", "<SupplierStatementCard />"];
+  const order = ["<KpiCards", "<AgingListTable", "<TradeFinanceBlock />", "<ContraCard />", "<SupplierStatementCard />"];
   let at = -1;
   for (const o of order) {
     const i = ap.indexOf(o, at + 1);

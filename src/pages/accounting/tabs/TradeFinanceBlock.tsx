@@ -8,6 +8,11 @@
 // Amounts are ledger-derived server-side (loadTfDraws) — this block only
 // displays, edits due dates, and links to the Supplier Payment screen to
 // repay (payee = the lender; the grid there lists draws instead of PIs).
+//
+// Since 2026-10-17 (owner 「这些都做」, Finance v2) Creditor Aging's list ALSO
+// shows one row per open draw, in its own Trade finance section (never mixed
+// into the supplier rows), with its due date as Next Due. This block stays
+// where draws are managed: due dates, interest, bank charges, setup.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";

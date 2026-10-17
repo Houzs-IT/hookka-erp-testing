@@ -161,7 +161,8 @@ type JournalLineRow = {
 // each open document under its party, amount in its aging column). `mo` is
 // the bucket index 0..4 (current / 1 / 2 / 3 / 3+ months); advances appear
 // as negative current-bucket docs.
-type AgingDocRow = { no: string; date: string; mo: number; amountSen: number };
+// `due`: a purchase invoice's due date (Creditor Aging's Next Due, 2026-10-17).
+type AgingDocRow = { no: string; date: string; mo: number; amountSen: number; due?: string };
 
 type ArAgingRow = {
   customerId: string;
@@ -534,7 +535,10 @@ app.get("/aging", async (c) => {
   // cacheKey partitions the consolidated ("") result from each per-company
   // ("company:<orgId>") result so a filtered request never poisons the
   // default cache — the default read stays byte-identical to today.
-  const cacheKey = coFilter.active ? `company:${coFilter.orgId}` : "";
+  // The "|due" suffix (2026-10-17) versions the cached shape: purchase-invoice
+  // docs now carry their due date (Creditor Aging's Next Due), so a snapshot
+  // built before that must not be served.
+  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due` : "|due";
   const data = await withSnapshot(
     c.var.DB,
     {
@@ -654,6 +658,7 @@ app.get("/aging", async (c) => {
           date: String(p.invoiceDate ?? "").slice(0, 10),
           mo: agingBucketIdx(moAp),
           amountSen: outstanding,
+          due: String(p.dueDate ?? "").slice(0, 10),
         });
       }
       // Unapplied supplier advances → NEGATIVE current-bucket rows (owner rule

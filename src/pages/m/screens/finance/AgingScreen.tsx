@@ -3,8 +3,9 @@
 // /api/accounting/aging — the desktop page's read — as at today (aging as at
 // a chosen month-end is deferred). The Outstanding card and the bucket chips
 // are sums of the rows' five buckets, the desktop Total; a tap opens a party's
-// documents. Debtor Aging also lists the other debtors (owner 2026-10-17,
-// Finance v2), from /other-party-aging, as the desktop page does.
+// documents. Debtor Aging also lists the other debtors, Creditor Aging the
+// other creditors and one row per open trade-finance draw with its next due
+// date (owner 2026-10-17, Finance v2), from the desktop page's own reads.
 // ---------------------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
@@ -15,17 +16,29 @@ import { M } from "../../theme";
 import { FinanceHeader, FinanceNote } from "./finance-shell";
 import { AGING_BUCKETS, agingBarWidths, agingRowTotal, agingTotals, fmtMoney } from "./m-finance-lib";
 import { otherPartyAgingRows, type OtherPartyAgingBill, type OtherPartyAgingRow } from "@/lib/other-party-aging-rows";
+import { daysUntil, dueText, dueTone, monthBucket, nextDueOf } from "@/lib/aging-next-due";
+import { todayYmdMY } from "@/lib/utils";
 
 // The design's bucket colours: teal while current, warming to red as it ages.
 const BUCKET_COLOURS = ["#5AA49B", "#9AC9BF", "#F2B47E", "#E8A07C", "#D9704F"];
 
 type AgingResp = { success?: boolean; error?: string; data?: { ar?: ARAgingEntry[]; ap?: APAgingEntry[] } };
 type OtherResp = { success?: boolean; data?: { bills?: OtherPartyAgingBill[] } };
-type Party = { id: string; name: string; other: boolean; row: ARAgingEntry | APAgingEntry | OtherPartyAgingRow; total: number; docs: AgingDocDetail[] };
+type TfResp = { success?: boolean; data?: { sources?: { lenderName: string; draws: { drawSourceId: string; drawDate: string; dueDate: string; outstandingSen: number; paidSupplier: string }[] }[] } };
+type BucketRow = { currentSen: number; days30Sen: number; days60Sen: number; days90Sen: number; over90Sen: number };
+type Party = { id: string; name: string; kind: "trade" | "other" | "tf"; sub?: string; nextDue?: string; row: ARAgingEntry | APAgingEntry | OtherPartyAgingRow | BucketRow; total: number; docs: AgingDocDetail[] };
+const KIND_TAG: Record<string, { label: string; bg: string; fg: string }> = {
+  other: { label: "Other", bg: "#F4EEE3", fg: "#6B5C32" },
+  tf: { label: "Trade finance", bg: "#E8EDF2", fg: "#1F2A44" },
+};
+const BUCKET_KEYS = ["currentSen", "days30Sen", "days60Sen", "days90Sen", "over90Sen"] as const;
+const TONE_COLOUR = { overdue: "#9A3A2D", soon: "#7A5B12", later: "#6B7280" } as const;
 
 export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
   const { data, loading, error } = useCachedJson<AgingResp>("/api/accounting/aging");
-  const { data: other } = useCachedJson<OtherResp>(side === "debtor" ? "/api/accounting/other-party-aging?type=DEBTOR" : null);
+  const { data: other } = useCachedJson<OtherResp>(`/api/accounting/other-party-aging?type=${side === "debtor" ? "DEBTOR" : "CREDITOR"}`);
+  const { data: tf } = useCachedJson<TfResp>(side === "creditor" ? "/api/accounting/trade-finance" : null);
+  const today = todayYmdMY();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const title = side === "debtor" ? "Debtor Aging" : "Creditor Aging";
@@ -36,17 +49,31 @@ export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
     const trade: Party[] = list.map((r) => ({
       id: "customerId" in r ? r.customerId : r.supplierId,
       name: "customerName" in r ? r.customerName : r.supplierName,
-      other: false,
+      kind: "trade",
+      nextDue: side === "creditor" ? nextDueOf(r.docs ?? []) : undefined,
       row: r,
       total: agingRowTotal(r),
       docs: r.docs ?? [],
     }));
-    const others: Party[] = side === "debtor" && other?.success
-      ? otherPartyAgingRows(other.data?.bills ?? []).map((r) => ({ id: `o:${r.partyId}`, name: r.partyName, other: true, row: r, total: agingRowTotal(r), docs: r.docs }))
+    const others: Party[] = other?.success
+      ? otherPartyAgingRows(other.data?.bills ?? []).map((r) => ({ id: `o:${r.partyId}`, name: r.partyName, kind: "other", row: r, total: agingRowTotal(r), docs: r.docs }))
       : [];
-    return [...trade, ...others].sort((a, b) => b.total - a.total);
-  }, [data, other, side]);
-  const otherCount = parties.filter((p) => p.other).length;
+    const draws: Party[] = side === "creditor" && tf?.success
+      ? (tf.data?.sources ?? []).flatMap((src) => src.draws.filter((d) => d.outstandingSen > 0).map((d) => {
+          const mo = monthBucket(d.drawDate, today);
+          const row: BucketRow = { currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 0, over90Sen: 0 };
+          row[BUCKET_KEYS[mo]] = d.outstandingSen;
+          return {
+            id: `f:${d.drawSourceId}`, name: src.lenderName, kind: "tf" as const, sub: [d.drawSourceId, d.paidSupplier].filter(Boolean).join(" · "),
+            nextDue: d.dueDate, row, total: d.outstandingSen,
+            docs: [{ no: d.drawSourceId, date: d.drawDate, mo, amountSen: d.outstandingSen, due: d.dueDate }],
+          };
+        }))
+      : [];
+    return [...trade, ...others, ...draws].sort((a, b) => b.total - a.total);
+  }, [data, other, tf, side, today]);
+  const otherCount = parties.filter((p) => p.kind === "other").length;
+  const drawCount = parties.filter((p) => p.kind === "tf").length;
   const totals = useMemo(() => agingTotals(parties.map((p) => p.row)), [parties]);
   const widths = agingBarWidths(totals.buckets);
   const kw = q.trim().toLowerCase();
@@ -67,8 +94,9 @@ export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: M.raisin }}>Outstanding</span>
                 <span style={{ fontSize: 12, color: M.muted }}>
-                  {parties.length - otherCount} {noun}{parties.length - otherCount === 1 ? "" : "s"}
-                  {otherCount ? ` · ${otherCount} other debtor${otherCount === 1 ? "" : "s"}` : ""} · as at today
+                  {parties.length - otherCount - drawCount} {noun}{parties.length - otherCount - drawCount === 1 ? "" : "s"}
+                  {otherCount ? ` · ${otherCount} other ${side === "debtor" ? "debtor" : "creditor"}${otherCount === 1 ? "" : "s"}` : ""}
+                  {drawCount ? ` · ${drawCount} draw${drawCount === 1 ? "" : "s"}` : ""} · as at today
                 </span>
               </div>
               <div data-m-fin="outstanding" style={{ fontSize: 28, fontWeight: 700, color: M.raisin, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
@@ -121,7 +149,14 @@ export function AgingScreen({ side }: { side: "debtor" | "creditor" }) {
                         {isOpen ? <ChevronDown size={16} color={M.taupe} /> : <ChevronRight size={16} color={M.faint} />}
                         <span style={{ flex: 1, fontSize: 15, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {p.name}
-                          {p.other ? <span data-m-fin="other-tag" style={{ marginLeft: 6, fontSize: 11, color: "#6B5C32", background: "#F4EEE3", borderRadius: 999, padding: "1px 7px" }}>Other debtor</span> : null}
+                          {KIND_TAG[p.kind] ? <span data-m-fin={`${p.kind}-tag`} style={{ marginLeft: 6, fontSize: 11, color: KIND_TAG[p.kind].fg, background: KIND_TAG[p.kind].bg, borderRadius: 999, padding: "1px 7px" }}>{KIND_TAG[p.kind].label}</span> : null}
+                          {p.sub || p.nextDue ? (
+                            <span style={{ display: "block", fontSize: 11.5, color: M.muted, overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {p.sub}
+                              {p.sub && p.nextDue ? " · " : ""}
+                              {p.nextDue ? (() => { const days = daysUntil(p.nextDue, today); return <span data-m-fin="next-due" style={{ color: TONE_COLOUR[dueTone(days)] }}>Next due {p.nextDue.split("-").reverse().join("/")} · {dueText(days)}</span>; })() : null}
+                            </span>
+                          ) : null}
                         </span>
                         <span data-m-fin="party-total" style={{ fontSize: 15, fontWeight: 700, color: p.total < 0 ? "#9A3A2D" : M.raisin, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(p.total)}</span>
                       </button>

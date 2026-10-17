@@ -1677,8 +1677,8 @@ in both, a read that cannot succeed returns a value that looks like data.
 | 5 | `dashboard-prototype.ts` — 260 reads, whole route | ✅ 2026-09-15 (BUG-2026-09-15-181) — converted from the rename map |
 | 6 | **every other route reading rows from `getSql`** | ⬜ unswept. No test forbids a sixth. The cheap sweep is `grep -oE "\br\.[a-z]+_[a-z_]+" src/api/routes/*.ts` — a hit is not automatically a bug (some are bound params or SQL fragments) but every hit deserves a look |
 | 7 | **no test asserts a payload's money field is non-zero** | ⬜ open. This class has now recurred five times and every instance was found by a human noticing a wrong number on a screen. One assertion per money-bearing endpoint — "this field is not 0 for a book with sales" — would have caught all five |
-| 8 | the customer KYC block (`KycPanel` over `GET /api/customer-crm/onboarding`) — the CLIENT read snake_case off a `SELECT *` row, and the upsert wrote the blanks back | 🟡 2026-10-17 (-313) — the write-back is what makes this variant destructive, not just wrong on screen |
-| 9 | `customers.default_company_code` in `rowToCustomer` and the PUT merge | 🟡 2026-10-17 (-312) — same destructive shape: the edit form sends the whole record |
+| 8 | the customer KYC block (`KycPanel` over `GET /api/customer-crm/onboarding`) — the CLIENT read snake_case off a `SELECT *` row, and the upsert wrote the blanks back | ✅ 2026-10-17 (-313) — the write-back is what makes this variant destructive, not just wrong on screen |
+| 9 | `customers.default_company_code` in `rowToCustomer` and the PUT merge | ✅ 2026-10-17 (-312) — same destructive shape: the edit form sends the whole record |
 
 ## C24 — the parent feeds the grid's own output back into the grid's inputs
 
