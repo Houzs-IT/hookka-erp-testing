@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useCachedJson } from "@/lib/cached-fetch";
+import { cachedFetchJson, useCachedJson } from "@/lib/cached-fetch";
 import { PeriodPicker } from "./dashboard-shared";
-import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
+import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, widgetPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
 import { useDashboardUrlState } from "./use-dashboard-url-state";
 import { FinanceView } from "./FinanceView";
@@ -138,6 +138,16 @@ export default function DashboardPrototypePage() {
     if (p.mode === "range" && !quarterOfPeriod(p)) return { mode: "monthly", month: p.month };
     return p.day ? { ...p, day: undefined } : p;
   }, [period, months, tab, dayTab]);
+
+  // Start the Command Center reads with the feed, not after it (owner
+  // 2026-10-17 "哪里卡顿": on Sales the 2.6s overview only began once the 2.6s
+  // feed had finished — ~6s). The tabs' own useCachedJson join these in-flight
+  // requests, so nothing is fetched twice.
+  const widgetKey = widgetPeriod(effectivePeriod);
+  useEffect(() => {
+    void cachedFetchJson(`/api/dashboard/overview?period=${widgetKey}`);
+    void cachedFetchJson(`/api/dashboard/overview/revenue-split?period=${widgetKey}`);
+  }, [widgetKey]);
 
   // A "Today's problems" tile opens its tab and scrolls to the list behind the
   // number (owner 2026-10-17: "我在上面点一下的时候，它就会跳下来"). The list

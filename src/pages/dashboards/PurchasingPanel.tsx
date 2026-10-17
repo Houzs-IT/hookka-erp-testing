@@ -50,10 +50,16 @@ export function PurchasingPanel({ period }: { period: Period }) {
   }, [key, today]);
   const lastYm = months[months.length - 1];
   const trendMonths = useMemo(() => Array.from({ length: 6 }, (_, i) => shiftMonth(lastYm, i - 5)), [lastYm]);
-  const revMonths = useMemo(() => [...new Set([...trendMonths, ...months, ...prevMonths])].filter((m) => m <= today.slice(0, 7)).sort(), [trendMonths, months, prevMonths, today]);
+  const revMonths = useMemo(() => [...new Set([...[1, 2, 3].map((i) => shiftMonth(trendMonths[0], -i)), ...trendMonths, ...months, ...prevMonths])].filter((m) => m <= today.slice(0, 7)).sort(), [trendMonths, months, prevMonths, today]);
 
   const { data: ov } = useCachedJson<Overview>(`/api/dashboard/overview?period=${key}`);
   const { data: piResp } = useCachedJson<{ data?: Pi[] }>("/api/purchase-invoices");
+  // What we owe suppliers = accounting's own figure (owner audit 2026-10-17):
+  // the trade-creditors control net of advances already paid, past due from
+  // its aging. Summing unpaid invoices ourselves read RM 377k against the
+  // ledger's RM 347k — it missed RM 22.7k of advances. Roles without
+  // accounting access fall back to the invoice sum, labelled as such.
+  const { data: apResp } = useCachedJson<{ data?: { netOutstandingSen?: number; aging?: { notDueSen: number; totalSen: number }[] } }>("/api/accounting/ap-control");
   const prodRev = useProductionRevenue(revMonths);
   const t = useSeriesToggle();
 
@@ -90,10 +96,21 @@ export function PurchasingPanel({ period }: { period: Period }) {
     const prevSpend = prevMonths.reduce((a, m) => a + (spendBy.get(m) ?? 0), 0);
     const rev = revOf(months);
     const prevRev = revOf(prevMonths);
+    // Expected spend (owner 2026-10-17: compare with a forecast built from
+    // production revenue, or a light / heavy month reads wrong): that month's
+    // production revenue × the purchase % of the three months before it.
+    const shareOf = (m: string) => { const r = revOf([m]); return r > 0 ? (spendBy.get(m) ?? 0) / r : null; };
     const trend = trendMonths.map((m) => {
       const r = revOf([m]);
       const s = spendBy.get(m) ?? 0;
-      return { m: monthLabel(m).slice(0, 3), Spend: Math.round(s / 100), "% of production revenue": r > 0 ? Math.round((s / r) * 1000) / 10 : null };
+      const prior = [1, 2, 3].map((i) => shareOf(shiftMonth(m, -i))).filter((x): x is number => x != null);
+      const rate = prior.length ? prior.reduce((a, b) => a + b, 0) / prior.length : null;
+      return {
+        m: monthLabel(m).slice(0, 3),
+        Spend: Math.round(s / 100),
+        "Expected from production": rate == null ? null : Math.round((r * rate) / 100),
+        "% of production revenue": r > 0 ? Math.round((s / r) * 1000) / 10 : null,
+      };
     });
     const top = [...supplier.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.sen - a.sen).slice(0, 6);
     return {
@@ -115,7 +132,7 @@ export function PurchasingPanel({ period }: { period: Period }) {
         <p className="mt-0.5 text-xs text-[#9CA3AF]">Supplier invoices by invoice date{isLive ? " (to date)" : ""} · % = share of production revenue, the same base as Costing</p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <Stat
             label="Invoiced spend"
             value={rm(calc.spend)}
@@ -127,14 +144,20 @@ export function PurchasingPanel({ period }: { period: Period }) {
             sub={calc.prevShare == null ? undefined : `previous period ${pct(calc.prevShare)}`}
             tone={calc.share != null && calc.prevShare != null ? (calc.share > calc.prevShare ? "bad" : "good") : undefined}
           />
-          <Stat label="Open POs" value={pur ? fmtN(pur.openPOCount) : "…"} sub={pur ? `${rm(pur.outstandingPOValueSen)} not yet received` : undefined} />
-          <Stat label="Waiting to arrive" value={pur ? fmtN(pur.itemsPendingReceipt) : "…"} sub={pur ? `${fmtN(pur.grnsPendingQC)} GRNs waiting for QC` : undefined} />
-          <Stat label="We owe suppliers" value={piResp ? rm(calc.owed) : "…"} sub={piResp ? `${rm(calc.overdue)} past due · ${calc.overdueN} invoices` : undefined} tone={calc.overdue > 0 ? "bad" : undefined} />
+          <Stat label="Outstanding POs" value={pur ? rm(pur.outstandingPOValueSen) : "…"} sub={pur ? `${fmtN(pur.openPOCount)} POs open · ${fmtN(pur.itemsPendingReceipt)} items still to arrive` : undefined} />
+          {apResp?.data?.netOutstandingSen != null ? (() => {
+            const aging = apResp.data.aging ?? [];
+            const total = apResp.data.netOutstandingSen ?? 0;
+            const pastDue = aging.reduce((a, r) => a + (r.totalSen - r.notDueSen), 0);
+            return <Stat label="We owe suppliers" value={rm(total)} sub={`${rm(pastDue)} past due · trade creditors, net of advances`} tone={pastDue > 0 ? "bad" : undefined} />;
+          })() : (
+            <Stat label="We owe suppliers" value={piResp ? rm(calc.owed) : "…"} sub={piResp ? `${rm(calc.overdue)} past due · from unpaid invoices` : undefined} tone={calc.overdue > 0 ? "bad" : undefined} />
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
           <div className="xl:col-span-3">
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">Spend · last 6 months</p>
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">Spend vs expected from production · last 6 months</p>
             <div className="select-none [&_*]:outline-none" style={{ width: "100%", height: 220 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={calc.trend} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
@@ -142,9 +165,10 @@ export function PurchasingPanel({ period }: { period: Period }) {
                   <XAxis dataKey="m" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
                   <YAxis yAxisId="rm" tick={CC_TICK} axisLine={false} tickLine={false} width={40} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                   <YAxis yAxisId="pct" orientation="right" tick={CC_TICK} axisLine={false} tickLine={false} width={36} tickFormatter={(v) => `${v}%`} />
-                  <Tooltip contentStyle={{ background: "#FFFFFF", border: "1px solid #E2DDD8", borderRadius: 8, fontSize: 12 }} formatter={(v, n) => (n === "Spend" ? [rm(Number(v) * 100), n] : [`${v}%`, n])} />
+                  <Tooltip contentStyle={{ background: "#FFFFFF", border: "1px solid #E2DDD8", borderRadius: 8, fontSize: 12 }} formatter={(v, n) => (n === "% of production revenue" ? [`${v}%`, n] : [rm(Number(v) * 100), n])} />
                   <Legend {...t.legend} />
                   <Bar yAxisId="rm" dataKey="Spend" hide={t.hide("Spend")} fill={INK} radius={[4, 4, 0, 0]} maxBarSize={30} isAnimationActive={false} />
+                  <Line yAxisId="rm" type="monotone" dataKey="Expected from production" hide={t.hide("Expected from production")} stroke="#3E6570" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: "#FFFFFF", stroke: "#3E6570", strokeWidth: 2 }} connectNulls isAnimationActive={false} />
                   <Line yAxisId="pct" type="monotone" dataKey="% of production revenue" hide={t.hide("% of production revenue")} stroke={GOLD} strokeWidth={2.5} dot={{ r: 3 }} connectNulls isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>

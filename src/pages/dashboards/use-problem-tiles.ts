@@ -6,7 +6,10 @@ import { isOutsourced } from "./dashboard-shared-lib";
 // "Today's problems" tiles — shared by the desktop strip (ProblemsStrip.tsx)
 // and the phone (/m) strip so both say the same thing.
 type Feed = {
-  production?: { overdueByDept?: { department: string; count: number }[] } | null;
+  production?: {
+    overdueByDept?: { department: string; count: number }[];
+    orders?: { risk?: string; stagesDone: number; stagesTotal: number; currentDept: string | null }[];
+  } | null;
   service?: { cases: { daysOverdue: number }[] } | null;
   employee?: {
     workers?: { id: string; name: string | null; empNo?: string | null; countsToHeadcount: boolean }[];
@@ -37,10 +40,24 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
     if (!data) return [];
     const out: Tile[] = [];
     const prod = data.production;
-    if (prod?.overdueByDept) {
+    // Overdue = past the customer's date AND still being made. An order whose
+    // every stage is finished is done on the floor — its status just hasn't
+    // been closed — so it is counted apart (owner audit 2026-10-17: 10 of 68).
+    if (prod?.orders) {
+      const late = prod.orders.filter((o) => o.risk === "critical");
+      const done = late.filter((o) => o.stagesTotal > 0 && o.stagesDone >= o.stagesTotal);
+      const live = late.filter((o) => !(o.stagesTotal > 0 && o.stagesDone >= o.stagesTotal));
+      const by = new Map<string, number>();
+      for (const o of live) by.set(o.currentDept ?? "—", (by.get(o.currentDept ?? "—") ?? 0) + 1);
+      const worst = [...by.entries()].sort((x, y) => y[1] - x[1])[0];
+      out.push({
+        key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(live.length), label: "Production orders overdue",
+        hint: [live.length && worst ? `most at ${deptName(worst[0])} (${worst[1]})` : "", done.length ? `+${done.length} finished, not closed` : ""].filter(Boolean).join(" · ") || "none",
+        tone: live.length ? "bad" : "ok",
+      });
+    } else if (prod?.overdueByDept) {
       const n = prod.overdueByDept.reduce((a, d) => a + d.count, 0);
-      const worst = prod.overdueByDept[0];
-      out.push({ key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(n), label: "Production orders overdue", hint: n && worst ? `most at ${deptName(worst.department)} (${worst.count})` : "none", tone: n ? "bad" : "ok" });
+      out.push({ key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(n), label: "Production orders overdue", tone: n ? "bad" : "ok" });
     }
     const emp = data.employee;
     // Not in: headcount workers (not outsourced, has ever clocked in — a

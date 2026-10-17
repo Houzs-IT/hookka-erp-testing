@@ -23,11 +23,14 @@ export type OverdueOrder = {
 
 export function OverdueOrdersList({ orders }: { orders: OverdueOrder[] }) {
   const [dept, setDept] = useState("ALL");
+  // "live" = still being made; "done" = every stage finished, status not closed.
+  const [kind, setKind] = useState<"live" | "done">("live");
   const [search, setSearch] = useState("");
-  const overdue = useMemo(
-    () => orders.filter((o) => o.risk === "critical").sort((a, b) => (a.daysToDD ?? 0) - (b.daysToDD ?? 0)),
-    [orders],
-  );
+  const allDone = (o: OverdueOrder) => o.stagesTotal > 0 && o.stagesDone >= o.stagesTotal;
+  const late = useMemo(() => orders.filter((o) => o.risk === "critical").sort((a, b) => (a.daysToDD ?? 0) - (b.daysToDD ?? 0)), [orders]);
+  const doneCount = late.filter(allDone).length;
+  const overdue = useMemo(() => late.filter((o) => (kind === "done" ? allDone(o) : !allDone(o))), [late, kind]);
+  const stale = overdue.filter((o) => (o.daysToDD ?? 0) < -60).length;
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const o of overdue) m.set(o.currentDept || "(no dept)", (m.get(o.currentDept || "(no dept)") ?? 0) + 1);
@@ -48,8 +51,11 @@ export function OverdueOrdersList({ orders }: { orders: OverdueOrder[] }) {
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3 flex-wrap">
         <div>
-          <CardTitle>Overdue production orders · {fmtN(overdue.length)}</CardTitle>
-          <p className="mt-0.5 text-xs text-[#9CA3AF]">Past the customer's delivery date and not finished · most late first · department = where it is waiting now</p>
+          <CardTitle>Overdue production orders · {fmtN(late.length - doneCount)}</CardTitle>
+          <p className="mt-0.5 text-xs text-[#9CA3AF]">
+            Past the customer's delivery date · most late first · department = where it is waiting now
+            {stale > 0 && kind === "live" && <span className="text-[#9C6F1E]"> · {stale} over 60 days late — likely shipped but never scanned out, please check</span>}
+          </p>
         </div>
         <div className="relative w-full max-w-[220px] max-md:max-w-none">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#9CA3AF]" />
@@ -57,6 +63,15 @@ export function OverdueOrdersList({ orders }: { orders: OverdueOrder[] }) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
+        <div className="px-4 pb-2">
+          <Tabs
+            tabs={[{ key: "live", label: `Still in production · ${fmtN(late.length - doneCount)}` }, { key: "done", label: `All stages finished, not closed · ${fmtN(doneCount)}` }]}
+            value={kind}
+            onChange={(k) => setKind(k as "live" | "done")}
+            variant="pill"
+            scrollable
+          />
+        </div>
         <div className="px-4 pb-3">
           <Tabs tabs={tabs} value={dept} onChange={setDept} variant="pill" scrollable />
         </div>

@@ -144,7 +144,10 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
     return m;
   }, [byDay]);
 
-  const loading = revByDay == null || (canLabour && !labourReady) || !csNow;
+  // The P&L cost structure takes ~4s cold (the full P&L engine): the card no
+  // longer waits for it — materials, total and cost % show "…" until it lands.
+  const loading = revByDay == null || (canLabour && !labourReady);
+  const pnlReady = !!csNow;
   const estimated = (ym: string) => !pnlMaterials.has(ym);
   const cost = (b: Bucket) => b.material + (canLabour ? b.labour : 0);
 
@@ -194,10 +197,10 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       <td className={`py-2 pr-3 ${opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}`}>{label}</td>
       {cols.map((c) => {
         const v = get(c.b);
-        const p = opts.pct && v != null ? pctOf(v, c.b.revenue) : null;
+        const p = opts.pct && v != null && !Number.isNaN(v) ? pctOf(v, c.b.revenue) : null;
         return (
           <td key={c.label} className="py-2 pl-3 text-right tabular-nums whitespace-nowrap">
-            <span className={opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}>{v == null ? "payroll only" : rm(v)}</span>
+            <span className={opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}>{v == null ? "payroll only" : Number.isNaN(v) ? "…" : rm(v)}</span>
             {opts.pct && <span className="ml-2 inline-block min-w-[46px] rounded bg-[#F5F2ED] px-1.5 py-0.5 text-[11px] text-[#6B5C32]">{pctTxt(p)}</span>}
           </td>
         );
@@ -216,7 +219,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
           <div className="mb-3 flex items-end gap-4">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">Cost % · {head.label}</p>
-              <p className="text-3xl font-bold tabular-nums" style={{ color: headPct != null && prevPct != null && headPct > prevPct ? "#9A3A2D" : "#4F7C3A" }}>{loading ? "…" : pctTxt(headPct)}</p>
+              <p className="text-3xl font-bold tabular-nums" style={{ color: headPct != null && prevPct != null && headPct > prevPct ? "#9A3A2D" : "#4F7C3A" }}>{loading || !pnlReady ? "…" : pctTxt(headPct)}</p>
             </div>
             {!loading && headPct != null && prevPct != null && (
               <p className="pb-1 text-xs text-[#6B7280]">
@@ -239,9 +242,9 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
               </thead>
               <tbody>
                 {row("Production revenue", (b) => b.revenue, { strong: true })}
-                {row("Materials used (P&L)", (b) => b.material, { pct: true })}
+                {row("Materials used (P&L)", (b) => (pnlReady ? b.material : NaN), { pct: true })}
                 {row("Labour", (b) => (canLabour ? b.labour : null), { pct: true })}
-                {row("Total cost", (b) => cost(b), { pct: true, strong: true })}
+                {row("Total cost", (b) => (pnlReady ? cost(b) : NaN), { pct: true, strong: true })}
                 {row("Purchases (supplier invoices)", (b) => b.purchases, { pct: true, muted: true })}
               </tbody>
             </table>
