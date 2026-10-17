@@ -135,5 +135,9 @@ test("screen: under the Stock Summary, TOTAL is the WIP line; a keyed month show
   for (const h of ["PO No.", "Product", "Line", "Qty", "Done", "At selling price", "WIP value"]) assert.ok(card.includes(`>${h}</th>`), h);
   assert.match(card, /<td colSpan=\{4\}>TOTAL — WORK IN PROGRESS<\/td>\n\s*<td data-cell="num split">\{amt\(atPriceSen\)\}<\/td>\n\s*<td data-cell="num">\{amt\(wip\.lineSen\)\}<\/td>/);
   assert.match(card, /DIFFERENCE \(Stock Take − orders\)/);
+  // No cost ratio (the books' first month): no difference row, and the note says why.
+  assert.match(card, /const noRatio = wip\.ratio === 0;/);
+  assert.match(card, /\{!noRatio && \(\n\s*<tr data-row="fin">\n\s*<td \/>\n\s*<td colSpan=\{4\}>DIFFERENCE/);
+  assert.match(card, /no goods were completed the month before — so the orders show at selling price only\./);
   assert.match(card, /\{amt\(wip\.lineSen - wip\.totalSen\)\}/);
 });

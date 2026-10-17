@@ -13622,6 +13622,10 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
   const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
   const atPriceSen = Math.round(wip.rows.reduce((s, r) => s + r.valueAtPriceSen, 0));
   const keyed = wip.basis === "stock-take";
+  // No cost ratio (no goods completed the month before — the first month of
+  // the books): the orders can only be shown at selling price, and a
+  // difference against the Stock Take figure would mean nothing.
+  const noRatio = wip.ratio === 0;
   return (
     <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
       <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
@@ -13674,12 +13678,14 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
                   <td data-cell="num split" />
                   <td data-cell="num">{amt(wip.lineSen)}</td>
                 </tr>
-                <tr data-row="fin">
-                  <td />
-                  <td colSpan={4}>DIFFERENCE (Stock Take − orders)</td>
-                  <td data-cell="num split" />
-                  <td data-cell="num" data-neg={wip.lineSen - wip.totalSen < 0 ? "" : undefined}>{amt(wip.lineSen - wip.totalSen)}</td>
-                </tr>
+                {!noRatio && (
+                  <tr data-row="fin">
+                    <td />
+                    <td colSpan={4}>DIFFERENCE (Stock Take − orders)</td>
+                    <td data-cell="num split" />
+                    <td data-cell="num" data-neg={wip.lineSen - wip.totalSen < 0 ? "" : undefined}>{amt(wip.lineSen - wip.totalSen)}</td>
+                  </tr>
+                )}
               </>
             ) : (
               <tr data-row="fin">
@@ -13698,6 +13704,7 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
           : "TOTAL is the WORK IN PROGRESS closing above, the same figure the P&L closes on and the Balance Sheet's work-in-progress line."}
         {" "}At selling price = the order's selling price × qty × the share of its job-card minutes done; WIP value = that × the cost ratio
         {wip.ratio !== null ? ` ${wip.ratio.toFixed(4)}` : ""} (last month's materials ÷ last month's completed goods + this month's direct labour ÷ this month's completed goods, both at selling price), spread over the orders to the sen.
+        {noRatio && " There is no cost ratio for this month — no goods were completed the month before — so the orders show at selling price only."}
       </p>
     </div>
   );

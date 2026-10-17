@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-325 (branch `fix/wip-card-no-ratio`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-322 and -323 flipped to 🟢 after the #970 prod check; -320 / -321 stay 🟡 (deployed, nothing on production to exercise without a write).
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-320 to -323 (branch `fix/edit-keeps-bank-match`; 319 is taken by the production-finishing fix, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-318 flipped to 🟢 after the #956 / #959 prod check.
@@ -143,6 +144,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-18-325 — WIP by production order showed every order at 0 and a full "difference" in the books' first month `finance` 🟡
+
+🟡 Fixed on branch `fix/wip-card-no-ratio`, prod check pending.
+
+**Symptom.** Found verifying #978 on production (read-only): Stock Summary for May 2026, the books' first month, listed 205 orders in progress, each with a WIP value of 0, and "DIFFERENCE (Stock Take − orders)" equal to the whole keyed WIP figure — as if the orders were worth nothing.
+
+**Root cause.** The orders' cost ratio is last month's materials ÷ last month's completed goods + this month's labour ÷ this month's completed goods. May has no month before it in the books, so the ratio is 0 and every order's value at cost is 0. The figure the P&L and the Balance Sheet use is the keyed Stock Take figure, so nothing posted or reported was wrong — only the comparison under the summary.
+
+**Fix.** With no cost ratio the card shows the orders at selling price only, drops the DIFFERENCE row, and says why ("no goods were completed the month before"). Months with a ratio are unchanged.
+
+**Regression.** `tests/wip-by-production-order.test.mjs` (screen case). Class: none (display of a valuation that cannot be made).
 
 ## BUG-2026-10-17-324 — Dashboard overstated overdue production and money owed to suppliers `dashboard` `production` `accounting` 🟢
 
