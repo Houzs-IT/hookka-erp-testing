@@ -22,7 +22,9 @@ import {
   buildJournalEntryStatements,
   ledgerHasSource,
 } from "../lib/journal-hash";
-import { applyLifecycle } from "../lib/document-lifecycle";
+import { applyLifecycle, getDocState, restoreEditedFamilyStatements } from "../lib/document-lifecycle";
+import { planEditBankCarry } from "../lib/bank-leg-carry";
+import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
 import { parseDebtorCode } from "../../lib/debtor";
 import { issueDocNumber } from "../lib/doc-number-service";
@@ -125,6 +127,8 @@ async function buildCustomerPaymentLifecycle(
         .bind(id, orgId),
     );
   }
+  // An unvoid brings back the EDITED legs, not the pre-edit ones (class C5).
+  if (reactivated) statements.push(...(await restoreEditedFamilyStatements(db, orgId, "payment", id)));
   if (deactivated || reactivated) {
     let totalAllocSen = 0;
     for (const a of allocs) {
@@ -207,6 +211,11 @@ async function buildCustomerPaymentRestate(
     .bind(id)
     .first<PaymentRow>();
   if (!existing) throw new Error("PAYMENT_NOT_FOUND");
+  // A cancelled receipt's legs are hidden and its invoices already rolled
+  // back; editing it would post live legs and re-mark the invoices paid.
+  if ((await getDocState(db, orgId, "payment", id)) !== "ACTIVE") {
+    throw new Error(`Receipt ${existing.receiptNumber} is cancelled — restore it before editing.`);
+  }
   const oldAllocs = parseAllocations(existing.allocations);
   const newAllocs = (body.allocations ?? []).filter(
     (a) => a.invoiceId && a.amount > 0,
@@ -301,11 +310,11 @@ async function buildCustomerPaymentRestate(
     (
       await db
         .prepare(
-          `SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
             WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'payment%'`,
         )
         .bind(id, orgId)
-        .all<{ accountCode: string; debitSen: number; creditSen: number }>()
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
     ).results ?? [];
   const revLegs = cur.map((l, i) => ({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
@@ -355,6 +364,9 @@ async function buildCustomerPaymentRestate(
           },
         ]
       : [];
+  // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+  const carry = await planEditBankCarry(db, cur, postLegs, "receipt");
+  if (!carry.ok) throw new BankMatchedEditRefused(carry.error);
   const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [
     ...revLegs,
     ...postLegs,
@@ -367,6 +379,7 @@ async function buildCustomerPaymentRestate(
       )
       .bind(id, orgId, `payment_restate_post:${stamp}`),
   );
+  statements.push(...carry.statements);
 
   // 5. Update the receipt row in place (same id + receiptNumber). The document
   //    date is editable too (owner 2026-07-07) — the GL month follows it via
@@ -1395,6 +1408,7 @@ app.post("/:id/restate", async (c) => {
     if (msg === "PAYMENT_NOT_FOUND") {
       return c.json({ success: false, error: `No payment found for ${id}` }, 404);
     }
+    if (err instanceof BankMatchedEditRefused) return c.json({ success: false, error: msg }, 409);
     if (msg === "ALLOCATIONS_EXCEED_AMOUNT") {
       return c.json(
         {

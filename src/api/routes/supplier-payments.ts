@@ -36,6 +36,8 @@ import { looksTechnical } from "../../lib/humanize-error";
 import { issueDocNumber } from "../lib/doc-number-service";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { applyLifecycle, getDocState } from "../lib/document-lifecycle";
+import { planEditBankCarry } from "../lib/bank-leg-carry";
+import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
 import { ensureTfTables, getTfSources, loadTfDraws } from "../lib/trade-finance";
 import { clampRepayAlloc, addDays } from "../../lib/trade-finance";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
@@ -1268,11 +1270,11 @@ async function buildSupplierPaymentRestate(
     (
       await db
         .prepare(
-          `SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
             WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'supplier_payment%'`,
         )
         .bind(paymentNo, orgId)
-        .all<{ accountCode: string; debitSen: number; creditSen: number }>()
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
     ).results ?? [];
   const revLegs = cur.map((l, i) => ({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
@@ -1294,6 +1296,9 @@ async function buildSupplierPaymentRestate(
   if (totalFx !== 0) {
     newLegs.push({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: paymentNo, legNo: 3, accountCode: FX_GAIN_ACCT, debitSen: totalFx < 0 ? -totalFx : 0, creditSen: totalFx > 0 ? totalFx : 0, description: `Realised FX · ${paymentNo}`, actorUserId, orgId });
   }
+  // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+  const carry = await planEditBankCarry(db, cur, newLegs, "payment");
+  if (!carry.ok) throw new BankMatchedEditRefused(carry.error);
   const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
   statements.push(...jeStmts);
   statements.push(
@@ -1303,6 +1308,7 @@ async function buildSupplierPaymentRestate(
       )
       .bind(paymentNo, orgId, postSource),
   );
+  statements.push(...carry.statements);
 
   // 5. TRUTH GUARD (owner rule 2026-07-08 「确保以后没有这问题」/
   //    BUG-2026-07-08-002: PI-2606-041 showed paid 836 on a 418 bill with
@@ -1671,6 +1677,7 @@ app.post("/:paymentNo/restate", async (c) => {
         404,
       );
     }
+    if (err instanceof BankMatchedEditRefused) return c.json({ success: false, error: msg }, 409);
     if (looksTechnical(msg)) {
       // The operator toast deliberately hides technical text (owner directive
       // 2026-06-08), which made the 2026-07-24 PV-2607-001 edit failure

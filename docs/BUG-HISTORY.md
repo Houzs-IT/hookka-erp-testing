@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-320 to -323 (branch `fix/edit-keeps-bank-match`; 319 is taken by the production-finishing fix, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-318 flipped to 🟢 after the #956 / #959 prod check.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-318 gains its follow-up (branch `fix/delivery-return-cn-blocked`, to main): the return's page says why no credit note can be raised.
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-318 (branch `fix/delivery-return-cn-status`, to main).
@@ -141,6 +142,54 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-323 — Editing an official receipt showed an empty account for a line whose code the chart had renamed `finance` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found verifying #968 on production (read-only, nothing saved): HOR-2610-002's edit form opened with its line's Account empty. Saving it untouched would have been refused ("Account 407-0000 not found").
+
+**Root cause.** The receipt line keeps the code it was posted with, 407-0000; the chart later renamed it 440-0040 (an `account_aliases` row). Every ledger read resolves aliases; the receipts list handed the stored code to the form, whose picker only knows today's chart.
+
+**Fix.** `GET /official-receipts` and `GET /payment-vouchers` resolve every stored account code (lines, Deposit To / Pay From, accrual account) through `loadAccountResolver`, moved to `src/api/lib/account-resolver.ts`. Stored rows are untouched. Measured on production: that receipt is the only document carrying a renamed code.
+
+**Regression.** `tests/official-receipt-edit-flow.test.mjs` (renamed-code case), `tests/official-receipt-edit.test.mjs`. Class: C32 (new).
+
+## BUG-2026-10-17-322 — The server accepted an edit of a cancelled voucher, customer receipt or other-party payment `finance` `gl` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent: every screen offers Edit only on an active document, so nobody could reach it from the app. A direct call (or a form left open while the same document was voided in another tab) would have posted live ledger legs under a cancelled document — and, for a customer receipt, marked its invoices paid again.
+
+**Root cause.** The edit (restate) routes of payment vouchers, customer receipts and other-party payments never asked the document's state; the supplier-payment edit did (since 2026-07).
+
+**Fix.** Each refuses unless the document is active ("… is cancelled — restore it before editing."), before anything is written. The official-receipt edit was born with the same check (#968).
+
+**Regression.** `tests/bank-leg-carry.test.mjs`, `tests/edit-keeps-bank-match-flow.test.mjs`. Class: none (a missing guard).
+
+## BUG-2026-10-17-321 — Editing a bank-matched payment or receipt left its statement line pointing at a hidden ledger leg `finance` `bank-reco` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (measured 2026-10-17: every matched statement line on production points at a live leg). Had it happened: after editing a voucher, supplier payment, customer receipt or other-party payment already matched in Cash Book, the month's reconciliation would show the statement line as booked and the re-posted bank leg as not yet through the bank — out by the amount, and a finalised month drifting.
+
+**Root cause.** An edit reverses the live legs and re-posts new ones with new ids. Bank reconciliation stores leg ids (a statement line's `matchedLegId`, a split's `leg_id`, the cash board's daily tick); nothing moved them.
+
+**Fix.** One rule for every edit that re-posts a bank leg (`planEditBankCarry`, `src/api/lib/bank-leg-carry.ts`; the pure rule `planBankCarry` in `src/lib/bank-leg-carry.ts`): each held leg moves to the re-posted leg with the same account (renamed codes resolved) and the same amounts, inside the edit's own batch. When none exists — the bank account or the amount changed — a statement match or split refuses the edit with 409 "… Unmatch it in Cash Book first to change them."; a daily tick never blocks. Used by the payment-voucher, supplier-payment, customer-receipt, other-party-payment and official-receipt edits.
+
+**Regression.** `tests/bank-leg-carry.test.mjs` (rule + a pin on every edit + an inventory of restate writers), `tests/edit-keeps-bank-match-flow.test.mjs` (the real voucher routes; proved red with the carry removed). Class: C31 rows 2–5.
+
+## BUG-2026-10-17-320 — Unvoiding an edited voucher, customer receipt or other-party payment brought back the pre-edit entry `finance` `gl` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Latent (measured 2026-10-17: the five documents on production edited around a void all show live legs that match the document today). Had it happened: void an edited document, restore it, and the ledger shows the numbers from BEFORE the edit while the document shows the edited ones.
+
+**Root cause.** Class C5, the supplier-payment bug of 2026-07-24 (BUG-2026-07-24-002) on three other documents: the shared lifecycle toggles `hidden` by exact sourceType, so an unvoid un-hid the base legs while the edit's `<doc>_restate_post:<stamp>` family stayed hidden.
+
+**Fix.** `restoreEditedFamilyStatements` (`src/api/lib/document-lifecycle.ts`), appended to the unvoid: re-hide the document's family, un-hide the newest edit plus any family first posted after it (`liveFamiliesAfterEdit`, `src/lib/lifecycle-machine.ts`). A never-edited document is untouched. Payment vouchers, customer receipts, other-party payments; official receipts (#968) moved onto it.
+
+**Regression.** `tests/edit-keeps-bank-match-flow.test.mjs` (proved red with the restore removed), `tests/bank-leg-carry.test.mjs`. Class: C5 rows 8–10.
 
 ## BUG-2026-10-17-319 — Production finishing pulled shipped and invoiced orders back to READY_TO_SHIP `production` `sales-orders` 🟡
 

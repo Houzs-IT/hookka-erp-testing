@@ -55,3 +55,24 @@ export function liveRestatePostType(sourceTypes: string[], base: string): string
   }
   return best;
 }
+
+// What was LIVE for an edited document just before it was voided: its newest
+// restate_post family, plus any family first posted AFTER that edit (a
+// settlement or a bounce booked later). Everything else — the base legs, the
+// older edits, every reversal and the void — stays hidden. Null when the
+// document was never edited: applyLifecycle's own toggles are then right.
+export function liveFamiliesAfterEdit(
+  families: { sourceType: string; firstAt: string }[],
+  base: string,
+): string[] | null {
+  const latest = liveRestatePostType(families.map((f) => f.sourceType), base);
+  if (!latest) return null;
+  const at = families.find((f) => f.sourceType === latest)?.firstAt ?? "";
+  const live = [latest];
+  for (const f of families) {
+    const t = f.sourceType;
+    if (t === latest || t === `${base}_void` || t.startsWith(`${base}_restate_`)) continue;
+    if (f.firstAt > at) live.push(t);
+  }
+  return live;
+}

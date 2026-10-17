@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-17**: branch `fix/edit-keeps-bank-match`, to `main`, closes **C5 rows 8–10** and **C31 rows 2–5** (one shared rule each: `restoreEditedFamilyStatements`, `planEditBankCarry`) and **adds C32, a stored account code the chart later renamed** (BUG-2026-10-17-320 to -323). Nothing else re-checked.
+
 > **Last verified: 2026-10-17**: branch `feat/or-edit`, to `main`, adds **C5 rows 7–11** (the official-receipt edit, born correct; three unvoid paths found open on the way) and **C31, an edit that re-posts a bank leg under a new id**. Nothing else re-checked.
 
 > **Last verified: 2026-10-17**: branch `feat/finance-notes-post`, to `main`, adds **C16 row 11** (the phone's Credit / Debit Notes lists read note-number and amount keys the API never returns, BUG-2026-10-17-317). Nothing else re-checked.
@@ -389,10 +391,10 @@ the fallback is (postedAt dating, "no legs to reverse", "nothing to hide").
 | 4 | `applyLifecycle` reversal SELECT + hidden UPDATEs | raw sourceId | ⬜ latent — unreachable today (PIs don't use lifecycle; PI delete is DRAFT-only = no legs). Warning comment in place; widen the matches if a `:<tag>`-legged doc type is ever wired in |
 | 5 | supplier-payment UNVOID leg un-hiding | exact `supplier_payment` sourceType | ✅ fixed 2026-07-24 (BUG-2026-07-24-002: an edited payment's live legs are `restate_post:<stamp>` — unvoid resurrected the stale pre-edit base legs; now picks `latestRestatePostType`) |
 | 6 | P&L "salary already recorded" (`glWindowSigned` + cost & expense classes) | exact `sourceType::sourceId`, credit legs only | ✅ fixed 2026-10-09 (BUG-2026-10-09-275: an unposted Labour post / voided JV still marked the month recorded, hiding the payslip labour; now `recordedSalaryAccounts` nets the document's legs) |
-| 7 | official-receipt void / UNVOID after an edit | — | ✅ born correct 2026-10-17 (branch `feat/or-edit`): void hides the whole `official_receipt%` family, unvoid restores `liveRestatePostType(…, "official_receipt")` (`src/lib/lifecycle-machine.ts`, the generic form of row 5's helper). Behaviour: `tests/official-receipt-edit-flow.test.mjs` |
-| 8 | payment-voucher UNVOID after an edit (`/payment-vouchers/:id/lifecycle`) | exact `payment_voucher` + `payment_voucher_settle` | ⬜ open, found 2026-10-17 building row 7: void hides the family, unvoid unhides the pre-edit base legs (row 5's shape) |
-| 9 | customer-receipt UNVOID after an edit (`payments.ts` lifecycle builder) | exact `payment` | ⬜ open, same shape |
-| 10 | other-party-payment UNVOID after an edit (`buildOtherPartyPaymentLifecycle`) | exact `other_party_payment` | ⬜ open, same shape |
+| 7 | official-receipt void / UNVOID after an edit | — | ✅ born correct 2026-10-17 (#968): void hides the whole `official_receipt%` family; unvoid runs `restoreEditedFamilyStatements` (`src/api/lib/document-lifecycle.ts`, since branch `fix/edit-keeps-bank-match`) |
+| 8 | payment-voucher UNVOID after an edit (`/payment-vouchers/:id/lifecycle`) | exact `payment_voucher` + `payment_voucher_settle` | ✅ fixed 2026-10-17 (BUG-2026-10-17-320): `restoreEditedFamilyStatements` — re-hide the family, un-hide the newest edit plus anything posted after it (`liveFamiliesAfterEdit`, `src/lib/lifecycle-machine.ts`). Prod had no affected voucher (measured) |
+| 9 | customer-receipt UNVOID after an edit (`buildCustomerPaymentLifecycle`) | exact `payment` | ✅ fixed 2026-10-17 (BUG-2026-10-17-320), same helper |
+| 10 | other-party-payment UNVOID after an edit (`buildOtherPartyPaymentLifecycle`) | exact `other_party_payment` | ✅ fixed 2026-10-17 (BUG-2026-10-17-320), same helper |
 | 11 | other-party-bill lifecycle (`otherPartyBillLegFamily`) | the whole family | ✅ net-correct: an unvoid un-hides every family (original, each reversal, each re-post) — the figures are right, the GL shows the cancelling pairs |
 
 **Enforced by** the `stripSourceIdSuffix` cases in `tests/doc-date.test.mjs`. When adding a NEW
@@ -1830,10 +1832,28 @@ Tests: `tests/no-sqlite-rowid-in-sql.test.mjs` (row 2 allow-listed until fixed).
 
 | # | where | state |
 |---|---|---|
-| 1 | official-receipt edit (`/official-receipts/:id/restate`) | ✅ born correct 2026-10-17 (branch `feat/or-edit`): `orBankCarry` (`src/lib/official-receipt-edit.ts`) + the three re-point UPDATEs |
-| 2 | payment-voucher edit (`/payment-vouchers/:id/restate`) | ⬜ open (production impact UNMEASURED) |
-| 3 | supplier-payment edit (`supplier-payments.ts` restate) | ⬜ open (UNMEASURED) |
-| 4 | customer-receipt edit (`payments.ts` `/:id/restate`) | ⬜ open (UNMEASURED) |
-| 5 | other-party-payment edit (`/other-party-payments/:paymentNo/restate`) | ⬜ open (UNMEASURED) |
+| 1 | official-receipt edit (`/official-receipts/:id/restate`) | ✅ born correct 2026-10-17 (#968); on the shared rule since branch `fix/edit-keeps-bank-match` |
+| 2 | payment-voucher edit (`/payment-vouchers/:id/restate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321): `planEditBankCarry` (`src/api/lib/bank-leg-carry.ts`, rule `planBankCarry` in `src/lib/bank-leg-carry.ts`) in the edit's own batch |
+| 3 | supplier-payment edit (`buildSupplierPaymentRestate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321) |
+| 4 | customer-receipt edit (`buildCustomerPaymentRestate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321) |
+| 5 | other-party-payment edit (`buildOtherPartyPaymentRestate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321) |
 
-Tests: `tests/official-receipt-edit-flow.test.mjs` (row 1).
+Production before the fix (measured 2026-10-17): every matched statement line on the bank account with statements pointed at a live leg — no instance had happened yet.
+
+Tests: `tests/bank-leg-carry.test.mjs` (the rule, a pin on every edit, an inventory of every `<x>_restate_post` writer), `tests/official-receipt-edit-flow.test.mjs` + `tests/edit-keeps-bank-match-flow.test.mjs` (the real routes on `tests/_ledger-mock.mjs`).
+
+## C32 — a stored account code the chart later renamed, looked up in today's chart
+
+**Shape.** A document keeps the account code it was posted with. A rename (`/coa/rename`) cannot rewrite the immutable ledger, so it adds an `account_aliases` row old → new and every ledger READ resolves through `loadAccountResolver`. A document read that hands its stored code straight to a screen does not: the edit form's account picker (today's chart) finds nothing and shows an empty account, the popup prints the code with no name, and saving the untouched form sends the old code, which the server refuses ("Account … not found").
+
+**The rule.** A read that feeds an edit form, a popup or a print resolves every stored account code through `loadAccountResolver` (`src/api/lib/account-resolver.ts`). The stored row is never rewritten.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | `GET /official-receipts` — lines and Deposit To | ✅ fixed 2026-10-17 (BUG-2026-10-17-323); one receipt on prod carried a renamed line code (measured) |
+| 2 | `GET /payment-vouchers` — lines, Pay From, accrual account | ✅ fixed 2026-10-17 alongside row 1; none on prod (measured) |
+| 3 | other-party bills, other-party / customer / supplier payments | ⬜ not converted; none carries a renamed code on prod (measured 2026-10-17) — resolve the read if a rename ever touches them |
+
+Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tests/official-receipt-edit.test.mjs`.
