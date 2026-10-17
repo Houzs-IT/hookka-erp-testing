@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-17**: branch `feat/or-edit`, to `main`, adds **C5 rows 7–11** (the official-receipt edit, born correct; three unvoid paths found open on the way) and **C31, an edit that re-posts a bank leg under a new id**. Nothing else re-checked.
+
 > **Last verified: 2026-10-17**: branch `feat/finance-notes-post`, to `main`, adds **C16 row 11** (the phone's Credit / Debit Notes lists read note-number and amount keys the API never returns, BUG-2026-10-17-317). Nothing else re-checked.
 
 > **Last verified: 2026-10-17**: branch `fix/m-dashboard-anchor-month`, to `main`, adds **C21 row 16** (the phone's Finance Dashboard took the API's last row as the latest month, BUG-2026-10-17-308). Nothing else re-checked.
@@ -387,6 +389,11 @@ the fallback is (postedAt dating, "no legs to reverse", "nothing to hide").
 | 4 | `applyLifecycle` reversal SELECT + hidden UPDATEs | raw sourceId | ⬜ latent — unreachable today (PIs don't use lifecycle; PI delete is DRAFT-only = no legs). Warning comment in place; widen the matches if a `:<tag>`-legged doc type is ever wired in |
 | 5 | supplier-payment UNVOID leg un-hiding | exact `supplier_payment` sourceType | ✅ fixed 2026-07-24 (BUG-2026-07-24-002: an edited payment's live legs are `restate_post:<stamp>` — unvoid resurrected the stale pre-edit base legs; now picks `latestRestatePostType`) |
 | 6 | P&L "salary already recorded" (`glWindowSigned` + cost & expense classes) | exact `sourceType::sourceId`, credit legs only | ✅ fixed 2026-10-09 (BUG-2026-10-09-275: an unposted Labour post / voided JV still marked the month recorded, hiding the payslip labour; now `recordedSalaryAccounts` nets the document's legs) |
+| 7 | official-receipt void / UNVOID after an edit | — | ✅ born correct 2026-10-17 (branch `feat/or-edit`): void hides the whole `official_receipt%` family, unvoid restores `liveRestatePostType(…, "official_receipt")` (`src/lib/lifecycle-machine.ts`, the generic form of row 5's helper). Behaviour: `tests/official-receipt-edit-flow.test.mjs` |
+| 8 | payment-voucher UNVOID after an edit (`/payment-vouchers/:id/lifecycle`) | exact `payment_voucher` + `payment_voucher_settle` | ⬜ open, found 2026-10-17 building row 7: void hides the family, unvoid unhides the pre-edit base legs (row 5's shape) |
+| 9 | customer-receipt UNVOID after an edit (`payments.ts` lifecycle builder) | exact `payment` | ⬜ open, same shape |
+| 10 | other-party-payment UNVOID after an edit (`buildOtherPartyPaymentLifecycle`) | exact `other_party_payment` | ⬜ open, same shape |
+| 11 | other-party-bill lifecycle (`otherPartyBillLegFamily`) | the whole family | ✅ net-correct: an unvoid un-hides every family (original, each reversal, each re-post) — the figures are right, the GL shows the cancelling pairs |
 
 **Enforced by** the `stripSourceIdSuffix` cases in `tests/doc-date.test.mjs`. When adding a NEW
 suffixed identity (a second `:<tag>` writer), grep every `sourceId = ?` / `.get(sourceId)`
@@ -1812,3 +1819,21 @@ Tests: `tests/worker-history-snapshot-fresh.test.mjs` (row 4), `tests/cn-pdf-co-
 | 3 | sofa price backfill (`import-completion/price-backfill.ts`) | ✅ earlier, pairing by product code instead of position |
 
 Tests: `tests/no-sqlite-rowid-in-sql.test.mjs` (row 2 allow-listed until fixed).
+
+## C31 — an edit re-posts a bank leg under a new id; the bank side still points at the old one
+
+**Shape.** An in-place edit (restate) reverses the document's live legs and posts new ones — new ids. Bank reconciliation stores ids: a statement line's `matchedLegId`, a split's `bank_line_leg_splits.leg_id`, the cash board's daily tick `bank_board_cleared.leg_id`. Nothing moves them, so after the edit the statement line is "matched" to a hidden leg (the report treats a missing leg as booked) while the re-posted bank leg shows as not yet through the bank: the month is out by the amount, and a finalised month drifts.
+
+**The rule.** An edit that re-posts a bank / cash leg moves every bank-side reference from the old leg to the new one in the same batch — when the bank account and the amount are unchanged. When either changes, a statement match blocks the edit (unmatch first); a tick never blocks.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | official-receipt edit (`/official-receipts/:id/restate`) | ✅ born correct 2026-10-17 (branch `feat/or-edit`): `orBankCarry` (`src/lib/official-receipt-edit.ts`) + the three re-point UPDATEs |
+| 2 | payment-voucher edit (`/payment-vouchers/:id/restate`) | ⬜ open (production impact UNMEASURED) |
+| 3 | supplier-payment edit (`supplier-payments.ts` restate) | ⬜ open (UNMEASURED) |
+| 4 | customer-receipt edit (`payments.ts` `/:id/restate`) | ⬜ open (UNMEASURED) |
+| 5 | other-party-payment edit (`/other-party-payments/:paymentNo/restate`) | ⬜ open (UNMEASURED) |
+
+Tests: `tests/official-receipt-edit-flow.test.mjs` (row 1).

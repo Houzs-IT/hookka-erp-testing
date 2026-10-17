@@ -70,9 +70,10 @@ test("each kind voids through its own document's endpoint", () => {
   assert.match(hub, /`\/api\/payments\/\$\{encodeURIComponent\(r\.cust\.id\)\}\/lifecycle`/);
   assert.match(hub, /`\/api\/accounting\/other-party-payments\/\$\{encodeURIComponent\(r\.od\.paymentNo\)\}\/lifecycle`/);
   assert.match(hub, /`\/api\/accounting\/official-receipts\/\$\{r\.or!\.id\}\/lifecycle`/);
-  // Official receipts have no in-place edit — only customer / other-debtor rows offer it.
-  // (2026-10-02: the row's actions moved to its right-click menu.)
-  assert.match(hub, /\.\.\.\(r\.lifecycleState === "ACTIVE" && \(r\.cust \|\| r\.od\) \? \[\{ label: "Edit", action: \(\) => startEdit\(r\) \}\] : \[\]\),/);
+  // Every active receipt offers Edit — official receipts too since 2026-10-17
+  // (owner 「可以」; tests/official-receipt-edit.test.mjs). The row's actions
+  // are its right-click menu (2026-10-02).
+  assert.match(hub, /\.\.\.\(r\.lifecycleState === "ACTIVE" \? \[\{ label: "Edit", action: \(\) => startEdit\(r\) \}\] : \[\]\),/);
 });
 
 test("the customer voucher / advance helpers live in one lib, used by both pages", () => {
