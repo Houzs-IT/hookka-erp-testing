@@ -1183,6 +1183,7 @@ narrowing has to state what it is dropping.
 | 7 | `regNo` / `tin` / `address` | the PERMISSION projection on `GET /api/organisations` | `letterheadForPurchaseOrg` → the PO / GRN / PI letterhead | ✅ 2026-08-13 (-100) — caught **before** merge, by looking for this class rather than by an incident |
 | 8 | `customerSOLine` / `customerRefLine` / `companySO` (read as the DO names `customerSO` / `customerRef` / `salesOrderNo`) | `computeInvoicePrintExtras` | `buildUnifiedInvoiceData` → invoice download + customer e-mail PDF | ✅ 2026-09-23 (-186) — a RENAMED field, not a dropped one: the invoice and DO extras share the `DocLineExtra` type, so `tsc` saw every name as optional-and-valid. Every line printed the invoice-level SO/REF and a blank CO SO. Enforced by `tests/invoice-pdf-line-refs.test.mjs` |
 | 9 | `total` / `totalSen` (the AR aging row carries five buckets and no total) | `/api/accounting/aging` | `receivablesConfig` → the phone's Receivables list | ✅ 2026-10-17 (-307) — every debtor read RM 0.00; the outstanding is now the sum of the five buckets; `tests/m-receivables-aging-total.test.mjs` imports the real config |
+| 10 | `pvKind` = `TRANSFER` (OVERWRITTEN, not dropped: the mapper wrote `isAp ? "AP" : "EXPENSE"` over the stored kind) | `GET /api/accounting/payment-vouchers` | every `pvKind === "TRANSFER"` branch in `src/pages/accounting/index.tsx` (door, print, detail, edit mode) | 🟡 2026-10-17 (-309) — a mapper written before the value existed; `tests/ap-payment-print.test.mjs` pins it |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same
@@ -1283,6 +1284,7 @@ parties in a single pass"* — which is true of the maths and false of the queri
 | 6 | `/ap-control` (`loadUnappliedSupplierAdvances`) vs `/ap-reconciliation` (`ap-recon.ts`) | trade-finance repayments (`TF_REPAYMENT`) left out of the advances | ✅ 2026-09-30 (-229) |
 | 7 | `/ar-control` (`loadUnappliedCustomerAdvances`) vs `/ar-reconciliation` | receipts held on account netted off as advances | ✅ 2026-09-30 (-229) |
 | 8 | customer vs supplier opening seeds (`openingControlSums`, `/opening-balance` lists) | CANCELLED seeds left out | ✅ 2026-09-30 (-230) |
+| 9 | single print (`printPvWithDetail`) vs batch print (`payVoucherOf`) of a payment voucher — not a ledger pair, the same shape | the bills an AP Payment settles | 🟡 2026-10-17 (-311) — batch now prints through the single print's spec |
 
 **The rule.** When you add a predicate to one subsidiary-ledger surface, open its twin in
 the same commit and diff the query — not the file. And when the two must agree on a

@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-309 to -311 (branch `feat/finance-v2-print-1a`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-308 flipped to 🟢 after the #945 prod check (branch `docs/finance-v2-plan8-close`).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-308 (branch `fix/m-dashboard-anchor-month`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-307 flipped to 🟢 after the #941 prod check (branch `feat/finance-v2-mobile-b`).
@@ -132,6 +133,42 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-17-311 — Batch print dropped an AP Payment voucher's bills `accounting` `print` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 while building the voucher print in the Finance v2 layout. Printing one AP Payment voucher from Payment Vouchers listed the bills it paid. Ticking the same voucher and pressing the batch bar's Print gave a voucher whose table was empty except for the Total: an AP voucher has no expense lines, only bills.
+
+**Root cause.** Two paths printed the same voucher. The single print (`printPvWithDetail` → `pvPrintSpec`) added the bills; the batch print mapped the ticked rows through `payVoucherOf`, which called `buildPvVoucher(row.pv, accounts)` without them.
+
+**Fix.** `payVoucherOf` is async and prints a voucher through `pvPrintSpec`, the single print's own spec; supplier and other-creditor payments load the same print detail (`GET /api/accounting/ap-payment-print`) in a batch as on their own. The Supplier Payment and Other Creditor Payments pages print the same way.
+
+**Regression.** `tests/ap-payment-print.test.mjs` pins that every bill-paying door loads its detail before printing, batch included. Class: BUG-CLASSES C18 row 9.
+
+## BUG-2026-10-17-310 — An other debtor's receipt printed as a payment voucher `accounting` `print` 🟡
+
+🟡 **Fixed on its branch; prod check pending.**
+
+**Symptom.** Found 2026-10-17 by reading the print builders for the Finance v2 print layout. Printing money received from an other debtor (Receipts, or the Other Debtor Receipts page) gave "OTHER-PARTY PAYMENT VOUCHER" with "Paid from: <the bank it was paid into>" and payment signatures.
+
+**Root cause.** `buildOtherPartyPaymentVoucher` serves both sides of other-party payments and never looked at `partyType`.
+
+**Fix.** A DEBTOR payment prints "OTHER-PARTY RECEIPT", "Received From", "Deposited to", "Amount received" and the receipt's signatures; a CREDITOR payment keeps the payment wording.
+
+**Regression.** `tests/ap-payment-print.test.mjs` pins the side switch. Class: none — one builder shared by two kinds of document.
+
+## BUG-2026-10-17-309 — A transfer voucher was read back as a payment `accounting` 🟡
+
+🟡 **Fixed on its branch; prod check pending.** How many transfer vouchers prod holds is UNMEASURED (the list API hid the kind); the prod check counts them.
+
+**Symptom.** Found 2026-10-17 while building the voucher print. A Payment Voucher saved as a Transfer (owner 2026-10-01: money between our own bank / cash accounts) listed with the Payment Voucher door, printed "Pay To <payee>" instead of "Transfer To <receiving account>", opened its detail as a Payment and its edit form in Payment mode. Its lines also fed the scan's learned expense accounts.
+
+**Root cause.** `GET /payment-vouchers` maps each row with `pvKind: isAp ? "AP" : "EXPENSE"`, written for AP Payment (#465) before transfers existed. Transfers (`pv_kind = 'TRANSFER'`, 2026-10-01) were saved correctly and then overwritten on every read, so every `pvKind === "TRANSFER"` branch on the page was dead.
+
+**Fix.** The mapper keeps a stored TRANSFER kind; everything else reads as before.
+
+**Regression.** `tests/ap-payment-print.test.mjs` pins the mapper. Class: BUG-CLASSES C16 row 10.
 
 ## BUG-2026-10-17-308 — The phone's Finance Dashboard showed a month ahead with no figures `mobile` `finance` 🟢
 

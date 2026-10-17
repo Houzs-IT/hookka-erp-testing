@@ -60,6 +60,8 @@ function buildDebitNoteVoucher(dn: DebitNote): VoucherSpec {
     date: formatDateDMY(dn.date),
     partyLabel: "Customer",
     partyName: dn.customerName ?? "",
+    amountBox: { label: "Debit amount", value: formatCurrency(dn.totalAmount) },
+    facts: [{ label: "Against invoice", value: dn.invoiceNumber || "—" }],
     columns: [
       { label: "Description" },
       { label: "Qty", align: "right" },
@@ -68,7 +70,6 @@ function buildDebitNoteVoucher(dn: DebitNote): VoucherSpec {
     ],
     lines,
     totalCells: ["", "", "Total", formatCurrency(dn.totalAmount)],
-    footerNote: `Against Invoice: ${dn.invoiceNumber || "—"}`,
     remarks,
     amountWords: amountInWords(dn.totalAmount),
     signatures: [{ label: "Issued by" }, { label: "Approved by" }],
