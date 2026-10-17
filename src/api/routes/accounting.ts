@@ -109,7 +109,7 @@ import {
 // The Payment Vouchers "AP Payment" road posts a supplier payment at APPROVE
 // through the SAME builders the Supplier Payment page uses (owner 2026-09-22,
 // Houzs adoption: 「ap payment 和 payment voucher 一起」).
-import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle } from "./supplier-payments";
+import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, tfRepaymentStatements, validateTfRepayment } from "./supplier-payments";
 // PV attachments ride the generic file store (Supabase Storage + file_assets)
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
@@ -11060,7 +11060,9 @@ function pvExtraFields(body: Record<string, unknown>): { notes: string | null; b
   return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null };
 }
 type PvPartyKind = "SUPPLIER" | "OTHER";
-type PvAllocDocKind = "PI" | "AP";
+// TF = a trade-finance drawdown, repaid by an AP Payment to the lender
+// (finance backlog item 17); docId = the drawdown's payment no.
+type PvAllocDocKind = "PI" | "AP" | "TF";
 type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number };
 
 async function loadPvAllocs(db: Env["Variables"]["DB"], voucherId: string): Promise<PvAlloc[]> {
@@ -11104,7 +11106,11 @@ type PvOpenBill = {
   docKind: PvAllocDocKind; id: string; no: string; ref: string; date: string; dueDate: string | null;
   totalSen: number; paidSen: number; outstandingSen: number; reservedSen: number; reservedBy: string[]; availableSen: number;
   currency: string; foreign: boolean; opening: boolean;
+  /** A drawdown (docKind TF): the interest in its balance (recorded at drawdown). */
+  interestSen?: number;
 };
+// The lender of a trade-finance line, when the supplier picked is one.
+type PvTfLender = { accountCode: string; lenderName: string };
 
 // The creditor's payable documents as the voucher form lists them.
 async function pvOpenBillsFor(
@@ -11113,12 +11119,46 @@ async function pvOpenBillsFor(
   partyKind: PvPartyKind,
   partyId: string,
   exclude: string | null,
-): Promise<{ partyName: string; bills: PvOpenBill[]; advanceOpenSen: number } | null> {
+): Promise<{ partyName: string; bills: PvOpenBill[]; advanceOpenSen: number; tfLender?: PvTfLender } | null> {
   const reserved = await pvReservedByDoc(db, exclude);
   if (partyKind === "SUPPLIER") {
     const sup = await db.prepare("SELECT id, name FROM suppliers WHERE id = ?").bind(partyId)
       .first<{ id: string; name: string }>();
     if (!sup) return null;
+    // The trade-finance lender: what is payable is its open DRAWDOWNS
+    // (finance backlog item 17, owner 2026-10-17) — each with its balance
+    // (interest recorded at drawdown included), minus what other unposted
+    // vouchers already promise it.
+    const tfSources = await getTfSources(db).catch(() => [] as TfSource[]);
+    const lender = tfSources.find((x) => x.lenderSupplierId === partyId);
+    if (lender) {
+      await ensureTfTables(db);
+      const { draws } = await loadTfDraws(db, lender);
+      const open = draws.filter((d) => d.outstandingSen > 0);
+      const forBy = new Map<string, string>();
+      if (open.length > 0) {
+        const nos = open.map((d) => d.drawSourceId);
+        const rs = await db.prepare(
+          `SELECT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN (${nos.map(() => "?").join(", ")})`,
+        ).bind(...nos).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+        for (const r of rs.results ?? []) {
+          const no = String(r.paymentNo ?? r.payment_no ?? "");
+          const nm = String(r.supplierName ?? r.supplier_name ?? "").trim();
+          if (no && nm && !(forBy.get(no) ?? "").split(", ").includes(nm)) forBy.set(no, forBy.get(no) ? `${forBy.get(no)}, ${nm}` : nm);
+        }
+      }
+      const bills: PvOpenBill[] = open.map((d) => {
+        const rsv = reserved.get(`TF|${d.drawSourceId}`);
+        return {
+          docKind: "TF", id: d.drawSourceId, no: d.drawSourceId, ref: forBy.get(d.drawSourceId) ?? "",
+          date: d.drawDate, dueDate: d.dueDate || null,
+          totalSen: d.amountSen, paidSen: d.repaidSen, outstandingSen: d.outstandingSen,
+          reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen: Math.max(0, d.outstandingSen - (rsv?.sen ?? 0)),
+          currency: "MYR", foreign: false, opening: false, interestSen: d.interestSen,
+        };
+      });
+      return { partyName: sup.name, bills, advanceOpenSen: 0, tfLender: { accountCode: lender.accountCode, lenderName: lender.lenderName } };
+    }
     const res = await db.prepare(
       `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening
          FROM purchase_invoices
@@ -11191,7 +11231,7 @@ type PvApValidated = {
 // Create/edit validation for an AP voucher: party exists, Pay From is bank/
 // cash, every ticked bill is the party's, open, and within (outstanding −
 // reserved elsewhere); a supplier may add an unallocated advance.
-async function validatePvAp(
+export async function validatePvAp(
   db: Env["Variables"]["DB"],
   orgId: string,
   coa: Map<string, { type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>,
@@ -11230,6 +11270,11 @@ async function validatePvAp(
   }
   const advanceSen = Math.max(0, Math.round(Number(body.advanceSen) || 0));
   if (advanceSen > 0 && partyKind !== "SUPPLIER") return { ok: false, error: "An advance is only for suppliers — other creditors are paid against their bills" };
+  if (open.tfLender) {
+    // A repayment of trade finance: drawdowns only, no advance.
+    if (advanceSen > 0) return { ok: false, error: "A trade-finance repayment has no advance — tick the drawdowns it repays" };
+    if (allocs.length === 0) return { ok: false, error: "Tick at least one drawdown to repay" };
+  }
   if (allocs.length === 0 && advanceSen <= 0) return { ok: false, error: "Tick at least one bill (or enter an advance)" };
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
   return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen } };
@@ -11242,7 +11287,7 @@ type PvApHeader = {
 // The posting moment of an AP voucher — the settlement document is built by the
 // page-native builders under paymentNo = pvNo. Returns the statements to batch;
 // the caller adds the voucher's own state flip.
-async function pvApSettlementStatements(
+export async function pvApSettlementStatements(
   db: Env["Variables"]["DB"],
   orgId: string,
   actorUserId: string | null,
@@ -11251,8 +11296,21 @@ async function pvApSettlementStatements(
 ): Promise<{ ok: true; statements: D1PreparedStatement[]; totalSen: number } | { ok: false; error: string }> {
   if (pv.partyKind === "SUPPLIER") {
     const tfSources = await getTfSources(db).catch(() => [] as TfSource[]);
-    if (tfSources.some((s) => s.lenderSupplierId === pv.partyId)) {
-      return { ok: false, error: "This supplier is a trade-finance lender — record the repayment on the Supplier Payment page" };
+    const lender = tfSources.find((s) => s.lenderSupplierId === pv.partyId);
+    if (lender) {
+      // A trade-finance REPAYMENT (finance backlog item 17): the ticked
+      // drawdowns, re-checked against today's balances, posted by the same
+      // builder the Supplier Payment page uses (DR <TF account> / CR bank).
+      if (tfSources.some((s) => s.accountCode === pv.payFrom)) {
+        return { ok: false, error: "A trade-finance repayment cannot be paid FROM the trade-finance account" };
+      }
+      const chk = await validateTfRepayment(db, lender, allocs.filter((a) => a.docKind === "TF").map((a) => ({ drawSourceId: a.docId, paySen: a.amountSen })));
+      if (!chk.ok) return chk;
+      const statements = await tfRepaymentStatements(db, {
+        orgId, actorUserId, lender, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
+        allocations: chk.allocations, totalSen: chk.totalSen, paymentNo: pv.pvNo,
+      });
+      return { ok: true, statements, totalSen: chk.totalSen };
     }
     const built = await buildSupplierPaymentCreate(db, {
       orgId, actorUserId, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
@@ -11343,9 +11401,11 @@ async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentN
       partyKind: String(pv.partyKind ?? pv.party_kind ?? "") === "OTHER" ? "OTHER" : "SUPPLIER",
       partyId: String(pv.partyId ?? pv.party_id ?? ""),
       date: String(pv.date ?? "").slice(0, 10),
-      allocs: allocs.map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen })),
+      // A repayment of trade finance prints as its total (like the Supplier
+      // Payment page's TF_REPAYMENT), not as bill rows.
+      allocs: allocs.filter((a) => a.docKind !== "TF").map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen })),
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
-      tfRepaySen: 0,
+      tfRepaySen: allocs.filter((a) => a.docKind === "TF").reduce((s, a) => s + a.amountSen, 0),
     };
   }
   const sp = await db.prepare(
@@ -11622,7 +11682,8 @@ app.get("/payment-vouchers", async (c) => {
       const list = allocsByVoucher.get(vid) ?? [];
       list.push({
         docKind: kind, docId: String(a.docId ?? a.doc_id ?? ""),
-        docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : (a.billNo ?? a.bill_no)) ?? ""),
+        // A trade-finance drawdown line (docKind TF) is named by its own payment no.
+        docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : kind === "TF" ? (a.docId ?? a.doc_id) : (a.billNo ?? a.bill_no)) ?? ""),
         docRef: String((kind === "PI" ? (a.piRef ?? a.pi_ref) : (a.billRef ?? a.bill_ref)) ?? ""),
         amountSen: Math.round(Number(a.amountSen ?? a.amount_sen) || 0),
       });

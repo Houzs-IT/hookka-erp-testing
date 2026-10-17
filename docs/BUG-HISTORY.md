@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-322 and -323 flipped to 🟢 after the #970 prod check; -320 / -321 stay 🟡 (deployed, nothing on production to exercise without a write).
 > **Last verified: 2026-10-17**: newest entries BUG-2026-10-17-320 to -323 (branch `fix/edit-keeps-bank-match`; 319 is taken by the production-finishing fix, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-318 flipped to 🟢 after the #956 / #959 prod check.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-318 gains its follow-up (branch `fix/delivery-return-cn-blocked`, to main): the return's page says why no credit note can be raised.
@@ -143,9 +144,9 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-17-323 — Editing an official receipt showed an empty account for a line whose code the chart had renamed `finance` 🟡
+## BUG-2026-10-17-323 — Editing an official receipt showed an empty account for a line whose code the chart had renamed `finance` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Fixed and verified on prod 2026-10-17** (#970): the receipts list reads the line as 440-0040, and HOR-2610-002's edit form shows that account (closed without saving).
 
 **Symptom.** Found verifying #968 on production (read-only, nothing saved): HOR-2610-002's edit form opened with its line's Account empty. Saving it untouched would have been refused ("Account 407-0000 not found").
 
@@ -155,9 +156,9 @@ Entries themselves stay newest-first.
 
 **Regression.** `tests/official-receipt-edit-flow.test.mjs` (renamed-code case), `tests/official-receipt-edit.test.mjs`. Class: C32 (new).
 
-## BUG-2026-10-17-322 — The server accepted an edit of a cancelled voucher, customer receipt or other-party payment `finance` `gl` 🟡
+## BUG-2026-10-17-322 — The server accepted an edit of a cancelled voucher, customer receipt or other-party payment `finance` `gl` 🟢
 
-🟡 **Fixed on its branch; prod check pending.**
+🟢 **Fixed and verified on prod 2026-10-17** (#970): an edit sent to a voided voucher answers 400 "This voucher is cancelled — restore it before editing." before anything is written.
 
 **Symptom.** Latent: every screen offers Edit only on an active document, so nobody could reach it from the app. A direct call (or a form left open while the same document was voided in another tab) would have posted live ledger legs under a cancelled document — and, for a customer receipt, marked its invoices paid again.
 
@@ -169,7 +170,7 @@ Entries themselves stay newest-first.
 
 ## BUG-2026-10-17-321 — Editing a bank-matched payment or receipt left its statement line pointing at a hidden ledger leg `finance` `bank-reco` 🟡
 
-🟡 **Fixed on its branch; prod check pending.**
+🟡 **Deployed (#970); behaviour proven by the route tests — production has no document to exercise it without a write.**
 
 **Symptom.** Latent (measured 2026-10-17: every matched statement line on production points at a live leg). Had it happened: after editing a voucher, supplier payment, customer receipt or other-party payment already matched in Cash Book, the month's reconciliation would show the statement line as booked and the re-posted bank leg as not yet through the bank — out by the amount, and a finalised month drifting.
 
@@ -181,7 +182,7 @@ Entries themselves stay newest-first.
 
 ## BUG-2026-10-17-320 — Unvoiding an edited voucher, customer receipt or other-party payment brought back the pre-edit entry `finance` `gl` 🟡
 
-🟡 **Fixed on its branch; prod check pending.**
+🟡 **Deployed (#970); behaviour proven by the route tests — production has no document to exercise it without a write.**
 
 **Symptom.** Latent (measured 2026-10-17: the five documents on production edited around a void all show live legs that match the document today). Had it happened: void an edited document, restore it, and the ledger shows the numbers from BEFORE the edit while the document shows the edited ones.
 
