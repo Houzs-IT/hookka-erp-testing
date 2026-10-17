@@ -262,6 +262,12 @@ export type DataGridProps<T> = {
   // `GET /api/invoices` ships `items: []` per row, so the builder has to fetch
   // them. That fetch is the whole reason invoices had no detail listing.
   detailExport?: { label: string; build: (rows: T[]) => Aoa | Promise<Aoa> };
+  // HK-0002: on a server-paged page the grid only holds the loaded page, so
+  // an export of `data` is silently partial. When given, Export calls this for
+  // EVERY row matching the page's server-side filters (the page pages through
+  // its list API — see fetchAllPages), then applies the grid's own search /
+  // column filters / sort on top, exactly as on screen.
+  fetchAllRows?: () => Promise<T[]>;
   // Fires whenever the global search text changes. Lets the parent react
   // to "user is searching" — e.g. switch a server-paginated fetch to a
   // whole-dataset fetch so the search covers every record, not just the
@@ -1764,6 +1770,7 @@ export function DataGrid<T extends Record<string, any>>({
   exportName,
   exportSheetLabel,
   detailExport,
+  fetchAllRows,
   onSearchChange,
   initialSearch,
   alwaysSearchKeys = EMPTY_SEARCH_KEYS,
@@ -1912,6 +1919,7 @@ export function DataGrid<T extends Record<string, any>>({
 
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
 
   const toggleColumn = useCallback((key: string) => {
     setVisibleKeys(prev => {
@@ -2595,8 +2603,8 @@ export function DataGrid<T extends Record<string, any>>({
   }, []);
 
   // ── Filtered + Sorted data ──
-  const filteredData = useMemo(() => {
-    let result = data;
+  const filterRows = useCallback((rows: T[]): T[] => {
+    let result = rows;
 
     // Global search (deferred — see deferredSearch above)
     if (deferredSearch) {
@@ -2650,7 +2658,8 @@ export function DataGrid<T extends Record<string, any>>({
     }
 
     return result;
-  }, [data, deferredSearch, columnFilters, columnValueFilters, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columns]);
+  }, [deferredSearch, columnFilters, columnValueFilters, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columns]);
+  const filteredData = useMemo(() => filterRows(data), [filterRows, data]);
 
   // All unique group values (for group filter dropdown)
   const allGroupValues = useMemo(() => {
@@ -2680,8 +2689,8 @@ export function DataGrid<T extends Record<string, any>>({
     initialCollapseRef.current = groupBy;
   }, [groupBy, groupEnabled, allGroupValues]);
 
-  const sortedData = useMemo(() => {
-    let result = [...filteredData];
+  const sortRows = useCallback((rows: T[]): T[] => {
+    let result = [...rows];
 
     // Apply group filter (only when grouping is active)
     if (groupBy && groupEnabled && groupFilter) {
@@ -2716,7 +2725,8 @@ export function DataGrid<T extends Record<string, any>>({
       });
     }
     return result;
-  }, [filteredData, sortKey, sortDir, groupBy, groupEnabled, groupFilter, columns]);
+  }, [sortKey, sortDir, groupBy, groupEnabled, groupFilter, columns]);
+  const sortedData = useMemo(() => sortRows(filteredData), [sortRows, filteredData]);
 
   // ── Row cap (render-only) ──
   // Caps the DOM row count to `defaultRowCap` on first paint when the
@@ -3240,12 +3250,13 @@ export function DataGrid<T extends Record<string, any>>({
                 showExportMenu ? "border-[#6B5C32] bg-[#6B5C32]/10 text-[#6B5C32]" : "border-[#DDD] text-[#666] hover:border-[#999]",
               )}
               onClick={() => setShowExportMenu((v) => !v)}
+              disabled={exportBusy}
               title="Export the current view"
             >
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
               </svg>
-              Export
+              {exportBusy ? "Exporting…" : "Export"}
             </button>
             {showExportMenu && (
               <>
@@ -3254,22 +3265,30 @@ export function DataGrid<T extends Record<string, any>>({
                   {(() => {
                     const today = new Date().toISOString().slice(0, 10);
                     const label = exportSheetLabel || exportName;
-                    const listingAoa = (): Aoa =>
-                      buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
+                    // All matching rows (fetchAllRows) or the loaded ones.
+                    const exportRows = async (): Promise<T[]> =>
+                      fetchAllRows ? sortRows(filterRows(await fetchAllRows())) : sortedData;
+                    const listingAoa = (rows: T[]): Aoa =>
+                      buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], rows);
                     const run = (
-                      aoa: Aoa | Promise<Aoa>,
+                      build: (rows: T[]) => Aoa | Promise<Aoa>,
                       kind: string,
                       ext: "xlsx" | "csv",
                     ) => {
                       setShowExportMenu(false);
+                      setExportBusy(true);
                       const fname = exportFilename(exportName, kind, ext, today);
                       // An async builder must not write a half-built file: await
                       // it, and let a failure surface rather than silently
                       // exporting whatever came back.
-                      void Promise.resolve(aoa).then((rows) => {
-                        if (ext === "xlsx") return exportReportXlsx(fname, label, rows);
-                        exportReportCsv(fname, rows);
-                      });
+                      void exportRows()
+                        .then(build)
+                        .then((rows) => {
+                          if (ext === "xlsx") return exportReportXlsx(fname, label, rows);
+                          exportReportCsv(fname, rows);
+                        })
+                        .catch((e) => window.alert(`Export failed — ${e instanceof Error ? e.message : String(e)}`))
+                        .finally(() => setExportBusy(false));
                     };
                     const Item = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
                       <button
@@ -3282,20 +3301,20 @@ export function DataGrid<T extends Record<string, any>>({
                     return (
                       <>
                         <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
-                          Listing · {sortedData.length} rows, {visibleColumns.length} cols
+                          Listing · {fetchAllRows ? "all matching" : sortedData.length} rows, {visibleColumns.length} cols
                         </div>
-                        <Item onClick={() => run(listingAoa(), "listing", "xlsx")}>Listing → Excel</Item>
-                        <Item onClick={() => run(listingAoa(), "listing", "csv")}>Listing → CSV</Item>
+                        <Item onClick={() => run(listingAoa, "listing", "xlsx")}>Listing → Excel</Item>
+                        <Item onClick={() => run(listingAoa, "listing", "csv")}>Listing → CSV</Item>
                         {detailExport && (
                           <>
                             <div className="my-1 border-t border-[#F0ECE9]" />
                             <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
                               {detailExport.label} · per line item
                             </div>
-                            <Item onClick={() => run(detailExport.build(sortedData), "detail", "xlsx")}>
+                            <Item onClick={() => run(detailExport.build, "detail", "xlsx")}>
                               {detailExport.label} → Excel
                             </Item>
-                            <Item onClick={() => run(detailExport.build(sortedData), "detail", "csv")}>
+                            <Item onClick={() => run(detailExport.build, "detail", "csv")}>
                               {detailExport.label} → CSV
                             </Item>
                           </>

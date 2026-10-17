@@ -12,8 +12,10 @@ import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, getStatusColor } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState } from "@/lib/use-url-state";
 import { buildGrnDetailListingAoa } from "@/lib/doc-detail-listings";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import type { GoodsReceiptNote, PurchaseOrder, ArrivalState } from "@/types";
 import { Ship } from "lucide-react";
 import {
@@ -32,6 +34,7 @@ import {
   ScanLine,
   FolderInput,
   Ban,
+  Upload,
 } from "lucide-react";
 import {
   ScanSupplierModal,
@@ -387,6 +390,7 @@ export default function GRNPage() {
   const [selectedGrns, setSelectedGrns] = useState<GoodsReceiptNote[]>([]);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [bulkArrivalBusy, setBulkArrivalBusy] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const { data: grnResp, loading: grnLoading, refresh: refreshGrns } = useCachedJson<{ success?: boolean; data?: GoodsReceiptNote[]; total?: number } | GoodsReceiptNote[]>(
     grnFiltersActive
@@ -401,7 +405,7 @@ export default function GRNPage() {
   const { loading: poLoading, refresh: refreshPOs } = useCachedJson<{ success?: boolean; data?: PurchaseOrder[] } | PurchaseOrder[]>("/api/purchase-orders");
   // Purchase Company letterhead — print each GRN under its supplier's buying
   // company (HOOKKA / OHANA / any sister co); accounting stays HOOKKA.
-  const { data: supResp } = useCachedJson<{ data?: Array<{ id: string; purchaseOrgCode?: string }> }>("/api/suppliers");
+  const { data: supResp } = useCachedJson<{ data?: Array<{ id: string; code?: string; purchaseOrgCode?: string }> }>("/api/suppliers");
   const { data: orgsResp } = useCachedJson<{ organisations?: Array<{ code?: string; name?: string; regNo?: string; tin?: string; address?: string; phone?: string; email?: string }> }>("/api/organisations");
 
   const grns: GoodsReceiptNote[] = useMemo(
@@ -946,8 +950,24 @@ export default function GRNPage() {
           >
             <ScanLine className="h-4 w-4" /> Scan GRN
           </Button>
+          <Button variant="outline" onClick={() => setShowImport(true)}>
+            <Upload className="h-4 w-4" /> Import
+          </Button>
         </div>
       </div>
+
+      <DocImportDialog
+        docType="grn"
+        title="Import GRNs from a Detail Listing"
+        hint="Edit: Qty (accepted) on existing lines. Create: leave Doc No. blank, Ref Doc No. = the PO, one row per PO line with Item Code + Qty (Rejected Qty / Rejection Reason optional)."
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onApplied={() => {
+          invalidateCachePrefix("/api/grn");
+          invalidateCachePrefix("/api/purchase-orders");
+          fetchData();
+        }}
+      />
 
       {/* Summary Cards */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
@@ -1223,7 +1243,13 @@ export default function GRNPage() {
             onSearchChange={setGridSearch}
             exportName="goods-receipts"
             exportSheetLabel="Goods Receipts"
-            detailExport={{ label: "Detail Listing", build: (rows) => buildGrnDetailListingAoa(rows) }}
+            detailExport={{
+              label: "Detail Listing",
+              build: (rows) => buildGrnDetailListingAoa(rows, new Map((supResp?.data ?? []).map((x) => [x.id, x.code ?? ""]))),
+            }}
+            // Unfiltered = one server page; export every GRN on the current tab.
+            fetchAllRows={grnFiltersActive ? undefined : async () =>
+              (await fetchAllPages<GoodsReceiptNote>("/api/grn")).filter((g) => (tab === "DRAFT") === (g.status === "DRAFT"))}
           />
           {/* Server-side page controls — only in the default (unfiltered) view.
               A filter/search loads the whole dataset, so paging is hidden. */}

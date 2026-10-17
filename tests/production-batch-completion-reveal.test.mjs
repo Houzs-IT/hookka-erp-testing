@@ -88,7 +88,9 @@ test("forceShowKeys exempts rows from the per-column TEXT and VALUE filters", ()
   // forceShowKeys must be in the filteredData memo deps so a change re-filters.
   assert.match(
     g,
-    /\}, \[data, deferredSearch, columnFilters, columnValueFilters, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columns\]\);/,
+    // HK-0002: the filter is a filterRows callback (the export re-uses it on
+    // fetched rows); filteredData = useMemo(() => filterRows(data)).
+    /\}, \[deferredSearch, columnFilters, columnValueFilters, visibleColumns, alwaysSearchKeys, forceShowKeys, keyField, columns\]\);/,
     "filteredData useMemo must depend on forceShowKeys (so adding an id re-runs " +
       "the filter and the row appears).",
   );

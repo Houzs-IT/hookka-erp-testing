@@ -13,6 +13,7 @@ import { tabValueSen, type StatusTabSpec } from "@/lib/status-tab-strip";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { buildDoDetailListingAoa } from "@/lib/doc-detail-listings";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import { useNavigate } from "react-router-dom";
 import {
   Truck,
@@ -38,6 +39,7 @@ import {
   Bot,
   Undo2,
   XCircle,
+  Upload,
 } from "lucide-react";
 import DeliveryAgentTab from "./agent-tab";
 import type { DeliveryOrder, ProofOfDelivery, ThreePLProvider, Customer } from "@/types";
@@ -48,6 +50,7 @@ import PrintDO from "@/components/delivery/print-do";
 import type { PrintDOData, PrintMode } from "@/components/delivery/print-do";
 import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
 import { fetchJson, FetchJsonError } from "@/lib/fetch-json";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { mutationWithData, MutationResultSchema } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
@@ -905,6 +908,7 @@ export default function DeliveryPage() {
   // Top-level "Orders" / "3PL" / "Agent" tab — URL-synced so refresh and
   // back/forward both keep the user where they were.
   const [pageTab, setPageTab] = useUrlState<"orders" | "3pl" | "agent">("section", "orders");
+  const [showImport, setShowImport] = useState(false);
   const [deliveryOrders, setDeliveryOrders] = useState<DeliveryOrderRow[]>([]);
   // Whole-table search matches (across every status), populated only while a
   // search is active. Separate from deliveryOrders so the browse-derived
@@ -1128,6 +1132,9 @@ export default function DeliveryPage() {
   // from a memoized closure (the row context menu is built via
   // useCallback([fetchData]) and would otherwise capture a stale/empty list).
   const customersDataRef = useRef<Customer[]>([]);
+  // Last SO ref map built by the load effect — reused by the export's
+  // fetchAllRows so its rows get the same Customer SO / Ref / PO as the grid.
+  const soRefMapRef = useRef<Map<string, { customerSO: string; reference: string; customerPO: string }>>(new Map());
   useEffect(() => {
     customersDataRef.current = customersData;
   }, [customersData]);
@@ -1440,6 +1447,7 @@ export default function DeliveryPage() {
             if (so.companySOId) soRefMap.set(so.companySOId, v);
           }
         }
+        soRefMapRef.current = soRefMap;
         if (dRes.success && dRes.data) {
           const realRows = (dRes.data as DeliveryOrder[])
             .filter((d) => !d.id.startsWith("virt-"))
@@ -4769,7 +4777,20 @@ export default function DeliveryPage() {
         {/* Selection actions (Create as Packing List / Mark Dispatched /
             Mark Delivered) all live in the grid card header now, right next
             to the row selection, so they're easy to find. */}
+        {/* The grid's Detail Listing export IS the import template. */}
+        <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
+          <Upload className="h-3.5 w-3.5" /> Import
+        </Button>
       </div>
+
+      <DocImportDialog
+        docType="do"
+        title="Import delivery orders from a Detail Listing"
+        hint="Edit: Delivery Date / Remarks (keep Line IDs as exported). Create: one row per production order — Item Code plus PO No. (or Ref Doc No. = its SO); leave Doc No. blank or NEW-1."
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onApplied={fetchData}
+      />
 
       {/* Summary Cards */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-4">
@@ -5066,7 +5087,21 @@ export default function DeliveryPage() {
               contextMenuItems={getContextMenuItems}
               exportName="delivery-orders"
               exportSheetLabel="Delivery Orders"
-              detailExport={{ label: "Detail Listing", build: (rows) => buildDoDetailListingAoa(rows) }}
+              detailExport={{
+                label: "Detail Listing",
+                build: (rows) => buildDoDetailListingAoa(rows, new Map(customersData.map((cu) => [cu.id, cu.code]))),
+              }}
+              // The grid holds one 50-row page of this tab (or the search
+              // matches); export every DO of the tab / every search match.
+              fetchAllRows={async () => {
+                const q = search.trim();
+                const url = q
+                  ? `/api/delivery-orders?search=${encodeURIComponent(q)}`
+                  : `/api/delivery-orders?status=${(TAB_DO_STATUSES[activeTab] ?? []).join(",")}`;
+                return (await fetchAllPages<DeliveryOrder>(url))
+                  .filter((d) => !d.id.startsWith("virt-"))
+                  .map((d) => mapDOToRow(d, soRefMapRef.current));
+              }}
             />
 
             {/* Pagination footer — per-tab: total = this tab's statuses only */}

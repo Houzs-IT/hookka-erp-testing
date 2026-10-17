@@ -230,15 +230,23 @@ test("the invoice detail export fetches per invoice and paces itself", () => {
 
 test("the export reads the FILTERED rows and the VISIBLE columns, never raw data", () => {
   const src = readFileSync("src/components/ui/data-grid.tsx", "utf8");
+  // HK-0002: both builders take the rows `exportRows()` hands them — the
+  // on-screen sortedData, or (server-paged pages, `fetchAllRows`) every
+  // matching row pushed through the SAME filterRows/sortRows the grid uses.
   assert.match(
     src,
-    /buildListingAoa\(visibleColumns as unknown as ExportColumn<T>\[\], sortedData\)/,
-    "listing must be built from visibleColumns × sortedData",
+    /buildListingAoa\(visibleColumns as unknown as ExportColumn<T>\[\], rows\)/,
+    "listing must be built from visibleColumns × the export rows",
   );
   assert.match(
     src,
-    /detailExport\.build\(sortedData\)/,
-    "the detail listing must also be built from the filtered rows",
+    /fetchAllRows \? sortRows\(filterRows\(await fetchAllRows\(\)\)\) : sortedData/,
+    "export rows = the filtered+sorted rows (all pages when fetchAllRows is given)",
+  );
+  assert.match(
+    src,
+    /run\(detailExport\.build, "detail"/,
+    "the detail listing must also be built from the export rows",
   );
 });
 
