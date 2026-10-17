@@ -6596,3 +6596,4 @@ Asks, in order:
 41. Owner: merge the dashboard to prod — menu label "Dashboard" with the Dashboard icon (one entry).
 42. Employees: non-production hours per day and per department (owner worries about people gaming it).
 43. Every number on the dashboard clickable → layer-2 detail popup.
+- /m: phone tabs now render the desktop merged views (tabs/MergedTabs.tsx); Overview removed; Today's problems strip; Quarter/Year picker, Day only on Employees. Verified no horizontal overflow at 375px.
