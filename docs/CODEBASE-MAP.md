@@ -2645,7 +2645,7 @@ deliberately not dropped.
 **This field is NOT the tenant boundary, and never was.** `getOrgId(c)`
 (`src/api/lib/tenant.ts:109`) resolves the request's org from the session's `users.orgId`
 and never reads `inter_company_config`, so switching company has never rescoped a single
-query — despite `switchOrg` in `sidebar.tsx:457` doing a full `window.location.reload()`,
+query — despite `switchOrg` in `sidebar.tsx:470` doing a full `window.location.reload()`,
 which reads as though it should. `activeOrgId` drives exactly two things: the switcher's
 label + tick (`sidebar.tsx:894`/`:949`) and the highlight ring on Settings → Organisations
 (`settings/organisations.tsx:329`). **Open owner question:** `PUT /api/organisations` is
