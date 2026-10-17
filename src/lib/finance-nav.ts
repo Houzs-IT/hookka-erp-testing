@@ -57,7 +57,7 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   openstock: { title: "Opening Stock", explain: "Quantity and cost on hand at the switch date." },
   stocktake: { title: "Stock Take", explain: "Month-end stock counts by material group; the P&L closing stock reads them." },
   opening: { title: "Opening Balance", explain: "Balances brought into the books on the opening date." },
-  audit: { title: "Audit Log", explain: "Voided and deleted documents: who did it and when, with Unvoid where allowed." },
+  audit: { title: "Audit Log", explain: "All changes: everything done in Finance month by month — postings, edits (the entry before and after), voids, restores, deletes, payment voucher approvals and settings — who did it and when. Voided & deleted: the documents voided or deleted now, with Unvoid where allowed." },
   maint: { title: "Settings", explain: "Tax rate, financial year, document numbering, landed cost and clean-up checks." },
 };
 
