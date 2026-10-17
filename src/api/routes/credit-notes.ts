@@ -18,6 +18,8 @@ import {
   ledgerHasSource,
 } from "../lib/journal-hash";
 import { buildCreditNoteLedgerLegs } from "../lib/note-ledger";
+import { ensureDeliveryReturnTables } from "../lib/delivery-return-create";
+import { priceReturnLines, type InvoiceLineOfReturn, type InvoiceOfReturn, type ReturnLine } from "../../lib/cn-from-return";
 
 const app = new Hono<Env>();
 
@@ -200,6 +202,106 @@ app.get("/", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/credit-notes/from-returns[?returnId=] — the delivery returns a
+// credit note can be raised from (owner 2026-10-17, Finance v2: "create a
+// Credit Note from a Delivery Return"). Each return with its customer, the
+// invoice that billed its delivery order and its returned lines priced from
+// that invoice (priceReturnLines). A return already turned into a note
+// carries it — linked by delivery_return_id, or, for notes raised before the
+// link existed, by the "Delivery Return <no>" detail the old prefill wrote.
+// Read-only.
+// ---------------------------------------------------------------------------
+app.get("/from-returns", async (c) => {
+  const denied = await requirePermission(c, "credit-notes", "create");
+  if (denied) return denied;
+  const db = c.var.DB;
+  await ensureDeliveryReturnTables(db);
+  const orgId = getOrgId(c);
+  const returnId = c.req.query("returnId") || "";
+  const heads = (await db.prepare(
+    `SELECT id, return_no, delivery_order_id, customer_id, customer_name, status, returned_at, created_at
+       FROM delivery_returns WHERE org_id = ? AND status <> 'CANCELLED'${returnId ? " AND id = ?" : ""}
+      ORDER BY created_at DESC LIMIT 200`,
+  ).bind(...(returnId ? [orgId, returnId] : [orgId])).all<Record<string, unknown>>()).results ?? [];
+  if (!heads.length) return c.json({ success: true, data: [] });
+  const marks = (n: number) => Array.from({ length: n }, () => "?").join(",");
+  const str = (r: Record<string, unknown>, a: string, b: string) => String((r[a] ?? r[b]) ?? "");
+  const ids = heads.map((h) => String(h.id));
+  const doIds = [...new Set(heads.map((h) => str(h, "deliveryOrderId", "delivery_order_id")).filter(Boolean))];
+  const [itemRes, invRes, cnRes] = await Promise.all([
+    db.prepare(
+      `SELECT delivery_return_id, production_order_id, product_code, product_name, quantity
+         FROM delivery_return_items WHERE delivery_return_id IN (${marks(ids.length)})`,
+    ).bind(...ids).all<Record<string, unknown>>(),
+    doIds.length
+      ? db.prepare(
+          `SELECT id, invoiceNo, totalSen, paidAmount, delivery_order_id FROM invoices
+            WHERE delivery_order_id IN (${marks(doIds.length)}) AND status NOT IN ('DRAFT','CANCELLED')`,
+        ).bind(...doIds).all<Record<string, unknown>>()
+      : Promise.resolve({ results: [] as Record<string, unknown>[] }),
+    db.prepare("SELECT * FROM credit_notes").all<Record<string, unknown>>(),
+  ]);
+  const invRows = invRes.results ?? [];
+  const invIds = invRows.map((r) => String(r.id));
+  // production_order_id on invoice lines is runtime-ensured elsewhere; an
+  // engine without it simply prices nothing.
+  const lineRows = invIds.length
+    ? ((await db.prepare(
+        `SELECT invoice_id, production_order_id, quantity, total_sen FROM invoice_items WHERE invoice_id IN (${marks(invIds.length)})`,
+      ).bind(...invIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? [])
+    : [];
+  const invLines: InvoiceLineOfReturn[] = lineRows.map((l) => ({
+    invoiceId: str(l, "invoiceId", "invoice_id"),
+    productionOrderId: str(l, "productionOrderId", "production_order_id") || null,
+    quantity: Number(l.quantity) || 0,
+    totalSen: Math.round(Number(l.totalSen ?? l.total_sen) || 0),
+  }));
+  const notes = cnRes.results ?? [];
+  const data = heads.map((h) => {
+    const id = String(h.id);
+    const returnNo = str(h, "returnNo", "return_no");
+    const doId = str(h, "deliveryOrderId", "delivery_order_id");
+    const invoices: InvoiceOfReturn[] = invRows
+      .filter((r) => str(r, "deliveryOrderId", "delivery_order_id") === doId)
+      .map((r) => ({
+        id: String(r.id),
+        invoiceNo: str(r, "invoiceNo", "invoice_no"),
+        outstandingSen: Math.max(0, Math.round(Number(r.totalSen ?? r.total_sen) || 0) - Math.round(Number(r.paidAmount ?? r.paid_amount) || 0)),
+      }));
+    const lines: ReturnLine[] = (itemRes.results ?? [])
+      .filter((i) => str(i, "deliveryReturnId", "delivery_return_id") === id)
+      .map((i) => ({
+        productionOrderId: str(i, "productionOrderId", "production_order_id") || null,
+        productCode: str(i, "productCode", "product_code"),
+        productName: str(i, "productName", "product_name"),
+        quantity: Number(i.quantity) || 0,
+      }));
+    const draft = priceReturnLines(lines, invoices, invLines);
+    const note = notes.find((n) => str(n, "deliveryReturnId", "delivery_return_id") === id)
+      ?? (returnNo ? notes.find((n) => str(n, "reasonDetail", "reason_detail").trim() === `Delivery Return ${returnNo}`) : undefined);
+    return {
+      id, returnNo,
+      date: (str(h, "returnedAt", "returned_at") || str(h, "createdAt", "created_at")).slice(0, 10),
+      customerId: str(h, "customerId", "customer_id"),
+      customerName: str(h, "customerName", "customer_name"),
+      status: str(h, "status", "status"),
+      ...draft,
+      creditNote: note ? { id: String(note.id), noteNumber: str(note, "noteNumber", "note_number") } : null,
+    };
+  });
+  return c.json({ success: true, data });
+});
+
+// The link from a note to the return it was raised from (2026-10-17).
+// Self-applied before the first write; the flag is set only once it exists.
+let cnReturnColEnsured = false;
+async function ensureCreditNoteReturnColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (cnReturnColEnsured) return;
+  await db.prepare("ALTER TABLE credit_notes ADD COLUMN IF NOT EXISTS delivery_return_id TEXT").run();
+  cnReturnColEnsured = true;
+}
+
 // POST /api/credit-notes — create
 app.post("/", async (c) => {
   // RBAC gate (P3.3-followup) — credit-notes:create.
@@ -208,6 +310,16 @@ app.post("/", async (c) => {
   try {
     const body = await c.req.json();
     const { invoiceId, reason, reasonDetail, items } = body;
+    // A note raised from a delivery return (2026-10-17): one note per return.
+    const deliveryReturnId = typeof body.deliveryReturnId === "string" ? body.deliveryReturnId.trim() : "";
+    await ensureCreditNoteReturnColumn(c.var.DB);
+    if (deliveryReturnId) {
+      const used = await c.var.DB.prepare("SELECT noteNumber FROM credit_notes WHERE delivery_return_id = ?")
+        .bind(deliveryReturnId).first<{ noteNumber?: string; note_number?: string }>();
+      if (used) {
+        return c.json({ success: false, error: `This delivery return already has credit note ${used.noteNumber ?? used.note_number ?? ""}.` }, 409);
+      }
+    }
     if (!invoiceId || !reason || !items || items.length === 0) {
       return c.json(
         {
@@ -339,8 +451,8 @@ app.post("/", async (c) => {
         // attention / customerPhone snapshotted from the invoice.
         `INSERT INTO credit_notes (id, noteNumber, invoiceId, invoiceNumber, customerId,
            customerName, customerState, customerAddress, attention, customerPhone,
-           date, reason, reasonDetail, totalAmount, status, approvedBy, items)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           date, reason, reasonDetail, totalAmount, status, approvedBy, items, delivery_return_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         noteNumber,
@@ -359,8 +471,17 @@ app.post("/", async (c) => {
         requestedStatus,
         approvedBy,
         JSON.stringify(parsedItems),
+        deliveryReturnId || null,
       ),
     ];
+    // The return points back at its note, so its page shows "Credit note".
+    if (deliveryReturnId) {
+      statements.push(
+        c.var.DB.prepare(
+          "UPDATE delivery_returns SET credit_note_id = ? WHERE id = ? AND COALESCE(credit_note_id, '') = ''",
+        ).bind(id, deliveryReturnId),
+      );
+    }
 
     if (isIssuedStatus(requestedStatus) && totalAmount > 0) {
       // Mirror the PUT-POSTED path: decrement customer A/R and, if a specific

@@ -78,6 +78,29 @@ function buildCreditNoteVoucher(cn: CreditNote): VoucherSpec {
   };
 }
 
+// One row of GET /api/credit-notes/from-returns.
+type ReturnCreditCandidate = {
+  id: string;
+  returnNo: string;
+  date: string;
+  customerId: string;
+  customerName: string;
+  status: string;
+  invoice: { id: string; invoiceNo: string; outstandingSen: number } | null;
+  lines: { description: string; quantity: number; unitPriceSen: number | null }[];
+  valueSen: number;
+  unpriced: number;
+  creditNote: { id: string; noteNumber: string } | null;
+};
+// Why a return cannot be used ("" = it can): already has a note, was never
+// invoiced, or its invoice is settled (a note may not exceed what is owed).
+function returnCandidateBlock(d: ReturnCreditCandidate): string {
+  if (d.creditNote) return `CN issued · ${d.creditNote.noteNumber}`;
+  if (!d.invoice) return "Not invoiced";
+  if (d.invoice.outstandingSen <= 0) return "Invoice settled";
+  return "";
+}
+
 export default function CreditNotesPage() {
   const { data: cnResp, loading, refresh: refreshCreditNotes } = useCachedJson<{ success?: boolean; data?: CreditNote[] }>("/api/credit-notes");
   const creditNotes: CreditNote[] = useMemo(
@@ -121,82 +144,77 @@ export default function CreditNotesPage() {
   const [items, setItems] = useState<CreditNoteItemRow[]>([newCNItem()]);
   const [creating, setCreating] = useState(false);
 
-  // Pure return → land here PRE-FILLED (owner 2026-07-15): open the New CN modal
-  // with reason=RETURN, one line per returned item, and (best-effort) the
-  // customer + the DO's invoice pre-selected, so the operator only confirms the
-  // refund amount instead of starting from a blank list.
+  // A note from a delivery return (owner 2026-07-15 → priced 2026-10-17,
+  // Finance v2 "create a Credit Note from a Delivery Return"): the New CN form
+  // opens with the customer, the invoice that billed the return's delivery
+  // order, reason RETURN and one line per returned item at that invoice's
+  // price per unit (GET /api/credit-notes/from-returns). Reached from the
+  // "From Delivery Return" picker on this page or from a return's own page
+  // (?fromReturn=<id>). The note remembers its return (deliveryReturnId).
   const [searchParams, setSearchParams] = useSearchParams();
   const fromReturn = searchParams.get("fromReturn") || "";
-  // customer + invoice captured from the DR; applied to the selects once the
-  // invoices list has loaded (it loads lazily when the modal opens).
-  const pendingPrefill = useRef<{ customerId: string; invoiceNo: string } | null>(null);
+  const [fromReturnDraft, setFromReturnDraft] = useState<ReturnCreditCandidate | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [candidates, setCandidates] = useState<ReturnCreditCandidate[] | null>(null);
+  // The invoice is applied once the invoices list has loaded (it loads lazily
+  // when the modal opens).
+  const pendingInvoiceId = useRef<string>("");
   const prefillRan = useRef(false);
+
+  const applyReturn = (d: ReturnCreditCandidate) => {
+    setFromReturnDraft(d);
+    setSelectedCustomerId(d.customerId);
+    pendingInvoiceId.current = d.invoice?.id ?? "";
+    setSelectedInvoiceId(d.invoice?.id ?? "");
+    setReason("RETURN");
+    setReasonDetail(`Delivery Return ${d.returnNo}`.trim());
+    setItems(d.lines.map((l) => ({
+      _uid: crypto.randomUUID(),
+      description: l.description,
+      quantity: l.quantity,
+      unitPriceSen: l.unitPriceSen ?? 0,
+      priceStr: l.unitPriceSen != null ? (l.unitPriceSen / 100).toFixed(2) : "",
+    })));
+    setPickOpen(false);
+    refreshInvoices();
+    setShowCreateModal(true);
+  };
 
   useEffect(() => {
     if (!fromReturn || prefillRan.current) return;
     prefillRan.current = true;
     void (async () => {
       try {
-        const drRes = await fetch(
-          `/api/delivery-returns/${encodeURIComponent(fromReturn)}`,
-        );
-        const drJson = (await drRes.json()) as {
-          data?: {
-            returnNo?: string;
-            customerId?: string;
-            deliveryOrderId?: string;
-            items?: Array<{ productCode?: string; productName?: string; quantity?: number }>;
-          };
-        };
-        const dr = drJson?.data;
-        if (!dr) return;
-        setReason("RETURN");
-        setReasonDetail(`Delivery Return ${dr.returnNo ?? ""}`.trim());
-        setItems(
-          (dr.items ?? []).map((it) => ({
-            _uid: crypto.randomUUID(),
-            description: [it.productCode, it.productName].filter(Boolean).join(" "),
-            quantity: Number(it.quantity ?? 1),
-            unitPriceSen: 0,
-          })),
-        );
-        let invoiceNo = "";
-        if (dr.deliveryOrderId) {
-          try {
-            const doRes = await fetch(
-              `/api/delivery-orders/${encodeURIComponent(dr.deliveryOrderId)}`,
-            );
-            const doJson = (await doRes.json()) as { data?: { invoiceNo?: string } };
-            invoiceNo = doJson?.data?.invoiceNo ?? "";
-          } catch {
-            /* best-effort — operator can pick the invoice manually */
-          }
-        }
-        pendingPrefill.current = { customerId: dr.customerId ?? "", invoiceNo };
-        setShowCreateModal(true);
+        const res = await fetch(`/api/credit-notes/from-returns?returnId=${encodeURIComponent(fromReturn)}`);
+        const j = (await res.json()) as { success?: boolean; data?: ReturnCreditCandidate[] };
+        const d = j?.success ? j.data?.[0] : undefined;
+        if (d) applyReturn(d);
       } catch {
-        /* best-effort */
+        /* best-effort — the operator can still use the picker */
+      } finally {
+        setSearchParams({});
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot, ref-guarded
   }, [fromReturn]);
 
-  // Once the invoices list is loaded, apply the pending customer + invoice.
+  // Once the invoices list is loaded, apply the pending invoice (the select
+  // only offers invoices it has loaded).
   useEffect(() => {
-    const p = pendingPrefill.current;
-    if (!p || invoices.length === 0) return;
-    if (p.customerId) setSelectedCustomerId(p.customerId);
-    if (p.invoiceNo) {
-      const inv = invoices.find((i) => {
-        const r = i as { invoiceNo?: string; invoiceNumber?: string };
-        return r.invoiceNo === p.invoiceNo || r.invoiceNumber === p.invoiceNo;
-      });
-      if (inv) setSelectedInvoiceId(inv.id);
-    }
-    pendingPrefill.current = null;
-    if (fromReturn) setSearchParams({});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply once invoices arrive
+    const id = pendingInvoiceId.current;
+    if (!id || invoices.length === 0) return;
+    if (invoices.some((i) => i.id === id)) setSelectedInvoiceId(id);
+    pendingInvoiceId.current = "";
   }, [invoices]);
+
+  const openPicker = () => {
+    setPickOpen(true);
+    setCandidates(null);
+    fetch("/api/credit-notes/from-returns")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ReturnCreditCandidate[] }>)
+      .then((j) => setCandidates(j?.success ? (j.data ?? []) : []))
+      .catch(() => setCandidates([]));
+  };
 
   // Ticked rows for the batch actions bar (print vouchers + Excel/CSV export).
   const [selectedCreditNotes, setSelectedCreditNotes] = useState<CreditNote[]>([]);
@@ -238,10 +256,12 @@ export default function CreditNotesPage() {
           reason,
           reasonDetail,
           items: payloadItems,
+          ...(fromReturnDraft ? { deliveryReturnId: fromReturnDraft.id } : {}),
         },
       });
       if (data.success) {
         setShowCreateModal(false);
+        setFromReturnDraft(null);
         setSelectedInvoiceId("");
         setReason("RETURN");
         setReasonDetail("");
@@ -353,9 +373,12 @@ export default function CreditNotesPage() {
         title="Credit Notes"
         explain="Credit notes for returns, price adjustments and damages."
         actions={
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-2" /> New Credit Note
-          </Button>
+          <>
+            <Button variant="outline" onClick={openPicker}>From Delivery Return</Button>
+            <Button onClick={() => { setFromReturnDraft(null); openCreate(); }}>
+              <Plus className="h-4 w-4 mr-2" /> New Credit Note
+            </Button>
+          </>
         }
       />
 
@@ -416,17 +439,80 @@ export default function CreditNotesPage() {
         </Card>
       </div>
 
+      {/* From Delivery Return — pick a return, the form fills in. */}
+      {pickOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onMouseDown={(e) => { if (e.target === e.currentTarget) setPickOpen(false); }}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[85vh] overflow-y-auto" data-cn-return-picker="">
+            <div className="flex items-center justify-between p-5 border-b">
+              <div>
+                <h2 className="text-lg font-semibold">Credit Note from Delivery Return</h2>
+                <p className="text-[12px] text-[#6B7280]">Pick a return — customer, invoice and returned items fill in at the invoice's prices; check them, then save.</p>
+              </div>
+              <button onClick={() => setPickOpen(false)} aria-label="Close"><X className="h-5 w-5 text-gray-400" /></button>
+            </div>
+            <div className="p-4">
+              {candidates === null ? (
+                <p className="py-8 text-center text-sm text-[#6B7280]">Loading…</p>
+              ) : candidates.length === 0 ? (
+                <p className="py-8 text-center text-sm text-[#6B7280]">No delivery returns yet.</p>
+              ) : (
+                <table data-fin-list className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="px-3 py-2 text-left">Return No</th>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Invoice</th>
+                      <th className="px-3 py-2 text-right">Items</th>
+                      <th className="px-3 py-2 text-right">Value</th>
+                      <th className="px-3 py-2 text-right"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidates.map((d) => {
+                      const why = returnCandidateBlock(d);
+                      return (
+                        <tr
+                          key={d.id}
+                          data-fin-nolift={why ? "" : undefined}
+                          className={why ? "bg-[#F7F5F1] text-[#9CA3AF]" : "cursor-pointer"}
+                          onClick={why ? undefined : () => applyReturn(d)}
+                          title={why || "Fill a new credit note from this return"}
+                        >
+                          <td className="px-3 py-2 font-mono">{d.returnNo}</td>
+                          <td className="px-3 py-2">{d.date ? formatDateDMY(d.date) : "-"}</td>
+                          <td className="px-3 py-2">{d.customerName}</td>
+                          <td className="px-3 py-2">{d.invoice?.invoiceNo ?? "-"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{d.lines.reduce((s, l) => s + l.quantity, 0)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{d.invoice ? formatRM(d.valueSen) : "-"}{d.unpriced ? <span className="block text-[11px] text-[#9C6F1E]">{d.unpriced} unpriced</span> : null}</td>
+                          <td className="px-3 py-2 text-right text-[12px]">{why ? <span className={d.creditNote ? "text-[#27500A]" : ""}>{why}</span> : <span className="text-[#6B5C32]">Use →</span>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-lg font-semibold">Create Credit Note</h2>
-              <button onClick={() => setShowCreateModal(false)}>
+              <h2 className="text-lg font-semibold">Create Credit Note{fromReturnDraft ? <span className="ml-2 text-sm font-normal text-[#6B7280]">from {fromReturnDraft.returnNo}</span> : null}</h2>
+              <button onClick={() => { setShowCreateModal(false); setFromReturnDraft(null); }}>
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
             <div className="p-6 space-y-4">
+              {fromReturnDraft && fromReturnDraft.unpriced > 0 && (
+                <p className="rounded-md border border-[#F2D9A6] bg-[#FBF3E4] px-3 py-2 text-[12px] text-[#7A5B12]" data-cn-unpriced="">
+                  {fromReturnDraft.unpriced} returned line{fromReturnDraft.unpriced === 1 ? " was" : "s were"} not on the invoice — enter {fromReturnDraft.unpriced === 1 ? "its" : "their"} price.
+                </p>
+              )}
               {/* #5: Customer first → only their not-yet-settled invoices. */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Customer</label>
