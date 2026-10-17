@@ -55,7 +55,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales Â· Invoices Â
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1614` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:248` | One line per production department |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2336` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2355` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
 | `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:58` | Single ~2000-line aggregate handler |
