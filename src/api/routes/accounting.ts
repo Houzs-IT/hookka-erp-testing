@@ -89,6 +89,8 @@ import { buildInventoryOpeningSeed, applyOpeningSeed, type InventoryOpeningRow }
 import { bucketAging } from "../../lib/other-party-aging";
 import { applyLifecycle, getDocState } from "../lib/document-lifecycle";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
+import { liveRestatePostType } from "../../lib/lifecycle-machine";
+import { orBankCarry } from "../../lib/official-receipt-edit";
 import {
   computeMaterialCheckpoints,
   windowFromCheckpoints,
@@ -12492,65 +12494,90 @@ app.get("/official-receipts", async (c) => {
   }
 });
 
+// One validation for posting AND editing an official receipt: the date, the
+// income lines, and the bank / cash account the money went into.
+type OfficialReceiptInput = {
+  date: string; payTo: string; receivedFrom: string; description: string;
+  lines: { accountCode: string; description: string; amountSen: number }[]; totalSen: number;
+};
+async function validateOfficialReceipt(
+  db: Env["Variables"]["DB"],
+  body: Record<string, unknown>,
+): Promise<{ ok: true; v: OfficialReceiptInput } | { ok: false; error: string }> {
+  const date = String(body.date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "date must be YYYY-MM-DD" };
+  const coaRes = await db.prepare(
+    `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
+  ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
+  const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
+  const lv = validateDocLines(coa, body.lines);
+  if (!lv.ok) return { ok: false, error: lv.error };
+  const payTo = String(body.payTo || "");
+  const payToAcct = coa.get(payTo);
+  if (!payToAcct || (payToAcct.specialAccountType !== "SBK" && payToAcct.specialAccountType !== "SCH")) {
+    return { ok: false, error: "Deposit To must be a bank (SBK) or cash (SCH) account" };
+  }
+  return {
+    ok: true,
+    v: { date, payTo, receivedFrom: String(body.receivedFrom ?? ""), description: String(body.description ?? ""), lines: lv.lines, totalSen: lv.totalSen },
+  };
+}
+
+// A receipt's legs: DR the bank / cash account (leg 1, its id chosen by the
+// caller so an edit can move a bank match onto it), CR each line.
+function officialReceiptLegs(
+  v: OfficialReceiptInput,
+  doc: { id: string; orNo: string; sourceType: string; bankLegId: string },
+  actorUserId: string | null,
+  orgId: string,
+): LedgerEntryInput[] {
+  return [
+    {
+      id: doc.bankLegId,
+      sourceType: doc.sourceType,
+      sourceId: doc.id,
+      legNo: 1,
+      accountCode: v.payTo,
+      debitSen: v.totalSen,
+      creditSen: 0,
+      description: `${doc.orNo} · ${v.receivedFrom ? `from ${v.receivedFrom}` : "Receipt"}`,
+      actorUserId,
+      orgId,
+    },
+    ...v.lines.map((l, idx) => ({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: doc.sourceType,
+      sourceId: doc.id,
+      legNo: idx + 2,
+      accountCode: l.accountCode,
+      debitSen: 0,
+      creditSen: l.amountSen,
+      description: `${doc.orNo} · ${l.description || v.description || "Receipt"}`,
+      actorUserId,
+      orgId,
+    })),
+  ];
+}
+
 app.post("/official-receipts", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
   try {
     const body = await c.req.json();
-    const date = String(body.date || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
-    }
-    const coaRes = await c.var.DB.prepare(
-      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
-    ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
-    const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
-    const v = validateDocLines(coa, body.lines);
-    if (!v.ok) return c.json({ success: false, error: v.error }, 400);
-    const payTo = String(body.payTo || "");
-    const payToAcct = coa.get(payTo);
-    if (!payToAcct || (payToAcct.specialAccountType !== "SBK" && payToAcct.specialAccountType !== "SCH")) {
-      return c.json(
-        { success: false, error: "Deposit To must be a bank (SBK) or cash (SCH) account" },
-        400,
-      );
-    }
+    const ok = await validateOfficialReceipt(c.var.DB, body as Record<string, unknown>);
+    if (!ok.ok) return c.json({ success: false, error: ok.error }, 400);
+    const v = ok.v;
     const id = `or-${crypto.randomUUID().slice(0, 8)}`;
     const orNo = await issueDocNumber(c.var.DB, {
-      bankAccountCode: payTo,
+      bankAccountCode: v.payTo,
       direction: "in",
-      dateIso: date,
+      dateIso: v.date,
     });
     const now = new Date().toISOString();
     const orgId = getOrgId(c);
     const actorUserId =
       (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
-    const legs: LedgerEntryInput[] = [
-      {
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "official_receipt",
-        sourceId: id,
-        legNo: 1,
-        accountCode: payTo,
-        debitSen: v.totalSen,
-        creditSen: 0,
-        description: `${orNo} · ${body.receivedFrom ? `from ${body.receivedFrom}` : "Receipt"}`,
-        actorUserId,
-        orgId,
-      },
-      ...v.lines.map((l, idx) => ({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "official_receipt",
-        sourceId: id,
-        legNo: idx + 2,
-        accountCode: l.accountCode,
-        debitSen: 0,
-        creditSen: l.amountSen,
-        description: `${orNo} · ${l.description || body.description || "Receipt"}`,
-        actorUserId,
-        orgId,
-      })),
-    ];
+    const legs = officialReceiptLegs(v, { id, orNo, sourceType: "official_receipt", bankLegId: `lje-${crypto.randomUUID().slice(0, 12)}` }, actorUserId, orgId);
     const { statements: ledgerStmts } = await buildJournalEntryStatements(
       c.var.DB,
       orgId,
@@ -12563,9 +12590,9 @@ app.post("/official-receipts", async (c) => {
            status, createdBy, created_at, updated_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?)`,
       ).bind(
-        id, orNo, date,
-        String(body.receivedFrom ?? ""), String(body.description ?? ""),
-        payTo, v.totalSen, actorUserId, now, now,
+        id, orNo, v.date,
+        v.receivedFrom, v.description,
+        v.payTo, v.totalSen, actorUserId, now, now,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12582,6 +12609,106 @@ app.post("/official-receipts", async (c) => {
       { success: false, error: "Failed to save the receipt — is migration 0159 applied?" },
       400,
     );
+  }
+});
+
+// Edit a POSTED official receipt IN PLACE (owner 2026-10-17 「可以」) — same
+// OR number. Reverses the live legs, re-posts the edited ones
+// (official_receipt_restate_rev/post:<stamp>) and hides every older family —
+// the payment-voucher restate. A bank match (or the cash board's daily tick)
+// on the old bank leg moves to the new one when the bank account and amount
+// are unchanged; a matched receipt cannot change them (orBankCarry).
+app.post("/official-receipts/:id/restate", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const id = c.req.param("id");
+  try {
+    const db = c.var.DB;
+    const or = await db.prepare("SELECT * FROM official_receipts WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    if (!or) return c.json({ success: false, error: "Receipt not found" }, 404);
+    const orNo = String(or.orNo ?? or.or_no ?? "");
+    const state = await getDocState(db, orgId, "official_receipt", id);
+    if (state !== "ACTIVE" || String(or.status ?? "") === "VOID") {
+      return c.json({ success: false, error: "This receipt is cancelled — restore it before editing." }, 400);
+    }
+    const body = await c.req.json();
+    const ok = await validateOfficialReceipt(db, body as Record<string, unknown>);
+    if (!ok.ok) return c.json({ success: false, error: ok.error }, 400);
+    const v = ok.v;
+
+    // The live set: the original legs, or the newest restate.
+    const cur = (await db.prepare(
+      `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
+        WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'official_receipt%'`,
+    ).bind(id, orgId).all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
+    // What on the bank side points at those legs.
+    const curIds = cur.map((l) => l.id);
+    const matched = new Set<string>();
+    const ticked = new Set<string>();
+    let splitHeld = false;
+    if (curIds.length > 0) {
+      const marks = curIds.map(() => "?").join(", ");
+      for (const r of (await db.prepare(`SELECT matchedLegId FROM bank_statement_lines WHERE matchedLegId IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
+        matched.add(String(r.matchedLegId ?? r.matched_leg_id ?? ""));
+      }
+      for (const r of (await db.prepare(`SELECT leg_id FROM bank_line_leg_splits WHERE leg_id IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
+        matched.add(String(r.legId ?? r.leg_id ?? ""));
+        splitHeld = true;
+      }
+      for (const r of (await db.prepare(`SELECT leg_id FROM bank_board_cleared WHERE leg_id IN (${marks})`).bind(...curIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? []) {
+        ticked.add(String(r.legId ?? r.leg_id ?? ""));
+      }
+    }
+    const carry = orBankCarry(cur, { matched, ticked }, { payTo: v.payTo, totalSen: v.totalSen });
+    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
+
+    const now = new Date().toISOString();
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const stamp = Date.now();
+    const postSource = `official_receipt_restate_post:${stamp}`;
+    const bankLegId = `lje-${crypto.randomUUID().slice(0, 12)}`;
+    const revLegs: LedgerEntryInput[] = cur.map((l, i) => ({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: `official_receipt_restate_rev:${stamp}`, sourceId: id, legNo: i + 1,
+      accountCode: l.accountCode, debitSen: Number(l.creditSen) || 0, creditSen: Number(l.debitSen) || 0, description: `Restate rev · ${orNo}`, actorUserId, orgId,
+    }));
+    const newLegs = officialReceiptLegs(v, { id, orNo, sourceType: postSource, bankLegId }, actorUserId, orgId);
+    const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
+    const statements: D1PreparedStatement[] = [...jeStmts];
+    statements.push(db.prepare(
+      `UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%' AND sourceType <> ?`,
+    ).bind(id, orgId, postSource));
+    // The bank match / split / daily tick follow the re-posted bank leg.
+    if (carry.carryFrom) {
+      if (matched.has(carry.carryFrom)) {
+        statements.push(db.prepare("UPDATE bank_statement_lines SET matchedLegId = ? WHERE matchedLegId = ?").bind(bankLegId, carry.carryFrom));
+      }
+      if (splitHeld) statements.push(db.prepare("UPDATE bank_line_leg_splits SET leg_id = ? WHERE leg_id = ?").bind(bankLegId, carry.carryFrom));
+      if (ticked.has(carry.carryFrom)) statements.push(db.prepare("UPDATE bank_board_cleared SET leg_id = ? WHERE leg_id = ?").bind(bankLegId, carry.carryFrom));
+    }
+    statements.push(db.prepare(
+      "UPDATE official_receipts SET date = ?, receivedFrom = ?, description = ?, payTo = ?, totalSen = ?, updated_at = ? WHERE id = ?",
+    ).bind(v.date, v.receivedFrom, v.description, v.payTo, v.totalSen, now, id));
+    statements.push(db.prepare("DELETE FROM official_receipt_lines WHERE receiptId = ?").bind(id));
+    v.lines.forEach((l, idx) => {
+      statements.push(db.prepare(
+        `INSERT INTO official_receipt_lines (id, receiptId, accountCode, description, amountSen, lineOrder)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(`orl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));
+    });
+    const beforeLines = (await db.prepare("SELECT accountCode, description, amountSen FROM official_receipt_lines WHERE receiptId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>()).results ?? [];
+    await db.batch(statements);
+    await emitAudit(c, {
+      resource: "accounting",
+      resourceId: orNo,
+      action: "update",
+      before: { date: or.date, payTo: or.payTo ?? or.pay_to, receivedFrom: or.receivedFrom ?? or.received_from, description: or.description, totalSen: or.totalSen ?? or.total_sen, lines: beforeLines },
+      after: { date: v.date, payTo: v.payTo, receivedFrom: v.receivedFrom, description: v.description, totalSen: v.totalSen, lines: v.lines },
+    });
+    return c.json({ success: true, data: { id, orNo, bankMatchMoved: !!carry.carryFrom } });
+  } catch (e) {
+    console.error("[or] restate failed:", e);
+    return c.json({ success: false, error: "Failed to update the receipt" }, 400);
   }
 });
 
@@ -12610,6 +12737,26 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
     ...lc.statements,
     c.var.DB.prepare("UPDATE official_receipts SET status = ?, updated_at = ? WHERE id = ?").bind(docStatus, new Date().toISOString(), id),
   ];
+  // An EDITED receipt's live legs are its newest official_receipt_restate_post
+  // family, which applyLifecycle's exact match on "official_receipt" misses
+  // (class C5). Void / delete hide the whole family so the GL nets to zero;
+  // unvoid then restores THAT family, not the pre-edit original.
+  if (lc.newState !== "ACTIVE") {
+    statements.push(
+      c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
+    );
+  } else {
+    const fams = (await c.var.DB.prepare(
+      `SELECT DISTINCT sourceType FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt_restate_post:%'`,
+    ).bind(id, orgId).all<{ sourceType: string }>()).results ?? [];
+    const live = liveRestatePostType(fams.map((f) => String(f.sourceType)), "official_receipt");
+    if (live) {
+      statements.push(
+        c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
+        c.var.DB.prepare("UPDATE ledger_journal_entries SET hidden = 0 WHERE sourceId = ? AND orgId = ? AND sourceType = ?").bind(id, orgId, live),
+      );
+    }
+  }
   await c.var.DB.batch(statements);
   return c.json({ success: true, data: { state: lc.newState } });
 });

@@ -12394,18 +12394,23 @@ type OrRow = {
 // bank/cash account, CR each income line. Posts immediately (no ladder on
 // money in). Unchanged rules: one money parser, an unreadable amount refuses
 // the post and blanks the Total (BUG-2026-08-13-094/095).
-function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartOfAccount[]; onSaved: () => void; onCancel: () => void }) {
+// With `editing` (owner 2026-10-17 「可以」) the same form edits a posted
+// receipt: same OR number, the server reverses the posted entry and re-posts
+// the edited one (/official-receipts/:id/restate).
+function OfficialReceiptForm({ accounts, editing, onSaved, onCancel }: { accounts: ChartOfAccount[]; editing?: OrRow | null; onSaved: () => void; onCancel: () => void }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    date: new Date().toISOString().slice(0, 10),
-    receivedFrom: "",
-    description: "",
-    payTo: "",
+    date: editing ? String(editing.date ?? "").slice(0, 10) : new Date().toISOString().slice(0, 10),
+    receivedFrom: editing?.receivedFrom ?? "",
+    description: editing?.description ?? "",
+    payTo: editing?.payTo ?? "",
   });
-  const [lines, setLines] = useState<{ accountCode: string; description: string; amount: string }[]>([
-    { accountCode: "", description: "", amount: "" },
-  ]);
+  const [lines, setLines] = useState<{ accountCode: string; description: string; amount: string }[]>(
+    editing && editing.lines.length > 0
+      ? editing.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) }))
+      : [{ accountCode: "", description: "", amount: "" }],
+  );
 
   const bankCash = accounts.filter(
     (a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH",
@@ -12448,13 +12453,16 @@ function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartO
     }
     setSaving(true);
     try {
-      const res = await fetch("/api/accounting/official-receipts", {
+      const res = await fetch(editing ? `/api/accounting/official-receipts/${encodeURIComponent(editing.id)}/restate` : "/api/accounting/official-receipts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const j = asMutationResponse(await res.json());
-      if (j?.success) {
+      if (j?.success && editing) {
+        toast.success(`${editing.orNo} updated`);
+        onSaved();
+      } else if (j?.success) {
         toast.success("Receipt posted");
         setForm({ date: new Date().toISOString().slice(0, 10), receivedFrom: "", description: "", payTo: "" });
         setLines([{ accountCode: "", description: "", amount: "" }]);
@@ -12470,7 +12478,11 @@ function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartO
   return (
     <Card>
       <CardContent className="p-4 space-y-4">
-        <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">sundry income / recovery — DR bank, CR the income account</span></div>
+        {editing ? (
+          <div className="text-sm font-semibold text-[#1F1D1B]">Edit Official Receipt {editing.orNo} <span className="text-[11px] font-normal text-[#9CA3AF]">same number — the posted entry is reversed and the edited one posted</span></div>
+        ) : (
+          <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">sundry income / recovery — DR bank, CR the income account</span></div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-[#6B7280] mb-1 block">Date</label>
@@ -12537,7 +12549,7 @@ function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartO
 
         <div className="flex gap-2 pt-3 border-t border-[#F0ECE9]">
           <Button variant="primary" size="sm" disabled={saving || totalSen <= 0 || !!orMoneyError || !(form.payTo || defaultBankCode(bankCash))} onClick={handleSave}>
-            {saving ? "Posting…" : "Post receipt"}
+            {saving ? (editing ? "Saving…" : "Posting…") : editing ? "Save changes" : "Post receipt"}
           </Button>
           <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
         </div>
@@ -12616,8 +12628,9 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [door, setDoor] = useState<ReceiptKind | null>(null);
   const [custEditing, setCustEditing] = useState<PaymentRecord | null>(null);
   const [odEditing, setOdEditing] = useState<PaymentGroup | null>(null);
-  const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setDoor(door === k ? null : k); };
-  const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); };
+  const [orEditing, setOrEditing] = useState<OrRow | null>(null);
+  const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setDoor(door === k ? null : k); };
+  const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); setOrEditing(null); };
 
   const rows = useMemo<ReceiptHubRow[]>(() => [
     ...(cust ?? []).map((p): ReceiptHubRow => ({
@@ -12721,8 +12734,9 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else toast.error(j?.error || `${verb} failed`);
   };
   const startEdit = (r: ReceiptHubRow) => {
-    if (r.cust) { setOdEditing(null); setCustEditing(r.cust); setDoor("CUSTOMER"); }
-    else if (r.od) { setCustEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
+    if (r.cust) { setOdEditing(null); setOrEditing(null); setCustEditing(r.cust); setDoor("CUSTOMER"); }
+    else if (r.od) { setCustEditing(null); setOrEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
+    else if (r.or) { setCustEditing(null); setOdEditing(null); setOrEditing(r.or); setDoor("OFFICIAL"); }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const kindChip = receiptKindChip;
@@ -12757,7 +12771,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     [{ label: "Open", action: () => setDetailKey(r.key) }],
     [
       { label: "Print", action: () => printVoucher(voucherOf(r)) },
-      ...(r.lifecycleState === "ACTIVE" && (r.cust || r.od) ? [{ label: "Edit", action: () => startEdit(r) }] : []),
+      ...(r.lifecycleState === "ACTIVE" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
     ],
     lifecycleMenuItems(r.lifecycleState, {
       void: () => void lifecycle(r, "void"),
@@ -12784,7 +12798,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
         <OtherPartyPaymentForm key={odEditing?.paymentNo ?? "new"} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} />
       )}
       {door === "OFFICIAL" && (
-        <OfficialReceiptForm accounts={accounts} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
+        <OfficialReceiptForm key={orEditing?.id ?? "new"} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
       )}
 
       <BatchActionsBar
@@ -12851,7 +12865,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             onClose={close}
             actions={<>
               <Button variant="outline" size="sm" onClick={() => printVoucher(voucherOf(r))}><Printer className="h-4 w-4" /> Print</Button>
-              {r.lifecycleState === "ACTIVE" && (r.cust || r.od) && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
+              {r.lifecycleState === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
               {r.lifecycleState === "ACTIVE"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void lifecycle(r, "void"); }}>Void</Button>
                 : r.lifecycleState === "VOID"

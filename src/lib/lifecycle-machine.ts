@@ -36,3 +36,22 @@ export function hiddenTargets(state: DocState): { original: 0 | 1; reversal: 0 |
 export function needsReversal(action: LifecycleAction): boolean {
   return action === "void" || action === "delete";
 }
+
+// The GL family that is LIVE for an edited document: each restate hides the
+// older families, so the newest `<base>_restate_post:<stamp>` wins over the
+// base legs. An unvoid must restore THAT family — the base legs are the
+// pre-edit numbers (class C5, BUG-2026-07-24-002). Null = never edited.
+export function liveRestatePostType(sourceTypes: string[], base: string): string | null {
+  const prefix = `${base}_restate_post:`;
+  let best: string | null = null;
+  let bestStamp = -1;
+  for (const t of sourceTypes) {
+    if (!t.startsWith(prefix)) continue;
+    const stamp = Number(t.slice(prefix.length)) || 0;
+    if (stamp > bestStamp) {
+      bestStamp = stamp;
+      best = t;
+    }
+  }
+  return best;
+}
