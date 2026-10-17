@@ -1,12 +1,11 @@
 import { useMemo, useState } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import {
-  TAUPE, TEAL, RED, AMBER, GREEN, MUTED, BORDER, CHART_GOLD, fmtN,
-  inPeriod, inFocus, dayLabel, periodLabel, type Period, type ServiceSub, CC_TICK } from "./dashboard-shared-lib";
+  TEAL, RED, AMBER, GREEN, MUTED, fmtN,
+  inFocus, dayLabel, periodLabel, type Period, type ServiceSub } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge } from "./dashboard-shared";
 import { ServiceApprovalsPanel } from "./ServiceApprovalsPanel";
 import { ServiceIssuesPanel } from "./ServiceIssuesPanel";
@@ -80,32 +79,6 @@ export function ServiceView({
 
   // Cases logged inside the focused window (a clicked day narrows it).
   const logged = useMemo(() => cases.filter((c) => inFocus(period, c.createdDate)), [cases, period]);
-  const count = (st: string) => logged.filter((c) => c.status === st).length;
-
-  // Monthly/range: a bar per day. YTD: a bar per month (click opens the month).
-  const chart = useMemo(() => {
-    const ytd = period.mode === "ytd";
-    const m = new Map<string, { iso: string; date: string; New: number; Closed: number }>();
-    const bump = (iso: string, k: "New" | "Closed") => {
-      const key = ytd ? iso.slice(0, 7) : iso;
-      const cur = m.get(key) ?? { iso: key, date: ytd ? key : key.slice(5), New: 0, Closed: 0 };
-      cur[k] += 1;
-      m.set(key, cur);
-    };
-    for (const c of cases) {
-      if (inPeriod(period, c.createdDate)) bump(c.createdDate, "New");
-      if (c.status === "CLOSED" && c.closedDate && inPeriod(period, c.closedDate)) bump(c.closedDate, "Closed");
-    }
-    return [...m.values()].sort((a, b) => (a.iso < b.iso ? -1 : 1));
-  }, [cases, period]);
-
-  const pick = (e: { activeLabel?: unknown } | null) => {
-    const hit = chart.find((d) => d.date === e?.activeLabel);
-    if (!hit) return;
-    if (period.mode === "ytd") onPeriodChange({ mode: "monthly", month: hit.iso });
-    else onPeriodChange({ ...period, day: period.day === hit.iso ? undefined : hit.iso });
-  };
-  const dayLine = period.day && period.mode !== "ytd" ? period.day.slice(5) : null;
 
   const listRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -165,38 +138,11 @@ export function ServiceView({
 
       {sub === "overview" && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-            <Kpi label="New cases" value={fmtN(logged.length)} sub={`logged, ${periodLabel(period)}`} />
-            <Kpi label="Open" value={fmtN(count("OPEN"))} sub="of those logged" valueColorClass="text-[#9C6F1E]" />
-            <Kpi label="In progress" value={fmtN(count("IN_PROGRESS"))} sub="of those logged" valueColorClass="text-[#3E6570]" />
-            <Kpi label="Closed" value={fmtN(count("CLOSED"))} sub="of those logged" valueColorClass="text-[#4F7C3A]" />
-            <Kpi label="Cancelled" value={fmtN(count("CANCELLED"))} sub="of those logged" />
-            <Kpi label="Overdue now" value={fmtN(overdue.length)} sub={`open > ${threshold} days, all time`} valueColorClass="text-[#9A3A2D]" />
-          </div>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Cases logged vs closed — {period.mode === "ytd" ? "by month" : "by day"}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="select-none [&_*]:outline-none" style={{ width: "100%", height: 220 }}>
-                {chart.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-xs text-[#6B7280]">No service cases in this period.</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chart} margin={{ top: 8, right: 12, bottom: 0, left: -8 }} onClick={pick} style={{ cursor: "pointer" }}>
-                      <XAxis dataKey="date" tick={CC_TICK} axisLine={false} tickLine={false} />
-                      <YAxis tick={CC_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
-                      <Tooltip contentStyle={{ background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }} />
-                      {dayLine && <ReferenceLine x={dayLine} stroke={RED} strokeDasharray="3 3" />}
-                      <Bar dataKey="New" fill={TAUPE} radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="Closed" fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          {/* Merged (owner 2026-10-17: "上面跟下面的数据 confusing"): one row of
+              numbers and one opened-vs-closed chart, from the performance
+              panel; the old "of those logged" status row and its duplicate
+              chart are gone. */}
+          <ServicePerformancePanel slice={slice} period={period} onPeriodChange={onPeriodChange} />
 
           <Card>
             <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3 flex-wrap">
@@ -254,7 +200,6 @@ export function ServiceView({
 
       {/* Merged dashboard: Report holds performance and root causes; To do
           (key "overdue") holds overdue cases and approvals. */}
-      {sub === "overview" && <ServicePerformancePanel slice={slice} period={period} onPeriodChange={onPeriodChange} />}
 
       {sub === "overdue" && (
         <>

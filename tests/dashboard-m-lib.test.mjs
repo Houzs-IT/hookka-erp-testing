@@ -45,10 +45,11 @@ test("a bare URL opens on TODAY; anything the user picked is left alone", () => 
   assert.deepEqual(resolvePeriod({ mode: "monthly", month: "" }, [], today), { mode: "monthly", month: "" });
 });
 
-test("Overview and Sales open on the MONTH; the other tabs open on today", () => {
+test("every dashboard tab opens on the MONTH to date (merged dashboard 2026-10-17)", () => {
   const today = "2026-08-14";
-  for (const tab of ["overview", "sales"]) assert.equal(opensOnToday(tab), false, tab);
-  for (const tab of ["operations", "people", "service", "finance", undefined]) assert.equal(opensOnToday(tab), true, String(tab));
+  // A tab opening on "today" made a one-day figure read like a whole month.
+  for (const tab of ["overview", "sales", "operations", "people", "service", "finance", "ocr"]) assert.equal(opensOnToday(tab), false, tab);
+  assert.equal(opensOnToday(undefined), true);
   // Bare URL on a monthly tab: this month, no day.
   assert.deepEqual(resolvePeriod({ mode: "monthly", month: "" }, months, today, false), { mode: "monthly", month: "2026-08" });
   // A day the user picked is still honoured there.

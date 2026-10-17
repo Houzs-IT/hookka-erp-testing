@@ -62,12 +62,12 @@ test("every registered sub-tab list is non-empty with unique keys", () => {
 test("links from the person-named tabs resolve to the functional tab that owns the chart", () => {
   const at = (q) => { const s = parse(q); return `${s.tab}/${s.sub}`; };
   assert.equal(at("tab=siti"), "operations/overview");
-  assert.equal(at("tab=siti&sub=cost"), "operations/cost");
+  assert.equal(at("tab=siti&sub=cost"), "operations/production");
   assert.equal(at("tab=employee&sub=time"), "people/time");
   assert.equal(at("tab=department"), "people/efficiency");
   assert.equal(at("tab=lim"), "people/efficiency");
   assert.equal(at("tab=lim&sub=plan"), "operations/production");
-  assert.equal(at("tab=lim&sub=revenue"), "operations/cost");
+  assert.equal(at("tab=lim&sub=revenue"), "operations/production");
   assert.equal(at("tab=lim&sub=overdue"), "operations/overview");
   assert.equal(at("tab=lim&sub=attendance"), "people/time");
   assert.equal(at("tab=lim&sub=service"), "service/overview");
@@ -93,7 +93,8 @@ test("merged dashboard: folded tabs and sub-tabs keep their old links working", 
   const at = (q) => { const x = parse(q); return `${x.tab}/${x.sub}`; };
   assert.equal(at("tab=overview"), "sales/");
   assert.equal(at("tab=operations&sub=plan"), "operations/production");
-  assert.equal(at("tab=operations&sub=materials"), "operations/cost");
+  assert.equal(at("tab=operations&sub=materials"), "operations/production");
+  assert.equal(at("tab=operations&sub=cost"), "operations/production");
   assert.equal(at("tab=people&sub=overview"), "people/efficiency");
   assert.equal(at("tab=service&sub=performance"), "service/overview");
   assert.equal(at("tab=service&sub=issues"), "service/overview");

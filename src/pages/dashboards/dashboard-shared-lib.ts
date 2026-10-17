@@ -223,7 +223,10 @@ export function resolvePeriod(period: Period, months: string[], today: string, o
 }
 
 /** Tabs whose bare URL opens on the MONTH, not on today. Same keys on desktop and /m. */
-const MONTHLY_TABS = new Set(["overview", "sales", "ocr"]);
+// Merged dashboard (owner 2026-10-17): every tab opens on the month to date —
+// a tab opening on "today" read like a whole-month figure (RM 1,741.69 of
+// production cost was one day).
+const MONTHLY_TABS = new Set(["overview", "sales", "ocr", "operations", "people", "service", "finance"]);
 
 export function opensOnToday(tab: string | undefined): boolean {
   return !MONTHLY_TABS.has(tab ?? "");
@@ -472,8 +475,7 @@ export const PEOPLE_SUBS = [
 ] as const;
 export const OPS_SUBS = [
   { key: "overview", label: "Overview" },
-  { key: "production", label: "Output" }, // plan vs actual + completed
-  { key: "cost", label: "Cost & Materials" }, // production cost, fabric, purchasing, shortages
+  { key: "production", label: "Output & Cost" }, // completed, plan vs actual, cost, materials (owner 2026-10-17)
 ] as const;
 export type PeopleSub = (typeof PEOPLE_SUBS)[number]["key"];
 export type OpsSub = (typeof OPS_SUBS)[number]["key"];

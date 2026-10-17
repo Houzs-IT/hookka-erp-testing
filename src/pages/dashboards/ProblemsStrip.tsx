@@ -22,7 +22,7 @@ type Feed = {
 };
 
 type Tone = "bad" | "warn" | "ok" | "info";
-type Tile = { key: string; tab: string; sub?: string; value: string; label: string; hint?: string; tone: Tone };
+type Tile = { key: string; tab: string; sub?: string; anchor?: string; value: string; label: string; hint?: string; tone: Tone };
 
 const TONE: Record<Tone, { bar: string; value: string }> = {
   bad: { bar: "#DC2626", value: "#B91C1C" },
@@ -33,7 +33,7 @@ const TONE: Record<Tone, { bar: string; value: string }> = {
 
 const LOW_EFF_PCT = 75;
 
-export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly string[]; onOpen: (tab: string, sub?: string) => void }) {
+export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly string[]; onOpen: (tab: string, sub?: string, anchor?: string) => void }) {
   const { data } = useCachedJson<Feed>("/api/dashboard/prototype");
   const tiles = useMemo<Tile[]>(() => {
     if (!data) return [];
@@ -42,12 +42,12 @@ export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly s
     if (prod?.overdueByDept) {
       const n = prod.overdueByDept.reduce((a, d) => a + d.count, 0);
       const worst = prod.overdueByDept[0];
-      out.push({ key: "overdue", tab: "operations", sub: "overview", value: String(n), label: "Production orders overdue", hint: n && worst ? `most at ${worst.department} (${worst.count})` : "none", tone: n ? "bad" : "ok" });
+      out.push({ key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(n), label: "Production orders overdue", hint: n && worst ? `most at ${worst.department} (${worst.count})` : "none", tone: n ? "bad" : "ok" });
     }
     if (prod?.dueSoon3Days) {
       const today = prod.dueSoon3Days.filter((o) => o.daysToDD === 0).length;
       const n = prod.dueSoon3Days.length;
-      out.push({ key: "due", tab: "operations", sub: "overview", value: String(today), label: "Due today", hint: `${n} within 3 days`, tone: today ? "warn" : n ? "info" : "ok" });
+      out.push({ key: "due", tab: "operations", sub: "overview", anchor: "ops-due-soon", value: String(today), label: "Due today", hint: `${n} within 3 days`, tone: today ? "warn" : n ? "info" : "ok" });
     }
     if (data.service?.cases) {
       const late = data.service.cases.filter((c) => c.daysOverdue > 0).length;
@@ -65,7 +65,7 @@ export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly s
     }
     if (data.inventory?.materialShortage) {
       const n = data.inventory.materialShortage.length;
-      out.push({ key: "short", tab: "operations", sub: "cost", value: String(n), label: "Materials at zero / negative", tone: n ? "bad" : "ok" });
+      out.push({ key: "short", tab: "operations", sub: "production", anchor: "ops-shortage", value: String(n), label: "Materials at zero / negative", tone: n ? "bad" : "ok" });
     }
     if (prod?.bottleneck?.dept) {
       out.push({ key: "neck", tab: "operations", sub: "overview", value: prod.bottleneck.dept, label: "Bottleneck department", hint: `${prod.bottleneck.cards} cards waiting`, tone: "info" });
@@ -82,7 +82,7 @@ export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly s
           <button
             key={t.key}
             type="button"
-            onClick={() => onOpen(t.tab, t.sub)}
+            onClick={() => onOpen(t.tab, t.sub, t.anchor)}
             className="min-w-0 rounded-xl bg-white p-3 text-left shadow-[0_1px_3px_rgba(0,0,0,0.08)] transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6B5C32]"
             style={{ borderTop: `3px solid ${TONE[t.tone].bar}` }}
           >

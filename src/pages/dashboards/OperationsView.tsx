@@ -5,13 +5,16 @@ import {
 import { useCachedJson } from "@/lib/cached-fetch";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { TAUPE, TEAL, AMBER, BORDER, fmtN, fmtRMAxis, inPeriod, inFocus, dayLabel, periodLabel, type Period, type OpsSub, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+import { TAUPE, TEAL, AMBER, BORDER, fmtN, fmtRMAxis, inPeriod, inFocus, dayLabel, periodLabel, type Period, type OpsSub, CC_TICK, CC_AXIS_LINE, widgetPeriod } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge } from "./dashboard-shared";
 import { DueSoonWorklist, type ProdOrderSummary } from "./OverdueCards";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import { ProductionDailyPanels } from "./ProductionDailyPanels";
 import { CompletedCard } from "./DashboardWidgets";
 import { CommandCenterSections } from "./CommandCenterSections";
+import { OverdueOrdersList } from "./OverdueOrdersList";
+import { dropIdleSundays } from "@/lib/idle-sundays";
+import type { Overview } from "./dashboard-widgets-lib";
 
 // Operations tab: the shop-floor report checklist (handed over on paper,
 // 2026-09-17), redesigned 2026-09-18 for density: a single KPI strip, a 2-column chart split
@@ -76,11 +79,6 @@ export function OperationsView({
   const prodLive = data?.availability?.production?.live ?? false;
   const invLive = data?.availability?.inventory?.live ?? false;
 
-  const totalOverdue = useMemo(
-    () => (production?.overdueByDept ?? []).reduce((a, d) => a + d.count, 0),
-    [production?.overdueByDept],
-  );
-
   // Overall stage-completion progress across every OPEN order — the "Plan vs
   // Actual" headline. Sums fields every order in `production.orders` already
   // carries (stagesDone/stagesTotal), so no new data, just an aggregate.
@@ -93,12 +91,21 @@ export function OperationsView({
 
   // Follows the global period picker (top right): Monthly = that month by day,
   // YTD = the year by month.
+  // Completed per day uses the Command Center's "Completed" definition (a
+  // production order counts the day its LAST job card finishes: bedframe in
+  // units, sofa in sets), so this chart, the Completed card and Plant Load all
+  // say the same thing (owner 2026-10-17: "Daily output 是怎么计算的"). The old
+  // series counted orders whose status field read COMPLETED, a second meaning.
+  const { data: ovOps } = useCachedJson<Overview>(`/api/dashboard/overview?period=${widgetPeriod(period)}`);
   const outputChartData = useMemo(
     () =>
-      bucket((production?.dailyOutput ?? []).filter((d) => inPeriod(period, d.date)), period,
-        (a, b) => ({ ...a, units: a.units + b.units }))
-        .map((d) => ({ iso: d.iso, date: d.key, Units: d.units })),
-    [production?.dailyOutput, period],
+      dropIdleSundays(ovOps?.production?.completedLast7 ?? [], (d) => d.date, (d) => [d.bedframeUnits, d.sofaSets])
+        .map((d) => ({ iso: d.date, date: d.date.slice(5), Units: d.bedframeUnits + d.sofaSets, Bedframe: d.bedframeUnits, Sofa: d.sofaSets })),
+    [ovOps],
+  );
+  const costBatchesInPeriod = useMemo(
+    () => (production?.productionCost?.byDay ?? []).filter((d) => inFocus(period, d.date)).reduce((a, d) => a + d.batches, 0),
+    [production?.productionCost?.byDay, period],
   );
   // Click a bar: a month in YTD opens that month, a day anywhere else is
   // highlighted (period.day, same field the datepicker writes). Charts keep
@@ -162,27 +169,44 @@ export function OperationsView({
 
       {sub === "overview" && (
         <>
+            {/* Command Center cards (owner 2026-10-17: the old Overview UI).
+                Department Revenue sits right above Department Status, and
+                Plant Load beside it instead of stretched across the page.
+                The overdue / due-soon counts live in "Today's problems" up
+                top; its tiles scroll down to these two lists. */}
+            <CommandCenterSections period={period} sections={["dailyReport", "deptRevenue"]} />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              <div className="lg:col-span-2 min-w-0">
+                <CommandCenterSections period={period} sections={["deptBacklog"]} />
+              </div>
+              <div className="min-w-0">
+                <CommandCenterSections period={period} sections={["plantLoad"]} />
+              </div>
+            </div>
+
+            <div id="ops-overdue" className="scroll-mt-48">
+              <OverdueOrdersList orders={production?.orders ?? []} />
+            </div>
+            <div id="ops-due-soon" className="scroll-mt-48">
+              <DueSoonWorklist orders={production?.dueSoon3Days ?? []} />
+            </div>
+
+        </>
+      )}
+
+      {/* Output & Cost (owner 2026-10-17): Output, Plan vs Actual and Cost &
+          Materials merged into one sub-tab. */}
+      {sub === "production" && (
+        <>
             {/* ---- KPI groups: Orders (3) on top, Materials & cost | People (2+2) below at xl ---- */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
              <div className="xl:col-span-2">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#6B7280]">Orders</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <Kpi
-                label="Overdue Orders"
-                value={fmtN(totalOverdue)}
-                sub="all departments"
-                valueColorClass="text-[#9A3A2D]"
-              />
-              <Kpi
-                label="Due Within 3 Days"
-                value={fmtN((production?.dueSoon3Days ?? []).length)}
-                sub="early warning"
-                valueColorClass="text-[#9C6F1E]"
-              />
-              <div className="col-span-2 md:col-span-1">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#6B7280]">Progress</p>
+              <div className="grid grid-cols-1 gap-3">
+              <div>
                 <Card>
                   <CardContent className="p-3">
-                    <p className="text-xs text-[#6B7280] truncate">Plan vs Actual</p>
+                    <p className="text-xs text-[#6B7280] truncate">Plan vs Actual · stages done on every open order</p>
                     <p className="mt-1 font-bold truncate tabular-nums text-2xl text-[#1F1D1B]">
                       {stageCompletion.pct == null ? "—" : `${stageCompletion.pct.toFixed(1)}%`}
                     </p>
@@ -211,13 +235,9 @@ export function OperationsView({
                 sub="at zero/negative stock"
               />
               <Kpi
-                label="Production Cost"
+                label={`Production cost · finished batches, ${periodLabel(period)}`}
                 value={formatCurrency(totalCostSen)}
-                sub={
-                  production?.productionCost
-                    ? `${production.productionCost.batchesWithCost}/${production.productionCost.totalBatches} batches costed`
-                    : undefined
-                }
+                sub={`${fmtN(costBatchesInPeriod)} batches finished in the period · material + labour + overhead`}
                 valueColorClass="text-[#3E6570]"
                 valueSizeClass="text-xl"
               />
@@ -225,22 +245,10 @@ export function OperationsView({
              </div>
             </div>
 
-            {/* How loaded is the plant (dial) · where is it stuck (per-dept board:
-                queue days + overdue + due-soon) · what's due next (lanes). */}
-            {/* Command Center cards (owner 2026-10-17: the old Overview UI):
-                Hookka Report exceptions, Plant Load and Department Backlog. */}
-            <CommandCenterSections period={period} sections={["dailyReport", "plantLoad", "deptRevenue", "deptBacklog"]} />
 
-            <DueSoonWorklist orders={production?.dueSoon3Days ?? []} />
-
-        </>
-      )}
-
-      {sub === "production" && (
-        <>
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle>{period.mode === "ytd" ? "Monthly" : "Daily"} Production Output</CardTitle>
+                  <CardTitle>Completed per day · {periodLabel(period)}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="select-none [&_*]:outline-none [&_.recharts-wrapper]:outline-none" style={{ width: "100%", height: 260 }}>
@@ -252,7 +260,8 @@ export function OperationsView({
                           <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
                           <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={32} allowDecimals={false} />
                           <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={{ background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }} />
-                          <Bar dataKey="Units" fill={TAUPE} radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="Bedframe" stackId="u" fill={TAUPE} />
+                          <Bar dataKey="Sofa" stackId="u" fill={TEAL} radius={[3, 3, 0, 0]} />
                           {dayLine && <ReferenceLine x={dayLine} stroke={AMBER} strokeWidth={2} />}
                           <ReferenceLine y={outputAvg} stroke={AMBER} strokeDasharray="4 3" strokeWidth={1.5} />
                         </BarChart>
@@ -260,9 +269,8 @@ export function OperationsView({
                     )}
                   </div>
                   <p className="mt-2 text-xs text-[#6B7280]">
-                    {periodLabel(period)}, by completion date. Dashed line is the {fmtN(Math.round(outputAvg))}-unit
-                    average per bar — there's no configured target anywhere in the data, so this is a
-                    baseline to compare against, not an owner-set target.
+                    Bedframe units + sofa sets, on the day an order's last job card finished (same as the
+                    Completed figure). Dashed line: the {fmtN(Math.round(outputAvg))} average per working day.
                   </p>
                 </CardContent>
               </Card>
@@ -318,7 +326,7 @@ export function OperationsView({
         </>
       )}
 
-      {sub === "cost" && (
+      {sub === "production" && (
         <>
               <Card>
                 <CardHeader className="pb-3">
@@ -356,10 +364,10 @@ export function OperationsView({
       {/* Merged (owner 2026-10-17): Materials joined Cost — one "Cost &
           Materials" sub-tab. Department Revenue moved to Overview, right above
           Department Status. */}
-      {sub === "cost" && (
+      {sub === "production" && (
         <>
             <CommandCenterSections period={period} sections={["fabric", "purchasing"]} />
-            <Card>
+            <Card id="ops-shortage" className="scroll-mt-48">
               <CardHeader className="pb-3">
                 <CardTitle>Material Shortage detail</CardTitle>
               </CardHeader>

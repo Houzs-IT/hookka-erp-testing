@@ -133,6 +133,21 @@ export default function DashboardPrototypePage() {
     [period, months, tab],
   );
 
+  // A "Today's problems" tile opens its tab and scrolls to the list behind the
+  // number (owner 2026-10-17: "我在上面点一下的时候，它就会跳下来"). The list
+  // renders once that tab's data is in, so poll briefly for it.
+  const openProblem = (t: string, s?: string, anchor?: string) => {
+    setTab(t as TabKey, s);
+    if (!anchor) return;
+    let tries = 0;
+    const go = () => {
+      const el = document.getElementById(anchor);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      else if (tries++ < 30) window.setTimeout(go, 100);
+    };
+    window.setTimeout(go, 50);
+  };
+
   // Publishes the sticky header's live height as --dash-sticky-top so a tab's
   // own sticky bar (Employees filter) docks right under it at any width.
   const rootRef = useRef<HTMLDivElement>(null);
@@ -204,7 +219,7 @@ export default function DashboardPrototypePage() {
       </div>
 
       {/* Today's problems: on every tab, above its content (owner 2026-10-17). */}
-      <ProblemsStrip visibleTabs={visibleTabs.map((t) => t.key)} onOpen={(t, s) => setTab(t as TabKey, s)} />
+      <ProblemsStrip visibleTabs={visibleTabs.map((t) => t.key)} onOpen={openProblem} />
 
       {blocked && (
         <Card>

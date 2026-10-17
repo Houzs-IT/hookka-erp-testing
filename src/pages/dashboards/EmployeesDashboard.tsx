@@ -145,6 +145,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     return out;
   }, [canSalary, workersResp, entriesResp, effResp, holResp, rulesResp]);
   const salaryReady = canSalary && costByWorkerDay.size > 0;
+  // "1–17 Oct 2026 (to date)": every headline here is the period up to the
+  // latest day with hours, live (owner 2026-10-17: "到底是跑 live 到 17 号").
+  const toDate = range.from && range.to ? `${Number(range.from.slice(8))}–${Number(range.to.slice(8))} ${periodLabel(period)}${period.mode !== "ytd" ? " (to date)" : ""}` : periodLabel(period);
 
   // Production revenue (the Upholstery department row of Department Revenue).
   const { data: splitResp } = useCachedJson<RevenueSplitResp & { success?: boolean }>(`/api/dashboard/overview/revenue-split?period=${widgetPeriod(period)}`);
@@ -280,9 +283,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tile label={`Working now · ${latest || "—"}`} value={`${fmtN(totals.workingToday)} / ${fmtN(roster)}`} sub="clocked hours that day / headcount" />
-        <Tile label={`Overall salary · ${periodLabel(period)}`} value={money(totals.cost)} sub="logged hours at the Labor Cost rate" color={CHART_INK} />
-        <Tile label="Avg labour cost / person" value={money(totals.paid ? Math.round(totals.cost / totals.paid) : 0)} sub={`${fmtN(totals.paid)} people logged hours`} />
-        <Tile label="Avg production revenue / person" value={productionRevenueSen == null ? "…" : formatCurrency(totals.producers ? Math.round(productionRevenueSen / totals.producers) : 0)} sub={`Upholstery output ÷ ${fmtN(totals.producers)} producers`} color={GREEN} />
+        <Tile label={`Overall salary · ${toDate}`} value={money(totals.cost)} sub="logged hours at the Labor Cost rate" color={CHART_INK} />
+        <Tile label="Avg labour cost / person" value={money(totals.paid ? Math.round(totals.cost / totals.paid) : 0)} sub={`${toDate} · ${fmtN(totals.paid)} people logged hours`} />
+        <Tile label="Avg production revenue / person" value={productionRevenueSen == null ? "…" : formatCurrency(totals.producers ? Math.round(productionRevenueSen / totals.producers) : 0)} sub={`${toDate} · Upholstery output ÷ ${fmtN(totals.producers)} producers`} color={GREEN} />
         <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working`} color={effColor(eff(totals.prod, totals.work), target)} />
       </div>
 

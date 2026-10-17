@@ -5,7 +5,6 @@ import {
   Cell,
   Line,
   Bar,
-  Legend,
   Pie,
   PieChart,
   XAxis,
@@ -18,13 +17,10 @@ import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
-  CHART_INK, CHART_GOLD, CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
-  inPeriod, inFocus, periodLabel, type Period, widgetPeriod, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+  CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
+  inPeriod, inFocus, periodLabel, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { LiveBadge } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
-import { dropIdleSundays } from "@/lib/idle-sundays";
-import { pickCat, type RevCat, type RevenueSplitResp } from "../dashboard-b/revenue-split";
-import type { Overview } from "./dashboard-widgets-lib";
 import { rollingForecast } from "@/lib/revenue-forecast";
 import { buildSalesTrend, computeSalesKpis } from "./dashboard-sales-lib";
 
@@ -82,9 +78,6 @@ export function SalesOrdersView({
 }) {
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
   const [stateFilter, setStateFilter] = useState<string | null>(null);
-  const [trendShow, setTrendShow] = useState<"both" | "revenue" | "orders">("both");
-  const showRev = trendShow !== "orders";
-  const showOrd = trendShow !== "revenue";
 
   // `?? []` allocates a fresh array each render, which would make every
   // downstream useMemo re-run regardless of its deps. Memoised so the deps
@@ -123,60 +116,11 @@ export function SalesOrdersView({
     [byDay, period.mode, period.month, period.from, period.to],
   );
 
-  // Merged dashboard (owner 2026-10-17): Sales Orders and Invoices are tied
-  // into this chart. The bars are Sales Orders by SO DATE (the Command Center
-  // definition, same as the KPI cards above), with Invoices and Production as
-  // lines; the Orders line keeps counting orders per day from the feed.
-  // Bedframe / Sofa read the revenue-split feed (per day; not offered in YTD,
-  // whose feed is weekly). Idle Sundays (nothing at all) are left off.
-  const wpTrend = widgetPeriod(period);
-  const { data: ovTrend } = useCachedJson<Overview & { success?: boolean }>(`/api/dashboard/overview?period=${wpTrend}`);
-  const { data: splitTrend } = useCachedJson<RevenueSplitResp & { success?: boolean }>(`/api/dashboard/overview/revenue-split?period=${wpTrend}`);
-  const [trendCat, setTrendCat] = useState<RevCat>("all");
-  const catActive = period.mode !== "ytd" ? trendCat : "all";
-  const chartData = useMemo(() => {
-    const money = new Map<string, { so: number; inv: number; prod: number }>();
-    if (period.mode === "ytd") {
-      for (const r of ovTrend?.monthlyRevenue ?? []) money.set(r.month, { so: r.salesOrderSen, inv: r.invoiceSen, prod: r.productionSen });
-    } else if (catActive === "all") {
-      for (const r of ovTrend?.weeklyRevenue ?? []) money.set(r.week, { so: r.salesOrderSen, inv: r.invoiceSen, prod: r.productionSen });
-    } else {
-      for (const r of splitTrend?.revenue ?? []) money.set(r.bucket, { so: pickCat(r.salesOrder, catActive), inv: pickCat(r.invoice, catActive), prod: pickCat(r.production, catActive) });
-    }
-    const haveMoney = money.size > 0;
-    const rows = baseTrend.map((d) => {
-      const m = money.get(d.iso);
-      return {
-        ...d,
-        Revenue: haveMoney ? Math.round((m?.so ?? 0) / 100) : d.Revenue,
-        Invoices: Math.round((m?.inv ?? 0) / 100),
-        Production: Math.round((m?.prod ?? 0) / 100),
-      };
-    });
-    return dropIdleSundays(rows, (r) => r.iso, (r) => [r.Revenue, r.Invoices, r.Production, r.Orders]);
-  }, [baseTrend, ovTrend, splitTrend, period.mode, catActive]);
-
-  // Clicking a bar drills in: a month in YTD becomes the selected month; a day
-  // anywhere else highlights that day. The highlight lives on `period.day`, the
-  // same field the datepicker writes, so the chart keeps showing the whole
-  // month either way and only the order-scoped panels narrow.
-  const onBucketClick = (label: string) => {
-    const hit = chartData.find((d) => d.date === label);
-    if (!hit) return;
-    if (period.mode === "ytd") {
-      onPeriodChange({ mode: "monthly", month: hit.iso });
-      return;
-    }
-    onPeriodChange({ ...period, day: period.day === hit.iso ? undefined : hit.iso });
-  };
+  // The day series only backs a highlighted day (period.day, set from the
+  // period picker); the revenue chart itself is the Command Center card.
+  const chartData = baseTrend;
 
   const clearDay = () => onPeriodChange({ ...period, day: undefined });
-
-  // The bucket key (an axis label) for whichever day is highlighted.
-  const selectedBucket = useMemo(
-    () => chartData.find((d) => d.iso === period.day)?.date ?? null,
-    [chartData, period.day],
-  );
 
   const selectedDetail = useMemo(() => {
     if (!period.day) return null;
@@ -328,191 +272,10 @@ export function SalesOrdersView({
       {/* The Command Center KPI cards, exactly as on the old Dashboard. */}
       <CommandCenterSections period={period} sections={["kpis"]} />
 
-      {/* Revenue trend + Recent orders side by side, as the design prototype
-          has them. Revenue is BARS and orders a LINE on its own right-hand
-          axis: two lines on one plot were unreadable where the scales differ
-          by ~100x. Clicking a bar drills in — a month in YTD, a day in
-          Monthly. The Both / Revenue / Orders switch hides either series. */}
-      <div className="grid gap-3">
-        <Card className="bg-white border-[#E5E0D8]">
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>Revenue trend</CardTitle>
-              <div className="flex flex-wrap items-center gap-3">
-                {period.mode !== "ytd" && (
-                  <div className="flex items-center gap-1">
-                    {([["all", "All"], ["bedframe", "Bedframe"], ["sofa", "Sofa"]] as const).map(([k, label]) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setTrendCat(k)}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${trendCat === k ? "bg-[#6B5C32] text-white" : "bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]"}`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {selectedBucket && (
-                  <button
-                    type="button"
-                    onClick={clearDay}
-                    className="text-xs text-[#6B5C32] underline underline-offset-2"
-                  >
-                    clear selection
-                  </button>
-                )}
-                <div className="flex rounded-lg border border-[#E2DDD8] overflow-hidden">
-                  {([
-                    { k: "both", label: "Both" },
-                    { k: "revenue", label: "Revenue" },
-                    { k: "orders", label: "Orders" },
-                  ] as const).map((v) => (
-                    <button
-                      key={v.k}
-                      type="button"
-                      onClick={() => setTrendShow(v.k)}
-                      className={
-                        "px-2.5 py-1 max-md:py-2.5 text-xs font-medium " +
-                        (trendShow === v.k ? "bg-[#F0ECE9] text-[#1F1D1B]" : "text-[#6B7280] hover:bg-[#F7F5F3]")
-                      }
-                    >
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <p className="text-xs text-[#6B7280]">
-              {selectedDetail
-                ? `${selectedDetail.label} · ${formatCurrency(selectedDetail.revenueSen)} · ${fmtN(selectedDetail.orders)} orders`
-                : `Sales Orders (bars, by SO date) · Invoices · Production · Orders · ${period.mode === "ytd" ? "every month" : "every working day"} of ${periodLabel(period)}${catActive === "all" ? "" : ` · ${catActive === "sofa" ? "Sofa" : "Bedframe"} only`} · click a bar to ${period.mode === "ytd" ? "open that month" : "highlight that day"}`}
-            </p>
-          </CardHeader>
-          <CardContent>
-            <div
-              className="select-none [&_*]:outline-none [&_.recharts-wrapper]:outline-none"
-              style={{ width: "100%", height: 260 }}
-            >
-              {chartData.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-xs text-[#6B7280]">
-                  No orders in range.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart
-                    data={chartData}
-                    margin={{ top: 6, right: 6, bottom: 0, left: 0 }}
-                    onClick={(e) => {
-                      const key = e?.activeLabel;
-                      if (typeof key === "string") onBucketClick(key);
-                    }}
-                  >
-                    <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                    <XAxis
-                      dataKey="date"
-                      tick={CC_TICK}
-                      axisLine={CC_AXIS_LINE}
-                      tickLine={false}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      yAxisId="rev"
-                      hide={!showRev}
-                      tick={CC_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      width={56}
-                      tickFormatter={(v) => fmtRMAxis(Number(v))}
-                    />
-                    <YAxis
-                      yAxisId="ord"
-                      orientation="right"
-                      hide={!showOrd}
-                      tick={CC_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      width={30}
-                    />
-                    <Tooltip
-                      cursor={{ fill: "#F0ECE9" }}
-                      contentStyle={{
-                        background: CARD_BG,
-                        border: `1px solid ${CARD_BORDER}`,
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(value, name) => {
-                        // Explicit for zero days: "RM 0.00" / "0", never a
-                        // blank, a null or a skipped entry.
-                        const n = Number(value ?? 0);
-                        const safe = Number.isFinite(n) ? n : 0;
-                        return name === "Orders"
-                          ? [fmtN(safe), name]
-                          : [formatCurrency(safe * 100), name];
-                      }}
-                    />
-                    <Legend {...CC_LEGEND} />
-                    {showRev && (
-                      <Bar
-                        yAxisId="rev"
-                        dataKey="Revenue"
-                        name="Sales Orders"
-                        fill={CHART_INK}
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={28}
-                        // activeBar MUST stay off. On hover Recharts lifts the
-                        // hovered bar out of the bar layer (zIndex 300) and
-                        // redraws it in an active-bar layer at zIndex 1000 —
-                        // above the line at 400 — so the line vanished behind
-                        // whichever bar the pointer was over. Styling the active
-                        // bar to match does not help: the layer is the problem,
-                        // not the colour. Selection is already shown via Cell
-                        // fill, so nothing is lost by removing it.
-                        activeBar={false}
-                        isAnimationActive={false}
-                        // The bar shapes render into Recharts' `inactive-bar`
-                        // layer, which swallows the click without invoking any
-                        // handler — clicking a bar did nothing while clicking the
-                        // line or empty plot worked. Letting pointer events fall
-                        // THROUGH the bars hands the click to the chart-level
-                        // handler below, which resolves the bucket from
-                        // activeLabel and already worked everywhere else.
-                        style={{ pointerEvents: "none" }}
-                      >
-                        {chartData.map((d) => (
-                          <Cell
-                            key={d.date}
-                            fill={selectedBucket && selectedBucket !== d.date ? "#D9D2CA" : CHART_INK}
-                          />
-                        ))}
-                      </Bar>
-                    )}
-                    {showRev && (
-                      <Line yAxisId="rev" type="monotone" dataKey="Invoices" stroke={TEAL} strokeWidth={2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
-                    )}
-                    {showRev && (
-                      <Line yAxisId="rev" type="monotone" dataKey="Production" stroke="#4F7C3A" strokeWidth={2} dot={false} isAnimationActive={false} />
-                    )}
-                    {showOrd && (
-                      <Line
-                        yAxisId="ord"
-                        type="monotone"
-                        dataKey="Orders"
-                        stroke={CHART_GOLD}
-                        strokeWidth={3}
-                        dot={{ r: 3.5, fill: "#FFFFFF", stroke: CHART_GOLD, strokeWidth: 2 }}
-                        activeDot={{ r: 5.5, fill: "#FFFFFF", stroke: CHART_GOLD, strokeWidth: 2 }}
-                      />
-                    )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-      </div>
+      {/* Revenue: the Command Center chart itself (owner 2026-10-17: "换成
+          第二张" — the old area chart, Sales Orders · Production · Invoices,
+          All / Bedframe / Sofa, idle Sundays out), replacing the bar trend. */}
+      <CommandCenterSections period={period} sections={["revenue"]} />
 
       {/* Attribution and forecast sit side by side, as the design
           prototype pairs them. */}
@@ -630,7 +393,7 @@ export function SalesOrdersView({
           <CardHeader className="pb-3">
             <CardTitle>Sales by state &amp; category</CardTitle>
             <p className="text-xs" style={{ color: CHART_AXIS }}>
-              Share of revenue · {selectedDetail ? selectedDetail.label : periodLabel(period)} · click a state to filter the SKU list
+              Revenue by state and category · {selectedDetail ? selectedDetail.label : periodLabel(period)} · click a state to highlight it
             </p>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 items-center">
@@ -727,7 +490,8 @@ export function SalesOrdersView({
                       style={{ background: CHART_SERIES[i % CHART_SERIES.length] }}
                     />
                     <span className="flex-1 truncate text-[#1F1D1B]">{st.state}</span>
-                    <span className="tabular-nums shrink-0" style={{ color: CHART_AXIS }}>
+                    <span className="tabular-nums shrink-0 font-semibold text-[#1F1D1B]">{formatCurrency(st.revenueSen)}</span>
+                    <span className="w-12 text-right tabular-nums shrink-0" style={{ color: CHART_AXIS }}>
                       {pct.toFixed(1)}%
                     </span>
                   </button>
@@ -735,9 +499,13 @@ export function SalesOrdersView({
               })}
               <div className="pt-1 border-t border-[#E5E0D8] space-y-0.5">
                 {attribution.categories.slice(0, 4).map((c) => (
-                  <p key={c.category} className="text-[12px] flex justify-between gap-2">
-                    <span style={{ color: CHART_AXIS }}>{c.category} sold</span>
-                    <span className="tabular-nums text-[#1F1D1B]">{fmtN(c.qty)}</span>
+                  <p key={c.category} className="text-[12px] flex items-baseline gap-2">
+                    <span className="flex-1" style={{ color: CHART_AXIS }}>{c.category}</span>
+                    <span className="tabular-nums" style={{ color: CHART_AXIS }}>{fmtN(c.qty)} sold</span>
+                    <span className="tabular-nums font-semibold text-[#1F1D1B]">{formatCurrency(c.revenueSen)}</span>
+                    <span className="w-12 text-right tabular-nums" style={{ color: CHART_AXIS }}>
+                      {attribution.total > 0 ? ((c.revenueSen / attribution.total) * 100).toFixed(1) : "0.0"}%
+                    </span>
                   </p>
                 ))}
               </div>

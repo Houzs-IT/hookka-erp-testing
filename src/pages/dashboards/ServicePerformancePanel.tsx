@@ -101,11 +101,16 @@ export function ServicePerformancePanel({
 
   return (
     <>
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      {/* One row, each number with its own scope stated (owner 2026-10-17):
+          opened / closed = in the period (closed counts cases logged earlier
+          too); open / overdue = right now, whenever they were logged.
+          "Not started" is the OPEN status (logged, nobody on it yet). */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
+        <Kpi label="Opened" value={fmtN(openedInFocus.length)} sub={`new cases logged · ${win}`} />
+        <Kpi label="Closed" value={fmtN(closedNow.length)} sub={`closed · ${win} (any logged date)`} valueColorClass="text-[#4F7C3A]" />
+        <Kpi label="Still open now" value={fmtN(open.length)} sub={`${fmtN(open.filter((c) => c.status === "OPEN").length)} not started · ${fmtN(open.filter((c) => c.status === "IN_PROGRESS").length)} in progress`} valueColorClass="text-[#9C6F1E]" />
+        <Kpi label="Overdue now" value={fmtN(open.filter((c) => c.daysOverdue > 0).length)} sub={`open more than ${threshold} days`} valueColorClass="text-[#9A3A2D]" />
         <Kpi label="Avg case closing" value={closeNow.avg === null ? "—" : `${closeNow.avg} d`} sub={`${fmtN(closeNow.n)} closed · ${dl ? dl.text : "no previous-period comparison"}`} valueColorClass={dl?.good == null ? undefined : dl.good ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
-        <Kpi label="Open cases now" value={fmtN(open.length)} sub={`${fmtN(open.filter((c) => c.daysOverdue > 0).length)} overdue (> ${threshold} d)`} valueColorClass="text-[#9C6F1E]" />
-        <Kpi label="Opened in period" value={fmtN(openedInFocus.length)} sub={win} />
-        <Kpi label="Closed in period" value={fmtN(closedNow.length)} sub={win} valueColorClass="text-[#4F7C3A]" />
       </div>
 
       <Card>
