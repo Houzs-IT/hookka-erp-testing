@@ -12,6 +12,7 @@ import { useState } from "react";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   calendarCells, monthLabel, periodLabel, periodPresets, presetActive, shiftMonth, stepDay, stepPeriod,
+  quarterOfPeriod, quarterPeriod, quarterKeyOf, stepQuarter,
   yearsWithData, ymd,
   type Period,
 } from "../../../dashboards/dashboard-shared-lib";
@@ -65,12 +66,15 @@ export function PeriodChip({
   months,
   latestDay,
   onChange,
+  allowDay = true,
 }: {
   period: Period;
   months: string[];
   /** Newest day that carries data - the presets anchor to it, not to the clock. */
   latestDay: string;
   onChange: (p: Period) => void;
+  /** false hides Day (only Employees has one — same as the desktop). */
+  allowDay?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // The month/year the popover browses. It follows the period (stepper,
@@ -90,19 +94,27 @@ export function PeriodChip({
   // Which of the three views the CURRENT period reads as - same rule as the
   // desktop PeriodPicker. A range preset (Last 7 Days) has no calendar
   // identity of its own, so it reads as Day (the closest of the three).
-  const view: "day" | "month" | "ytd" =
-    period.mode === "ytd" ? "ytd" : period.mode === "range" || period.day ? "day" : "month";
-  const setView = (v: "day" | "month" | "ytd") => {
+  // Quarter (2026-10-17) = a range that is exactly a calendar quarter, as on
+  // the desktop picker.
+  const quarterKey = quarterOfPeriod(period);
+  const view: "day" | "month" | "quarter" | "ytd" =
+    period.mode === "ytd" ? "ytd" : quarterKey ? "quarter" : period.mode === "range" || period.day ? "day" : "month";
+  const setView = (v: "day" | "month" | "quarter" | "ytd") => {
     if (v === view) return;
     if (v === "ytd") { onChange({ mode: "ytd", month: period.month }); return; }
+    if (v === "quarter") { onChange(quarterPeriod(quarterKeyOf(period.month), today)); return; }
     if (v === "month") { onChange({ mode: "monthly", month: period.month, day: undefined }); return; }
     const day = period.day ?? today;
     onChange({ mode: "monthly", month: day.slice(0, 7), day });
   };
 
   const singleDay = view === "day" && period.mode === "monthly" && !!period.day;
-  const prev = singleDay ? dayNeighbour(period.day, -1, today) : stepPeriod(period, months, -1);
-  const next = singleDay ? dayNeighbour(period.day, 1, today) : stepPeriod(period, months, 1);
+  const stepQ = (dir: -1 | 1) => {
+    const k = quarterKey ? stepQuarter(quarterKey, dir, today) : null;
+    return k ? quarterPeriod(k, today) : null;
+  };
+  const prev = quarterKey ? stepQ(-1) : singleDay ? dayNeighbour(period.day, -1, today) : stepPeriod(period, months, -1);
+  const next = quarterKey ? stepQ(1) : singleDay ? dayNeighbour(period.day, 1, today) : stepPeriod(period, months, 1);
 
   const years = yearsWithData(months);
   const yi = years.indexOf(viewYear);
@@ -152,9 +164,9 @@ export function PeriodChip({
 
       <Sheet open={open} onClose={() => setOpen(false)} title="Period">
         <div style={{ display: "flex", gap: 8 }}>
-          {(["day", "month", "ytd"] as const).map((v) => (
+          {(allowDay ? (["day", "month", "quarter", "ytd"] as const) : (["month", "quarter", "ytd"] as const)).map((v) => (
             <button key={v} type="button" aria-pressed={view === v} style={seg(view === v)} onClick={() => setView(v)}>
-              {v === "day" ? "Day" : v === "month" ? "Month" : "YTD"}
+              {v === "day" ? "Day" : v === "month" ? "Month" : v === "quarter" ? "Quarter" : "Year"}
             </button>
           ))}
         </div>
