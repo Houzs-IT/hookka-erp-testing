@@ -801,16 +801,17 @@ const creditNotesSource: DataSource = {
   select: selectData,
   toVM: (r): RowVM => ({
     id: str(r, "id", "cnNo"),
-    code: str(r, "cnNo", "creditNoteNo") || str(r, "id"),
+    // The API returns noteNumber / totalAmount (sen); the old keys read blank.
+    code: str(r, "noteNumber", "cnNo", "creditNoteNo") || str(r, "id"),
     title: str(r, "customerName") || str(r, "reason") || "—",
     subLine: str(r, "reason") || undefined,
     meta1: { label: "Order Date", value: dateOnly(r, "date", "createdAt") || "—" },
-    meta2: { label: "Amount", value: money(num(r, "totalSen")) },
+    meta2: { label: "Amount", value: money(num(r, "totalAmount", "totalSen")) },
   }),
   columns: [
-    textCol("cnNo", "Reference", (r) => str(r, "cnNo", "creditNoteNo")),
+    textCol("cnNo", "Reference", (r) => str(r, "noteNumber", "cnNo", "creditNoteNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen")),
+    numCol("amount", "Amount", (r) => num(r, "totalAmount", "totalSen")),
     dateCol("date", "Order Date", (r) => dateOnly(r, "date", "createdAt")),
   ],
   defaultSort: { key: "date", dir: "desc" },
@@ -822,16 +823,17 @@ const debitNotesSource: DataSource = {
   select: selectData,
   toVM: (r): RowVM => ({
     id: str(r, "id", "dnNo"),
-    code: str(r, "dnNo", "debitNoteNo") || str(r, "id"),
+    // The API returns noteNumber / totalAmount (sen); the old keys read blank.
+    code: str(r, "noteNumber", "dnNo", "debitNoteNo") || str(r, "id"),
     title: str(r, "customerName") || str(r, "reason") || "—",
     subLine: str(r, "reason") || undefined,
     meta1: { label: "Order Date", value: dateOnly(r, "date", "createdAt") || "—" },
-    meta2: { label: "Amount", value: money(num(r, "totalSen")) },
+    meta2: { label: "Amount", value: money(num(r, "totalAmount", "totalSen")) },
   }),
   columns: [
-    textCol("dnNo", "Reference", (r) => str(r, "dnNo", "debitNoteNo")),
+    textCol("dnNo", "Reference", (r) => str(r, "noteNumber", "dnNo", "debitNoteNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen")),
+    numCol("amount", "Amount", (r) => num(r, "totalAmount", "totalSen")),
     dateCol("date", "Order Date", (r) => dateOnly(r, "date", "createdAt")),
   ],
   defaultSort: { key: "date", dir: "desc" },

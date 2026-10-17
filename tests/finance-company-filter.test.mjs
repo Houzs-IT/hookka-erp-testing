@@ -110,8 +110,9 @@ test("aging snapshot partitions filtered vs consolidated by cache_key", () => {
   const src = read("src/api/routes/accounting.ts");
   // The /aging snapshot MUST use a per-company cacheKey when filtered so a
   // scoped result never overwrites the consolidated cache slot. Both slots
-  // carry the "|due" shape version (2026-10-17, Creditor Aging's Next Due).
-  assert.match(src, /const cacheKey = coFilter\.active \? `company:\$\{coFilter\.orgId\}\|due` : "\|due"/);
+  // carry the shape version: "|due" (2026-10-17, Creditor Aging's Next Due),
+  // "|notes" (2026-10-17, a credit / debit note is its own Debtor Aging line).
+  assert.match(src, /const cacheKey = coFilter\.active \? `company:\$\{coFilter\.orgId\}\|due\|notes` : "\|due\|notes"/);
 });
 
 // --- ensureFinanceOrgColumns: additive DDL + idempotent ----------------------

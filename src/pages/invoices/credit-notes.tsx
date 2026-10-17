@@ -23,6 +23,9 @@ import { amountInWords } from "@/lib/amount-in-words";
 import { printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
+import { getCurrentUser } from "@/lib/auth";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
 
@@ -332,21 +335,71 @@ export default function CreditNotesPage() {
     },
   ], []);
 
-  const contextMenuItems: ContextMenuItem[] = [
+  // Post / Back to Draft (owner 2026-10-17, Finance v2). Posting applies the
+  // note — the customer owes less, the invoice's total drops, the books take
+  // the entries; Back to Draft undoes all three in one go.
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
+  const afterNoteChange = () => {
+    invalidateCachePrefix("/api/credit-notes");
+    invalidateCachePrefix("/api/invoices");
+    invalidateCachePrefix("/api/accounting");
+    refreshCreditNotes();
+  };
+  const sendNote = async (url: string, init: RequestInit, done: string, failed: string) => {
+    try {
+      const res = await fetch(url, init);
+      const j = (await res.json()) as { success?: boolean; error?: string };
+      if (res.ok && j.success) {
+        toast.success(done);
+        afterNoteChange();
+      } else toast.error(j.error || failed);
+    } catch {
+      toast.error(failed);
+    }
+  };
+  const postNote = async (cn: CreditNote) => {
+    if (!(await confirm({
+      title: `Post ${cn.noteNumber}?`,
+      message: `${formatCurrency(cn.totalAmount)} comes off invoice ${cn.invoiceNumber || "—"} and off what ${cn.customerName} owes, and goes into the books.`,
+      confirmLabel: "Post",
+    }))) return;
+    await sendNote(`/api/credit-notes/${encodeURIComponent(cn.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "POSTED", approvedBy: getCurrentUser()?.displayName?.trim() || undefined }),
+    }, `${cn.noteNumber} posted`, "Could not post the credit note");
+  };
+  const unpostNote = async (cn: CreditNote) => {
+    if (!(await confirm({
+      title: `Put ${cn.noteNumber} back to draft?`,
+      message: `${formatCurrency(cn.totalAmount)} goes back on invoice ${cn.invoiceNumber || "—"} and on what ${cn.customerName} owes, and its entries come out of the books. You can post it again later.`,
+      confirmLabel: "Back to Draft",
+      danger: true,
+    }))) return;
+    await sendNote(`/api/credit-notes/${encodeURIComponent(cn.id)}/unpost`, { method: "POST" },
+      `${cn.noteNumber} is a draft again`, "Could not put the credit note back to draft");
+  };
+
+  const contextMenuItems = (row: CreditNote): ContextMenuItem[] => [
     {
       label: "Print PDF",
-      action: async (row) => {
+      action: async (r: CreditNote) => {
         try {
           const { generateCreditNotePdf } = await import("@/lib/generate-credit-note-pdf");
-          generateCreditNotePdf(row);
+          generateCreditNotePdf(r);
         } catch {
           /* generator handles its own draw; nothing to surface here */
         }
       },
     },
+    ...(row.status === "DRAFT"
+      ? [{ label: "Post", action: (r: CreditNote) => void postNote(r) }]
+      : [{ label: "Back to Draft", danger: true, action: (r: CreditNote) => void unpostNote(r) }]),
     {
       label: "Refresh",
-      action: (_row) => refreshCreditNotes(),
+      separator: true,
+      action: () => refreshCreditNotes(),
     },
   ];
 

@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-17 on branch `feat/finance-notes-post` (to `main`)**: the Debit Notes section (§5) and its credit-note twin, read from `src/api/routes/debit-notes.ts`, `src/api/routes/credit-notes.ts`, `src/api/lib/note-ledger.ts`, `src/lib/invoice-notes.ts`, `src/api/lib/lock-helpers.ts`, `src/pages/invoices/debit-notes.tsx`, `src/pages/invoices/credit-notes.tsx`, `src/pages/m/config/modules.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-17 on branch `feat/finance-v2-cn-from-return` (to `main`)**: the credit-note-from-delivery-return note, read from `src/api/routes/credit-notes.ts` (`/from-returns`, POST `deliveryReturnId`), `src/lib/cn-from-return.ts`, `src/pages/invoices/credit-notes.tsx`, `src/api/routes/delivery-returns.ts` (GET `/:id` `creditNoteNo`), `src/pages/delivery-returns/detail.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-17 on branch `feat/finance-v2-creditor-aging` (to `main`)**: the Creditor Aging note (Trade Finance draws, other creditors, Next Due), read from `src/pages/accounting/index.tsx` (`APTab`, `AgingListTable`), `src/lib/aging-next-due.ts`, `src/api/routes/accounting.ts` (`/aging` docs' `due`, the `|due` cache key), `src/pages/accounting/tabs/TradeFinanceBlock.tsx`, `src/pages/m/screens/finance/AgingScreen.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-17 on branch `feat/finance-v2-aging-other-parties` (to `main`)**: the Debtor Aging note (other debtors joined, `AgingListTable`), read from `src/pages/accounting/index.tsx` (`ARTab`, `AgingListTable`, `agingGroupsFor`), `src/lib/other-party-aging-rows.ts`, `src/lib/aging-export.ts` (`buildGroupedAgingExportAoa`), `src/api/routes/accounting.ts` (`/other-party-aging`), `src/pages/m/screens/finance/AgingScreen.tsx`. Nothing else re-checked.
@@ -697,7 +698,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 - **The Overview tab's three KPI cards read the LEDGER, not `chart_of_accounts.balanceSen` (2026-08-13, BUG-2026-08-13-091).** `balanceSen` is moved by **only** the manual-JV paths (`accounting.ts` PUT `/journals/:id` `:1378`/`:1447`, POST `/journals/:id/lifecycle` `:1640`); every real posting writes `ledger_journal_entries`. Summing it reported hand-keyed journals as the company's revenue, under a "(MTD)" caption with no date filter, with the `COST` type dropped from the expense side. The cards now read `GET /accounting/pl?period=<YYYY-MM>` and publish "—" (never RM 0.00) for a category with no posted account, exactly as `/reports` does since BUG-2026-08-13-009. "Cost & Expenses" is COGS + OpEx so the three tie to the server's own `netProfit = revenue − cogs − opex`. Guard: `tests/accounting-ui-truthfulness.test.mjs`.
 - **The aging tabs are READ-ONLY. `POST /api/accounting/aging` writes DEAD tables — never call it (2026-08-13, BUG-2026-08-13-090).** It UPDATEs `ar_aging`/`ap_aging`, which `GET /aging` does not read (it computes live from `invoices`/`purchase_invoices`; `accounting.ts:377,490` and `api/lib/ensure-finance-org.ts:22` all call those tables dead). The "Record Payment" button that used to sit on both tabs therefore recorded nothing and, never checking `res.ok`, swallowed the 404. Customer receipts go through `/invoices/payments`; supplier payments through `/invoices/supplier-payments`.
 - **Cash Flow accepts `YYYY-MM` ONLY (2026-08-13, BUG-2026-08-13-092).** `fyMonths` (`src/lib/cashflow-engine.ts`) parses the period with `parseInt`, so a quarter/year value built 13 columns keyed `2026-NaN`: every income and expense line rendered `-` while `balBefore` string-compared TRUE against every real month and printed a large, real Bank b/f and c/f. The optgroups are gone and `fyMonths` now throws on a malformed period. ⚠️ The **P&L Statement's** identical-looking selector is CORRECT — `/pl` and `/pl-statement` route the period through `ymInPeriod`/`periodStartYm`/`periodEndYm` (`accounting.ts:5382-5416`), which do understand `2026-Q1` and `2026`. Do not "fix" that one.
-- **Stock Summary's `balanced` flag is a TAUTOLOGY — do not render it (2026-08-13, BUG-2026-08-13-093).** `accounting.ts:1437` computes `opening + purchases − consumption === closing` while `materialWindow` defines `consumedSen = opening + purchase − closing`, so it reduces to `closing === closing`. **Consumption is the balancing plug on this screen, not a measured issue quantity.** The ✓ column and its footnote are removed. The Trial Balance's `balanced` badge IS a real check (ΣDR vs ΣCR over independent columns) — leave it.
+- **Stock Summary's `balanced` flag is a TAUTOLOGY — do not render it (2026-08-13, BUG-2026-08-13-093).** `accounting.ts:1483` computes `opening + purchases − consumption === closing` while `materialWindow` defines `consumedSen = opening + purchase − closing`, so it reduces to `closing === closing`. **Consumption is the balancing plug on this screen, not a measured issue quantity.** The ✓ column and its footnote are removed. The Trial Balance's `balanced` badge IS a real check (ΣDR vs ΣCR over independent columns) — leave it.
 - **A money form's displayed total must sum exactly the lines its payload sends (2026-08-13, BUG-2026-08-13-094).** Payment Voucher, Official Receipt, Other-Party Bill and the Journal Entry balanced-check each totalled EVERY line while POSTing only lines carrying an account, and the backend recomputes the header from what it receives — so "Total RM 1,000.00 · Post" wrote RM 800.00, and a JV with an account-less DR row showed a green balanced footer the server then rejected. Each form now has ONE `*LineWillPost` predicate feeding both the figure and the payload, and discloses any filled line that will not post.
 
 **Start here:** Open `src/pages/accounting/index.tsx` (one mega-page hosting ~25 tabs) and jump via the section banners; for customer-billing tasks start at `src/api/routes/invoices.ts`.
@@ -1939,7 +1940,7 @@ you are changing auth behaviour you want L227–417 and nothing else.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:14184`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
+| `src/pages/finance-dashboard.tsx` — `/finance-dashboard` (`src/dashboard-routes.tsx:472`; sidebar FORECASTING → "Dashboard"); 6 cards, monthly or calendar-quarterly (1263) | `src/api/routes/accounting.ts` — `GET /dashboard` (`:10109`), SWR-cached | `accounting_dashboard_snapshot` (runtime-created at `accounting.ts:14244`) over the ledger + `kv_config['forecast_pnl']` (`:10192`) | `tests/dashboard-forecast-pct.test.mjs` (BUG-2026-08-06-002), `tests/dashboard-production-revenue.test.mjs` (Production Revenue rows, `% / %`, Cost Structure TOTAL) |
 | `src/pages/forecast.tsx` — `/forecast` (`src/dashboard-routes.tsx:471`; sidebar FORECASTING → "Forecast P&L"); planning grid, zero contact with the books (575) | `src/api/routes/accounting.ts` — `GET /forecast` (`:10743`), `PUT /forecast` (`:10758`), `GET /coa` (`:829`), `GET /pnl/section-map` (`:9827`), `GET /labor/departments` (`:9561`) | `kv_config` row `key='forecast_pnl'` (`:10789`) — **no forecast table exists**; plus `chart_of_accounts` for the line structure | **NONE** |
 
 > **Name collision — read this before touching either.** `/forecast` (`src/pages/forecast.tsx`,
@@ -2148,7 +2149,7 @@ and `/api/files/:id/download` as an `<img src>` (`:671`).
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/invoices/debit-notes.tsx` — `/invoices/debit-notes`, gated `RequirePermission resource="invoices" action="read"` (`src/dashboard-routes.tsx:349-356`); DataGrid list + create modal + batch voucher print/export (500) | `src/api/routes/debit-notes.ts` (450) — `GET /` (`:122`), `POST /` (`:137`), `GET /:id` (`:282`), `PUT /:id` (`:302`) | `debit_notes` (items are JSON TEXT in one column), and on POSTED: `customers.outstandingSen`, `invoices.totalSen/subtotalSen/status`, the GL via `buildDebitNoteLedgerLegs` | **NONE dedicated.** Only cross-cutting sweeps name the file — `tests/tenant-isolation.test.mjs` lists it at line 151, plus `tests/security-route-coverage.test.mjs`, `tests/security-permission-matrix.test.mjs`, `tests/audit-coverage.test.mjs` |
+| `src/pages/invoices/debit-notes.tsx` — `/invoices/debit-notes`, gated `RequirePermission resource="invoices" action="read"` (`src/dashboard-routes.tsx:349-356`); DataGrid list + create modal + batch voucher print/export + Post / Back to Draft in the row menu (536) | `src/api/routes/debit-notes.ts` (602) — `GET /` (`:124`), `POST /` (`:139`), `GET /:id` (`:284`), `PUT /:id` (`:304`), `POST /:id/unpost` (`:492`, Back to Draft) | `debit_notes` (items are JSON TEXT in one column), and on POSTED: `customers.outstandingSen`, `invoices.totalSen/subtotalSen/status`, the GL via `buildDebitNoteLedgerLegs` | `tests/finance-notes-post.test.mjs` (with the credit-note twin), plus the cross-cutting sweeps — `tests/tenant-isolation.test.mjs`, `tests/security-route-coverage.test.mjs`, `tests/security-permission-matrix.test.mjs`, `tests/audit-coverage.test.mjs` |
 
 **Endpoints called:** `GET /api/debit-notes` (`:78`, via `useCachedJson`),
 `GET /api/invoices` (`:84`, only while the create modal is open),
@@ -2156,13 +2157,17 @@ and `/api/files/:id/download` as an `<img src>` (`:671`).
 
 **Gotchas — three, all worth knowing before you touch this**
 
-1. **The page cannot post a debit note.** `PUT /api/debit-notes/:id` (`debit-notes.ts:302`)
-   is the ONLY transition that charges the customer (`:339` `outstandingSen + ?`), bumps the
-   linked invoice and re-opens its status (`:375-381`), and writes the GL legs (`:396-410`).
-   **No frontend calls it** — the only `/api/debit-notes` references in `src/` are the list,
-   the create, and the generic CRUD factory `src/lib/api/resources/billing.ts:36`. Every DN
-   raised from this screen stays DRAFT, while the page's own "Posted" tile (`:254`) counts a
-   status nothing in the UI can reach.
+1. **Post / Back to Draft (2026-10-17).** The row menu posts a DRAFT note (`PUT` status
+   POSTED — the ONLY transition that charges the customer, moves the linked invoice's total and
+   writes the GL legs) and takes a posted one back (`POST /:id/unpost`: subledger + invoice
+   reversed and the GL legs mirrored under `debit_note_restate_rev:<t>` then hidden, one
+   batch; refused when the customer already paid the note). A plain PUT can no longer take a
+   POSTED note back out (BUG-2026-10-17-316). The credit-note route is the twin
+   (`credit-notes.ts` `PUT /:id` `:612`, `POST /:id/unpost` `:797`). Posting moves
+   `invoices.totalSen`, so any report that ALSO lists the notes works the issued amount back
+   with `src/lib/invoice-notes.ts` (statement, debtor ledger, invoice page and print, Debtor
+   Aging — BUG-2026-10-17-315), and an invoice carrying an issued note is locked for edit /
+   cancel / price import (`issuedNotesOnInvoice`, `src/api/lib/lock-helpers.ts`).
 2. **Per-id handlers are not tenant-scoped.** `GET /` scopes on `WHERE orgId = ?` (`:128`),
    but `GET /:id` (`:287`), `PUT /:id` (`:309`, `:331`) and the POST re-read (`:257`) select
    and update **by id alone**. `tests/tenant-isolation.test.mjs` passes anyway because it
@@ -2174,17 +2179,10 @@ and `/api/files/:id/download` as an `<img src>` (`:671`).
    `unitPrice` → `unitPriceSen` rename. POST **rejects** a body carrying `unitPrice`
    (`:185-193`). Keep both halves.
 
-**⚠ Read bug found — the MOBILE Debit Notes list shows RM 0.00 for every note.**
-`src/pages/m/config/modules.ts:819-838` builds its rows with `str(r,"dnNo","debitNoteNo")`
-and `num(r,"totalSen")`. The API returns **`noteNumber`** and **`totalAmount`**
-(`debit-notes.ts:80`, `:89`) — neither `dnNo`, nor `debitNoteNo`, nor `totalSen` exists in
-the response. `read()` in `src/pages/m/config/helpers.ts:35-41` returns `undefined`, so
-`num` yields `0` (`:48-52`) and `str` yields `""`. Result: the Reference column is blank,
-`code` falls back to the raw `dn-xxxxxxxx` id, and both the card amount and the Amount
-column read RM 0.00. The **credit-notes source three rows above it has the identical shape**
-(`cnNo` / `creditNoteNo` / `totalSen` vs `credit-notes.ts:87`, `:96` returning
-`noteNumber` / `totalAmount`), so this is a two-instance class — fix both or it recurs
-(fix-then-sweep, `docs/PLAYBOOKS.md`).
+**Fixed 2026-10-17 — the MOBILE Credit / Debit Notes lists** read `cnNo` / `dnNo` /
+`totalSen`, keys the API never returns (it returns `noteNumber` / `totalAmount`), so every
+note showed its raw id and RM 0.00. Both sources in `src/pages/m/config/modules.ts` now read
+`noteNumber` / `totalAmount` first (BUG-2026-10-17-317, BUG-CLASSES C16 row 11).
 
 ---
 

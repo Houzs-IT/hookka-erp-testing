@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: item 1 prod-verified (#954); item 2 in progress on branch `feat/finance-notes-post`; the owner's answers on items 17 and 18 logged.
 > **Last verified: 2026-10-17**: the owner's answers on the remaining finance v2 list logged as a new entry; item 1 in progress on branch `fix/finance-report-gap-rows`.
 > **Last verified: 2026-10-17**: items 6 (#951) and 7 (#952) prod-verified; the owner's-answers entry closed.
 > **Last verified: 2026-10-17**: item 7 (credit note from a delivery return) in progress on branch `feat/finance-v2-cn-from-return`.
@@ -223,8 +224,8 @@ design/mobile-home-dashboard
 ## 2026-10-17 — 🔵 Finance & Forecasting v2: the rest of the design, as the owner ranked it (his answers on "还有什么没做", item by item)(shipped in parts, each to `main`)
 
 Now:
-1. 🔵 (branch `fix/finance-report-gap-rows`, BUG-2026-10-17-314) The empty strip between sections on the P&L, Monthly P&L and Cash Flow (owner's screenshot): a 10px spacer row that broke the table under NET SALES; now hidden, with the design's strong line on the next row.
-2. ⚪ Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines.
+1. ✅ (#954, BUG-2026-10-17-314, prod-verified) The empty strip between sections on the P&L, Monthly P&L and Cash Flow (owner's screenshot): a 10px spacer row that broke the table under NET SALES; now hidden, with the design's strong line on the next row.
+2. 🔵 (branch `feat/finance-notes-post`, BUG-2026-10-17-315 / -316 / -317) Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines. Production had no credit or debit notes (measured 2026-10-17), so nothing existing moves.
 3. ⚪ Scan Bills reads every bill in a multi-bill PDF (today only the first).
 4. ⚪ Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail).
 5. ⚪ Aging as at a chosen month-end.
@@ -239,8 +240,8 @@ Now:
 14. ⚪ An Official Receipt can be edited.
 15. ⚪ The New Account form reworked (section chips, parent first, next free code) — existing accounts untouched.
 16. ⚪ Cash Book bank matching by pick list.
-17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns) — how interest is recorded to be confirmed with the owner.
-18. ⚪ To confirm with the owner: whether Monthly P&L changes its column order.
+17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns). Owner 2026-10-17: interest is recorded at drawdown (「提款时就记」).
+18. ✅ Monthly P&L column order — owner 2026-10-17: keep it as it is, cumulative first and the newest month first (「照现在」). Nothing to build.
 19. ⚪ A delivery return that reads "CN issued" with no credit note behind it — fix.
 
 Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
