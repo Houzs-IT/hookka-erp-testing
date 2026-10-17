@@ -4259,6 +4259,8 @@ type AgingListRow = {
   key: string;
   kind: string;
   name: string;
+  /** The party's code (debtor / creditor code; a draw's TF account). */
+  code?: string;
   /** A second line under the name (a draw's lender, supplier and date). */
   sub?: string;
   /** "YYYY-MM-DD" — the earliest open due date (Creditor Aging's Next Due). */
@@ -4292,7 +4294,7 @@ function AgingListTable({
   nextDue?: (r: AgingListRow) => ReactNode;
 }) {
   const rows = groups.flatMap((g) => g.rows);
-  const cols = 8 + (nextDue ? 1 : 0);
+  const cols = 9 + (nextDue ? 1 : 0);
   const money = (v: number, i: number) => (
     <td key={i} className={`py-3 px-4 text-right ${v < 0 ? "text-[#9A3A2D]" : v > 0 ? AGING_BUCKET_TONE[i] : ""}`}>{v !== 0 ? formatCurrency(v) : "-"}</td>
   );
@@ -4302,6 +4304,7 @@ function AgingListTable({
     return (
       <Fragment key={r.key}>
         <tr data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
+          <td className="py-3 px-4 font-mono text-xs text-[#6B7280] whitespace-nowrap" data-aging-code="">{r.code || "—"}</td>
           <td className="py-3 px-4 font-medium text-[#1F1D1B]">
             <button className="inline-flex items-start gap-1.5 text-left" onClick={() => onToggle(r.key)} title="Show the documents behind this balance">
               {isOpen ? <ChevronDownIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
@@ -4315,7 +4318,7 @@ function AgingListTable({
         </tr>
         {isOpen && r.docs.map((d, i) => (
           <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-            <td colSpan={nextDue ? 3 : 2} className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
+            <td colSpan={nextDue ? 4 : 3} className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
             {[0, 1, 2, 3, 4].map((b) => (
               <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
                 {d.mo === b ? formatCurrency(d.amountSen) : ""}
@@ -4334,7 +4337,7 @@ function AgingListTable({
   };
   const subtotal = (g: AgingGroup) => (
     <tr key={`s-${g.key}`} data-fin-nolift="" data-aging-subtotal={g.key} className="border-b border-[#E2DDD8] bg-[#F7F4EF] font-semibold">
-      <td colSpan={nextDue ? 3 : 2} className="py-2 px-4 text-[#1F1D1B]">{g.label} total</td>
+      <td colSpan={nextDue ? 4 : 3} className="py-2 px-4 text-[#1F1D1B]">{g.label} total</td>
       {AGING_KEYS.map((k) => <td key={k} className="py-2 px-4 text-right">{formatCurrency(sumOf(g.rows, k))}</td>)}
       <td className="py-2 px-4 text-right">{formatCurrency(g.rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
     </tr>
@@ -4343,6 +4346,7 @@ function AgingListTable({
     <table data-fin-list className="w-full text-sm">
       <thead>
         <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
+          <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Code</th>
           <th className="py-3 px-4 text-left text-[#6B7280] font-medium">{partyHeader}</th>
           <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Type</th>
           {nextDue ? <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Next Due</th> : null}
@@ -4369,7 +4373,7 @@ function AgingListTable({
       </tbody>
       <tfoot>
         <tr className="bg-[#F0ECE9]/50 font-semibold">
-          <td colSpan={nextDue ? 3 : 2} className="py-3 px-4 text-[#1F1D1B]">Total</td>
+          <td colSpan={nextDue ? 4 : 3} className="py-3 px-4 text-[#1F1D1B]">Total</td>
           {AGING_KEYS.map((k) => <td key={k} className="py-3 px-4 text-right">{formatCurrency(sumOf(rows, k))}</td>)}
           <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
         </tr>
@@ -4380,6 +4384,8 @@ function AgingListTable({
 // The slice of GET /api/accounting/trade-finance Creditor Aging reads.
 type TfAgingSource = {
   lenderName: string;
+  /** The TF account the draws sit on (the Code column). */
+  accountCode?: string;
   draws: { drawSourceId: string; drawDate: string; dueDate: string; interestSen: number; outstandingSen: number; paidSupplier: string }[];
 };
 const AGING_TYPE_TAG: Record<string, string> = {
@@ -4431,7 +4437,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   }, []);
   const [show, setShow] = useState<AgingShow>("all");
   const tradeList: AgingListRow[] = rows.map((a) => ({
-    key: `t:${a.customerId}`, kind: "trade", name: a.customerName,
+    key: `t:${a.customerId}`, kind: "trade", name: a.customerName, code: a.customerCode,
     currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs ?? [],
   }));
   const otherList: AgingListRow[] = otherPartyAgingRows(odBills ?? []).map((r) => ({
@@ -5284,7 +5290,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   const today = todayYmdMY();
   const [show, setShow] = useState<AgingShow>("all");
   const supplierList: AgingListRow[] = rows.map((a) => ({
-    key: `s:${a.supplierId}`, kind: "trade", name: a.supplierName,
+    key: `s:${a.supplierId}`, kind: "trade", name: a.supplierName, code: a.supplierCode,
     currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen,
     docs: a.docs ?? [], nextDue: nextDueOf(a.docs ?? []),
   }));
@@ -5296,7 +5302,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
     .flatMap((src) => src.draws.filter((d) => d.outstandingSen > 0).map((d) => {
       const mo = monthBucket(d.drawDate, today);
       const row: AgingListRow = {
-        key: `f:${d.drawSourceId}`, kind: "tf", name: src.lenderName,
+        key: `f:${d.drawSourceId}`, kind: "tf", name: src.lenderName, code: src.accountCode,
         sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`, d.interestSen ? `incl. interest ${formatCurrency(d.interestSen)}` : ""].filter(Boolean).join(" · "),
         currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 0, over90Sen: 0,
         docs: [{ no: d.drawSourceId, date: d.drawDate, mo, amountSen: d.outstandingSen, due: d.dueDate }],

@@ -753,6 +753,7 @@ export type AgingDocDetail = {
 export type ARAgingEntry = {
   customerId: string;
   customerName: string;
+  customerCode?: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -764,6 +765,7 @@ export type ARAgingEntry = {
 export type APAgingEntry = {
   supplierId: string;
   supplierName: string;
+  supplierCode?: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;

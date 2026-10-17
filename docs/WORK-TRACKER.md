@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: item 13 merged (#960); item 19 prod-checked (#956); item 6 in progress on branch `feat/aging-code-column`.
 > **Last verified: 2026-10-17**: item 19 follow-up merged (#959); item 13 in progress on branch `feat/cash-position-tf-due`.
 > **Last verified: 2026-10-17**: item 3 merged (#958); item 19 follow-up on branch `fix/delivery-return-cn-blocked`.
 > **Last verified: 2026-10-17**: item 2 prod-checked read-side (#955); item 19 merged (#956); item 3 in progress on branch `feat/ocb-scan-every-bill`.
@@ -233,14 +234,14 @@ Now:
 3. 🔵 (#958, prod check pending) Scan Bills reads every bill in a multi-bill PDF (today only the first). Other Creditor / Debtor Bills: the form fills with bill 1 of N, Save & Post moves to the next, Skip / Stop offered; the Payment Voucher scan already took every bill.
 4. ⚪ Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail).
 5. ⚪ Aging as at a chosen month-end.
-6. ⚪ A Code column on Debtor / Creditor Aging.
+6. 🔵 (branch `feat/aging-code-column`) A Code column on Debtor / Creditor Aging. Trade rows show the debtor / creditor code, a trade-finance draw its TF account, an other party "—" (its register has no code); the Excel / PDF prints the code before the name.
 7. ⚪ Debtor List / Creditor List pages (customers and other parties together).
 8. ⚪ A per-company Balance Sheet (every ledger entry has to carry its company first).
 9. ⚪ Month / Quarter / Financial Year pickers, Change Year End, closed-year locks.
 10. ⚪ A full audit log of every change.
 11. ⚪ "Add New Asset" when a payment voucher / AP Invoice uses a fixed-asset account.
 12. ⚪ WIP by production order feeding the Balance Sheet.
-13. 🔵 (branch `feat/cash-position-tf-due`) Daily Cash Position's TO REPAY lists Trade Finance due dates. Each draw still owed (as Creditor Aging lists them) under TO REPAY, due by month end by default ⇄ all; "Cash after repay & receive" takes it off — desktop, share image and phone alike.
+13. 🔵 (#960, prod check pending) Daily Cash Position's TO REPAY lists Trade Finance due dates. Each draw still owed (as Creditor Aging lists them) under TO REPAY, due by month end by default ⇄ all; "Cash after repay & receive" takes it off — desktop, share image and phone alike.
 14. ⚪ An Official Receipt can be edited.
 15. ⚪ The New Account form reworked (section chips, parent first, next free code) — existing accounts untouched.
 16. ⚪ Cash Book bank matching by pick list.
