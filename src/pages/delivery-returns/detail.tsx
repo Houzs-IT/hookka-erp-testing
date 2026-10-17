@@ -16,6 +16,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Loader2, ArrowLeft, Printer } from "lucide-react";
 import { generateDeliveryReturnPdf } from "@/lib/generate-delivery-return-pdf";
 import { deliveryReturnStatus } from "@/lib/delivery-return-status";
+import { returnCandidateBlock, type ReturnCreditCandidate } from "@/lib/cn-from-return";
 
 interface DRItem {
   id: string;
@@ -72,6 +73,10 @@ export default function DeliveryReturnDetail() {
   );
   const dr = raw?.data ?? null;
   const [busy, setBusy] = useState(false);
+  // Only asked while the return waits for its credit note (BUG-2026-10-17-318).
+  const { data: cnCandidateResp } = useCachedJson<{ success?: boolean; data?: ReturnCreditCandidate[] }>(
+    dr && deliveryReturnStatus(dr).awaitingCreditNote ? `/api/credit-notes/from-returns?returnId=${encodeURIComponent(String(id))}` : null,
+  );
 
   const call = async (path: string, body?: unknown) => {
     if (busy) return;
@@ -129,6 +134,11 @@ export default function DeliveryReturnDetail() {
 
   const isOpen = dr.status === "OPEN";
   const statusView = deliveryReturnStatus(dr);
+  // Why no note can be raised yet ("" = it can) — the same rule the Credit
+  // Notes picker shows: a settled invoice takes no credit note (it may not
+  // exceed what is owed), a never-invoiced order needs none.
+  const cnCandidate = cnCandidateResp?.success ? cnCandidateResp.data?.[0] : undefined;
+  const cnBlock = cnCandidate ? returnCandidateBlock(cnCandidate) : "";
   // Outcomes are MUTUALLY EXCLUSIVE — you pick exactly one from OPEN. Once any
   // outcome is chosen (restock / repair / pure-return) the DR is resolved and
   // the other buttons disappear. This is what stops "restock (+1 good stock)
@@ -251,10 +261,18 @@ export default function DeliveryReturnDetail() {
               again, pre-filled from this return. */}
           {statusView.awaitingCreditNote && (
             <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-[#F2D9A6] bg-[#FBF3E4] px-3 py-2 text-[12px] text-[#7A5B12]" data-dr-awaiting-cn="">
-              <span>Returned to stock — the credit note for this return has not been raised yet.</span>
-              <Button size="sm" variant="outline" onClick={() => navigate(`/invoices/credit-notes?fromReturn=${id}`)}>
-                Create credit note
-              </Button>
+              {cnBlock === "Invoice settled" ? (
+                <span>Returned to stock — invoice {cnCandidate?.invoice?.invoiceNo} is fully paid, so no credit note can go against it (a credit note may not exceed what is still owed).</span>
+              ) : cnBlock === "Not invoiced" ? (
+                <span>Returned to stock — this delivery was never invoiced, so no credit note is needed.</span>
+              ) : (
+                <>
+                  <span>Returned to stock — the credit note for this return has not been raised yet.</span>
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/invoices/credit-notes?fromReturn=${id}`)}>
+                    Create credit note
+                  </Button>
+                </>
+              )}
             </div>
           )}
 

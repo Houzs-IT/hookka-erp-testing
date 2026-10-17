@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-17**: item 3 merged (#958); item 19 follow-up on branch `fix/delivery-return-cn-blocked`.
 > **Last verified: 2026-10-17**: item 2 prod-checked read-side (#955); item 19 merged (#956); item 3 in progress on branch `feat/ocb-scan-every-bill`.
 > **Last verified: 2026-10-17**: item 19 in progress on branch `fix/delivery-return-cn-status`.
 > **Last verified: 2026-10-17**: item 1 prod-verified (#954); item 2 in progress on branch `feat/finance-notes-post`; the owner's answers on items 17 and 18 logged.
@@ -228,7 +229,7 @@ design/mobile-home-dashboard
 Now:
 1. ✅ (#954, BUG-2026-10-17-314, prod-verified) The empty strip between sections on the P&L, Monthly P&L and Cash Flow (owner's screenshot): a 10px spacer row that broke the table under NET SALES; now hidden, with the design's strong line on the next row.
 2. ✅ (#955, BUG-2026-10-17-315 / -316 / -317; prod read-side check: the new routes answer, statement = debtor ledger, aging buckets = lines, print data carries the adjustment — Post itself is the owner's to press) Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines. Production had no credit or debit notes (measured 2026-10-17), so nothing existing moves.
-3. 🔵 (branch `feat/ocb-scan-every-bill`) Scan Bills reads every bill in a multi-bill PDF (today only the first). Other Creditor / Debtor Bills: the form fills with bill 1 of N, Save & Post moves to the next, Skip / Stop offered; the Payment Voucher scan already took every bill.
+3. 🔵 (#958, prod check pending) Scan Bills reads every bill in a multi-bill PDF (today only the first). Other Creditor / Debtor Bills: the form fills with bill 1 of N, Save & Post moves to the next, Skip / Stop offered; the Payment Voucher scan already took every bill.
 4. ⚪ Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail).
 5. ⚪ Aging as at a chosen month-end.
 6. ⚪ A Code column on Debtor / Creditor Aging.
@@ -244,7 +245,7 @@ Now:
 16. ⚪ Cash Book bank matching by pick list.
 17. ⚪ Trade Finance repaid from AP Payment (picking the drawdowns). Owner 2026-10-17: interest is recorded at drawdown (「提款时就记」).
 18. ✅ Monthly P&L column order — owner 2026-10-17: keep it as it is, cumulative first and the newest month first (「照现在」). Nothing to build.
-19. 🔵 (#956, BUG-2026-10-17-318, prod check pending) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when none); stored data untouched.
+19. 🔵 (#956 + branch `fix/delivery-return-cn-blocked`, BUG-2026-10-17-318, prod check pending) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when one can be raised; when the invoice is fully paid or was never raised, the page says so instead); stored data untouched. The reported return's invoice is fully paid, so a credit note cannot go against it under the current rule — the owner decides what happens to it.
 
 Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
 

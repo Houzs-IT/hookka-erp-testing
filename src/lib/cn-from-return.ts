@@ -58,3 +58,27 @@ export function priceReturnLines(
     unpriced: out.filter((l) => l.unitPriceSen == null).length,
   };
 }
+
+// One row of GET /api/credit-notes/from-returns.
+export type ReturnCreditCandidate = {
+  id: string;
+  returnNo: string;
+  date: string;
+  customerId: string;
+  customerName: string;
+  status: string;
+  invoice: { id: string; invoiceNo: string; outstandingSen: number } | null;
+  lines: { description: string; quantity: number; unitPriceSen: number | null }[];
+  valueSen: number;
+  unpriced: number;
+  creditNote: { id: string; noteNumber: string } | null;
+};
+// Why a return cannot be used ("" = it can): already has a note, was never
+// invoiced, or its invoice is settled (a note may not exceed what is owed).
+// Shared by the Credit Notes picker and the return's own page.
+export function returnCandidateBlock(d: ReturnCreditCandidate): string {
+  if (d.creditNote) return `CN issued · ${d.creditNote.noteNumber}`;
+  if (!d.invoice) return "Not invoiced";
+  if (d.invoice.outstandingSen <= 0) return "Invoice settled";
+  return "";
+}

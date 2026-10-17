@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-17**: BUG-2026-10-17-318 gains its follow-up (branch `fix/delivery-return-cn-blocked`, to main): the return's page says why no credit note can be raised.
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-318 (branch `fix/delivery-return-cn-status`, to main).
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-317 (branch `feat/finance-notes-post`, to main); BUG-2026-10-17-314 flipped to 🟢 after the #954 prod check.
 > **Last verified: 2026-10-17**: newest entry BUG-2026-10-17-314 (branch `fix/finance-report-gap-rows`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -149,6 +150,8 @@ Entries themselves stay newest-first.
 **Root cause.** "Return to stock" on an invoiced delivery order calls `POST /api/delivery-returns/:id/set-outcome` with `PURE_RETURN`, which sets the status to `CN_ISSUED` straight away and then opens the Credit Notes form pre-filled. The note is only linked when that form is saved; leaving the form left the return claiming a note that was never raised.
 
 **Fix.** The chip is worked from the note actually linked (`src/lib/delivery-return-status.ts`): no note → "Awaiting credit note" (amber, counted as open, and the return's page offers "Create credit note" pre-filled from the return); a draft note → "Credit note drafted"; an issued one → "CN issued". The API returns the linked note's status (`creditNoteStatus`). No stored data changed.
+
+**Follow-up (same day).** The return the owner reported was invoiced and that invoice is fully paid, so "Create credit note" led to a form that cannot be saved (a credit note may not exceed what is still owed — the Phase 1 cap). The return's page now asks the same question the Credit Notes picker asks (`returnCandidateBlock`, moved to `src/lib/cn-from-return.ts`) and says why instead: the invoice is fully paid, or the delivery was never invoiced. The button shows only when a note can be raised.
 
 **Regression.** `tests/delivery-return-cn-status.test.mjs`. Class: none.
 

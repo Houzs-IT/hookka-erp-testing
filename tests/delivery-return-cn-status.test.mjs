@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { deliveryReturnStatus } from "../src/lib/delivery-return-status.ts";
+import { returnCandidateBlock } from "../src/lib/cn-from-return.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
@@ -47,4 +48,19 @@ test("the API returns the linked note's status; both pages label from it", () =>
   assert.match(list, /const v = deliveryReturnStatus\(row\);/);
   assert.match(list, /if \(deliveryReturnStatus\(r\)\.awaitingCreditNote\) c\.open \+= 1;/);
   assert.doesNotMatch(list, /const STATUS_LABEL/);
+});
+
+test("a return waiting for its note says why none can be raised, instead of a dead-end button", () => {
+  const cand = (over) => ({
+    id: "dr-1", returnNo: "DR-0001", date: "2026-01-02", customerId: "c-1", customerName: "A customer", status: "CN_ISSUED",
+    invoice: { id: "i-1", invoiceNo: "INV-0001", outstandingSen: 5000 }, lines: [], valueSen: 5000, unpriced: 0, creditNote: null, ...over,
+  });
+  assert.equal(returnCandidateBlock(cand({})), "");
+  assert.equal(returnCandidateBlock(cand({ invoice: { id: "i-1", invoiceNo: "INV-0001", outstandingSen: 0 } })), "Invoice settled");
+  assert.equal(returnCandidateBlock(cand({ invoice: null })), "Not invoiced");
+  const detail = read("src/pages/delivery-returns/detail.tsx");
+  // Asked only while the return waits for its note.
+  assert.match(detail, /dr && deliveryReturnStatus\(dr\)\.awaitingCreditNote \? `\/api\/credit-notes\/from-returns\?returnId=\$\{encodeURIComponent\(String\(id\)\)\}` : null,/);
+  assert.match(detail, /cnBlock === "Invoice settled" \? \(\n\s*<span>Returned to stock — invoice \{cnCandidate\?\.invoice\?\.invoiceNo\} is fully paid, so no credit note can go against it/);
+  assert.match(detail, /cnBlock === "Not invoiced" \? \(\n\s*<span>Returned to stock — this delivery was never invoiced, so no credit note is needed\.<\/span>/);
 });
