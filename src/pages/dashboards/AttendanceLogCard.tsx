@@ -44,6 +44,8 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
   // "This month" (owner 2026-10-17: "如果我要看这个月的，该怎么看"): one row per
   // person for the month — days in, days not in, times late, minutes late —
   // most absent first, then most late.
+  // A login kept only for viewing never clocks in — not an absent worker.
+  const everClocked = useMemo(() => new Set(employee.attendance.filter((r) => r.clockIn || r.clockOut).map((r) => r.employeeId)), [employee]);
   const [monthPick, setMonthPick] = useState<string | null>(null);
   const monthOn = monthPick === pageKey;
   const monthYm = (pagePeriod.day ?? pagePeriod.month ?? today).slice(0, 7);
@@ -59,7 +61,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
       byWorker.set(id, [...(byWorker.get(id) ?? []), r]);
     }
     const rows = employee.workers
-      .filter((w) => w.countsToHeadcount && !isOutsourced(w))
+      .filter((w) => w.countsToHeadcount && !isOutsourced(w) && everClocked.has(w.id))
       .map((w) => {
         const mine = byWorker.get(w.id) ?? [];
         const inDays = new Set(mine.map((r) => r.date));
@@ -79,7 +81,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
       })
       .sort((a, b) => b.notIn - a.notIn || b.late - a.late || b.lateMin - a.lateMin || a.name.localeCompare(b.name));
     return { rows, workDays: workDays.length };
-  }, [monthOn, employee, monthYm]);
+  }, [monthOn, employee, monthYm, everClocked]);
 
   const log = useMemo(() => {
     const byId = new Set(employee.workers.map((w) => w.id));
@@ -120,7 +122,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     if (period.day && !perDay) {
       const seen = new Set([...byEmp.values()].map((v) => v.workerId).filter(Boolean));
       for (const w of employee.workers) {
-        if (!w.countsToHeadcount || isOutsourced(w) || seen.has(w.id)) continue;
+        if (!w.countsToHeadcount || isOutsourced(w) || !everClocked.has(w.id) || seen.has(w.id)) continue;
         rows.push({
           key: `absent|${w.id}`,
           last: { employeeId: w.id, employeeName: w.name, dept: w.dept, date: period.day, clockIn: null, clockOut: null, workingMinutes: 0, productionMinutes: 0, overtimeMinutes: 0, efficiencyPct: null },
@@ -137,7 +139,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     const working = sum((r) => r.working);
     const prod = sum((r) => r.prod);
     return { rows, working, prod, nonProd: sum((r) => r.nonProd), days: sum((r) => r.days), eff: working > 0 ? (prod / working) * 100 : null, absent: rows.filter((r) => r.absent).length, late: rows.filter((r) => !r.absent && lateMin(r.last.clockIn) > 0).length };
-  }, [employee, period, perDay]);
+  }, [employee, period, perDay, everClocked]);
 
   const H = ["Employee", "Date", "Clock in", "Clock out", "Production time", "Prod hours", "Non-prod hours", "Efficiency", ...(perDay ? [] : ["Total days"]), "Status"];
   const ncol = H.length;

@@ -171,7 +171,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
         .filter((m) => m.slice(0, 4) === focusMonth.slice(0, 4))
         .map((m) => {
           const b = byMonth.get(m) ?? ZERO;
-          return { key: m, label: monthLabel(m), Materials: Math.round(b.material / 100), Labour: canLabour ? Math.round(b.labour / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue };
+          return { key: m, label: monthLabel(m), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Labour: canLabour ? Math.round(b.labour / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue };
         });
     }
     const days = [...byDay.keys()].filter((d) => inPeriod(period, d)).sort();
@@ -179,7 +179,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       days.map((d) => ({ d, b: byDay.get(d)! })),
       (x) => x.d,
       (x) => [x.b.revenue, x.b.material, x.b.labour],
-    ).map(({ d, b }) => ({ key: d, label: d.slice(5), Materials: Math.round(b.material / 100), Labour: canLabour ? Math.round(b.labour / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue }));
+    ).map(({ d, b }) => ({ key: d, label: d.slice(5), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Labour: canLabour ? Math.round(b.labour / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ytd, months, byMonth, byDay, period, focusMonth, canLabour]);
   const pick = (e: { activeLabel?: unknown } | null) => {
@@ -256,7 +256,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       <Card className="xl:col-span-3">
         <CardHeader className="pb-2">
           <CardTitle>Cost trend · {ytd ? "by month" : "by day"}</CardTitle>
-          <p className="mt-0.5 text-xs text-[#9CA3AF]">Bars = materials used + labour (RM) · line = cost % of that {ytd ? "month" : "day"}'s production revenue · click a bar to focus it</p>
+          <p className="mt-0.5 text-xs text-[#9CA3AF]">Each {ytd ? "month" : "day"}: production revenue (light) beside its cost (materials + labour) — the gap is the margin · line = cost % · click a bar to focus it</p>
         </CardHeader>
         <CardContent>
           <div className="select-none [&_*]:outline-none" style={{ width: "100%", height: 280 }}>
@@ -288,8 +288,9 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
                     }}
                   />
                   <Legend {...t.legend} />
-                  <Bar yAxisId="rm" dataKey="Materials" hide={t.hide("Materials")} stackId="c" fill={INK} maxBarSize={22} isAnimationActive={false} />
-                  {canLabour && <Bar yAxisId="rm" dataKey="Labour" hide={t.hide("Labour")} stackId="c" fill={TEAL} radius={[3, 3, 0, 0]} maxBarSize={22} isAnimationActive={false} />}
+                  <Bar yAxisId="rm" dataKey="Revenue" hide={t.hide("Revenue")} fill="#E3DCD0" radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
+                  <Bar yAxisId="rm" dataKey="Materials" hide={t.hide("Materials")} stackId="c" fill={INK} maxBarSize={18} isAnimationActive={false} />
+                  {canLabour && <Bar yAxisId="rm" dataKey="Labour" hide={t.hide("Labour")} stackId="c" fill={TEAL} radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />}
                   <Line yAxisId="pct" type="monotone" dataKey="Cost %" hide={t.hide("Cost %")} stroke={GOLD} strokeWidth={2.5} dot={{ r: 2.5 }} connectNulls isAnimationActive={false} />
                   {headPct != null && !ytd && <ReferenceLine yAxisId="pct" y={Math.round(headPct * 10) / 10} stroke={GOLD} strokeDasharray="4 3" strokeOpacity={0.6} />}
                   {period.day && !ytd && <ReferenceLine yAxisId="rm" x={period.day.slice(5)} stroke="#9C6F1E" strokeWidth={2} />}

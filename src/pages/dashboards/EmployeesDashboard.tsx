@@ -104,7 +104,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
 
   const workers = useMemo(() => employee?.workers ?? [], [employee]);
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
-  const roster = useMemo(() => workers.filter((w) => w.countsToHeadcount && !isOutsourced(w)), [workers]);
+  // Headcount for present / not in: ACTIVE, not outsourced, and has clocked in
+  // at least once — a login kept only for viewing (owner 2026-10-17: Chee "只是
+  // 账号提供观看") never clocks and is not a worker who is absent.
+  const clockers = useMemo(() => new Set((employee?.attendance ?? []).filter((r) => r.clockIn || r.clockOut).map((r) => r.employeeId)), [employee]);
+  const roster = useMemo(() => workers.filter((w) => w.countsToHeadcount && !isOutsourced(w) && clockers.has(w.id)), [workers, clockers]);
   const outsourced = useMemo(() => new Set(workers.filter(isOutsourced).map((w) => w.id)), [workers]);
 
   // Per worker per day, the period's working / production minutes.
