@@ -127,6 +127,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const [open, setOpen] = useState<string | null>(null);
   // Layer 2 for the headline tiles: every worker behind the number.
   const [tileDrill, setTileDrill] = useState<"salary" | "eff" | null>(null);
+  const [deptDrill, setDeptDrill] = useState<string | null>(null);
   const dayMode = !!period.day;
   const anchor = period.day ?? latest;
   const effWin: Win = dayMode ? "day" : win;
@@ -500,7 +501,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                   const v = eff(r.prod, r.work);
                   const lp = ratio(r.cost, r.bf + r.sofa);
                   return (
-                    <tr key={r.dept} className="border-b border-[#F0ECE6]">
+                    <tr key={r.dept} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => setDeptDrill(r.dept)} title="Click for the workers">
                       <td className={`px-3 py-1.5 ${floorSet.has(r.dept) ? "text-[#1F1D1B]" : "text-[#9CA3AF]"}`}>{costCentreName(r.dept)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(r.people.size)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
@@ -559,6 +560,42 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <p className="text-[11px]" style={{ color: MUTED, borderColor: BORDER }}>
         Salary = logged hours priced by the Labor Cost rule (regular hours at salary ÷ the month's working days ÷ hours per day; OT by day type), so it matches the Labor Cost tab. <span style={{ color: TEAL }}>Efficiency</span> = production minutes ÷ working minutes.
       </p>
+
+      {deptDrill && (() => {
+        // Workers whose home department this is, or who logged hours here in the window.
+        const logged = new Set(hourEntries.filter((e) => winDates.has(e.date) && e.departmentCode === deptDrill).map((e) => e.workerId));
+        const list = rows.filter((r) => r.dept === deptDrill || logged.has(r.id));
+        const hoursHere = new Map<string, number>();
+        for (const e of hourEntries) if (winDates.has(e.date) && e.departmentCode === deptDrill) hoursHere.set(e.workerId, (hoursHere.get(e.workerId) ?? 0) + (Number(e.hours) || 0));
+        return (
+          <DashModal wide title={`${costCentreName(deptDrill)} · ${winLabel}`} subtitle="Home department or hours logged here · click a worker for each day" onClose={() => setDeptDrill(null)}>
+            <div className="max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-[12.5px]">
+                <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
+                  <th className="py-1.5">Worker</th><th className="py-1.5">Home dept</th><th className="py-1.5 text-right">Hours logged here</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Salary</th>}
+                </tr></thead>
+                <tbody>
+                  {list.sort((a, b) => (hoursHere.get(b.id) ?? 0) - (hoursHere.get(a.id) ?? 0)).map((r) => {
+                    const v = eff(r.prod, r.work);
+                    return (
+                      <tr key={r.id} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => { setDeptDrill(null); setOpen(r.id); }}>
+                        <td className="py-1.5">{r.name}</td>
+                        <td className="py-1.5 text-[#6B7280]">{deptName(r.dept)}</td>
+                        <td className="py-1.5 text-right tabular-nums">{hoursHere.has(r.id) ? `${(hoursHere.get(r.id) ?? 0).toFixed(1)} h` : "—"}</td>
+                        <td className="py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
+                        <td className="py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
+                        <td className="py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}</td>
+                        {canSalary && <td className="py-1.5 text-right tabular-nums">{money(r.cost)}</td>}
+                      </tr>
+                    );
+                  })}
+                  {list.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-[#9CA3AF]">No workers in this window.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </DashModal>
+        );
+      })()}
 
       {tileDrill && (
         <DashModal

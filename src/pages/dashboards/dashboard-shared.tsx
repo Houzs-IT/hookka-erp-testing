@@ -552,6 +552,7 @@ export function Kpi({
   valueSizeClass,
   hint,
   children,
+  onClick,
 }: {
   label: string;
   value: string;
@@ -562,6 +563,8 @@ export function Kpi({
   hint?: string;
   /** Extra content under the sub line (e.g. a baseline bar). */
   children?: ReactNode;
+  /** Layer 2: opens the rows behind the number (owner 2026-10-17). */
+  onClick?: () => void;
 }) {
   // Label on top, big value, then the sub line. A "+x% / -x%" delta sub is a
   // green / red pill; any other sub is plain text so it can wrap, not truncate.
@@ -569,7 +572,12 @@ export function Kpi({
   const down = sub?.startsWith("-");
   const Trend = down ? TrendingDown : TrendingUp;
   return (
-    <Card>
+    <Card
+      className={onClick ? "cursor-pointer transition-shadow hover:shadow-md" : undefined}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      title={onClick ? "Click for the detail" : undefined}
+    >
       <CardContent className="p-3 min-w-0">
         <p className="text-xs text-[#6B7280] truncate">
           {label}

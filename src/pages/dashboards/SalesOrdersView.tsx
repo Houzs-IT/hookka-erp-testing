@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSeriesToggle } from "./use-series-toggle";
+import { DashModal } from "./DashModal";
 import {
   CartesianGrid,
   ComposedChart,
@@ -239,6 +240,23 @@ export function SalesOrdersView({
       total,
     };
   }, [stateCatRows]);
+
+  // Layer 2: a state or a category opens the products sold there.
+  const [saleDrill, setSaleDrill] = useState<{ kind: "state" | "category"; key: string } | null>(null);
+  const saleDrillRows = useMemo(() => {
+    if (!saleDrill) return [];
+    const m = new Map<string, { sku: string; name: string; other: string; qty: number; revenueSen: number }>();
+    for (const r of stateCatRows) {
+      const hit = saleDrill.kind === "state" ? (r.state ?? "—") === saleDrill.key : (r.category ?? "—") === saleDrill.key;
+      if (!hit) continue;
+      const k = r.sku ?? "—";
+      const e = m.get(k) ?? { sku: k, name: r.name ?? k, other: saleDrill.kind === "state" ? (r.category ?? "—") : (r.state ?? "—"), qty: 0, revenueSen: 0 };
+      e.qty += r.qty;
+      e.revenueSen += r.revenueSen;
+      m.set(k, e);
+    }
+    return [...m.values()].sort((a, b) => b.revenueSen - a.revenueSen);
+  }, [saleDrill, stateCatRows]);
 
   // Donut: top states, with anything past the 6th folded into "Other" so the
   // outside labels cannot collide into an unreadable fan.
@@ -497,7 +515,7 @@ export function SalesOrdersView({
                   <button
                     key={st.state}
                     type="button"
-                    onClick={() => setStateFilter((cur) => (cur === st.state ? null : st.state))}
+                    onClick={() => { setStateFilter((cur) => (cur === st.state ? null : st.state)); setSaleDrill({ kind: "state", key: st.state }); }}
                     className="w-full flex items-center gap-2 text-[12.5px] text-left max-md:py-1.5"
                     style={{ opacity: on ? 1 : 0.45 }}
                   >
@@ -515,7 +533,7 @@ export function SalesOrdersView({
               })}
               <div className="pt-1 border-t border-[#E5E0D8] space-y-0.5">
                 {attribution.categories.slice(0, 4).map((c) => (
-                  <p key={c.category} className="text-[12px] flex items-baseline gap-2">
+                  <p key={c.category} className="cursor-pointer text-[12px] flex items-baseline gap-2 hover:bg-[#FAF8F4]" onClick={() => setSaleDrill({ kind: "category", key: c.category })} title="Click for the products">
                     <span className="flex-1" style={{ color: CHART_AXIS }}>{c.category}</span>
                     <span className="tabular-nums" style={{ color: CHART_AXIS }}>{fmtN(c.qty)} sold</span>
                     <span className="tabular-nums font-semibold text-[#1F1D1B]">{formatCurrency(c.revenueSen)}</span>
@@ -534,6 +552,33 @@ export function SalesOrdersView({
       {/* Top Sellers last, 10 each with their share of sales (owner 2026-10-17). */}
       <CommandCenterSections period={period} sections={["topSellers"]} />
 
+      {saleDrill && (
+        <DashModal
+          wide
+          title={`${saleDrill.key} · ${periodLabel(period)}`}
+          subtitle={`Products sold ${saleDrill.kind === "state" ? "in this state" : "in this category"} · ${formatCurrency(saleDrillRows.reduce((a, r) => a + r.revenueSen, 0))}`}
+          onClose={() => setSaleDrill(null)}
+        >
+          <div className="max-h-[60vh] overflow-y-auto">
+            <table className="w-full text-[12.5px]">
+              <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
+                <th className="py-1.5">Product</th><th className="py-1.5">{saleDrill.kind === "state" ? "Category" : "State"}</th><th className="py-1.5 text-right">Qty</th><th className="py-1.5 text-right">Revenue</th><th className="py-1.5 text-right">Share</th>
+              </tr></thead>
+              <tbody>
+                {(() => { const tot = saleDrillRows.reduce((a, r) => a + r.revenueSen, 0); return saleDrillRows.map((r) => (
+                  <tr key={r.sku} className="border-b border-[#F0ECE6]">
+                    <td className="py-1.5">{r.name}</td>
+                    <td className="py-1.5 text-[#6B7280]">{r.other}</td>
+                    <td className="py-1.5 text-right tabular-nums">{fmtN(r.qty)}</td>
+                    <td className="py-1.5 text-right tabular-nums font-semibold">{formatCurrency(r.revenueSen)}</td>
+                    <td className="py-1.5 text-right tabular-nums text-[#6B7280]">{tot > 0 ? `${((r.revenueSen / tot) * 100).toFixed(1)}%` : "—"}</td>
+                  </tr>
+                )); })()}
+              </tbody>
+            </table>
+          </div>
+        </DashModal>
+      )}
     </div>
   );
 }
