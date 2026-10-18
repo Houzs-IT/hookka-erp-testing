@@ -62,7 +62,10 @@ export function Tabs<T extends string = string>({
           className,
         )}
       >
-        <div className={cn("gap-1", gridColsClass ? `grid ${gridColsClass}` : "flex", scrollable && "max-md:w-max")}>
+        {/* Scrollable flex pills: one scrolling row on phones; on desktop they
+            WRAP rather than shrink — shrinking truncated every label to
+            "FABRIC CUTTIN…" (owner 2026-10-18). */}
+        <div className={cn("gap-1", gridColsClass ? `grid ${gridColsClass}` : "flex", scrollable && "max-md:w-max", scrollable && !gridColsClass && "md:flex-wrap")}>
           {tabs.map((tab) => {
             const active = tab.key === value;
             return (
@@ -79,6 +82,7 @@ export function Tabs<T extends string = string>({
                 className={cn(
                   "rounded px-3 py-2 text-xs font-semibold uppercase tracking-wide transition truncate",
                   scrollable && "max-md:shrink-0 max-md:whitespace-nowrap",
+                  scrollable && !gridColsClass && "md:shrink-0 md:whitespace-nowrap md:overflow-visible",
                   active
                     ? "border border-[#6B5C32] bg-white text-[#1F1D1B] shadow-sm"
                     : "text-[#8A7F73] hover:text-[#1F1D1B]",

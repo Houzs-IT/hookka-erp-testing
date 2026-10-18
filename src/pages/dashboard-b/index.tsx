@@ -692,7 +692,7 @@ function Gauge({
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-[34px] leading-none font-[800] text-[#1F1D1B] tabular-nums">
+        <span className="text-[28px] leading-none font-[800] text-[#1F1D1B] tabular-nums">
           {big}
         </span>
         <span className="mt-1 text-[10px] uppercase tracking-wider text-[#9CA3AF]">
@@ -945,6 +945,18 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
     ? Math.max(0, pipeConfirmed - pipeDelivered)
     : outstanding;
   const pipeMax = Math.max(1, pipeConfirmed, pipeDelivered, pipeOutstanding);
+  // Average per working day (owner 2026-10-18: "加个 average … 平均一天多少,
+  // 要怎么去拉供需平衡"): orders in, production out, invoiced, over the
+  // revenue chart's own buckets. A month's buckets are days (idle days left
+  // out); quarter / year / all are weeks, counted as 6 working days each.
+  const perDay = (() => {
+    const daily = /^\d{4}-\d{2}$/.test(period);
+    const live = weekRev.filter((r) => r.salesOrderSen || r.invoiceSen || r.productionSen);
+    const days = daily ? live.length : live.length * 6;
+    if (days === 0) return null;
+    const sum = (f: (r: (typeof weekRev)[number]) => number) => live.reduce((a, r) => a + f(r), 0);
+    return { days, orders: sum((r) => r.salesOrderSen) / days, production: sum((r) => r.productionSen) / days, invoiced: sum((r) => r.invoiceSen) / days };
+  })();
   const backlogDays = prod?.backlogDays ?? 0;
   const util = Math.min(1, backlogDays / 14);
   const gaugeAccent = backlogDays > 12 ? C_RED : backlogDays > 7 ? C_PROD : C_GREEN;
@@ -1436,7 +1448,9 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
         {show("plantLoad") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5 flex flex-col items-center">
-            <SectionTitle title="Plant Load" sub="backlog vs daily capacity" />
+            <div className="w-full">
+              <SectionTitle title="Plant Load" sub="backlog vs daily capacity" />
+            </div>
             {stateLiveTag && (
               <span
                 title="Backlog, Active Jobs and Workforce are point-in-time counts. No daily snapshot was stored for this past month, so the current live figures are shown — not that month's true state."
@@ -1539,16 +1553,16 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     ),
                   });
                 }}
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <Factory className="h-4 w-4 text-[#6B5C32]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     Daily Capacity{" "}
                     <span className="text-[#C2BBAE]">· {capacityWindowLabel}</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {hrs(prod?.dailyCapacityMin)}
                 </span>
               </button>
@@ -1582,16 +1596,16 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     ),
                   })
                 }
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <Clock className="h-4 w-4 text-[#DC2626]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     Total Backlog{" "}
                     <span className="text-[#C2BBAE]">· per dept</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {backlogDays.toLocaleString()}d ·{" "}
                   {hrs(prod?.backlogMin)}
                 </span>
@@ -1617,16 +1631,16 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     ),
                   })
                 }
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <Package className="h-4 w-4 text-[#6B5C32]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     Active Jobs{" "}
                     <span className="text-[#C2BBAE]">· pending</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {(prod?.activeJobs?.bedframeUnits ?? 0).toLocaleString()} /{" "}
                   {(prod?.activeJobs?.sofaSets ?? 0).toLocaleString()}
                 </span>
@@ -1649,16 +1663,16 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     ),
                   })
                 }
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-[#15803D]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     {completedHeadlineLabel}{" "}
                     <span className="text-[#C2BBAE]">{completedHintLabel}</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {completedHeadBf.toLocaleString()} /{" "}
                   {completedHeadSofa.toLocaleString()}
                 </span>
@@ -1764,21 +1778,59 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                 </p>
                 {(() => {
                   const maxN = Math.max(1, ...PIPELINE_STATUSES.map(([k]) => so.byStatus?.[k] ?? 0));
+                  // How many days of the current pace each stage holds:
+                  // in production ÷ production per day, ready to ship ÷
+                  // invoiced per day (what leaves the factory).
+                  const daysOf = (k: string, sen: number) => {
+                    const rate = k === "IN_PRODUCTION" ? perDay?.production : k === "READY_TO_SHIP" ? perDay?.invoiced : null;
+                    return rate && rate > 0 ? sen / rate : null;
+                  };
                   return PIPELINE_STATUSES.map(([k, label]) => {
                     const n = so.byStatus?.[k] ?? 0;
                     if (n === 0) return null;
+                    const sen = so.revenueByStatus?.[k] ?? 0;
+                    const d = daysOf(k, sen);
                     return (
                       <div key={k} className="flex items-center gap-3 py-1">
-                        <span className="w-24 text-xs text-[#5A5550]">{label}</span>
+                        <span className="w-24 shrink-0 text-xs text-[#5A5550]">{label}</span>
                         <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#F5F2ED]">
                           <div className="h-full rounded-full" style={{ width: `${Math.max(3, (n / maxN) * 100)}%`, background: k === "ON_HOLD" ? C_RED : C_PROD }} />
                         </div>
-                        <span className="w-14 text-right text-[11px] tabular-nums text-[#9CA3AF]">{n.toLocaleString()} SO</span>
-                        <span className="w-28 text-right text-xs font-semibold tabular-nums text-[#1F1D1B]">{rm(so.revenueByStatus?.[k] ?? 0)}</span>
+                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9CA3AF]">{n.toLocaleString()} SO</span>
+                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9C6F1E]" title={d == null ? undefined : k === "IN_PRODUCTION" ? "Days of production at the current pace" : "Days of invoicing at the current pace"}>
+                          {d == null ? "" : `≈ ${d.toFixed(1)} d`}
+                        </span>
+                        <span className="w-28 shrink-0 text-right text-xs font-semibold tabular-nums text-[#1F1D1B]">{rm(sen)}</span>
                       </div>
                     );
                   });
                 })()}
+                {perDay && (
+                  <div className="mt-3 rounded-lg bg-[#F7F4EF] px-3 py-2">
+                    <p className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">
+                      Average per working day · {perDay.days} working day{perDay.days === 1 ? "" : "s"}
+                    </p>
+                    <div className="mt-1 grid grid-cols-3 gap-2 text-center">
+                      {[
+                        ["Orders in", perDay.orders, C_SO],
+                        ["Production", perDay.production, C_PROD],
+                        ["Invoiced", perDay.invoiced, C_INV],
+                      ].map(([k, v, c]) => (
+                        <div key={k as string} className="min-w-0">
+                          <p className="truncate text-[11px] text-[#6B7280]">{k as string}</p>
+                          <p className="truncate text-sm font-bold tabular-nums" style={{ color: c as string }}>{rm(Math.round(v as number))}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-[11px] text-[#6B7280]">
+                      {perDay.production > 0
+                        ? perDay.orders > perDay.production
+                          ? `Orders arrive ${(((perDay.orders - perDay.production) / perDay.production) * 100).toFixed(0)}% faster than we produce — the queue grows by about ${rm(Math.round(perDay.orders - perDay.production))} a day.`
+                          : `We produce ${(((perDay.production - perDay.orders) / perDay.production) * 100).toFixed(0)}% more than comes in — the queue shrinks by about ${rm(Math.round(perDay.production - perDay.orders))} a day.`
+                        : "No production recorded in this period yet."}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -2575,7 +2627,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
       <div className={show("deptBacklog") && show("purchasing") ? "grid grid-cols-1 lg:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
         {show("deptBacklog") && (
         <Card className="lg:col-span-2 bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-          <CardContent className="p-5">
+          <CardContent className="p-5 flex h-full flex-col">
             {stateLiveTag && (
               <span
                 title="Backlog is a point-in-time count. No daily snapshot was stored for this past month, so the current live figures are shown — not that month's true state."
@@ -2661,15 +2713,25 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                 return { d, sofaDays, bedDays, showDays };
               });
               const mxDays = Math.max(1, ...rows.map((r) => r.showDays ?? 0));
-              return rows.map(({ d, sofaDays, bedDays, showDays }) => (
+              // Rows spread over the card's height (it stretches to Plant
+              // Load beside it); each row also says what the days are made of.
+              return (
+                <div className="flex flex-1 flex-col justify-evenly">
+                  <div className="flex items-center gap-3 pb-1 text-[10px] uppercase tracking-wide text-[#9CA3AF]">
+                    <span className="w-28 shrink-0">Department</span>
+                    <span className="flex-1">Days to clear</span>
+                    <span className="hidden w-32 shrink-0 text-right sm:block">Queued · capacity</span>
+                    <span className="w-12 shrink-0 text-right">Days</span>
+                  </div>
+                  {rows.map(({ d, sofaDays, bedDays, showDays }) => (
                 <div
                   key={d.dept}
-                  className="flex items-center gap-3 py-1"
+                  className="flex items-center gap-3 py-1.5 border-b border-[#F7F4EF] last:border-0"
                 >
-                  <span className="w-28 text-xs text-[#1F1D1B]">
+                  <span className="w-28 shrink-0 truncate text-xs text-[#1F1D1B]" title={d.dept}>
                     {d.dept}
                   </span>
-                  <div className="flex-1 h-2.5 rounded bg-[#F5F2ED] overflow-hidden flex">
+                  <div className="flex-1 h-3 rounded bg-[#F5F2ED] overflow-hidden flex">
                     {sofaOn && (
                       <div
                         className="h-full"
@@ -2689,11 +2751,16 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       />
                     )}
                   </div>
-                  <span className="w-12 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 7 working days — queue can't be sized in days" : undefined}>
+                  <span className="hidden w-32 shrink-0 text-right text-[11px] text-[#9CA3AF] tabular-nums sm:block">
+                    {hrs(d.totalMin)} · {hrs(d.dailyCapMin)}/d
+                  </span>
+                  <span className="w-12 shrink-0 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 7 working days — queue can't be sized in days" : undefined}>
                     {showDays == null ? "stalled" : `${showDays.toFixed(1)}d`}
                   </span>
                 </div>
-              ));
+                  ))}
+                </div>
+              );
             })()}
           </CardContent>
         </Card>

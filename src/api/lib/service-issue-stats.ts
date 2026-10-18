@@ -379,6 +379,9 @@ export function productCategoriesOf(
  * Defect rate per category for a set of months: cases logged ÷ units shipped.
  * A case counts once under each category of its affected products; a case with
  * no product recorded counts under "UNSPECIFIED" (shipped 0 there, so no rate).
+ * Bedframe (per unit) and sofa (per set) only — accessories are left out of
+ * both sides (owner 2026-10-18: "accessory 不应该算"); an accessory-only case
+ * drops out rather than landing in "not specified".
  */
 export function defectRates(
   cases: readonly { createdDate: string; productCategories?: string[] | null }[],
@@ -386,11 +389,14 @@ export function defectRates(
   months: readonly string[],
 ): { category: string; cases: number; units: number; rate: number | null }[] {
   const inM = (d: string) => months.includes(d.slice(0, 7));
-  const cats = ["BEDFRAME", "SOFA", "ACCESSORY"];
+  const cats = ["BEDFRAME", "SOFA"];
   const caseN = new Map<string, number>();
   for (const c of cases) {
     if (!inM(c.createdDate)) continue;
-    const cs = c.productCategories?.length ? c.productCategories : ["UNSPECIFIED"];
+    const all = c.productCategories ?? [];
+    const counted = all.filter((k) => cats.includes(k));
+    if (all.length && !counted.length) continue; // accessory only
+    const cs = counted.length ? counted : ["UNSPECIFIED"];
     for (const k of cs) caseN.set(k, (caseN.get(k) ?? 0) + 1);
   }
   const unitN = new Map<string, number>();

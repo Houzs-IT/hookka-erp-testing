@@ -10,7 +10,8 @@ import { CC_AXIS_LINE, CC_TICK, fmtN, monthLabel, shiftMonth, ymd, type Period }
 // Defect rate (owner 2026-10-17: "defects rate 在 service, 根据出货的数量, 根据
 // 不一样 category"). Cases logged in the period ÷ units delivered in the period,
 // per product category. Units = finished-goods units scanned DELIVERED
-// (bedframe / accessory per unit, sofa per set = sales order). A case counts
+// (bedframe per unit, sofa per set = sales order; accessories left out —
+// owner 2026-10-18). A case counts
 // under each category of its affected products; one with no product recorded
 // is "Not specified" and has no rate. Read off the service slice of the feed
 // (`shipped`, `cases[].productCategories`).
@@ -46,7 +47,7 @@ export function DefectRateCard({ cases, shipped, period }: { cases: Case[]; ship
       <CardHeader className="pb-2">
         <CardTitle>Defect rate · cases per unit shipped</CardTitle>
         <p className="mt-0.5 text-xs text-[#9CA3AF]">
-          Service cases logged ÷ units delivered in the period, by product category · units = finished-goods units scanned delivered (sofa counted per set)
+          Service cases logged ÷ units delivered in the period, bedframe and sofa · units = finished-goods units scanned delivered (bedframe per unit, sofa per set; accessories not counted)
         </p>
       </CardHeader>
       <CardContent>

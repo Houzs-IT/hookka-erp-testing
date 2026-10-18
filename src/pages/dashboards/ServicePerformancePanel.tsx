@@ -207,12 +207,13 @@ export function ServicePerformancePanel({
                 <div className="flex flex-col justify-center">
                   <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">How long they took · {fmtN(closedNow.length)} closed</p>
                   {closeBands.bands.map((b, i) => (
-                    <div key={b.label} className="grid grid-cols-[96px_1fr_28px] items-center gap-2 border-t border-[#F0ECE6] py-1.5 text-[12.5px]">
+                    <div key={b.label} className="grid grid-cols-[96px_1fr_28px_44px] items-center gap-2 border-t border-[#F0ECE6] py-1.5 text-[12.5px]">
                       <span className="text-[#1F1D1B]">{b.label}</span>
                       <span className="h-3 rounded-sm bg-[#F0ECE6]">
                         <span className="block h-3 rounded-sm" style={{ width: `${(b.count / closeBands.max) * 100}%`, background: i <= 1 ? GREEN : i === 2 ? CHART_GOLD : i === 3 ? AMBER : RED }} />
                       </span>
                       <span className="text-right font-semibold tabular-nums">{b.count}</span>
+                      <span className="text-right text-[11.5px] tabular-nums text-[#6B7280]">{closedNow.length ? `${Math.round((b.count / closedNow.length) * 100)}%` : "—"}</span>
                     </div>
                   ))}
                   <p className="mt-1 text-[11px] text-[#6B7280]">
@@ -235,6 +236,26 @@ export function ServicePerformancePanel({
               </div>
             )}
           </div>
+          {closedNow.length > 0 && (() => {
+            const within = (days: number) => closeBands.bands.filter((b) => b.hi <= days).reduce((a, b) => a + b.count, 0);
+            const share = (n: number) => `${Math.round((n / closedNow.length) * 100)}%`;
+            const over14 = closeBands.bands[closeBands.bands.length - 1].count;
+            return (
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {[
+                  { label: "Closed within 3 days", n: within(3), tone: "text-[#4F7C3A]" },
+                  { label: "Closed within 7 days", n: within(7), tone: "text-[#1F1D1B]" },
+                  { label: "Took 15+ days", n: over14, tone: over14 > 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]" },
+                ].map((k) => (
+                  <div key={k.label} className="rounded-lg bg-[#F7F4EF] px-3 py-2">
+                    <p className="truncate text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">{k.label}</p>
+                    <p className={`text-lg font-bold tabular-nums ${k.tone}`}>{share(k.n)}</p>
+                    <p className="text-[11px] text-[#6B7280]">{fmtN(k.n)} of {fmtN(closedNow.length)} cases</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
