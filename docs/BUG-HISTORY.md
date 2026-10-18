@@ -229,6 +229,8 @@ Entries themselves stay newest-first.
 
 Fix = forward-only rule `canAdvanceToReadyToShip` (CONFIRMED / IN_PRODUCTION only; `src/api/lib/ready-to-ship-guard.ts`) on all four forward cascades, also inside the UPDATE's WHERE; dispatch now ships an SO still IN_PRODUCTION / CONFIRMED. Data = `scripts/fix-ready-to-ship-backslide-2026-10-17.mjs` (dry run by default; each SO goes to the status its own documents prove — invoices → INVOICED / CLOSED, all units delivered → DELIVERED, all units out → SHIPPED — with an audit row and a restore file). Regression: `tests/ready-to-ship-guard.test.mjs`.
 
+Data repair also runs server-side (2026-10-18): `GET /api/admin/fix-ready-to-ship` (read-only plan) / `POST` with `{ confirm: true }` (apply), SUPER_ADMIN, same rule as the script via `correctedReadyToShipStatus`. Runs on the worker's own DB binding, so no connection string has to leave it; the restore list goes into the audit event.
+
 ## BUG-2026-10-17-318 — A delivery return read "CN issued" with no credit note behind it `delivery` `finance` 🟢
 
 🟢 **Fixed and verified on prod 2026-10-17** (#956, #959): the reported return lists as "Awaiting credit note" and counts as open; its page says its invoice is fully paid, so no credit note can go against it — no button.

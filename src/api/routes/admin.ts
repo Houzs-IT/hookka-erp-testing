@@ -45,6 +45,7 @@ import { loadSpecialsConfig } from "../lib/specials-config";
 import { invalidateProductionListCaches } from "../lib/po-list-cache";
 import { emitAudit } from "../lib/audit";
 import { ensureInvoicePoLinkColumn } from "../lib/invoice-po-link";
+import { correctedReadyToShipStatus } from "../lib/ready-to-ship-guard";
 
 const app = new Hono<Env>();
 
@@ -2238,6 +2239,117 @@ app.post("/backfill-config-only-specials", async (c) => {
     after: { ...summary.totals, linesUpdated: lines.length, docs: summary.fix, bug: "BUG-2026-09-23-183" },
   });
   return c.json({ success: true, linesUpdated: lines.length, ...summary });
+});
+
+// ---------------------------------------------------------------------------
+// GET/POST /api/admin/fix-ready-to-ship — BUG-2026-10-17 data repair.
+//
+// Production completion used to pull shipped / invoiced SOs BACK to
+// READY_TO_SHIP (code fixed in #947). This puts every READY_TO_SHIP SO onto the
+// status its own invoices / finished-goods units prove (correctedReadyToShipStatus).
+// Status only — no stock, GL or money moves; each change writes an
+// so_status_changes row. Server-side, so no DB credential leaves the worker.
+// GET = read-only plan. POST { confirm: true } = apply. Idempotent. SUPER_ADMIN.
+// ---------------------------------------------------------------------------
+async function planReadyToShipFix(c: Parameters<typeof requireSuperAdmin>[0]) {
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const sos = (await db
+    .prepare(`SELECT id, companySOId, totalSen FROM sales_orders WHERE orgId = ? AND status = 'READY_TO_SHIP'`)
+    .bind(orgId)
+    .all<{ id: string; companySOId: string | null; totalSen: number | null }>()).results ?? [];
+  const inv = new Map<string, string[]>();
+  const units = new Map<string, string[]>();
+  const push = (m: Map<string, string[]>, k: string | null, v: string) => {
+    if (!k) return;
+    const a = m.get(k) ?? [];
+    a.push(v);
+    m.set(k, a);
+  };
+  const ids = sos.map((s) => s.id);
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    const ph = chunk.map(() => "?").join(", ");
+    // Invoices linked directly, or through their delivery order.
+    const ivRows = (await db
+      .prepare(
+        `SELECT COALESCE(i.salesOrderId, d.salesOrderId) AS soId, i.status AS status
+           FROM invoices i LEFT JOIN delivery_orders d ON d.id = i.deliveryOrderId
+          WHERE i.status <> 'CANCELLED' AND COALESCE(i.salesOrderId, d.salesOrderId) IN (${ph})`,
+      )
+      .bind(...chunk)
+      .all<{ soId: string; status: string }>()).results ?? [];
+    for (const r of ivRows) push(inv, r.soId, r.status);
+    const fgRows = (await db
+      .prepare(`SELECT soId, status FROM fg_units WHERE soId IN (${ph})`)
+      .bind(...chunk)
+      .all<{ soId: string; status: string }>()).results ?? [];
+    for (const r of fgRows) push(units, r.soId, r.status);
+  }
+  const plan: { id: string; no: string; sen: number; to: string; why: string }[] = [];
+  const kept: Record<string, number> = {};
+  for (const so of sos) {
+    const r = correctedReadyToShipStatus(inv.get(so.id) ?? [], units.get(so.id) ?? []);
+    if (!r.to) {
+      kept[r.why] = (kept[r.why] ?? 0) + 1;
+      continue;
+    }
+    plan.push({ id: so.id, no: so.companySOId ?? so.id, sen: Number(so.totalSen) || 0, to: r.to, why: r.why });
+  }
+  const byStatus: Record<string, { orders: number; valueSen: number }> = {};
+  for (const p of plan) {
+    byStatus[p.to] ??= { orders: 0, valueSen: 0 };
+    byStatus[p.to].orders += 1;
+    byStatus[p.to].valueSen += p.sen;
+  }
+  return { atReadyToShip: sos.length, toMove: plan.length, byStatus, staysReadyToShip: kept, plan };
+}
+
+app.get("/fix-ready-to-ship", async (c) => {
+  const su = requireSuperAdmin(c);
+  if (su) return su;
+  const r = await planReadyToShipFix(c);
+  return c.json({ success: true, dryRun: true, note: "Read-only. POST the same path with { confirm: true } to apply.", ...r });
+});
+
+app.post("/fix-ready-to-ship", async (c) => {
+  const su = requireSuperAdmin(c);
+  if (su) return su;
+  const body = await c.req.json().catch(() => ({}));
+  if ((body as { confirm?: unknown })?.confirm !== true) {
+    return c.json({ success: false, error: "Refusing to write without { confirm: true }." }, 400);
+  }
+  const db = c.var.DB;
+  const { plan, byStatus, staysReadyToShip } = await planReadyToShipFix(c);
+  if (plan.length === 0) return c.json({ success: true, moved: 0, note: "Nothing to do — already fixed." });
+  const now = new Date().toISOString();
+  for (let i = 0; i < plan.length; i += 100) {
+    const stmts = plan.slice(i, i + 100).flatMap((p) => [
+      // Guarded: only an SO still at READY_TO_SHIP moves, and the audit row
+      // only lands for it (WHERE EXISTS on the moved status).
+      db.prepare(`UPDATE sales_orders SET status = ?, updated_at = ? WHERE id = ? AND status = 'READY_TO_SHIP'`).bind(p.to, now, p.id),
+      db
+        .prepare(
+          `INSERT INTO so_status_changes (id, soId, fromStatus, toStatus, changedBy, timestamp, notes, autoActions)
+           SELECT ?, ?, 'READY_TO_SHIP', ?, 'System (data fix BUG-2026-10-17)', ?, ?, '[]'
+            WHERE EXISTS (SELECT 1 FROM sales_orders WHERE id = ? AND status = ? AND updated_at = ?)`,
+        )
+        .bind(`ssc-fix1017-${p.id}`, p.id, p.to, now, `Status corrected from its own documents: ${p.why}`, p.id, p.to, now),
+    ]);
+    await db.batch(stmts as never[]);
+  }
+  const left = await db
+    .prepare(`SELECT COUNT(*) AS n FROM sales_orders WHERE orgId = ? AND status = 'READY_TO_SHIP'`)
+    .bind(getOrgId(c))
+    .first<{ n: number }>();
+  await emitAudit(c, {
+    resource: "sales-orders",
+    resourceId: "fix-ready-to-ship",
+    action: "fix-ready-to-ship",
+    source: "admin",
+    after: { moved: plan.length, byStatus, restore: plan.map((p) => ({ id: p.id, no: p.no, before: "READY_TO_SHIP", after: p.to })), bug: "BUG-2026-10-17-319" },
+  });
+  return c.json({ success: true, moved: plan.length, byStatus, staysReadyToShip, stillReadyToShip: Number(left?.n ?? 0) });
 });
 
 export default app;
