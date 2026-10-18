@@ -6619,3 +6619,5 @@ Asks, in order:
 53. Defect rate: accessory should not be counted (bedframe per unit, sofa per set).
 54. Average case closing: add % to the bands; fill the empty space.
 55. Polish Finance and OCR tabs.
+56. Sales forecast: target from the Forecast P&L module, actual = invoiced (owner 2026-10-18).
+57. READY_TO_SHIP repair executed on prod (owner "执行", 2026-10-18): 836 moved, 46 stay.
