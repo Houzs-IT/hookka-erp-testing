@@ -187,12 +187,18 @@ function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; k
 function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
   const p = d.perHead;
   const tHead = useSeriesToggle();
-  const data = p.trend.map((t) => ({
+  const all = p.trend.map((t) => ({
     ym: t.ym,
     label: monthLabel(t.ym),
     "Labour cost / head": t.labourPerHeadSen === null ? null : Math.round(t.labourPerHeadSen / 100),
     "Revenue / head": t.revenuePerHeadSen === null ? null : Math.round(t.revenuePerHeadSen / 100),
+    "Labour % of revenue":
+      t.labourPerHeadSen != null && t.revenuePerHeadSen ? Math.round((t.labourPerHeadSen / t.revenuePerHeadSen) * 1000) / 10 : null,
   }));
+  // Months before the ledger starts are blank bars — start the axis at the
+  // first month with figures (owner 2026-10-18 polish).
+  const first = all.findIndex((r) => r["Revenue / head"] || r["Labour cost / head"]);
+  const data = first > 0 ? all.slice(first) : all;
   const anyData = data.some((r) => r["Revenue / head"] !== null || r["Labour cost / head"] !== null);
   return (
     <>
@@ -204,8 +210,8 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
       </div>
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle>Per head, last 12 months</CardTitle>
-          <p className="text-xs text-[#6B7280]">Click a month to open it.</p>
+          <CardTitle>Per head, by month</CardTitle>
+          <p className="text-xs text-[#6B7280]">Revenue and labour cost per head · line = labour as a % of revenue · click a month to open it.</p>
         </CardHeader>
         <CardContent>
           <div className={CHART_WRAP} style={{ width: "100%", height: 240 }}>
@@ -213,7 +219,7 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
               <div className="flex h-full items-center justify-center text-xs text-[#6B7280]">No ledger data in the last 12 months.</div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
+                <ComposedChart
                   data={data}
                   margin={{ top: 6, right: 6, bottom: 0, left: 0 }}
                   style={{ cursor: "pointer" }}
@@ -224,12 +230,14 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
                 >
                   <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
                   <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
-                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
+                  <YAxis yAxisId="rm" tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                  <YAxis yAxisId="pct" orientation="right" tick={CC_TICK} axisLine={false} tickLine={false} width={40} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, n) => (n === "Labour % of revenue" ? [`${v}%`, n] : [formatCurrency(Number(v) * 100), n])} />
                   <Legend {...tHead.legend} />
-                  <Bar dataKey="Revenue / head" hide={tHead.hide("Revenue / head")} fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
-                  <Bar dataKey="Labour cost / head" hide={tHead.hide("Labour cost / head")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
-                </BarChart>
+                  <Bar yAxisId="rm" dataKey="Revenue / head" hide={tHead.hide("Revenue / head")} fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                  <Bar yAxisId="rm" dataKey="Labour cost / head" hide={tHead.hide("Labour cost / head")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                  <Line yAxisId="pct" type="monotone" dataKey="Labour % of revenue" hide={tHead.hide("Labour % of revenue")} stroke={TEAL} strokeWidth={2.5} dot={{ r: 3 }} connectNulls isAnimationActive={false} />
+                </ComposedChart>
               </ResponsiveContainer>
             )}
           </div>

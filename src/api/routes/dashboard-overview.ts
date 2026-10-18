@@ -31,6 +31,7 @@ import {
 import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
 import {
   allocateDocsByCategory,
+  DEPT_REVENUE_ORDER,
   loadDeptRevenue,
   loadInvoiceLines,
   loadSoLines,
@@ -156,7 +157,7 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const data = await cached(c, `dashboard:overview:${orgId}:v26:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:overview:${orgId}:v27:${period}`, 60, async () => {
     const db = c.var.DB;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -995,16 +996,9 @@ app.get("/", async (c) => {
       }));
 
     // ---- Backlog per department (mirror of Planning capacityData) ----
-    const DEPARTMENTS: { code: string; name: string }[] = [
-      { code: "FAB_CUT", name: "Fabric Cutting" },
-      { code: "FAB_SEW", name: "Fabric Sewing" },
-      { code: "WOOD_CUT", name: "Wood Cutting" },
-      { code: "FOAM", name: "Foam Bonding" },
-      { code: "FRAMING", name: "Framing" },
-      { code: "WEBBING", name: "Webbing" },
-      { code: "UPHOLSTERY", name: "Upholstery" },
-      { code: "PACKING", name: "Packing" },
-    ];
+    // Same list + flow order as the progressive-revenue table (dept-revenue.ts),
+    // so departments added later (Foam Cutting, Fibre) appear here too.
+    const DEPARTMENTS = DEPT_REVENUE_ORDER.map(({ code, label }) => ({ code, name: label }));
     const backlogRows = backlogJcRes.results ?? [];
     const backlogByDept = DEPARTMENTS.map(({ code, name }) => {
       let windowTotal = 0;

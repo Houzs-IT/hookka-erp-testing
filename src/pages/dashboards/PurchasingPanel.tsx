@@ -16,15 +16,18 @@ import type { Overview } from "./dashboard-widgets-lib";
 //   • supplier-invoice spend for the period vs the period before
 //   • purchases as a % of production revenue (same base as Costing)
 //   • open POs, goods waiting to arrive, GRNs waiting for QC (from the overview)
-//   • what we owe suppliers now, and how much of it is past due
+//   • raw-material stock on hand at the last stock take (owner 2026-10-18:
+//     "we owe suppliers change to raw material 的 stock balance") — the P&L's
+//     closing stock, not the live system balance, which is unreliable until
+//     the BOMs are complete (owner ruling 2026-10-17)
 //   • six months of spend with its % of production revenue
 //   • top suppliers by invoiced amount, with their share
 // Supplier invoices are read once (GET /api/purchase-invoices, cancelled out).
 // ---------------------------------------------------------------------------
 type Pi = { piNo?: string | null; invoiceDate: string | null; dueDate: string | null; amountSen: number | string | null; paidAmountSen: number | string | null; status: string; supplierName: string | null };
 type Po = { poNo?: string | null; supplierName?: string | null; orderDate?: string | null; expectedDate?: string | null; totalSen?: number | string | null; status: string };
-type Aging = { supplierName: string; notDueSen: number; d30Sen: number; d60Sen: number; d90Sen: number; d120Sen: number; over120Sen: number; totalSen: number };
-type Drill = "spend" | "share" | "po" | "owe" | null;
+type Drill = "spend" | "share" | "po" | "stock" | null;
+type CostStructure = { data?: { cols?: string[]; groups?: { group?: string; description?: string; months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
 
 const INK = "#6B5C32";
 const GOLD = "#C9A24B";
@@ -63,12 +66,9 @@ export function PurchasingPanel({ period }: { period: Period }) {
 
   const { data: ov } = useCachedJson<Overview>(`/api/dashboard/overview?period=${key}`);
   const { data: piResp } = useCachedJson<{ data?: Pi[] }>("/api/purchase-invoices");
-  // What we owe suppliers = accounting's own figure (owner audit 2026-10-17):
-  // the trade-creditors control net of advances already paid, past due from
-  // its aging. Summing unpaid invoices ourselves read RM 377k against the
-  // ledger's RM 347k — it missed RM 22.7k of advances. Roles without
-  // accounting access fall back to the invoice sum, labelled as such.
-  const { data: apResp } = useCachedJson<{ data?: { netOutstandingSen?: number; aging?: Aging[] } }>("/api/accounting/ap-control");
+  // Raw-material stock = the P&L's closing stock from the latest stock take
+  // (GET /api/accounting/cost-structure, the source Costing uses).
+  const { data: csResp } = useCachedJson<CostStructure>("/api/accounting/cost-structure");
   // Layer 2 (owner 2026-10-17: "点到那个数据都可以深挖"): each tile opens its rows.
   const [drill, setDrill] = useState<Drill>(null);
   const { data: poResp } = useCachedJson<{ data?: Po[] }>(drill === "po" ? "/api/purchase-orders" : null);
@@ -135,6 +135,30 @@ export function PurchasingPanel({ period }: { period: Period }) {
     };
   }, [piResp, prodRev, months, prevMonths, trendMonths, today]);
 
+  // Latest finished month that has a stock take, and the one before it.
+  const stock = useMemo(() => {
+    const cols = csResp?.data?.cols ?? [];
+    const groups = csResp?.data?.groups ?? [];
+    const closingAt = (i: number) => {
+      let sum = 0;
+      let any = false;
+      for (const g of groups) {
+        const m = g.months?.[i];
+        if (m?.closing != null && m.closing !== 0) { sum += m.closing; any = true; }
+      }
+      return any ? sum : null;
+    };
+    const taken = cols.map((ym, i) => ({ ym, i, sen: ym < today.slice(0, 7) ? closingAt(i) : null })).filter((x): x is { ym: string; i: number; sen: number } => x.sen != null);
+    const last = taken[taken.length - 1];
+    if (!last) return null;
+    const prev = taken[taken.length - 2] ?? null;
+    const lines = groups
+      .map((g) => ({ name: g.description || g.group || "—", sen: g.months?.[last.i]?.closing ?? 0, prevSen: prev ? g.months?.[prev.i]?.closing ?? 0 : null }))
+      .filter((l) => l.sen || l.prevSen)
+      .sort((a, b) => b.sen - a.sen);
+    return { ym: last.ym, sen: last.sen, prevYm: prev?.ym ?? null, prevSen: prev?.sen ?? null, lines };
+  }, [csResp, today]);
+
   const pur = ov?.purchasing;
   const label = key === dp.key && dp.kind !== "month" ? (dp.kind === "year" ? key : `Q${key.slice(6)} ${key.slice(0, 4)}`) : monthLabel(lastYm);
   const isLive = lastYm === today.slice(0, 7);
@@ -161,14 +185,14 @@ export function PurchasingPanel({ period }: { period: Period }) {
             tone={calc.share != null && calc.prevShare != null ? (calc.share > calc.prevShare ? "bad" : "good") : undefined}
           />
           <Stat label="Outstanding POs" onClick={() => setDrill("po")} value={pur ? rm(pur.outstandingPOValueSen) : "…"} sub={pur ? `${fmtN(pur.openPOCount)} POs open · ${fmtN(pur.itemsPendingReceipt)} items still to arrive` : undefined} />
-          {apResp?.data?.netOutstandingSen != null ? (() => {
-            const aging = apResp.data.aging ?? [];
-            const total = apResp.data.netOutstandingSen ?? 0;
-            const pastDue = aging.reduce((a, r) => a + (r.totalSen - r.notDueSen), 0);
-            return <Stat label="We owe suppliers" onClick={() => setDrill("owe")} value={rm(total)} sub={`${rm(pastDue)} past due · trade creditors, net of advances`} tone={pastDue > 0 ? "bad" : undefined} />;
-          })() : (
-            <Stat label="We owe suppliers" value={piResp ? rm(calc.owed) : "…"} sub={piResp ? `${rm(calc.overdue)} past due · from unpaid invoices` : undefined} tone={calc.overdue > 0 ? "bad" : undefined} />
-          )}
+          <Stat
+            label="Raw material stock"
+            onClick={stock ? () => setDrill("stock") : undefined}
+            value={stock ? rm(stock.sen) : csResp ? "—" : "…"}
+            sub={stock
+              ? `stock take ${monthLabel(stock.ym)}${stock.prevSen ? ` · ${stock.sen >= stock.prevSen ? "▲" : "▼"} ${Math.abs(((stock.sen - stock.prevSen) / stock.prevSen) * 100).toFixed(0)}% vs ${monthLabel(stock.prevYm ?? "").slice(0, 3)}` : ""}`
+              : csResp ? "no stock take recorded yet" : undefined}
+          />
         </div>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
@@ -213,8 +237,8 @@ export function PurchasingPanel({ period }: { period: Period }) {
         {drill && (
           <DashModal
             wide
-            title={drill === "spend" ? `Supplier invoices · ${label}` : drill === "share" ? "Purchases vs production revenue · by month" : drill === "po" ? "Outstanding purchase orders" : "What we owe suppliers · aging"}
-            subtitle={drill === "spend" ? `${calc.periodPis.length} invoices · ${rm(calc.spend)}` : drill === "owe" ? "Trade creditors, net of advances — accounting's own aging" : undefined}
+            title={drill === "spend" ? `Supplier invoices · ${label}` : drill === "share" ? "Purchases vs production revenue · by month" : drill === "po" ? "Outstanding purchase orders" : `Raw material stock · stock take ${stock ? monthLabel(stock.ym) : ""}`}
+            subtitle={drill === "spend" ? `${calc.periodPis.length} invoices · ${rm(calc.spend)}` : drill === "stock" ? "Closing stock per P&L account, from the month-end stock take" : undefined}
             onClose={() => setDrill(null)}
           >
             <div className="max-h-[60vh] overflow-y-auto">
@@ -246,12 +270,13 @@ export function PurchasingPanel({ period }: { period: Period }) {
                     </tbody>
                   </>
                 )}
-                {drill === "owe" && (
+                {drill === "stock" && stock && (
                   <>
-                    <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]"><th className="py-1.5">Supplier</th><th className="py-1.5 text-right">Not due</th><th className="py-1.5 text-right">1–30 d</th><th className="py-1.5 text-right">31–60 d</th><th className="py-1.5 text-right">61–90 d</th><th className="py-1.5 text-right">90+ d</th><th className="py-1.5 text-right">Total</th></tr></thead>
-                    <tbody>{[...(apResp?.data?.aging ?? [])].sort((a, b) => b.totalSen - a.totalSen).map((a) => (
-                      <tr key={a.supplierName} className="border-b border-[#F0ECE6]"><td className="py-1.5">{a.supplierName}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{rm(a.notDueSen)}</td><td className="py-1.5 text-right tabular-nums">{rm(a.d30Sen)}</td><td className="py-1.5 text-right tabular-nums">{rm(a.d60Sen)}</td><td className="py-1.5 text-right tabular-nums">{rm(a.d90Sen)}</td><td className="py-1.5 text-right tabular-nums text-[#9A3A2D]">{rm(a.d120Sen + a.over120Sen)}</td><td className="py-1.5 text-right tabular-nums font-semibold">{rm(a.totalSen)}</td></tr>
+                    <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]"><th className="py-1.5">Account</th>{stock.prevYm && <th className="py-1.5 text-right">{monthLabel(stock.prevYm)}</th>}<th className="py-1.5 text-right">{monthLabel(stock.ym)}</th></tr></thead>
+                    <tbody>{stock.lines.map((l) => (
+                      <tr key={l.name} className="border-b border-[#F0ECE6]"><td className="py-1.5">{l.name}</td>{stock.prevYm && <td className="py-1.5 text-right tabular-nums text-[#6B7280]">{rm(l.prevSen ?? 0)}</td>}<td className="py-1.5 text-right tabular-nums font-semibold">{rm(l.sen)}</td></tr>
                     ))}</tbody>
+                    <tfoot><tr className="font-semibold"><td className="py-1.5">Total</td>{stock.prevYm && <td className="py-1.5 text-right tabular-nums">{rm(stock.prevSen ?? 0)}</td>}<td className="py-1.5 text-right tabular-nums">{rm(stock.sen)}</td></tr></tfoot>
                   </>
                 )}
               </table>

@@ -215,25 +215,22 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
     if (!drill || drill.kind !== "month") return [];
     return [...byDay.entries()].filter(([d]) => d.startsWith(drill.ym)).sort(([a], [b]) => a.localeCompare(b));
   }, [drill, byDay]);
-  const row = (label: string, get: (b: Bucket) => number | null, opts: { pct?: boolean; strong?: boolean; muted?: boolean; onPick?: (ym: string) => void } = {}) => (
-    <tr className={`border-b border-[#F0ECE6] ${opts.strong ? "font-semibold" : ""}`}>
-      <td className={`py-2 pr-3 ${opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}`}>{label}</td>
-      {cols.map((c) => {
-        const v = get(c.b);
-        const p = opts.pct && v != null && !Number.isNaN(v) ? pctOf(v, c.b.revenue) : null;
-        return (
-          <td key={c.label} className={`py-2 pl-3 text-right tabular-nums whitespace-nowrap ${opts.onPick && c.ym ? "cursor-pointer hover:bg-[#FAF8F4]" : ""}`} onClick={opts.onPick && c.ym ? () => opts.onPick!(c.ym!) : undefined}>
-            <span className={opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}>{v == null ? "payroll only" : Number.isNaN(v) ? "…" : rm(v)}</span>
-            {opts.pct && <span className="ml-2 inline-block min-w-[46px] rounded bg-[#F5F2ED] px-1.5 py-0.5 text-[11px] text-[#6B5C32]">{pctTxt(p)}</span>}
-          </td>
-        );
-      })}
-    </tr>
-  );
+  // One month per ROW (owner 2026-10-18: the old months-as-columns table ran
+  // off the card and clipped its row labels). Each cost cell is the amount
+  // with its % of production revenue under it.
+  const cell = (v: number | null, rev: number, opts: { pct?: boolean; muted?: boolean } = {}) => {
+    const p = opts.pct && v != null && !Number.isNaN(v) ? pctOf(v, rev) : null;
+    return (
+      <>
+        <div className={`whitespace-nowrap ${opts.muted ? "text-[#9CA3AF]" : "text-[#1F1D1B]"}`}>{v == null ? "payroll only" : Number.isNaN(v) ? "…" : rm(v)}</div>
+        {opts.pct && <div className="text-[11px] text-[#9C8A5E]">{pctTxt(p)}</div>}
+      </>
+    );
+  };
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
-      <Card className="xl:col-span-2">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <Card>
         <CardHeader className="pb-2">
           <CardTitle>Costing vs production revenue</CardTitle>
           <p className="mt-0.5 text-xs text-[#9CA3AF]">% = share of production revenue · materials used + labour = cost</p>
@@ -253,33 +250,46 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead>
-                <tr className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">
-                  <th className="py-1.5 text-left font-semibold" />
-                  {cols.map((c) => (
-                    <th key={c.label} className={`py-1.5 pl-3 text-right font-semibold ${c.ym ? "cursor-pointer hover:text-[#6B5C32]" : ""}`} onClick={c.ym ? () => setDrill({ kind: "month", ym: c.ym! }) : undefined} title={c.ym ? "Click for each day" : undefined}>
-                      <div className="text-[#6B7280]">{c.label}</div>
-                      <div className="font-normal normal-case tracking-normal">{c.sub}</div>
-                    </th>
-                  ))}
+                <tr className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
+                  <th className="py-1.5 pr-2 text-left font-semibold">Month</th>
+                  <th className="py-1.5 pl-2 text-right font-semibold">Production revenue</th>
+                  <th className="py-1.5 pl-2 text-right font-semibold">Materials</th>
+                  <th className="py-1.5 pl-2 text-right font-semibold">Labour</th>
+                  <th className="py-1.5 pl-2 text-right font-semibold">Total cost</th>
                 </tr>
               </thead>
               <tbody>
-                {row("Production revenue", (b) => b.revenue, { strong: true })}
-                {row("Materials used (P&L)", (b) => (pnlReady ? b.material : NaN), { pct: true, onPick: (ym) => setDrill({ kind: "materials", ym }) })}
-                {row("Labour", (b) => (canLabour ? b.labour : null), { pct: true })}
-                {row("Total cost", (b) => (pnlReady ? cost(b) : NaN), { pct: true, strong: true })}
-                {row("Purchases (supplier invoices)", (b) => b.purchases, { pct: true, muted: true })}
+                {cols.map((c) => (
+                  <tr key={c.label} className="border-b border-[#F0ECE6] align-top">
+                    <td className={`py-2 pr-2 ${c.ym ? "cursor-pointer hover:text-[#6B5C32]" : ""}`} onClick={c.ym ? () => setDrill({ kind: "month", ym: c.ym! }) : undefined} title={c.ym ? "Click for each day" : undefined}>
+                      <div className="whitespace-nowrap font-semibold text-[#1F1D1B]">{c.label}</div>
+                      <div className="text-[10.5px] text-[#9CA3AF]">{c.sub}</div>
+                    </td>
+                    <td className="py-2 pl-2 text-right tabular-nums font-semibold">{cell(c.b.revenue, c.b.revenue)}</td>
+                    <td className={`py-2 pl-2 text-right tabular-nums ${c.ym ? "cursor-pointer hover:bg-[#FAF8F4]" : ""}`} onClick={c.ym ? () => setDrill({ kind: "materials", ym: c.ym! }) : undefined} title={c.ym ? "Click for the P&L lines" : undefined}>
+                      {cell(pnlReady ? c.b.material : NaN, c.b.revenue, { pct: true })}
+                    </td>
+                    <td className="py-2 pl-2 text-right tabular-nums">{cell(canLabour ? c.b.labour : null, c.b.revenue, { pct: true })}</td>
+                    <td className="py-2 pl-2 text-right tabular-nums font-semibold">{cell(pnlReady ? cost(c.b) : NaN, c.b.revenue, { pct: true })}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
+          <p className="mt-2 text-[11.5px] text-[#6B7280]">
+            Purchases (supplier invoices, stock bought — not used):{" "}
+            {cols.map((c, i) => (
+              <span key={c.label} className="whitespace-nowrap">{i ? " · " : ""}{c.label} <b className="tabular-nums">{rm(c.b.purchases)}</b> ({pctTxt(pctOf(c.b.purchases, c.b.revenue))})</span>
+            ))}
+          </p>
           <p className="mt-2 text-[11px] text-[#9CA3AF]">
-            Materials used = the P&L's raw materials (opening stock + purchases − closing stock from the stock take). A month without its stock take yet is estimated at the last finished month's rate. Purchases are stock bought, not used — reference only, not added to cost.
+            Materials used = the P&L's raw materials (opening stock + purchases − closing stock from the stock take). A month without its stock take yet is estimated at the last finished month's rate. Purchases are reference only, not added to cost.
             {!canLabour && " Labour needs payroll access, so cost here is materials only."}
           </p>
         </CardContent>
       </Card>
 
-      <Card className="xl:col-span-3">
+      <Card>
         <CardHeader className="pb-2">
           <CardTitle>Cost trend · {ytd ? "by month" : "by day"}</CardTitle>
           <p className="mt-0.5 text-xs text-[#9CA3AF]">Each {ytd ? "month" : "day"}: production revenue (light) beside its cost (materials + labour) — the gap is the margin · line = cost % · click a bar to focus it</p>

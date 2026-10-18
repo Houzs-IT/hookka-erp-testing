@@ -6605,3 +6605,17 @@ Asks, in order:
 43. Every number on the dashboard clickable → layer-2 detail popup.
 - /m: phone tabs now render the desktop merged views (tabs/MergedTabs.tsx); Overview removed; Today's problems strip; Quarter/Year picker, Day only on Employees. Verified no horizontal overflow at 375px.
 - Service defect rate card (cases ÷ units delivered, by category) — needs the feed update (prototype cache v4).
+
+### 2026-10-18 owner review, round 4
+44. READY_TO_SHIP repair done by Claude, not by pasting a DB URL → server-side admin endpoint (PR #988).
+45. Sales forecast vs production revenue vs P&L revenue differ — explained (orders / output / invoices); owner to pick the forecast basis.
+46. Why so many SOs at READY_TO_SHIP — the backslide bug (#947) + repair (#988).
+47. By Status (live): add an average-per-day figure, to see the supply/demand balance.
+48. Department Backlog: include the newly added departments; fill the empty space.
+49. Plant Load: gauge off-centre, numbers overflow their boxes — fix fonts.
+50. Department tabs truncated (Due within 3 days worklist) — sweep every dashboard page in Chrome for clipped text.
+51. Purchasing: "We owe suppliers" → raw-material stock balance.
+52. Costing vs production revenue table: labels clipped — rework the layout.
+53. Defect rate: accessory should not be counted (bedframe per unit, sofa per set).
+54. Average case closing: add % to the bands; fill the empty space.
+55. Polish Finance and OCR tabs.

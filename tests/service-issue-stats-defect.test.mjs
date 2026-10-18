@@ -23,3 +23,13 @@ test("defectRates: per category, unspecified cases have no rate, other months ig
   assert.deepEqual([r.BEDFRAME.cases, r.BEDFRAME.rate], [1, 0.5]);
   assert.equal(r.UNSPECIFIED.rate, null);
 });
+
+test("defectRates: accessories are left out of cases and units (owner 2026-10-18)", () => {
+  const cases = [
+    { createdDate: "2026-10-03", productCategories: ["ACCESSORY"] },
+    { createdDate: "2026-10-04", productCategories: ["ACCESSORY", "SOFA"] },
+  ];
+  const shipped = [{ ym: "2026-10", category: "ACCESSORY", units: 134 }, { ym: "2026-10", category: "SOFA", units: 10 }];
+  const r = defectRates(cases, shipped, ["2026-10"]);
+  assert.deepEqual(r.map((x) => [x.category, x.cases, x.units]), [["SOFA", 1, 10]]);
+});

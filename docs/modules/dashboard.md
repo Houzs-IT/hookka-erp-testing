@@ -77,6 +77,10 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - **recharts is lazy-loaded** via `./charts.tsx` (~357 KB). Keep chart code there, not in `index.tsx`, or you regress first-paint.
 - **Only snapshot freshness is test-covered** — `tests/snapshot-freshness.test.mjs` + `tests/snapshot-freshness-latestts.test.mjs`. The KPI math itself has no unit tests; verify live on prod.
 
+- **Department lists come from one place** (2026-10-18): Department Backlog uses `DEPT_REVENUE_ORDER` (`src/api/lib/dept-revenue.ts`) — add a production department there, not to a local list, or it silently goes missing from the backlog (Foam Cutting / Fibre did).
+- **Purchasing "Raw material stock"** is the P&L closing stock from the last stock take (`/api/accounting/cost-structure`), never the live system RM balance — that balance is unreliable until BOMs are complete (owner ruling 2026-10-17).
+- **Defect rate counts bedframe + sofa only** — accessories are excluded from both cases and units (owner 2026-10-18).
+
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:58`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
 - **Add a chart** → put the recharts component in `charts.tsx` and lazy-import it (keep recharts out of `index.tsx`); pass computed data + colors as props (parent owns the numbers).
