@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-327 (branch `fix/staging-duplicate-usepermissions-import`, to `staging`; numbers up to 326 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: staging<-main sync (branch `chore/sync-staging-from-main-1016`): both sides kept. Bugs that main logged again under a different number keep staging's number with a "Ported to main" line. Where main reused a number for another entry, main's copy is suffixed `b` (BUG-2026-10-16-293b, BUG-2026-10-14-288b, BUG-2026-09-30-223b).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-304 (branch `fix/self-apply-skip-existing-column`, to `main`; 302 is taken on `staging`, 303 on `main`); a log, so "verified" means the entry matches the code on that branch.
 > **Last verified: 2026-10-16**: BUG-2026-10-16-302 corrected after the #907 staging run (the cut-off was the app's 30 s timeout after a server stall; branch `docs/bug302-staging-verified`).
@@ -177,6 +178,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-18-327 — A staging<-main sync merge left a duplicate import and every staging deploy failed to build `infrastructure` `production` 🟡
+
+🟡 **Fixed on branch** (`fix/staging-duplicate-usepermissions-import` → `staging`). Found 2026-10-18 while checking why the merged PR #919 (phone Sales Order detail) never reached the staging site.
+
+**Symptom.** The staging deploy failed in `npm run build` with `Identifier 'usePermissions' has already been declared` in `src/pages/production/index.tsx`. Per the GitHub `deploy` check, the last good staging deploy is `809422cb` (#914, 2026-10-16 09:28 UTC); `7be89ef4` (#916), `1f09a13e` (#920) and `c27c5aba` (#919) all failed, so none of those three PRs is on the staging site. Production (`main`) is not affected: `upstream/main` has one import.
+
+**Root cause.** Staging had `import { usePermissions } from "@/lib/use-permission"` as line 7 since 2026-09-17 (`dbb38a1d`); main added the same import as line 2 on 2026-10-15 (`35a03e27`). The sync merge `a5832856` ("chore: sync staging from main (2026-10-16)", PR #916) kept both, without a conflict because they sit on different lines. `npx tsc -p tsconfig.app.json --noEmit` reports it (`TS2300: Duplicate identifier 'usePermissions'`), so the strict check that CLAUDE.md requires before every push was not run on the merged tree.
+
+**Fix.** Remove the line-7 import and keep line 2, so the import block matches `main` and the next sync does not reintroduce it. No behaviour change: the one remaining import is the same symbol from the same module, used by the existing `usePermissions()` call.
+
+**Regression.** No new test: the build and `npx tsc -p tsconfig.app.json --noEmit` already fail on a duplicate import. The lesson is process: after any sync merge, run `npm run build:strict` on the merged tree before pushing it.
 
 ---
 
