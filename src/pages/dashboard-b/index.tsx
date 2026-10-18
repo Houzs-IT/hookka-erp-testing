@@ -10,6 +10,7 @@
 // ===========================================================================
 import { lazy, Suspense, useMemo, useState } from "react";
 import { CompletedDrill } from "./CompletedDrill";
+import { InvoiceListDrill, OutstandingDrill, PendingDeliveryDrill, SoListDrill } from "./KpiDrills";
 import { parseDashPeriod } from "../../api/lib/dash-period";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1196,6 +1197,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           accent={C_SO}
           spark={soSpark}
           delta={isMonthScoped ? null : salesDelta}
+          onClick={() => setDrill({ title: `${salesLabel} — orders`, subtitle: "Confirmed sales orders by SO date", node: <SoListDrill period={period} kind="sales" /> })}
         />
         {/* This Month Invoices — Σ invoice totals (excl. cancelled) by invoice
             date for the selected month (all-time = cumulative). Invoice-sourced,
@@ -1208,6 +1210,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           accent={C_PROD}
           spark={invSpark}
           delta={isMonthScoped ? null : invoiceDelta}
+          onClick={() => setDrill({ title: `${invoicesLabel} — invoices`, subtitle: "Invoices by invoice date, cancelled excluded", node: <InvoiceListDrill period={period} /> })}
         />
         {/* Pending Delivery (consolidated) — one card for everything made but
             not yet delivered: pending delivery (made, not on a dispatched DO)
@@ -1227,6 +1230,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           accent={C_GREEN}
           loading={pendingL}
           tag="live"
+          onClick={() => setDrill({ title: "Pending Delivery — by stage", subtitle: "Live: everything made but not yet delivered", node: <PendingDeliveryDrill pendingSen={pendingDeliveryValueSen} dispatchSen={dispatchChain.pendingDispatchSen} transitSen={dispatchChain.inTransitSen} /> })}
         />
         <KTile
           label="Outstanding"
@@ -1236,6 +1240,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           accent={C_INV}
           loading={soL}
           tag="live"
+          onClick={() => setDrill({ title: "Outstanding — how it adds up", subtitle: "Confirmed order value minus value delivered (live)", node: <OutstandingDrill /> })}
         />
       </div>
       )}

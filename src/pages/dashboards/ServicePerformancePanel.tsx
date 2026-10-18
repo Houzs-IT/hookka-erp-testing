@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useSeriesToggle } from "./use-series-toggle";
 import { BarChart, Bar, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import {
   inPeriod, inFocus, monthLabel, periodLabel, previousPeriod, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import { TallyList } from "./ServiceIssuesPanel";
+import { DashModal } from "./DashModal";
 import { ServiceCaseNo } from "./ServiceCaseLink";
 import { useServiceCaseLinks } from "./use-service-case-links";
 import {
@@ -49,6 +50,8 @@ export function ServicePerformancePanel({
   const ytd = period.mode === "ytd";
   const bucketOf = (d: string) => (ytd ? d.slice(0, 7) : d);
   const { canOpen, rowProps } = useServiceCaseLinks();
+  // Layer 2 behind each number in the KPI row.
+  const [drill, setDrill] = useState<"opened" | "closed" | "open" | "overdue" | null>(null);
   const tClose = useSeriesToggle();
   const tFlow = useSeriesToggle();
 
@@ -142,12 +145,45 @@ export function ServicePerformancePanel({
           too); open / overdue = right now, whenever they were logged.
           "Not started" is the OPEN status (logged, nobody on it yet). */}
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
-        <Kpi label="Opened" value={fmtN(openedInFocus.length)} sub={`new cases logged · ${win}`} />
-        <Kpi label="Closed" value={fmtN(closedNow.length)} sub={`closed · ${win} (any logged date)`} valueColorClass="text-[#4F7C3A]" />
-        <Kpi label="Still open now" value={fmtN(open.length)} sub={`${fmtN(open.filter((c) => c.status === "OPEN").length)} not started · ${fmtN(open.filter((c) => c.status === "IN_PROGRESS").length)} in progress`} valueColorClass="text-[#9C6F1E]" />
-        <Kpi label="Overdue now" value={fmtN(open.filter((c) => c.daysOverdue > 0).length)} sub={`open more than ${threshold} days`} valueColorClass="text-[#9A3A2D]" />
-        <Kpi label="Avg case closing" value={closeNow.avg === null ? "—" : `${closeNow.avg} d`} sub={`${fmtN(closeNow.n)} closed · ${dl ? dl.text : "no previous-period comparison"}`} valueColorClass={dl?.good == null ? undefined : dl.good ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
+        <Kpi label="Opened" onClick={() => setDrill("opened")} value={fmtN(openedInFocus.length)} sub={`new cases logged · ${win}`} />
+        <Kpi label="Closed" onClick={() => setDrill("closed")} value={fmtN(closedNow.length)} sub={`closed · ${win} (any logged date)`} valueColorClass="text-[#4F7C3A]" />
+        <Kpi label="Still open now" onClick={() => setDrill("open")} value={fmtN(open.length)} sub={`${fmtN(open.filter((c) => c.status === "OPEN").length)} not started · ${fmtN(open.filter((c) => c.status === "IN_PROGRESS").length)} in progress`} valueColorClass="text-[#9C6F1E]" />
+        <Kpi label="Overdue now" onClick={() => setDrill("overdue")} value={fmtN(open.filter((c) => c.daysOverdue > 0).length)} sub={`open more than ${threshold} days`} valueColorClass="text-[#9A3A2D]" />
+        <Kpi label="Avg case closing" onClick={() => setDrill("closed")} value={closeNow.avg === null ? "—" : `${closeNow.avg} d`} sub={`${fmtN(closeNow.n)} closed · ${dl ? dl.text : "no previous-period comparison"}`} valueColorClass={dl?.good == null ? undefined : dl.good ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
       </div>
+
+      {drill && (() => {
+        const list = drill === "opened" ? openedInFocus : drill === "closed" ? closedNow : drill === "open" ? open : open.filter((c) => c.daysOverdue > 0);
+        const title = drill === "opened" ? `Cases opened · ${win}` : drill === "closed" ? `Cases closed · ${win}` : drill === "open" ? "Cases still open" : "Cases overdue";
+        return (
+          <DashModal wide title={`${title} · ${fmtN(list.length)}`} subtitle={drill === "closed" ? "Days = whole days from logged to closed" : drill === "opened" ? "Logged in the period" : "Days = open since logged"} onClose={() => setDrill(null)}>
+            <div className="max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-[12.5px]">
+                <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
+                  <th className="py-1.5">Case</th><th className="py-1.5">Customer</th><th className="py-1.5">Issue</th><th className="py-1.5">Logged</th><th className="py-1.5">Closed</th><th className="py-1.5">Status</th><th className="py-1.5 text-right">Days</th>
+                </tr></thead>
+                <tbody>
+                  {[...list].sort((a, b) => b.createdDate.localeCompare(a.createdDate)).map((c) => {
+                    const days = c.status === "CLOSED" && c.closedDate ? daysToClose(c) : c.ageDays;
+                    return (
+                      <tr key={c.id} {...rowProps(c.id, "border-b border-[#F0ECE6]")}>
+                        <td className="py-1.5 font-mono whitespace-nowrap"><ServiceCaseNo id={c.id} caseNo={c.caseNo} canOpen={canOpen} /></td>
+                        <td className="py-1.5">{c.customer ?? "—"}</td>
+                        <td className="py-1.5 max-w-[280px] truncate text-[#6B7280]">{(c as { issue?: string }).issue || "—"}</td>
+                        <td className="py-1.5 whitespace-nowrap text-[#6B7280]">{c.createdDate}</td>
+                        <td className="py-1.5 whitespace-nowrap text-[#6B7280]">{c.closedDate ?? "—"}</td>
+                        <td className="py-1.5 text-[#6B7280]">{c.status}</td>
+                        <td className={`py-1.5 text-right tabular-nums ${c.daysOverdue > 0 ? "font-semibold text-[#9A3A2D]" : ""}`}>{days == null ? "—" : `${days} d`}</td>
+                      </tr>
+                    );
+                  })}
+                  {list.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-[#9CA3AF]">None.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </DashModal>
+        );
+      })()}
 
       {/* Issues by category sits right under the numbers (owner 2026-10-17). */}
       {afterKpis}
