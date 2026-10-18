@@ -81,6 +81,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - **Purchasing "Raw material stock"** is the P&L closing stock from the last stock take (`/api/accounting/cost-structure`), never the live system RM balance — that balance is unreliable until BOMs are complete (owner ruling 2026-10-17).
 - **Defect rate counts bedframe + sofa only** — accessories are excluded from both cases and units (owner 2026-10-18).
 
+- **Sales forecast** (2026-10-18, owner): target = sales keyed in **Forecast P&L** (`GET /api/accounting/forecast`, kv `forecast_pnl`, months[ym].salesSen; quarter/year = sum of keyed months); actual = **invoiced** by invoice date. No rolling-average fallback — an unkeyed month shows no target. Viewers without Accounting read see actuals only.
+
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:58`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
 - **Add a chart** → put the recharts component in `charts.tsx` and lazy-import it (keep recharts out of `index.tsx`); pass computed data + colors as props (parent owns the numbers).

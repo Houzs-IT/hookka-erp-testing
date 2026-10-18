@@ -20,7 +20,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
   CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
-  inPeriod, inFocus, periodLabel, monthLabel, quarterOfPeriod, quarterKeyOf, shiftMonth, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  inPeriod, inFocus, periodLabel, monthLabel, quarterOfPeriod, quarterKeyOf, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { LiveBadge } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { buildSalesTrend, computeSalesKpis } from "./dashboard-sales-lib";
@@ -144,67 +144,66 @@ export function SalesOrdersView({
 
   const kpis = useMemo(() => computeSalesKpis(scopedOrders), [scopedOrders]);
 
-  // Sales forecast — the TARGET is the 3-month rolling average of the months
-  // before it, which is what "actual vs target" means here; this book carries
-  // no externally-set revenue target anywhere in the feed, and inventing one
-  // would put a number on the page that nothing backs. A month is "hit" when
-  // actual >= that rolling target. Future months carry the last known target
-  // forward as a projection and have no actual, so they draw as empty slots
-  // rather than as zero — a zero would read as "sold nothing".
-  // Sales forecast (owner 2026-10-17: "这个也是 by this month? monthly /
-  // quarter / yearly 怎么做"). The bars follow the period picker: months on
-  // Month, quarters on Quarter, years on Year. Target for a bucket = the
-  // average of the 3 FINISHED buckets before it (null until 3 exist). The
-  // bucket in progress is NOT extrapolated any more — a run-rate turned 17
-  // lumpy days of October into RM 660k — it shows what is sold so far plus
-  // the amount still needed to reach its target. Future buckets carry the
-  // last target forward as a plan line.
+  // Sales forecast (owner 2026-10-18: "sales forecast 应该用我的 forecast 的
+  // module 取, actual sales 应该根据 invoice 的"):
+  //   • Target = the sales the owner keyed per month in Forecast P&L
+  //     (GET /api/accounting/forecast → months[ym].salesSen). A quarter / year
+  //     target is the sum of its keyed months; a month with nothing keyed has
+  //     no target (no rolling-average stand-in — that was a made-up number).
+  //   • Actual = invoiced value by invoice date (cancelled out) — the same
+  //     figure as the "This month invoices" tile and the P&L's sales.
+  // Bars follow the period picker: months on Month, quarters on Quarter,
+  // years on Year. The bucket in progress shows invoiced so far plus what is
+  // still needed; future buckets show the keyed target only.
   const fcUnit: "month" | "quarter" | "year" = period.mode === "ytd" ? "year" : quarterOfPeriod(period) ? "quarter" : "month";
   const tFc = useSeriesToggle();
+  const { data: fcResp, failure: fcFailure } = useCachedJson<{ data?: { months?: Record<string, { salesSen?: number }> } }>("/api/accounting/forecast");
+  const { data: invResp } = useCachedJson<{ data?: { invoiceDate?: string | null; status: string; totalSen?: number | null }[] }>("/api/invoices");
   const forecast = useMemo(() => {
     const curYm = todayYmd.slice(0, 7);
     const keyOf = (ym: string) => (fcUnit === "year" ? ym.slice(0, 4) : fcUnit === "quarter" ? quarterKeyOf(ym) : ym);
     const labelOf = (k: string) => (fcUnit === "year" ? k : fcUnit === "quarter" ? `Q${k.slice(6)} ${k.slice(2, 4)}` : `${monthLabel(k).slice(0, 3)} ${k.slice(2, 4)}`);
-    const nextKey = (k: string) => {
-      if (fcUnit === "year") return String(Number(k) + 1);
-      if (fcUnit === "quarter") { const y = Number(k.slice(0, 4)); const q = Number(k.slice(6)); return q === 4 ? `${y + 1}-Q1` : `${y}-Q${q + 1}`; }
-      return shiftMonth(k, 1);
-    };
     const curKey = keyOf(curYm);
-    const sums = new Map<string, number>();
-    for (const d of allByDay) sums.set(keyOf(d.date.slice(0, 7)), (sums.get(keyOf(d.date.slice(0, 7))) ?? 0) + d.revenueSen);
-    const keys = [...sums.keys()].filter((k) => k <= curKey).sort();
-    const done = keys.filter((k) => k < curKey);
-    const targetFor = (i: number, list: string[]) => {
-      const prior = list.slice(Math.max(0, i - 3), i);
-      return prior.length === 3 ? prior.reduce((t, k) => t + (sums.get(k) ?? 0), 0) / 3 : null;
-    };
-    type Row = { month: string; iso: string; Actual: number | null; "Still needed": number | null; Target: number | null; hit: boolean | null; projected: boolean; inProgress: boolean };
-    const out: Row[] = done.map((k, i) => {
-      const t = targetFor(i, done);
-      const v = sums.get(k) ?? 0;
-      return { month: labelOf(k), iso: k, Actual: Math.round(v / 100), "Still needed": null, Target: t == null ? null : Math.round(t / 100), hit: t == null ? null : v >= t, projected: false, inProgress: false };
-    });
-    const curT = targetFor(done.length, done);
-    const curV = sums.get(curKey) ?? 0;
-    out.push({
-      month: labelOf(curKey), iso: curKey, Actual: Math.round(curV / 100),
-      "Still needed": curT == null ? null : Math.max(0, Math.round((curT - curV) / 100)),
-      Target: curT == null ? null : Math.round(curT / 100),
-      hit: curT == null ? null : curV >= curT ? true : null,
-      projected: false, inProgress: true,
-    });
-    const tail = done.slice(-3).map((k) => sums.get(k) ?? 0);
-    const plan = tail.length ? tail.reduce((t, v) => t + v, 0) / tail.length : null;
-    let k = curKey;
-    const ahead = fcUnit === "month" ? 6 : fcUnit === "quarter" ? 4 : 1;
-    for (let i = 0; i < ahead; i++) {
-      k = nextKey(k);
-      out.push({ month: labelOf(k), iso: k, Actual: null, "Still needed": null, Target: plan == null ? null : Math.round(plan / 100), hit: null, projected: true, inProgress: false });
+    const actual = new Map<string, number>();
+    for (const i of invResp?.data ?? []) {
+      if (i.status === "CANCELLED" || !i.invoiceDate) continue;
+      const k = keyOf(String(i.invoiceDate).slice(0, 7));
+      actual.set(k, (actual.get(k) ?? 0) + (Number(i.totalSen) || 0));
     }
-    // Months: the last 6 finished + now + 6 ahead keeps the axis readable.
-    return fcUnit === "month" ? out.slice(Math.max(0, out.length - 13)) : out;
-  }, [allByDay, fcUnit]);
+    const target = new Map<string, number>();
+    for (const [ym, m] of Object.entries(fcResp?.data?.months ?? {})) {
+      const sen = Number(m?.salesSen) || 0;
+      if (!/^\d{4}-\d{2}$/.test(ym) || sen <= 0) continue;
+      target.set(keyOf(ym), (target.get(keyOf(ym)) ?? 0) + sen);
+    }
+    const keys = [...new Set([...actual.keys(), ...target.keys(), curKey])].sort();
+    type Row = { month: string; iso: string; Actual: number | null; "Still needed": number | null; Target: number | null; actualSen: number; targetSen: number | null; hit: boolean | null; projected: boolean; inProgress: boolean };
+    const out: Row[] = keys.map((k) => {
+      const t = target.get(k) ?? null;
+      const v = actual.get(k) ?? 0;
+      const past = k < curKey;
+      const now = k === curKey;
+      return {
+        month: labelOf(k),
+        iso: k,
+        Actual: past || now ? Math.round(v / 100) : null,
+        "Still needed": now && t != null ? Math.max(0, Math.round((t - v) / 100)) : null,
+        Target: t == null ? null : Math.round(t / 100),
+        // exact sen for the header / tooltip; the bar heights above are RM
+        actualSen: v,
+        targetSen: t,
+        hit: t == null || (!past && !now) ? null : v >= t ? true : now ? null : false,
+        projected: !past && !now,
+        inProgress: now,
+      };
+    });
+    // Months: the last 6 finished + now + up to 6 keyed ahead.
+    if (fcUnit !== "month") return out;
+    const at = out.findIndex((r) => r.inProgress);
+    return out.slice(Math.max(0, at - 6), at + 7);
+  }, [invResp, fcResp, fcUnit]);
+  const fcNoAccess = !fcResp && fcFailure != null;
+  const fcNone = !!fcResp && forecast.every((r) => r.Target == null);
   const fcNow = forecast.find((r) => r.inProgress);
 
 
@@ -327,16 +326,18 @@ export function SalesOrdersView({
           <CardHeader className="pb-2">
             <CardTitle>Sales forecast</CardTitle>
             <p className="mt-0.5 text-xs text-[#9CA3AF]">
-              By {fcUnit} · target = average of the 3 finished {fcUnit}s before
-              {fcNow && fcNow.Target != null && (
-                <> · {fcNow.month} so far {formatCurrency((fcNow.Actual ?? 0) * 100)} of {formatCurrency(fcNow.Target * 100)} target ({Math.round(((fcNow.Actual ?? 0) / Math.max(1, fcNow.Target)) * 100)}%)</>
+              By {fcUnit} · actual = invoiced (by invoice date) · target = sales keyed in Forecast P&L
+              {fcNoAccess && " · the target needs Accounting access"}
+              {fcNone && " · no sales keyed in Forecast P&L yet"}
+              {fcNow && fcNow.targetSen != null && (
+                <> · {fcNow.month} invoiced so far {formatCurrency(fcNow.actualSen)} of {formatCurrency(fcNow.targetSen)} target ({Math.round((fcNow.actualSen / Math.max(1, fcNow.targetSen)) * 100)}%)</>
               )}
             </p>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap items-center justify-end gap-3 pb-2 text-xs text-[#6B7280]">
               {([
-                { key: "Actual", label: "Actual (green = hit, amber = missed, brown = so far, grey = no target yet)", color: GREEN, line: false },
+                { key: "Actual", label: "Invoiced (green = hit, amber = missed, brown = so far, grey = no target keyed)", color: GREEN, line: false },
                 { key: "Still needed", label: `Still needed for target (this ${fcUnit})`, color: "#E9E3DA", line: false },
                 { key: "Target", label: "Target", color: TEAL, line: true },
               ] as const).map((l) => {
@@ -355,7 +356,7 @@ export function SalesOrdersView({
             </div>
             <div style={{ width: "100%", height: 260 }}>
               {forecast.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-xs text-[#9CA3AF]">No dated revenue.</div>
+                <div className="flex items-center justify-center h-full text-xs text-[#9CA3AF]">No invoices yet.</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={forecast} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
@@ -374,9 +375,9 @@ export function SalesOrdersView({
                               {r.iso}
                               {r.inProgress ? " · in progress" : r.projected ? " · projected" : ""}
                             </p>
-                            {!r.projected && <p>{r.inProgress ? "So far" : "Actual"}: <b>{rm(r.Actual)}</b></p>}
+                            {!r.projected && <p>{r.inProgress ? "Invoiced so far" : "Invoiced"}: <b>{formatCurrency(r.actualSen)}</b></p>}
                             {r.inProgress && r["Still needed"] != null && <p>Still needed for target: <b>{rm(r["Still needed"])}</b></p>}
-                            <p>{r.projected ? "Projected" : "Target"}: <b>{rm(r.Target)}</b></p>
+                            <p>Forecast target: <b>{r.targetSen == null ? "— (not keyed)" : formatCurrency(r.targetSen)}</b></p>
                             {r.hit !== null && (
                               <p style={{ color: r.hit ? GREEN : AMBER }}>{r.hit ? "On / above target" : "Below target"}</p>
                             )}
