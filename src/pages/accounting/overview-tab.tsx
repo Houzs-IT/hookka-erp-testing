@@ -259,7 +259,7 @@ const BUCKETS: { period: string; key: keyof Omit<AgingRow, "name"> }[] = [
 ];
 const PARTY_LINES = 8;
 
-function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon: ReactNode; rows: AgingRow[]; barColor: string; party: string }) {
+function AgingCard({ title, icon, rows, barColor, party, loading = false }: { title: string; icon: ReactNode; rows: AgingRow[]; barColor: string; party: string; loading?: boolean }) {
   const buckets = BUCKETS.map((b) => ({
     period: b.period,
     amountSen: rows.reduce((s, r) => s + r[b.key], 0),
@@ -284,6 +284,9 @@ function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {/* The aging loads beside the charts (no longer before them) — while it
+            does, say so instead of drawing zero buckets. */}
+        {loading ? <div className="py-6 text-center text-sm text-[#9CA3AF]">Loading…</div> : (
         <div className="space-y-3">
           {buckets.map((b) => {
             const pct = total > 0 ? Math.round((b.amountSen / total) * 100) : 0;
@@ -306,6 +309,7 @@ function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon
             <span className="text-[#1F1D1B]"><Amount sen={total} /></span>
           </div>
         </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -313,7 +317,7 @@ function AgingCard({ title, icon, rows, barColor, party }: { title: string; icon
 
 // ---- The tab ------------------------------------------------------------------
 
-export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData: APAgingEntry[] }) {
+export function OverviewTab({ arData, apData, agingLoading = false }: { arData: ARAgingEntry[]; apData: APAgingEntry[]; agingLoading?: boolean }) {
   const [range, setRange] = useState<Range>(3);
   const { data: resp, loading } = useCachedJson<{ success?: boolean; data?: { months: OverviewMonth[]; runningYm: string } }>(
     `/api/accounting/overview-trend?months=${range}`,
@@ -491,8 +495,8 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
       )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <AgingCard title="Accounts Receivable Aging" icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />} rows={arRows} barColor="bg-[#6B5C32]" party="customer" />
-        <AgingCard title="Accounts Payable Aging" icon={<TrendingDown className="h-5 w-5 text-[#6B5C32]" />} rows={apRows} barColor="bg-[#9C6F1E]" party="supplier" />
+        <AgingCard title="Accounts Receivable Aging" icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />} rows={arRows} barColor="bg-[#6B5C32]" party="customer" loading={agingLoading} />
+        <AgingCard title="Accounts Payable Aging" icon={<TrendingDown className="h-5 w-5 text-[#6B5C32]" />} rows={apRows} barColor="bg-[#9C6F1E]" party="supplier" loading={agingLoading} />
       </div>
     </div>
   );
