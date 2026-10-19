@@ -698,6 +698,18 @@ fixed print layout.
 
 **Regression.** `tests/bom-draft-activate.test.mjs` checks the badge, the Activate wiring and that the PUT accepts ACTIVE; fails without the change.
 
+## BUG-2026-10-15-HK0033 — Chat could not approve or reject the Delivery Agent's schedule proposals `assistant` `planning` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0033-pic-decide-proposals-chat`, PR #861). Prod occurrences UNMEASURED for non-super-admins.
+
+**Symptom.** The person in charge asked the chat to approve schedule proposals and it could not.
+
+**Root cause.** `list_schedule_proposals` / `decide_schedule_proposals` were missing from `STAFF_TOOL_NAMES` (`assistant.ts`) and `decide` was gated to SUPER_ADMIN only.
+
+**Fix.** Both tools are on the staff list; list needs `production-orders:read`, decide needs `production-orders:update` (super admin always passes). Approval still only records the plan: no DO or packing list is created (Delivery Agent v1 red line).
+
+**Regression.** `tests/assistant-schedule-decide.test.mjs`.
+
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 
 🟡 **Fixed on branch** (`fix/pi-revoid-legno-main` → `main`). Same fix as staging #852, which was verified on the staging site 2026-10-14. Number shared with the staging entry.
