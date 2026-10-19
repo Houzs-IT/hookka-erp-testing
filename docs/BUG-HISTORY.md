@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-336 (branch `fix/dashboard-period-keeps-scroll`, to `staging`).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-335 (branch `fix/chart-click-focus-box`, to `staging`; 334 is taken on both branches).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: staging<-main sync (branch `chore/sync-staging-from-main-1019`): both sides kept. Main entries staging lacked are added above staging's newest; main's copies of 329 and 330 (the same bugs, ported) are folded into staging's entries as a "Ported to main" line, and a stray 303 heading from the merge was dropped (staging's 303 entry stays).
@@ -222,6 +223,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/dashboard-period-keeps-scroll` → `staging`). Reported 2026-10-19 on staging, right after the Day view (#1003).
+
+**Symptom.** On Operations, clicking a day on the Department Revenue chart (or any period change) scrolled the page to the top, away from the chart.
+
+**Root cause.** Measured on staging: `scrollY` went from 487 to 0 on a day click while the page height stayed 3318, and the only `window.scrollTo(0, 0)` call came from react-router. `DashboardLayout` renders `<ScrollRestoration>`, which scrolls to the top on every navigation without `preventScrollReset`. A period change is a `setSearchParams(..., { replace: true })` in `use-dashboard-url-state.ts` (and `/m`'s `hooks.ts`) with no such flag.
+
+**Fix.** Period and day writes pass `preventScrollReset` (desktop: on the replace writes only, so a tab switch still opens at the top; phone: the period setter).
+
+**Regression.** `tests/dashboard-period-keeps-scroll.test.mjs`.
 
 ---
 
