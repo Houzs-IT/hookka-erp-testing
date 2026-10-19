@@ -1,6 +1,7 @@
 import type { Env } from "../worker";
 import { addDays, deriveDraws } from "../../lib/trade-finance";
 import type { TfAlloc, TfDraw, TfDrawMeta, TfLegRow } from "../../lib/trade-finance";
+import { timedFn } from "./step-timing";
 
 // ---------------------------------------------------------------------------
 // Trade-finance storage (owner 2026-08-11) — the DB half of the feature whose
@@ -175,7 +176,7 @@ export async function loadTfDrawsAt(
   return deriveDraws(legs, metas, allocs, repayNos);
 }
 
-export async function loadTfDraws(
+async function loadTfDrawsUntimed(
   db: DB,
   source: TfSource,
 ): Promise<{ draws: TfDraw[]; accountNetSen: number; unallocatedSen: number }> {
@@ -251,3 +252,4 @@ export async function loadTfDraws(
   );
   return derived;
 }
+export const loadTfDraws = timedFn("tf-draws", loadTfDrawsUntimed);

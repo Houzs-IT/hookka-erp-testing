@@ -19,7 +19,7 @@ import map from "../src/api/lib/column-rename-map.json" with { type: "json" };
 
 test("F6 loadMaterialCostData SQL: every camelCase identifier is in column-rename-map", () => {
   const src = fs.readFileSync(new URL("../src/api/routes/accounting.ts", import.meta.url), "utf8");
-  const start = src.indexOf("async function loadMaterialCostData(");
+  const start = src.indexOf("async function loadMaterialCostDataUntimed(");
   assert.ok(start >= 0, "loadMaterialCostData not found in accounting.ts");
   // function body = from its declaration to the next top-level function decl.
   const nextFn = src.indexOf("\nasync function ", start + 1);

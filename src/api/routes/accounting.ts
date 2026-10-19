@@ -27,6 +27,7 @@ import {
 import { ClosedYearError, FYE_CHANGES_KV_KEY, FY_LOCKED_KV_KEY, closedYearError, getFyLockedEnds, getFySchedule, fyWindowAt } from "../lib/fiscal";
 import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
+import { timedFn } from "../lib/step-timing";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
 import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
@@ -416,7 +417,7 @@ function addToBucket(
 // advance kept its −row in both agings while its GL was correctly hidden,
 // skewing the drift card by exactly that amount) — same NOT-EXISTS shape as
 // buildPiPaidTruthStatement, pure snake_case so the adapter passes it through.
-async function loadUnappliedSupplierAdvances(
+async function loadUnappliedSupplierAdvancesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
 ): Promise<Map<string, { supplierName: string; sen: number; items: { paymentNo: string; date: string; sen: number }[] }>> {
@@ -453,6 +454,7 @@ async function loadUnappliedSupplierAdvances(
   }
   return out;
 }
+const loadUnappliedSupplierAdvances = timedFn("supplier-advances", loadUnappliedSupplierAdvancesUntimed);
 
 // The customer mirror. A receipt whose allocations don't add up to it is
 // holding money on account (owner 2026-08-06 asked to be able to record one:
@@ -461,7 +463,7 @@ async function loadUnappliedSupplierAdvances(
 // reports a drift for every advance — the same false alarm the supplier side
 // carried until BUG-2026-07-08-003. Voided / deleted receipts are excluded for
 // the same reason they are on the supplier side: they hold nothing.
-async function loadUnappliedCustomerAdvances(
+async function loadUnappliedCustomerAdvancesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
 ): Promise<Map<string, { customerName: string; sen: number; items: { receiptNumber: string; date: string; sen: number }[] }>> {
@@ -502,6 +504,7 @@ async function loadUnappliedCustomerAdvances(
   void orgId; // payment_records is not org-scoped; kept for signature symmetry
   return out;
 }
+const loadUnappliedCustomerAdvances = timedFn("customer-advances", loadUnappliedCustomerAdvancesUntimed);
 
 app.get("/aging", async (c) => {
   // RBAC gate (P3.3-followup) — accounting:read.
@@ -6806,7 +6809,7 @@ const GROUP_DESCRIPTIONS: Record<string, string> = {
 // The effective stock map = built-in defaults overlaid with the owner's
 // kv_config `coa_stock_map` override (same shape). Single reader so the
 // P&L, stock summary and closing-stock posting all see one truth.
-async function getStockMap(
+async function getStockMapUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<typeof DEFAULT_STOCK_MAP> {
   try {
@@ -6826,6 +6829,7 @@ async function getStockMap(
   }
   return DEFAULT_STOCK_MAP;
 }
+const getStockMap = timedFn("stock-map", getStockMapUntimed);
 
 async function liveInventory(
   db: Env["Variables"]["DB"],
@@ -7587,7 +7591,7 @@ type PnlTrace = {
   extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
 };
 
-async function glWindowSigned(
+async function glWindowSignedUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
@@ -7695,6 +7699,7 @@ async function glWindowSigned(
   if (!trace) dc.glMemo?.set(memoKey, out);
   return out;
 }
+const glWindowSigned = timedFn("gl-window", glWindowSignedUntimed);
 
 // ---------------------------------------------------------------------------
 // loadMaterialCost (F6 T4b) — read-only FIFO material cost for a P&L window.
@@ -7819,7 +7824,7 @@ type MaterialCostData = {
   };
 };
 
-async function loadMaterialCostData(
+async function loadMaterialCostDataUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   lastYm: string,
@@ -8308,6 +8313,7 @@ async function loadMaterialCostData(
     warnings: { negatives, unresolved },
   };
 }
+const loadMaterialCostData = timedFn("material-replay", loadMaterialCostDataUntimed);
 
 // Derive one P&L window (the old per-window loadMaterialCost shape) from the
 // precomputed data — pure arithmetic, no replay. opening = closing at the end of
@@ -8551,7 +8557,7 @@ function ensureOtherPartyBillOpening(db: D1Database): Promise<void> {
 }
 
 /** Load all historical P&L rows for an org, grouped by ym. */
-async function loadHistoricalPnl(
+async function loadHistoricalPnlUntimed(
   db: D1Database,
   orgId: string,
 ): Promise<Map<string, Partial<Record<"all" | "sofa" | "bedframe", PnlWindow>>>> {
@@ -8593,6 +8599,7 @@ async function loadHistoricalPnl(
   }
   return map;
 }
+const loadHistoricalPnl = timedFn("pnl-history", loadHistoricalPnlUntimed);
 
 // A "purchase account" = COST-type account that is not one of the dedicated
 // account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
@@ -8704,7 +8711,7 @@ function productionValuedMonth(
 // The month-end FG / WIP to use at `ym` where the Stock Take is blank — the
 // production-order valuation (liveStockFor). null = leave the material
 // window's figure.
-async function blankMonthStock(
+async function blankMonthStockUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   ym: string | null,
@@ -8722,6 +8729,7 @@ async function blankMonthStock(
     return null; // unreadable → the material window's figures, as before
   }
 }
+const blankMonthStock = timedFn("blank-month-stock", blankMonthStockUntimed);
 
 // The closing stock the P&L carries at month-end `ym` — the material window's
 // close, with a blank month's FG / WIP from the production orders — in the
@@ -8783,7 +8791,7 @@ async function sheetStockAt(
 // of the last three months and nothing so far this month. Read from the same
 // one-month ledger windows the statement shows for those months (before any
 // estimate). Display only — nothing is posted. Memoised per request.
-async function runningMonthEstimates(
+async function runningMonthEstimatesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   dc: DocDateCtx,
@@ -8807,8 +8815,9 @@ async function runningMonthEstimates(
   }
   return hit;
 }
+const runningMonthEstimates = timedFn("running-estimates", runningMonthEstimatesUntimed);
 
-async function computePnlWindow(
+async function computePnlWindowUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
@@ -9041,10 +9050,11 @@ async function computePnlWindow(
     materialWarnings: mat.warnings,
   };
 }
+const computePnlWindow = timedFn("pnl-window", computePnlWindowUntimed);
 
 // Window form of costByLine for sales ratio (period-string version exists
 // for the public endpoint; this one takes an explicit window).
-async function costByLineWindow(
+async function costByLineWindowUntimed(
   db: Env["Variables"]["DB"],
   startYm: string | null,
   endYm: string | null,
@@ -9077,6 +9087,7 @@ async function costByLineWindow(
   const tot = sofaSales + bedSales;
   return { salesRatio: tot > 0 ? { sofa: sofaSales / tot, bedframe: bedSales / tot } : { sofa: 0.5, bedframe: 0.5 } };
 }
+const costByLineWindow = timedFn("cost-by-line", costByLineWindowUntimed);
 
 // Assemble the statement row tree from a period window + the FY-YTD window.
 function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
@@ -17554,7 +17565,7 @@ async function attachSupplierNames(
   }
 }
 
-async function loadBankRecoState(
+async function loadBankRecoStateUntimed(
   db: Env["Variables"]["DB"],
   account: string,
 ): Promise<BankRecoLegState> {
@@ -17621,6 +17632,7 @@ async function loadBankRecoState(
   }
   return { legs, clearedOn, openingDate };
 }
+const loadBankRecoState = timedFn("bank-reco-state", loadBankRecoStateUntimed);
 
 // One walk, used by BOTH the live report and the finalise snapshot.
 async function computeBankRecoReport(
@@ -18395,7 +18407,7 @@ async function ensureFundTransfersTable(
 // Each family load is try/caught so a missing table/column just degrades that
 // family to the postedAt fallback. Keyed by BOTH id and human number because
 // posters set sourceId inconsistently (some the UUID, some the doc number).
-async function loadDocDateResolver(
+async function loadDocDateResolverUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<DocDateCtx> {
   const openingDate = await getOpeningDate(db);
@@ -18441,6 +18453,7 @@ async function loadDocDateResolver(
   };
   return { docDate, openingDate, glMemo: new Map() };
 }
+const loadDocDateResolver = timedFn("doc-dates", loadDocDateResolverUntimed);
 
 // Per-control-account sums of the opening invoices: AR per parseDebtorCode
 // control (300-x / 305-x), AP all into 400-0000. These become the locked

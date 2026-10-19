@@ -104,13 +104,13 @@ test("debtor side: money held on account is an advance, like /ar-control nets it
 
 test("the reconciliations copy the control cards' advance rules", () => {
   // Creditor: both leave trade-finance repayments out.
-  const supAdv = slice(api, "async function loadUnappliedSupplierAdvances(", "\n}\n");
+  const supAdv = slice(api, "async function loadUnappliedSupplierAdvancesUntimed(", "\n}\n");
   assert.match(supAdv, /AND COALESCE\(sp\.method,''\) <> 'TF_REPAYMENT'/);
   const recon = readFileSync("src/lib/ap-recon.ts", "utf8");
   assert.match(recon, /if \(r\.method === "TF_REPAYMENT"\) continue;/);
   assert.match(recon, /if \(all\.length > 0 && all\.every\(\(r\) => r\.method === "TF_REPAYMENT"\)\) \{/);
   // Debtor: both take amount − Σ allocations, positive only, receipts with a customer.
-  const custAdv = slice(api, "async function loadUnappliedCustomerAdvances(", "\n}\n");
+  const custAdv = slice(api, "async function loadUnappliedCustomerAdvancesUntimed(", "\n}\n");
   assert.match(custAdv, /const sen = Math\.round\(Number\(r\.amount\) \|\| 0\) - allocated;\n\s+if \(sen <= 0\) continue;/);
   assert.match(custAdv, /if \(!custId\) continue;/);
   const arRecon = slice(api, 'app.get("/ar-reconciliation"', "const report = buildApReconciliation(");
