@@ -79,8 +79,9 @@ test("cards and stage cells are memoized, fed stable handlers", () => {
   assert.match(PAGE, /const onOverviewStageClick = useCallback<StageClick>\(\s*\(\.\.\.args\) => overviewStageClickRef\.current\(\.\.\.args\),\s*\[\],/);
 });
 
-test("the page opens on Cards and does not persist the choice", () => {
-  assert.match(PAGE, /useState<"cards" \| "grid">\("cards"\)/);
+test("the page opens on Grid and does not persist the choice", () => {
+  assert.match(PAGE, /useState<"cards" \| "grid">\("grid"\)/);
+  assert.doesNotMatch(PAGE, /localStorage\.(get|set)Item\([^)]*[Oo]verviewView/);
 });
 
 test("stageKind: pill state per cell; in progress is display-only", () => {
