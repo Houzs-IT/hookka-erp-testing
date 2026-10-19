@@ -62,7 +62,9 @@ test("the dashboard carries production revenue per period and retires the old ca
   assert.match(API, /productionRevenue: prodRevByMonth \? sumProductionRevenue\(prodRevByMonth, b\.months, nowYm\) : null,/);
   // v15 introduced the field; any later bump keeps it retired.
   assert.match(API, /const DASH_PAYLOAD_V = "v(1[5-9]|[2-9]\d)";/);
-  assert.match(API, /sourceTables: \[[\s\S]{0,1800}"job_cards",/, "a completed upholstery card must refresh the snapshot");
+  // The source tables are one list since 2026-10-19, shared with /overview-trend.
+  assert.match(API, /sourceTables: PNL_REPLAY_SOURCE_TABLES,/);
+  assert.match(API, /const PNL_REPLAY_SOURCE_TABLES: readonly string\[\] = \[[\s\S]{0,1800}"job_cards",/, "a completed upholstery card must refresh the snapshot");
 });
 
 test("cost structure: SALES REVENUE, then PRODUCTION REVENUE, then the materials, then TOTAL", () => {

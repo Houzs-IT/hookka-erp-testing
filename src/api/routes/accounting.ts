@@ -27,6 +27,7 @@ import {
 import { ClosedYearError, FYE_CHANGES_KV_KEY, FY_LOCKED_KV_KEY, closedYearError, getFyLockedEnds, getFySchedule, fyWindowAt } from "../lib/fiscal";
 import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
+import { requestMemo, timed, timedFn } from "../lib/step-timing";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
 import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
@@ -46,6 +47,8 @@ import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
 import { actionLabel, auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, payloadRef, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
+import { normaliseReference, settlementReference } from "../../lib/doc-reference";
+import { prepareLedger, windowNet } from "../../lib/ledger-window";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
@@ -143,6 +146,9 @@ type JournalEntryRow = {
   entryNo: string;
   date: string;
   description: string;
+  // Optional (owner 2026-10-19 「先做 Reference 栏」); absent until the column
+  // is self-applied by the first journal save.
+  reference?: string | null;
   status: "DRAFT" | "POSTED" | "REVERSED";
   createdBy: string;
   // Postgres hands this back as `createdAt` (see rowToJournal). `created_at`
@@ -224,6 +230,7 @@ function rowToJournal(e: JournalEntryRow, lines: JournalLineRow[]) {
     entryNo: e.entryNo,
     date: e.date,
     description: e.description,
+    reference: e.reference ?? null,
     status: e.status,
     createdBy: e.createdBy,
     // Dual-keyed. `created_at` alone was ALWAYS undefined: db-pg.ts installs
@@ -411,7 +418,7 @@ function addToBucket(
 // advance kept its −row in both agings while its GL was correctly hidden,
 // skewing the drift card by exactly that amount) — same NOT-EXISTS shape as
 // buildPiPaidTruthStatement, pure snake_case so the adapter passes it through.
-async function loadUnappliedSupplierAdvances(
+async function loadUnappliedSupplierAdvancesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
 ): Promise<Map<string, { supplierName: string; sen: number; items: { paymentNo: string; date: string; sen: number }[] }>> {
@@ -448,6 +455,7 @@ async function loadUnappliedSupplierAdvances(
   }
   return out;
 }
+const loadUnappliedSupplierAdvances = timedFn("supplier-advances", loadUnappliedSupplierAdvancesUntimed);
 
 // The customer mirror. A receipt whose allocations don't add up to it is
 // holding money on account (owner 2026-08-06 asked to be able to record one:
@@ -456,7 +464,7 @@ async function loadUnappliedSupplierAdvances(
 // reports a drift for every advance — the same false alarm the supplier side
 // carried until BUG-2026-07-08-003. Voided / deleted receipts are excluded for
 // the same reason they are on the supplier side: they hold nothing.
-async function loadUnappliedCustomerAdvances(
+async function loadUnappliedCustomerAdvancesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
 ): Promise<Map<string, { customerName: string; sen: number; items: { receiptNumber: string; date: string; sen: number }[] }>> {
@@ -497,6 +505,7 @@ async function loadUnappliedCustomerAdvances(
   void orgId; // payment_records is not org-scoped; kept for signature symmetry
   return out;
 }
+const loadUnappliedCustomerAdvances = timedFn("customer-advances", loadUnappliedCustomerAdvancesUntimed);
 
 app.get("/aging", async (c) => {
   // RBAC gate (P3.3-followup) — accounting:read.
@@ -1373,12 +1382,25 @@ app.get("/system-journals", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// A journal's Reference column (owner 2026-10-19 「先做 Reference 栏」) —
+// self-applied, awaited before the first write that names it.
+let _pendingJournalRefCol: Promise<void> | null = null;
+function ensureJournalReferenceColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingJournalRefCol) {
+    _pendingJournalRefCol = db.prepare("ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT").run()
+      .then(() => undefined)
+      .catch((e) => { _pendingJournalRefCol = null; throw e; });
+  }
+  return _pendingJournalRefCol;
+}
+
 app.post("/journals", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
   try {
     const body = await c.req.json();
     const { date, description, lines } = body;
+    await ensureJournalReferenceColumn(c.var.DB);
     if (!date || !description || !lines || !Array.isArray(lines) || lines.length === 0) {
       return c.json(
         { success: false, error: "date, description, and lines are required" },
@@ -1413,10 +1435,10 @@ app.post("/journals", async (c) => {
     // tenant's journals would land labelled 'hookka' and then be hidden from
     // the tenant that created them.
     await c.var.DB.prepare(
-      `INSERT INTO journal_entries (id, entryNo, date, description, status, createdBy, orgId)
-       VALUES (?, ?, ?, ?, 'DRAFT', ?, ?)`,
+      `INSERT INTO journal_entries (id, entryNo, date, description, reference, status, createdBy, orgId)
+       VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?)`,
     )
-      .bind(id, entryNo, date, description, createdBy, orgId)
+      .bind(id, entryNo, date, description, normaliseReference(body.reference), createdBy, orgId)
       .run();
 
     const inserts = lines.map(
@@ -1710,11 +1732,12 @@ app.put("/journals/:id", async (c) => {
       await c.var.DB.batch(statements);
     } else if (entry.status === "DRAFT") {
       // Draft-only edits of header + lines.
-      if (body.date !== undefined || body.description !== undefined) {
+      if (body.date !== undefined || body.description !== undefined || body.reference !== undefined) {
+        await ensureJournalReferenceColumn(c.var.DB);
         await c.var.DB.prepare(
-          "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
+          "UPDATE journal_entries SET date = ?, description = ?, reference = ? WHERE id = ?",
         )
-          .bind(body.date ?? entry.date, body.description ?? entry.description, id)
+          .bind(body.date ?? entry.date, body.description ?? entry.description, body.reference !== undefined ? normaliseReference(body.reference) : (entry.reference ?? null), id)
           .run();
       }
       if (body.lines !== undefined && Array.isArray(body.lines)) {
@@ -5269,7 +5292,7 @@ app.get("/audit-log", async (c) => {
 // (finance backlog item 10 part 2): header and lines ("account amount; …").
 async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<Record<string, unknown> | null> {
   try {
-    const h = await db.prepare("SELECT date, payee, description, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    const h = await db.prepare("SELECT date, payee, description, reference, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
     if (!h) return null;
     const ls = await db.prepare("SELECT accountCode, amountSen FROM payment_voucher_lines WHERE voucherId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>();
     const sen = (v: unknown) => ((Number(v) || 0) / 100).toFixed(2);
@@ -5277,6 +5300,7 @@ async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<
       date: h.date ?? null,
       payee: h.payee ?? null,
       description: h.description ?? null,
+      reference: h.reference ?? null,
       payFrom: h.payFrom ?? h.pay_from ?? null,
       total: sen(h.totalSen ?? h.total_sen),
       lines: (ls.results ?? []).map((l) => `${String(l.accountCode ?? l.account_code ?? "")} ${sen(l.amountSen ?? l.amount_sen)}`).join("; "),
@@ -6786,7 +6810,7 @@ const GROUP_DESCRIPTIONS: Record<string, string> = {
 // The effective stock map = built-in defaults overlaid with the owner's
 // kv_config `coa_stock_map` override (same shape). Single reader so the
 // P&L, stock summary and closing-stock posting all see one truth.
-async function getStockMap(
+async function getStockMapUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<typeof DEFAULT_STOCK_MAP> {
   try {
@@ -6806,6 +6830,7 @@ async function getStockMap(
   }
   return DEFAULT_STOCK_MAP;
 }
+const getStockMap = timedFn("stock-map", getStockMapUntimed);
 
 async function liveInventory(
   db: Env["Variables"]["DB"],
@@ -6816,8 +6841,10 @@ async function liveInventory(
   fg: number;
   total: number;
 }> {
+  // Both loads once per read request (requestMemo, 2026-10-19): /pl values the
+  // opening and the closing month together — two full reads of the same rows.
   const [clRes, rmRes] = await Promise.all([
-    db
+    requestMemo("cost-ledger:live-inventory", () => db
       .prepare(
         "SELECT type, itemType, itemId, direction, totalCostSen, date FROM cost_ledger",
       )
@@ -6828,10 +6855,10 @@ async function liveInventory(
         direction: string;
         totalCostSen: number;
         date: string;
-      }>(),
-    db
+      }>()),
+    requestMemo("raw-materials:groups", () => db
       .prepare("SELECT id, itemGroup FROM raw_materials")
-      .all<{ id: string; itemGroup: string }>(),
+      .all<{ id: string; itemGroup: string }>()),
   ]);
   const grp = new Map<string, string>();
   for (const r of rmRes.results ?? []) grp.set(r.id, r.itemGroup || "OTHER");
@@ -7567,7 +7594,7 @@ type PnlTrace = {
   extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
 };
 
-async function glWindowSigned(
+async function glWindowSignedUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
@@ -7578,17 +7605,20 @@ async function glWindowSigned(
   const memoKey = `${startYm ?? ""}|${endYm ?? ""}`;
   const cached = trace ? undefined : dc.glMemo?.get(memoKey);
   if (cached) return cached;
+  // Every window of a read request reads the same live legs and chart — loaded
+  // once (requestMemo; 2026-10-19 「优化加载速度」: the P&L statement asked for
+  // eight windows, eight full loads of the ledger). Shared rows: read-only here.
   const [legRes, coaRes] = await Promise.all([
-    db.prepare(trace
+    requestMemo(trace ? "ledger-legs:trace" : "ledger-legs", () => db.prepare(trace
       ? "SELECT id, accountCode, sourceId, debitSen, creditSen, postedAt, sourceType, description FROM ledger_journal_entries WHERE hidden = 0"
       : "SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0")
-      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>(),
-    db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>(),
+      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>()),
+    requestMemo("coa-name-type", () => db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>()),
   ]);
   const resolve = await loadAccountResolver(db);
   const { docDate, openingDate: obDate } = dc;
-  const net: GlWindow = new Map();
-  const openingNet: GlWindow = new Map(); // opening_balance(+reversal) legs, netted
+  let net: GlWindow = new Map();
+  let openingNet: GlWindow = new Map(); // opening_balance(+reversal) legs, netted
   // Salary accruals ALREADY in the GL, per month and ACCOUNT: any entry that
   // credits 410-0010 (a Labour-tab post OR a manual JV) marks the accounts its
   // debit legs touched. Those (month, account) pairs keep the owner's figures;
@@ -7598,8 +7628,26 @@ async function glWindowSigned(
   // WHOLE month, wiping the production 750-x auto-extract with it. Net of any
   // undo (BUG-2026-10-09-275): a Labour post that was unposted, or a voided JV,
   // records nothing — see src/lib/recorded-salary.ts.
-  const recordedSalaryAccts = recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT);
-  for (const l of legRes.results ?? []) {
+  // Window-independent — once per read request (requestMemo; the drill's own legs walk it fresh).
+  const recordedSalaryAccts = trace
+    ? recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT)
+    : await requestMemo("ledger-recorded-salary", async () => recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT));
+  if (!trace) {
+    // The legs dated and resolved ONCE per read request (src/lib/ledger-window.ts;
+    // 2026-10-19 「优化加载速度」: the P&L statement's eight windows walked every
+    // leg eight times); the window adds up the months it covers. Same figures,
+    // same account order as the loop below, which a drill still runs because it
+    // lists the legs one by one.
+    const prep = await requestMemo("ledger-prepared", async () => prepareLedger(legRes.results ?? [], {
+      docDate,
+      resolve,
+      isBeforeOpening: (sourceType, dd) => legBeforeOpening(sourceType, dd, obDate),
+      isOpening: isOpeningSource,
+    }));
+    net = windowNet(prep, startYm, endYm);
+    openingNet = prep.openingNet;
+  }
+  if (trace) for (const l of legRes.results ?? []) {
     const dd = docDate(l.sourceType, l.sourceId, l.postedAt); // by document date
     if (legBeforeOpening(l.sourceType, dd, obDate)) continue; // pre-opening: not extracted
     // Opening-balance legs carry the CUMULATIVE-to-opening P&L balances — they
@@ -7675,6 +7723,7 @@ async function glWindowSigned(
   if (!trace) dc.glMemo?.set(memoKey, out);
   return out;
 }
+const glWindowSigned = timedFn("gl-window", glWindowSignedUntimed);
 
 // ---------------------------------------------------------------------------
 // loadMaterialCost (F6 T4b) — read-only FIFO material cost for a P&L window.
@@ -7799,7 +7848,7 @@ type MaterialCostData = {
   };
 };
 
-async function loadMaterialCostData(
+async function loadMaterialCostDataUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   lastYm: string,
@@ -7809,9 +7858,11 @@ async function loadMaterialCostData(
   // any window ending <= lastYm, so they're dropped while assembling.
   const matEndIso = monthEndIso(lastYm);
   // 0. Ensure the opening-stock tables exist (deploys don't run migrations).
-  await ensureMaterialOpeningStock(db);
-  await ensureInventoryOpening(db);
-  await ensureStockTake(db);
+  await timed("mat-ensure", async () => {
+    await ensureMaterialOpeningStock(db);
+    await ensureInventoryOpening(db);
+    await ensureStockTake(db);
+  });
 
   // 0a. Cutover day: global kv `material_opening_date`, else the earliest
   //     as_of_date on file. Only GRN/issue movements strictly AFTER the cutover
@@ -7869,7 +7920,7 @@ async function loadMaterialCostData(
   //      and the cost_ledger RM_ISSUE / ADJUSTMENT rows. Loaded in parallel.
   //      (cost_ledger is read whole — same pattern as stockSummaryRange — and
   //      filtered in JS; LABOR / FG rows are reused for WIP / FG below.)
-  const [grnRes, piRes, clRes, poRes, fgbRes, fguRes] = await Promise.all([
+  const [grnRes, piRes, clRes, poRes, fgbRes, fguRes] = await timed("mat-sources", () => Promise.all([
     db
       .prepare(
         `SELECT g.poId AS poId, g.receiveDate AS receiveDate, g.status AS status,
@@ -7925,7 +7976,7 @@ async function loadMaterialCostData(
       )
       .bind(orgId)
       .all<{ batchId: string | null; date: string | null; qty: number | null }>(),
-  ]);
+  ]));
 
   // 3. PI-weighted-average layer cost, batched into one map keyed PO+material.
   //    round(Σ line_total_sen / Σ qty) over all APPROVED-PI STOCKED lines for
@@ -8288,6 +8339,7 @@ async function loadMaterialCostData(
     warnings: { negatives, unresolved },
   };
 }
+const loadMaterialCostData = timedFn("material-replay", loadMaterialCostDataUntimed);
 
 // Derive one P&L window (the old per-window loadMaterialCost shape) from the
 // precomputed data — pure arithmetic, no replay. opening = closing at the end of
@@ -8531,7 +8583,7 @@ function ensureOtherPartyBillOpening(db: D1Database): Promise<void> {
 }
 
 /** Load all historical P&L rows for an org, grouped by ym. */
-async function loadHistoricalPnl(
+async function loadHistoricalPnlUntimed(
   db: D1Database,
   orgId: string,
 ): Promise<Map<string, Partial<Record<"all" | "sofa" | "bedframe", PnlWindow>>>> {
@@ -8573,6 +8625,7 @@ async function loadHistoricalPnl(
   }
   return map;
 }
+const loadHistoricalPnl = timedFn("pnl-history", loadHistoricalPnlUntimed);
 
 // A "purchase account" = COST-type account that is not one of the dedicated
 // account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
@@ -8684,7 +8737,7 @@ function productionValuedMonth(
 // The month-end FG / WIP to use at `ym` where the Stock Take is blank — the
 // production-order valuation (liveStockFor). null = leave the material
 // window's figure.
-async function blankMonthStock(
+async function blankMonthStockUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   ym: string | null,
@@ -8702,6 +8755,7 @@ async function blankMonthStock(
     return null; // unreadable → the material window's figures, as before
   }
 }
+const blankMonthStock = timedFn("blank-month-stock", blankMonthStockUntimed);
 
 // The closing stock the P&L carries at month-end `ym` — the material window's
 // close, with a blank month's FG / WIP from the production orders — in the
@@ -8763,7 +8817,7 @@ async function sheetStockAt(
 // of the last three months and nothing so far this month. Read from the same
 // one-month ledger windows the statement shows for those months (before any
 // estimate). Display only — nothing is posted. Memoised per request.
-async function runningMonthEstimates(
+async function runningMonthEstimatesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   dc: DocDateCtx,
@@ -8787,8 +8841,9 @@ async function runningMonthEstimates(
   }
   return hit;
 }
+const runningMonthEstimates = timedFn("running-estimates", runningMonthEstimatesUntimed);
 
-async function computePnlWindow(
+async function computePnlWindowUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
@@ -9021,10 +9076,11 @@ async function computePnlWindow(
     materialWarnings: mat.warnings,
   };
 }
+const computePnlWindow = timedFn("pnl-window", computePnlWindowUntimed);
 
 // Window form of costByLine for sales ratio (period-string version exists
 // for the public endpoint; this one takes an explicit window).
-async function costByLineWindow(
+async function costByLineWindowUntimed(
   db: Env["Variables"]["DB"],
   startYm: string | null,
   endYm: string | null,
@@ -9057,6 +9113,7 @@ async function costByLineWindow(
   const tot = sofaSales + bedSales;
   return { salesRatio: tot > 0 ? { sofa: sofaSales / tot, bedframe: bedSales / tot } : { sofa: 0.5, bedframe: 0.5 } };
 }
+const costByLineWindow = timedFn("cost-by-line", costByLineWindowUntimed);
 
 // Assemble the statement row tree from a period window + the FY-YTD window.
 function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
@@ -9979,6 +10036,52 @@ app.get("/pl-monthly", async (c) => {
 //   • the most-produced models — production orders completed in the month,
 //     quantities per model series, Sofa and Bedframe apart, top 5 each.
 // Read-only.
+// Every table the P&L replay reads — /dashboard and /overview-trend keep a
+// snapshot of replayed P&L figures, and a write to any of these must rebuild
+// it. kv_config carries the opening date and the section map; pnl_historical
+// the owner-keyed months before the books opened.
+const PNL_REPLAY_SOURCE_TABLES: readonly string[] = [
+  "ledger_journal_entries",
+  "invoices",
+  "purchase_invoices",
+  "cost_ledger",
+  "grn_items",
+  "production_orders",
+  "delivery_orders",
+  "kv_config",
+  // Production Salary per head / per unit reads these two — without them
+  // hiring someone or completing a batch would leave the card stale.
+  "workers",
+  "fg_batches",
+  // salaryByDept reads payslips — without it a payroll edit leaves the
+  // department stacks stale.
+  "payslips",
+  // Report-layer labour injection (2026-08-31) dry-runs payroll from
+  // these when a month has no payslips yet — new clock entries, docks
+  // or a raise must refresh the injected P&L figures.
+  "working_hour_entries",
+  "payroll_hour_deductions",
+  "worker_salary_history",
+  // Production Revenue (2026-10-12) books a PO when its last upholstery
+  // card completes, priced from its SO / CO line or the product master.
+  "job_cards",
+  "sales_order_items",
+  "consignment_order_items",
+  "products",
+  // The running month's labour to date (2026-10-12) also reads the
+  // department master (which departments log factory hours) and the
+  // effective-dated pay rules.
+  "departments",
+  "pay_rule_versions",
+  // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
+  // delivery order or consignment note.
+  "delivery_order_items",
+  "consignment_notes",
+  "consignment_items",
+  "stock_take",
+  "pnl_historical",
+];
+
 app.get("/overview-trend", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -9987,6 +10090,52 @@ app.get("/overview-trend", async (c) => {
   const n = asked === 6 || asked === 12 ? asked : 3;
   const runYm = runningMonthYm();
   const months = lastMonths(runYm, n);
+  // Cache-aside + serve-stale-while-revalidate (owner 2026-10-19 「优化加载
+  // 速度…尤其是overview」): the trend replays the P&L month by month and
+  // measured 5.6–7.8 s (84–107 queries) on EVERY call, phone and desktop. The
+  // same pattern as /dashboard: the last computed copy is served at once and
+  // refreshed in the background whenever a source table changes. The key
+  // carries the range and the running month (a new month = a new window).
+  const { withSnapshot } = await import("../lib/snapshot");
+  // The snapshot table must exist before withSnapshot reads it (readSnapshot
+  // is not guarded) — the exact shape of the /dashboard snapshot table.
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS accounting_overview_snapshot (
+       org_id TEXT NOT NULL,
+       cache_key TEXT NOT NULL DEFAULT '',
+       data TEXT NOT NULL,
+       built_from TEXT NOT NULL,
+       built_at TEXT NOT NULL DEFAULT '',
+       refresh_count INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (org_id, cache_key)
+     )`,
+  ).run();
+  const snapOrgId = getOrgId(c);
+  // PAYLOAD VERSION — bump whenever the response SHAPE (or what a month's
+  // figures mean) changes: the freshness probe watches the source TABLES, so a
+  // code change alone never retires a stored copy.
+  const OVERVIEW_PAYLOAD_V = "v1";
+  const payload = await withSnapshot(
+    db,
+    { tableName: "accounting_overview_snapshot", sourceTables: [...PNL_REPLAY_SOURCE_TABLES, "sales_orders"] },
+    snapOrgId,
+    () => computeOverviewTrend(db, snapOrgId, runYm, months),
+    `${OVERVIEW_PAYLOAD_V}:${n}:${runYm}:${snapOrgId}`,
+    c,
+    { staleWhileRevalidate: true },
+  );
+  return c.json({ success: true, data: payload });
+});
+
+// The Overview's figures, month by month (computed fresh; /overview-trend
+// keeps the last copy): sales orders vs invoices, the P&L's own month windows,
+// the most-produced models.
+async function computeOverviewTrend(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  runYm: string,
+  months: string[],
+): Promise<{ months: OverviewMonth[]; runningYm: string }> {
 
   const pick = (r: Record<string, unknown>, ...keys: string[]) => {
     for (const k of keys) if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k];
@@ -10033,7 +10182,6 @@ app.get("/overview-trend", async (c) => {
 
   // The P&L, month by month — /pl-monthly's own loop.
   await ensurePnlHistorical(db);
-  const orgId = getOrgId(c);
   const override = await getPnlSectionMap(db);
   const matData = await loadMaterialCostData(db, orgId, runYm);
   const dc = await loadDocDateResolver(db);
@@ -10053,8 +10201,8 @@ app.get("/overview-trend", async (c) => {
       top: topBy.get(ym) ?? { SOFA: [], BEDFRAME: [] },
     });
   }
-  return c.json({ success: true, data: { months: out, runningYm: runYm } });
-});
+  return { months: out, runningYm: runYm };
+}
 
 // Finance dashboard tab feed (routes/dashboard-finance.ts → lib/dashboard-finance.ts).
 // Per month: the P&L's own figures (same per-month window logic as `/pl-monthly`:
@@ -10905,7 +11053,9 @@ app.get("/pl", async (c) => {
     });
 
   // --- ledger legs ---
-  const legRes = await c.var.DB.prepare(
+  // Without a company filter this is the very query every ledger window of the
+  // request reads — loaded once (requestMemo "ledger-legs", 2026-10-19).
+  const legQuery = () => c.var.DB.prepare(
     `SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0${legWhere}`,
   )
     .bind(...(coFilter.active ? [coFilter.param] : []))
@@ -10917,6 +11067,7 @@ app.get("/pl", async (c) => {
     postedAt: string;
     sourceType: string;
   }>();
+  const legRes = await (coFilter.active ? legQuery() : requestMemo("ledger-legs", legQuery));
   const endYm = periodEndYm(period);
   // Per-account net for the P&L period and cumulative-as-of for the BS.
   // Phase 1 (2026-06): year-close legs zero the P&L accounts into 150-0000
@@ -11449,7 +11600,9 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
       // finance carries the drawdown's due date and the interest recorded at
       // drawdown (finance backlog item 17, owner 「提款时就记」).
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER"]) {
+      // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
+      // its own field — the description stays the printed text.
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -11475,12 +11628,13 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
 const PV_KIND_AP = "AP";
 
 // The voucher form's own fields (owner 2026-10-01): internal notes (never
-// printed), the supplier's bill number and date.
-function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null } {
+// printed), the supplier's bill number and date — and (2026-10-19) the
+// Reference, the TT / cheque no., printed on the voucher.
+function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null; reference: string | null } {
   const notes = String(body.notes ?? "").trim();
   const billNo = String(body.billNo ?? "").trim();
   const billDate = String(body.billDate ?? "").trim();
-  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null };
+  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null, reference: normaliseReference(body.reference) };
 }
 type PvPartyKind = "SUPPLIER" | "OTHER";
 // TF = a trade-finance drawdown, repaid by an AP Payment to the lender
@@ -12279,7 +12433,8 @@ app.post("/payment-vouchers", async (c) => {
       const pvNo = asDraft
         ? `${PV_DRAFT_PREFIX}${id.slice(3)}`
         : await issueDocNumber(c.var.DB, { bankAccountCode: ap.v.payFrom, direction: "out", dateIso: date });
-      const reference = String(body.description ?? body.reference ?? "");
+      const description = String(body.description ?? body.reference ?? "");
+      const { reference } = pvExtraFields(body as Record<string, unknown>);
       const statements: D1PreparedStatement[] = [
         c.var.DB.prepare(
           `INSERT INTO payment_vouchers (
@@ -12287,16 +12442,16 @@ app.post("/payment-vouchers", async (c) => {
              accrualAccount, settledAt, productLine, totalSen, status,
              approval_state, approved_at, approved_by,
              createdBy, created_at, updated_at,
-             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
-          id, pvNo, date, ap.v.partyName, reference, ap.v.payFrom,
+          id, pvNo, date, ap.v.partyName, description, ap.v.payFrom,
           ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
           asDraft ? "DRAFT" : "APPROVED",
           asDraft ? null : now, asDraft ? null : actorUserId,
           actorUserId, now, now,
           PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
-          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
+          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, reference,
         ),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ];
@@ -12305,7 +12460,7 @@ app.post("/payment-vouchers", async (c) => {
         // this voucher's number (same builders as the payment pages).
         const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
           id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
-          reference: reference || null, advanceSen: ap.v.advanceSen,
+          reference: settlementReference(reference, description), advanceSen: ap.v.advanceSen,
           tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0,
         }, ap.v.allocs);
         if (!built.ok) return c.json({ success: false, error: built.error }, 400);
@@ -12352,8 +12507,8 @@ app.post("/payment-vouchers", async (c) => {
            accrualAccount, settledAt, productLine, totalSen, status,
            approval_state, approved_at, approved_by,
            createdBy, created_at, updated_at,
-           pv_kind, notes, bill_no, bill_date
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           pv_kind, notes, bill_no, bill_date, reference
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id, pvNo, date,
         isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""),
@@ -12362,7 +12517,7 @@ app.post("/payment-vouchers", async (c) => {
         asDraft ? "DRAFT" : "APPROVED",
         asDraft ? null : now, asDraft ? null : actorUserId,
         actorUserId, now, now,
-        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate,
+        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate, extra.reference,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12428,9 +12583,10 @@ app.put("/payment-vouchers/:id", async (c) => {
       await c.var.DB.batch([
         c.var.DB.prepare(
           `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
-                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, updated_at = ? WHERE id = ?`,
+                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, reference = ?, updated_at = ? WHERE id = ?`,
         ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
-          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, now, id),
+          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
+          pvExtraFields(body as Record<string, unknown>).reference, now, id),
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
@@ -12458,8 +12614,8 @@ app.put("/payment-vouchers/:id", async (c) => {
     await c.var.DB.batch([
       c.var.DB.prepare(
         `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?,
-                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, updated_at = ? WHERE id = ?`,
-      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id),
+                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, reference = ?, updated_at = ? WHERE id = ?`,
+      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, extra.reference, now, id),
       c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12557,7 +12713,7 @@ async function pvApprovalCore(
       id, pvNo, date: String(pv.date ?? "").slice(0, 10),
       payFrom: String(pv.payFrom ?? pv.pay_from ?? ""), partyKind,
       partyId: String(pv.partyId ?? pv.party_id ?? ""),
-      reference: String(pv.description ?? "") || null,
+      reference: settlementReference(pv.reference, pv.description),
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
       tfDueDate: (pv.tfDueDate ?? pv.tf_due_date ?? null) as string | null,
       tfInterestSen: Math.round(Number(pv.tfInterestSen ?? pv.tf_interest_sen) || 0),
@@ -12923,7 +13079,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
     const extra = pvExtraFields(body as Record<string, unknown>);
-    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id));
+    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, reference = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, extra.reference, now, id));
     statements.push(c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id));
     v.lines.forEach((l, idx) => {
       statements.push(c.var.DB.prepare(`INSERT INTO payment_voucher_lines (id, voucherId, accountCode, description, amountSen, lineOrder) VALUES (?, ?, ?, ?, ?, ?)`).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));
@@ -15061,48 +15217,10 @@ app.get("/dashboard", async (c) => {
     c.var.DB,
     {
       tableName: "accounting_dashboard_snapshot",
-      // Every table the P&L + cost-structure replay reads. kv_config carries
-      // the opening date; a change to any of these must rebuild the snapshot.
-      sourceTables: [
-        "ledger_journal_entries",
-        "invoices",
-        "purchase_invoices",
-        "cost_ledger",
-        "grn_items",
-        "production_orders",
-        "delivery_orders",
-        "kv_config",
-        // Production Salary per head / per unit reads these two — without them
-        // hiring someone or completing a batch would leave the card stale.
-        "workers",
-        "fg_batches",
-        // salaryByDept reads payslips — without it a payroll edit leaves the
-        // department stacks stale.
-        "payslips",
-        // Report-layer labour injection (2026-08-31) dry-runs payroll from
-        // these when a month has no payslips yet — new clock entries, docks
-        // or a raise must refresh the injected P&L figures.
-        "working_hour_entries",
-        "payroll_hour_deductions",
-        "worker_salary_history",
-        // Production Revenue (2026-10-12) books a PO when its last upholstery
-        // card completes, priced from its SO / CO line or the product master.
-        "job_cards",
-        "sales_order_items",
-        "consignment_order_items",
-        "products",
-        // The running month's labour to date (2026-10-12) also reads the
-        // department master (which departments log factory hours) and the
-        // effective-dated pay rules.
-        "departments",
-        "pay_rule_versions",
-        // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
-        // delivery order or consignment note.
-        "delivery_order_items",
-        "consignment_notes",
-        "consignment_items",
-        "stock_take",
-      ],
+      // Every table the P&L + cost-structure replay reads (shared with
+      // /overview-trend). kv_config carries the opening date; a change to any
+      // of these must rebuild the snapshot.
+      sourceTables: PNL_REPLAY_SOURCE_TABLES,
     },
     dashOrgId,
     async () => {
@@ -17476,7 +17594,7 @@ async function attachSupplierNames(
   }
 }
 
-async function loadBankRecoState(
+async function loadBankRecoStateUntimed(
   db: Env["Variables"]["DB"],
   account: string,
 ): Promise<BankRecoLegState> {
@@ -17543,6 +17661,7 @@ async function loadBankRecoState(
   }
   return { legs, clearedOn, openingDate };
 }
+const loadBankRecoState = timedFn("bank-reco-state", loadBankRecoStateUntimed);
 
 // One walk, used by BOTH the live report and the finalise snapshot.
 async function computeBankRecoReport(
@@ -17861,7 +17980,11 @@ app.get("/cash-position", async (c) => {
     pending: { legId: string; day: string; sourceId: string; description: string; amountSen: number; ticked: boolean }[];
   }[] = [];
   const tickWarnings: { account: string; day: string; sourceId: string; description: string; amountSen: number }[] = [];
-  for (const a of bankAccounts) {
+  // Every bank account at once (2026-10-19, 「优化加载速度」): the accounts are
+  // independent, so their loads go out together instead of one account after
+  // another. Same rows, same order; each account's tick warnings stay in its turn.
+  const perAccount = await timed("cp-accounts", () => Promise.all(bankAccounts.map(async (a) => {
+    const warnings: typeof tickWarnings = [];
     const { legs, clearedOn, openingDate } = await loadBankRecoState(c.var.DB, a.code);
     // The pending LIST only itemises vouchers after this account's last
     // FINALISED month — earlier leftovers are reconciliation debt, collapsed
@@ -17928,7 +18051,7 @@ app.get("/cash-position", async (c) => {
         // The bank's own statement is the referee: month imported + still
         // unmatched means the tick claimed something the paper never showed.
         if (!matchedOn && importedMonths.has(l.day.slice(0, 7))) {
-          tickWarnings.push({ account: a.code, day: l.day, sourceId: l.sourceId, description: l.description, amountSen: l.amountSen });
+          warnings.push({ account: a.code, day: l.day, sourceId: l.sourceId, description: l.description, amountSen: l.amountSen });
         }
       }
     }
@@ -17950,7 +18073,11 @@ app.get("/cash-position", async (c) => {
     }
     const bankEstSen = bookSen - pendingSen + unbookedSen;
     const availableSen = bankEstSen + pendingSen; // = bookSen + unbookedSen
-    accounts.push({ code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending });
+    return { row: { code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending }, warnings };
+  })));
+  for (const p of perAccount) {
+    accounts.push(p.row);
+    tickWarnings.push(...p.warnings);
   }
   const totalBankEstSen = accounts.reduce((s, x) => s + x.bankEstSen, 0);
   const totalAvailableSen = accounts.reduce((s, x) => s + x.availableSen, 0);
@@ -17962,7 +18089,7 @@ app.get("/cash-position", async (c) => {
   // customer's terms) for the board's default "due now" scope.
   const obDateCp = await getOpeningDate(c.var.DB);
   const apExclCp = await loadOpeningApExcludes(c.var.DB);
-  const [piRes2, invRes2, ocbRes2, plannedRes] = await Promise.all([
+  const [piRes2, invRes2, ocbRes2, plannedRes] = await timed("cp-open-docs", () => Promise.all([
     c.var.DB.prepare(
       "SELECT id, supplierName, amountSen, paidAmountSen, status, invoiceDate, isOpening FROM purchase_invoices",
     ).all<{ id: string; supplierName: string; amountSen: number; paidAmountSen?: number | null; paid_amount_sen?: number | null; status: string; invoiceDate: string | null; isOpening: number | null }>(),
@@ -17979,7 +18106,7 @@ app.get("/cash-position", async (c) => {
     c.var.DB.prepare(
       "SELECT id, party_name, ref, expected_date, amount_sen FROM planned_payments WHERE done_at IS NULL ORDER BY expected_date",
     ).all<{ id: string; party_name?: string; partyName?: string; ref: string | null; expected_date?: string; expectedDate?: string; amount_sen?: number; amountSen?: number }>().catch(() => ({ results: [] as never[] })),
-  ]);
+  ]));
   const repayAgg = new Map<string, number>();
   for (const p of piRes2.results ?? []) {
     if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateCp, apExclCp)) continue;
@@ -18078,23 +18205,39 @@ app.get("/cash-position", async (c) => {
   // draw still owed — the same draws Creditor Aging's Trade Finance section
   // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
   const tradeFinance: { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number }[] = [];
-  try {
-    for (const s of await getTfSources(c.var.DB)) {
-      const derived = await loadTfDraws(c.var.DB, s);
-      for (const d of derived.draws) {
-        if (d.outstandingSen <= 0) continue;
-        let paidFor = "";
-        try {
-          const rs = await c.var.DB.prepare("SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?")
-            .bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
-          paidFor = [...new Set((rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean))].join(", ");
-        } catch { /* leave blank */ }
-        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender: s.lenderName, ref: d.drawSourceId, paidFor, outstandingSen: d.outstandingSen });
+  await timed("cp-trade-finance", async () => {
+    try {
+      const open: { lender: string; d: { dueDate: string; drawDate: string; drawSourceId: string; outstandingSen: number } }[] = [];
+      for (const s of await getTfSources(c.var.DB)) {
+        const derived = await loadTfDraws(c.var.DB, s);
+        for (const d of derived.draws) if (d.outstandingSen > 0) open.push({ lender: s.lenderName, d });
       }
+      // The supplier each draw paid — one query for all the draws (it was one
+      // per draw, in a row; 2026-10-19 「优化加载速度」).
+      const paidFor = new Map<string, Set<string>>();
+      const nos = [...new Set(open.map((o) => o.d.drawSourceId))];
+      for (let i = 0; i < nos.length; i += 200) {
+        const part = nos.slice(i, i + 200);
+        try {
+          const rs = await c.var.DB.prepare(`SELECT DISTINCT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN (${part.map(() => "?").join(",")})`)
+            .bind(...part).all<{ paymentNo?: string | null; payment_no?: string | null; supplierName: string | null; supplier_name: string | null }>();
+          for (const r of rs.results ?? []) {
+            const no = String(r.paymentNo ?? r.payment_no ?? "");
+            const name = String(r.supplierName ?? r.supplier_name ?? "").trim();
+            if (!no || !name) continue;
+            let set = paidFor.get(no);
+            if (!set) { set = new Set(); paidFor.set(no, set); }
+            set.add(name);
+          }
+        } catch { /* leave blank */ }
+      }
+      for (const { lender, d } of open) {
+        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender, ref: d.drawSourceId, paidFor: [...(paidFor.get(d.drawSourceId) ?? [])].join(", "), outstandingSen: d.outstandingSen });
+      }
+    } catch {
+      /* trade finance not set up → nothing to repay there */
     }
-  } catch {
-    /* trade finance not set up → nothing to repay there */
-  }
+  });
   tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
@@ -18317,30 +18460,36 @@ async function ensureFundTransfersTable(
 // Each family load is try/caught so a missing table/column just degrades that
 // family to the postedAt fallback. Keyed by BOTH id and human number because
 // posters set sourceId inconsistently (some the UUID, some the doc number).
-async function loadDocDateResolver(
+async function loadDocDateResolverUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<DocDateCtx> {
-  const openingDate = await getOpeningDate(db);
   const maps = new Map<string, Map<string, string>>(); // family → (id|no → 'YYYY-MM-DD')
-  for (const [fam, cfg] of Object.entries(DOC_DATE_FAMILIES)) {
-    const m = new Map<string, string>();
-    try {
-      const res = await db
+  // All families at once (2026-10-19, 「优化加载速度」): one awaited query per
+  // family in a row was 14 round trips before every report could start; sent
+  // together they share the request's connection. Same maps, same order.
+  const families = Object.entries(DOC_DATE_FAMILIES);
+  const [openingDate, famRows] = await Promise.all([
+    getOpeningDate(db),
+    Promise.all(families.map(([, cfg]) =>
+      db
         .prepare(
           `SELECT id AS rid, ${cfg.noCol} AS rno, ${cfg.dateCol} AS rdt FROM ${cfg.table}`,
         )
-        .all<{ rid: string | null; rno: string | null; rdt: string | null }>();
-      for (const r of res.results ?? []) {
-        const d = String(r.rdt ?? "").slice(0, 10);
-        if (!d) continue;
-        if (r.rid) m.set(String(r.rid), d);
-        if (r.rno) m.set(String(r.rno), d);
-      }
-    } catch {
-      /* table/column absent → this family falls back to postedAt */
+        .all<{ rid: string | null; rno: string | null; rdt: string | null }>()
+        // table/column absent → this family falls back to postedAt
+        .catch(() => null),
+    )),
+  ]);
+  families.forEach(([fam], i) => {
+    const m = new Map<string, string>();
+    for (const r of famRows[i]?.results ?? []) {
+      const d = String(r.rdt ?? "").slice(0, 10);
+      if (!d) continue;
+      if (r.rid) m.set(String(r.rid), d);
+      if (r.rno) m.set(String(r.rno), d);
     }
     maps.set(fam, m);
-  }
+  });
   const docDate = (
     sourceType: string,
     sourceId: string,
@@ -18363,6 +18512,13 @@ async function loadDocDateResolver(
   };
   return { docDate, openingDate, glMemo: new Map() };
 }
+// One load per read request (2026-10-19, 「优化加载速度」): Daily Cash Position
+// loaded every document date once PER BANK ACCOUNT (14 tables each time), and
+// a report's helpers each loaded their own. The context's own memos (ledger
+// windows, labour, stock, estimates) are per-request by design, so sharing it
+// only shares them further.
+const loadDocDateResolver = (db: Env["Variables"]["DB"]): Promise<DocDateCtx> =>
+  requestMemo("doc-dates", () => timed("doc-dates", () => loadDocDateResolverUntimed(db)));
 
 // Per-control-account sums of the opening invoices: AR per parseDebtorCode
 // control (300-x / 305-x), AP all into 400-0000. These become the locked

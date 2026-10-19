@@ -105,7 +105,7 @@ test("automatch never offers a pre-opening statement line", () => {
 test("shared loader voids pre-opening matches; report floors unbooked at the opening date", () => {
   // The alias/floor/void rules live ONCE in loadBankRecoState (report,
   // finalise snapshot and cash position all consume it).
-  const start = src.indexOf("async function loadBankRecoState(");
+  const start = src.indexOf("async function loadBankRecoStateUntimed(");
   assert.notEqual(start, -1, "loadBankRecoState not found");
   const loader = src.slice(start, src.indexOf("async function computeBankRecoReport("));
   // Group-aware clearing (2026-09-07 combo match): void pre-opening claims
@@ -187,7 +187,7 @@ test("split match: exact sum, sentinel on the line, one row per leg", () => {
 });
 
 test("loader and taken-checks see split rows; unmatch releases a split", () => {
-  const start = src.indexOf("async function loadBankRecoState(");
+  const start = src.indexOf("async function loadBankRecoStateUntimed(");
   const loader = src.slice(start, src.indexOf("async function computeBankRecoReport("));
   assert.match(loader, /FROM bank_line_leg_splits s/);
   assert.match(loader, /if \(r\.matchedLegId === BANK_LINE_SPLIT_SENTINEL\) continue;/);

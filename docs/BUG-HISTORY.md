@@ -198,6 +198,26 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-19-342 — Today's efficiency read 4,000% on the dashboard: working hours only land at punch-out `dashboard` `workforce` ✅
+
+Owner 2026-10-19 (10-19 tile: 4,173%, 166.9 h production over 4 h working). Job-card credit lands all day, but `working_hour_entries` are written only when the worker punches out (`punch-autofill.ts`), so until evening the day's efficiency divided a full morning's output by almost no working time. Same for the Attendance log's "Production time" (0h for everyone) and the Today's problems efficiency tile.
+
+Fix = every punch still open today gets its hours so far in the dashboard feed — clock-in to now, rules engine (lunch off, late ceiled), less approved non-production hours, split by department scans: the same maths as the worker phone's live card (`liveSplitRows`, now shared by `computeLiveDeptDay` and the bulk `liveOpenPunchRows`). "Now" steps every 30 minutes (owner: refresh half-hourly); the dashboard page refetches every 30 minutes. Feed cache key v5. Regression: `tests/live-open-punch.test.mjs`.
+
+## BUG-2026-10-19-341 — Two receipts could each take the full PO qty; returned and cancelled goods stayed billable `procurement` `data-integrity` 🟡
+
+🟡 **On branch** (`fix/hk0096-qty-guards` → `main`). HK-0096, the follow-up to HK-0003 parts 2 and 3.
+
+**Symptom.** Against a 100-unit PO line, two goods receipts of 100 each both posted (each passed "100 <= 110"). A DRAFT receipt could be posted on top of another receipt that had already taken the line. A POSTED receipt's qty could be raised past the line. A purchase invoice could be raised through the API off a DRAFT or CANCELLED receipt. Goods returned off a GRN before billing could still be invoiced in full, and a GRN line could be returned more than once.
+
+**Cause.** The 110% over-receipt check in `grn.ts` POST compared only this document's qty to the ordered qty. `purchase_order_items.receivedQty` already holds what earlier posted receipts drew down, but the check never read it. The DRAFT → POSTED flip and the POSTED qty edit had no ceiling at all. PI create never read the source GRN's status (only the UI hid the button). PI-from-GRN availability was `accepted - invoiced`, so a GRN-sourced return was ignored, and `issuePurchaseReturnDebitNote` refuses a debit note for such a return. So the supplier's credit never landed anywhere. Purchase-return create had no qty cap.
+
+**Fix.** `findOverReceipt` checks (already received + this receipt) <= 110% of ordered, summed per PO line, at GRN create, the DRAFT → POSTED flip and a POSTED qty increase. PI create refuses a source GRN that is not POSTED/CONFIRMED (409). PI create and the PI re-line ceiling subtract `loadGrnReturnedBeforeBilling` (returns with no PI) from what a GRN line may still bill. `checkPurchaseReturnQty` caps cumulative returns per GRN line at accepted and per PI line at its billed qty (409).
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` — the seven `HK-0096` tests fail without the fix.
+
+---
+
 ## BUG-2026-10-19-340 — Editing a GRN or PI dropped each line's own PO link `procurement` `grn` `purchase-invoice` 🟡
 
 🟡 **On branch** (`fix/hk0107-line-po-keep` → `main`), HK-0107. Preventive: prod has 0 DRAFT GRNs and 0 PIs whose line PO differs from the header, so no backfill.

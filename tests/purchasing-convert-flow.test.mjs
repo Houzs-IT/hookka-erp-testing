@@ -40,6 +40,11 @@ const piApp = (
     pathToFileURL(resolve(process.cwd(), "src/api/routes/purchase-invoices.ts")).href
   )
 ).default;
+const prApp = (
+  await import(
+    pathToFileURL(resolve(process.cwd(), "src/api/routes/purchase-returns.ts")).href
+  )
+).default;
 
 // ---------------------------------------------------------------------------
 // Stateful in-memory mock D1. Implements just enough SQL for the two routes.
@@ -251,6 +256,52 @@ function makeDb() {
     if (/FROM purchase_invoices WHERE piNo LIKE/i.test(sql)) return [];
     if (/FROM purchase_orders WHERE poNo LIKE/i.test(sql)) return [];
 
+    // HK-0096 — PO lines by id, for the cumulative over-receipt ceiling.
+    if (/SELECT id, materialName, quantity, receivedQty FROM purchase_order_items WHERE id IN/i.test(sql)) {
+      const ids = binds.map(String);
+      return tables.purchase_order_items
+        .filter((r) => ids.includes(String(r.id)))
+        .map((r) => ({
+          id: r.id,
+          materialName: getCol(r, "materialName"),
+          quantity: getCol(r, "quantity"),
+          receivedQty: Number(getCol(r, "receivedQty")) || 0,
+        }));
+    }
+    // HK-0096 — returned-before-billing per GRN line (returns with no PI).
+    if (/FROM purchase_return_items pri JOIN purchase_returns pr/i.test(sql)) {
+      const ids = binds.map(String);
+      const byLine = new Map();
+      for (const it of tables.purchase_return_items ?? []) {
+        const pr = (tables.purchase_returns ?? []).find((h) => h.id === it.purchase_return_id);
+        if (!pr || String(pr.purchase_invoice_id ?? "") !== "") continue;
+        const gi = String(it.grn_item_id ?? "");
+        if (!ids.includes(gi)) continue;
+        byLine.set(gi, (byLine.get(gi) ?? 0) + (Number(it.quantity) || 0));
+      }
+      return [...byLine].map(([grnItemId, qty]) => ({ grnItemId, qty }));
+    }
+    // HK-0096 — return caps: the source line's qty, and what was already returned.
+    if (/SELECT acceptedQty AS cap FROM grn_items WHERE id = \?/i.test(sql)) {
+      return tables.grn_items
+        .filter((r) => String(r.id) === String(binds[0]))
+        .map((r) => ({ cap: getCol(r, "acceptedQty") }));
+    }
+    if (/SELECT qty AS cap FROM purchase_invoice_items WHERE id = \?/i.test(sql)) {
+      return tables.purchase_invoice_items
+        .filter((r) => String(r.id) === String(binds[0]))
+        .map((r) => ({ cap: r.qty }));
+    }
+    {
+      const m = sql.match(/SELECT COALESCE\(SUM\(quantity\), 0\) AS qty FROM purchase_return_items WHERE (\w+) = \?/i);
+      if (m) {
+        const qty = (tables.purchase_return_items ?? [])
+          .filter((r) => String(r[m[1]] ?? "") === String(binds[0]))
+          .reduce((n, r) => n + (Number(r.quantity) || 0), 0);
+        return [{ qty }];
+      }
+    }
+
     // The invoice's posted legs, and the highest leg number per source.
     if (/FROM ledger_journal_entries WHERE sourceId = \? AND hidden = 0 AND sourceType LIKE 'purchase_invoice%'/i.test(sql)) {
       return (tables.ledger_journal_entries ?? []).filter(
@@ -335,6 +386,7 @@ function makeDb() {
       return tables.purchase_order_items
         .filter((r) => String(getCol(r, "purchaseOrderId")) === String(binds[0]))
         .map((r) => ({
+          id: r.id,
           material_code: getCol(r, "material_code"),
           materialName: getCol(r, "materialName"),
           quantity: getCol(r, "quantity"),
@@ -993,4 +1045,129 @@ test("BUG-2026-10-14-286 — void, unvoid, void again: each reversal gets new le
   const voidLegs = (db.tables.ledger_journal_entries ?? []).filter((l) => l.sourceType === "purchase_invoice_void");
   assert.ok(voidLegs.length >= 4, "two voids posted legs");
   assert.equal(new Set(voidLegs.map((l) => l.legNo)).size, voidLegs.length, "no leg number reused");
+});
+
+// ---------------------------------------------------------------------------
+// HK-0096 (HK-0003 parts 2 and 3) — cumulative receipt and invoice-qty guards.
+//
+// Part 2: the 110% over-receipt ceiling was checked per DOCUMENT, so two
+// receipts could each take the full PO qty. It is now (already received on the
+// PO line + this receipt) at create, at the DRAFT → POSTED flip, and on a qty
+// increase to a POSTED receipt.
+// Part 3: a PI could be raised off a DRAFT/CANCELLED receipt, goods returned
+// off a GRN before billing stayed billable (and such a return gets no DN), and
+// a purchase return had no cap — the same line could be returned twice.
+// ---------------------------------------------------------------------------
+const json = (method, body) => ({
+  method,
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+test("HK-0096 two receipts cannot each take the full PO qty (create)", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // poi-9: ordered 5, received 0
+  const grnRoot = mount(grnApp, db);
+  const receipt = {
+    poId: "po-9", receivedBy: "Ahmad", arrival_state: "ARRIVED",
+    items: [{ poItemIndex: 0, poId: "po-9", poItemId: "poi-9", receivedQty: 5, acceptedQty: 5, rejectedQty: 0 }],
+  };
+  assert.equal((await grnRoot.request("/", json("POST", receipt))).status, 201);
+  const second = await grnRoot.request("/", json("POST", receipt));
+  assert.equal(second.status, 400, "5 already received + 5 more > 110% of 5");
+  assert.match((await second.json()).error, /already received 5 \+ this receipt 5/);
+  const poi = db.tables.purchase_order_items.find((r) => r.id === "poi-9");
+  assert.equal(Number(poi.receivedQty), 5, "the refused receipt drew nothing down");
+});
+
+test("HK-0096 two lines of one receipt against the same PO line count together", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+  const grnRoot = mount(grnApp, db);
+  const line = { poItemIndex: 0, poId: "po-9", poItemId: "poi-9", receivedQty: 3, acceptedQty: 3, rejectedQty: 0 };
+  const res = await grnRoot.request(
+    "/",
+    json("POST", { poId: "po-9", receivedBy: "Ahmad", arrival_state: "ARRIVED", items: [line, line] }),
+  );
+  assert.equal(res.status, 400, "3 + 3 on one PO line > 110% of 5");
+});
+
+test("HK-0096 two DRAFT receipts: only the first to post may take the PO qty", async () => {
+  const db = makeDb();
+  seedOpenPo(db);
+  for (const id of ["grn-d1", "grn-d2"]) {
+    db.tables.grns.push({
+      id, grnNumber: id.toUpperCase(), poId: "po-9", poNumber: "PO-9",
+      supplierId: "sup-9", supplierName: "OPEN CO", receiveDate: "2026-10-19",
+      receivedBy: "x", totalAmount: 50000, qcStatus: "PENDING", status: "DRAFT",
+      notes: "", arrival_state: "ARRIVED",
+    });
+    db.tables.grn_items.push({
+      id: id === "grn-d1" ? 901 : 902, grnId: id, poItemIndex: 0, po_id: "po-9", po_item_id: "poi-9",
+      materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", orderedQty: 5,
+      receivedQty: 5, acceptedQty: 5, rejectedQty: 0, rejectionReason: null,
+      unitPrice: 10000, invoiced_qty: 0,
+    });
+  }
+  const grnRoot = mount(grnApp, db);
+  assert.equal((await grnRoot.request("/grn-d1", json("PUT", { status: "POSTED" }))).status, 200);
+  const second = await grnRoot.request("/grn-d2", json("PUT", { status: "POSTED" }));
+  assert.equal(second.status, 400);
+  assert.equal(db.tables.grns.find((g) => g.id === "grn-d2").status, "DRAFT", "the refused post left it DRAFT");
+  assert.equal(Number(db.tables.purchase_order_items.find((r) => r.id === "poi-9").receivedQty), 5);
+});
+
+test("HK-0096 raising a POSTED receipt's qty past the ceiling is refused", async () => {
+  const db = makeDb();
+  seed(db); // poi-1 ordered 10, received 10 via grn-1
+  const grnRoot = mount(grnApp, db);
+  const res = await grnRoot.request("/grn-1", json("PUT", { items: [{ acceptedQty: 12 }] }));
+  assert.equal(res.status, 400, "10 received + 2 more > 110% of 10");
+  assert.equal(Number(db.tables.grn_items.find((r) => r.id === 101).acceptedQty), 10);
+  // ...but a correction inside the tolerance still goes through.
+  assert.equal((await grnRoot.request("/grn-1", json("PUT", { items: [{ acceptedQty: 11 }] }))).status, 200);
+});
+
+test("HK-0096 a CANCELLED or DRAFT receipt cannot be invoiced", async () => {
+  for (const status of ["CANCELLED", "DRAFT"]) {
+    const db = makeDb();
+    seed(db);
+    db.tables.grns.find((g) => g.id === "grn-1").status = status;
+    const piRoot = mount(piApp, db);
+    const res = await piRoot.request("/", json("POST", {
+      grnId: "grn-1", supplierId: "sup-1", supplierName: "ACME",
+      items: [{ materialCode: "FOAM-1", materialName: "FOAM-1 - Foam block", qty: 1, unitPriceSen: 10000, grnItemId: 101 }],
+    }));
+    assert.equal(res.status, 409, `${status} receipt must not be billable`);
+    assert.equal(Number(db.tables.grn_items.find((r) => r.id === 101).invoiced_qty), 0);
+  }
+});
+
+test("HK-0096 goods returned off the GRN before billing come off what a PI may bill", async () => {
+  const db = makeDb();
+  seed(db); // grn line 101: accepted 10
+  db.tables.purchase_returns = [{ id: "pr-1", purchase_invoice_id: "", grn_id: "grn-1" }];
+  db.tables.purchase_return_items = [{ id: "pri-1", purchase_return_id: "pr-1", grn_item_id: "101", quantity: 4 }];
+  const piRoot = mount(piApp, db);
+  const bill = (qty) => piRoot.request("/", json("POST", {
+    grnId: "grn-1", supplierId: "sup-1", supplierName: "ACME",
+    items: [{ materialCode: "FOAM-1", materialName: "FOAM-1 - Foam block", qty, unitPriceSen: 10000, grnItemId: 101 }],
+  }));
+  assert.equal((await bill(10)).status, 409, "4 of 10 went back unbilled — only 6 can be invoiced");
+  assert.equal((await bill(6)).status, 200);
+});
+
+test("HK-0096 a GRN line cannot be returned twice over", async () => {
+  const db = makeDb();
+  seed(db); // grn line 101: accepted 10
+  const prRoot = mount(prApp, db);
+  const ret = (quantity) => prRoot.request("/", json("POST", {
+    grnId: "grn-1",
+    items: [{ grnItemId: "101", materialCode: "FOAM-1", materialName: "FOAM-1 - Foam block", quantity, unitCostSen: 10000 }],
+  }));
+  assert.equal((await ret(6)).status, 200);
+  const over = await ret(6);
+  assert.equal(over.status, 409, "6 already returned + 6 > 10 received");
+  assert.match((await over.json()).error, /already returned 6/);
+  assert.equal((await ret(4)).status, 200, "the remaining 4 can still go back");
 });

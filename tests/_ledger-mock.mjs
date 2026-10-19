@@ -212,8 +212,9 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
       const v = st.vouchers.find((x) => x.id === a[0]);
       return v ? { id: v.id, pvNo: v.pvNo, date: v.date ?? null, status: v.status, approvalState: v.approvalState, pvKind: v.pvKind ?? null, partyKind: null } : null;
     }
-    if (/^UPDATE payment_vouchers SET date = \?, payee = \?, description = \?, payFrom = \?, accrued = \?, accrualAccount = \?, settledAt = NULL, productLine = \?, totalSen = \?, notes = \?, bill_no = \?, bill_date = \?, status = 'POSTED', updated_at = \? WHERE id = \?$/.test(sql)) {
-      Object.assign(st.vouchers.find((x) => x.id === a[12]), { date: a[0], payee: a[1], description: a[2], payFrom: a[3], totalSen: a[7] });
+    if (/^UPDATE payment_vouchers SET date = \?, payee = \?, description = \?, payFrom = \?, accrued = \?, accrualAccount = \?, settledAt = NULL, productLine = \?, totalSen = \?, notes = \?, bill_no = \?, bill_date = \?, (reference = \?, )?status = 'POSTED', updated_at = \? WHERE id = \?$/.test(sql)) {
+      // (+ reference since 2026-10-19 — the id is the last bind either way.)
+      Object.assign(st.vouchers.find((x) => x.id === a[a.length - 1]), { date: a[0], payee: a[1], description: a[2], payFrom: a[3], totalSen: a[7] });
       return null;
     }
     if (/^UPDATE payment_vouchers SET status = \? WHERE id = \?$/.test(sql)) { st.vouchers.find((x) => x.id === a[1]).status = a[0]; return null; }

@@ -734,6 +734,8 @@ export type JournalEntry = {
   entryNo: string;
   date: string;
   description: string;
+  // Optional, its own field (owner 2026-10-19 「先做 Reference 栏」).
+  reference?: string | null;
   lines: JournalLine[];
   status: "DRAFT" | "POSTED" | "REVERSED";
   lifecycleState?: string;

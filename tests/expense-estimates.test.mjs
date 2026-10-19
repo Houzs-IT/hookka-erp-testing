@@ -85,7 +85,7 @@ const DASH = readFileSync("src/pages/finance-dashboard.tsx", "utf8").replace(/\r
 const slice = (src, from, to) => { const a = src.indexOf(from); assert.notEqual(a, -1, from); const b = src.indexOf(to, a + 1); return src.slice(a, b === -1 ? undefined : b); };
 
 test("the estimates read the same one-month ledger windows the statement shows, before any estimate", () => {
-  const fn = slice(API, "async function runningMonthEstimates(", "\nasync function computePnlWindow(");
+  const fn = slice(API, "async function runningMonthEstimatesUntimed(", "\nasync function computePnlWindowUntimed(");
   assert.match(fn, /const prevYms = previousMonths\(runYm, ESTIMATE_LOOKBACK\);/);
   assert.match(fn, /\[runYm, \.\.\.prevYms\]\.map\(\(ym\) => glWindowSigned\(db, orgId, ym, ym, dc\)\)/);
   assert.match(fn, /recurringEstimates\(\{ current: cur\.net, previous: prev\.map\(\(w\) => w\.net\), bucketOf \}\)/);
@@ -93,7 +93,7 @@ test("the estimates read the same one-month ledger windows the statement shows, 
 });
 
 test("only a window that reaches the running month carries them, added to a copy of the shared window", () => {
-  const fn = slice(API, "async function computePnlWindow(", "\n// Window form of costByLine");
+  const fn = slice(API, "async function computePnlWindowUntimed(", "\n// Window form of costByLine");
   assert.match(fn, /const est = windowCoversYm\(startYm, endYm, runningMonthYm\(\)\)\n\s*\? await runningMonthEstimates\(db, orgId, dc\)/);
   assert.match(fn, /const gl = est\.size \? \{ \.\.\.glLedger, net: new Map\(glLedger\.net\) \} : glLedger;/, "the memoised window is never mutated");
   assert.match(fn, /overheadLines\.push\(\{ code, name: meta\.name, amountSen: Math\.round\(v \* \(isAll \? 1 : R\)\), \.\.\.estPart\(code\) \}\);/);

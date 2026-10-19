@@ -115,10 +115,15 @@ test("how a figure is made adds up exactly", () => {
 
 test("the route is read-only and reads the P&L page's own month windows", () => {
   const api = read("src/api/routes/accounting.ts");
-  const r = slice(api, 'app.get("/overview-trend"', "\n});\n");
-  assert.match(r, /requirePermission\(c, "accounting", "read"\)/);
+  const route = slice(api, 'app.get("/overview-trend"', "\n});\n");
+  // The figures are computed by computeOverviewTrend; the route keeps the last
+  // copy in its own snapshot table (2026-10-19, tests/finance-overview-speed.test.mjs)
+  // — that cache is the ONLY thing it writes.
+  const r = slice(api, "async function computeOverviewTrend(", "\n}\n");
+  assert.match(route, /requirePermission\(c, "accounting", "read"\)/);
   assert.doesNotMatch(r, /INSERT|UPDATE|DELETE|kvSet|\.run\(/, "nothing written");
-  assert.match(r, /const n = asked === 6 \|\| asked === 12 \? asked : 3;/, "three months unless asked");
+  assert.doesNotMatch(route.replace(/CREATE TABLE IF NOT EXISTS accounting_overview_snapshot \([\s\S]*?\)`,\n\s*\)\.run\(\);/, ""), /INSERT|UPDATE|DELETE|kvSet|\.run\(/, "the route writes its snapshot table only");
+  assert.match(route, /const n = asked === 6 \|\| asked === 12 \? asked : 3;/, "three months unless asked");
   assert.match(r, /FROM sales_orders WHERE status NOT IN \('DRAFT','CANCELLED'\)/);
   assert.match(r, /FROM invoices WHERE status NOT IN \('DRAFT','CANCELLED'\)/);
   assert.match(r, /SELECT companySODate, createdAt, subtotalSen FROM sales_orders/, "an order before SST (it carries none)");
@@ -132,7 +137,7 @@ test("the route is read-only and reads the P&L page's own month windows", () => 
 test("the tab: six charts, aging with who makes up a bucket, no month table", () => {
   const ui = read("src/pages/accounting/overview-tab.tsx");
   const page = read("src/pages/accounting/index.tsx");
-  assert.match(page, /<OverviewTab arData=\{arData\} apData=\{apData\} \/>/);
+  assert.match(page, /<OverviewTab arData=\{arData\} apData=\{apData\} agingLoading=\{agingPending\} \/>/);
   assert.doesNotMatch(page, /Recent Journal Entries/, "the recent-journal grid is gone");
   assert.match(ui, /const \[range, setRange\] = useState<Range>\(3\);/, "three months by default");
   assert.match(ui, /`\/api\/accounting\/overview-trend\?months=\$\{range\}`/);

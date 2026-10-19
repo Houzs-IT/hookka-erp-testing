@@ -1,4 +1,5 @@
 import type { Env } from "../worker";
+import { requestMemo } from "./step-timing";
 
 // ---------------------------------------------------------------------------
 // Account-code rename aliases (migration 0157). The immutable ledger
@@ -9,7 +10,15 @@ import type { Env } from "../worker";
 // (Moved from routes/accounting.ts 2026-10-17 so the payment routes can
 // compare a re-posted bank leg with the old one — src/lib/bank-leg-carry.ts.)
 // ---------------------------------------------------------------------------
-export async function loadAccountResolver(
+// Loaded once per read request (requestMemo — every bank account of Daily Cash
+// Position and every report helper asked again); a plain load on writes.
+export function loadAccountResolver(
+  db: Env["Variables"]["DB"],
+): Promise<(code: string) => string> {
+  return requestMemo("account-resolver", () => loadAccountResolverFresh(db));
+}
+
+async function loadAccountResolverFresh(
   db: Env["Variables"]["DB"],
 ): Promise<(code: string) => string> {
   try {

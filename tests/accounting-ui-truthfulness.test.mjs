@@ -169,9 +169,10 @@ test("the Overview does not sum chart_of_accounts.balanceSen", () => {
       "Overview expenses are summing chart_of_accounts.balanceSen again",
     );
   }
-  // It takes the aging and nothing else — no chart of accounts, no journals.
+  // It takes the aging and nothing else — no chart of accounts, no journals
+  // (+ whether the aging is still loading, 2026-10-19: it no longer waits).
   assert.ok(
-    /<OverviewTab arData=\{arData\} apData=\{apData\} \/>/.test(src),
+    /<OverviewTab arData=\{arData\} apData=\{apData\} agingLoading=\{agingPending\} \/>/.test(src),
     "OverviewTab took another list back as a prop — its figures come from /overview-trend",
   );
 });
