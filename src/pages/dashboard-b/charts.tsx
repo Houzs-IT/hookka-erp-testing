@@ -21,6 +21,7 @@ import {
   Pie,
   Cell,
   LineChart,
+  ReferenceLine,
   Line,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
@@ -248,13 +249,26 @@ export function CustomerPieChart({
 export function DeptRevenueChart({
   data,
   series,
+  markDay,
+  onPickDay,
 }: {
   data: Record<string, number | string>[];
   series: { key: string; color: string }[];
+  markDay?: string;
+  onPickDay?: (day: string) => void;
 }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
+      <LineChart
+        data={data}
+        margin={{ top: 6, right: 6, bottom: 0, left: 0 }}
+        onClick={onPickDay ? (e) => {
+          const hit = data.find((r) => r.m === e?.activeLabel);
+          if (hit) onPickDay(String(hit.d));
+        } : undefined}
+        style={onPickDay ? { cursor: "pointer" } : undefined}
+      >
+        {markDay && <ReferenceLine x={markDay} stroke="#6B5C32" strokeDasharray="3 3" />}
         <XAxis
           dataKey="m"
           tick={{ fill: "#9CA3AF", fontSize: 11 }}
