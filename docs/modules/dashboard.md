@@ -1,5 +1,6 @@
 # Dashboard & Command Center — Module Guide
 
+> **Last verified: 2026-10-19** (branch `fix/dashboard-dept-revenue-to-main` (to `main`, cherry-picked from staging #1003)): the Department Revenue JSX and `DeptRevenueChart` rows (anchors :1688 / :250 and the Day view). Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
@@ -53,8 +54,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |
 | Revenue by Customer JSX | `src/pages/dashboard-b/index.tsx:1749` | Concentration exhibit (donut + category modes) |
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
-| Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1614` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa |
-| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:248` | One line per production department |
+| Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1688` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
+| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:250` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
 | `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2355` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |

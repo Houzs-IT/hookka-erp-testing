@@ -236,6 +236,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-19 — 🔵 Dashboard Operations: a Day view, and click a day on the month chart (branch `feat/dashboard-ops-day-view` → `staging` #1003; to `main` in #1015)
+
+Owner asks (2026-10-19): days should show each day's performance, and on the month view a click on the chart should open that day (as the pre-sync staging dashboard did).
+
+1. ✅ Sync staging from main first (PR #1001, branch `chore/sync-staging-from-main-1019`).
+2. 🔵 Day button on the Operations tab. This reverses the 2026-10-17 rule "only Employees has a Day view" for Operations only: Department Revenue now has per-day figures, so a day shows something different. Sales / Service / Finance keep the rule. Operations still opens on the month.
+3. 🔵 Department Revenue follows the picked day (table = that day's values, title = the day); the chart keeps the whole month and marks the day. Clicking a point on the month chart picks that day; clicking the marked day again goes back to the month. Weekly buckets (quarter / year) are not clickable.
+4. 🔵 Output & Cost's "Click a bar to focus that day" works again (the day used to be dropped on Operations).
+5. ⚪ Not changed: the phone dashboard (/m) keeps Day on Employees only. Daily Report, Department Status and Plant Load are live state, not per day.
+6. 🟡 Verify on the staging site after #1001 and this PR merge (user signs in).
 
 
 
