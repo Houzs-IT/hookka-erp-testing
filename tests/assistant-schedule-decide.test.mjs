@@ -67,7 +67,13 @@ test("tools: both proposal tools registered; decide enforces consent + role", ()
   // The consent check + role check live inside the decide executor.
   const decideIdx = tools.indexOf('name: "decide_schedule_proposals"');
   const decideSlice = tools.slice(decideIdx, decideIdx + 4000);
-  assert.match(decideSlice, /isSuperAdmin\(c\)/, "decide is SUPER_ADMIN-gated");
+  // HK-0033: SUPER_ADMIN, or whoever holds the permission the Planning
+  // route's approve/reject buttons require.
+  assert.match(
+    decideSlice,
+    /!isSuperAdmin\(c\) && !\(await hasPermission\(c, "production-orders", "update"\)\)/,
+    "decide must be gated like POST /api/planning/proposals/approve",
+  );
   assert.match(
     decideSlice,
     /decideProposals\(db, \{ action, ids, decidedBy: userId \}\)/,
@@ -85,4 +91,83 @@ test("shared core: lib exports decideProposals; route delegates to it", () => {
     /UPDATE job_cards SET dueDate/,
     "the route must not keep a divergent inline write path",
   );
+});
+
+test("HK-0033: staff can reach list/decide, and each tool enforces its own permission", () => {
+  assert.match(
+    prompt,
+    /"list_schedule_proposals",\s*\n\s*"decide_schedule_proposals",/,
+    "both proposal tools must be in STAFF_TOOL_NAMES",
+  );
+  const listIdx = tools.indexOf('name: "list_schedule_proposals"');
+  assert.match(
+    tools.slice(listIdx, listIdx + 3000),
+    /hasPermission\(c, "production-orders", "read"\)/,
+    "list must enforce production-orders:read for non-super-admins",
+  );
+});
+
+// ---- HK-0033 behavioural gate: drives the real runTool against a fake DB ----
+const { runTool } = await import(
+  new URL("../src/api/lib/assistant-tools.ts", import.meta.url).href
+);
+
+function gateCtx(role, grants, writes) {
+  const stmt = (sql) => ({
+    bind: () => stmt(sql),
+    async first() { return null; },
+    async all() {
+      if (/role_permissions/.test(sql)) {
+        return { results: grants.map((g) => ({ resource: g.split(":")[0], action: g.split(":")[1] })) };
+      }
+      return { results: [] };
+    },
+    async run() {
+      writes.push(sql);
+      return { success: true, meta: { changes: 1 } };
+    },
+  });
+  const DB = {
+    prepare: (sql) => stmt(sql.replace(/\s+/g, " ").trim()),
+    async exec() { return { count: 0 }; },
+    async batch(s) { return s.map(() => ({ success: true, meta: { changes: 1 } })); },
+  };
+  const vars = { DB, orgId: "org-1", userRole: role, userId: "u-1" };
+  return { var: vars, env: {}, get: (k) => vars[k], set: (k, v) => { vars[k] = v; } };
+}
+const decideArgs = { action: "reject", ids: ["p-1"], confirmed: true };
+const rejected = (w) => w.some((s) => /UPDATE schedule_proposals/.test(s));
+
+test("HK-0033 gate: decide is denied without production-orders:update, nothing written", async () => {
+  const writes = [];
+  const c = gateCtx("PIC_NO_UPDATE", ["production-orders:read"], writes);
+  const r = await runTool(c, "decide_schedule_proposals", decideArgs);
+  assert.equal(r.ok, true, "runTool wraps the executor's own refusal");
+  assert.equal(r.result.ok, false);
+  assert.match(r.result.error, /production-orders update permission/);
+  assert.equal(rejected(writes), false);
+});
+
+test("HK-0033 gate: decide is allowed with production-orders:update", async () => {
+  const writes = [];
+  const c = gateCtx("PIC_WITH_UPDATE", ["production-orders:update"], writes);
+  const r = await runTool(c, "decide_schedule_proposals", decideArgs);
+  assert.equal(r.result.ok, true, JSON.stringify(r.result));
+  assert.equal(rejected(writes), true);
+});
+
+test("HK-0033 gate: list is denied without production-orders:read, allowed with it", async () => {
+  const denied = await runTool(gateCtx("PIC_NO_READ", ["sales-orders:read"], []), "list_schedule_proposals", {});
+  assert.equal(denied.result.ok, false);
+  assert.match(denied.result.error, /permission/);
+  const allowed = await runTool(gateCtx("PIC_WITH_READ", ["production-orders:read"], []), "list_schedule_proposals", {});
+  assert.notEqual(allowed.result.ok, false, JSON.stringify(allowed.result));
+});
+
+test("HK-0033 prompt: no SUPER_ADMIN-only wording left for list/decide proposals", () => {
+  for (const name of ["list_schedule_proposals", "decide_schedule_proposals"]) {
+    for (const m of prompt.matchAll(new RegExp(`${name}[^\\n]{0,400}`, "g"))) {
+      assert.doesNotMatch(m[0], /SUPER_ADMIN/, `prompt line for ${name} must not say SUPER_ADMIN`);
+    }
+  }
 });

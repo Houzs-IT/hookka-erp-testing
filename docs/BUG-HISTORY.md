@@ -1,5 +1,7 @@
 # Bug History
-> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `fix/hk0025-receipts-targeted`, to main; 329 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `feat/production-overview-default-grid-main`, to `main`, cherry-picked from the staging change; 328 is taken on `main`, 329 on `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-329 (branch `fix/ocr-tab-myt-time-main`, to `main`, cherry-picked from the staging fix); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: BUG-2026-10-18-325 (#980) and -326 (#982) flipped to 🟢 after their prod checks.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-328 (branch `fix/raw-materials-org-scope`, to main; 327 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-326 (branch `feat/finance-change-log-2`, to main); BUG-2026-10-18-325 stays 🟡 until its prod check.
@@ -149,7 +151,7 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-19-330 — Announcement read receipts counted every worker, not the notice's audience `announcements` 🟡
+## BUG-2026-10-19-331 — Announcement read receipts counted every worker, not the notice's audience `announcements` 🟡
 
 🟡 **Fixed on branch** (`fix/hk0025-receipts-targeted` → `main`).
 
@@ -160,6 +162,38 @@ Entries themselves stay newest-first.
 **Fix.** `audienceRoster()` filters the active roster with `workerCanSee`, the rule the worker phone uses; both endpoints call it.
 
 **Regression.** `tests/announcement-acks.test.mjs` ("a targeted notice counts only its audience").
+
+---
+
+## BUG-2026-10-19-330 — Production Overview opened on Cards; the floor wants Grid first `production` `ui` 🟡
+
+🟡 **Fixed on branch** (`feat/production-overview-default-grid-main` → `main`, same change as `feat/production-overview-default-grid` → `staging`, #995). Owner request 2026-10-19.
+
+**Symptom.** The /production Overview tab always opened on the Cards layout. Users had to click Grid every visit to get the matrix they work from.
+
+**Root cause.** Not a fault: `overviewView` in `src/pages/production/index.tsx` started as `"cards"` by design when the Cards view shipped (2026-09-30). The choice is not saved anywhere (no localStorage, no URL param), so every visit starts on the default.
+
+**Fix.** The initial state is now `"grid"`. The toggle still switches to Cards for that visit, and the choice is still not saved, as before.
+
+**Regression.** `tests/production-overview-cards.test.mjs` "the page opens on Grid and does not persist the choice" (it used to pin Cards).
+
+---
+
+## BUG-2026-10-19-329 — The OCR tab showed scan times in UTC and filtered by the UTC date `ocr` `dashboard` 🟡
+
+🟡 **Fixed on branch** (`fix/ocr-tab-myt-time-main` → `main`, same fix as `fix/ocr-tab-myt-time` → `staging`). Found 2026-10-19 from the owner's screenshot of "Recent problem scans".
+
+**Symptom.** On the dashboard's OCR tab the When column read `2026-10-19 02:05` for a scan made at 10:05 Malaysia time, eight hours early. The period filter had the same offset: a scan before 08:00 MYT counted on the previous day, so the first eight hours of a selected range were left out and the last eight hours of the day before it were counted.
+
+**Root cause.** `scan_queue.created_at` and the sample tables' `createdAt` are stored in UTC (`new Date().toISOString()`, or the Postgres `NOW()` default). The page sliced the stored string (`p.createdAt.slice(0, 16)`), which prints the UTC clock. The route compared `substr(created_at::text, 1, 10)`, the UTC date, in `GET /models`, the timing block of `GET /`, and `dateWhere` (whose `from` bound compared the raw string). Same shape as BUG-2026-09-24-190.
+
+**Fix.** The When column uses `formatTimestampMY(..., { withYear: true })` from `src/lib/utils.ts`, so it now reads `19/10/2026 10:05` (house format, was `YYYY-MM-DD HH:MM`). All six date bounds in `src/api/routes/ocr-accuracy.ts` use `mytDateSql` from `src/api/lib/on-time-delivery.ts`.
+
+**Unmeasured.** `mytDateSql` casts the text column to `timestamptz`; a value that does not cast would fail the query. `scan_queue.created_at` is already cast on this table by the timing query. `po_scan_samples.created_at` and `supplier_scan_samples.created_at` were not checked; read-only check per table: `SELECT count(*) FROM po_scan_samples WHERE created_at IS NOT NULL AND created_at !~ '^d{4}-d{2}-d{2}[T ]d{2}:d{2}'` (expect 0).
+
+**Regression.** `tests/ocr-tab-myt.test.mjs`: the formatter turns `02:05Z` into `10:05` and `17:30Z` into the next day, and the route has no UTC `substr(created_at::text` bound left. It fails on the old code.
+
+---
 
 ## BUG-2026-10-19-328 — Raw-material by-id routes ignored the caller's org `raw-materials` `auth-rbac` 🟡
 
@@ -678,6 +712,18 @@ fixed print layout.
 **Fix.** The BOM page shows a DRAFT badge beside the product in the list and on the BOM header, and a DRAFT BOM gets an Activate button that saves `versionStatus: "ACTIVE"` through the existing `PUT /api/bom/templates/:id`. The bulk-generate default is unchanged (not part of this ask).
 
 **Regression.** `tests/bom-draft-activate.test.mjs` checks the badge, the Activate wiring and that the PUT accepts ACTIVE; fails without the change.
+
+## BUG-2026-10-15-HK0033 — Chat could not approve or reject the Delivery Agent's schedule proposals `assistant` `planning` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0033-pic-decide-proposals-chat`, PR #861). Prod occurrences UNMEASURED for non-super-admins.
+
+**Symptom.** The person in charge asked the chat to approve schedule proposals and it could not.
+
+**Root cause.** `list_schedule_proposals` / `decide_schedule_proposals` were missing from `STAFF_TOOL_NAMES` (`assistant.ts`) and `decide` was gated to SUPER_ADMIN only.
+
+**Fix.** Both tools are on the staff list; list needs `production-orders:read`, decide needs `production-orders:update` (super admin always passes). Approval still only records the plan: no DO or packing list is created (Delivery Agent v1 red line).
+
+**Regression.** `tests/assistant-schedule-decide.test.mjs`.
 
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 
