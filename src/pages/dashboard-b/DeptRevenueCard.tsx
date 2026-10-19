@@ -97,7 +97,7 @@ export function DeptRevenueCard({
         (x) => depts.map((d) => pickCat(d.byBucket[x.i], cat)),
       ).map(({ b, i }) => {
         const row: Record<string, number | string> = { m: b.slice(5), d: b };
-        for (const d of depts) row[d.label] = Math.round(pickCat(d.byBucket[i], cat) / 100);
+        for (const d of depts) row[d.label] = pickCat(d.byBucket[i], cat) / 100;
         return row;
       }),
     [buckets, depts, cat],

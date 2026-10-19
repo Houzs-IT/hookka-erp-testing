@@ -267,13 +267,14 @@ export function DeptRevenueChart({
   return (
     <div>
       <p className="text-[11px] text-[#9CA3AF] mb-1">Same scale on every chart: 0 to {rm(max * 100)}</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
         {series.map((s) => {
           const peak = data.reduce<Record<string, number | string> | undefined>(
             (p, r) => ((Number(r[s.key]) || 0) > (Number(p?.[s.key]) || 0) ? r : p),
             undefined,
           );
-          const at = hover ? data.find((r) => r.m === hover) : undefined;
+          // Hover wins, then the picked day, so the header matches the table on a day view.
+          const at = hover ?? markDay ? data.find((r) => r.m === (hover ?? markDay)) : undefined;
           return (
             <div key={s.key} className="min-w-0">
               <div className="flex items-baseline justify-between gap-2 text-xs">
@@ -281,11 +282,11 @@ export function DeptRevenueChart({
                   <span style={{ color: s.color }}>●</span>
                   {s.key}
                 </span>
-                <span className="shrink-0 tabular-nums text-[#9CA3AF]">
+                <span className="shrink-0 tabular-nums text-[#5A5550]">
                   {at
-                    ? `${at.m} · ${rm((Number(at[s.key]) || 0) * 100)}`
+                    ? `${at.m} · ${rm(Math.round((Number(at[s.key]) || 0) * 100))}`
                     : peak
-                      ? `peak ${peak.m} · ${rm((Number(peak[s.key]) || 0) * 100)}`
+                      ? `peak ${peak.m} · ${rm(Math.round((Number(peak[s.key]) || 0) * 100))}`
                       : "no output"}
                 </span>
               </div>
@@ -308,7 +309,11 @@ export function DeptRevenueChart({
                       dataKey="m"
                       ticks={first && last ? [first, last] : undefined}
                       interval={0}
-                      tick={{ fill: "#9CA3AF", fontSize: 10 }}
+                      tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                        <text x={x} y={y + 10} textAnchor={payload.value === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
+                          {payload.value}
+                        </text>
+                      )}
                       axisLine={{ stroke: "#F0ECE6" }}
                       tickLine={false}
                       height={14}
@@ -318,7 +323,7 @@ export function DeptRevenueChart({
                     <Line
                       type="monotone"
                       dataKey={s.key}
-                      stroke={s.color}
+                      stroke={peak ? s.color : "#E2DDD8"}
                       strokeWidth={1.75}
                       isAnimationActive={false}
                       dot={false}
