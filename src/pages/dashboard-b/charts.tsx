@@ -25,6 +25,7 @@ import {
   ReferenceLine,
   Line,
 } from "recharts";
+import type { XAxisTickContentProps } from "recharts";
 import { formatCurrency } from "@/lib/utils";
 
 const rm = (sen: number | undefined) => formatCurrency(sen ?? 0);
@@ -309,7 +310,7 @@ export function DeptRevenueChart({
                       dataKey="m"
                       ticks={first && last ? [first, last] : undefined}
                       interval={0}
-                      tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                      tick={({ x, y, payload }: XAxisTickContentProps) => (
                         <text x={x} y={y} dy="0.71em" textAnchor={payload.value === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
                           {payload.value}
                         </text>
