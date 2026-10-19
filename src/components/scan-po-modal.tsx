@@ -2055,7 +2055,7 @@ function PreviewStep({
                 </i>
                 <span className="truncate">{it.fileName}</span>
                 {it.error && (
-                  <span className="text-xs truncate opacity-80">— {it.error.slice(0, 80)}</span>
+                  <span className="text-xs min-w-0 line-clamp-2 break-words opacity-80" title={it.error}>— {it.error}</span>
                 )}
               </div>
               <button
