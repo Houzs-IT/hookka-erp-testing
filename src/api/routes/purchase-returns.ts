@@ -17,6 +17,7 @@ import { getOrgId } from "../lib/tenant";
 import {
   ensurePurchaseReturnTables,
   createPurchaseReturn,
+  checkPurchaseReturnQty,
   loadPiItemsForReturn,
   loadGrnItemsForReturn,
   applyPurchaseReturnStockOut,
@@ -178,6 +179,8 @@ app.post("/", async (c) => {
       supplierName: String(pick(grn, "supplier_name", "supplierName") ?? ""),
     };
   }
+  const overReturn = await checkPurchaseReturnQty(c.var.DB, items);
+  if (overReturn) return c.json({ success: false, error: overReturn }, 409);
   const created = await createPurchaseReturn(c.var.DB, {
     ...src,
     reason: String(b.reason ?? ""),

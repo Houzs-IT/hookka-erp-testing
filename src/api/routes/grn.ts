@@ -912,15 +912,22 @@ async function resolveGrnLineTargets(
   db: D1Database,
   grnId: string,
   headerPoId: string | null,
+  // Lines not yet in the DB (a pre-post ceiling check, HK-0096). Omitted →
+  // read this GRN's stored lines, exactly as before.
+  preloaded?: GrnLinePoRef[],
 ): Promise<Array<{ poId: string; poItemId: string; qty: number }>> {
   await ensureGrnItemPoRef(db);
-  const res = await db
-    .prepare(
-      "SELECT poItemIndex, acceptedQty, po_id, po_item_id FROM grn_items WHERE grnId = ? ORDER BY id ASC",
-    )
-    .bind(grnId)
-    .all<GrnLinePoRef>();
-  const lines = res.results ?? [];
+  const lines =
+    preloaded ??
+    (
+      await db
+        .prepare(
+          "SELECT poItemIndex, acceptedQty, po_id, po_item_id FROM grn_items WHERE grnId = ? ORDER BY id ASC",
+        )
+        .bind(grnId)
+        .all<GrnLinePoRef>()
+    ).results ??
+    [];
 
   const out: Array<{ poId: string; poItemId: string; qty: number }> = [];
   const needPositional = lines.some(
@@ -955,6 +962,43 @@ async function resolveGrnLineTargets(
     out.push({ poId: headerPoId, poItemId: poItemsOrdered[idx].id, qty });
   }
   return out;
+}
+
+/**
+ * HK-0096 — the over-receipt ceiling, measured CUMULATIVELY.
+ *
+ * `purchase_order_items.receivedQty` already holds what every POSTED receipt
+ * drew down, so the ceiling is (already received + this receipt) <= 110% of
+ * ordered. Checking only this document let two 100-unit receipts each pass
+ * "100 <= 110" against one 100-unit line. Targets are summed per PO line
+ * first, so two lines of one receipt against the same PO line count together.
+ * Returns the error text, or null when every line fits.
+ */
+async function findOverReceipt(
+  db: D1Database,
+  targets: Array<{ poItemId: string; qty: number }>,
+): Promise<string | null> {
+  const want = new Map<string, number>();
+  for (const t of targets) {
+    want.set(t.poItemId, (want.get(t.poItemId) ?? 0) + (Number(t.qty) || 0));
+  }
+  if (want.size === 0) return null;
+  const ids = [...want.keys()];
+  const res = await db
+    .prepare(
+      `SELECT id, materialName, quantity, receivedQty FROM purchase_order_items WHERE id IN (${ids.map(() => "?").join(",")})`,
+    )
+    .bind(...ids)
+    .all<{ id: string; materialName: string | null; quantity: number; receivedQty: number | null }>();
+  for (const r of res.results ?? []) {
+    const ordered = Number(r.quantity) || 0;
+    const already = Number(r.receivedQty) || 0;
+    const incoming = want.get(String(r.id)) ?? 0;
+    if (already + incoming > ordered * 1.1) {
+      return `Over-receipt for ${r.materialName ?? "line"}: already received ${already} + this receipt ${incoming} exceeds 110% of ordered ${ordered}. Requires ADMIN approval.`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1527,7 +1571,8 @@ app.post("/", async (c) => {
         return typeof idx === "number" && idx >= 0 ? list[idx] : undefined;
       };
 
-      // Over-receipt validation (110% tolerance)
+      // Over-receipt validation (110% tolerance), cumulative (HK-0096)
+      const receiptTargets: Array<{ poItemId: string; qty: number }> = [];
       for (const item of items as Array<{
         poItemIndex: number;
         poId?: string | null;
@@ -1535,18 +1580,11 @@ app.post("/", async (c) => {
         receivedQty: number;
       }>) {
         const poItem = resolvePoItem(item);
-        if (poItem) {
-          const tolerance = poItem.quantity * 1.1;
-          if (item.receivedQty > tolerance) {
-            return c.json(
-              {
-                success: false,
-                error: `Over-receipt for ${poItem.materialName}: received ${item.receivedQty} exceeds 110% of ordered ${poItem.quantity}. Requires ADMIN approval.`,
-              },
-              400,
-            );
-          }
-        }
+        if (poItem) receiptTargets.push({ poItemId: String(poItem.id), qty: item.receivedQty });
+      }
+      const overReceipt = await findOverReceipt(c.var.DB, receiptTargets);
+      if (overReceipt) {
+        return c.json({ success: false, error: overReceipt }, 400);
       }
 
       grnPoId = po.id;
@@ -2028,6 +2066,21 @@ app.put("/:id", async (c) => {
           unresolved: adj.unresolved,
         };
 
+        // HK-0096 — a qty increase draws the PO line down further, so it
+        // must fit the same cumulative ceiling a new receipt does. Resolved
+        // the way cascadePOReceivedQtyDelta applies it (by poItemIndex).
+        const overOnEdit = await findOverReceipt(
+          c.var.DB,
+          await resolveGrnLineTargets(
+            c.var.DB,
+            id,
+            existing.poId ?? null,
+            poLineDeltas.map((d) => ({ poItemIndex: d.poItemIndex, acceptedQty: d.delta })),
+          ),
+        );
+        if (overOnEdit) {
+          return c.json({ success: false, error: overOnEdit }, 400);
+        }
         // Cascade the accepted-qty delta to the parent PO's receivedQty so the
         // PO's per-line consumed counter (and status) tracks the correction.
         // Deferred to after the main batch (it re-reads PO lines / recomputes
@@ -2125,6 +2178,28 @@ app.put("/:id", async (c) => {
         id,
       ),
     );
+
+    // HK-0096 — the DRAFT → POSTED flip is where cascadePOStatusAfterGRNPost
+    // adds this receipt to the PO counter, so the cumulative ceiling is checked
+    // here too: two DRAFT receipts can each hold the full PO qty, and only the
+    // first to post may take it. Uses the lines this PUT is about to write.
+    if (newStatus === "POSTED" && !COMMITTED_STATUSES.has(prevStatus)) {
+      const postLines: GrnLinePoRef[] | undefined = Array.isArray(body.items)
+        ? (body.items as Array<Record<string, unknown>>).map((it) => ({
+            poItemIndex: Number(it.poItemIndex) || 0,
+            acceptedQty: Number(it.acceptedQty) || 0,
+            poId: (it.poId as string | null) ?? null,
+            poItemId: (it.poItemId as string | null) ?? null,
+          }))
+        : undefined;
+      const overOnPost = await findOverReceipt(
+        c.var.DB,
+        await resolveGrnLineTargets(c.var.DB, id, existing.poId ?? null, postLines),
+      );
+      if (overOnPost) {
+        return c.json({ success: false, error: overOnPost }, 400);
+      }
+    }
 
     await c.var.DB.batch(statements);
 
