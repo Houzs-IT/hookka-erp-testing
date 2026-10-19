@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-19 on branch `fix/dept-revenue-multiples-polish` (to `staging`)**: the `dashboard-b/charts.tsx` row still holds (Department Revenue small charts: date labels no longer clipped, header shows the picked day, exact sen amounts). Read from `charts.tsx` and `DeptRevenueCard.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-19 on branch `feat/dept-revenue-small-multiples` (to `staging`)**: the `dashboard-b/charts.tsx` row (Department Revenue is now one small chart per department on a shared scale), read from `charts.tsx` and `DeptRevenueCard.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-19 on branch `feat/dashboard-ops-day-view` (to `staging`)**: the `dashboard-prototype.tsx` row (Day view on Operations), read from `dashboard-prototype.tsx`, `CommandCenterSections.tsx`, `dashboard-b/DeptRevenueCard.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-19 on branch `fix/users-org-columns-memo` (to `staging`)**: the users route cell (`ensureUserOrgColumns` is a boolean memo, C9). Nothing else re-checked.
