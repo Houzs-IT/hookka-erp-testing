@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-19**: the owner's answers on what is left logged (e-Invoice tracking and the Settings trio to build; pre-opening invoices to report first; five items not doing).
 > **Last verified: 2026-10-19**: the owner's next asks logged (Reference fields, loading speed, the phone dashboard's missing sections).
 > **Last verified: 2026-10-18**: item 9 done — part B prod-verified read-only (#984); the ranked list is finished except item 8 (paused by the owner).
 > **Last verified: 2026-10-18**: item 9 part A prod-verified (#983); part B (Close Year / Reopen, the lock) on branch `feat/fiscal-year-close-lock`.
@@ -239,6 +240,14 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-19 — 🔵 The owner's answers on what is left (「1 做，2 做，3这个确定一下之前的呢？ / 4 不理先， 5不做 6不做，7 不做 / 8 不做 9 不做」)
+
+1. ⚪ e-Invoice submission tracking (MyInvois) — **做**. The design: not connected to LHDN; the page builds the UBL XML and keeps the record — Mark as Submitted (the Submission ID MyInvois gave), Record Result (Valid with the LHDN UUID / Rejected with the reason), Cancel within 72 h of validation; an "Uploaded To MyInvois" column, statuses Pending / Submitted / Valid / Invalid / Rejected / Cancelled, four cards.
+2. ⚪ SST tax codes, per-document numbering, the new landed-cost method (the design's Setup › Settings) — **做**.
+3. ⚪ Adding pre-opening invoices one at a time — owner: confirm the earlier ones first (「确定一下之前的」): report which pre-opening invoices are on the books today and how the Opening Balance treats them, before building anything.
+4. ⏸ DR-2608-001 (its invoice is fully paid, so no credit note) — 「不理先」.
+5. ✖ FY 2025/26 Close Year — not doing. 6. ✖ The stock system (stopped since March) — not doing. 7. ✖ Per-company Balance Sheet — not doing. 8. ✖ CIMB statement reading — not doing. 9. ✖ Trying Cash Book pick-matching on October's HLBB statement — not doing.
 
 ## 2026-10-19 — 🔵 The owner's next asks (「先做 Reference 栏，然后优化加载速度，手机和网页版，尤其是overview 和dashboard」; 「为什么我的手机版dashboard 只有两个dashboard?」)
 
