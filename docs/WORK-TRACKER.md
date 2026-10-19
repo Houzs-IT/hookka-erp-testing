@@ -2,6 +2,7 @@
 
  deisgn/mobile-so-detail-card
 
+> **Last verified: 2026-10-19**: branch `fix/wip-save-popup-wording`, to `staging`: the WIP save entry below got its staging result and a wording fix (its entry is the newest).
 > **Last verified: 2026-10-19**: branch `feat/wip-save-current-month`, to `staging` (WIP time save also moves cards finished this month) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/wip-save-confirm-cards`, to `staging` (confirm pop-up listing affected job cards before a WIP time save) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `chore/sync-staging-from-main-1016` (staging<-main sync) added below (its entry is the newest).
@@ -7563,4 +7564,8 @@ affected, judged by when the employee finished scanning the card.
    it too. Cards finished in an earlier month are not touched and not listed in the pop-up.
 3. [x] Pop-up and edit window wording updated.
 
-Built on branch `feat/wip-save-current-month` (to `staging`). **Not yet verified on staging.**
+Built on branch `feat/wip-save-current-month` (to `staging`, #991). Verified on staging 2026-10-19: a
+real save on `5539 -Left Arm (Frame)` / Framing moved the card finished on 7 Oct and left the one
+finished on 25 Sep, then was put back. The pop-up lists the finished card as "Finished this month".
+4. [x] The pop-up headline and the after-save banner said "unfinished job cards", which is wrong once a
+   finished card is in the list. Now just "job cards" (branch `fix/wip-save-popup-wording`, to `staging`).
