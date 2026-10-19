@@ -25,9 +25,11 @@ import {
   HardHat,
   Wallet,
   FlaskConical,
+  Landmark,
   type LucideIcon,
 } from "lucide-react";
 import { DASHBOARD_NAV_HREF } from "./screens/dashboard/dashboard-m-lib";
+import { FINANCE_NAV_GATES } from "./finance-menu";
 
 export type TabKey = "home" | "sales" | "products" | "delivery" | "procure";
 
@@ -91,6 +93,9 @@ export type ModuleLink = {
    * More hides the row when usePermissions().isNavAllowed(navGate) is false.
    */
   navGate?: string;
+  /** Several desktop hrefs: the row shows when ANY of them is allowed (the
+   *  Finance menu row — it opens a menu of screens, each gated on its own). */
+  navGateAny?: string[];
 };
 
 export type ModuleGroup = {
@@ -153,7 +158,10 @@ export const MORE_GROUPS: ModuleGroup[] = [
     title: "People & Finance",
     items: [
       { label: "Employees", icon: HardHat, path: "/m/employees" },
-      { label: "Receivables", icon: Wallet, path: "/m/receivables" },
+      // Finance v2 mobile: the Finance menu, shown when any of its screens is allowed.
+      { label: "Finance", icon: Landmark, path: "/m/finance", navGateAny: FINANCE_NAV_GATES },
+      // Gated like the desktop Debtor Aging it reads (owner 2026-10-14).
+      { label: "Receivables", icon: Wallet, path: "/m/receivables", navGate: "/accounting?tab=ar" },
     ],
   },
   // System — owner 2026-06-28 design v12: User Management is a SUPER_ADMIN

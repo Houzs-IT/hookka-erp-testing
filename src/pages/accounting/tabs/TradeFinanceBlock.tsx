@@ -8,6 +8,11 @@
 // Amounts are ledger-derived server-side (loadTfDraws) — this block only
 // displays, edits due dates, and links to the Supplier Payment screen to
 // repay (payee = the lender; the grid there lists draws instead of PIs).
+//
+// Since 2026-10-17 (owner 「这些都做」, Finance v2) Creditor Aging's list ALSO
+// shows one row per open draw, in its own Trade finance section (never mixed
+// into the supplier rows), with its due date as Next Due. This block stays
+// where draws are managed: due dates, interest, bank charges, setup.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -79,7 +84,10 @@ export function TradeFinanceBlock() {
   // server delta-posts DR INTEREST ON TRADE FINANCE or BANK CHARGES / CR the
   // TF account under this draw, so outstanding + the identity include it.
   // Same figure twice = no-op.
-  const saveCharge = async (kind: "interest" | "bankCharge", drawSourceId: string, rmStr: string) => {
+  // Interest is recorded AT DRAWDOWN (owner 2026-10-17 「提款时就记」): a figure
+  // keyed here later is still dated on the drawdown day, so it lands in the
+  // drawdown's month. Bank charges keep the day they are keyed.
+  const saveCharge = async (kind: "interest" | "bankCharge", drawSourceId: string, rmStr: string, drawDate?: string) => {
     const label = kind === "interest" ? "Interest" : "Bank charges";
     // BUG-2026-08-13-095 — the interest cell is a free-text input, so the
     // bank's "1,250.00" reached `parseFloat` whole and posted RM 1.00 of
@@ -93,7 +101,9 @@ export function TradeFinanceBlock() {
     const res = await fetch(`/api/accounting/trade-finance/${kind === "interest" ? "draw-interest" : "draw-bank-charge"}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(kind === "interest" ? { drawSourceId, interestSen: sen } : { drawSourceId, bankChargeSen: sen }),
+      body: JSON.stringify(kind === "interest"
+        ? { drawSourceId, interestSen: sen, ...(drawDate && /^\d{4}-\d{2}-\d{2}$/.test(drawDate) ? { date: drawDate } : {}) }
+        : { drawSourceId, bankChargeSen: sen }),
     }).catch(() => null);
     const j = (await res?.json().catch(() => null)) as { success?: boolean; error?: string; data?: { unchanged?: boolean } } | null;
     if (j?.success) { if (!j.data?.unchanged) { toast.success(`${label} posted`); } load(); }
@@ -140,7 +150,7 @@ export function TradeFinanceBlock() {
               {" = account balance "}{rm(s.accountNetSen)}
             </p>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50 text-[#6B7280]">
                     <th className="py-2 px-3 text-left font-medium">Draw</th>
@@ -156,10 +166,12 @@ export function TradeFinanceBlock() {
                 </thead>
                 <tbody>
                   {s.draws.length === 0 && (
-                    <tr><td colSpan={9} className="py-4 px-3 text-center text-[#9CA3AF]">No open draws.</td></tr>
+                    <tr data-fin-nolift=""><td colSpan={9} className="py-4 px-3 text-center text-[#9CA3AF]">No open draws.</td></tr>
                   )}
                   {s.draws.map((d) => (
-                    <tr key={d.drawSourceId} className="border-b border-[#F0ECE9]">
+                    // The due date, interest and bank charges are typed in place:
+                    // the row stays put under the cursor.
+                    <tr key={d.drawSourceId} data-fin-nolift="" className="border-b border-[#F0ECE9]">
                       <td className="py-1.5 px-3 tabular-nums">{d.drawSourceId}</td>
                       <td className="py-1.5 px-3">{d.paidSupplier || "-"}</td>
                       <td className="py-1.5 px-3 tabular-nums">{d.drawDate}</td>
@@ -186,7 +198,7 @@ export function TradeFinanceBlock() {
                           placeholder="0.00"
                           onBlur={(e) => {
                             const cur = d.interestSen ? (d.interestSen / 100).toFixed(2) : "";
-                            if (e.target.value !== cur && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value);
+                            if (e.target.value !== cur && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value, d.drawDate);
                           }}
                           className="w-24 rounded border border-[#E2DDD8] px-1.5 py-0.5 text-[12px] text-right tabular-nums bg-white"
                         />
@@ -212,7 +224,9 @@ export function TradeFinanceBlock() {
                       <td className="py-1.5 px-3 text-right tabular-nums font-semibold">{rm(d.outstandingSen)}</td>
                     </tr>
                   ))}
-                  {s.draws.length > 0 && (
+                </tbody>
+                {s.draws.length > 0 && (
+                  <tfoot>
                     <tr className="border-t-2 border-[#E2DDD8] bg-[#F6F1E7] font-semibold">
                       <td className="py-2 px-3" colSpan={4}>TOTAL</td>
                       <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.amountSen - d.interestSen - d.bankChargeSen, 0))}</td>
@@ -221,8 +235,8 @@ export function TradeFinanceBlock() {
                       <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.repaidSen, 0))}</td>
                       <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.outstandingSen, 0))}</td>
                     </tr>
-                  )}
-                </tbody>
+                  </tfoot>
+                )}
               </table>
             </div>
           </CardContent>

@@ -21,6 +21,8 @@ export type AgingExportDoc = {
 
 export type AgingExportParty = {
   name: string;
+  /** The party's code, printed before its name (owner 2026-10-17). */
+  code?: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -68,39 +70,68 @@ export function agingBucketTotals(rows: AgingBuckets[]) {
   return { buckets, totalSen: buckets.reduce((s, b) => s + b.amountSen, 0) };
 }
 
+// Date before Doc No (owner 2026-07-09), matching the on-screen detail rows;
+// doc order arrives pre-sorted from /aging (bucket asc, newest first inside).
+const agingHeader = (partyHeader: string): (string | number)[] =>
+  [partyHeader, "Date", "Doc No", "Current", "1 Month", "2 Months", "3 Months", "> 3 Months", "Total (RM)"];
+
+// One party: its name line, a row per open document, its total line. Adds the
+// party's buckets into `sum`.
+function pushParty(aoa: AgingAoa, p: AgingExportParty, sum: number[]): void {
+  const buckets = bucketsOf(p);
+  buckets.forEach((v, i) => { sum[i] += v; });
+  const total = buckets.reduce((s, v) => s + v, 0);
+  const docs = p.docs ?? [];
+  const label = p.code ? `${p.code}  ${p.name}` : p.name;
+  if (docs.length === 0) {
+    // Defensive: a party with no doc detail exports as a single line.
+    aoa.push([label, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
+    return;
+  }
+  aoa.push([label, "", "", "", "", "", "", "", ""]);
+  for (const d of docs) {
+    const cells: (string | number)[] = ["", "", "", "", ""];
+    const b = Math.min(Math.max(Math.round(d.mo) || 0, 0), 4);
+    cells[b] = rm(d.amountSen);
+    aoa.push(["", d.date, d.no, ...cells, rm(d.amountSen)]);
+  }
+  aoa.push([`${label} — Total`, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
+}
+
+const grandRow = (grand: number[]): (string | number)[] =>
+  ["GRAND TOTAL", "", "", ...grand.map((v) => rm(v)), rm(grand.reduce((s, v) => s + v, 0))];
+
 export function buildAgingExportAoa(
   partyHeader: string,
   parties: AgingExportParty[],
 ): AgingAoa {
-  // Date before Doc No (owner 2026-07-09), matching the on-screen detail rows;
-  // doc order arrives pre-sorted from /aging (bucket asc, newest first inside).
-  const aoa: AgingAoa = [
-    [partyHeader, "Date", "Doc No", "Current", "1 Month", "2 Months", "3 Months", "> 3 Months", "Total (RM)"],
-  ];
+  const aoa: AgingAoa = [agingHeader(partyHeader)];
   const grand = [0, 0, 0, 0, 0];
-  for (const p of parties) {
-    const buckets = bucketsOf(p);
-    buckets.forEach((v, i) => { grand[i] += v; });
-    const total = buckets.reduce((s, v) => s + v, 0);
-    const docs = p.docs ?? [];
-    if (docs.length === 0) {
-      // Defensive: a party with no doc detail exports as a single line.
-      aoa.push([p.name, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
-      continue;
-    }
-    aoa.push([p.name, "", "", "", "", "", "", "", ""]);
-    for (const d of docs) {
-      const cells: (string | number)[] = ["", "", "", "", ""];
-      const b = Math.min(Math.max(Math.round(d.mo) || 0, 0), 4);
-      cells[b] = rm(d.amountSen);
-      aoa.push(["", d.date, d.no, ...cells, rm(d.amountSen)]);
-    }
-    aoa.push([`${p.name} — Total`, "", "", ...buckets.map((v) => (v !== 0 ? rm(v) : "")), rm(total)]);
+  for (const p of parties) pushParty(aoa, p, grand);
+  aoa.push(grandRow(grand));
+  return aoa;
+}
+
+/**
+ * The same report in groups (owner 2026-10-17, Finance v2: Debtor Aging lists
+ * trade customers, then other debtors; Creditor Aging trade finance, suppliers,
+ * other creditors): each group's band line, its parties, its total line; then
+ * the grand total over every group. An empty group is left out.
+ */
+export function buildGroupedAgingExportAoa(
+  partyHeader: string,
+  groups: { label: string; parties: AgingExportParty[] }[],
+): AgingAoa {
+  const aoa: AgingAoa = [agingHeader(partyHeader)];
+  const grand = [0, 0, 0, 0, 0];
+  for (const g of groups) {
+    if (!g.parties.length) continue;
+    const sum = [0, 0, 0, 0, 0];
+    aoa.push([g.label.toUpperCase(), "", "", "", "", "", "", "", ""]);
+    for (const p of g.parties) pushParty(aoa, p, sum);
+    aoa.push([`${g.label} — Total`, "", "", ...sum.map((v) => (v !== 0 ? rm(v) : "")), rm(sum.reduce((s, v) => s + v, 0))]);
+    sum.forEach((v, i) => { grand[i] += v; });
   }
-  aoa.push([
-    "GRAND TOTAL", "", "",
-    ...grand.map((v) => rm(v)),
-    rm(grand.reduce((s, v) => s + v, 0)),
-  ]);
+  aoa.push(grandRow(grand));
   return aoa;
 }

@@ -538,7 +538,7 @@ export async function issuePurchaseReturnDebitNote(
         { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "purchase_return", sourceId: returnId, legNo: 1, accountCode: apCode, debitSen: amountSen, creditSen: 0, description: `${noteNumber} · AP debit (goods returned)`, actorUserId, orgId: org },
         { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "purchase_return", sourceId: returnId, legNo: 2, accountCode: expenseCode, debitSen: 0, creditSen: amountSen, description: `${noteNumber} · purchase return`, actorUserId, orgId: org },
       ];
-      const { statements: ls } = await buildJournalEntryStatements(db, org, legs);
+      const { statements: ls } = await buildJournalEntryStatements(db, org, legs, { docDate: now.slice(0, 10) });
       stmts.push(...ls);
     }
   }

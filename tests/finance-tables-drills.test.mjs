@@ -72,7 +72,10 @@ test("Monthly P&L: a row's ledger lines under it, in their month's column; the l
   assert.match(rows, /\$\{l\.description \|\| "—"\}\$\{l\.ref2 \? ` · \$\{l\.ref2\}` : ""\} — \$\{l\.ref1\}/, "date · description · who — document no.");
   assert.match(rows, /const on = c\.accum \|\| c\.key === e\.ym;/, "the amount in its month and in Accumulated");
   assert.match(rows, /const tied = line !== "all" \|\| cols\.every\(/, "each month's lines make the row");
-  assert.match(rows, /open in GL<\/Link>/);
+  // Finance v2: "Open In GL →", only where the row is one account (a material
+  // group's PURCHASE line has no single ledger).
+  assert.match(rows, /\{glOk && <> · <Link to=\{glHref\(account, from, to\)\} className="text-\[#6B5C32\] hover:text-\[#574A28\]">Open In GL →<\/Link><\/>\}/);
+  assert.match(rows, /const glOk = \/\^\\d\{3\}-\/\.test\(account\);/);
   // Computed lines that are one account's figure open too (as on the statement).
   const mx = read("src/lib/pnl-matrix.ts");
   assert.match(mx, /line\("PURCHASE", 3, \(w\) => find\(w\)\?\.purchasesSen \?\? 0, undefined, rg\.group\);/);
@@ -83,5 +86,9 @@ test("the General Ledger opens from a drill's link with the account and dates pi
   const gl = slice(ui, "function GeneralLedgerTab(", "\nfunction ");
   assert.match(gl, /useState<string\[\]>\(\(\) => \{ const a = new URLSearchParams\(window\.location\.search\)\.get\("account"\); return a \? \[a\] : \[\]; \}\)/);
   assert.match(gl, /useState\(\(\) => new URLSearchParams\(window\.location\.search\)\.get\("from"\) \?\? ""\)/);
-  assert.match(ui, /return `\/accounting\?tab=gl&account=\$\{encodeURIComponent\(account\)\}&from=\$\{fromYm\}-01&to=\$\{last\}`;/);
+  // The link runs to the last day of the drill's last month, through the shared
+  // helper the Trial Balance double-click uses too.
+  assert.match(ui, /const glHref = \(account: string, fromYm: string, toYm: string\) =>\n  glLink\(\{ account, fromYm, toDate: monthEnd\(toYm\) \}\);/);
+  const lib = read("src/lib/finance-reports.ts");
+  assert.match(lib, /return `\/accounting\?tab=gl&account=\$\{encodeURIComponent\(o\.account\)\}&from=\$\{o\.fromYm\}-01&to=\$\{o\.toDate\}`;/);
 });

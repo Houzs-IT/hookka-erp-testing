@@ -27,6 +27,9 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
+import { FinancePageTitle } from "@/components/finance/page-title";
+import { SegmentedSwitch } from "@/components/finance/report-shell";
+import { chartTipRows } from "@/lib/finance-reports";
 import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
 
 type Slice = {
@@ -134,12 +137,13 @@ function ChartTip(props: {
   money?: boolean;
   /** Show each series' share of sales beside its amount (cost-structure chart). */
   shares?: boolean;
+  /** Series drawn as lines (the forecast, per head / per unit, ratios): listed
+   *  after the bars under a rule and never added into the Total. */
+  lineKeys?: string[];
+  /** Stacked bars: list them top band first and add a bold Total of the bars shown. */
+  stackTotal?: boolean;
 }) {
   if (!props.active || !props.payload?.length) return null;
-  // The point object every series in this chart was built from — csData carries
-  // __pct__<cat> and __fcpct__<cat> alongside the amounts, so the share needs no
-  // recomputation here (owner 2026-08-06: 「帮我在 diagram 也显示 %」). An
-  // amount on a chart says how big; only the share says whether that is a lot.
   const point = props.payload[0]?.payload ?? {};
   const shareOf = (dataKey: string): number | null => {
     if (!props.shares) return null;
@@ -147,25 +151,34 @@ function ChartTip(props: {
     const v = point[key];
     return typeof v === "number" ? v : null;
   };
+  const fmt = (name: string, v: unknown) =>
+    typeof v === "number"
+      ? props.money !== false && !/%|Ratio/i.test(name)
+        ? rm2(v)
+        : `${v.toFixed(2)}${/%/.test(name) ? "%" : ""}`
+      : String(v ?? "-");
+  // Finance v2 (design): three aligned columns — name / amount / % of sales.
+  const { bars, lines, total, counted } = chartTipRows(props.payload, props.lineKeys ?? [], !!props.stackTotal);
+  const showTotal = total !== null;
+  const countedShares = counted.map((p) => shareOf(String(p.dataKey)));
+  const totalShare = countedShares.every((x) => x !== null) ? countedShares.reduce((sum: number, x) => sum + (x as number), 0) : null;
+  const row = (key: string, name: React.ReactNode, color: string | undefined, value: string, pct: number | null, bold = false) => (
+    <Fragment key={key}>
+      <span className={bold ? "font-bold text-[#1F1D1B]" : ""} style={bold ? undefined : { color }}>{name}</span>
+      <span className={`text-right ${bold ? "font-bold text-[#1F1D1B]" : ""}`}>{value}</span>
+      <span className="text-right text-[10px] text-[#9CA3AF]">{pct !== null ? `${pct.toFixed(2)}%` : ""}</span>
+    </Fragment>
+  );
   return (
     <div className="rounded-lg border border-[#E2DDD8] bg-white px-3 py-2 shadow-md text-xs">
       <div className="font-semibold text-[#5A5550] mb-1">{props.label}</div>
-      {props.payload.map((p) => {
-        const pct = shareOf(String(p.dataKey));
-        return (
-          <div key={String(p.dataKey)} className="flex justify-between gap-4 tabular-nums">
-            <span style={{ color: p.color }}>{p.name}</span>
-            <span>
-              {typeof p.value === "number"
-                ? props.money !== false && !/%|Ratio/i.test(String(p.name))
-                  ? rm2(p.value as number)
-                  : `${(p.value as number).toFixed(2)}${/%/.test(String(p.name)) ? "%" : ""}`
-                : String(p.value ?? "-")}
-              {pct !== null && <span className="ml-1.5 text-[10px] text-[#9CA3AF]">{pct.toFixed(2)}%</span>}
-            </span>
-          </div>
-        );
-      })}
+      <div className="grid grid-cols-[auto_auto_auto] gap-x-3 gap-y-0.5 tabular-nums">
+        {bars.map((p) => row(String(p.dataKey), p.name, p.color, fmt(String(p.name), p.value), shareOf(String(p.dataKey))))}
+        {showTotal && <span className="col-span-3 my-0.5 border-t border-[#E2DDD8]" />}
+        {showTotal && row("__total__", "Total", undefined, fmt("Total", total), totalShare, true)}
+        {lines.length > 0 && bars.length > 0 && <span className="col-span-3 my-0.5 border-t border-dashed border-[#E2DDD8]" />}
+        {lines.map((p) => row(String(p.dataKey), p.name, p.color, fmt(String(p.name), p.value), shareOf(String(p.dataKey))))}
+      </div>
     </div>
   );
 }
@@ -288,14 +301,14 @@ function SalaryDeptCard({
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={rowsData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="#F0ECE9" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false} />
-              <YAxis yAxisId="amt" tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false}
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="amt" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false}
                 tickFormatter={(v: number) => rm(v)} />
               {showDenominators && (
-                <YAxis yAxisId="unit" orientation="right" tick={{ fontSize: 11, fill: "#9A3A2D" }} axisLine={false} tickLine={false}
+                <YAxis yAxisId="unit" orientation="right" tick={{ fontSize: 12, fill: "#9A3A2D" }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false}
                   tickFormatter={(v: number) => rm(v)} />
               )}
-              <Tooltip content={<ChartTip shares />} />
+              <Tooltip content={<ChartTip shares stackTotal lineKeys={["__cardfc__", "perHead", "perUnit"]} />} />
               {depts.length === 0 ? (
                 <Bar yAxisId="amt" dataKey="__cardamt__" name={title} fill={GOLD} radius={[3, 3, 0, 0]} maxBarSize={38} />
               ) : (
@@ -326,26 +339,28 @@ function SalaryDeptCard({
           </ResponsiveContainer>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <tbody>
+          <table data-fin-list data-fin-stick className="w-full">
+            <thead>
               <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF]">
-                <td className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</td>
+                <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</th>
                 {rowsData.map((d) => (
-                  <td key={String(d.label)} colSpan={2}
+                  <th key={String(d.label)} colSpan={2}
                     className="px-2 py-1.5 text-center text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap border-l border-[#E2DDD8]">
                     {String(d.label)}
-                  </td>
+                  </th>
                 ))}
               </tr>
               <tr className="border-b-2 border-[#E2DDD8] bg-[#F7F4EF]">
-                <td className="px-2 py-1 text-left text-[10px] text-[#9CA3AF]"></td>
+                <th className="px-2 py-1 text-left text-[10px] text-[#9CA3AF]"></th>
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
-                    <td className="px-2 py-1 text-right text-[10px] font-semibold text-[#6B5C32] border-l border-[#E2DDD8]">Actual</td>
-                    <td className="px-2 py-1 text-right text-[10px] font-semibold text-[#9A3A2D]">Forecast</td>
+                    <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#6B5C32" }}>Actual</th>
+                    <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#9A3A2D" }}>Forecast</th>
                   </Fragment>
                 ))}
               </tr>
+            </thead>
+            <tbody>
               <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
                 <td className={`${tdc} text-left font-semibold`}>SALES REVENUE</td>
                 {rowsData.map((d) => (
@@ -482,35 +497,23 @@ function ChartCard({
       <CardContent className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-[#1F1D1B] mr-2">{title}</h3>
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => onTab(t.key)}
-              className={`rounded-md border px-2.5 py-1 text-xs cursor-pointer ${
-                active === t.key
-                  ? "bg-[#6B5C32] text-white border-[#6B5C32]"
-                  : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+          <SegmentedSwitch label={title} options={tabs} value={active} onChange={onTab} />
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="#F0ECE9" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={false} tickLine={false} />
               <YAxis
-                tick={{ fontSize: 11, fill: "#6B7280" }}
-                axisLine={false}
+                tick={{ fontSize: 12, fill: "#4B5563" }}
+                axisLine={{ stroke: "#CBD5E1" }}
                 tickLine={false}
                 tickFormatter={(v: number) => rm(v)}
               />
               {line?.axis === "right" && (
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: RUST }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12, fill: RUST }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} />
               )}
-              <Tooltip content={<ChartTip />} />
+              <Tooltip content={<ChartTip lineKeys={line ? [line.key] : []} />} />
               {bars.map((b) => (
                 <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} radius={[3, 3, 0, 0]} maxBarSize={38} />
               ))}
@@ -924,9 +927,9 @@ export default function FinanceDashboardPage() {
   // months now open every figures table in bold instead of trailing it in grey.
   const periodHead = (labels: string[]) => (
     <tr className="border-b-2 border-[#E2DDD8] bg-[#F7F4EF]">
-      <td className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</td>
+      <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</th>
       {labels.map((l) => (
-        <td key={l} className="px-2 py-1.5 text-right text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap">{l}</td>
+        <th key={l} className="px-2 py-1.5 text-right text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap">{l}</th>
       ))}
     </tr>
   );
@@ -937,17 +940,17 @@ export default function FinanceDashboardPage() {
   const periodHeadSplit = (labels: string[]) => (
     <>
       <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF]">
-        <td className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</td>
+        <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</th>
         {labels.map((l) => (
-          <td key={l} colSpan={2} className="px-2 py-1.5 text-center text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap border-l border-[#E2DDD8]">{l}</td>
+          <th key={l} colSpan={2} className="px-2 py-1.5 text-center text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap border-l border-[#E2DDD8]">{l}</th>
         ))}
       </tr>
       <tr className="border-b-2 border-[#E2DDD8] bg-[#F7F4EF]">
-        <td className="px-2 py-1 text-left text-[10px] text-[#9CA3AF]"></td>
+        <th className="px-2 py-1 text-left text-[10px] text-[#9CA3AF]"></th>
         {labels.map((l) => (
           <Fragment key={l}>
-            <td className="px-2 py-1 text-right text-[10px] font-semibold text-[#6B5C32] border-l border-[#E2DDD8]">Actual</td>
-            <td className="px-2 py-1 text-right text-[10px] font-semibold text-[#9A3A2D]">Forecast</td>
+            <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#6B5C32" }}>Actual</th>
+            <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#9A3A2D" }}>Forecast</th>
           </Fragment>
         ))}
       </tr>
@@ -955,11 +958,13 @@ export default function FinanceDashboardPage() {
   );
 
   return (
-    <div className="space-y-4 p-1">
+    <div className="space-y-4 p-1" data-fin-ui>
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold text-[#1F1D1B] flex items-center gap-2">
-          <BarChart3 className="h-5 w-5 text-[#6B5C32]" /> Financial Dashboard
-        </h2>
+        <FinancePageTitle
+          title="Financial Dashboard"
+          icon={<BarChart3 className="h-5 w-5 text-[#6B5C32]" />}
+          explain="The books' figures against the Forecast P&L, month by month or by quarter."
+        />
         <span className="text-xs text-[#9CA3AF]">* = period still running / not a full quarter</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-[#6B7280]">Period</span>
@@ -1005,9 +1010,9 @@ export default function FinanceDashboardPage() {
             bars={[{ key: "actual", name: "Actual", color: GOLD }]}
             line={{ key: "forecast", name: "Forecast", color: RUST, dashed: true }}
             footer={
-              <table className="w-full">
+              <table data-fin-list data-fin-stick className="w-full">
+                <thead>{periodHead(plData.map((d) => d.label))}</thead>
                 <tbody>
-                  {periodHead(plData.map((d) => d.label))}
                   {/* Amount and its share of revenue in ONE cell (owner
                       2026-08-05: percentage beside the amount, not its own row). */}
                   <tr>
@@ -1154,10 +1159,10 @@ export default function FinanceDashboardPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={csData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                       <CartesianGrid stroke="#F0ECE9" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 11, fill: "#6B7280" }} axisLine={false} tickLine={false}
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false}
                         tickFormatter={(v: number) => rm(v)} />
-                      <Tooltip content={<ChartTip shares />} />
+                      <Tooltip content={<ChartTip shares stackTotal lineKeys={["__fctotal__"]} />} />
                       {csCats.map((cat, i) =>
                         csHidden.has(cat) ? null : (
                           <Bar key={cat} dataKey={cat} name={cat} stackId="cs" maxBarSize={44}
@@ -1185,9 +1190,9 @@ export default function FinanceDashboardPage() {
                   </ResponsiveContainer>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table data-fin-list data-fin-stick className="w-full">
+                    <thead>{periodHeadSplit(csData.map((d) => String(d.label)))}</thead>
                     <tbody>
-                      {periodHeadSplit(csData.map((d) => String(d.label)))}
                       {/* The base every percentage divides by (owner 2026-07-30). */}
                       <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
                         <td className={`${td} text-left font-semibold`}>SALES REVENUE</td>
@@ -1302,9 +1307,9 @@ export default function FinanceDashboardPage() {
                    of four: the plan no longer needs its own pair of rows once
                    it has its own column, and Amount now sits directly beside
                    the target it should be read against. */
-                <table className="w-full">
+                <table data-fin-list data-fin-stick className="w-full">
+                  <thead>{periodHeadSplit(csTrend.map((d) => d.label))}</thead>
                   <tbody>
-                    {periodHeadSplit(csTrend.map((d) => d.label))}
                     <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
                       <td className={`${td} text-left font-semibold`}>REVENUE</td>
                       {csTrend.map((d) => (
@@ -1368,9 +1373,9 @@ export default function FinanceDashboardPage() {
                   ))}
                   <span className="text-[11px] text-[#9CA3AF]">Detail lists every account that moved cash.</span>
                 </div>
-                <table className="w-full">
+                <table data-fin-list data-fin-stick className="w-full">
+                  <thead>{periodHead(cfData.map((d) => d.label))}</thead>
                   <tbody>
-                    {periodHead(cfData.map((d) => d.label))}
                     <tr><td className={`${td} text-left font-medium text-[#4F7C3A]`}>Money in</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#4F7C3A]`}>{rm(d.inflow as number)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium text-[#9A3A2D]`}>Money out</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#9A3A2D]`}>{rm(d.outflow as number)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>{cfTab === "freeCashFlow" ? "Free cash flow" : cfTab[0].toUpperCase() + cfTab.slice(1)}</td>{cfData.map((d) => <td key={d.label} className={`${td} ${(d.value as number) < 0 ? "text-[#9A3A2D]" : ""}`}>{rm(d.value as number)}</td>)}</tr>
@@ -1428,9 +1433,9 @@ export default function FinanceDashboardPage() {
               bsData.length === 0 ? (
                 <p className="text-xs text-[#9CA3AF]">Balances start at the opening date — nothing before it.</p>
               ) : (
-                <table className="w-full">
+                <table data-fin-list data-fin-stick className="w-full">
+                  <thead>{periodHead(bsData.map((d) => d.label))}</thead>
                   <tbody>
-                    {periodHead(bsData.map((d) => d.label))}
                     <tr><td className={`${td} text-left font-medium`}>Total assets</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.assets)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>Total liabilities</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.liabilities)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium text-[#9A3A2D]`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#9A3A2D]`}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
@@ -1455,9 +1460,9 @@ export default function FinanceDashboardPage() {
             data={ratioData}
             bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: TEAL }]}
             footer={
-              <table className="w-full">
+              <table data-fin-list data-fin-stick className="w-full">
+                <thead>{periodHead(ratioData.map((d) => d.label))}</thead>
                 <tbody>
-                  {periodHead(ratioData.map((d) => d.label))}
                   <tr>
                     <td className={`${td} text-left font-medium`}>{/Pct$/.test(ratioTab) ? "Percent" : "Ratio"}</td>
                     {ratioData.map((d) => (

@@ -1,0 +1,426 @@
+/* ---------------------------------------------------------------------------
+   Finance & Forecasting v2 look (owner 2026-10-16 「照 README 把这些设计做进现有的
+   Hookka repo」; spec docs/superpowers/specs/2026-10-16-finance-v2-design.md).
+
+   Every rule is scoped to [data-fin-ui] — the root of each Finance and
+   Forecasting page — so no other module changes. The sheet is UNLAYERED on
+   purpose: Tailwind v4 puts its utilities in @layer utilities, and an unlayered
+   rule beats a layered one, so these win over a component's utility classes
+   without !important. Keep it flat (no @media / @layer): the scope test reads
+   it rule by rule.
+
+   Hooks it styles (they change nothing on their own):
+     DataGrid  data-dg="table" | "th" | "row" | "foot" | "menu"
+     Button    data-variant / data-size
+     Card      data-slot="card"
+     A plain list table opts in with table[data-fin-list].
+   --------------------------------------------------------------------------- */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-700.css";
+
+/* ── Tokens + type ─────────────────────────────────────────────────────────── */
+[data-fin-ui] {
+  --fin-ink: #1F1D1B;
+  --fin-text: #1F2937;
+  --fin-text-2: #374151;
+  --fin-muted: #6B7280;
+  --fin-faint: #9CA3AF;
+  --fin-page: #FAF8F4;
+  --fin-card: #FFFFFF;
+  --fin-card-border: #E2DDD8;
+  --fin-line: #E7E1D8;
+  --fin-line-strong: #7A6E5E;
+  --fin-head-bg: #E2E8F0;
+  --fin-head-line: #CBD5E1;
+  --fin-sub-bg: #F1EEE8;
+  --fin-foot-bg: #F7F7F5;
+  --fin-accent: #6B5C32;
+  --fin-accent-hover: #574A28;
+  --fin-ok-fg: #27500A;
+  --fin-ok-bg: #E7F0E3;
+  --fin-warn-fg: #7A5B12;
+  --fin-warn-bg: #FBF3E4;
+  --fin-err-fg: #9A3A2D;
+  --fin-err-bg: #F3E8E5;
+  --fin-neutral-fg: #4B5563;
+  --fin-neutral-bg: #EEF1F4;
+  --fin-info-fg: #2C4170;
+  --fin-info-bg: #EEF2FB;
+  --fin-faint-bg: #F4F4F2;
+  --fin-lift-shadow: 0 8px 18px rgba(31,29,27,.16), 0 0 0 1.5px #7A6E5E;
+  --fin-menu-shadow: 0 14px 34px rgba(31,29,27,.18);
+  --fin-modal-shadow: 0 24px 60px rgba(31,29,27,.28);
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The page behind a finance page. Only one page is mounted at a time (the
+   layout renders plain <Routes>), so this follows the open page. */
+body:has([data-fin-ui]) {
+  background: #FAF8F4;
+}
+
+/* ── Cards, buttons ───────────────────────────────────────────────────────── */
+[data-fin-ui] [data-slot="card"] {
+  border-radius: 10px;
+  border-color: #E2DDD8;
+}
+
+[data-fin-ui] button[data-size="default"],
+[data-fin-ui] button[data-size="sm"] {
+  height: 34px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+[data-fin-ui] button[data-variant="default"] {
+  background-color: #1F1D1B;
+  color: #FFFFFF;
+}
+
+/* The finance pages' main action ("primary", gold elsewhere) is ink in v2. */
+[data-fin-ui] button[data-variant="primary"] {
+  background-color: #1F1D1B;
+  color: #FFFFFF;
+}
+
+[data-fin-ui] button[data-variant="default"]:hover,
+[data-fin-ui] button[data-variant="primary"]:hover {
+  background-color: #000000;
+}
+
+[data-fin-ui] button[data-variant="outline"] {
+  background-color: #FFFFFF;
+  border-color: #E2DDD8;
+  color: #1F1D1B;
+}
+
+/* ── Tables: DataGrid (data-dg) and opted-in plain lists (data-fin-list) ──── */
+[data-fin-ui] table[data-dg="table"],
+[data-fin-ui] table[data-fin-list] {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+[data-fin-ui] table[data-dg="table"] > thead > tr,
+[data-fin-ui] table[data-fin-list] > thead > tr {
+  background-color: #E2E8F0;
+}
+
+[data-fin-ui] table[data-dg="table"] > thead > tr > th,
+[data-fin-ui] table[data-fin-list] > thead > tr > th {
+  background-color: #E2E8F0;
+  color: #1F2937;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-right: 1px solid #CBD5E1;
+  border-bottom: 1.5px solid #7A6E5E;
+}
+
+/* No colour on the cells: an unlayered colour here would beat a row's own
+   Tailwind colour (a blue advance-open row, a red accrual). The table sets it
+   and rows inherit or override. */
+[data-fin-ui] table[data-dg="table"],
+[data-fin-ui] table[data-fin-list] {
+  color: #1F2937;
+}
+
+[data-fin-ui] table[data-dg="table"] > tbody > tr > td,
+[data-fin-ui] table[data-fin-list] > tbody > tr > td {
+  border-bottom: 1px solid #E7E1D8;
+  font-size: 13px;
+}
+
+/* Hover lift: the row rises 2px (no scale, so nothing reflows) with a shadow
+   and a strong-line ring; grid lines stay. It passes UNDER the sticky header
+   and total row (they sit at z-30 in DataGrid; the row only reaches 1). */
+[data-fin-ui] table[data-dg="table"] > tbody > tr[data-dg="row"],
+[data-fin-ui] table[data-fin-list] > tbody > tr {
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+
+[data-fin-ui] table[data-dg="table"] > tbody > tr[data-dg="row"]:hover,
+[data-fin-ui] table[data-fin-list] > tbody > tr:not([data-fin-nolift]):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(31,29,27,.16), 0 0 0 1.5px #7A6E5E;
+  position: relative;
+  z-index: 1;
+  background-color: #FFFFFF;
+}
+
+[data-fin-ui] table[data-dg="table"] > tfoot[data-dg="foot"] > tr > td,
+[data-fin-ui] table[data-fin-list] > tfoot > tr > td {
+  background-color: #F7F7F5;
+  border-top: 1.5px solid #7A6E5E;
+  color: #1F1D1B;
+  font-weight: 600;
+}
+
+/* A list whose first column stays put when its months scroll sideways
+   (the Financial Dashboard's tables): data-fin-stick. A row's own colour
+   carries into the pinned cell; a plain row's pinned cell is white. */
+[data-fin-ui] table[data-fin-list][data-fin-stick] > thead > tr > th:first-child,
+[data-fin-ui] table[data-fin-list][data-fin-stick] > tbody > tr > td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+[data-fin-ui] table[data-fin-list][data-fin-stick] > tbody > tr > td:first-child {
+  background-color: inherit;
+}
+
+[data-fin-ui] table[data-fin-list][data-fin-stick] > tbody > tr:not([class*="bg-"]) > td:first-child {
+  background-color: #FFFFFF;
+}
+
+/* ── Document popups (DocDetailModal) ──────────────────────────────────────── */
+/* Each block in the popup's light body reads as a white card. */
+[data-fin-ui] [data-fin-modal-body] > * {
+  background-color: #FFFFFF;
+  border: 1px solid #E2DDD8;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+/* ── Menus (row / header right-click) ──────────────────────────────────────── */
+/* Row menus open on <body> (outside the page root), so they are matched by
+   "a finance page is open" rather than by being inside it. */
+body:has([data-fin-ui]) [data-dg="menu"] {
+  border-radius: 12px;
+  border-color: #E2DDD8;
+  box-shadow: 0 14px 34px rgba(31,29,27,.18);
+}
+
+/* ── Reports: <table data-fin-report> (components/finance/report-shell.tsx) ──
+   A row says what it is with data-row (sec, grp, line, sub, res, fin, bf, det,
+   detsum); a cell with data-cell words (num, code, split, stick, acc, pct,
+   est) and data-neg for a negative amount. Layers, low to high: a sticky first
+   cell 1, a lifted line 2, the header 4, the header's sticky first cell 5 —
+   so a lifted line passes over the frozen column and under the header. */
+[data-fin-ui] table[data-fin-report] {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  color: #374151;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background-color: #E2E8F0;
+  border-bottom: 1.5px solid #7A6E5E;
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1F2937;
+  white-space: nowrap;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td {
+  background-color: #FFFFFF;
+  border-bottom: 1px solid #EEE9E1;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="num"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="num"] {
+  border-left: 1px solid #E7E1D8;
+  color: #1F1D1B;
+  font-weight: 500;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="num"] {
+  border-left: 1px solid #CBD5E1;
+}
+
+/* The first amount column opens with the strong line. */
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="split"],
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="split"] {
+  border-left: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="center"] {
+  text-align: center;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="code"] {
+  color: #6B5C32;
+  font-size: 12px;
+}
+
+[data-fin-ui] table[data-fin-report] [data-cell~="stick"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="stick"] {
+  z-index: 5;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="acc"] {
+  background-color: #D9E1EA;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="acc"] {
+  background-color: #F7F5F1;
+}
+
+/* Row kinds. */
+/* A break between sections is a line, not an empty strip (design rule 3,
+   "Lines, not fills, separate groups"; owner 2026-10-17 screenshot: the 10px
+   spacer row read as a hole in the table under NET SALES). The gap row stays
+   in the DOM as a marker and the row after it carries the strong line. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="gap"] {
+  display: none;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="gap"] + tr > td {
+  border-top: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sec"] > td {
+  border-top: 1.5px solid #7A6E5E;
+  color: #1F1D1B;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="grp"] > td {
+  color: #1F1D1B;
+  font-weight: 600;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sub"] > td {
+  background-color: #F1EEE8;
+  border-top: 1px solid #7A6E5E;
+  color: #1F1D1B;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"] > td {
+  background-color: #E9E3D8;
+  border-top: 1.5px solid #7A6E5E;
+  border-bottom: 1.5px solid #7A6E5E;
+  color: #1F1D1B;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+/* The last result (Net Profit) closes with a double line. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"][data-fin-double] > td {
+  border-bottom: 3px double #1F1D1B;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="fin"] > td {
+  border-top: 1.5px solid #7A6E5E;
+  border-bottom: 3px double #1F1D1B;
+  color: #1F1D1B;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="bf"] > td {
+  color: #4B5563;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="det"] > td {
+  background-color: #F4F6F8;
+  color: #4B5563;
+  font-size: 12px;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="detsum"] > td {
+  background-color: #E8EDF2;
+  color: #1F1D1B;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* After the row kinds, so they win: an estimate (a cell, or a whole row), a
+   drop target in Edit Layout, % cells, a negative amount. */
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="est"],
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-est] > td {
+  background-color: #FAEFCB;
+  color: #9C6F1E;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-fin-drop] > td {
+  background-color: #F1EEE8;
+  box-shadow: inset 0 2px 0 #6B5C32, inset 0 -2px 0 #6B5C32;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="pct"] {
+  font-size: 11px;
+  color: #6B7280;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-neg] {
+  color: #9A3A2D;
+}
+
+/* A line lifts on hover, like the lists. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="line"] {
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="line"]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(31,29,27,.16), 0 0 0 1.5px #7A6E5E;
+  position: relative;
+  z-index: 2;
+}
+
+/* A dense report (the General Ledger): rows are pinned to 29px so the windowed
+   listings and the off-screen placeholders stay in step. */
+[data-fin-ui] table[data-fin-report][data-fin-dense] > tbody > tr > td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* A two-row header (a period over its RM | % pair): the first row is 34px so
+   the second sticks right under it; the spanning first cell keeps the strong
+   line. */
+[data-fin-ui] table[data-fin-report] > thead > tr[data-row="h1"] > th {
+  height: 34px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #CBD5E1;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr[data-row="h1"] > th[rowspan] {
+  border-bottom: 1.5px solid #7A6E5E;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr[data-row="h2"] > th {
+  top: 34px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* A report that keeps to its content's width (owner 2026-10-01: the month
+   reports stop stretching). */
+[data-fin-ui] table[data-fin-report][data-fin-fit] {
+  width: auto;
+}
+
+/* A zero ("-") reads pale, so the figures stand out. */
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-zero] {
+  color: #C4BDB3;
+}

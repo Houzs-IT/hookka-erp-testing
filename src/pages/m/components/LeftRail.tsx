@@ -31,6 +31,7 @@ import {
   Sun,
   PanelLeftClose,
   PanelLeftOpen,
+  Landmark,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { M } from "../theme";
@@ -38,11 +39,12 @@ import { useMobileThemeMode } from "../lib/theme-mode";
 import { getCurrentUser, clearAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { DASHBOARD_NAV_HREF } from "../screens/dashboard/dashboard-m-lib";
+import { FINANCE_NAV_GATES } from "../finance-menu";
 
 type RailEntry =
   | { kind: "section"; label: string }
   // navGate: desktop href whose server nav gate also hides this row (as in nav.ts).
-  | { kind: "item"; key: string; label: string; icon: LucideIcon; path: string; navGate?: string };
+  | { kind: "item"; key: string; label: string; icon: LucideIcon; path: string; navGate?: string; navGateAny?: string[] };
 
 // dc12 Fold railDefs — same order + section labels.
 const ENTRIES: RailEntry[] = [
@@ -60,6 +62,7 @@ const ENTRIES: RailEntry[] = [
   { kind: "item", key: "procurement", label: "Procurement", icon: ShoppingBag, path: "/m/procurement" },
   { kind: "section", label: "People & Comms" },
   { kind: "item", key: "employees", label: "Employees", icon: HardHat, path: "/m/employees" },
+  { kind: "item", key: "finance", label: "Finance", icon: Landmark, path: "/m/finance", navGateAny: FINANCE_NAV_GATES },
   { kind: "item", key: "announcements", label: "Announcements", icon: Megaphone, path: "/m/announcements" },
   { kind: "item", key: "mailcenter", label: "Mail Center", icon: Mail, path: "/m/mail-center" },
 ];
@@ -196,6 +199,7 @@ export function LeftRail({
       >
         {ENTRIES.map((e, i) => {
           if (e.kind === "item" && e.navGate && !isNavAllowed(e.navGate)) return null;
+          if (e.kind === "item" && e.navGateAny && !e.navGateAny.some(isNavAllowed)) return null;
           if (e.kind === "section") {
             if (compact) {
               return <div key={`sec-${i}`} aria-hidden style={{ height: i === 0 ? 4 : 10 }} />;

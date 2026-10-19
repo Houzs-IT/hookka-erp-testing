@@ -13,11 +13,16 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
+import { buildJournalEntryStatements } from "../lib/journal-hash";
+import { ClosedYearError } from "../lib/fiscal";
 import {
-  buildJournalEntryStatements,
-  ledgerHasSource,
-} from "../lib/journal-hash";
-import { buildCreditNoteLedgerLegs } from "../lib/note-ledger";
+  buildCreditNoteLedgerLegs,
+  buildNoteUnpostStatements,
+  invoiceAfterNoteReversal,
+  noteLedgerSourceType,
+} from "../lib/note-ledger";
+import { ensureDeliveryReturnTables } from "../lib/delivery-return-create";
+import { priceReturnLines, type InvoiceLineOfReturn, type InvoiceOfReturn, type ReturnLine } from "../../lib/cn-from-return";
 
 const app = new Hono<Env>();
 
@@ -111,6 +116,15 @@ function isIssuedStatus(status: string | null | undefined): boolean {
   return status === "APPROVED" || status === "POSTED";
 }
 
+// A note only moves an issued invoice. On a DRAFT the cut would land twice:
+// once now, and again when the draft is posted at its already-reduced total.
+// A CANCELLED invoice has nothing left to credit. (owner 2026-10-17)
+function noteInvoiceBlock(invoiceNo: string, status: string | null | undefined): string | null {
+  if (status === "DRAFT") return `Invoice ${invoiceNo} is still a draft — post the invoice first.`;
+  if (status === "CANCELLED") return `Invoice ${invoiceNo} is cancelled.`;
+  return null;
+}
+
 // Compose the statements that apply a CN's amount against the linked
 // invoice:
 //   * totalSen / subtotalSen are reduced by the CN's amountSen (floored at 0);
@@ -200,6 +214,106 @@ app.get("/", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/credit-notes/from-returns[?returnId=] — the delivery returns a
+// credit note can be raised from (owner 2026-10-17, Finance v2: "create a
+// Credit Note from a Delivery Return"). Each return with its customer, the
+// invoice that billed its delivery order and its returned lines priced from
+// that invoice (priceReturnLines). A return already turned into a note
+// carries it — linked by delivery_return_id, or, for notes raised before the
+// link existed, by the "Delivery Return <no>" detail the old prefill wrote.
+// Read-only.
+// ---------------------------------------------------------------------------
+app.get("/from-returns", async (c) => {
+  const denied = await requirePermission(c, "credit-notes", "create");
+  if (denied) return denied;
+  const db = c.var.DB;
+  await ensureDeliveryReturnTables(db);
+  const orgId = getOrgId(c);
+  const returnId = c.req.query("returnId") || "";
+  const heads = (await db.prepare(
+    `SELECT id, return_no, delivery_order_id, customer_id, customer_name, status, returned_at, created_at
+       FROM delivery_returns WHERE org_id = ? AND status <> 'CANCELLED'${returnId ? " AND id = ?" : ""}
+      ORDER BY created_at DESC LIMIT 200`,
+  ).bind(...(returnId ? [orgId, returnId] : [orgId])).all<Record<string, unknown>>()).results ?? [];
+  if (!heads.length) return c.json({ success: true, data: [] });
+  const marks = (n: number) => Array.from({ length: n }, () => "?").join(",");
+  const str = (r: Record<string, unknown>, a: string, b: string) => String((r[a] ?? r[b]) ?? "");
+  const ids = heads.map((h) => String(h.id));
+  const doIds = [...new Set(heads.map((h) => str(h, "deliveryOrderId", "delivery_order_id")).filter(Boolean))];
+  const [itemRes, invRes, cnRes] = await Promise.all([
+    db.prepare(
+      `SELECT delivery_return_id, production_order_id, product_code, product_name, quantity
+         FROM delivery_return_items WHERE delivery_return_id IN (${marks(ids.length)})`,
+    ).bind(...ids).all<Record<string, unknown>>(),
+    doIds.length
+      ? db.prepare(
+          `SELECT id, invoiceNo, totalSen, paidAmount, delivery_order_id FROM invoices
+            WHERE delivery_order_id IN (${marks(doIds.length)}) AND status NOT IN ('DRAFT','CANCELLED')`,
+        ).bind(...doIds).all<Record<string, unknown>>()
+      : Promise.resolve({ results: [] as Record<string, unknown>[] }),
+    db.prepare("SELECT * FROM credit_notes").all<Record<string, unknown>>(),
+  ]);
+  const invRows = invRes.results ?? [];
+  const invIds = invRows.map((r) => String(r.id));
+  // production_order_id on invoice lines is runtime-ensured elsewhere; an
+  // engine without it simply prices nothing.
+  const lineRows = invIds.length
+    ? ((await db.prepare(
+        `SELECT invoice_id, production_order_id, quantity, total_sen FROM invoice_items WHERE invoice_id IN (${marks(invIds.length)})`,
+      ).bind(...invIds).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }))).results ?? [])
+    : [];
+  const invLines: InvoiceLineOfReturn[] = lineRows.map((l) => ({
+    invoiceId: str(l, "invoiceId", "invoice_id"),
+    productionOrderId: str(l, "productionOrderId", "production_order_id") || null,
+    quantity: Number(l.quantity) || 0,
+    totalSen: Math.round(Number(l.totalSen ?? l.total_sen) || 0),
+  }));
+  const notes = cnRes.results ?? [];
+  const data = heads.map((h) => {
+    const id = String(h.id);
+    const returnNo = str(h, "returnNo", "return_no");
+    const doId = str(h, "deliveryOrderId", "delivery_order_id");
+    const invoices: InvoiceOfReturn[] = invRows
+      .filter((r) => str(r, "deliveryOrderId", "delivery_order_id") === doId)
+      .map((r) => ({
+        id: String(r.id),
+        invoiceNo: str(r, "invoiceNo", "invoice_no"),
+        outstandingSen: Math.max(0, Math.round(Number(r.totalSen ?? r.total_sen) || 0) - Math.round(Number(r.paidAmount ?? r.paid_amount) || 0)),
+      }));
+    const lines: ReturnLine[] = (itemRes.results ?? [])
+      .filter((i) => str(i, "deliveryReturnId", "delivery_return_id") === id)
+      .map((i) => ({
+        productionOrderId: str(i, "productionOrderId", "production_order_id") || null,
+        productCode: str(i, "productCode", "product_code"),
+        productName: str(i, "productName", "product_name"),
+        quantity: Number(i.quantity) || 0,
+      }));
+    const draft = priceReturnLines(lines, invoices, invLines);
+    const note = notes.find((n) => str(n, "deliveryReturnId", "delivery_return_id") === id)
+      ?? (returnNo ? notes.find((n) => str(n, "reasonDetail", "reason_detail").trim() === `Delivery Return ${returnNo}`) : undefined);
+    return {
+      id, returnNo,
+      date: (str(h, "returnedAt", "returned_at") || str(h, "createdAt", "created_at")).slice(0, 10),
+      customerId: str(h, "customerId", "customer_id"),
+      customerName: str(h, "customerName", "customer_name"),
+      status: str(h, "status", "status"),
+      ...draft,
+      creditNote: note ? { id: String(note.id), noteNumber: str(note, "noteNumber", "note_number") } : null,
+    };
+  });
+  return c.json({ success: true, data });
+});
+
+// The link from a note to the return it was raised from (2026-10-17).
+// Self-applied before the first write; the flag is set only once it exists.
+let cnReturnColEnsured = false;
+async function ensureCreditNoteReturnColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (cnReturnColEnsured) return;
+  await db.prepare("ALTER TABLE credit_notes ADD COLUMN IF NOT EXISTS delivery_return_id TEXT").run();
+  cnReturnColEnsured = true;
+}
+
 // POST /api/credit-notes — create
 app.post("/", async (c) => {
   // RBAC gate (P3.3-followup) — credit-notes:create.
@@ -208,6 +322,16 @@ app.post("/", async (c) => {
   try {
     const body = await c.req.json();
     const { invoiceId, reason, reasonDetail, items } = body;
+    // A note raised from a delivery return (2026-10-17): one note per return.
+    const deliveryReturnId = typeof body.deliveryReturnId === "string" ? body.deliveryReturnId.trim() : "";
+    await ensureCreditNoteReturnColumn(c.var.DB);
+    if (deliveryReturnId) {
+      const used = await c.var.DB.prepare("SELECT noteNumber FROM credit_notes WHERE delivery_return_id = ?")
+        .bind(deliveryReturnId).first<{ noteNumber?: string; note_number?: string }>();
+      if (used) {
+        return c.json({ success: false, error: `This delivery return already has credit note ${used.noteNumber ?? used.note_number ?? ""}.` }, 409);
+      }
+    }
     if (!invoiceId || !reason || !items || items.length === 0) {
       return c.json(
         {
@@ -223,7 +347,7 @@ app.post("/", async (c) => {
     // populated at invoice-create time.
     const invoice = await c.var.DB.prepare(
       `SELECT id, invoiceNo, customerId, customerName, customerState,
-              customerAddress, attention, customerPhone, totalSen, paidAmount
+              customerAddress, attention, customerPhone, totalSen, paidAmount, status
          FROM invoices WHERE id = ?`,
     )
       .bind(invoiceId)
@@ -238,6 +362,7 @@ app.post("/", async (c) => {
         customerPhone: string | null;
         totalSen: number;
         paidAmount: number;
+        status: string;
       }>();
     if (!invoice) {
       return c.json({ success: false, error: "Invoice not found" }, 404);
@@ -312,6 +437,10 @@ app.post("/", async (c) => {
       isIssuedStatus(requestedStatus) && typeof body.approvedBy === "string"
         ? body.approvedBy
         : null;
+    if (isIssuedStatus(requestedStatus)) {
+      const block = noteInvoiceBlock(invoice.invoiceNo, invoice.status);
+      if (block) return c.json({ success: false, error: block }, 409);
+    }
 
     // Phase 1 (2026-06) — a CN must not exceed what is still uncollected on
     // the linked invoice. Without this cap, an oversized CN floors the
@@ -339,8 +468,8 @@ app.post("/", async (c) => {
         // attention / customerPhone snapshotted from the invoice.
         `INSERT INTO credit_notes (id, noteNumber, invoiceId, invoiceNumber, customerId,
            customerName, customerState, customerAddress, attention, customerPhone,
-           date, reason, reasonDetail, totalAmount, status, approvedBy, items)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           date, reason, reasonDetail, totalAmount, status, approvedBy, items, delivery_return_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         noteNumber,
@@ -359,8 +488,17 @@ app.post("/", async (c) => {
         requestedStatus,
         approvedBy,
         JSON.stringify(parsedItems),
+        deliveryReturnId || null,
       ),
     ];
+    // The return points back at its note, so its page shows "Credit note".
+    if (deliveryReturnId) {
+      statements.push(
+        c.var.DB.prepare(
+          "UPDATE delivery_returns SET credit_note_id = ? WHERE id = ? AND COALESCE(credit_note_id, '') = ''",
+        ).bind(id, deliveryReturnId),
+      );
+    }
 
     if (isIssuedStatus(requestedStatus) && totalAmount > 0) {
       // Mirror the PUT-POSTED path: decrement customer A/R and, if a specific
@@ -387,7 +525,10 @@ app.post("/", async (c) => {
           (
             c as unknown as { get: (k: string) => string | undefined }
           ).get("userId") ?? null;
-        if (!(await ledgerHasSource(c.var.DB, orgId, "credit_note", id))) {
+        // First post = "credit_note"; a re-post after Back to Draft takes a
+        // fresh restate source. null = a live set exists — never post twice.
+        const sourceType = await noteLedgerSourceType(c.var.DB, orgId, "credit_note", id);
+        if (sourceType) {
           const legs = await buildCreditNoteLedgerLegs(
             c.var.DB,
             orgId,
@@ -399,12 +540,14 @@ app.post("/", async (c) => {
             },
             totalAmount,
             actorUserId,
+            sourceType,
           );
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: date });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] CN ${id} GL build failed — aborting:`, e);
         return c.json(
           {
@@ -492,14 +635,13 @@ app.put("/:id", async (c) => {
       }
     }
 
-    // An issued credit note is terminal. Its customer-credit (A/R reduction) +
-    // invoice-total cascade fire on the DRAFT→issued transition and are NOT
-    // idempotent (only the GL leg is guarded by ledgerHasSource). Allowing
-    // issued→DRAFT→issued would apply the credit TWICE and drift customer A/R +
-    // invoice total off the GL. Reverting an issued CN needs a dedicated contra
-    // flow (none exists yet), so block any transition back out of an issued
-    // status. issued→issued (APPROVED→POSTED) and the first DRAFT→issued stay
-    // allowed.
+    // A plain status edit never takes an issued credit note back out. Its
+    // customer-credit (A/R reduction) + invoice-total cascade fire on the
+    // DRAFT→issued transition and are NOT idempotent, so issued→DRAFT→issued
+    // here would apply the credit TWICE and drift customer A/R + invoice total
+    // off the GL. Taking it back is POST /:id/unpost (Back to Draft), which
+    // reverses the cascade and the GL in one batch. issued→issued
+    // (APPROVED→POSTED) and DRAFT→issued stay allowed.
     if (
       isIssuedStatus(existing.status) &&
       status !== existing.status &&
@@ -508,7 +650,7 @@ app.put("/:id", async (c) => {
       return c.json(
         {
           success: false,
-          error: `Credit note ${existing.noteNumber} is already issued and can't be reverted to ${status}. The customer credit has already been applied.`,
+          error: `Credit note ${existing.noteNumber} is already issued. Use Back to Draft to take it back — that also returns the amount to the customer and the invoice.`,
         },
         409,
       );
@@ -535,10 +677,12 @@ app.put("/:id", async (c) => {
       // drift.
       if (existing.invoiceId) {
         const inv = await c.var.DB.prepare(
-          "SELECT invoiceNo, totalSen, paidAmount FROM invoices WHERE id = ?",
+          "SELECT invoiceNo, totalSen, paidAmount, status FROM invoices WHERE id = ?",
         )
           .bind(existing.invoiceId)
-          .first<{ invoiceNo: string; totalSen: number; paidAmount: number }>();
+          .first<{ invoiceNo: string; totalSen: number; paidAmount: number; status: string }>();
+        const block = inv ? noteInvoiceBlock(inv.invoiceNo, inv.status) : null;
+        if (block) return c.json({ success: false, error: block }, 409);
         if (inv) {
           const uncollectedSen = Math.max(
             0,
@@ -585,7 +729,10 @@ app.put("/:id", async (c) => {
           (
             c as unknown as { get: (k: string) => string | undefined }
           ).get("userId") ?? null;
-        if (!(await ledgerHasSource(c.var.DB, orgId, "credit_note", id))) {
+        // First post = "credit_note"; a re-post after Back to Draft takes a
+        // fresh restate source. null = a live set exists — never post twice.
+        const sourceType = await noteLedgerSourceType(c.var.DB, orgId, "credit_note", id);
+        if (sourceType) {
           const legs = await buildCreditNoteLedgerLegs(
             c.var.DB,
             orgId,
@@ -597,12 +744,14 @@ app.put("/:id", async (c) => {
             },
             existing.totalAmount,
             actorUserId,
+            sourceType,
           );
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: existing.date ?? null });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] CN ${id} GL build failed — aborting:`, e);
         return c.json(
           {
@@ -640,6 +789,114 @@ app.put("/:id", async (c) => {
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
+});
+
+// POST /api/credit-notes/:id/unpost — Back to Draft (owner 2026-10-17,
+// Finance v2). Undoes an issue in ONE batch: the note returns to DRAFT, the
+// customer owes the amount again, the invoice gets it back on its total, and
+// the GL legs are mirrored and hidden (buildNoteUnpostStatements), so the
+// books read as if the note had never been issued while the trail stays. The
+// note can then be posted again (the re-post takes a fresh ledger source).
+app.post("/:id/unpost", async (c) => {
+  const denied = await requirePermission(c, "credit-notes", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const existing = await c.var.DB.prepare(
+    "SELECT * FROM credit_notes WHERE id = ?",
+  )
+    .bind(id)
+    .first<CreditNoteRow>();
+  if (!existing) {
+    return c.json({ success: false, error: "Credit note not found" }, 404);
+  }
+  if (!isIssuedStatus(existing.status)) {
+    return c.json(
+      { success: false, error: `Credit note ${existing.noteNumber} is already a draft.` },
+      409,
+    );
+  }
+  const amount = Number(existing.totalAmount) || 0;
+  const statements: D1PreparedStatement[] = [
+    c.var.DB.prepare(
+      "UPDATE credit_notes SET status = 'DRAFT', approvedBy = NULL WHERE id = ?",
+    ).bind(id),
+  ];
+  if (amount > 0) {
+    statements.push(
+      c.var.DB.prepare(
+        "UPDATE customers SET outstandingSen = outstandingSen + ? WHERE id = ?",
+      ).bind(amount, existing.customerId),
+    );
+    if (existing.invoiceId) {
+      const inv = await c.var.DB.prepare(
+        "SELECT invoiceNo, totalSen, subtotalSen, paidAmount, status FROM invoices WHERE id = ?",
+      )
+        .bind(existing.invoiceId)
+        .first<{ invoiceNo: string; totalSen: number; subtotalSen: number; paidAmount: number; status: string }>();
+      if (inv?.status === "CANCELLED") {
+        return c.json(
+          { success: false, error: `Invoice ${inv.invoiceNo} is cancelled — its credit note can't go back to draft.` },
+          409,
+        );
+      }
+      if (inv) {
+        const next = invoiceAfterNoteReversal(inv, "credit_note", amount);
+        statements.push(
+          c.var.DB.prepare(
+            `UPDATE invoices
+                SET totalSen = ?, subtotalSen = ?, status = ?, updated_at = ?
+              WHERE id = ?`,
+          ).bind(next.totalSen, next.subtotalSen, next.status, new Date().toISOString(), existing.invoiceId),
+        );
+      }
+    }
+  }
+  try {
+    const actorUserId =
+      (
+        c as unknown as { get: (k: string) => string | undefined }
+      ).get("userId") ?? null;
+    statements.push(
+      ...(await buildNoteUnpostStatements(
+        c.var.DB,
+        orgId,
+        "credit_note",
+        { id, noteNumber: existing.noteNumber, date: existing.date ?? null },
+        actorUserId,
+      )),
+    );
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
+    console.error(`[ledger] CN ${id} back-to-draft GL build failed — aborting:`, e);
+    return c.json(
+      {
+        success: false,
+        error:
+          "Failed to build the GL reversal for this credit note — nothing was changed. Retry, and report if it persists.",
+      },
+      500,
+    );
+  }
+
+  await c.var.DB.batch(statements);
+
+  const updated = await c.var.DB.prepare(
+    "SELECT * FROM credit_notes WHERE id = ?",
+  )
+    .bind(id)
+    .first<CreditNoteRow>();
+  if (!updated) {
+    return c.json({ success: false, error: "Credit note not found" }, 404);
+  }
+  await emitAudit(c, {
+    resource: "credit-notes",
+    resourceId: id,
+    action: "unpost",
+    before: rowToCreditNote(existing),
+    after: rowToCreditNote(updated),
+  });
+  return c.json({ success: true, data: rowToCreditNote(updated) });
 });
 
 export default app;

@@ -1,4 +1,63 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-19**: staging<-main sync (branch `chore/sync-staging-from-main-1019`): main entries staging lacked are added above staging's newest; nothing else re-checked.
+> **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (`<<<<<<< HEAD` … `>>>>>>> 85e58b40`) on `main`; left for its owner to resolve.
+> **Last verified: 2026-10-18**: item 9 done — part B prod-verified read-only (#984); the ranked list is finished except item 8 (paused by the owner).
+> **Last verified: 2026-10-18**: item 9 part A prod-verified (#983); part B (Close Year / Reopen, the lock) on branch `feat/fiscal-year-close-lock`.
+> **Last verified: 2026-10-18**: item 10 done (#982 prod-read); item 9 part A on branch `feat/fiscal-year-pickers`.
+> **Last verified: 2026-10-18**: item 10 part 1 merged (#981, prod-read: the running month's log reads every trail with no warning); part 2 on branch `feat/finance-change-log-2` (BUG-2026-10-18-326 found in the prod read).
+> **Last verified: 2026-10-18**: item 10 part 1 (All changes) on branch `feat/finance-change-log`.
+> **Last verified: 2026-10-18**: item 12 prod-verified (#978), its first-month display fix on branch `fix/wip-card-no-ratio` (BUG-2026-10-18-325).
+> **Last verified: 2026-10-18**: item 17 part 2 prod-verified (#976), item 17 done; item 12 on branch `feat/wip-by-production-order`.
+> **Last verified: 2026-10-17**: item 4 batch B merged (#966); batch C (other-party names list, Audit Log) on branch `feat/finance-grids-c`.
+> **Last verified: 2026-10-17**: item 5 prod-verified after #964; item 4 batch A merged (#965), batch B (other-party bills / payments) on branch `feat/finance-grids-b`.
+> **Last verified: 2026-10-17**: item 7 prod-verified (#963); item 4 batch A (Fund Transfer, AP Invoices) on branch `feat/finance-grids-a`.
+> **Last verified: 2026-10-17**: item 5's prod tie-out found three as-at gaps (a supplier credit note dated by its knock-off, an interest line moved between draws, pre-opening bills paid after the date) — fixed on branch `fix/aging-as-at-tie`; item 7 merged (#963).
+> **Last verified: 2026-10-17**: item 6 prod-verified (#961); item 5 merged (#962); item 7 in progress on branch `feat/finance-party-lists`.
+> **Last verified: 2026-10-17**: items 13 (#960) and 19 (#956, #959) prod-verified; item 6 merged (#961); item 5 in progress on branch `feat/aging-as-at`.
+> **Last verified: 2026-10-17**: item 13 merged (#960); item 19 prod-checked (#956); item 6 in progress on branch `feat/aging-code-column`.
+> **Last verified: 2026-10-17**: item 19 follow-up merged (#959); item 13 in progress on branch `feat/cash-position-tf-due`.
+> **Last verified: 2026-10-17**: item 3 merged (#958); item 19 follow-up on branch `fix/delivery-return-cn-blocked`.
+> **Last verified: 2026-10-17**: item 2 prod-checked read-side (#955); item 19 merged (#956); item 3 in progress on branch `feat/ocb-scan-every-bill`.
+> **Last verified: 2026-10-17**: item 19 in progress on branch `fix/delivery-return-cn-status`.
+> **Last verified: 2026-10-17**: item 1 prod-verified (#954); item 2 in progress on branch `feat/finance-notes-post`; the owner's answers on items 17 and 18 logged.
+> **Last verified: 2026-10-17**: the owner's answers on the remaining finance v2 list logged as a new entry; item 1 in progress on branch `fix/finance-report-gap-rows`.
+> **Last verified: 2026-10-17**: items 6 (#951) and 7 (#952) prod-verified; the owner's-answers entry closed.
+> **Last verified: 2026-10-17**: item 7 (credit note from a delivery return) in progress on branch `feat/finance-v2-cn-from-return`.
+> **Last verified: 2026-10-17**: items 4 (#949) and 5 (#950) prod-verified; item 6 in progress on branch `feat/finance-v2-creditor-aging`.
+> **Last verified: 2026-10-17**: item 5 (other debtors in Debtor Aging) in progress on branch `feat/finance-v2-aging-other-parties`.
+> **Last verified: 2026-10-17**: the print layout (#948) prod-verified; the party fields (item 4) in progress on branch `feat/finance-v2-party-fields`.
+> **Last verified: 2026-10-17**: the owner's answers on the finance v2 open questions logged as a new entry (branch `docs/finance-v2-asks-1017`).
+> **Last verified: 2026-10-17**: BUG-2026-10-17-308 (#945) prod-verified; plan 8 closed.
+> **Last verified: 2026-10-17**: plan 8 part C (#944) prod-checked — Daily Cash Position verified, the Finance Dashboard's month bug (BUG-2026-10-17-308) found and fixed on branch `fix/m-dashboard-anchor-month`.
+> **Last verified: 2026-10-17**: plan 8 parts A (#942) and B (#943) prod-verified; part C (Finance Dashboard, Daily Cash Position) added to its entry, branch `feat/finance-v2-mobile-c`.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-307 (#941) prod-verified; plan 8 part B (the four reports on the phone) added to its entry.
+> **Last verified: 2026-10-17**: plan 7 (#940) prod-verified and closed; branch `feat/finance-v2-mobile` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-17**: BUG-2026-10-17-307 (the phone's Receivables at RM 0.00) added as a new entry, branch `fix/m-receivables-aging-total`.
+> **Last verified: 2026-10-17**: plan 6 parts A (#938) and B (#939) prod-verified, plan 6 closed; plan 7 part B (Forecast P&L) added to its entry.
+> **Last verified: 2026-10-17**: branch `feat/finance-v2-forecasting` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-17**: plan 6 part B (Setup) built on branch `feat/finance-v2-setup`.
+> **Last verified: 2026-10-17**: BUG-2026-10-17-306 (#937) prod-verified; plan 5 closed.
+> **Last verified: 2026-10-17**: finance v2 plan 5 part B (#936) prod-verified (entry items 2–4).
+> **Last verified: 2026-10-17**: branch `feat/finance-v2-einvoice` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-17**: BUG-2026-10-17-306 (found in the plan 5 part B prod check) added to the plan 5 entry, branch `fix/ap-invoices-cancelled-outstanding`.
+> **Last verified: 2026-10-17**: finance v2 plan 5 part A (#935) prod-verified; part B (Tasks 2–3) added to its entry, branch `feat/finance-v2-debtors-creditors-b`.
+> **Last verified: 2026-10-17**: the owner's three answers (#934) prod-verified; plan 4 closed; branch `feat/finance-v2-debtors-creditors` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-17**: finance v2 plan 4 part C (#933) prod-verified; the owner's three answers added as a new entry.
+> **Last verified: 2026-10-17**: finance v2 plan 4 part B (#932) prod-verified; part C (Stock Take, Cash Book) added to its entry.
+> **Last verified: 2026-10-17**: finance v2 plan 4 part A (#931) prod-verified; part B (Labour, Fixed Assets) added to its entry.
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-monthly` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 6 (#929) prod-verified; part 7 (Overview) added to its entry.
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 5 (#928) prod-verified; part 6 (Stock Summary, Balance Sheet look) added to its entry.
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 4 (#927) prod-verified incl. BUG-2026-10-16-305; part 5 (Cash Flow) added to its entry.
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 3 (#926) prod-verified; part 4 (Monthly P&L / Cost Structure, BUG-2026-10-16-305) added to its entry.
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 2 (#925) prod-verified; part 3 (P&L) added to its entry.
+> **Last verified: 2026-10-16**: finance v2 plan 3 part 1 (#924) prod-verified; part 2 (General Ledger) added to its entry.
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-reports` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: finance v2 plan 2b (#923) prod-verified.
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-daily-b` (to `main`) added below (its entry is the newest); plan 2a (#922) prod-verified.
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-daily` (to `main`) added below (its entry is the newest).
+> **Last verified: 2026-10-16**: finance v2 plan 1 (#918) prod-verified.
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-foundation` (to `main`) added below (its entry is the newest).
 
  deisgn/mobile-so-detail-card
 
@@ -275,6 +334,420 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-17 — 🔵 Finance & Forecasting v2: the rest of the design, as the owner ranked it (his answers on "还有什么没做", item by item)(shipped in parts, each to `main`)
+
+Now:
+1. ✅ (#954, BUG-2026-10-17-314, prod-verified) The empty strip between sections on the P&L, Monthly P&L and Cash Flow (owner's screenshot): a 10px spacer row that broke the table under NET SALES; now hidden, with the design's strong line on the next row.
+2. ✅ (#955, BUG-2026-10-17-315 / -316 / -317; prod read-side check: the new routes answer, statement = debtor ledger, aging buckets = lines, print data carries the adjustment — Post itself is the owner's to press) Credit notes can be issued (posted): first stop the customer statement / debtor ledger counting a posted note twice; then the Post button, Back to Draft, and notes as their own aging lines. Production had no credit or debit notes (measured 2026-10-17), so nothing existing moves.
+3. 🔵 (#958, prod check pending) Scan Bills reads every bill in a multi-bill PDF (today only the first). Other Creditor / Debtor Bills: the form fills with bill 1 of N, Save & Post moves to the next, Skip / Stop offered; the Payment Voucher scan already took every bill.
+4. 🔵 Every finance table behaves like the Payment Vouchers table (header menu, column filters, resize / reorder, Set as default, double-click detail). Batch A (#965): Fund Transfer and AP Invoices lists are DataGrids. Batch B (#966): Other Debtor / Creditor Bills (the inline card now opens in the bill's popup) and Payments. Batch C (#967): the other-party names list (Edit / Deactivate / Delete in the row menu, double-click edits) and the Audit Log (Unvoid in the row menu / double-click). Left as they are: Supplier Discount history (edits in the row itself), the Fixed Assets register (a grouped report), report-style tables and forms.
+5. ✅ (#962 + #964, prod-verified: at 30/06, 31/07, 31/08 and 30/09 every supplier ties to the creditor ledger and the 400 control, other creditors and trade finance to their controls, every customer to the debtor ledger except the long-standing Houzs difference) Aging as at a chosen month-end. A month stepper on Debtor / Creditor Aging; a past month rolls every item back from today by what was settled after its last day (receipts, supplier payments incl. credit-note knock-offs, other-party payments, trade-finance repayments and charges, notes); money paid ahead of a later document shows as an advance; the control cards read the trial balance as at that date.
+6. ✅ (#961, prod-verified: 7 / 7 customers and 15 / 15 suppliers carry their register code; draws their TF account; other parties "—") A Code column on Debtor / Creditor Aging. Trade rows show the debtor / creditor code, a trade-finance draw its TF account, an other party "—" (its register has no code); the Excel / PDF prints the code before the name.
+7. ✅ (#963, prod-verified: Debtor List 8 + 3 = RM 334,126.95 = Debtor Aging; Creditor List 40 + 20, total = Creditor Aging suppliers + other creditors) Debtor List / Creditor List pages (customers and other parties together). `?tab=debtors` / `?tab=creditors` under Debtors / Creditors: code, name, type, terms / what for, credit limit (debtors), outstanding (= the aging row), phone, email, status; chips; double-click opens the record where it is kept (customer edit form, supplier page, other-party form); + New buttons land on those forms.
+8. ⏸ A per-company Balance Sheet (every ledger entry has to carry its company first). Owner 2026-10-17: not now (「分公司那个先不做」).
+9. ✅ Month / Quarter / Financial Year pickers, Change Year End, closed-year locks. Part A (#983, prod-verified read-only: eight report fingerprints — P&L for September, October and a calendar quarter, Cost Structure, Cost / Expense Classes, Monthly P&L, Cash Flow, the year-end close preview — identical before and after the deploy; Settings lists FY 2025/26 open, FY 2026/27 current, FY 2027/28 future; Change Year End to December offers 4 or 16 months with the following years previewed, cancelled without saving; the P&L picker offers FY 2026/27 Q1, FY 2025/26 Q1–Q4 and the two years): the financial years now follow the year end AND its changes — every report's year (P&L year to date, Monthly P&L, Cost Structure, Cost / Expense Classes, Cash Flow, year-end close) reads the same schedule, and with no change saved each one is exactly what it was. The P&L picks months, the financial year's quarters and the years (this one and the last) instead of calendar quarters and years. Settings › Financial Years lists the years — start, end, months, status (Closed, Current, Future, Open — not closed) — and a Super Admin gets Change Year End: pick the year it starts from (the current or a later one, never a closed one) and the new year-end month; the transition years allowed (1–18 months) are offered and the years after it previewed before Save. The old one-box year-end editor, which re-based every past year, is gone. Part B (#984, prod-verified read-only: the same eight report fingerprints still identical; Settings shows Close Year on FY 2025/26 only — not pressed — with the lock explained; no year is locked, so nothing is refused; a posting under the new code had not happened yet on a Sunday, so that path on production is UNMEASURED until the next one — it is covered by tests/fiscal-year-lock.test.mjs): Close Year on that list (and the Balance Sheet's Year-End Close) posts the year-end close and locks the year; Reopen (Super Admin) takes the lock off and keeps the close entry — closing again posts only what was added since. A locked year refuses every posting, edit, void, restore or delete of a document dated in it — sales and purchase invoices, receipts, payments, vouchers, journals, notes, bills, transfers, labour, depreciation, closing stock, trade-finance charges — and its stock take; the message names the year and says a Super Admin can reopen it. Every ledger posting passes its document's date (the compiler holds every call), so none can slip past. Nothing is locked until someone closes a year.
+10. ✅ A full audit log of every change. Part 1 (#981, prod-read without changing anything: the running month lists every trail's changes in about half a second, no trail unreadable; a supplier payment's posted → voided → restored → edited story reads in order): the Audit Log opens on **All changes** — every change made in Finance in a month (Malaysia time, month stepper), newest first: postings, edits (double-click shows the ledger entry before and after), voids, restores, undos and deletes, payment voucher prepare / check / approve, and the settings and other steps the audit trail records (opening date, valuation modes, trade-finance due dates, account renames, …) — who, when, type, reference, party, amount, what changed. Built from what is already kept (the ledger, the voucher ladder, the document lifecycle, the audit trail); one act seen by two of them is listed once. **Voided & deleted** (the old list, with Unvoid) is the other view. Read-only. Part 2 (#982, prod-read without changing anything: the two doubled edits now read "Same amount and accounts", purchase-invoice edits show only what changed, labour unposts show once, trade-finance amounts in RM; the new records appear as soon as someone saves — none yet on a Sunday): the finance saves that recorded nothing now write an audit row — chart of accounts (new / edited), the other-party register, payment voucher drafts (header and lines before / after), every approval step including withdraw and send-back with its reason, attachments added / removed, every void / restore / delete of vouchers, receipts, transfers, journals and other-party bills / payments, bank statement imports, matches (single, group, split, auto), unmatches, ignores, deleted lines, booked lines, month finalise / re-open, the strict lock, cash-position ticks and planned payments, the labour / cash-flow / P&L / balance-sheet mappings and document numbering (each with its value before), fixed assets (new / edited / disposed / deleted), opening-balance invoices, stock take months (each group before → after, in RM), item mappings and opening stock — so from now on they show in All changes with their own action names (Matched, Sent back, Month finalised, Ticked, …). Also: an edit's "What changed" no longer doubles its accounts (BUG-2026-10-18-326), a save that sends only some fields is compared on those fields, money fields read in RM, a labour unpost shows once.
+11. ✅ (#973, prod-verified without saving: a waiting prompt placed in the browser opened Fixed Assets with Add Asset filled in — PLANT & MACHINERY with its ACCUM. DEPRN. and depreciation accounts — Skip asked first, then cleared it; the register stayed empty) "Add New Asset" when a payment voucher / AP Invoice uses a fixed-asset account: after saving a voucher or an other-creditor (AP) bill with a line on a fixed-asset cost account (a non-current asset that is not an accumulated-depreciation account, goodwill, an investment or a deposit), the Fixed Assets page opens Add Asset filled in from each such line — name, purchase date, cost, the cost account, its paired ACCUM. DEPRN. account and a depreciation expense account (the one naming the same asset, else the general fixed-assets one) — with a "From <document>" note; Save asset (life entered by hand) or Skip for now. Lines already registered from that document are not asked again. Registering posts nothing; depreciation stays the month-end run.
+12. ✅ (#978, prod-verified read-only: the running month's 235 orders add up to Stock Summary's WORK IN PROGRESS closing to the sen, and the Balance Sheet's work-in-progress account carries the same figure; September, keyed in Stock Take, keeps its keyed figure with the orders and the difference listed; the books' first month has no cost ratio — its orders now show at selling price only, no difference row, BUG-2026-10-18-325) WIP by production order feeding the Balance Sheet. Under Stock Summary, "Work in Progress by Production Order" lists the orders that make up the WORK IN PROGRESS line — PO no., product, line, qty, done %, value at selling price, WIP value — from the same valuation as the line (`liveStockFor`), the line spread over the orders to the sen, so TOTAL is the WIP line, the figure the P&L closes on and the Balance Sheet's work-in-progress line. A month whose WIP is keyed in Stock Take keeps the keyed figure and lists the orders for comparison, with the difference. The old cost-ledger list (issued materials + labour − completed), which no longer fed anything, is gone.
+13. ✅ (#960, prod-verified: 3 draws = Creditor Aging's trade finance, bottom line recomputed to the sen) Daily Cash Position's TO REPAY lists Trade Finance due dates. Each draw still owed (as Creditor Aging lists them) under TO REPAY, due by month end by default ⇄ all; "Cash after repay & receive" takes it off — desktop, share image and phone alike.
+14. ✅ (#968, prod-verified read-only: the official receipts offer Edit, the form opens filled in under the same number, the new route answers; nothing saved) An Official Receipt can be edited: Edit on the row menu and in the popup opens the same form filled in; Save keeps the OR number, reverses the posted entry and posts the edited one (`POST /official-receipts/:id/restate`). A receipt matched in Cash Book keeps its match (it moves to the re-posted bank leg) as long as the bank account and amount stay the same; changing either on a matched receipt is refused until it is unmatched. Void / unvoid follow the edit (an unvoid brings back the edited receipt, not the original). Behaviour test `tests/official-receipt-edit-flow.test.mjs`. Found on the way, same shape on the other edit paths (class C5 / C31 in `docs/BUG-CLASSES.md`): an unvoid after an edit of a payment voucher, customer receipt or other-party payment brings back the pre-edit entry, and an edit of a bank-matched payment / receipt leaves the statement line on the old, hidden leg. Measured on production: no document affected by either yet. Fixed on branch `fix/edit-keeps-bank-match` (BUG-2026-10-17-320 / -321, one shared rule each), with the server now refusing edits of cancelled documents (-322) and the receipt / voucher lists reading renamed account codes (-323 — the one receipt whose edit form showed an empty account).
+15. ✅ (#972, prod-verified without saving: Expenses chip by default, debit hint, suggested 903-0000, Parent lists exactly the four expense groups and no posting account) The New Account form reworked (section chips, parent first, next free code) — existing accounts untouched: section chips with the normal-balance hint; Parent first, offering only accounts that are already groups (adding under a posting account would turn it into a group, i.e. change an existing account — never offered); the parent's cash flow and P&L category carried over; a suggested next free code with a live check (format, already exists, wrong section band); Cash flow / P&L category as segmented controls, Special type picker. Same create call; editing, moving, renaming and deactivating existing accounts are unchanged.
+16. ✅ (#971, live: the Suggested book entry column shows; Match / Pick could not be tried on production — every month up to September is finalised with nothing open and October's statement is not imported yet) Cash Book bank matching by pick list — the design's Cash Book: every open bank line shows its suggested book entry (the one open entry with the same amount) with Match / Pick / Book / Ignore; Pick opens a checklist of the open entries it could have paid (same direction, not bigger than the line) with Exact ✓ / Short / Over and a filter — one entry is a plain match, several adding up exactly a split match; ticking several bank lines offers "Combine & match to <ref>". The old per-line drop-down and the separate split panel are gone; same endpoints, the server checks every match again.
+17. ✅ Trade Finance repaid from AP Payment (picking the drawdowns). Owner 2026-10-17: interest is recorded at drawdown (「提款时就记」). Part 1 (#975, prod-verified read-only: the lender's AP Payment lists exactly the three open drawdowns of the trade-finance list — same balances, interest, due dates and suppliers — no advance box; closed without saving): picking the lender on an AP Payment lists its open drawdowns (balance incl. the interest recorded at drawdown, minus what other unposted vouchers promise) instead of bills — Drawdown · For · Drawn · Due · Balance · Interest · Repay; no advance; the voucher climbs the same ladder and approve / Post now posts the same TF_REPAYMENT document the Supplier Payment page posts (one shared builder, re-checked at that moment, DR the TF account / CR the bank, number = the voucher's). Part 2 (#976, prod-verified without saving: an ordinary supplier's AP Payment offers the trade-finance line under Paid from; picking it opens the drawing box — due date = payment date + 90 days, the interest field, the drawdown-no. hint in Reference; closed, the voucher list unchanged): Paid from on an ordinary supplier's AP Payment also offers the trade-finance line (never for the lender or an other creditor); the form then asks the drawdown's due date (default payment date + the line's tenor) and the interest at drawdown, the bank's drawdown no. going in Reference. Approve / Post now posts the supplier payment from the TF line (DR creditors · CR TF), records the drawdown's due date, and posts the interest (DR 900-I004 · CR TF, dated the payment day) in the same entry chain — the drawdown is then repayable with its interest. On Creditor Aging, interest keyed later is dated on the drawdown day (bank charges keep the day they are keyed).
+18. ✅ Monthly P&L column order — owner 2026-10-17: keep it as it is, cumulative first and the newest month first (「照现在」). Nothing to build.
+19. ✅ (#956 + #959, BUG-2026-10-17-318, prod-verified) A delivery return that reads "CN issued" with no credit note behind it — fix. The chip now follows the linked note ("Awaiting credit note" + a Create credit note button when one can be raised; when the invoice is fully paid or was never raised, the page says so instead); stored data untouched. The reported return's invoice is fully paid, so a credit note cannot go against it under the current rule — the owner decides what happens to it.
+
+Later (owner: 最后 / 后面): e-Invoice submission tracking (MyInvois); SST tax codes, per-document numbering, the new landed-cost method; Reference fields on vouchers and journals; adding pre-opening invoices one at a time.
+
+Not doing (owner): the Balance Sheet plant & machinery question; more permissions for the finance account; the payslip / employee prints (not his area).
+
+## 2026-10-17 — ✅ Finance & Forecasting v2: the owner's answers on the open questions (「这些都做」「1a 但是签名那边我要1b」; before that: close #849, keep the phone's Receivables)(shipped in parts, each to `main`)
+
+1. ✅ #849 closed on GitHub (superseded by the v2 work #918–#946).
+2. ✅ The phone's More keeps its Receivables row — no change.
+3. ✅ (#948 a546cf01; plan `docs/superpowers/plans/2026-10-17-finance-v2-open-questions.md` part A) Print layout: the design's option 1a (logo, the amount boxed beside the payee, AP Payment's six bill columns and the supplier's balance before / after) with option 1b's boxed signatures, for every printed voucher (payment vouchers, AP Payment, receipts, journal). A box with no data on file is not printed. Found on the way and fixed in the same branch: BUG-2026-10-17-309 (a transfer voucher read back as a payment), -310 (an other debtor's receipt printed as a payment voucher), -311 (batch print dropped an AP voucher's bills). Prod check (read-only; prints captured, no dialog): `GET /ap-payment-print` answers for every creditor payment on prod — all AP vouchers, supplier payments and other-creditor payments, no error — and each one's bills + advance + trade-finance rows add up to its total; every active supplier payment's "balance before" equals the supplier statement at its date plus its own rows; spot checks of single bills equal the purchase invoice / bill and its payment history; a printed AP voucher renders the 1a layout with the logo, the six columns, the strip and four signature boxes; the transfer, receipt and batch-print bugs verified as in their entries.
+4. ✅ (#949 b0111f86, plan part B) TIN, SST Reg. No., Currency, Bank & account no. on customers, other parties and suppliers (Currency is recorded only — no conversion). A customer's TIN / SST sit in its Onboarding / KYC block; the AP print shows the payee's bank; a new e-Invoice takes the buyer TIN from KYC. Found on the way: BUG-2026-10-17-312 (a customer's default company always read blank and an edit saved the blank), -313 (the KYC block came back blank and its next Save wiped it). Prod check (read-only, nothing saved): every customer, supplier and other party returns the new fields (currency MYR by default); the supplier edit dialog on both pages opens with the stored Registration No. and currency, so a save keeps them; the customer dialog shows Currency and Bank, the other-party form TIN / SST / Currency / Bank; the AP print read answers with the payee's bank (none on file yet); no customer holds a default company and no KYC record exists, so -312 / -313 lost nothing.
+5. ✅ (#950 15af95c1, plan part C) Debtor Aging includes the other debtors: Type column, chips All / Trade / Other debtors, a section and subtotal per kind, an "Other debtors · 305-0000" card, a grouped export; the phone's Debtor Aging lists them too. Prod check (read-only): sections "Trade customers · N" and "Other debtors · N" with counts equal to the APIs; the trade subtotal equals `/aging`'s total, the other-debtor subtotal equals `/other-party-aging`'s, and the grand total their sum; the 305-0000 card reads matches ✓ against the control; every bill carries its month bucket.
+6. ✅ (#951 0f727a61, plan part D) Creditor Aging: groups Trade Suppliers / Other Creditors / Trade Finance, Trade Finance one row per drawdown sorted by due date; a Next Due column (amber within 7 days, red when overdue). Prod check (read-only): sections Trade finance / Trade suppliers / Other creditors with counts equal to the APIs; each subtotal equals its source (open draws of `/trade-finance`, `/aging`, `/other-party-aging`), the grand total their sum; the 405-0000 card matches the control; every supplier's Next Due is its earliest open due date and the draws run by due date; the Overdue card equals an independent sum; `/aging` documents carry their due date (the advances carry none).
+7. ✅ (#952 35cf30fb, plan part E) A Credit Note can be created from a Delivery Return: a "From Delivery Return" picker on Credit Notes fills the new note with the customer, the invoice and the returned lines at the invoice's prices; one note per return, linked both ways. Notes are still saved as drafts — no screen issues (posts) a credit note today; asked the owner. Prod check (read-only, nothing saved): `/from-returns` lists prod's one delivery return with its invoice and its three lines priced exactly as that invoice's lines; that invoice is fully paid, so the picker greys the return out as "Invoice settled" (a credit note may not exceed what is owed) — the fill-in itself is therefore covered by the tests, not exercised on prod.
+
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 8: mobile Finance (/m/finance) (owner「继续做」; the owner's 2026-10-14 gate decision)(branch `feat/finance-v2-mobile` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-mobile.md`. Not here: aging as at a month-end (deferred), Forecast P&L on the phone (desktop only), voucher / receipt entry.
+
+1. ✅ Part A (#942 7ce032fb) — the Finance menu (three sections, rows gated like their desktop pages, no permission = no row, a refused deep link says No access), the Finance row in More, Receivables gated like Debtor Aging; Debtor / Creditor Aging (Outstanding card and bucket chips summed from the rows, stacked bar, search, parties opening to their documents). Prod check (read-only): More shows Finance; the menu lists the built screens only; Debtor and Creditor Aging's Outstanding and all five bucket chips equal sums over `/aging`, one row per party; an unbuilt screen says "Not on the phone yet".
+2. ✅ Part B (#943 196941b7) — Overview (3 / 6 / 12 months, five cards with the desktop's own shares), P&L (month stepper, Overall / Sofa / Bedframe, Gross / Net Profit from the statement's result rows, the folded statement), Cash Flow (the month's own column or "No cash flow"), Balance Sheet (the desktop arrangement and two-sides check). Prod check (read-only): the P&L cards equal the statement's Gross / Net Profit rows; the Balance Sheet's two sides equal sums over the API and read Balanced ✓; the Cash Flow shows every engine row and the month's Bank c/f equals the API; the Overview's latest invoices and gross profit equal the trend.
+3. ✅ Part C (#944 b430c3b1) — Finance Dashboard (one Income Statement line at a time, gap to forecast, last four months; a cash-flow card) and Daily Cash Position (day stepper, cash available and after repay & receive, awaiting approval, banks collapsed, share as image — the desktop's own drawing, now in `src/lib/cash-position-image.ts`); a Finance entry on the fold rail. Prod check (read-only, nothing shared or saved): Daily Cash Position — cash available equals the API, "after repay & receive" equals available − repay + receive over the months before this one, every bank's Available equals the API; the desktop Get image still opens its picture (the drawing moved, same output). The Finance Dashboard showed a month ahead with no figures → BUG-2026-10-17-308 (item 4).
+4. ✅ BUG-2026-10-17-308 (#945 acebb8dc) — the phone's Finance Dashboard anchored on the API's last row, a forecast-only month ahead; it now anchors on the latest month with actuals. Prod check (read-only): the running month with its still-running note; Revenue, the gap to forecast, Net Profit and the cash-flow lines equal `/dashboard`; four bars ending at the running month.
+
+## 2026-10-17 — ✅ BUG-2026-10-17-307: the phone's Receivables list showed every debtor owing RM 0.00 (found while surveying /m for the finance v2 mobile plan)(branch `fix/m-receivables-aging-total` → `main`)
+
+1. ✅ (#941 111946af) `receivablesConfig` read a `total` the aging API never sends; it now sums the five aging buckets (the desktop Debtor Aging's Total). Regression `tests/m-receivables-aging-total.test.mjs`. Prod check (read-only): /m/receivables shows each of the 7 debtors at the sum of its five buckets, none at RM 0.00, and they add up to the desktop Debtor Aging's total.
+
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 7: Forecasting — Financial Dashboard + Forecast P&L (owner「继续做」)(branch `feat/finance-v2-forecasting` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-forecasting.md`. Kept as today (owner rules): a new month starts from the previous month's percentages; Forecast P&L is desktop only.
+
+1. ✅ Part A (#940 7ef9d681) — Financial Dashboard: visible y-axis and clearer labels; the tooltip in three aligned columns (stack order, a bold Total on stacked charts, lines under a rule and never totalled); chart tabs as the v2 switch; the tables in the v2 list look with the period header as the table head and the first column pinned. Prod check (read-only): every y-axis draws its line; the eight tables (the salary card twice) have the slate head and a pinned first column; on the stacked salary chart the tooltip lists the departments top band first, its Total equals their sum and its share the sum of theirs, and the per-head / per-unit lines sit under the rule, not totalled.
+2. ✅ Part B (#940) — Forecast P&L: one month control (picking a month adds it), a confirm before a month is removed, arrow / Enter movement between cells, the unsaved-changes banner and leave guard, calmer cells, names without account numbers. Prod check (read-only, nothing saved or typed): the Add month list offers the months not on the sheet and no month input remains; keyed boxes are warm and carry their columns; no account codes in the side column; Down moves to the next row in the same column and Right to the next column, and moving alone does not raise the unsaved banner.
+
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 6: e-Invoice + Setup, look only (owner「继续做」)(branch `feat/finance-v2-einvoice` → `main`; shipped in parts)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-einvoice-setup.md`. Not built here (deferred or against an owner rule): e-Invoice submission tracking, the Chart of Accounts form rework, Currency & FX monthly rates (owner chose per-document rates), Change Year End with closed-year locks, SST tax codes, adding pre-opening invoices one at a time.
+
+1. ✅ Part A (#938 0965c3e6) — e-Invoice: the tab strip as the v2 switch (Generate shows how many are ready), the four status figures as KPI cards, both lists in the v2 list look; the LHDN notice and every write unchanged. Prod check (read-only): prod holds no e-invoices yet (measured), the four cards read 0, Generate's count equals the API's invoices that are neither draft nor cancelled, its list opens in the v2 look with the spacer row not lifting, the notice is there.
+2. ✅ Part B (#939 eb9c74a8) — Setup: Chart of Accounts / Stock Mapping / Opening Stock / Opening Balance main buttons on the title row (Post keeps its guard and label), Opening Balance's balance line as the check strip, every list in the v2 look (input rows not lifted), the Audit Log's repeated heading gone; Settings cards keep their own buttons; the shared virtual-scroll spacer rows never lift. Prod check (read-only, nothing pressed): Add Account, both Saves and Re-post opening balance sit on the title row (Re-post enabled, not pressed); the opening balance strip reads Balanced ✓ with Total DR = Total CR equal to the grid's TOTAL row, every grid row stays put; Stock Mapping's 23 rows and Opening Stock's rows stay put; the Audit Log lists the API's rows with no repeated heading; Settings keeps its Saves in the cards.
+
+## 2026-10-17 — ✅ Finance & Forecasting v2, plan 5: Debtors / Creditors, look only (owner「继续做」; the five open questions for this group are not built)(branch `feat/finance-v2-debtors-creditors` → `main`)
+
+Plan: `docs/superpowers/plans/2026-10-17-finance-v2-debtors-creditors.md`. Waiting on the owner (asked 2026-10-16), not built here: other-debtor aging inside Debtor Aging; a Next Due column; one Trade Finance row per drawdown; TIN / SST / Currency / Bank on parties; a Credit Note from a Delivery Return.
+
+1. ✅ Part A (#935 0752a29a) — Debtor / Creditor Aging: the control figures and Total outstanding as KPI cards, Recalculate counter and one download (Excel / PDF) on the title row as in the design, the aging / statement / contra / Trade Finance lists in the v2 list look (open rows and rows with inputs not lifted); on Creditor Aging the list comes first, then Trade Finance, Contra and the statement. Prod check (read-only, nothing pressed): Debtor Aging's four cards equal `/ar-control` and the aging total, its rows and every bucket total equal `/aging`, an opened debtor's document rows stay put; Creditor Aging's three cards equal `/ap-control` and the aging total, its rows and totals equal `/aging`, the blocks run list → Trade Finance → Contra → statement, and the Trade Finance table's rows and TOTAL equal `/trade-finance`; both downloads offer Excel and Print / PDF only.
+2. ✅ Part B (#936 0e167cc2) — AP Invoices (both buttons on the title row, the three open totals as KPI cards, the shared chips with counts, the list in the v2 look), Supplier Discount (both lists in the v2 look, rows holding inputs stay put, a note count), Other Debtors / Creditors (Add Party on the title row, the control balance and the names count as cards, status chips with counts instead of the select, the list in the v2 look; nested on the Bills page its buttons stay in the fold).
+3. ✅ Part B (#936) — the other-party aging, bills and payments lists in the v2 list look (row menus and double-clicks unchanged; the aging total in `<tfoot>`); Credit / Debit Notes: the three summary figures as KPI cards, a caption with the count, the grid with the v2 header menu and draggable headers (columns memoised).
+4. ✅ Part B prod check (read-only, nothing pressed): AP Invoices — the three cards equal `/ap-invoices` totals, every chip count equals a count of the API's rows, the list shows every row, both buttons sit on the title row; Supplier Discount — the history lists the API's non-draft notes and the caption counts them; Other Creditors / Debtors — the control card equals the trial balance's 405 / 305 line, the names card and chips count the API's parties, the list shows them all, Add Party on the title row; the Bills page — the aging rows and Total outstanding equal `/other-party-aging`, the bills list shows every API bill, and opening the names fold keeps its Add Party inside the fold; the payments list shows every API row; Credit / Debit Notes — prod holds no notes (both lists empty, measured), the cards read 0, the header menu offers sort / filter / columns / layout / Excel / PDF / Print (no CSV) and closes with Esc, the headers drag.
+5. ✅ BUG-2026-10-17-306 (#937 4243e19c), found by the part B prod check: AP Invoices' All view counted cancelled bills / invoices as outstanding (their face amount on the row and in "N shown · outstanding"), above the Open · all card. Fix: `/ap-invoices` gives only OPEN rows an outstanding amount. Prod check (read-only): the All view's outstanding line equals the Open · all card; the cancelled rows read "—".
+
+## 2026-10-17 — ✅ Finance & Forecasting v2: the owner's three answers (「1. Hookka industries sdn Bhd 2. 可以 3. 可以」)(branch `feat/finance-v2-owner-answers` → `main`)
+
+1. ✅ Every report head and PDF prints HOOKKA INDUSTRIES SDN BHD (`COMPANY.HOOKKA.name`): the P&L family, Cash Flow, the PDF default, the customer statement and party-ledger prints.
+2. ✅ Balance Sheet in the design's arrangement (Fixed Assets; Current Assets less Current Liabilities = Net Current Assets; Financed By), the check comparing the two sides, DETAIL L1–L4; same entries and sections, drag and drill unchanged.
+3. ✅ CSV removed from the finance downloads (Excel and PDF only).
+
+Shipped #934 (e80a878e). Prod check (read-only, nothing pressed): the running month's sheet lists the API's 25 entries; each section total, Net Current Assets and the two sides equal sums taken from the API independently, and the strip reads Balanced ✓; L1 shows totals only, L2 the folded sections, L3 every account, L4 every account's ledger lines (one drill per account, none on the unclosed-earnings line); the frame and the title carry the legal name; the download menus of the Balance Sheet, the three P&L views and Cash Flow offer Excel and Print / PDF only.
+
+## 2026-10-16 — ✅ Finance & Forecasting v2, plan 4: Monthly group (branch `feat/finance-v2-monthly` → `main`; shipped in parts)
+
+1. ✅ Part A (#931 8721544c) — KPI cards + status banner (shared); Self-check as one list with result pills, items under the row and fix links, under a "N of M OK" card; Corrections on DataGrid under a count card, last 90 days by default or by month. Same reads. Prod check (read-only): Self-check shows its 7 checks with the card's OK count matching the pills, the Trial balance line agrees with the API's balanced flag, items open under a row, Run again sits on the title row; Corrections lists exactly the API's rows for the last 90 days and for the running month, its total row equals an independent sum, and the card's per-kind counts add up to the row count.
+2. ✅ Part B (#932 d7245e08) — Labour (title-row month / map / Check in Payroll / the same Post–Unpost; banner and cards from the preview) and Fixed Assets (title-row month / Add Asset / the same Post / download; the preview loads with the month; banner and cards; run and register grouped by asset account with subtotals). Prod check (read-only, nothing pressed): Labour's running month reads Not posted (amber) with the card equal to the preview's total and the department list equal to the API's departments and total; the previous, posted month reads Posted (green) with its credit accounts and offers Unpost. Fixed Assets: the register on prod is empty, so the page reads No assets with no Post button — the grouped register itself is UNMEASURED on prod (no rows to show).
+3. ✅ Part C (#933 2be2a76a) — Stock Take (title-row month + its four buttons, v2 tables) and Cash Book (title-row account / month / import / auto-match, four cards from the reconciliation, v2 tables; the reconciliation card untouched). Prod check (read-only, nothing pressed): Cash Book on a finalised month — the four cards equal the reconciliation card's own figures and the pill reads Finalised · Tally ✓ · all recorded; Stock Take — month stepper and its four buttons on the title row, the month card names the month, the group list in the v2 look.
+4. ✅ Close-out (2026-10-17). All three parts shipped and prod-checked; every posting / matching / saving button kept its behaviour and no check pressed one.
+
+## 2026-10-16 — 🔵 Finance & Forecasting v2, plan 3: Reports (branch `feat/finance-v2-reports` → `main`; shipped in parts)
+
+1. ✅ Popup and cash-position dates read "15 Oct 2026" (carried over from plan 2b).
+2. ✅ Part 1 (#924 6605a7bf) — report shell (title-row toolbar: period stepper, DETAIL levels, one download icon; check strip; framed report with centred head; report table look) + Trial Balance pilot (month stepper, sections by the chart's rules with fold and subtotal, L1 / L2, double-click an account to open its ledger on the same as-at date, Excel / Print-PDF). Figures and the balanced check unchanged (server's). Prod check (read-only, owner's session): rows shown = API rows, line sums = section subtotals = TOTAL = server totals, verdict from the server flag; previous month reads as at its last day and matches that day's API; L1 folds to section totals (they add to the total), a heading click opens one section; double-click opened the ledger on the same dates and its closing balance matched, plus 16 sampled accounts (4 credit-normal) TB = GL; download menu and period picker open and close on Esc / outside click; no console errors.
+3. ✅ Part 2 (#925 851c48b9) — General Ledger: v2 filter row with the Accounts multi-picker (By Code Range + Tick), summary bar with Expand / Collapse all, account blocks in the v2 frame, credit balances in brackets, double-click a line to open its source, Excel / Print-PDF; same data calls; rows pinned to 29px for the windowed listings; Sales / Purchase scope unchanged. Prod check (read-only): accounts shown = API, TOTAL DR / CR = API = sum of the accounts, every line row 29px, open-card chrome measured 140–141px (constant set to 141), Collapse / Expand all, By Code Range 310–310 ticked the four 310 accounts and the picker closed on Esc, a credit-normal account's inquiry showed its balance in brackets equal to the Trial Balance credit, the long inquiry rendered only its window of rows.
+4. ✅ Part 3 (#926 719f0b8a) — P&L: view + product-line switches on the title row (the line shared by the three views); statement with the period stepper, Edit Layout, L1–L4, one download (CSV kept), amber warning with View / Hide, framed two-row-header table with the first column frozen, open groups show their figure on their total line, "Open In GL →" in the drill total. Same data call and figures. Prod check (read-only): at L4 the 224 amounts on screen are exactly the API's 224; at L1 Gross Profit = Sales − Cost of Goods Sold and Net Profit = Gross Profit − Operating Expenses; the two-row header stays put when the frame scrolls (second row at 34px); View / Hide on the warning; a sales line's drill totals to the row with "Open In GL →" carrying the account and the month's first and last day; Sofa carried into Monthly P&L and Cost Structure. Found there: the YTD % column divided by the month's net sales — pre-existing, BUG-2026-10-16-305, fixed in part 4.
+5. ✅ Part 4 (#927 fe598096) — Monthly P&L and Cost Structure in the v2 look (frame, toolbar, Accumulated shading, open groups on their total line with the statement's labels, drill as detail rows with "Open In GL →", Cost Structure section frames + Total to date); the statement's YTD % divides by the year-to-date net sales (BUG-2026-10-16-305). Prod check (read-only): the statement's Net Sales YTD reads 100.0% and Net Profit YTD = its figure ÷ the year-to-date net sales; Monthly P&L fully open shows exactly the API's amounts, columns Accumulated then newest month, the statement's total labels, table at its content width; Cost Structure's three Total-to-date rows equal an independent sum from the API.
+6. ✅ Part 5 (#928 a0367c7f) — Cash Flow in the v2 look: months-only stepper, Edit Layout + banner, L1–L3, one download (CSV kept), frame (company line as printed), Accumulated shaded, the engine's row kinds in the report look, pale zeros, drill as detail rows with "Open In GL →"; engine, TF block and drag unchanged. Prod check (read-only): at L3 every one of the 96 rows on screen equals the engine's row of that label, Accumulated first then newest month, Bank c/f on the double line, table at its content width, the period picker offers months only and closes on Esc, a line's drill totals to the line with "Open In GL →".
+7. ✅ Part 6 (#929 e06af6dc) — Stock Summary (title-row stepper + download, frame, TOTAL STOCK, no ✓ verdict per BUG-093) and the Balance Sheet look (toolbar, check strip, frame; same sections and order). Prod check (read-only): Stock Summary's group rows, RAW MATERIAL TOTAL, WIP and finished goods equal the API and TOTAL STOCK equals the three added up, no "balances ✓" anywhere; the Balance Sheet's accounts equal the API's one for one, TOTAL ASSETS and TOTAL LIABILITIES + EQUITY equal an independent sum of the API's entries, the strip reads Balanced ✓, the Year-End Close card is still there (not pressed).
+8. 🔵 Part 7 — Overview: the 3 / 6 / 12 months switch on the title row.
+9. ⚪ Close-out: the owner's three answers (company name, Balance Sheet layout, CSV), then plan 4 (Monthly group).
+10. 🟡 Waiting on the owner: the legal company name on report heads (screen + PDF), the Balance Sheet layout, dropping CSV.
+
+## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2b: Daily part 2 — Receipts, Daily Cash Position, Fund Transfer, popups (#923 fe84208e, prod-verified)
+
+1. ✅ Receipts list on DataGrid (v2 pills incl. Bounced and Posted · unallocated, funnels, header menu, total over active receipts); click-to-expand dropped (owner 「继续做」), double-click shows the same detail.
+2. ✅ Daily Cash Position: title-row buttons, weekday, slate bank header, v2 list look; pending lines receipts first on screen, image and print; banks stay open (owner).
+3. ✅ Fund Transfer: v2 list look, dates, pill, total over active transfers.
+4. ✅ Document popups (DocDetailModal) in the v2 frame.
+5. ✅ Prod check (read-only, owner's session): Receipts — 54 from the three sources = 54 shown, footer total = active receipts added up from the APIs, pills Posted / Posted · unallocated / VOID / DELETED, no expand arrows; a double-clicked receipt opened in the v2 popup frame and Esc closed it. Daily Cash Position — title-row buttons, "Friday · today", slate bank header, banks open, receipts before payments, the ticked fold row. Fund Transfer — 5 transfers, footer = active total, dates "09 Oct 2026".
+
+## 2026-10-16 — ✅ Finance & Forecasting v2, plan 2a: Daily part 1 — Payment Vouchers list (owner「继续做」; Receipts expand dropped and Daily Cash Position banks kept open, as recommended)(branch `feat/finance-v2-daily` → `main`)
+
+1. ✅ Shared pieces: status pills, segmented chips, title-row button slot, ink primary buttons on finance pages, v2 look on row menus that open on `<body>`.
+2. ✅ DataGrid `checkboxSelectOnly` (the finance lists' rule: only the checkbox ticks) and `searchPlaceholder`.
+3. ✅ Payment Vouchers list on DataGrid: v2 columns and pills, funnels in place of the date / bank / door inputs, header menu, total over active payments; title-row buttons; the explanation behind the (i) with its two page links. Ladder batch, batch print / export, popups and row menus unchanged.
+4. ✅ Prod check (#922, read-only, owner's session): title-row buttons, chips with counts, two-line payee / description, v2 pills; 307 rows from the four sources = 307 shown, and the footer total equals the active payments added up independently from the APIs; with a row ticked, a right-click on another opened its menu (row highlighted) and kept the tick; Esc closed it.
+5. ➡ Plan 2b (entry above).
+
+## 2026-10-16 — ✅ Finance & Forecasting v2, plan 1: foundation (owner「照 README 把这些设计做进现有的 Hookka repo，接真正的 API」→ decisions in chat →「自己核对完直接上线」)(#918 e6288c0d, prod-verified)
+
+1. ✅ Spec = the Claude Design handoff README + the owner's 2026-10-16 decisions (`docs/superpowers/specs/2026-10-16-finance-v2-design.md`): Trade Finance stays its own block with interest at drawdown; knock-off stays manual; delete hides and keeps the record; Monthly P&L keeps Accumulated first, newest month first; the per-company Balance Sheet and the other items needing new data / API / postings are deferred, each to be confirmed first.
+2. ✅ DataGrid table rules (opt-in): number range filter, sticky total row, header right-click menu, drag headers to reorder, Save Layout per user on the server (`datagrid-layouts` kind `user`).
+3. ✅ Scoped v2 look (`src/styles/finance-v2.css`, `[data-fin-ui]` only): IBM Plex Sans, slate table headers, strong lines, hover lift, 34px buttons; page titles with an (i) explanation.
+4. ✅ Pilot: Journal Entries on the new table rules.
+5. ✅ Prod check (read-only, owner's session): Journal Entries shows the v2 title with (i), IBM Plex Sans (loaded), slate header, hover lift; "Total · 26 shown of 26" and the debit total equals the sum of every journal's lines from the API; the header right-click menu lists the design's items; a From amount in the Number Filters tab narrowed the list (every shown row at or above it), and Clear All Filters restored it; the toolbar Export is gone. Payment Vouchers and the Financial Dashboard show the v2 title. Sales Orders (/sales) is unchanged: no data-fin-ui, original background, system font, unchanged grid header, 40px buttons. Seen for plan 2: primary (gold) buttons and portalled row menus are not restyled yet; the PV title-row buttons stack until the page is converted.
+6. ⚪ Next plans: page groups (Daily, Reports, Monthly, Debtors / Creditors, e-Invoice, Setup), Forecasting, mobile `/m` Finance, print layouts.
+
+## 2026-10-16 — 🟡 /production poll: do not cancel a list request that is still running (branch `fix/production-poll-skip-inflight` → `staging`, BUG-2026-10-16-297 and -298)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+1. 🟡 Confirm with evidence: code read end to end, reproduced with the real hook in node (5 of 10 requests aborted, none delivered). Site and frequency of the 8,007 ms abort UNMEASURED.
+2. 🟡 Poll tick skips while the list request runs (`useCachedJson().isFetching()`); shared abort rules unchanged.
+3. 🟡 Other timed refreshes listed: none go through `useCachedJson().refresh`. `joinInflight` settle deleted by URL: fixed, item 5.
+4. 🟡 Test `tests/production-poll-skip-inflight.test.mjs`.
+5. 🟡 BUG-2026-10-16-298 (branch `fix/cached-fetch-inflight-298`, after the branch above merged): identity check in the `joinInflight` `.finally` (C15 row 8 closed), test `tests/cached-fetch-inflight-identity.test.mjs` (10 started, 5 aborted, 3 finished unwatched before). Open: `releaseInflight` also finds its entry by URL (two components sharing a URL).
+
+## 2026-10-16 — 🟡 Production order list: keep a salesperson's narrowed list out of the shared KV cache (branch `fix/po-list-cache-staging` → `staging`)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+1. 🟡 Confirm with evidence: code read, prod measured read-only (3 active SALES users; page use UNMEASURED). See BUG-2026-10-16-296.
+2. 🟡 Skip the KV read and write for scoped users, MISS write and stale refresh both (`production-orders.ts` GET /).
+3. 🟡 Regression test `tests/po-list-kv-scoped-user.test.mjs`; C22 row 4 flipped.
+
+## 2026-10-16 — 🔵 /production poll: 304 when the order list is unchanged (branch `fix/po-list-cache-staging` → `staging`, BUG-2026-10-16-299 and -295)
+
+Ported to `main` on branch `fix/po-list-cache-main`.
+
+From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on the wire. Asks:
+1. 🔵 ETag + 304 for the non-paginated PO list; `no-store` relaxed to `private, no-cache` only for ETag replies (BUG-2026-10-16-299).
+2. 🔵 Background list refresh reads the cache version before the build (BUG-2026-10-16-295).
+3. ⚪ Self-reload when leaving a page (`vite:preloadError` in `src/main.tsx`): not in this branch, cause not confirmed yet.
+4. ⚪ Bundle split (React out of the `charts` chunk, lazy `WorkerLayout`): not in this branch.
+5. 🔵 Check on staging: a second poll with unchanged data returns 304, and a scan still shows within about 8 s. After deploy, prod bytes per idle poll are UNMEASURED.
+
+## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
+
+Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:
+1. 🟡 Move file bytes out of the database row into object storage (`scan_queue.file_key`, `scan-file-store.ts`).
+2. 🟡 Inject only the matching customer's rules (exact code/name hint) and drop empty stubs. 🔵 Identify-the-customer-first by a model pre-pass is NOT built (owner question below).
+3. 🟡 Log every correction into an alias table (`scan_field_corrections`) and replay it on the next scan of the same customer / supplier.
+4. 🟡 Keep every original (consume no longer evicts), inline view (`GET /api/scan-queue/:id/original`) and an access trail (`scan_original_access`).
+5. 🔵 Acceptance "scan time down by a third": UNMEASURED, needs a before/after timing on staging.
+Owner questions: see the PR body and the ticket's internal note.
+
+## 2026-10-15 — 🔵 HK-0025: Send Notification (order priority) from the Production Overview (branch `feat/hk-0025-production-notify` → `staging`)
+
+Ticket HK-0025 (Violet, 2026-09-23, support.houzscentury.com), asks 1 to 7.
+
+1. **Send Notification button** — Overview, tick order(s), Send Notification (`SendOrderNotificationDialog`, max 10 orders per send, one announcement each).
+2. **Priority** — URGENT / OVERDUE / PRIORITY (`src/lib/order-notification.ts`); URGENT and OVERDUE are forced to the WARNING category, which the worker phone already shows as a red card plus must-ack popup.
+3. **Recipients** — departments (multi), individual workers, or all; this is the existing announcement targeting, unchanged.
+4. **Content** — order no., model, required date, status, priority, optional supervisor note, built by `buildOrderNotice`.
+5. **Mobile** — announcement feed + Web Push, unchanged. Not done: tapping the notice does not open a dedicated order screen (the order details are in the notice text).
+6. **History** — /announcements shows priority, order no., "by <sender>" (`createdByName`) and the existing read-receipt panel (acked vs pending). Not done: a history view filtered to order notices only.
+7. Columns `priority`, `order_no`, `order_id` on `announcements`, runtime self-apply (nullable, no backfill).
+
+Tests: `tests/order-notification.test.mjs`. Prod state: UNMEASURED (not deployed; staging check pending).
+
+## 2026-10-15 — ⬜ HK-0055: Department Efficiency access per employee: triage, no code (branch `docs/hk0055-dept-efficiency-triage` → `staging`)
+
+Ticket HK-0055 (High, type Development, reporter Violet, created 2026-10-05): assign department efficiency to an employee (specific / multiple / Overall), the employee's dashboard shows only those, admin can assign / change / remove, the system records who has what. [Violet, Houzs Hub HK-0055, 2026-10-05]
+
+1. 🔵 Already built under DEV-36 / DEV-37, so no code change is made here. Assign: Library > KPI > Production time efficiency or Department efficiency, per-person department chips, any number ticked, none = Overall [code: src/api/routes/kpi.ts:974-1015]. Sofa / Bedframe split per department gives "Fab Cut Sofa + Fab Sew Sofa" [code: src/api/routes/kpi.ts:1006]. Employee sees only their own card, view only (DEV-37). Remove = `isActive: false`. Record = `kpi_assignments.scope` + `assigned_by` + `updated_at` [code: src/api/routes/kpi.ts:1020-1034].
+2. 🔵 The ticket's floor-worker reading ("Employee A" on the worker app) was built on staging as #714 and taken back as #715 by owner decision 2026-10-06 ("KPIs go to login accounts only, no worker app card", see the DEV-36 entry below). Re-adding it would reverse that decision, so it is not done without the owner.
+3. ⬜ Owner questions (unanswered): (a) is HK-0055 satisfied by DEV-36 / DEV-37, so it can close? (b) if not, which "Employee Dashboard": the KPI Card, Dashboard Experimental > Employees, or the worker app? (c) must floor workers (no ERP login) see it, which reverses #715? (d) is last-writer `assigned_by` enough for "record which departments are assigned", or is a change history wanted (who / when / old scope)? (e) the card names departments by code (`FAB_CUT + FAB_SEW`); wanted as names?
+4. Prod state UNMEASURED: no prod access from this branch; whether assignments exist for these staff was not queried.
+
+## 2026-10-15 — 🔵 HK-0080 PO overdue: scanned delivery dates not forced to ISO (Violet「can cross check why there are many PO overdue? is OCR using convert?」)(branch `fix/hk0080-po-scan-date-iso` -> `main`, BUG-2026-10-15-288)
+
+1. DONE on branch: `toIsoDate` in scan route + SO create; regression `tests/scan-delivery-date-iso.test.mjs`.
+1b. Review fixes DONE: SO create / PUT 400 on an unreadable date (was silent blank); day-first assumption documented.
+2. OPEN, owner: does "PO" mean Production Order (Overview chips) or Purchase Order? Prod volume of non-ISO date rows UNMEASURED; run the query in BUG-2026-10-15-288.
+3. OPEN, owner: template-fallback scan path sets Our Expected DD = customer DD with no buffer.
+
+## 2026-10-15 — 🔵 RM unit follows the material (HK-0037, branch `fix/hk0037-rm-uom-propagation` → `main`, PR #863)
+
+1. 🔵 RM create rejects an unlisted unit; PO line unit from the RM base unit; Adjustments and GRN show the real unit.
+2. ⬜ Owner questions: per-category unit lists, ROLL/MTR conversion, BOM unit display; other PO writers (`procurement-backfills.ts`, `convert-from-po-modal.tsx`).
+
+## 2026-10-15 — ⬜ IT Hub HK-0052: department option on Production Time Efficiency is already shipped as DEV-36; one ask left for the owner (branch `docs/hk0052-already-delivered-dev36` → `main`, docs only)
+
+Ticket HK-0052 (Violet, 2026-10-05, type Development, reopened by Laphii from TESTING 2026-10-14) asks for a Department field on the Production Time Efficiency KPI, the existing Overall kept, and assignment to the workers of that department. Read from the code on `main`, no change made:
+
+1. 🔵 Department option, Overall kept, scored on that department only: shipped as DEV-36 (see the 2026-10-07 entry below). `src/pages/kpi/index.tsx` offers every production department as All / Sofa / Bedframe; `PUT /api/kpi/assignments/:kpiKey` stores it in `kpi_assignments.scope`; `parseEfficiencyScope` is covered by `tests/efficiency-allowance.test.mjs`. Nothing ticked is Overall.
+2. 🔵 "Fab Cut Sofa", "Fab Sew Sofa", "Upholstery Bedframe", "Packing Sofa" etc. are the department + category pairs of item 1. Whether "foam bonding" and "Packing" exist as production departments on prod is UNMEASURED (no prod access from this session).
+3. ❓ "Assign to individual workers within that department": not built, on purpose. Owner decision 2026-10-06 (DEV-36): holders are office login accounts, not floor workers; `9af643c9` removed the floor-worker half. The people list is every login, with no department filter. OWNER QUESTION: keep it so (close HK-0052 as delivered), or should the people list narrow to accounts linked to the chosen department? If the latter, which field links a login account to a department is not decided.
+4. ⬜ Violet / Laphii: say what failed when Laphii reopened it; the ticket carries no comment.
+
+## 2026-10-15 — 🔵 Chat approve / reject schedule proposals for the person in charge (HK-0033, branch `fix/hk0033-pic-decide-proposals-chat` → `main`, PR #861)
+
+1. 🔵 Both proposal tools on the staff tool list; gated by production-orders read / update.
+   Review fixes: prompt text says production-orders read / update (super admin always), no longer SUPER_ADMIN; the per-tool-call audit row now runs after dispatch and records outcome ok / refused. ADMIN reaching the tools is intended: `requirePermission` and `hasPermission` both let ADMIN through, so chat now matches the Planning tab buttons. Behavioural gate tests added.
+2. ⬜ Owner decision: should the agent be allowed to create packing lists? (v1 red line today.)
+
+## 2026-10-15 — 🔵 SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(branch `feat/hk0094-so-customer-edit` → `main`)
+
+## 2026-10-15 — 🔵 Dashboard: idle Sundays out of every per-day chart and average (branch `feat/hide-idle-sundays` → `main`)
+
+Owner asks (2026-10-15): 「礼拜天 remove 掉，因为没开工，除非礼拜天开工才拉进来 … 全部的 chart 和数据都是，不要被这个影响了我们的数据」.
+1. 🔵 Charts (/dashboard Revenue + Department Revenue, /m Revenue, Completed per-day list): a Sunday whose every plotted value is 0 is left off the axis; a Sunday with any figure stays. Weekday zeros still show. `src/lib/idle-sundays.ts`.
+2. 🔵 Averages (Daily Capacity, Backlog days of queue): working days were Mon–Sat minus holidays, so a WORKED Sunday's output was dropped. Now a Sunday or public holiday counts only when production happened on it (completed job-card minutes > 0). `src/api/lib/working-days.ts`.
+3. 🔵 Not covered: /dashboard-experimental's Daily tab; frozen past months keep the figures they were frozen with.
+
+## 2026-10-15 — ✅ SO detail: change the customer like the hub (IT Hub HK-0094, Siti「Can you add a button to select the customer, similar to the delivery hub button?」→ Samuel「开始做按钮，直接做在 main」)(#864 9688216, prod-verified)
+
+1. ✅ The order behind the ticket: SO-2609-392 (Customer PO `2990-PO-2609-042`) was keyed under Houzs Century. Siti asked for it
+   moved and re-priced, so Samuel ran a one-off SQL repair on prod on 2026-10-15: 2990 HOME SDN BHD / 2990 KL, line price
+   RM 1,155.00 → RM 1,091.48 (2990's seat-24 price). The SQL also covered the production order and the PACKED fg_unit, and
+   wiped the seven `sales` snapshot tables. Read-back on prod confirmed it. Siti reprints the packing sticker.
+2. ✅ `PATCH /api/sales-orders/:id/customer` `{customerId, hubId?, reason?}`. Moves the SO, its production orders
+   (`customerName` / `customerState`), its un-shipped fg_units (sticker customer + hub), and any DRAFT DO / DRAFT invoice
+   (customer + hub contact block). Item prices are not touched (Siti: prices stay the same).
+   Returns 409 when: a DO is LOADED or later; a non-DRAFT, non-CANCELLED invoice exists; a draft DO also carries another
+   SO; or an open service order exists. A POTENTIAL customer is refused (`assertCustomerBillable`). Writes a
+   `customer-change` audit row. Wipes the `sales` snapshots and bumps the PO-list KV version.
+3. ✅ `src/components/orders/CustomerEditModal.tsx` + a pencil next to Customer on `src/pages/sales/detail.tsx`. Pick the
+   customer, then its hub (auto-picked when the customer has one). Disabled with the reason once a DO has shipped or an
+   invoice has been issued.
+4. ✅ Staging preview `claude-hk94` (staging DB), 2026-10-15: SO-2609-392 moved Houzs Century → 2990 HOME through the UI;
+   SO, production order and SO list show 2990 HOME / 2990 KL, price stayed RM 1,155.00, `customer-change` audit row
+   written. SO-2610-170 (DO-2610-029 INVOICED) shows the pencil disabled with the lock reason. PR #864.
+5. ✅ Siti saw BEFORE/AFTER from canary-864 (modal only, no save)「okey nice . can put it live already」.
+6. ✅ Prod, read-only after deploy: SO-2609-392 pencil enabled; SO-2610-182 pencil disabled ("Customer locked: DO
+   DO-2610-048 already INVOICED."); the route answers an empty body with 400 "customerId is required".
+
+## 2026-10-14 — 🔵 Second void of a purchase invoice answers 500 (branch `fix/pi-revoid-legno-main` → `main`, BUG-2026-10-14-286)
+
+1. ✅ Fixed and verified on staging first (#852): void, unvoid and void again all pass there.
+2. 🔵 Same `buildPiDeltaLegs` fix to `main`, without staging's PO-direct auto receipt.
+3. ⬜ After deploy: void, unvoid, void a test invoice on prod and check it answers 200 each time.
+
+## 2026-10-14 — 🔵 CN print: CO No. and fabric missing on a CN printed right after it was created (IT Hub HK-0093, Siti「COLOUR MISSING AND ALSO PLS CHECK SUPPOSELY HAVE NUMBER CO BUT DIDNT SHOW IT AT STICKER AND CO NOTE」→ Samuel「开始」)(branch `fix/hk0093-cn-print-co-fabric` → `main`, BUG-2026-10-14-285)
+
+1. 🔵 `GET /api/consignment-notes/:id/print-extras` returns each line's PO `companyCOId` + `fabricCode` (it already
+   joins `production_orders`), and `buildCnPdfData` prefers them over `poToCoNoMap` / `poToFabricMap`, which come from
+   the stale-while-revalidate `/ready-planning` snapshot and miss a CN created moments earlier.
+2. 🔵 Regression test + BUG-HISTORY entry + BUG-CLASSES C29 row.
+3. 🟡 Sticker missing the CO number: Siti printed it from Foam Bonding → Print Packing Stickers. Previewed on prod
+   (read-only, 2026-10-14): Our SO = `CO-2610-010` / `-04/-05/-06` and Colour = `HG1313-01` are on it; PO No / Cust Ref /
+   Cust SO are `—`. 2990's own CO number `2990-PCO-2610-019` (`consignment_orders.customer_co_id`) is on neither the
+   sticker nor the CN (`production_orders.customer_po_id` is blank on all 166 CO-origin POs). Asked Siti which number she
+   meant.
+   → Siti「ouh ya can put 2990 own CO number on sticker . consignment note also want Po No」→ Samuel: same PR, "PO No" line.
+   🔵 Production: Siti「ya for all production also need 2990's co number」→ `attachCustomerSO` sets `customerPOId` on a
+   CO-origin PO from `consignment_orders.customerCOId` (blank on all 166 today), so Customer PO on every dept sheet /
+   Overview / filter / search and "PO No" on the packing + job-card stickers all show it. SO-origin POs unchanged.
+   🔵 CN PDF: `print-extras` returns each line's `customerPOId` = the line's CO `customer_co_id`; the first column is Order,
+   stacked `Our CO: <our CO>` / `PO: <2990's CO no.>` like the DO's Order column (Siti「can put like this ? our CO and
+   their own PO」with a DO screenshot).
+4. ✅ "Colour": Siti「for colour HG1313-01 already okey, no need name」. No change.
+
+## 2026-10-14 — ✅ Finance Overview shipped on its own (owner「你可以只上线 overview 吗？我才去 claude design 慢慢改，因为我每说一个就要等你 deploy 很吃时间」)(#851 a2770f0c, prod-verified)
+
+1. ✅ Only the Overview from PR #849 — that PR stays open and unmerged with the rest of the finance UI refresh while the owner reworks it in Claude Design. Brought over: `overview-tab.tsx`, `overview-trend.ts`, `GET /accounting/overview-trend`, and the three small helpers the Overview uses (`finance-money.ts`, `amount.tsx`, `finance-names.ts`). The page header, money format, reports, payment pages and phone layout on `main` are untouched.
+2. ✅ Prod check (read-only, in the owner's session): the Overview loads at 3 and 6 months and a hover explains its bar. For every month May–Oct, its net sales, cost of goods sold, raw materials, direct labour, gross profit and net profit equal the P&L statement's rows; gross profit = net sales − cost of goods sold, net profit = gross profit + other income − expenses, and the materials add up to raw materials used. May's raw-material share is far above the other months because May is the month the books opened — the statement shows the same.
+
+## 2026-10-13 — ✅ P&L: running-month estimates for recurring costs not recorded yet (owner「用上个月，3个月，factory overhead 也一起…字体颜色和 row 的 background colour 不一样」→「做」)(#846 27d82e33, prod-verified)
+
+1. ✅ For the running month (Malaysia time) only: an operating expense, salaries & contribution or factory overhead
+   account with an amount in each of the last three months and nothing recorded so far this month shows last month's
+   amount. As soon as anything is recorded on it this month the real figure replaces the estimate; months that have
+   ended are never estimated. Report layer only — nothing is posted (trial balance / balance sheet / cash flow
+   unchanged). Read from the same one-month ledger windows the statement shows for those months, before any estimate.
+2. ✅ One place for every P&L consumer: `computePnlWindow` adds the estimates to a copy of the ledger window when the
+   window reaches the running month, and tags each line (`estSen`, `estFrom`). The statement rows, the Monthly P&L
+   matrix (`estValues` per column), the P&L drill (an `estimate` row so it still adds up) and the dashboard slices
+   (`estimated`; payload version moves up) carry them.
+3. ✅ The pages colour an estimate: amber text on a pale amber row (Monthly P&L: the cell), italic, an "est." tag,
+   a hover naming the month it came from, and a note under the table; the dashboard's Income Statement card adds an
+   "incl. estimates" row.
+4. ✅ Prod (2026-10-13, read-only): the running month gained exactly the estimate lines predicted from the three
+   months before it (operating expenses, salaries & contribution and factory overhead), its net profit moved by exactly
+   their total, and every closed month reads as before to the sen (statement, Monthly P&L, dashboard). The Monthly P&L
+   marks only the running month and Accumulated; the drill on an estimated line shows the estimate row and ties; the
+   dashboard carries the same total; the statement shows the amber rows with the note. The running month's statement
+   loads about half a second slower.
+
+## 2026-10-13 — ✅ Balance Sheet lines in account-code order (owner「排序按科目编号，做」)(#843 8d546ce0, prod-verified)
+
+1. ✅ Within each section the Balance Sheet listed accounts in the order the ledger read first met them (no ORDER BY,
+   no sort), with the stock lines appended in stock-map order. `/pl` now sorts the sheet's account lines by code;
+   Current Year Earnings (unclosed) stays last in Equity.
+2. ✅ Prod (2026-10-13, read-only): a closed month and the running month come back in code order within every
+   section, Current Year Earnings last in Equity; the closed month's totals are unchanged and both sheets balance.
+
+## 2026-10-13 — ✅ Balance Sheet stock = the P&L's closing stock (owner「balance sheet 就让他的 closing stock 和 P&L closing stock 一样」→「做」)(#840 973232c7, prod-verified)
+
+1. ✅ The Balance Sheet's stock accounts (the stock map's 330-x homes: each material group, WIP, FG) show the same
+   closing stock the P&L uses for that month-end (the Stock Summary figure, including a blank month's production-order
+   FG / WIP). Report layer only — nothing is posted to the ledger. The ledger's own balance on those accounts (none
+   today) is replaced, and the difference goes to Current Year Earnings (unclosed), so the sheet still balances and a
+   year-end stock entry by the accountant would not be counted twice. Months before the opening month get nothing.
+2. ✅ The same rule in the dashboard's balance-sheet figures (assets / current assets / inventory) and in the finance
+   series (assets and equity per month); the dashboard payload version moves up.
+3. ✅ The Balance Sheet drill on a stock line shows the Stock Summary movement per material group (b/f = last
+   month-end's closing stock, c/f = this month-end's).
+4. ✅ The Stock Summary's old "Post closing stock to GL" button is hidden (not needed; its posting rule would mis-date
+   reversals). The endpoint is left in place.
+5. ✅ Prod (2026-10-13, read-only): for every closed month since the opening month the sheet's stock lines equal the
+   Stock Summary's closing to the sen, per account and in total; total assets and Current Year Earnings each moved by
+   exactly that amount against a baseline taken before the deploy; every sheet still balances; the P&L's net profit for
+   those months is unchanged to the sen. The running month carries the P&L's live closing (no raw-material count yet).
+   The drill on a stock line shows last month-end → this month-end per group (the opening month starts from zero). The
+   dashboard's inventory and assets match the sheet. The Stock Summary no longer shows the post button.
+
+## 2026-10-17 — merged dashboard, owner review round (localhost only)
+Asks, in order:
+1. Why do 823 SOs sit at READY_TO_SHIP? — answered: production-completion cascade
+   pulls shipped/invoiced SOs back (no forward guard); ~720 have no DO/invoice at all.
+   Fix + data cleanup await owner approval.
+2. Sales forecast looked wrong — current (partial) month now kept out of target /
+   projection, drawn as so-far + run-rate estimate. UI restyled to Command Center.
+3. Department Backlog leaves empty space beside Plant Load — even the heights.
+4. ~~Combine overdue + due-within-3-days~~ — owner: keep them as they are.
+5. "Open orders · stages done" is unclear — explain or replace.
+6. Purchasing: show purchase cost % of revenue; labour cost % this month (live) vs
+   last month vs 3 months; tidy the Output & Cost section and its chart.
+7. Is "not in" really 5 people? How are joiners / leavers prorated in avg labour per
+   person? Are non-production departments in Employees?
+8. Merge Top 10 / Bottom 10 / every-worker into one ranked list split in halves.
+9. Attendance log: keep it, but absent first, late second, on time third; show
+   today and yesterday absentees.
+10. Service "Average case closing" only plots the 4 closing days — show every day.
+11. Layout rule for every tab: summary / chart cards on top, long detail tables
+    (case list, worker lists, order lists) at the bottom.
+12. Plan vs actual chart + By department table: put on one row (too much space).
+13. Remove "On-time completion · by order".
+14. Layer 1 / layer 2 rule: layer 1 as simple as possible; detail opens in a popup.
+    Remove "Completed per day" + "Completed" cards from Output & Cost — put the chart
+    inside the Plant Load "Completed · view days" popup instead.
+15. Costing: this month vs last month, with % of revenue beside each number.
+16. Employees: avg labour cost / person with its % beside it.
+17. Every chart: click a legend item to show / hide that series.
+18. Day view shows month data (e.g. Employees) — make Day / Month / Quarter / Year all correct on every tab (add Quarter).
+19. Department efficiency table: show the Sofa / Bedframe split.
+20. Production Cost trend: cost % of production revenue per day / month (material +
+    labour ÷ production revenue), drawn nicely.
+21. Plan vs actual: explain Units vs Orders on the card.
+
+### 2026-10-17 owner decisions on the data findings
+- READY_TO_SHIP: owner says these orders have normally already shipped — correct each
+  SO's status from its own documents (Delivered / Invoiced …) AND fix the cascade bug.
+- "OUTSOURCE - CHAU" / "OUTSOURCE - OHN MAR SHEIN": opened on purpose — leave them.
+- WANNA HLAING October hours after the 2026-09-30 resignation: resolve it.
+- Quarter / Year periods: build it (backend change).
+- WANNA HLAING: resignation date 2026-09-30 is deliberate (October unpaid). Data left alone; Labor Cost rule now prices days after resignedAt at 0 (effective salary still returned the full month).
+
+### 2026-10-17 owner review, round 3
+22. Day option only on Employees (Sales / Operations / Service / Finance: no Day).
+23. Completed popup: no chart, no best day; average per day for Bedframe and Sofa separately. (done)
+24. Materials used: Sept / Oct don't match the P&L — derive cost the way the P&L gets GP and cost.
+25. Purchasing card: optimise, add supporting data.
+26. Plan vs actual is hard to read; cost trend chart — optimise.
+27. Working vs production hours chart — clearer / prettier.
+28. Department efficiency revenue: use the department PROGRESSIVE revenue (costing share),
+    not the full order value; department revenue stays the supply / demand balance view.
+29. Outsourced workers are not counted as working people.
+30. Attendance log: how to view a whole month.
+31. Service: average case closing — check the calculation and the presentation; pull the
+    "Issues by category" summary up.
+32. Mobile /m: owner said adjust it too — align with the merged desktop (in progress).
+33. Sales forecast: October estimate looks wrong (run-rate 660k); forecast and Order Pipeline
+    "by status" must follow Month / Quarter / Year.
+34. Top Sellers: move to the bottom of Sales, show 10, add % of sales.
+35. Purchasing: "Waiting to arrive" → Outstanding POs.
+36. Purchasing spend vs a forecast built from production revenue (so a low / high month reads fairly).
+37. Fabric cards: show each month's average cost per metre.
+38. Today's problems: only overdue orders, people not in, efficiency, service overdue. (done locally)
+39. Service defect rate = cases ÷ units shipped, by category.
+40. Question: is Hookka Report open to everyone?
+41. Owner: merge the dashboard to prod — menu label "Dashboard" with the Dashboard icon (one entry).
+42. Employees: non-production hours per day and per department (owner worries about people gaming it).
+43. Every number on the dashboard clickable → layer-2 detail popup.
+- /m: phone tabs now render the desktop merged views (tabs/MergedTabs.tsx); Overview removed; Today's problems strip; Quarter/Year picker, Day only on Employees. Verified no horizontal overflow at 375px.
+- Service defect rate card (cases ÷ units delivered, by category) — needs the feed update (prototype cache v4).
+
+### 2026-10-18 owner review, round 4
+44. READY_TO_SHIP repair done by Claude, not by pasting a DB URL → server-side admin endpoint (PR #988).
+45. Sales forecast vs production revenue vs P&L revenue differ — explained (orders / output / invoices); owner to pick the forecast basis.
+46. Why so many SOs at READY_TO_SHIP — the backslide bug (#947) + repair (#988).
+47. By Status (live): add an average-per-day figure, to see the supply/demand balance.
+48. Department Backlog: include the newly added departments; fill the empty space.
+49. Plant Load: gauge off-centre, numbers overflow their boxes — fix fonts.
+50. Department tabs truncated (Due within 3 days worklist) — sweep every dashboard page in Chrome for clipped text.
+51. Purchasing: "We owe suppliers" → raw-material stock balance.
+52. Costing vs production revenue table: labels clipped — rework the layout.
+53. Defect rate: accessory should not be counted (bedframe per unit, sofa per set).
+54. Average case closing: add % to the bands; fill the empty space.
+55. Polish Finance and OCR tabs.
+56. Sales forecast: target from the Forecast P&L module, actual = invoiced (owner 2026-10-18).
+57. READY_TO_SHIP repair executed on prod (owner "执行", 2026-10-18): 836 moved, 46 stay.
+
 ## 2026-10-15 (latest) — 🔵 Phone Products Hub: SKU Master + Catalog from `Products Hub.dc.html` (branch `design/mobile-home-dashboard` → `staging`, local only, not committed)
 
 Owner asks, logged before work; audit done, implementation approved 2026-10-15 with: phone only; Sofa = View prices (seat × tier grid), Bedframe = P1 / P2, Accessory = base, no unverified "From" prices; product detail and `modules.ts` unchanged; no ⋮ menu; repo typography + Sales Orders phone styling. No commit / push / deploy.

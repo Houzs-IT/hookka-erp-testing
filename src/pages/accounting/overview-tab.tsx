@@ -45,6 +45,8 @@ import {
   type OverviewMonth,
 } from "@/lib/overview-trend";
 import type { APAgingEntry, ARAgingEntry } from "@/types";
+import { FinanceTitleActions } from "@/components/finance/title-actions";
+import { ReportToolbar, SegmentedSwitch } from "@/components/finance/report-shell";
 
 const RANGES = [3, 6, 12] as const;
 type Range = (typeof RANGES)[number];
@@ -404,22 +406,18 @@ export function OverviewTab({ arData, apData }: { arData: ARAgingEntry[]; apData
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Months shown" className="inline-flex overflow-hidden rounded-md border border-[#E2DDD8] bg-white text-sm">
-          {RANGES.map((r, i) => (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={range === r}
-              onClick={() => setRange(r)}
-              className={`cursor-pointer px-3 py-1.5 ${i > 0 ? "border-l border-[#E2DDD8]" : ""} ${range === r ? "bg-[#6B5C32] text-white" : "text-[#4B5563] hover:bg-[#F0ECE9]"}`}
-            >
-              {r} months
-            </button>
-          ))}
-        </div>
-        <span className="text-[11px] text-[#9CA3AF]">Point at a bar, a line or a figure to see how it is made.</span>
-      </div>
+      {/* Finance v2: the range sits on the page's title row. */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <SegmentedSwitch
+            label="Months shown"
+            options={RANGES.map((r) => ({ key: String(r), label: `${r} months` }))}
+            value={String(range)}
+            onChange={(k) => setRange(Number(k) as Range)}
+          />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-[11px] text-[#9CA3AF]">Point at a bar, a line or a figure to see how it is made.</p>
       {last?.running && (
         <p className="-mt-2 text-[11px] text-[#9C6F1E]">
           {monthLong(last.ym)} is still running — its figures are so far, and recurring costs not recorded yet are at last month&apos;s amount.

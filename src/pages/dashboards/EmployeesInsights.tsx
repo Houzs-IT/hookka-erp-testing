@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { PieChart, Pie, Cell, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { TAUPE, TEAL, MUTED, BORDER, AMBER, GREEN, fmtN, inPeriod, inFocus, dayLabel, dayList, warnDays, workerDays, auditTier, OVER_TIERS, periodLabel, type AuditTier, type Period } from "./dashboard-shared-lib";
+import { TAUPE, TEAL, MUTED, BORDER, AMBER, GREEN, fmtN, inPeriod, inFocus, dayLabel, dayList, warnDays, workerDays, auditTier, OVER_TIERS, periodLabel, type AuditTier, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 
 // The Employees tab's time/efficiency panels. Everything here is derived from
 // the SAME cached /api/dashboard/prototype `employee` slice the rest of the
@@ -220,11 +220,11 @@ export function DailyEfficiencyCard({ employee, period, target, onPeriodChange, 
                   if (hit) onPeriodChange({ ...period, day: period.day === hit.iso ? undefined : hit.iso });
                 }}
               >
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                <YAxis yAxisId="pct" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={38} unit="%" domain={[0, "auto"]} />
-                {workerId && <YAxis yAxisId="h" orientation="right" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={32} unit="h" />}
+                <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                <YAxis yAxisId="pct" tick={CC_TICK} axisLine={false} tickLine={false} width={38} unit="%" domain={[0, "auto"]} />
+                {workerId && <YAxis yAxisId="h" orientation="right" tick={CC_TICK} axisLine={false} tickLine={false} width={32} unit="h" />}
                 <Tooltip cursor={{ stroke: BORDER }} contentStyle={TOOLTIP} formatter={(v, name) => (v == null ? "—" : name === "Efficiency" ? `${v}%` : `${v}h`)} />
-                {workerId && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                {workerId && <Legend {...CC_LEGEND} />}
                 {period.day && <ReferenceLine yAxisId="pct" x={period.day.slice(5)} stroke={TAUPE} strokeDasharray="3 3" />}
                 <ReferenceLine yAxisId="pct" y={target} stroke={MUTED} strokeDasharray="4 3" label={{ value: `${target}% target`, fontSize: 10, fill: MUTED, position: "insideTopRight" }} />
                 {/* activeBar off + pointer-events none: see SalesOrdersView, the

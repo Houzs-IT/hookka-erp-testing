@@ -219,14 +219,24 @@ test("the Cash Flow tab offers only YYYY-MM periods", () => {
     !/<optgroup label="Full year">/.test(tab),
     "the Full-year options are back on Cash Flow — same NaN-column failure",
   );
+  // Finance v2 (2026-10-16): the period is a stepper; it may only be fed months.
   assert.ok(
-    /<optgroup label="Monthly">/.test(tab),
-    "Cash Flow lost its Monthly period options",
+    /const periodOpts = useMemo\(\(\) => monthOptions\(today\.slice\(0, 7\), 18\), \[today\]\);/.test(tab) &&
+      /<PeriodStepper value=\{period\} options=\{periodOpts\} onChange=\{setPeriod\} today=\{today\} \/>/.test(tab),
+    "Cash Flow lost its month-only period options",
   );
-  // The sibling P&L selector must still be there — this fix is Cash-Flow-only.
+  assert.ok(!/-Q\$\{|String\(yr\)/.test(tab), "a quarter or year period is fed to the Cash Flow stepper again");
+  // The sibling P&L selector must still offer quarters and years — this fix is
+  // Cash-Flow-only. Finance v2 (2026-10-16): the P&L's period is a stepper fed
+  // the same keys (YYYY-MM, YYYY-Qn, YYYY).
+  const pl = src.slice(src.indexOf("function PLStatementTab("), src.indexOf("\nfunction ", src.indexOf("function PLStatementTab(") + 10));
+  // Since item 9 (2026-10-18) those are FINANCIAL-year quarters and years
+  // ("fyq:" / "fy:" keys, which periodStartYm / periodEndYm read) —
+  // tests/fiscal-year.test.mjs.
   assert.ok(
-    /<optgroup label="Full year">/.test(src),
-    "the P&L Statement's Full-year option was removed too; /pl-statement handles quarters and years correctly",
+    /\.\.\.recent\.flatMap\(\(y\) => fyQuarters\(y\)/.test(pl) &&
+      /\.\.\.recent\.map\(\(y\) => fyKey\(y\)\),/.test(pl),
+    "the P&L Statement's quarter / full-year periods were removed too; /pl-statement handles quarters and years correctly",
   );
 });
 
@@ -268,8 +278,10 @@ test("Stock Summary renders no ✓ column off the tautological `balanced` flag",
   );
   // The Trial Balance's own `balanced` is a REAL check (server-computed ΣDR vs
   // ΣCR over independent columns) and must survive this cleanup.
+  // Finance v2 (2026-10-16): the badge became the check strip; its verdict is
+  // still the server's flag, and an imbalance now names the difference.
   has(src,
-    /tb\.balanced \? "Balanced ✓" : "OUT OF BALANCE"/,
+    /<CheckStrip ok=\{tb\.balanced\} label=\{tb\.balanced \? "Balanced ✓" : checkLabel\(tb\.totalDr - tb\.totalCr\)\}>/,
     "the Trial Balance balanced badge was removed — that one is a real cross-check",
   );
 });

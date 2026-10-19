@@ -50,11 +50,11 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:689` | Main component: staged fetches, useMemos, all JSX |
-| `KTile` | `src/pages/dashboard-b/index.tsx:424` | The KPI card used by the four Command Center cards |
-| `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:379 / 406` | Sparkline + delta-% chip |
-| `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:506` | Per-section loading placeholder |
-| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:640 / 568 / 615` | Presentational helpers |
+| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:716` | Main component: staged fetches, useMemos, all JSX |
+| `KTile` | `src/pages/dashboard-b/index.tsx:439` | The KPI card used by the four Command Center cards |
+| `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:394 / 421` | Sparkline + delta-% chip |
+| `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:521` | Per-section loading placeholder |
+| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:650 / 578 / 625` | Presentational helpers |
 | KPI rail JSX | `src/pages/dashboard-b/index.tsx:1117` | Sales · Invoices · Pending Delivery · Outstanding cards |
 | Revenue chart + Plant Load JSX | `src/pages/dashboard-b/index.tsx:1374` | Area chart + backlog-vs-capacity gauge |
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |
@@ -62,8 +62,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1628` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:248` | One line per production department |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2664` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
-| Phone Department Revenue | `src/pages/m/screens/Home.tsx:1848` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2355` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
 | `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:75` | Single ~2000-line aggregate handler |
 | `captureTodayState` | `src/api/routes/dashboard-overview.ts:111` | Extract + upsert today's state snapshot |
@@ -73,6 +73,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | rebuild cron endpoint | `src/api/worker.ts:395` | Nightly force-invalidate all snapshots |
 
 ## Gotchas
+- **The merged Dashboard (2026-10-17) is `/dashboard-experimental`** (`pages/dashboards/dashboard-prototype.tsx`); the sidebar's single "Dashboard" entry opens it and `/dashboard` redirects there. Command Center cards are embedded by section (`CommandCenterSections.tsx`). Figures and their sources, audited 2026-10-17 (BUG-HISTORY "overstated overdue production and money owed"): overdue = past date AND still being made (all-stages-done listed apart); payables = `/api/accounting/ap-control` (net of advances), never a sum of unpaid PIs; costing materials = the P&L raw-materials window (`/api/accounting/cost-structure`), labour = the Labor Cost rule (`src/lib/labor-day-cost.ts`, unrounded until display); department output = progressive revenue (`/api/working-hour-entries/production-revenue`); non-production hours = all-department minus production-department clocked minutes. Service defect rate = cases logged ÷ units delivered (finished-goods units scanned DELIVERED; sofa per set = SO), by the product category of each case's affected products (`service-issue-stats.ts` `defectRates`, feed `service.shipped`).
 - **`dashboard-b` IS the production dashboard.** The old `/dashboard` page was retired 2026-05-21; `/dashboard` lazy-loads `dashboard-b`, and `/dashboard-b` just redirects (`dashboard-routes.tsx:233`). There is no separate `dashboard` page.
 - **The whole backend is ONE GET `/` handler** (~2000 lines, no sub-routes) — every dashboard number flows through it. It is **60s KV-cached on top of a data-change-aware snapshot**, so edits can take up to a minute to reflect live (bump the `v23` cache key or hit the rebuild cron to force a refresh).
 - **Three-layer freshness, not just a cache.** Layer 1 = `dashboard_snapshot` (`built_from` vs `getMaxSourceUpdatedAt`); Layer 2 = 60s KV; Layer 3 = full compute. An admin script that UPDATEs a source table WITHOUT bumping its `updated_at` escapes Layer 1/2 — the nightly `rebuild-dashboard-snapshot` cron is the safety net. The snapshot path only runs for `period=all`; any month filter skips straight to KV + compute.
@@ -82,6 +83,12 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - **Frontend fetches are staged** (`ovL`/`soL`/`pendingL`, `index.tsx:779`) so KPI numbers paint before heavy sections — don't collapse them into one fetch.
 - **recharts is lazy-loaded** via `./charts.tsx` (~357 KB). Keep chart code there, not in `index.tsx`, or you regress first-paint.
 - **Only snapshot freshness is test-covered** — `tests/snapshot-freshness.test.mjs` + `tests/snapshot-freshness-latestts.test.mjs`. The KPI math itself has no unit tests; verify live on prod.
+
+- **Department lists come from one place** (2026-10-18): Department Backlog uses `DEPT_REVENUE_ORDER` (`src/api/lib/dept-revenue.ts`) — add a production department there, not to a local list, or it silently goes missing from the backlog (Foam Cutting / Fibre did).
+- **Purchasing "Raw material stock"** is the P&L closing stock from the last stock take (`/api/accounting/cost-structure`), never the live system RM balance — that balance is unreliable until BOMs are complete (owner ruling 2026-10-17).
+- **Defect rate counts bedframe + sofa only** — accessories are excluded from both cases and units (owner 2026-10-18).
+
+- **Sales forecast** (2026-10-18, owner): target = sales keyed in **Forecast P&L** (`GET /api/accounting/forecast`, kv `forecast_pnl`, months[ym].salesSen; quarter/year = sum of keyed months); actual = **invoiced** by invoice date. No rolling-average fallback — an unkeyed month shows no target. Viewers without Accounting read see actuals only.
 
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:51`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key (`v25` since 2026-10-09) if the payload shape changes, so stale snapshots don't serve the old shape.

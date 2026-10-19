@@ -45,7 +45,9 @@ test("a transfer moves money between two of OUR bank / cash accounts", () => {
 });
 
 test("all three write paths know a transfer; the voucher keeps notes, bill no. and bill date", () => {
-  assert.match(api, /for \(const col of \["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT"\]\)/);
+  // (+ tf_due_date / tf_interest_sen since 2026-10-17 — an AP Payment that
+  // draws on trade finance, tests/tf-draw-from-ap-payment.test.mjs.)
+  assert.match(api, /for \(const col of \["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER"\]\)/);
   const post = slice(api, 'app.post("/payment-vouchers", async (c) => {', 'app.put("/payment-vouchers/:id"');
   assert.match(post, /const isTransfer = body\.kind === PV_KIND_TRANSFER;/);
   assert.match(post, /const t = validatePvTransfer\(coa, body\);/);
@@ -92,7 +94,7 @@ test("the list: no single-click expand; transfers and old fund transfers are doo
   assert.match(tab, /<DocTrailBlock family="payment_voucher" sourceId=\{r\.id\} \/>/);
   assert.match(tab, /<DocTrailBlock family=\{g\.sp \? "supplier_payment" : g\.ft \? "fund_transfer" : "other_party_payment"\} sourceId=\{g\.no\} \/>/);
   assert.match(tab, /<DetailField label="Notes \(internal\)"/);
-  assert.match(ui, /partyLabel: isTransfer \? "Transfer To" : "Pay To",/, "a transfer prints the receiving account");
+  assert.match(ui, /partyLabel: isTransfer \? "Transfer To" : supplierAp \? "Pay To \(Supplier\)" : "Pay To",/, "a transfer prints the receiving account");
   const side = read("src/components/layout/sidebar.tsx");
   assert.doesNotMatch(side, /\{ name: "Fund Transfer", href: "\/accounting\?tab=transfer"/, "the menu entry is gone");
   assert.match(ui, /\{tab === "transfer" && /, "the old page still answers its URL");

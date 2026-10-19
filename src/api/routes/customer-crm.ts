@@ -119,6 +119,11 @@ async function createCrmTables(db: D1Database): Promise<void> {
        )`,
     )
     .run();
+  // The customer's SST Reg. No. sits with its TIN (Finance v2 party fields,
+  // owner 2026-10-17) — the two e-Invoice identifiers of the buyer.
+  await runSelfApply(db as unknown as Parameters<typeof runSelfApply>[0], "customer-crm", [
+    "ALTER TABLE customer_onboarding ADD COLUMN IF NOT EXISTS sst_reg_no TEXT",
+  ]);
   // Wishlist — styles / models a customer has shown interest in (outbound
   // sales: "what to pitch next"). product_id is optional so a free-text style
   // the shop hasn't turned into a SKU yet can still be captured.
@@ -380,10 +385,11 @@ app.put("/onboarding", async (c) => {
   if (!customerId) return c.json({ success: false, error: "customerId required" }, 400);
   await c.var.DB.prepare(
     `INSERT INTO customer_onboarding
-       (customer_id, tin_number, einvoice_id, consent_received, consent_date, docs_requested_at, notes, org_id, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (customer_id, tin_number, einvoice_id, consent_received, consent_date, docs_requested_at, notes, org_id, updated_at, sst_reg_no)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(customer_id) DO UPDATE SET
        tin_number = excluded.tin_number,
+       sst_reg_no = excluded.sst_reg_no,
        einvoice_id = excluded.einvoice_id,
        consent_received = excluded.consent_received,
        consent_date = excluded.consent_date,
@@ -401,6 +407,7 @@ app.put("/onboarding", async (c) => {
       (b.notes as string) ?? null,
       getOrgId(c),
       new Date().toISOString(),
+      (b.sstRegNo as string) ?? (b.sst_reg_no as string) ?? null,
     )
     .run();
   return c.json({ success: true, data: { customerId } });

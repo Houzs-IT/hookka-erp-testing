@@ -1,5 +1,7 @@
 # Procurement — Module Guide
 
+> **Last verified: 2026-10-17** (`feat/tf-repay-from-ap-payment`, main): `supplier-payments.ts` anchors re-derived after `validateTfRepayment` / `tfRepaymentStatements` were extracted above `buildSupplierPaymentCreate` (finance backlog item 17): POST `/` :149, `/knock-off` :681, `/un-knock` :842, `buildSupplierPaymentCreate` :473 (it now takes `extraLegs`, posted in the same entry chain), `buildSupplierPaymentLifecycle` :940. Nothing else re-checked.
+
 > **Last verified: 2026-10-16** (branch `chore/sync-staging-from-main-1016`, staging<-main merge): the `purchase-orders.ts` anchors (POST `/` :458, PUT `/:id` :789, `ensurePendingMigrations` :1125) re-read on the merged tree. Nothing else re-checked.
 > **Last verified: 2026-10-14** (branch `fix/pi-revoid-and-finance-auto-receipt`, staging): anchors shifted by BUG-2026-10-14-286/287. `purchase-invoices.ts`: PI create :1395, PI edit :2303, void :3219, unvoid :3338, `grnRoute` :1303 (sets `autoReceipt`), `buildPiDeltaLegs` :3158 (numbers legs on from `MAX(legNo)`). `grn.ts`: `isGrnNumberCollision` :491, `postGRNToStock` :722, create :1520, cancel :2671 (both skip the grn permission for the auto receipt). Nothing else re-checked.
 > **Last verified: 2026-10-12** (branch `fix/bug87-po-overdue-stock-check`, staging): `purchase-invoices.ts` anchors re-derived after the BUG-87 auto receipt helpers were added: PI create :1392, PI edit :2300, `checkPoRemaining` :1017, `checkInvoicedQtyCeilingAfterEdit` :731, `mapPurchaseLinesToAccounts` :208. Nothing else re-checked.
@@ -178,9 +180,9 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `isPiEditable` / `checkGrnLineQtyEdit` | `src/lib/purchase-edit-rules.ts:34 / 135` | Shared FE+BE edit gates |
 | `checkConvertAvailability` / `clampDecrement` | `src/lib/convert-chain.ts:81 / 138` | Line-level 409 guard + floor |
 | `app.get("/by-po/:poId")` | `src/api/routes/three-way-match.ts:303` | PO-scoped variance read |
-| `app.post("/")` / `/knock-off` / `/un-knock` | `src/api/routes/supplier-payments.ts:146 / 643 / 804` | Pay PIs, apply/reverse advance |
-| `buildSupplierPaymentCreate` | `src/api/routes/supplier-payments.ts:432` | THE builder (rows + PI bumps + GL) shared by POST / and the Payment Vouchers AP road (2026-09-22) |
-| `buildSupplierPaymentLifecycle` | `src/api/routes/supplier-payments.ts:898` | Void/delete/unvoid shared core (exported — the AP voucher's cancel delegates here) |
+| `app.post("/")` / `/knock-off` / `/un-knock` | `src/api/routes/supplier-payments.ts:149 / 681 / 842` | Pay PIs, apply/reverse advance |
+| `buildSupplierPaymentCreate` | `src/api/routes/supplier-payments.ts:473` | THE builder (rows + PI bumps + GL) shared by POST / and the Payment Vouchers AP road (2026-09-22) |
+| `buildSupplierPaymentLifecycle` | `src/api/routes/supplier-payments.ts:940` | Void/delete/unvoid shared core (exported — the AP voucher's cancel delegates here) |
 
 ## Gotchas
 - **GRN Post-to-Stock is a cascade, not a label.** Crossing DRAFT/CONFIRMED→POSTED in `grn.ts` writes stock/WIP + `cost_ledger` AND flips the parent PO. Never write stock outside this boundary. `COMMITTED_STATUSES = {CONFIRMED,POSTED}`; POSTED is never born before arrival = ARRIVED (gate structurally honoured).

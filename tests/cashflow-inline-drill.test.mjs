@@ -83,7 +83,7 @@ test("with trace: each line's sources sum to the line in every column; a split c
 test("the caller builds the drill from the engine's sources: one row per entry, bank side, refs, tie per column", () => {
   const fn = slice(api, "async function computeCashflowStatement(", 'app.get("/cashflow-statement"');
   assert.match(fn, /opts\?: \{ traceKey\?: string \},\n\) \{/);
-  assert.match(fn, /supplierCategory, fyeMonth, period, editable, trace: !!opts\?\.traceKey,/);
+  assert.match(fn, /supplierCategory, fyeMonth, fyStartYm, period, editable, trace: !!opts\?\.traceKey,/);
   assert.match(fn, /for \(const s of statement\.sources\?\.\[key\] \?\? \[\]\) \{\n      if \(!inFy\(s\.ym\)\) continue;/, "only the months the statement shows");
   assert.match(fn, /let money = legs\.filter\(\(l\) => bankCodes\.has\(l\.code\)\);/);
   assert.match(fn, /money = legs\.filter\(\(l\) => tfAccounts\.has\(l\.code\)\);/, "a facility draw shows the facility");
@@ -113,5 +113,7 @@ test("the tab: a line's name opens the payments under the row (not in Edit), in 
   assert.match(rows, /fetch\(`\/api\/accounting\/cashflow-drill\?period=\$\{encodeURIComponent\(period\)\}&key=\$\{encodeURIComponent\(lineKey\)\}`\)/);
   assert.match(rows, /const on = c\.accum \|\| c\.key === it\.ym;/, "the amount sits in its month's column and in Accumulated");
   assert.match(rows, /entr\{data\.items\.length === 1 \? "y" : "ies"\}/, "the last row counts them");
-  assert.match(rows, /open in GL<\/Link>/);
+  // Finance v2: the detail-total row's link reads "Open In GL →".
+  assert.match(rows, /Open In GL →<\/Link>/);
+  assert.match(rows, /<tr data-row="detsum">/);
 });

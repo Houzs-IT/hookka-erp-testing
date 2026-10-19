@@ -1,5 +1,7 @@
 # Customers & Platform — Module Guide
 
+> **Last verified: 2026-10-17**: the three `src/api/routes/customers.ts` anchors (`validateDebtorCode`, `rowToCustomer`, POST / PUT) restamped after the Finance v2 party fields (branch `feat/finance-v2-party-fields`); nothing else re-checked.
+
 > **Last verified: 2026-10-05** (branch `feat/topbar-profile`): the `auth.ts` anchor rows re-derived after `/me` started returning the photo. Nothing else re-checked.
 > **Last verified: 2026-08-19** against `src/pages/customers.tsx`, `src/pages/settings/Users.tsx`,
 > `src/pages/mail-center/{index.tsx,mail-prefs.ts}`, `src/api/routes/customers.ts`,
@@ -65,9 +67,9 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 | `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2692` | Price-history viewer |
 | `AssignSkuModal` | `src/pages/customers.tsx:3218` | SKU assignment modal |
 | `UsersPage` | `src/pages/settings/Users.tsx:226` | Users/Org/Mailbox tab shell |
-| `validateDebtorCode` | `src/api/routes/customers.ts:76` | Debtor-code validation on create/edit |
-| `rowToCustomer` | `src/api/routes/customers.ts:271` | Dual-key row → customer, buckets hubs |
-| `app.post("/")` / `app.put("/:id")` | `src/api/routes/customers.ts:350 / 508` | Customer create / edit (+ column self-apply) |
+| `validateDebtorCode` | `src/api/routes/customers.ts:93` | Debtor-code validation on create/edit |
+| `rowToCustomer` | `src/api/routes/customers.ts:294` | Dual-key row → customer, buckets hubs |
+| `app.post("/")` / `app.put("/:id")` | `src/api/routes/customers.ts:379 / 540` | Customer create / edit (+ column self-apply) |
 | `resolvePrices` | `src/api/routes/customer-products.ts:95` | Merge master + per-customer prices |
 | `app.post("/copy-from-master")` | `src/api/routes/customer-products.ts:833` | Seed per-customer prices from master |
 | `app.post("/bulk-assign")` | `src/api/routes/customer-products.ts:743` | Bulk-assign SKUs to a customer |

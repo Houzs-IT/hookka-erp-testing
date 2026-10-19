@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { FinancePageTitle } from "@/components/finance/page-title";
+import { KpiCards } from "@/components/finance/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
@@ -8,7 +10,6 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Plus,
-  FileText,
   X,
   Trash2,
 } from "lucide-react";
@@ -21,6 +22,9 @@ import { amountInWords } from "@/lib/amount-in-words";
 import { printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { parseMoneyInput } from "@/lib/parse-money";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
+import { getCurrentUser } from "@/lib/auth";
 
 const DNMutationSchema = mutationWithData(DebitNoteSchema);
 
@@ -59,6 +63,8 @@ function buildDebitNoteVoucher(dn: DebitNote): VoucherSpec {
     date: formatDateDMY(dn.date),
     partyLabel: "Customer",
     partyName: dn.customerName ?? "",
+    amountBox: { label: "Debit amount", value: formatCurrency(dn.totalAmount) },
+    facts: [{ label: "Against invoice", value: dn.invoiceNumber || "—" }],
     columns: [
       { label: "Description" },
       { label: "Qty", align: "right" },
@@ -67,7 +73,6 @@ function buildDebitNoteVoucher(dn: DebitNote): VoucherSpec {
     ],
     lines,
     totalCells: ["", "", "Total", formatCurrency(dn.totalAmount)],
-    footerNote: `Against Invoice: ${dn.invoiceNumber || "—"}`,
     remarks,
     amountWords: amountInWords(dn.totalAmount),
     signatures: [{ label: "Issued by" }, { label: "Approved by" }],
@@ -175,7 +180,7 @@ export default function DebitNotesPage() {
     setCreating(false);
   };
 
-  const columns: Column<DebitNote>[] = [
+  const columns = useMemo<Column<DebitNote>[]>(() => [
     {
       key: "noteNumber",
       label: "DN Number",
@@ -229,23 +234,74 @@ export default function DebitNotesPage() {
         </Badge>
       ),
     },
-  ];
+  ], []);
 
-  const contextMenuItems: ContextMenuItem[] = [
+  // Post / Back to Draft (owner 2026-10-17, Finance v2), the mirror of the
+  // credit-note page: posting adds the note to the invoice and to what the
+  // customer owes and books it; Back to Draft takes all three off again.
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
+  const afterNoteChange = () => {
+    invalidateCachePrefix("/api/debit-notes");
+    invalidateCachePrefix("/api/invoices");
+    invalidateCachePrefix("/api/accounting");
+    refreshDebitNotes();
+  };
+  const sendNote = async (url: string, init: RequestInit, done: string, failed: string) => {
+    try {
+      const res = await fetch(url, init);
+      const j = (await res.json()) as { success?: boolean; error?: string };
+      if (res.ok && j.success) {
+        toast.success(done);
+        afterNoteChange();
+      } else toast.error(j.error || failed);
+    } catch {
+      toast.error(failed);
+    }
+  };
+  const postNote = async (dn: DebitNote) => {
+    if (!(await confirm({
+      title: `Post ${dn.noteNumber}?`,
+      message: `${formatCurrency(dn.totalAmount)} is added to invoice ${dn.invoiceNumber || "—"} and to what ${dn.customerName} owes, and goes into the books.`,
+      confirmLabel: "Post",
+    }))) return;
+    await sendNote(`/api/debit-notes/${encodeURIComponent(dn.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "POSTED", approvedBy: getCurrentUser()?.displayName?.trim() || undefined }),
+    }, `${dn.noteNumber} posted`, "Could not post the debit note");
+  };
+  const unpostNote = async (dn: DebitNote) => {
+    if (!(await confirm({
+      title: `Put ${dn.noteNumber} back to draft?`,
+      message: dn.status === "POSTED"
+        ? `${formatCurrency(dn.totalAmount)} comes off invoice ${dn.invoiceNumber || "—"} and off what ${dn.customerName} owes, and its entries come out of the books. You can post it again later.`
+        : "It was never posted, so nothing else changes.",
+      confirmLabel: "Back to Draft",
+      danger: true,
+    }))) return;
+    await sendNote(`/api/debit-notes/${encodeURIComponent(dn.id)}/unpost`, { method: "POST" },
+      `${dn.noteNumber} is a draft again`, "Could not put the debit note back to draft");
+  };
+
+  const contextMenuItems = (row: DebitNote): ContextMenuItem[] => [
     {
       label: "Print PDF",
-      action: async (row) => {
+      action: async (r: DebitNote) => {
         try {
           const { generateDebitNotePdf } = await import("@/lib/generate-debit-note-pdf");
-          generateDebitNotePdf(row);
+          generateDebitNotePdf(r);
         } catch {
           /* generator draws/saves itself */
         }
       },
     },
+    ...(row.status !== "POSTED" ? [{ label: "Post", action: (r: DebitNote) => void postNote(r) }] : []),
+    ...(row.status !== "DRAFT" ? [{ label: "Back to Draft", danger: true, action: (r: DebitNote) => void unpostNote(r) }] : []),
     {
       label: "Refresh",
-      action: (_row) => refreshDebitNotes(),
+      separator: true,
+      action: () => refreshDebitNotes(),
     },
   ];
 
@@ -266,98 +322,74 @@ export default function DebitNotesPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Debit Notes</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage debit notes for undercharges and additional charges
-          </p>
-        </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-2" /> New Debit Note
-        </Button>
-      </div>
+    <div className="p-6 space-y-6 max-md:p-4 max-sm:p-3 max-md:space-y-4" data-fin-ui>
+      {/* Header (finance v2: the explanation sits behind the (i)) */}
+      <FinancePageTitle
+        title="Debit Notes"
+        explain="Debit notes for undercharges and additional charges."
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" /> New Debit Note
+          </Button>
+        }
+      />
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500">Total DN Value</p>
-                <p className="text-xl font-bold text-[#3E6570] truncate">+{formatCurrency(totalDNValue)}</p>
-              </div>
-              <FileText className="h-8 w-8 text-[#3E6570] shrink-0" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Draft</p>
-                <p className="text-2xl font-bold">{draftCount}</p>
-              </div>
-              <Badge variant="status" status="DRAFT">DRAFT</Badge>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Posted</p>
-                <p className="text-2xl font-bold">{postedCount}</p>
-              </div>
-              <Badge variant="status" status="POSTED">POSTED</Badge>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Summary (finance v2: KPI cards, same figures) */}
+      <KpiCards
+        items={[
+          { label: "Total DN value", value: `+${formatCurrency(totalDNValue)}`, tone: "info", note: `${debitNotes.length} note${debitNotes.length === 1 ? "" : "s"}` },
+          { label: "Draft", value: String(draftCount) },
+          { label: "Posted", value: String(postedCount) },
+        ]}
+      />
 
       {/* Data Grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle>All Debit Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <BatchActionsBar
-            count={selected.length}
-            onPrint={() => printVouchers(selected.map(buildDebitNoteVoucher))}
-            exportName="debit-notes"
-            exportAoa={() => [
-              ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
-              ...selected.flatMap((dn) =>
-                dn.items.map((item) => [
-                  dn.noteNumber,
-                  formatDateDMY(dn.date),
-                  dn.customerName ?? "",
-                  dn.status ?? "ACTIVE",
-                  dn.invoiceNumber ?? "",
-                  dn.reason ?? "",
-                  (Number(dn.totalAmount ?? 0) / 100).toFixed(2),
-                  item.description ?? "",
-                  String(item.quantity ?? ""),
-                  (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
-                  (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
-                ]),
-              ),
-            ]}
-          />
-          <DataGrid
-            columns={columns}
-            data={debitNotes}
-            keyField="id"
-            virtualize
-            gridId="debit-notes"
-            selectable
-            onSelectionChange={setSelected}
-            contextMenuItems={contextMenuItems}
-          />
-        </CardContent>
-      </Card>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h3 className="text-[14px] font-semibold text-[#1F1D1B]">All Debit Notes</h3>
+          <span className="text-[12px] text-[#6B7280]">{debitNotes.length} note{debitNotes.length === 1 ? "" : "s"}</span>
+        </div>
+        <BatchActionsBar
+          count={selected.length}
+          onPrint={() => printVouchers(selected.map(buildDebitNoteVoucher))}
+          exportName="debit-notes"
+          exportAoa={() => [
+            ["Note No", "Date", "Customer", "Status", "Invoice No", "Reason", "Voucher Total (RM)", "Description", "Qty", "Unit Price (RM)", "Amount (RM)"],
+            ...selected.flatMap((dn) =>
+              dn.items.map((item) => [
+                dn.noteNumber,
+                formatDateDMY(dn.date),
+                dn.customerName ?? "",
+                dn.status ?? "ACTIVE",
+                dn.invoiceNumber ?? "",
+                dn.reason ?? "",
+                (Number(dn.totalAmount ?? 0) / 100).toFixed(2),
+                item.description ?? "",
+                String(item.quantity ?? ""),
+                (Number(item.unitPriceSen ?? item.unitPrice ?? 0) / 100).toFixed(2),
+                (Number(item.totalSen ?? item.total ?? 0) / 100).toFixed(2),
+              ]),
+            ),
+          ]}
+        />
+        <Card>
+          <CardContent className="p-0">
+            <DataGrid
+              columns={columns}
+              data={debitNotes}
+              keyField="id"
+              virtualize
+              gridId="debit-notes"
+              selectable
+              onSelectionChange={setSelected}
+              contextMenuItems={contextMenuItems}
+              headerMenu
+              reorderableHeaders
+              exportName="Debit Notes"
+            />
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Create Modal */}
       {showCreateModal && (

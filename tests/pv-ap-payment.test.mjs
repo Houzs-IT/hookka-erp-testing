@@ -84,7 +84,11 @@ test("an AP voucher posts through the settlement builders, never through pvPosti
   assert.match(s, /buildOtherPartyPaymentCreate\(db, \{/);
   assert.match(s, /allocs: allocsIn, paymentNo: pv\.pvNo,/, "other-party settlement is born under the voucher's number");
   assert.doesNotMatch(s, /pvPostingStatements/);
-  assert.match(s, /lenderSupplierId === pv\.partyId/, "a trade-finance lender is refused (repayments stay on the Supplier Payment page)");
+  // A trade-finance lender: the voucher repays drawdowns through the same
+  // builder the Supplier Payment page uses (since 2026-10-17, finance backlog
+  // item 17 — tests/tf-repay-from-ap-payment.test.mjs).
+  assert.match(s, /lenderSupplierId === pv\.partyId/);
+  assert.match(s, /await tfRepaymentStatements\(db, \{/);
   // The approve rung branches on kind BEFORE the expense posting.
   const core = acc.slice(acc.indexOf("async function pvApprovalCore("), acc.indexOf("\napp.", acc.indexOf("async function pvApprovalCore(")));
   const apBranch = core.indexOf('=== PV_KIND_AP) {');
