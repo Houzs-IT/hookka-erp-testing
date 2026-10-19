@@ -18,7 +18,9 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.notEqual(
 
 test("GET /bs-drill picks legs the way the /pl balance sheet does", () => {
   const ep = slice(api, 'app.get("/bs-drill"', 'app.get("/pl-monthly"');
-  const pl = slice(api, 'app.get("/pl", async', "// --- P&L by account");
+  // The /pl body is its own function since 2026-10-19 (served through the
+  // report snapshot — tests/finance-report-snapshot.test.mjs).
+  const pl = slice(api, "async function plBalanceSheetResponse(c: AccountingCtx) {", "// --- P&L by account");
   assert.match(ep, /requirePermission\(c, "accounting", "read"\)/);
   assert.match(ep, /period must be YYYY-MM/);
   // Same leg set: hidden out, same optional company filter as the sheet.
