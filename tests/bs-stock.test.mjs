@@ -109,7 +109,7 @@ const UI = readFileSync("src/pages/accounting/index.tsx", "utf8").replace(/\r\n/
 const slice = (src, from, to) => { const a = src.indexOf(from); assert.notEqual(a, -1, from); const b = src.indexOf(to, a + 1); return src.slice(a, b === -1 ? undefined : b); };
 
 test("the sheet's stock is the Stock Summary's closing for its month (the figure the P&L closes on)", () => {
-  const fn = slice(API, "async function sheetStockAt(", "\nasync function computePnlWindow(");
+  const fn = slice(API, "async function sheetStockAt(", "\nasync function computePnlWindowUntimed(");
   assert.match(fn, /const month = sheetStockMonth\(endYm, openingDate \? openingDate\.slice\(0, 7\) : null, runningMonthYm\(\)\);/);
   assert.match(fn, /stockSummaryRange\(db, orgId, month, month\)/);
   assert.match(fn, /wipSen: s\.wip\.closingSen,\n\s*fgSen: s\.fg\.closingSen,/);

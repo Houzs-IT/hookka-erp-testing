@@ -18,6 +18,7 @@
 // October 2026 agree to the sen both ways.
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
+import { timedFn } from "./step-timing";
 
 export type ProductionCategory = "SOFA" | "BEDFRAME" | "ACCESSORY";
 
@@ -36,7 +37,7 @@ export type RecognizedProductionOrder = {
 };
 
 // Newest first, so the Labor Cost tab's raw-data table needs no sort.
-export async function loadProductionRevenue(
+async function loadProductionRevenueUntimed(
   db: Env["Variables"]["DB"],
   from: string,
   to: string,
@@ -148,6 +149,7 @@ export async function loadProductionRevenue(
   }
   return out;
 }
+export const loadProductionRevenue = timedFn("production-revenue", loadProductionRevenueUntimed);
 
 export type ProductionRevenueSplit = { bedframe: number; sofa: number; accessory: number; total: number };
 

@@ -6,6 +6,7 @@
 // owner 2026-10-13).
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
+import { timedFn } from "./step-timing";
 import { prepareProduction, type PreparedProduction, type PsJobCard, type PsLine, type PsOrder } from "../../lib/production-stock";
 
 const num = (v: unknown) => Number(v) || 0;
@@ -22,7 +23,7 @@ export function mytDay(v: unknown): string {
   return new Date(t + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-export async function loadPreparedProduction(
+async function loadPreparedProductionUntimed(
   db: Env["Variables"]["DB"],
   floorIso: string | null,
 ): Promise<PreparedProduction> {
@@ -98,3 +99,4 @@ export async function loadPreparedProduction(
 
   return prepareProduction({ orders, jobCards, soLines, coLines, dispatches, floorIso });
 }
+export const loadPreparedProduction = timedFn("prod-orders", loadPreparedProductionUntimed);
