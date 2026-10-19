@@ -457,6 +457,80 @@ export async function issuePurchaseReturnDebitNote(
   return { ok: true, noteNumber, amountSen };
 }
 
+// HK-0096 — a return can never send back more than came in. Cumulative across
+// every return already raised on the same source line:
+//   • per GRN line : all returns on it (from the GRN or from a PI) <= accepted
+//   • per PI line  : all returns on it <= the qty that invoice line billed
+// Lines with no source id (a free-typed line) have nothing to cap against.
+// Returns the error text, or null when every line fits.
+export async function checkPurchaseReturnQty(
+  db: D1Database,
+  items: PRCreateItem[],
+): Promise<string | null> {
+  const sum = (key: "grnItemId" | "purchaseInvoiceItemId") => {
+    const m = new Map<string, { qty: number; name: string }>();
+    for (const it of items) {
+      const id = it[key];
+      const qty = Number(it.quantity) || 0;
+      if (!id || qty <= 0) continue;
+      const prev = m.get(String(id));
+      m.set(String(id), { qty: (prev?.qty ?? 0) + qty, name: prev?.name ?? (it.materialName || "line") });
+    }
+    return m;
+  };
+  const checks: Array<[Map<string, { qty: number; name: string }>, string, string, string]> = [
+    [sum("grnItemId"), "SELECT acceptedQty AS cap FROM grn_items WHERE id = ?", "grn_item_id", "received"],
+    [sum("purchaseInvoiceItemId"), "SELECT qty AS cap FROM purchase_invoice_items WHERE id = ?", "purchase_invoice_item_id", "invoiced"],
+  ];
+  for (const [want, capSql, col, label] of checks) {
+    for (const [id, { qty, name }] of want) {
+      const src = await db.prepare(capSql).bind(id).first<{ cap: number | null }>();
+      if (!src) continue; // unknown source line — nothing to cap against
+      const prior = await db
+        .prepare(`SELECT COALESCE(SUM(quantity), 0) AS qty FROM purchase_return_items WHERE ${col} = ?`)
+        .bind(id)
+        .first<{ qty: number | null }>();
+      const cap = Number(src.cap) || 0;
+      const already = Number(prior?.qty) || 0;
+      if (already + qty > cap) {
+        return `Line "${name}": returning ${qty} would exceed what was ${label} (${cap}, already returned ${already}).`;
+      }
+    }
+  }
+  return null;
+}
+
+// HK-0096 — grn_items.id → qty returned off the GRN BEFORE it was billed (a
+// return with no purchase invoice). issuePurchaseReturnDebitNote refuses a DN
+// for such a return ("never invoiced"), so the only place the supplier's
+// credit can land is a smaller invoice: these units come off what a PI may
+// still bill. Fails soft to "nothing returned" before the tables exist.
+export async function loadGrnReturnedBeforeBilling(
+  db: D1Database,
+  grnItemIds: Array<string | number>,
+): Promise<Map<string, number>> {
+  const ids = [...new Set(grnItemIds.map(String).filter(Boolean))];
+  const out = new Map<string, number>();
+  if (ids.length === 0) return out;
+  try {
+    const res = await db
+      .prepare(
+        `SELECT pri.grn_item_id AS "grnItemId", COALESCE(SUM(pri.quantity), 0) AS "qty"
+           FROM purchase_return_items pri
+           JOIN purchase_returns pr ON pr.id = pri.purchase_return_id
+          WHERE COALESCE(pr.purchase_invoice_id, '') = ''
+            AND pri.grn_item_id IN (${ids.map(() => "?").join(", ")})
+          GROUP BY pri.grn_item_id`,
+      )
+      .bind(...ids)
+      .all<{ grnItemId: string; qty: number }>();
+    for (const r of res.results ?? []) out.set(String(r.grnItemId), Number(r.qty) || 0);
+  } catch {
+    /* purchase_return tables not created yet — nothing returned */
+  }
+  return out;
+}
+
 // Write a Purchase Return header + its item snapshot. Returns the new id +
 // return_no. No ledger movement (slice 1).
 export async function createPurchaseReturn(

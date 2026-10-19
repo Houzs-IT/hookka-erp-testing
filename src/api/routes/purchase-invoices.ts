@@ -37,6 +37,7 @@ import {
 import { PI_STATUS_CHECK_SQL } from "../lib/ensure-partial-payment";
 import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
+import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
 
 // ---------------------------------------------------------------------------
 // Runtime schema self-apply — convert-chain columns (PO→GRN→PI). All
@@ -755,7 +756,10 @@ async function checkInvoicedQtyCeilingAfterEdit(
         error: `Line "${name}" references a goods-receipt line (${giId}) that no longer exists.`,
       };
     }
-    const accepted = Number(gi.acceptedQty ?? gi.accepted_qty ?? 0) || 0;
+    // HK-0096 — goods returned off the GRN before billing are not billable.
+    const accepted =
+      (Number(gi.acceptedQty ?? gi.accepted_qty ?? 0) || 0) -
+      ((await loadGrnReturnedBeforeBilling(db, [giId])).get(giId) ?? 0);
     const currentInvoiced = Number(gi.invoicedQty ?? gi.invoiced_qty ?? 0) || 0;
     const oldThisPi = oldByGrnItem.get(giId) ?? 0;
     const projected = currentInvoiced - oldThisPi + newQty;
@@ -1282,7 +1286,7 @@ app.post("/", async (c) => {
   const grnLinePoId = new Map<string, string>();
   if (body.grnId) {
     const grn = await db
-      .prepare("SELECT id, poId, poNumber, purchase_org_code FROM grns WHERE id = ?")
+      .prepare("SELECT id, poId, poNumber, purchase_org_code, status FROM grns WHERE id = ?")
       .bind(body.grnId)
       .first<{
         id: string;
@@ -1290,9 +1294,24 @@ app.post("/", async (c) => {
         poNumber: string | null;
         purchase_org_code?: string | null;
         purchaseOrgCode?: string | null;
+        status?: string | null;
       }>();
     if (!grn) {
       return c.json({ success: false, error: "Source GRN not found" }, 404);
+    }
+    // HK-0096 — only goods actually received can be billed off a receipt. A
+    // DRAFT (OCR-parked / in transit) or CANCELLED receipt has nothing in
+    // stock behind its accepted qty; the UI already hides "Convert to PI"
+    // unless POSTED, this is the server-side backstop.
+    const grnStatus = String(grn.status ?? "DRAFT").toUpperCase();
+    if (grnStatus !== "POSTED" && grnStatus !== "CONFIRMED") {
+      return c.json(
+        {
+          success: false,
+          error: `Goods receipt is ${grnStatus} — only a received (POSTED) receipt can be invoiced.`,
+        },
+        409,
+      );
     }
     sourceGrnId = grn.id;
     sourceGrnOrgCode =
@@ -1325,6 +1344,8 @@ app.post("/", async (c) => {
         if (linePo) grnLinePoId.set(String(gi.id), String(linePo));
       }
 
+      // Returned off the GRN before billing — no DN will ever credit these.
+      const returnedBeforeBilling = await loadGrnReturnedBeforeBilling(db, [...giById.keys()]);
       const lines: ConvertLineRequest[] = [];
       for (const r of normalizedItems.rows) {
         if (!r.grnItemId) continue; // fee/tax/non-stocked lines don't draw down
@@ -1341,7 +1362,9 @@ app.post("/", async (c) => {
         lines.push({
           ref: gi.materialName ?? r.materialName,
           orderedQty: Number(gi.acceptedQty) || 0,
-          consumedQty: Number(gi.invoicedQty ?? gi.invoiced_qty ?? 0) || 0,
+          consumedQty:
+            (Number(gi.invoicedQty ?? gi.invoiced_qty ?? 0) || 0) +
+            (returnedBeforeBilling.get(String(r.grnItemId)) ?? 0),
           requestedQty: r.qty,
         });
       }
