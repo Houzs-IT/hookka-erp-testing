@@ -126,10 +126,24 @@ test("loaded once per read request: document dates, account aliases, labour to d
 test("Daily Cash Position: the bank accounts at once, the trade-finance names in one query", () => {
   const api = read("src/api/routes/accounting.ts");
   const cp = api.slice(api.indexOf('app.get("/cash-position"'), api.indexOf('app.post("/bank-reco/finalize"'));
-  assert.match(cp, /const perAccount = await Promise\.all\(bankAccounts\.map\(async \(a\) => \{\n\s+const warnings: typeof tickWarnings = \[\];/);
+  assert.match(cp, /const perAccount = await timed\("cp-accounts", \(\) => Promise\.all\(bankAccounts\.map\(async \(a\) => \{\n\s+const warnings: typeof tickWarnings = \[\];/);
+  assert.match(cp, /await timed\("cp-open-docs", \(\) => Promise\.all\(\[/);
+  assert.match(cp, /await timed\("cp-trade-finance", async \(\) => \{/);
   assert.match(cp, /return \{ row: \{ code: a\.code, name: a\.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending \}, warnings \};/);
   assert.match(cp, /for \(const p of perAccount\) \{\n\s+accounts\.push\(p\.row\);\n\s+tickWarnings\.push\(\.\.\.p\.warnings\);/, "same rows, same order");
   assert.doesNotMatch(cp, /for \(const a of bankAccounts\)/);
   assert.match(cp, /SELECT DISTINCT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN \(/);
   assert.doesNotMatch(cp, /WHERE paymentNo = \?/, "no query per draw");
+});
+
+test("/pl reads the ledger's live legs through the same memo; the stock valuation's rows load once", () => {
+  const api = read("src/api/routes/accounting.ts");
+  const pl = api.slice(api.indexOf('app.get("/pl",'), api.indexOf("\napp.", api.indexOf('app.get("/pl",') + 10));
+  // Without a company filter it is exactly the ledger windows' query.
+  assert.match(pl, /const legRes = await \(coFilter\.active \? legQuery\(\) : requestMemo\("ledger-legs", legQuery\)\);/);
+  assert.match(pl, /`SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0\$\{legWhere\}`/);
+  assert.match(api, /: "SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0"\)/, "the windows' query — the same columns, the same rows");
+  const li = api.slice(api.indexOf("async function liveInventory("), api.indexOf("\n}\n", api.indexOf("async function liveInventory(")));
+  assert.match(li, /requestMemo\("cost-ledger:live-inventory", \(\) => db/);
+  assert.match(li, /requestMemo\("raw-materials:groups", \(\) => db/);
 });
