@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `fix/hk0025-receipts-targeted`, to main; 329 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: BUG-2026-10-18-325 (#980) and -326 (#982) flipped to 🟢 after their prod checks.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-328 (branch `fix/raw-materials-org-scope`, to main; 327 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-326 (branch `feat/finance-change-log-2`, to main); BUG-2026-10-18-325 stays 🟡 until its prod check.
@@ -147,6 +148,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-19-330 — Announcement read receipts counted every worker, not the notice's audience `announcements` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0025-receipts-targeted` → `main`).
+
+**Symptom.** On prod (19 Oct) a notice sent to 1 worker read "Read 1 of 39", with 38 "NOT YET" and "Remind all (39)" (HK-0025).
+
+**Root cause.** `GET /api/announcements/:id/acks` and `POST /:id/remind` built the roster from every ACTIVE worker, ignoring `target_type` / `target_dept_codes` / `target_worker_ids`.
+
+**Fix.** `audienceRoster()` filters the active roster with `workerCanSee`, the rule the worker phone uses; both endpoints call it.
+
+**Regression.** `tests/announcement-acks.test.mjs` ("a targeted notice counts only its audience").
 
 ## BUG-2026-10-19-328 — Raw-material by-id routes ignored the caller's org `raw-materials` `auth-rbac` 🟡
 
