@@ -13,6 +13,7 @@
 // and are remapped to camelCase in the response.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
@@ -120,6 +121,25 @@ import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, tfRepaymentS
 import { storeUploadedFile, removeStoredFile } from "./files";
 
 const app = new Hono<Env>();
+
+// A change to the reports' own settings — the P&L / BS layouts, the chart of
+// accounts, the Stock Take, the valuation modes, the opening balances, the
+// financial years, the closing-stock post — clears the stored P&L / BS copies
+// (reportSnapshot below), so the next open shows it. Day-to-day postings keep
+// the owner's trade-off (2026-10-19): the first open after one can show the
+// previous copy, refreshed in the background.
+const REPORT_SETTING_WRITES: readonly RegExp[] = [
+  /^\/pnl\/section-map$/, /^\/bs\/section-map$/, /^\/coa(\/rename)?$/,
+  /^\/stock-take$/, /^\/fg-valuation-mode$/, /^\/rm-valuation-mode$/, /^\/material-opening-stock$/,
+  /^\/opening-balance(\/.*)?$/, /^\/opening-date$/,
+  /^\/year-close$/, /^\/fiscal-years\/.+$/, /^\/stock\/close-post$/,
+];
+app.use("*", async (c, next) => {
+  await next();
+  if (c.req.method === "GET" || c.res.status >= 400) return;
+  const sub = new URL(c.req.url).pathname.replace(/^.*\/api\/accounting/, "");
+  if (REPORT_SETTING_WRITES.some((re) => re.test(sub))) await clearReportSnapshots(c.var.DB, getOrgId(c));
+});
 
 // ---------------------------------------------------------------------------
 // Row types
@@ -9194,7 +9214,107 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
 // (consumed = opening + purchase − closing), with the line's monthly sales
 // and cost-spend % of sales. Opening carries across months (and from the
 // prior FY). One pass over the cost ledger.
-app.get("/cost-structure", async (c) => {
+// ---------------------------------------------------------------------------
+// The P&L hub's views (statement, Monthly P&L, Cost Structure) and the Balance
+// Sheet (GET /pl), kept in a snapshot like the Overview — owner 2026-10-19,
+// asked whether to 「也像 Overview 那样存结果」: 「要」. The last computed copy is
+// served at once and refreshed in the background when a source table changes
+// or the copy is older than REPORT_SNAPSHOT_MAX_AGE_MS; the first open after a
+// change can show the previous copy (the owner's trade-off). Each view's own
+// handler is unchanged (…Response below): a 4xx / {success:false} is passed
+// through and never stored. Edit Layout stays live; a report-setting write
+// clears the copies (REPORT_SETTING_WRITES). Daily Cash Position stays live.
+// ---------------------------------------------------------------------------
+type AccountingCtx = Context<Env>;
+const REPORT_SNAPSHOT_TABLE = "accounting_report_snapshot";
+// Bump when a view's response SHAPE (or what its figures mean) changes — the
+// freshness probe watches tables, so a code change alone retires no copy.
+const REPORT_SNAPSHOT_V = "v1";
+const REPORT_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
+// The P&L replay's tables plus what the statements, the Balance Sheet and the
+// material replay read besides (a table with no timestamp column is skipped by
+// the probe; the age limit covers it). A function: the replay list is declared
+// further down this module.
+const reportSnapshotSourceTables = (): readonly string[] => [
+  ...PNL_REPLAY_SOURCE_TABLES,
+  "chart_of_accounts", "account_aliases", "invoice_items", "sales_orders",
+  "purchase_invoice_items", "purchase_orders", "grns", "raw_materials",
+  "material_opening_stock", "inventory_opening", "fixed_assets",
+];
+class ReportNotStored extends Error {
+  status: number;
+  body: string;
+  constructor(status: number, body: string) {
+    super(`report not stored (${status})`);
+    this.status = status;
+    this.body = body;
+  }
+}
+async function reportSnapshot(
+  c: AccountingCtx,
+  view: string,
+  respond: (c: AccountingCtx) => Promise<Response>,
+  live = false,
+): Promise<Response> {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  if (live) return respond(c);
+  const db = c.var.DB;
+  const { withSnapshot } = await import("../lib/snapshot");
+  // The table must exist before withSnapshot reads it (readSnapshot is not
+  // guarded) — the shape of the other accounting snapshots.
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS ${REPORT_SNAPSHOT_TABLE} (
+       org_id TEXT NOT NULL,
+       cache_key TEXT NOT NULL DEFAULT '',
+       data TEXT NOT NULL,
+       built_from TEXT NOT NULL,
+       built_at TEXT NOT NULL DEFAULT '',
+       refresh_count INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (org_id, cache_key)
+     )`,
+  ).run();
+  const orgId = getOrgId(c);
+  // Every query parameter is part of the copy's identity (period, line, fy,
+  // anchor, the company filter…), and the running month — a new month is a
+  // new window.
+  const params = [...new URL(c.req.url).searchParams.entries()]
+    .sort(([a, av], [b, bv]) => a.localeCompare(b) || av.localeCompare(bv))
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+  const key = `${REPORT_SNAPSHOT_V}:${view}:${runningMonthYm()}:${params}:${orgId}`;
+  try {
+    const payload = await withSnapshot(
+      db,
+      { tableName: REPORT_SNAPSHOT_TABLE, sourceTables: reportSnapshotSourceTables() },
+      orgId,
+      async () => {
+        const res = await respond(c);
+        const text = await res.text();
+        if (res.status !== 200) throw new ReportNotStored(res.status, text);
+        const json = JSON.parse(text) as Record<string, unknown>;
+        if (json.success === false) throw new ReportNotStored(res.status, text);
+        return json;
+      },
+      key,
+      c,
+      { staleWhileRevalidate: true, maxAgeMs: REPORT_SNAPSHOT_MAX_AGE_MS },
+    );
+    return c.json(payload);
+  } catch (e) {
+    if (e instanceof ReportNotStored) {
+      return new Response(e.body, { status: e.status, headers: { "Content-Type": "application/json; charset=UTF-8" } });
+    }
+    throw e;
+  }
+}
+// The next open computes afresh (a missing table = nothing stored yet).
+async function clearReportSnapshots(db: Env["Variables"]["DB"], orgId: string): Promise<void> {
+  await db.prepare(`DELETE FROM ${REPORT_SNAPSHOT_TABLE} WHERE org_id = ?`).bind(orgId).run().catch(() => {});
+}
+
+app.get("/cost-structure", (c) => reportSnapshot(c, "cost-structure", costStructureResponse));
+async function costStructureResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const db = c.var.DB;
@@ -9266,7 +9386,7 @@ app.get("/cost-structure", async (c) => {
     success: true,
     data: { fyLabel: fyWin.label, cols, groups: out, salesSofa, salesBed, salesAll: cols.map((_, i) => salesSofa[i] + salesBed[i]) },
   });
-});
+}
 
 // Phase 5.9 — Cost & Expense classes: for a financial year, COST (mfg) and
 // EXPENSE (operating) accounts laid out months-as-columns, grouped by
@@ -9423,7 +9543,8 @@ app.get("/pl-trend", async (c) => {
   return c.json({ success: true, data: { line, months, cols } });
 });
 
-app.get("/pl-statement", async (c) => {
+app.get("/pl-statement", (c) => reportSnapshot(c, "pl-statement", plStatementResponse, c.req.query("editable") === "1"));
+async function plStatementResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   // Task 3.1 — ensure table exists before first read.
@@ -9490,7 +9611,7 @@ app.get("/pl-statement", async (c) => {
       materialWarnings,
     },
   });
-});
+}
 
 // An official receipt's payer and description, for the drills: its header
 // note when it has one, else its lines' text (the receipt popup shows both;
@@ -9957,7 +10078,8 @@ app.get("/bs-drill", async (c) => {
   });
 });
 
-app.get("/pl-monthly", async (c) => {
+app.get("/pl-monthly", (c) => reportSnapshot(c, "pl-monthly", plMonthlyResponse));
+async function plMonthlyResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   // Task 3.1 — ensure table exists before first read.
@@ -10023,7 +10145,7 @@ app.get("/pl-monthly", async (c) => {
 
   const matrix = buildPnlMatrix(cols);
   return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, columns: matrix.columns, rows: matrix.rows } });
-});
+}
 
 // Finance Overview, month by month (owner 2026-10-14 「overview 主要显示…」→「做」;
 // src/lib/overview-trend.ts). The last 3 / 6 / 12 months up to the running
@@ -11011,7 +11133,8 @@ app.get("/cashflow-drill", async (c) => {
 // product/customer revenue cuts stay operational (sourced from invoices),
 // per the owner's choice — the GL has no such dimensions. Response shape
 // is unchanged so the PL/BS UI tabs render as-is.
-app.get("/pl", async (c) => {
+app.get("/pl", (c) => reportSnapshot(c, "pl", plBalanceSheetResponse));
+async function plBalanceSheetResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const period = c.req.query("period");
@@ -11418,7 +11541,7 @@ app.get("/pl", async (c) => {
       },
     },
   });
-});
+}
 
 // ---------------------------------------------------------------------------
 // PAYMENT / EXPENSE VOUCHERS + OFFICIAL RECEIPTS (Phase 3.2/3.3, 2026-06)
