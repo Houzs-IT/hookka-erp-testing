@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `feat/production-overview-default-grid-main`, to `main`, cherry-picked from the staging change; 328 is taken on `main`, 329 on `staging`); a log, so "verified" means the entry matches the code on its branch.
@@ -154,7 +155,7 @@ Entries themselves stay newest-first.
 
 ## BUG-2026-10-19-334 — Two PO files die on every scan attempt with no error recorded `ocr` `scan-queue` 🟡
 
-🟡 **Logging only, on branch** (`fix/scan-po-step-logs` → `main`). Root cause still open.
+🟡 **Fixed on branch** (`fix/scan-no-30s-cap` → `main`). Step logs shipped first in #1005.
 
 **Symptom.** On prod (19 Oct) `HC-PO-2610-245-SO2610-196 HOK.pdf` and `HC-PO-2610-200-SO011254 HOK..pdf` ended every scan as "worker died before completing OCR", across several uploads. Twelve other POs scanned fine the same day, sofas included.
 
@@ -163,6 +164,10 @@ Entries themselves stay newest-first.
 **Change.** `runPoExtract` logs each step after the AI call (headers, body read, parse, sample insert, corrections replay) with elapsed ms, and `processOneRow` logs the claim, the extract result and the row write. Retry the file with `wrangler pages deployment tail` running to see the last step reached.
 
 **Regression.** `tests/scan-step-logs.test.mjs` pins the markers.
+
+**Root cause (measured with the step logs, 09:09 UTC).** The `/work` request ended `outcome=canceled` at `wall=29996` ms; its last log was `ai call start +0ms`, and the forwarder's Claude call for it took 31.5 s. `src/lib/api-client.ts` patches `window.fetch` to abort every `/api/*` call at `API_TIMEOUT_MS` (30 s), the scan-queue `/work` request included, although the client-driven design (BUG-2026-09-22-178) relies on that request staying open for as long as the extract takes. A PO whose Claude call finishes under 30 s scans fine; these two take about 31 s (seven lines with long fabric and special-instruction text), so the browser cancelled every attempt, Cloudflare cancelled the Worker with it, and the row sat `processing` until the 5-minute sweeper. The same cap also overrode the legacy `/api/scan-po/extract` (90 s) and `/api/scan-supplier/extract` (180 s) callers' own timeouts.
+
+**Fix.** `NO_TIMEOUT_PATH` in `api-client.ts` exempts those three OCR paths from the 30 s abort; a caller's own signal still chains. Every other `/api/*` call keeps the cap. `tests/api-client-ocr-no-timeout.test.mjs` drives the real patch with fake timers.
 
 ---
 

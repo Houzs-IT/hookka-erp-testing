@@ -41,6 +41,8 @@ const CSRF_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // a fetch error, the user retries / refreshes. Without this cap the call
 // hangs indefinitely and never shows up in observability.
 const API_TIMEOUT_MS = 30_000;
+// OCR calls legitimately run past 30s; they bring their own timeout or sweeper (BUG-2026-10-19-334).
+export const NO_TIMEOUT_PATH = /^\/api\/(scan-queue\/batch\/[^/]+\/work|scan-po\/extract|scan-supplier\/extract)$/;
 
 function pathOf(url: string): string {
   try {
@@ -98,10 +100,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       if (csrf) headers.set(CSRF_HEADER_NAME, csrf);
     }
     const controller = new AbortController();
-    timeoutId = setTimeout(() => {
-      aborted = true;
-      controller.abort();
-    }, API_TIMEOUT_MS);
+    if (!NO_TIMEOUT_PATH.test(pathOf(url))) {
+      timeoutId = setTimeout(() => {
+        aborted = true;
+        controller.abort();
+      }, API_TIMEOUT_MS);
+    }
     // Chain a caller-supplied signal if there is one. This way both
     // caller-cancel and our timeout can fire abort.
     const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : null);
