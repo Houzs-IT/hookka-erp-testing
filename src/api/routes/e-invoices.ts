@@ -473,6 +473,9 @@ app.put("/:id", async (c) => {
         return c.json(fail("That Submission ID is too long — key the ID only."), 400);
       }
       const invoice = await loadInvoice(c.var.DB, orgId, existing.invoiceId);
+      if (invoice?.status === "CANCELLED") {
+        return c.json(fail(`${invoice.invoiceNo} has been cancelled — its e-Invoice is not to be sent.`), 409);
+      }
       const tin = (invoice ? await customerKycTin(c.var.DB, invoice.customerId) : "") || String(existing.customerTIN ?? "").trim();
       if (!tin) {
         await c.var.DB.prepare("UPDATE e_invoices SET status = ?, errorMessage = ? WHERE id = ? AND orgId = ?")

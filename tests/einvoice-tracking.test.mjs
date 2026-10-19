@@ -312,6 +312,16 @@ test("Cancel only a Valid one; the old Submit still refuses; another org's recor
   assert.equal(cancelled.status, 200);
   assert.equal(cancelled.body.data.status, "CANCELLED");
 
+  // A sales invoice cancelled after its XML was built is not sent.
+  const { db: db2 } = makeDb();
+  const m2 = mount(db2);
+  const late = (await m2.call("POST", "/", { invoiceId: "inv-1" })).body.data.id;
+  const inv1 = (await db2.prepare("SELECT id, invoiceNo, invoiceDate, customerName, customerId, subtotalSen, taxSen, totalSen, status, isOpening FROM invoices WHERE id = ? AND orgId = ?").bind("inv-1", "hookka").first());
+  inv1.status = "CANCELLED";
+  const refusedCancelled = await m2.call("PUT", `/${late}`, { action: "mark-submitted", submissionId: "SUB-X" });
+  assert.equal(refusedCancelled.status, 409);
+  assert.equal(refusedCancelled.body.error, "INV-2610-001 has been cancelled — its e-Invoice is not to be sent.");
+
   assert.equal((await call("PUT", "/einv-acme", { action: "cancel" })).status, 404);
   assert.equal((await call("GET", "/einv-acme")).status, 404);
   const list = await call("GET", "/");
