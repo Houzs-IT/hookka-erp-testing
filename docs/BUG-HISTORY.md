@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `feat/production-overview-default-grid`, to `staging`; 328 is taken on `main`, 329 on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-329 (branch `fix/ocr-tab-myt-time`, to `staging`; 328 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-327 (branch `fix/staging-duplicate-usepermissions-import`, to `staging`; numbers up to 326 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: staging<-main sync (branch `chore/sync-staging-from-main-1016`): both sides kept. Bugs that main logged again under a different number keep staging's number with a "Ported to main" line. Where main reused a number for another entry, main's copy is suffixed `b` (BUG-2026-10-16-293b, BUG-2026-10-14-288b, BUG-2026-09-30-223b).
@@ -179,6 +180,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-330 — Production Overview opened on Cards; the floor wants Grid first `production` `ui` 🟡
+
+🟡 **Fixed on branch** (`feat/production-overview-default-grid` → `staging`). Owner request 2026-10-19.
+
+**Symptom.** The /production Overview tab always opened on the Cards layout. Users had to click Grid every visit to get the matrix they work from.
+
+**Root cause.** Not a fault: `overviewView` in `src/pages/production/index.tsx` started as `"cards"` by design when the Cards view shipped (2026-09-30). The choice is not saved anywhere (no localStorage, no URL param), so every visit starts on the default.
+
+**Fix.** The initial state is now `"grid"`. The toggle still switches to Cards for that visit, and the choice is still not saved, as before.
+
+**Regression.** `tests/production-overview-cards.test.mjs` "the page opens on Grid and does not persist the choice" (it used to pin Cards).
 
 ---
 
