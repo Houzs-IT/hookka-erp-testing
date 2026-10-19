@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-333 (branch `fix/view-as-loading-state`, to `staging`; 331 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `feat/production-overview-default-grid`, to `staging`; 328 is taken on `main`, 329 on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-329 (branch `fix/ocr-tab-myt-time`, to `staging`; 328 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-327 (branch `fix/staging-duplicate-usepermissions-import`, to `staging`; numbers up to 326 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
@@ -180,6 +181,34 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-333 — "View as" sometimes listed only Me after a switch `staging` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/view-as-loading-state` → `staging`). Staging-only tool.
+
+**Symptom.** After switching the topbar "View as" pick (the page reloads), opening the dropdown sometimes showed only "Me".
+
+**Root cause.** The list of people comes from `GET /api/users` after the reload. Until it returns, the dropdown has only "Me", and an already-open native dropdown does not pick up rows that arrive later. Measured on staging 2026-10-19: that request took 1.66 s on one switch and 34 ms on the next. On failure the picker also turned any error (non-200 or network) into an empty list, so a failed load looked the same as "nobody else exists". No failed request was observed; the slow load alone reproduces the screenshot.
+
+**Fix.** `src/components/staging-view-as.tsx` shows a disabled "Loading users…" row under "Me" until the list arrives, and on failure a disabled "Users failed to load (HTTP n), reopen to retry" row; opening the dropdown again after a failure re-requests the list.
+
+**Regression.** None automated: `tests/staging-view-as.test.mjs` covers the header parser and the server half, not the picker's UI state. Checked on staging by reading the dropdown's rows right after a switch.
+
+---
+
+## BUG-2026-10-19-332 — "View as" dropdown was white on white while viewing as someone `staging` `ui` 🟢
+
+🟢 **Fixed on `staging`** (PR #1000). Staging-only tool.
+
+**Symptom.** While a "View as" pick was active (red pill), the opened dropdown showed blank white rows; only the hovered row was readable.
+
+**Root cause.** The invisible native `<select>` laid over the pill inherited the pill's `text-white`, and the browser draws the opened list with the select's text colour on a white background.
+
+**Fix.** The select carries its own `bg-white text-gray-900` (still `opacity-0`, so the pill looks the same).
+
+**Regression.** None automated (UI colour on a staging-only control). Checked on staging: the rows compute to dark text on white with the pill red.
 
 ---
 

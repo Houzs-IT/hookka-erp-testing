@@ -14,6 +14,8 @@ import { readStagingViewAs, STAGING_VIEW_AS_HEADER, writeStagingViewAs, type Vie
 const TIP =
   "Staging only, this tab only. The app acts as the picked account: its role, its own list from User Management > Permissions, its customers and its own records. Writes are saved as that account; the audit log records you. Your password / 2FA changes are never done as them.";
 
+const LOADING = "Loading users…";
+
 type UserRow = { id: string; displayName: string; email: string; role: string; isActive: boolean };
 
 export function StagingViewAs() {
@@ -32,18 +34,28 @@ function apply(v: ViewAs | null) {
 
 function Picker({ active }: { active: ViewAs | null }) {
   const [users, setUsers] = useState<UserRow[]>([]);
+  // Shown as a disabled row under "Me": while loading, or why the list failed.
+  const [status, setStatus] = useState<string | null>(LOADING);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    setStatus(LOADING);
     // An empty header beats the tab's pick (see api-client.ts), so the list
     // is always read as you, even while viewing as someone without users:read.
     fetch("/api/users", { headers: { [STAGING_VIEW_AS_HEADER]: "" } })
-      .then((r) => (r.ok ? (r.json() as Promise<{ data?: UserRow[] }>) : null))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<{ data?: UserRow[] }>;
+      })
       .then((j) => {
-        const rows = (j?.data ?? []).filter((u) => u.isActive);
+        const rows = (j.data ?? []).filter((u) => u.isActive);
         rows.sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
         setUsers(rows);
+        setStatus(null);
       })
-      .catch(() => undefined);
-  }, []);
+      .catch((e: unknown) => {
+        setStatus(`Users failed to load (${e instanceof Error ? e.message : String(e)}), reopen to retry`);
+      });
+  }, [attempt]);
   const me = getCurrentUser()?.id;
 
   return (
@@ -68,10 +80,18 @@ function Picker({ active }: { active: ViewAs | null }) {
           const u = users.find((x) => x.id === e.target.value);
           apply(u ? { id: u.id, role: u.role, name: u.displayName || u.email } : null);
         }}
+        onMouseDown={() => {
+          if (status && status !== LOADING) setAttempt((n) => n + 1);
+        }}
         aria-label="View as user"
         className="absolute inset-0 cursor-pointer bg-white text-gray-900 opacity-0"
       >
         <option value="">Me</option>
+        {status && (
+          <option value="__status" disabled>
+            {status}
+          </option>
+        )}
         {active && !users.some((u) => u.id === active.id) && (
           <option value={active.id}>{active.name} · {roleShort(active.role)}</option>
         )}
