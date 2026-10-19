@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -150,6 +151,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-335 — Clicking a dashboard chart drew a box round it and selected the axis labels `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/chart-click-focus-box` → `staging`, #1006; to `main` in #1015). Reported 2026-10-19 on staging after the Day view (#1003) made the Department Revenue chart clickable.
+
+**Symptom.** Clicking a day on the Department Revenue chart, or anywhere on the Revenue chart, drew a dark box round the whole chart. Clicking quickly also highlighted the x-axis dates in blue.
+
+**Root cause.** Measured on staging: recharts 3 renders the chart `<svg class="recharts-surface">` with `tabindex="0"`. After a real mouse click it is `document.activeElement` with `outline: auto` (not `:focus-visible`, so a focus-visible rule would not catch it). The charts on the newer dashboard tabs already hid this with a per-chart wrapper (`select-none [&_*]:outline-none`); the Command Center charts embedded on 2026-10-17 never had it.
+
+**Fix.** `src/index.css`: `.recharts-wrapper { user-select: none }` and `.recharts-wrapper *:focus { outline: none }`, so every chart in the app is covered once. Buttons and inputs outside charts keep their focus rings. Checked by injecting the same rule on staging: the clicked surface reads `outline: none`.
+
+**Regression.** `tests/chart-click-no-focus-box.test.mjs`.
 
 ---
 
