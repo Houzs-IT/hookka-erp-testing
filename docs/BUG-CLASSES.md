@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-19**: branch `fix/users-org-columns-memo`, to `staging`. C9 row added (BUG-2026-10-19-334) and the rule corrected: a promise memo cleared on failure, or `memoizeSelfApply`, still shares a pending promise across requests. Nothing else re-checked.
 > **Last verified: 2026-10-19**: branch `chore/sync-staging-from-main-1019`, staging<-main merge. Both sides kept. Main's C21 row 16 (phone Finance Dashboard) is row 19 here, after staging's rows 16 to 18. Nothing else re-checked.
 > **Last verified: 2026-10-17**: branch `fix/edit-keeps-bank-match`, to `main`, closes **C5 rows 8–10** and **C31 rows 2–5** (one shared rule each: `restoreEditedFamilyStatements`, `planEditBankCarry`) and **adds C32, a stored account code the chart later renamed** (BUG-2026-10-17-320 to -323). Nothing else re-checked.
 
@@ -593,10 +594,13 @@ this is the *load-bearing* path for schema.
 | 2026-08-02 (am) | #222 converted 26 sites to `runSelfApply` | Half a fix. The helper throws "so the caller's memo can be cleared" — and 38 callers cleared nothing, so the retry it enables never happened. |
 | 2026-08-02 (pm) | The 38 remaining callers | 32 by codemod, 6 by hand (they swallowed errors inline). Two of the six guard *unique indexes* that win a concurrent-create race — an isolate that remembered a failed `CREATE INDEX` as done is exactly the one where two documents get the same number. |
 | 2026-08-04 | `ensureCustomerOemColumn` + `ensureCustomerGroupColumn` (`customers.ts`), `ensureCustomerStageColumns` (`customer-stage.ts`) | A THIRD variant the sweep produced: promise→boolean, but the setter was placed PAST the `catch`, so the boolean is set true even when the `ALTER` threw. All three feed columns in the customer PUT `UPDATE` (`oem_marking`, `group_org_code`, `customer_stage`, `salesperson_user_id`); one poisoned isolate 500s the whole save — the reported "OEM marking / phone / name won't save". Fixed by moving each setter INSIDE its try, after `.run()` (matching the correct `ensureCustomerCompanyColumn` next door). Behavioural cover: `tests/customer-stage-self-apply-retry.test.mjs` (the generic `self-apply-memo-is-boolean` test passes this variant — an `await` does precede the setter). |
+| 2026-10-19 | `ensureUserOrgColumns` (`users.ts`) | Defect 2 live. The memo was cleared on failure, so it passed the class test, but the pending promise was shared: parallel `GET /api/users` calls hung 30 s on staging (BUG-2026-10-19-334). Fixed with a boolean memo. Behavioural cover: `tests/users-org-columns-memo.test.mjs`. **Still open:** measured 2026-10-19 on `staging`, 55 other `Promise<void> | null` memos in `src/api` plus 15 `memoizeSelfApply` call sites share a pending promise the same way. |
 
 **The rule.** Memoise a **boolean**, set only after the statement lands
-(`src/api/lib/payment-columns.ts`), or use `memoizeSelfApply`, which clears the
-memo on failure for you. Never cache the promise itself.
+(`src/api/lib/payment-columns.ts`). Never cache the promise itself. A promise
+memo cleared on failure, and `memoizeSelfApply`, fix defect 1 only: while the
+first round is pending, every other request awaits its socket (defect 2). The
+class test still accepts them, so it does not cover defect 2.
 
 **Covered by** `tests/self-apply-memo-is-boolean.test.mjs`.
 

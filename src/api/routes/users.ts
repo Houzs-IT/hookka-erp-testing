@@ -104,11 +104,10 @@ function genId(): string {
 
 // ---------------------------------------------------------------------------
 // Lazy idempotent schema ensure for the user-level org-chart columns
-// (department / position / reports_to). Mirrors the repo pattern used in
-// email-outbox.ts, do-qr-token.ts, mail-center.ts etc.: a module-level
-// memoized promise so the ALTERs run AT MOST once per isolate, and the
-// per-statement try/catch swallows the "duplicate column" error on isolates
-// where they already ran.
+// (department / position / reports_to). A module-level BOOLEAN memo, set only
+// after the ALTERs land (payment-columns.ts shape, BUG-CLASSES C9): never the
+// in-flight promise, which holds the socket of the request that started it and
+// hung every other /api/users in the isolate (BUG-2026-10-19-334).
 //
 // Columns are snake_case in Postgres (department / position / reports_to) and
 // are intentionally NOT in column-rename-map.json. They do NOT pass through
@@ -118,34 +117,32 @@ function genId(): string {
 // use the snake_case column name, but reads of a SELECT * row use `reportsTo`.
 // All three are plain TEXT (org placement is free-text / id strings, never a
 // toISOString timestamp), so no timestamptz round-trip hazard.
-let orgColumnsEnsured: Promise<void> | null = null;
-function ensureUserOrgColumns(db: D1Database): Promise<void> {
-  if (orgColumnsEnsured) return orgColumnsEnsured;
-  orgColumnsEnsured = (async () => {
-    const stmts = [
-      "ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT",
-      "ALTER TABLE users ADD COLUMN IF NOT EXISTS position TEXT",
-      // reports_to holds the user id of this person's upline (manager), so the
-      // org chart can draw a reporting line — mirrors Houzs's parentId.
-      "ALTER TABLE users ADD COLUMN IF NOT EXISTS reports_to TEXT",
-      // An account created by an admin carries a password the ADMIN chose, so
-      // the admin knows it. Until the person changes it, nothing that account
-      // does can be attributed to them — the admin could equally have done it.
-      // Owner 2026-08-02 wants to hand out credentials directly:「我给他们密码、
-      // 账号,他们都可以直接登录进来」— which is a normal way to run an ERP on
-      // company mailboxes, and is safe exactly as long as the first login
-      // forces a change. Defaults FALSE so nothing existing is affected.
-      "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
-    ];
-    await runSelfApply(db, "users", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    orgColumnsEnsured = null;
-    throw err;
-  });
-  return orgColumnsEnsured;
+let orgColumnsEnsured = false;
+export async function ensureUserOrgColumns(db: D1Database): Promise<void> {
+  if (orgColumnsEnsured) return;
+  const stmts = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS position TEXT",
+    // reports_to holds the user id of this person's upline (manager), so the
+    // org chart can draw a reporting line — mirrors Houzs's parentId.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS reports_to TEXT",
+    // An account created by an admin carries a password the ADMIN chose, so
+    // the admin knows it. Until the person changes it, nothing that account
+    // does can be attributed to them — the admin could equally have done it.
+    // Owner 2026-08-02 wants to hand out credentials directly:「我给他们密码、
+    // 账号,他们都可以直接登录进来」— which is a normal way to run an ERP on
+    // company mailboxes, and is safe exactly as long as the first login
+    // forces a change. Defaults FALSE so nothing existing is affected.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+  ];
+  // Throws on failure before the flag is set, so the next request retries.
+  await runSelfApply(db, "users", stmts);
+  orgColumnsEnsured = true;
+}
+
+/** For tests — reset the module-level memo between cases. */
+export function _resetUserOrgColumnsMemoForTests(): void {
+  orgColumnsEnsured = false;
 }
 
 // GET /api/users — list all users
