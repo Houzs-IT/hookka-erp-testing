@@ -48,6 +48,7 @@ import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tid
 import { actionLabel, auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, payloadRef, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
 import { normaliseReference, settlementReference } from "../../lib/doc-reference";
+import { prepareLedger, windowNet } from "../../lib/ledger-window";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
@@ -7616,8 +7617,8 @@ async function glWindowSignedUntimed(
   ]);
   const resolve = await loadAccountResolver(db);
   const { docDate, openingDate: obDate } = dc;
-  const net: GlWindow = new Map();
-  const openingNet: GlWindow = new Map(); // opening_balance(+reversal) legs, netted
+  let net: GlWindow = new Map();
+  let openingNet: GlWindow = new Map(); // opening_balance(+reversal) legs, netted
   // Salary accruals ALREADY in the GL, per month and ACCOUNT: any entry that
   // credits 410-0010 (a Labour-tab post OR a manual JV) marks the accounts its
   // debit legs touched. Those (month, account) pairs keep the owner's figures;
@@ -7627,8 +7628,26 @@ async function glWindowSignedUntimed(
   // WHOLE month, wiping the production 750-x auto-extract with it. Net of any
   // undo (BUG-2026-10-09-275): a Labour post that was unposted, or a voided JV,
   // records nothing — see src/lib/recorded-salary.ts.
-  const recordedSalaryAccts = recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT);
-  for (const l of legRes.results ?? []) {
+  // Window-independent — once per read request (requestMemo; the drill's own legs walk it fresh).
+  const recordedSalaryAccts = trace
+    ? recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT)
+    : await requestMemo("ledger-recorded-salary", async () => recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT));
+  if (!trace) {
+    // The legs dated and resolved ONCE per read request (src/lib/ledger-window.ts;
+    // 2026-10-19 「优化加载速度」: the P&L statement's eight windows walked every
+    // leg eight times); the window adds up the months it covers. Same figures,
+    // same account order as the loop below, which a drill still runs because it
+    // lists the legs one by one.
+    const prep = await requestMemo("ledger-prepared", async () => prepareLedger(legRes.results ?? [], {
+      docDate,
+      resolve,
+      isBeforeOpening: (sourceType, dd) => legBeforeOpening(sourceType, dd, obDate),
+      isOpening: isOpeningSource,
+    }));
+    net = windowNet(prep, startYm, endYm);
+    openingNet = prep.openingNet;
+  }
+  if (trace) for (const l of legRes.results ?? []) {
     const dd = docDate(l.sourceType, l.sourceId, l.postedAt); // by document date
     if (legBeforeOpening(l.sourceType, dd, obDate)) continue; // pre-opening: not extracted
     // Opening-balance legs carry the CUMULATIVE-to-opening P&L balances — they
