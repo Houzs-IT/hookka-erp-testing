@@ -105,3 +105,10 @@ test("driver backs off on busy, exits on error, and stop() halts the pool", asyn
   assert.equal(d.active(), 0, "a stopped driver never restarts");
   void forever;
 });
+
+test("dead-worker failures say which attempt, which file and when", () => {
+  const src = readFileSync(new URL("../src/api/routes/scan-queue.ts", import.meta.url), "utf8");
+  assert.ok(/const WORKER_DIED_ERROR = `CONCAT\(/.test(src), "WORKER_DIED_ERROR is missing");
+  assert.equal(src.split("error = ${WORKER_DIED_ERROR}").length - 1, 2, "both sweepers must use it");
+  assert.ok(!/COALESCE\(error, 'worker died/.test(src), "bare COALESCE message is back");
+});
