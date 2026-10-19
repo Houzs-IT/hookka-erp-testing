@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useCachedJson, isUnknownOutcome } from "@/lib/cached-fetch";
+import { formatTimestampMY } from "@/lib/utils";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { OcrAccuracyCard } from "../dashboard-b/OcrAccuracyCard";
 import { monthWindow } from "./dashboard-widgets-lib";
@@ -224,7 +225,7 @@ export function OcrView({ period }: { period: Period }) {
               <tbody>
                 {d.problems.map((p) => (
                   <tr key={p.id} className="border-t border-[#F0ECE3] align-top">
-                    <td className={`${TD} whitespace-nowrap text-[#6B7280]`}>{p.createdAt.slice(0, 16).replace("T", " ")}</td>
+                    <td className={`${TD} whitespace-nowrap text-[#6B7280]`}>{formatTimestampMY(p.createdAt, { withYear: true })}</td>
                     <td className={TD}>
                       <a
                         href={`/api/scan-queue/${encodeURIComponent(p.id)}/original`}
