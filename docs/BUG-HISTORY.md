@@ -224,13 +224,27 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-19-333 — "View as" sometimes listed only Me after a switch `staging` `ui` 🟡
+## BUG-2026-10-19-334 — /api/users hung for 30 s when two requests arrived together `auth` `self-apply` `C9` 🟡
+
+🟡 **Fixed on branch** (`fix/users-org-columns-memo` → `staging`). The same code is on `main`; prod impact is UNMEASURED.
+
+**Symptom.** On staging the "View as" picker, and the User Management page that reads the same list, sometimes got no user list. Measured 2026-10-19: of three parallel `GET /api/users` calls, one answered (53 ms, later 1.9 s) and the others hung until the app's 30 s timeout; six parallel calls all hung past 3 s. In the same seconds `/api/auth/me`, `/api/notifications` and `/api/organisations` answered in under 120 ms, so it was not the database or a lock on `users`.
+
+**Root cause.** `ensureUserOrgColumns` in `src/api/routes/users.ts` (four `ALTER TABLE users ADD COLUMN IF NOT EXISTS`, run at the top of the list) cached its in-flight PROMISE per isolate. It cleared the memo on failure, which fixes C9 defect 1, but a pending promise still holds the socket of the request that started it (C9 defect 2). Every other `/api/users` in that isolate awaited it and hung. Why the first round in an isolate was slow enough to be aborted is UNMEASURED.
+
+**Fix.** A boolean memo, set only after `runSelfApply` resolves (the `payment-columns.ts` shape). Each request runs its own round until one lands; the ALTERs are `IF NOT EXISTS`, so a repeat is harmless.
+
+**Regression.** `tests/users-org-columns-memo.test.mjs`: with one caller's DDL never settling, a second caller must finish within 1 s and run its own four statements (fails on the old code: "timed out"); a failed round is retried and a landed one is not re-run.
+
+---
+
+— "View as" sometimes listed only Me after a switch `staging` `ui` 🟡
 
 🟡 **Fixed on branch** (`fix/view-as-loading-state` → `staging`). Staging-only tool.
 
 **Symptom.** After switching the topbar "View as" pick (the page reloads), opening the dropdown sometimes showed only "Me".
 
-**Root cause.** The list of people comes from `GET /api/users` after the reload. Until it returns, the dropdown has only "Me", and an already-open native dropdown does not pick up rows that arrive later. Measured on staging 2026-10-19: that request took 1.66 s on one switch and 34 ms on the next. On failure the picker also turned any error (non-200 or network) into an empty list, so a failed load looked the same as "nobody else exists". No failed request was observed; the slow load alone reproduces the screenshot.
+**Root cause.** The list of people comes from `GET /api/users` after the reload, and the picker turned any failure into an empty list with no message, so the dropdown held only "Me". The request was not just slow: measured on staging 2026-10-19 after this fix deployed, two of three `/api/users` calls on one page load hung until the app's 30 s timeout while the third answered in 53 ms (an earlier switch took 1.66 s, the next 34 ms). The server cause is BUG-2026-10-19-334. An already-open native dropdown also does not pick up rows that arrive later.
 
 **Fix.** `src/components/staging-view-as.tsx` shows a disabled "Loading users…" row under "Me" until the list arrives, and on failure a disabled "Users failed to load (HTTP n), reopen to retry" row; opening the dropdown again after a failure re-requests the list.
 
