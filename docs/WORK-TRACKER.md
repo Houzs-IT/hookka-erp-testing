@@ -2,6 +2,7 @@
 
  deisgn/mobile-so-detail-card
 
+> **Last verified: 2026-10-19**: branch `feat/wip-save-current-month`, to `staging` (WIP time save also moves cards finished this month) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `feat/wip-save-confirm-cards`, to `staging` (confirm pop-up listing affected job cards before a WIP time save) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `chore/sync-staging-from-main-1016` (staging<-main sync) added below (its entry is the newest).
 > **Last verified: 2026-10-16**: branch `fix/wip-save-one-transaction`, to `staging`: the WIP time auto-sync entry below got its one-transaction hardening (its entry is the newest).
@@ -7551,3 +7552,15 @@ that will change, in detail, before anything is saved.
 Built on branch `feat/wip-save-confirm-cards` (to `staging`): `dryRun` preview in `saveBomAndSyncCards`,
 `src/pages/production/job-card-changes.tsx`. Checked locally on the real page with stubbed
 responses (confirm, cancel, no-change, 320px). **Not yet verified on staging.**
+
+## 2026-10-19 — WIP time save: cards finished this month follow too
+
+Asked (owner, 2026-10-19): a WIP time save should work by the current month so past data is not
+affected, judged by when the employee finished scanning the card.
+
+1. [x] Unfinished cards (waiting, in progress, paused, blocked) still follow the new time, as before.
+2. [x] Cards finished (COMPLETED) this month, by their completed date in Malaysia time, now follow
+   it too. Cards finished in an earlier month are not touched and not listed in the pop-up.
+3. [x] Pop-up and edit window wording updated.
+
+Built on branch `feat/wip-save-current-month` (to `staging`). **Not yet verified on staging.**

@@ -65,7 +65,7 @@ type CardSync = {
   jobCards?: { updated: number; leftAlone: number; skipped: number; outOfDate?: number; details?: CardPreview };
 };
 const OPEN_CARDS_NOTE =
-  "Unfinished job cards (waiting, in progress, paused or blocked) still at the old time also get the new time. Finished cards, and cards that already had a different time, keep theirs.";
+  "Unfinished job cards (waiting, in progress, paused or blocked), and cards finished this month, still at the old time also get the new time. Cards finished in an earlier month, and cards that already had a different time, keep theirs.";
 
 function cardsNoticeFrom(results: CardSync[]): string | null {
   if (!results.some((r) => r.jobCards)) return null;

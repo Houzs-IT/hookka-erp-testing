@@ -1,7 +1,8 @@
 // Saving a WIP time on WIP Production Times also updates the unfinished job
 // cards of the changed products in that department (saveBomAndSyncCards), but
 // only cards still at the time the BOM had before the save.
-// Finished cards are never selected, a blank BOM step never zeroes a card,
+// Finished cards stay as they are unless their finish scan is in the current
+// Malaysia month, a blank BOM step never zeroes a card,
 // every write is guarded on still-open + still-at-the-old-minutes, and only
 // real changes are audited. A sync failure is reported, not hidden, and never
 // undoes the saved BOM.
@@ -9,7 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
-import { refreshDecision } from "../src/api/routes/jobcard-sync.ts";
+import { refreshDecision, currentMonthMyt } from "../src/api/routes/jobcard-sync.ts";
 import wipTimes from "../src/api/routes/wip-times.ts";
 import { breakBomIntoWips } from "../src/api/lib/bom-wip-breakdown.ts";
 
@@ -70,6 +71,11 @@ const TREE = [
 ];
 const KEY = breakBomIntoWips(JSON.stringify(TREE), "SQUARE PILLOW", null)[0].wipKey;
 const OPEN = ["WAITING", "IN_PROGRESS", "PAUSED", "BLOCKED"];
+const [MONTH_START] = currentMonthMyt();
+const LAST_MONTH_DAY = new Date(Date.parse(MONTH_START) - 86400000).toISOString().slice(0, 10);
+// Mirrors SYNC_STATUS_SQL: unfinished, or COMPLETED with completedDate in [from, to).
+const syncable = (c, from, to) =>
+  OPEN.includes(c.status) || (c.status === "COMPLETED" && c.completedDate >= from && c.completedDate < to);
 
 const card = (jcId, over = {}) => ({
   id: "pord-1", salesOrderId: "so-1", productCode: "SQUARE PILLOW", itemCategory: "ACCESSORY", quantity: 1,
@@ -95,7 +101,7 @@ function makeDb(cards, { raceIds = [], failCardRead = false, lockTimeouts = 0 } 
     if (/FROM job_cards jc JOIN production_orders/.test(s)) {
       if (failCardRead) throw new Error("connection reset");
       return cards
-        .filter((c) => OPEN.includes(c.status) && bound.includes(c.productCode))
+        .filter((c) => syncable(c, bound[0], bound[1]) && bound.includes(c.productCode))
         .map((c) => ({ ...c, oldMinutes: c.oldMinutes }));
     }
     return [];
@@ -139,9 +145,9 @@ function makeDb(cards, { raceIds = [], failCardRead = false, lockTimeouts = 0 } 
           locksLeft--;
           throw Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
         }
-        const [m, , id, old] = st.bound;
+        const [m, , id, old, from, to] = st.bound;
         const c = cards.find((x) => x.jcId === id);
-        const ok = c && OPEN.includes(c.status) && c.oldMinutes === old && !raceIds.includes(id);
+        const ok = c && syncable(c, from, to) && c.oldMinutes === old && !raceIds.includes(id);
         log.updates.push({ sql: st.sql, bound: st.bound });
         if (ok) c.oldMinutes = m;
         return { results: [], success: true, meta: { changes: ok ? 1 : 0 } };
@@ -333,4 +339,28 @@ test("TC-18 a real save carries no preview details", async () => {
   assert.equal(body.dryRun, false);
   assert.equal(body.jobCards.details, undefined);
   assert.equal(body.jobCards.updated, 1);
+});
+
+test("TC-19 a card finished this month moves; one finished last month keeps its time", async () => {
+  const cards = [
+    card("open"),
+    card("done-this-month", { status: "COMPLETED", completedDate: MONTH_START }),
+    card("done-last-month", { status: "COMPLETED", completedDate: LAST_MONTH_DAY }),
+  ];
+  const f = makeDb(cards);
+  const dry = await call(f.db, "PUT", "/", { ...SAVE, dryRun: true });
+  assert.deepEqual(dry.body.jobCards.details.willChange.map((c) => c.jcId).sort(), ["done-this-month", "open"]);
+  assert.equal(dry.body.jobCards.details.keep.length, 0, "last month's card is not even listed");
+  const { body } = await call(f.db, "PUT", "/", SAVE);
+  assert.deepEqual(body.jobCards, { updated: 2, leftAlone: 0, skipped: 0, outOfDate: 0 });
+  assert.deepEqual(cards.map((c) => c.oldMinutes), [12, 12, 10]);
+  for (const u of f.log.updates) {
+    assert.match(u.sql, /status = 'COMPLETED' AND completedDate >= \? AND completedDate < \?/);
+    assert.match(u.sql, /updated_at = NOW\(\)/, "stamps updated_at so cached efficiency pages refresh");
+  }
+});
+
+test("TC-20 the current month follows Malaysia time, not UTC", () => {
+  assert.deepEqual(currentMonthMyt(new Date("2026-10-31T16:30:00Z")), ["2026-11-01", "2026-12-01"]);
+  assert.deepEqual(currentMonthMyt(new Date("2026-12-31T15:59:00Z")), ["2026-12-01", "2027-01-01"]);
 });

@@ -31,6 +31,7 @@ const STATUS_LABEL: Record<string, string> = {
   IN_PROGRESS: "In progress",
   PAUSED: "Paused",
   BLOCKED: "Blocked",
+  COMPLETED: "Finished this month",
 };
 const KEEP_LABEL: Record<string, string> = {
   outOfDate: "already had a different time from the old BOM",
@@ -210,7 +211,7 @@ export function JobCardChangesList({ preview }: { preview: CardPreview }) {
             className="w-full flex items-center gap-1 p-3 text-left font-semibold"
           >
             {showKeep ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            {keep.length} unfinished card{keep.length === 1 ? " keeps its" : "s keep their"} time
+            {keep.length} card{keep.length === 1 ? " keeps its" : "s keep their"} time
           </button>
           {showKeep && (
             <ul className="px-3 pb-3 space-y-1.5 max-h-60 overflow-y-auto">
@@ -261,7 +262,7 @@ export function ConfirmJobCardChanges({
               Confirm job card changes
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
-              Nothing is saved until you confirm. Finished cards are not touched.
+              Nothing is saved until you confirm. Cards finished before this month are not touched.
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={saving} aria-label="Close">

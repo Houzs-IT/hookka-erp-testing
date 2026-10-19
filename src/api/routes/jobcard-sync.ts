@@ -34,6 +34,7 @@ import {
 } from "../lib/bom-wip-breakdown";
 import { isHeadboardOnlySpecial } from "./fg-units";
 import { parseRepairScope } from "../../lib/repair-scope";
+import { nextPeriod, todayYmdMalaysia } from "../lib/worker-penalties";
 
 const app = new Hono<Env>();
 
@@ -557,10 +558,20 @@ app.post("/fill-zero-minutes", async (c) => {
 // before and after the save.
 //
 // `pairs` holds `${productCode}::${deptCode}`. Unfinished = WAITING /
-// IN_PROGRESS / PAUSED / BLOCKED; a finished card keeps the minutes it was paid
-// and costed on. Due dates are not touched. Reads skip Hyperdrive's cache.
+// IN_PROGRESS / PAUSED / BLOCKED. A COMPLETED card moves too when its finish
+// scan (completedDate) is in the current Malaysia month (owner, 2026-10-19); one
+// finished in an earlier month keeps the minutes it was paid and costed on.
+// Due dates are not touched. Reads skip Hyperdrive's cache.
 // ---------------------------------------------------------------------------
 const OPEN_STATUSES = "('WAITING','IN_PROGRESS','PAUSED','BLOCKED')";
+// Binds: first day of this month, first day of next month.
+const SYNC_STATUS_SQL = (t: string) =>
+  `(${t}status IN ${OPEN_STATUSES} OR (${t}status = 'COMPLETED' AND ${t}completedDate >= ? AND ${t}completedDate < ?))`;
+
+export function currentMonthMyt(now: Date = new Date()): [string, string] {
+  const month = todayYmdMalaysia(now).slice(0, 7);
+  return [`${month}-01`, `${nextPeriod(month)}-01`];
+}
 
 type OpenCard = ProductionOrderRow & {
   jcId: string;
@@ -681,6 +692,7 @@ export async function saveBomAndSyncCards(
   }
   const codes = [...new Set([...pairs].map((p) => p.slice(0, p.lastIndexOf("::"))))];
 
+  const month = currentMonthMyt();
   const cards: OpenCard[] = [];
   for (const part of chunk(codes, 300)) {
     const res = await db
@@ -697,11 +709,11 @@ export async function saveBomAndSyncCards(
                 po.customerName AS "customerName"
            FROM job_cards jc
            JOIN production_orders po ON po.id = jc.productionOrderId
-          WHERE jc.status IN ${OPEN_STATUSES}
+          WHERE ${SYNC_STATUS_SQL("jc.")}
             AND po.productCode IN (${part.map(() => "?").join(",")})
           ORDER BY jc.id`,
       )
-      .bind(...part)
+      .bind(...month, ...part)
       .all<OpenCard>();
     cards.push(...(res.results ?? []));
   }
@@ -808,11 +820,12 @@ export async function saveBomAndSyncCards(
     stmts.push(
       raw
         .prepare(
-          `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?
-            WHERE id = ? AND status IN ${OPEN_STATUSES}
-              AND COALESCE(productionTimeMinutes, 0) = ?`,
+          // updated_at so the job_cards snapshot caches (snapshot-freshness.ts) see the change.
+          `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?, updated_at = NOW()
+            WHERE id = ? AND COALESCE(productionTimeMinutes, 0) = ?
+              AND ${SYNC_STATUS_SQL("")}`,
         )
-        .bind(f.newMinutes, f.newMinutes, f.jcId, f.oldMinutes),
+        .bind(f.newMinutes, f.newMinutes, f.jcId, f.oldMinutes, ...month),
     );
     const audit = await buildAuditStatement(
       c,
