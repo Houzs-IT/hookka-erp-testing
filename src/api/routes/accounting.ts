@@ -46,6 +46,7 @@ import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
 import { actionLabel, auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, payloadRef, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
+import { normaliseReference, settlementReference } from "../../lib/doc-reference";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
@@ -143,6 +144,9 @@ type JournalEntryRow = {
   entryNo: string;
   date: string;
   description: string;
+  // Optional (owner 2026-10-19 「先做 Reference 栏」); absent until the column
+  // is self-applied by the first journal save.
+  reference?: string | null;
   status: "DRAFT" | "POSTED" | "REVERSED";
   createdBy: string;
   // Postgres hands this back as `createdAt` (see rowToJournal). `created_at`
@@ -224,6 +228,7 @@ function rowToJournal(e: JournalEntryRow, lines: JournalLineRow[]) {
     entryNo: e.entryNo,
     date: e.date,
     description: e.description,
+    reference: e.reference ?? null,
     status: e.status,
     createdBy: e.createdBy,
     // Dual-keyed. `created_at` alone was ALWAYS undefined: db-pg.ts installs
@@ -1373,12 +1378,25 @@ app.get("/system-journals", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// A journal's Reference column (owner 2026-10-19 「先做 Reference 栏」) —
+// self-applied, awaited before the first write that names it.
+let _pendingJournalRefCol: Promise<void> | null = null;
+function ensureJournalReferenceColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingJournalRefCol) {
+    _pendingJournalRefCol = db.prepare("ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT").run()
+      .then(() => undefined)
+      .catch((e) => { _pendingJournalRefCol = null; throw e; });
+  }
+  return _pendingJournalRefCol;
+}
+
 app.post("/journals", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
   try {
     const body = await c.req.json();
     const { date, description, lines } = body;
+    await ensureJournalReferenceColumn(c.var.DB);
     if (!date || !description || !lines || !Array.isArray(lines) || lines.length === 0) {
       return c.json(
         { success: false, error: "date, description, and lines are required" },
@@ -1413,10 +1431,10 @@ app.post("/journals", async (c) => {
     // tenant's journals would land labelled 'hookka' and then be hidden from
     // the tenant that created them.
     await c.var.DB.prepare(
-      `INSERT INTO journal_entries (id, entryNo, date, description, status, createdBy, orgId)
-       VALUES (?, ?, ?, ?, 'DRAFT', ?, ?)`,
+      `INSERT INTO journal_entries (id, entryNo, date, description, reference, status, createdBy, orgId)
+       VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?)`,
     )
-      .bind(id, entryNo, date, description, createdBy, orgId)
+      .bind(id, entryNo, date, description, normaliseReference(body.reference), createdBy, orgId)
       .run();
 
     const inserts = lines.map(
@@ -1710,11 +1728,12 @@ app.put("/journals/:id", async (c) => {
       await c.var.DB.batch(statements);
     } else if (entry.status === "DRAFT") {
       // Draft-only edits of header + lines.
-      if (body.date !== undefined || body.description !== undefined) {
+      if (body.date !== undefined || body.description !== undefined || body.reference !== undefined) {
+        await ensureJournalReferenceColumn(c.var.DB);
         await c.var.DB.prepare(
-          "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
+          "UPDATE journal_entries SET date = ?, description = ?, reference = ? WHERE id = ?",
         )
-          .bind(body.date ?? entry.date, body.description ?? entry.description, id)
+          .bind(body.date ?? entry.date, body.description ?? entry.description, body.reference !== undefined ? normaliseReference(body.reference) : (entry.reference ?? null), id)
           .run();
       }
       if (body.lines !== undefined && Array.isArray(body.lines)) {
@@ -5269,7 +5288,7 @@ app.get("/audit-log", async (c) => {
 // (finance backlog item 10 part 2): header and lines ("account amount; …").
 async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<Record<string, unknown> | null> {
   try {
-    const h = await db.prepare("SELECT date, payee, description, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    const h = await db.prepare("SELECT date, payee, description, reference, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
     if (!h) return null;
     const ls = await db.prepare("SELECT accountCode, amountSen FROM payment_voucher_lines WHERE voucherId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>();
     const sen = (v: unknown) => ((Number(v) || 0) / 100).toFixed(2);
@@ -5277,6 +5296,7 @@ async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<
       date: h.date ?? null,
       payee: h.payee ?? null,
       description: h.description ?? null,
+      reference: h.reference ?? null,
       payFrom: h.payFrom ?? h.pay_from ?? null,
       total: sen(h.totalSen ?? h.total_sen),
       lines: (ls.results ?? []).map((l) => `${String(l.accountCode ?? l.account_code ?? "")} ${sen(l.amountSen ?? l.amount_sen)}`).join("; "),
@@ -11449,7 +11469,9 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
       // finance carries the drawdown's due date and the interest recorded at
       // drawdown (finance backlog item 17, owner 「提款时就记」).
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER"]) {
+      // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
+      // its own field — the description stays the printed text.
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -11475,12 +11497,13 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
 const PV_KIND_AP = "AP";
 
 // The voucher form's own fields (owner 2026-10-01): internal notes (never
-// printed), the supplier's bill number and date.
-function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null } {
+// printed), the supplier's bill number and date — and (2026-10-19) the
+// Reference, the TT / cheque no., printed on the voucher.
+function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null; reference: string | null } {
   const notes = String(body.notes ?? "").trim();
   const billNo = String(body.billNo ?? "").trim();
   const billDate = String(body.billDate ?? "").trim();
-  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null };
+  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null, reference: normaliseReference(body.reference) };
 }
 type PvPartyKind = "SUPPLIER" | "OTHER";
 // TF = a trade-finance drawdown, repaid by an AP Payment to the lender
@@ -12279,7 +12302,8 @@ app.post("/payment-vouchers", async (c) => {
       const pvNo = asDraft
         ? `${PV_DRAFT_PREFIX}${id.slice(3)}`
         : await issueDocNumber(c.var.DB, { bankAccountCode: ap.v.payFrom, direction: "out", dateIso: date });
-      const reference = String(body.description ?? body.reference ?? "");
+      const description = String(body.description ?? body.reference ?? "");
+      const { reference } = pvExtraFields(body as Record<string, unknown>);
       const statements: D1PreparedStatement[] = [
         c.var.DB.prepare(
           `INSERT INTO payment_vouchers (
@@ -12287,16 +12311,16 @@ app.post("/payment-vouchers", async (c) => {
              accrualAccount, settledAt, productLine, totalSen, status,
              approval_state, approved_at, approved_by,
              createdBy, created_at, updated_at,
-             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
-          id, pvNo, date, ap.v.partyName, reference, ap.v.payFrom,
+          id, pvNo, date, ap.v.partyName, description, ap.v.payFrom,
           ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
           asDraft ? "DRAFT" : "APPROVED",
           asDraft ? null : now, asDraft ? null : actorUserId,
           actorUserId, now, now,
           PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
-          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
+          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, reference,
         ),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ];
@@ -12305,7 +12329,7 @@ app.post("/payment-vouchers", async (c) => {
         // this voucher's number (same builders as the payment pages).
         const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
           id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
-          reference: reference || null, advanceSen: ap.v.advanceSen,
+          reference: settlementReference(reference, description), advanceSen: ap.v.advanceSen,
           tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0,
         }, ap.v.allocs);
         if (!built.ok) return c.json({ success: false, error: built.error }, 400);
@@ -12352,8 +12376,8 @@ app.post("/payment-vouchers", async (c) => {
            accrualAccount, settledAt, productLine, totalSen, status,
            approval_state, approved_at, approved_by,
            createdBy, created_at, updated_at,
-           pv_kind, notes, bill_no, bill_date
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           pv_kind, notes, bill_no, bill_date, reference
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id, pvNo, date,
         isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""),
@@ -12362,7 +12386,7 @@ app.post("/payment-vouchers", async (c) => {
         asDraft ? "DRAFT" : "APPROVED",
         asDraft ? null : now, asDraft ? null : actorUserId,
         actorUserId, now, now,
-        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate,
+        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate, extra.reference,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12428,9 +12452,10 @@ app.put("/payment-vouchers/:id", async (c) => {
       await c.var.DB.batch([
         c.var.DB.prepare(
           `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
-                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, updated_at = ? WHERE id = ?`,
+                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, reference = ?, updated_at = ? WHERE id = ?`,
         ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
-          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, now, id),
+          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
+          pvExtraFields(body as Record<string, unknown>).reference, now, id),
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
@@ -12458,8 +12483,8 @@ app.put("/payment-vouchers/:id", async (c) => {
     await c.var.DB.batch([
       c.var.DB.prepare(
         `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?,
-                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, updated_at = ? WHERE id = ?`,
-      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id),
+                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, reference = ?, updated_at = ? WHERE id = ?`,
+      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, extra.reference, now, id),
       c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12557,7 +12582,7 @@ async function pvApprovalCore(
       id, pvNo, date: String(pv.date ?? "").slice(0, 10),
       payFrom: String(pv.payFrom ?? pv.pay_from ?? ""), partyKind,
       partyId: String(pv.partyId ?? pv.party_id ?? ""),
-      reference: String(pv.description ?? "") || null,
+      reference: settlementReference(pv.reference, pv.description),
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
       tfDueDate: (pv.tfDueDate ?? pv.tf_due_date ?? null) as string | null,
       tfInterestSen: Math.round(Number(pv.tfInterestSen ?? pv.tf_interest_sen) || 0),
@@ -12923,7 +12948,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
     const extra = pvExtraFields(body as Record<string, unknown>);
-    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id));
+    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, reference = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, extra.reference, now, id));
     statements.push(c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id));
     v.lines.forEach((l, idx) => {
       statements.push(c.var.DB.prepare(`INSERT INTO payment_voucher_lines (id, voucherId, accountCode, description, amountSen, lineOrder) VALUES (?, ?, ?, ?, ?, ?)`).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));

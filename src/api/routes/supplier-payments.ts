@@ -76,6 +76,7 @@ app.get("/", async (c) => {
             sp.booked_sen   AS booked_sen,
             pi.pi_no        AS pi_no,
             pi.supplier_invoice_no AS supplier_invoice_no,
+            sp.reference    AS reference,
             dl.state        AS lifecycleState
        FROM supplier_payments sp
        LEFT JOIN purchase_invoices pi ON pi.id = sp.purchase_invoice_id

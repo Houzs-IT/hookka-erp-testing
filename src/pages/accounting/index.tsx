@@ -251,7 +251,9 @@ function buildPvVoucher(
       ? [{ label: "From", value: paidFrom.value }]
       : [{ label: "Payee bank", value: apDetail?.payeeBank ?? "" }, paidFrom],
     amountBox: { label: isTransfer ? "Amount transferred" : accruedOnly ? "Amount payable" : "Amount paid", value: formatCurrency(pv.totalSen) },
-    facts: billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : undefined,
+    // The Reference (TT / cheque no., owner 2026-10-19) prints with the bill;
+    // a blank fact is left out by the renderer.
+    facts: [{ label: "Reference", value: pv.reference ?? "" }, ...(billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : [])],
     columns: bills ? bills.columns : [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
     lines: bills ? bills.lines : lines,
     totalCells: bills ? bills.totalCells : ["", "Total", formatCurrency(pv.totalSen)],
@@ -333,6 +335,7 @@ function buildJvVoucher(je: JournalEntry): VoucherSpec {
     date: formatDateDMY(je.date),
     partyLabel: "Description",
     partyName: je.description ?? "",
+    facts: [{ label: "Reference", value: je.reference ?? "" }],
     columns: [
       { label: "Account" },
       { label: "Description" },
@@ -3405,6 +3408,11 @@ function JournalsTab({
       render: (value, row) => <span className="font-medium text-[#1F1D1B]">{row.description}</span>,
     },
     {
+      key: "reference",
+      label: "Reference",
+      render: (value, row) => <span className="text-[#4B5563]">{row.reference ?? ""}</span>,
+    },
+    {
       key: "totalDebit",
       label: "Total Debit",
       align: "right",
@@ -3591,8 +3599,9 @@ function JournalsTab({
                 <button onClick={close} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none">✕</button>
               </div>
               <div className="p-5 space-y-4 text-sm">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div><p className="text-[#9CA3AF] text-xs">Date</p><p className="font-medium">{formatDateDMY(je.date)}</p></div>
+                  <div><p className="text-[#9CA3AF] text-xs">Reference</p><p className="font-medium">{je.reference || "—"}</p></div>
                   <div className="col-span-2"><p className="text-[#9CA3AF] text-xs">Description</p><p className="font-medium">{je.description || "—"}</p></div>
                   <div><p className="text-[#9CA3AF] text-xs">{sys ? "Posted on" : "Created"}</p><p className="font-medium">{String(je.createdAt ?? "").slice(0, 10) || "—"}</p></div>
                 </div>
@@ -3679,6 +3688,8 @@ function JournalEntryForm({
 }) {
   const [date, setDate] = useState(() => (editing?.date ?? "").slice(0, 10) || new Date().toISOString().split("T")[0]);
   const [description, setDescription] = useState(editing?.description ?? "");
+  // Its own field, not the description (owner 2026-10-19 「先做 Reference 栏」).
+  const [reference, setReference] = useState(editing?.reference ?? "");
   // Editor rows carry a client-only `_uid` so React keys stay stable as rows
   // are added / removed / reordered. The uid is stripped before POST in
   // handleSave().  See sprint 7 — replacing key={idx} on mutable rows.
@@ -3771,7 +3782,7 @@ function JournalEntryForm({
     const res = await fetch(editing ? `/api/accounting/journals/${editing.id}` : "/api/accounting/journals", {
       method: editing ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date, description, lines: payloadLines }),
+      body: JSON.stringify({ date, description, reference: reference.trim(), lines: payloadLines }),
     });
     const data = asMutationResponse(await res.json());
     setSaving(false);
@@ -3794,7 +3805,7 @@ function JournalEntryForm({
             <div className={`rounded-md ${DANGER.bg} ${DANGER.border} border ${DANGER.text} px-4 py-2 text-sm`}>{error}</div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Date</label>
               <input
@@ -3811,6 +3822,17 @@ function JournalEntryForm({
                 placeholder="Journal entry description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[#6B7280] mb-1 block">Reference</label>
+              <input
+                type="text"
+                placeholder="Optional"
+                value={reference}
+                maxLength={120}
+                onChange={(e) => setReference(e.target.value)}
                 className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
               />
             </div>
@@ -10419,8 +10441,10 @@ type PvRow = {
   // of expense lines. EXPENSE / undefined = the classic voucher.
   pvKind?: "AP" | "EXPENSE" | "TRANSFER";
   // The voucher form's own fields (owner 2026-10-01): internal notes (never
-  // printed), the supplier's bill number and date.
+  // printed), the supplier's bill number and date; the Reference (TT /
+  // cheque no., owner 2026-10-19), printed.
   notes?: string | null;
+  reference?: string | null;
   billNo?: string | null; bill_no?: string | null;
   billDate?: string | null; bill_date?: string | null;
   partyKind?: "SUPPLIER" | "OTHER" | null;
@@ -10441,13 +10465,13 @@ type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; d
 // lines; Transfer = money between our own bank / cash accounts.
 type PvFormState = {
   date: string; payee: string; description: string; accrued: boolean; payFrom: string; accrualAccount: string;
-  productLine: string; notes: string; billNo: string; billDate: string;
+  productLine: string; notes: string; billNo: string; billDate: string; reference: string;
   mode: "PAYMENT" | "TRANSFER"; transferTo: string; transferAmount: string;
 };
 function blankPvForm(): PvFormState {
   return {
     date: new Date().toISOString().slice(0, 10), payee: "", description: "", accrued: false, payFrom: "", accrualAccount: "",
-    productLine: "", notes: "", billNo: "", billDate: "", mode: "PAYMENT", transferTo: "", transferAmount: "",
+    productLine: "", notes: "", billNo: "", billDate: "", reference: "", mode: "PAYMENT", transferTo: "", transferAmount: "",
   };
 }
 type PvAttachment = { id: string; filename: string; contentType: string; sizeBytes: number; uploadedAt: string };
@@ -10644,7 +10668,7 @@ function buildPayRows(pv: PvRow[] | null, sp: SupplierPaymentGroup[] | null, ocp
 // exports what the eye reads. Built once per load (stable rows — BUG-CLASSES
 // C24: an unstable list re-emits the selection forever).
 type PayGridRow = PayRow & {
-  payeeText: string; descText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
+  payeeText: string; descText: string; refText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
   statusLabel: string; status: FinStatus;
 };
 function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
@@ -10657,6 +10681,9 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
   const r = row.pv;
   let payeeText = row.payee;
   let descText = "";
+  // The TT / cheque no.: the voucher's own Reference, or the reference the
+  // supplier / other-creditor payment was saved with.
+  let refText = "";
   let viaLabel = bank(row.via);
   let lineText = "";
   let lineTitle = "";
@@ -10667,6 +10694,7 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     const toName = shortBankName(accounts.find((a) => a.code === toAcct)?.name) || toAcct;
     payeeText = r.pvKind === "TRANSFER" ? `Transfer to ${toName}` : (r.payee ?? "");
     descText = r.description ?? "";
+    refText = r.reference ?? "";
     viaLabel = r.accrued === 1 && !r.settledAt ? `accrued → ${r.accrualAccount ?? ""}` : bank(r.payFrom);
     if (r.pvKind === "AP") {
       const allocs = r.allocs ?? [];
@@ -10688,9 +10716,10 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     lineText = `${plural(invoices, "invoice")}${advance > 0 ? " + advance" : ""}`;
     lineTitle = row.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n");
     billNos = row.sp.lines.map((l) => l.piNo ?? "").join(" ");
+    refText = row.sp.reference ?? "";
     status = foreignPayStatus(row.state, advance, PAY_DOOR_HINT[row.door]);
   } else if (row.ocp) {
-    descText = row.ocp.reference ?? "";
+    refText = row.ocp.reference ?? "";
     lineText = plural(row.ocp.lines.length, "bill");
     lineTitle = row.ocp.lines.map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n");
     billNos = row.ocp.lines.map((l) => l.billNo).join(" ");
@@ -10700,7 +10729,7 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     lineText = `→ ${row.ft?.toName || row.ft?.toAccount || ""}`;
     status = foreignPayStatus(row.state, 0, PAY_DOOR_HINT[row.door]);
   }
-  return { ...row, payeeText, descText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
+  return { ...row, payeeText, descText, refText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
 }
 
 // The settled-bills detail block for a voucher's print when its print detail
@@ -10891,7 +10920,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     payFrom: "",
     partyKind: (initialPay?.docKind === "AP" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER",
     partyId: initialPay?.partyId ?? "",
+    // Reference = the TT / cheque no. (or the bank's drawdown no.);
+    // description = the printed text (owner 2026-10-19, two fields).
     reference: "",
+    description: "",
     advance: "",
     // Paid from a trade-finance line (a drawdown): its due date (blank =
     // the payment date + the line's tenor) and the interest at drawdown.
@@ -11074,6 +11106,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           {r.descText && <div className="truncate text-[12px] text-[#6B7280]" title={r.descText}>{r.descText}</div>}
         </div>
       ) },
+    { key: "refText", label: "Reference", width: "150px",
+      render: (_v, r) => <span className="truncate text-[12px] text-[#4B5563]" title={r.refText || undefined}>{r.refText}</span> },
     { key: "viaLabel", label: "Paid From", width: "190px", filterAccessor: (r) => r.viaLabel || (r.door === "SP" ? "(no bank leg)" : "—"),
       render: (_v, r) => (r.pv && r.pv.accrued === 1 && !r.pv.settledAt
         ? <span className="text-[12px] text-[#9A3A2D]">{r.viaLabel}</span>
@@ -11105,7 +11139,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setPendingScanFiles([]);
     setForm(blankPvForm());
     setLines([{ accountCode: "", description: "", amount: "" }]);
-    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", advance: "", tfDue: "", tfInterest: "" });
+    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", description: "", advance: "", tfDue: "", tfInterest: "" });
     setApAlloc({});
     setApBills(null);
   };
@@ -11145,7 +11179,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       payFrom: apForm.payFrom || defaultBankCode(bankCash),
       partyKind: apForm.partyKind,
       partyId: apForm.partyId,
-      description: apForm.reference,
+      description: apForm.description,
+      reference: apForm.reference,
       advanceSen: apForm.partyKind === "SUPPLIER" ? apAdvanceSen : 0,
       allocations: apTicked.map((b) => ({ docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") })).filter((a) => a.amountSen > 0),
       ...(apTfDraw ? { tfDueDate: apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays), tfInterestSen: apSen(apForm.tfInterest) } : {}),
@@ -11183,6 +11218,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const common = {
       date: form.date,
       description: form.description,
+      reference: form.reference,
       notes: form.notes,
       saveAs: mode === "draft" && !editingId ? "draft" : undefined,
     };
@@ -11463,7 +11499,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       // Only an unposted AP voucher is editable (posted → cancel and redo).
       const af = {
         date: r.date, payFrom: r.payFrom ?? "", partyKind: (r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER", partyId: r.partyId ?? "",
-        reference: r.description ?? "", advance: (r.advanceSen ?? 0) > 0 ? ((r.advanceSen ?? 0) / 100).toFixed(2) : "",
+        reference: r.reference ?? "", description: r.description ?? "", advance: (r.advanceSen ?? 0) > 0 ? ((r.advanceSen ?? 0) / 100).toFixed(2) : "",
         tfDue: String(r.tfDueDate ?? r.tf_due_date ?? "").slice(0, 10),
         tfInterest: (Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) > 0 ? ((Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) / 100).toFixed(2) : "",
       };
@@ -11481,7 +11517,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       ...blankPvForm(),
       date: r.date, payee: r.payee ?? "", description: r.description ?? "", accrued: r.accrued === 1,
       payFrom: r.payFrom ?? "", accrualAccount: r.accrualAccount ?? "", productLine: r.productLine ?? "",
-      notes: r.notes ?? "", billNo: (r.billNo ?? r.bill_no) ?? "", billDate: String((r.billDate ?? r.bill_date) ?? "").slice(0, 10),
+      notes: r.notes ?? "", reference: r.reference ?? "", billNo: (r.billNo ?? r.bill_no) ?? "", billDate: String((r.billDate ?? r.bill_date) ?? "").slice(0, 10),
       mode: isTransfer ? "TRANSFER" : "PAYMENT",
       transferTo: isTransfer ? (r.lines[0]?.accountCode ?? "") : "",
       transferAmount: isTransfer ? (r.totalSen / 100).toFixed(2) : "",
@@ -11589,8 +11625,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const formKeyed = (): boolean => {
     if (editingId) return JSON.stringify(formKind === "AP" ? [apForm, apAlloc] : [form, lines]) !== editBaseline.current;
     if (pendingScanFiles.length > 0) return true;
-    if (formKind === "AP") return !!(apForm.partyId || apForm.payFrom || apForm.reference.trim() || apForm.advance.trim() || Object.values(apAlloc).some((v) => v.trim()));
-    return !!(form.payee.trim() || form.description.trim() || form.billNo.trim() || form.notes.trim() || form.payFrom || form.accrualAccount
+    if (formKind === "AP") return !!(apForm.partyId || apForm.payFrom || apForm.reference.trim() || apForm.description.trim() || apForm.advance.trim() || Object.values(apAlloc).some((v) => v.trim()));
+    return !!(form.payee.trim() || form.description.trim() || form.reference.trim() || form.billNo.trim() || form.notes.trim() || form.payFrom || form.accrualAccount
       || form.transferTo || form.transferAmount.trim() || lines.some((l) => l.accountCode || l.description.trim() || l.amount.trim()));
   };
   const requestCloseForm = async () => {
@@ -11772,9 +11808,13 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           </div>
                         </div>
                       )}
-                      <div className="sm:col-span-2">
-                        <label className={fieldLabel}>Reference / remarks</label>
-                        <input type="text" placeholder={apTfDraw ? "Bank's drawdown no." : "e.g. TT ref, cheque no"} value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
+                      <div>
+                        <label className={fieldLabel}>{apTfDraw ? "Reference (drawdown no.)" : "Reference"} <span className="normal-case font-normal text-[#9CA3AF]">{apTfDraw ? "(the bank's)" : "(TT / cheque no.)"}</span></label>
+                        <input type="text" maxLength={120} placeholder={apTfDraw ? "Bank's drawdown no." : "e.g. TT ref, cheque no"} value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
+                      </div>
+                      <div>
+                        <label className={fieldLabel}>Description <span className="normal-case font-normal text-[#9CA3AF]">(printed on the voucher)</span></label>
+                        <input type="text" placeholder="e.g. Aug fabric invoices + advance" value={apForm.description} onChange={(e) => setApForm({ ...apForm, description: e.target.value })} className={`${selCls} w-full`} />
                       </div>
                     </div>
                   </div>
@@ -12009,12 +12049,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         </div>
                       )}
                       <div>
+                        <label className={fieldLabel}>Reference <span className="normal-case font-normal text-[#9CA3AF]">(TT / cheque no.)</span></label>
+                        <input type="text" maxLength={120} placeholder="e.g. TT ref, cheque no" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} className={`${selCls} w-full`} />
+                      </div>
+                      <div>
                         <label className={fieldLabel}>Description <span className="normal-case font-normal text-[#9CA3AF]">(printed on the voucher)</span></label>
                         <input type="text" placeholder={isTransfer ? "e.g. Petty cash top-up" : "e.g. Factory rent June"} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={`${selCls} w-full`} />
-                      </div>
-                      <div className={isTransfer ? "sm:col-span-2" : ""}>
-                        <label className={fieldLabel}>Notes <span className="normal-case font-normal text-[#9CA3AF]">(internal — not printed)</span></label>
-                        <textarea rows={2} placeholder="Internal notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={`${selCls} w-full`} />
                       </div>
                       {!isTransfer && (
                         <>
@@ -12029,6 +12069,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           </div>
                         </>
                       )}
+                      <div className={isTransfer ? "" : "sm:col-span-2"}>
+                        <label className={fieldLabel}>Notes <span className="normal-case font-normal text-[#9CA3AF]">(internal — not printed)</span></label>
+                        <textarea rows={2} placeholder="Internal notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={`${selCls} w-full`} />
+                      </div>
                     </div>
                     {!isTransfer && (
                       <label className="flex items-center gap-2 text-sm text-[#1F1D1B] cursor-pointer">
@@ -12214,7 +12258,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               />
             }
             searchPlaceholder="Search PV no / payee / bill no"
-            alwaysSearchKeys={["no", "payeeText", "descText", "billNos"]}
+            alwaysSearchKeys={["no", "payeeText", "descText", "refText", "billNos"]}
             headerMenu
             reorderableHeaders
             exportName="Payment Vouchers"
@@ -12288,7 +12332,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
                 <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
                 <DetailField label="Kind">{r.pvKind === "AP" ? "AP payment" : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
-                <DetailField label={r.pvKind === "AP" ? "Reference" : "Description (printed)"} span={4}>{r.description || "—"}</DetailField>
+                <DetailField label="Reference">{r.reference || "—"}</DetailField>
+                <DetailField label="Description (printed)" span={3}>{r.description || "—"}</DetailField>
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
                   <>
                     <DetailField label="Bill no.">{(r.billNo ?? r.bill_no) || "—"}</DetailField>
@@ -12371,7 +12416,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <DetailField label="Date">{fmtDocDate(g.date)}</DetailField>
               <DetailField label={g.sp ? "Supplier" : g.ft ? "Transfer" : "Other creditor"} span={2}>{g.payee || "—"}</DetailField>
               <DetailField label="Paid from">{g.via ? accountLabel(accounts, g.via) : <span title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</DetailField>
-              <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.ocp?.reference) || "—"}</DetailField>
+              <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.sp ? g.sp.reference : g.ocp?.reference) || "—"}</DetailField>
               <DetailField label="Total"><span className="tabular-nums">{formatCurrency(g.totalSen)}</span></DetailField>
             </div>
             {/* Per door (owner 2026-10-02 「FUND TRANSFER无法edit?」): this line used to
