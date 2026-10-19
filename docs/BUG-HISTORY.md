@@ -154,6 +154,12 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-19-342 — Today's efficiency read 4,000% on the dashboard: working hours only land at punch-out `dashboard` `workforce` ✅
+
+Owner 2026-10-19 (10-19 tile: 4,173%, 166.9 h production over 4 h working). Job-card credit lands all day, but `working_hour_entries` are written only when the worker punches out (`punch-autofill.ts`), so until evening the day's efficiency divided a full morning's output by almost no working time. Same for the Attendance log's "Production time" (0h for everyone) and the Today's problems efficiency tile.
+
+Fix = every punch still open today gets its hours so far in the dashboard feed — clock-in to now, rules engine (lunch off, late ceiled), less approved non-production hours, split by department scans: the same maths as the worker phone's live card (`liveSplitRows`, now shared by `computeLiveDeptDay` and the bulk `liveOpenPunchRows`). "Now" steps every 30 minutes (owner: refresh half-hourly); the dashboard page refetches every 30 minutes. Feed cache key v5. Regression: `tests/live-open-punch.test.mjs`.
+
 ## BUG-2026-10-19-341 — Two receipts could each take the full PO qty; returned and cancelled goods stayed billable `procurement` `data-integrity` 🟡
 
 🟡 **On branch** (`fix/hk0096-qty-guards` → `main`). HK-0096, the follow-up to HK-0003 parts 2 and 3.

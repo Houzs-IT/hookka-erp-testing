@@ -6634,3 +6634,4 @@ Asks, in order:
 55. Polish Finance and OCR tabs.
 56. Sales forecast: target from the Forecast P&L module, actual = invoiced (owner 2026-10-18).
 57. READY_TO_SHIP repair executed on prod (owner "执行", 2026-10-18): 836 moved, 46 stay.
+58. Efficiency 4,000% mid-day — working hours live for open punches (clock-in to now), refresh every 30 min (owner 2026-10-19).
