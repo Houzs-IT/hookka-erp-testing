@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-19 on branch `fix/scan-po-step-logs` (to `main`)**: the `sweepStuckScans` ref in the scan-queue section, re-read from `src/api/routes/scan-queue.ts` after the step logs (BUG-2026-10-19-334) moved it. Nothing else re-checked.
 > **Last verified: 2026-10-19 on branch `feat/production-overview-default-grid-main` (to `main`, cherry-picked from the staging change)**: the production page row and the Overview layout bullet (Grid is now the default view), read from `src/pages/production/index.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-18 on branch `feat/fiscal-year-close-lock` (to `main`)**: the closed-year lock note, read from `src/api/lib/fiscal.ts` (`ClosedYearError`, `closedYearError`, `assertYearOpen`, `FY_LOCKED_KV_KEY`), `src/api/lib/journal-hash.ts` (`PostingContext`), `src/api/lib/document-lifecycle.ts` (`applyLifecycle` `docDate`), `src/api/routes/accounting.ts` (`yearCloseLegs`, `setFyLocked`, `POST /fiscal-years/close` / `/reopen`, `PUT /stock-take`), `src/api/worker.ts` (`onError`). Nothing else re-checked.
 > **Last verified: 2026-10-18 on branch `feat/fiscal-year-pickers` (to `main`)**: the financial-years note, read from `src/lib/fiscal-year.ts`, `src/api/lib/fiscal.ts`, `src/api/routes/accounting.ts` (`GET /fiscal-years`, `PUT /fiscal-years/year-end`, `periodStartYm` / `periodEndYm`, the `fyWindowAt` call sites), `src/lib/finance-reports.ts`, `src/components/finance/report-shell.tsx` (`PeriodStepper`), `src/pages/accounting/tabs/FinancialYearsCard.tsx`. Nothing else re-checked.
@@ -2472,7 +2473,7 @@ two roles. "Org-scoped" means the SQL carries an `org_id` / `orgId` bind.
 | POST `/api/scan-queue/:id/retry` | `src/api/routes/scan-queue.ts:1201` | `purchase-orders:create` | org-filtered SELECT, then an id-only UPDATE (transitively safe) |
 | POST `/api/scan-queue/:id/consume` | `src/api/routes/scan-queue.ts:1273` | `purchase-orders:create` | org-filtered |
 
-Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1531`)
+Sweepers (`sweepStuckBatch` per poll, `sweepStuckScans` cron) only **re-queue** stuck rows; the next open modal drives them. The cron sweeper is **not** in this router: `sweepStuckScans` (`src/api/routes/scan-queue.ts:1543`)
 is exported and mounted by hand as `POST /api/internal/scan-queue-sweep`
 (`src/api/worker.ts:799`), registered **before** `authMiddleware` and gated by a
 constant-time `CRON_SECRET` compare that 503s when the secret is unset or under 16 chars

@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `feat/production-overview-default-grid-main`, to `main`, cherry-picked from the staging change; 328 is taken on `main`, 329 on `staging`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-329 (branch `fix/ocr-tab-myt-time-main`, to `main`, cherry-picked from the staging fix); a log, so "verified" means the entry matches the code on its branch.
@@ -148,6 +149,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-334 — Two PO files die on every scan attempt with no error recorded `ocr` `scan-queue` 🟡
+
+🟡 **Logging only, on branch** (`fix/scan-po-step-logs` → `main`). Root cause still open.
+
+**Symptom.** On prod (19 Oct) `HC-PO-2610-245-SO2610-196 HOK.pdf` and `HC-PO-2610-200-SO011254 HOK..pdf` ended every scan as "worker died before completing OCR", across several uploads. Twelve other POs scanned fine the same day, sofas included.
+
+**What was measured.** For the 08:35 UTC attempt the forwarder logged the Claude call as 200 after 32 s, but no `po_scan_samples` row was written and the `scan_queue` row stayed `processing`; no DB query was active or blocked. No attempt ever wrote a `retry n/3` error, so the 150 s fetch timeout never fired. Closing the modal later logged no cancelled `/work` request, so the request most likely ended (killed) soon after the reply arrived. Which step it died in is unmeasured: nothing is logged between the reply and the sample insert.
+
+**Change.** `runPoExtract` logs each step after the AI call (headers, body read, parse, sample insert, corrections replay) with elapsed ms, and `processOneRow` logs the claim, the extract result and the row write. Retry the file with `wrangler pages deployment tail` running to see the last step reached.
+
+**Regression.** `tests/scan-step-logs.test.mjs` pins the markers.
 
 ---
 

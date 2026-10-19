@@ -403,6 +403,7 @@ async function processOneRow(
     // counter; `next` was read pre-bump, so add 1. Drives the retry-vs-fail
     // decision in the result writer below.
     const attemptNo = (next.attempts ?? 0) + 1;
+    console.log(`[scan-queue] ${next.id} claimed attempt=${attemptNo} file=${next.fileName} bytes=${next.fileSize}`);
 
     // `sampleId` rides along so the completion UPDATE can persist it — the
     // wizards need a REAL scan-sample id to confirm against (see the sample_id
@@ -619,6 +620,7 @@ async function processOneRow(
     } catch (e) {
       result = { ok: false, error: (e as Error).message };
     }
+    console.log(`[scan-queue] ${next.id} extract returned ok=${result.ok} split=${!!splitMarker}`);
 
     const completedAt = new Date().toISOString();
     try {
@@ -717,6 +719,7 @@ async function processOneRow(
       console.error("[scan-queue] result write failed:", (e as Error).message);
       return { kind: "error", error: `Result write failed: ${(e as Error).message}` };
     }
+    console.log(`[scan-queue] ${next.id} row written`);
     return { kind: "processed", id: next.id };
   }
 }
