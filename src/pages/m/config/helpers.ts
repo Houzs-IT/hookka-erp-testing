@@ -146,6 +146,17 @@ export const PAYMENT_STATUS_MAP: StyleMap = {
   INACTIVE: NEUTRAL,
 };
 
+/** e-Invoice record (src/lib/e-invoice.ts): not sent yet, waiting for LHDN,
+ *  validated, failed our check / rejected by LHDN, cancelled. */
+export const E_INVOICE_STATUS_MAP: StyleMap = {
+  PENDING: WARNING,
+  SUBMITTED: INFO,
+  VALID: SUCCESS,
+  INVALID: DANGER,
+  REJECTED: DANGER,
+  CANCELLED: NEUTRAL,
+};
+
 /**
  * Service-case lifecycle colours (route /api/service-cases status enum:
  * OPEN / IN_PROGRESS / CLOSED / CANCELLED). Open = work to do (info),

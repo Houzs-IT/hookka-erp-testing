@@ -3,7 +3,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { KpiCards, SegmentedSwitch } from "@/components/finance/report-shell";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -18,172 +17,150 @@ import {
   Code,
   RefreshCw,
   Ban,
+  Copy,
+  Download,
 } from "lucide-react";
 import type { EInvoice } from "@/types";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
+import {
+  E_INVOICE_STATUS_NAME,
+  E_INVOICE_WHERE,
+  eInvoiceKpis,
+  eInvoiceNextStep,
+  isEInvoiceStatus,
+  mytMonth,
+  type EInvoiceStatus,
+} from "@/lib/e-invoice";
 
-type Invoice = {
+// An issued sales invoice with no e-Invoice yet (GET /api/e-invoices/candidates).
+type Candidate = {
   id: string;
   invoiceNo: string;
-  customerName: string;
-  customerState: string;
   invoiceDate: string;
+  customerName: string;
   totalSen: number;
   status: string;
+  buyerTin: string;
 };
 
 type TabId = "dashboard" | "generate" | "xml";
 
+// The three steps that keep the record in step with MyInvois.
+type Dialog = { kind: "mark" | "record" | "cancel"; einv: EInvoice };
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
 export default function EInvoicePage() {
   const { data: eResp, loading: eLoading, refresh: refreshEInvoices } = useCachedJson<{ success?: boolean; data?: EInvoice[] }>("/api/e-invoices");
-  const { data: iResp, loading: iLoading, refresh: refreshInvoices } = useCachedJson<{ success?: boolean; data?: Invoice[] }>("/api/invoices");
+  const { data: cResp, loading: cLoading, refresh: refreshCandidates } = useCachedJson<{ success?: boolean; data?: Candidate[] }>("/api/e-invoices/candidates");
   const eInvoices: EInvoice[] = useMemo(
     () => (eResp?.success ? eResp.data ?? [] : Array.isArray(eResp) ? eResp : []),
     [eResp]
   );
-  const invoices: Invoice[] = useMemo(
-    () => (iResp?.success ? iResp.data ?? [] : Array.isArray(iResp) ? iResp : []),
-    [iResp]
+  const candidates: Candidate[] = useMemo(
+    () => (cResp?.success ? cResp.data ?? [] : []),
+    [cResp]
   );
-  const loading = eLoading || iLoading;
+  const loading = eLoading || cLoading;
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
-  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
-  const [generating, setGenerating] = useState(false);
-  const [submitting, setSubmitting] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState<string | null>(null);
-  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState<{ done: number; total: number } | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [submissionId, setSubmissionId] = useState("");
+  const [result, setResult] = useState<"VALID" | "REJECTED">("VALID");
+  const [uuid, setUuid] = useState("");
+  const [reason, setReason] = useState("");
   const [selectedXmlId, setSelectedXmlId] = useState<string | null>(null);
-  // Esc = "No, Keep It" on the cancel confirmation (owner 2026-10-02: every
-  // finance popup closes on Esc); not while the cancel is being sent.
-  useEscapeClose(() => { if (!cancelling) setCancelConfirmId(null); }, !!cancelConfirmId);
+  // Esc closes the open step (owner 2026-10-02: every finance popup closes on
+  // Esc); not while it is being saved.
+  useEscapeClose(() => { if (!busy) setDialog(null); }, !!dialog);
 
   const fetchData = async () => {
     invalidateCachePrefix("/api/e-invoices");
-    invalidateCachePrefix("/api/invoices");
     refreshEInvoices();
-    refreshInvoices();
+    refreshCandidates();
   };
 
-  // KPI calculations
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const statusOf = (e: EInvoice): EInvoiceStatus => (isEInvoiceStatus(e.status) ? e.status : "PENDING");
 
-  const submittedMTD = eInvoices.filter(
-    (e) => e.submittedAt && e.submittedAt.startsWith(currentMonth)
-  ).length;
-  const validCount = eInvoices.filter((e) => e.status === "VALID").length;
-  const pendingCount = eInvoices.filter((e) => e.status === "PENDING").length;
-  const invalidCount = eInvoices.filter(
-    (e) => e.status === "INVALID"
-  ).length;
+  // The four cards (design): uploaded this month with a MyInvois ID,
+  // validated, waiting, invalid / rejected.
+  const kpi = eInvoiceKpis(eInvoices, mytMonth(new Date().toISOString()));
+  const readyWithTin = useMemo(() => candidates.filter((c) => c.buyerTin), [candidates]);
 
-  // Invoices not yet submitted as e-invoices
-  const eInvoiceInvoiceIds = useMemo(
-    () => new Set(eInvoices.map((e) => e.invoiceId)),
-    [eInvoices]
-  );
-  const eInvoiceInvoiceNos = useMemo(
-    () => new Set(eInvoices.map((e) => e.invoiceNo)),
-    [eInvoices]
-  );
-  const availableInvoices = useMemo(
-    () =>
-      invoices.filter(
-        (inv) =>
-          !eInvoiceInvoiceIds.has(inv.id) &&
-          !eInvoiceInvoiceNos.has(inv.invoiceNo) &&
-          inv.status !== "DRAFT" &&
-          inv.status !== "CANCELLED"
-      ),
-    [invoices, eInvoiceInvoiceIds, eInvoiceInvoiceNos]
-  );
-
-  const toggleSelect = (id: string) => {
-    setSelectedInvoiceIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const openDialog = (kind: Dialog["kind"], einv: EInvoice) => {
+    setSubmissionId("");
+    setResult("VALID");
+    setUuid("");
+    setReason("");
+    setDialogError(null);
+    setDialog({ kind, einv });
   };
 
-  const toggleSelectAll = () => {
-    if (selectedInvoiceIds.size === availableInvoices.length) {
-      setSelectedInvoiceIds(new Set());
-    } else {
-      setSelectedInvoiceIds(new Set(availableInvoices.map((inv) => inv.id)));
-    }
-  };
-
-  const generateEInvoices = async () => {
-    if (selectedInvoiceIds.size === 0) return;
-    setGenerating(true);
-
-    for (const invoiceId of selectedInvoiceIds) {
-      await fetch("/api/e-invoices", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceId }),
-      });
-    }
-
-    setSelectedInvoiceIds(new Set());
-    await fetchData();
-    setGenerating(false);
-    setActiveTab("dashboard");
-  };
-
-  // Submitting to LHDN is NOT implemented — the route now refuses (501) rather
-  // than minting a random submission ID + UUID and flipping the row to VALID,
-  // which is what it did until BUG-2026-08-13-014. The refusal is surfaced
-  // here: this function used to throw the response away entirely, so a failure
-  // would have looked like a button that simply did nothing.
-  const submitToLHDN = async (eInvoiceId: string) => {
-    setSubmitting(eInvoiceId);
-    setSubmitError(null);
+  // One step on one record. A refused input (400 / 409) keeps the step open
+  // so it can be fixed; anything the server recorded closes it.
+  const step = async (payload: Record<string, unknown>, okText: string) => {
+    if (!dialog) return;
+    setBusy(true);
+    setDialogError(null);
     try {
-      const res = await fetch(`/api/e-invoices/${eInvoiceId}`, {
+      const res = await fetch(`/api/e-invoices/${dialog.einv.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "submit" }),
+        headers: JSON_HEADERS,
+        body: JSON.stringify(payload),
       });
-      const json = (await res.json().catch(() => null)) as
-        | { success?: boolean; error?: string }
-        | null;
-      if (!res.ok || !json?.success) {
-        setSubmitError(
-          json?.error ??
-            `Submission failed (HTTP ${res.status}). Nothing was sent to LHDN.`,
-        );
+      const json = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
+      if (res.ok && json?.success) {
+        setNotice({ tone: "ok", text: okText });
+        setDialog(null);
+      } else if (res.status === 400 || res.status === 409) {
+        setDialogError(json?.error ?? `Not saved (HTTP ${res.status}).`);
+      } else {
+        setNotice({ tone: "err", text: json?.error ?? `Not saved (HTTP ${res.status}).` });
+        setDialog(null);
       }
     } catch {
-      setSubmitError(
-        "Submission failed: the request could not be sent. Nothing was sent to LHDN.",
-      );
+      setDialogError("Not saved: the request could not be sent.");
     }
     await fetchData();
-    setSubmitting(null);
+    setBusy(false);
   };
 
-  const cancelEInvoice = async (eInvoiceId: string) => {
-    setCancelling(eInvoiceId);
-    await fetch(`/api/e-invoices/${eInvoiceId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "cancel" }),
-    });
-    setCancelConfirmId(null);
+  // Build the XML for each invoice, one request each; every refusal is shown.
+  const generate = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setNotice(null);
+    setGenerating({ done: 0, total: ids.length });
+    const failed: string[] = [];
+    for (const [i, invoiceId] of ids.entries()) {
+      try {
+        const res = await fetch("/api/e-invoices", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ invoiceId }),
+        });
+        const json = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
+        if (!res.ok || !json?.success) failed.push(json?.error ?? `HTTP ${res.status}`);
+      } catch {
+        failed.push("the request could not be sent");
+      }
+      setGenerating({ done: i + 1, total: ids.length });
+    }
     await fetchData();
-    setCancelling(null);
+    setGenerating(null);
+    const made = ids.length - failed.length;
+    setNotice(
+      failed.length
+        ? { tone: "err", text: `${made} XML generated, ${failed.length} not — ${failed[0]}` }
+        : { tone: "ok", text: `${made} XML generated · now in the Dashboard as Pending` },
+    );
   };
 
-  const statusBadge = (status: EInvoice["status"]) => {
-    const config: Record<
-      EInvoice["status"],
-      { bg: string; text: string; icon: React.ReactNode }
-    > = {
+  const statusBadge = (status: EInvoiceStatus) => {
+    const config: Record<EInvoiceStatus, { bg: string; text: string; icon: React.ReactNode }> = {
       PENDING: {
         bg: "bg-[#FAEFCB] border-[#E8D597]",
         text: "text-[#9C6F1E]",
@@ -204,10 +181,15 @@ export default function EInvoicePage() {
         text: "text-[#9A3A2D]",
         icon: <AlertTriangle className="h-3 w-3" />,
       },
+      REJECTED: {
+        bg: "bg-[#F9E1DA] border-[#E8B2A1]",
+        text: "text-[#9A3A2D]",
+        icon: <XCircle className="h-3 w-3" />,
+      },
       CANCELLED: {
         bg: "bg-gray-50 border-gray-200",
         text: "text-gray-500",
-        icon: <XCircle className="h-3 w-3" />,
+        icon: <Ban className="h-3 w-3" />,
       },
     };
     const c = config[status];
@@ -216,27 +198,53 @@ export default function EInvoicePage() {
         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${c.bg} ${c.text}`}
       >
         {c.icon}
-        {status}
+        {E_INVOICE_STATUS_NAME[status]}
       </span>
     );
   };
 
+  // The second line of "Where It Is": the error, else the UUID, else the
+  // Submission ID.
+  const whereDetail = (e: EInvoice) =>
+    e.errorMessage ? e.errorMessage : e.status === "VALID" && e.uuid ? `UUID ${e.uuid}` : e.submissionId ? `Submission ID ${e.submissionId}` : "";
+
   const selectedXml = useMemo(
-    () => eInvoices.find((e) => e.id === selectedXmlId),
+    () => eInvoices.find((e) => e.id === selectedXmlId) ?? eInvoices[0],
     [eInvoices, selectedXmlId]
   );
+
+  const copyXml = async () => {
+    if (!selectedXml?.xmlContent) return;
+    try {
+      await navigator.clipboard.writeText(selectedXml.xmlContent);
+      setNotice({ tone: "ok", text: "XML copied" });
+    } catch {
+      setNotice({ tone: "err", text: "Could not copy — select the XML and copy it by hand." });
+    }
+  };
+
+  const downloadXml = () => {
+    if (!selectedXml?.xmlContent) return;
+    const url = URL.createObjectURL(new Blob([selectedXml.xmlContent], { type: "application/xml" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedXml.invoiceNo}.xml`;
+    a.click();
+    // eslint-disable-next-line no-restricted-syntax -- a click handler: frees the file link once the download has started
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   // Window both e-invoice tables so large invoice volumes stay light.
   const submissionsScrollRef = useRef<HTMLDivElement>(null);
   const submissionsVirtualizer = useVirtualizer({
     count: eInvoices.length,
     getScrollElement: () => submissionsScrollRef.current,
-    estimateSize: () => 53,
+    estimateSize: () => 57,
     overscan: 10,
   });
   const availableScrollRef = useRef<HTMLDivElement>(null);
   const availableVirtualizer = useVirtualizer({
-    count: availableInvoices.length,
+    count: candidates.length,
     getScrollElement: () => availableScrollRef.current,
     estimateSize: () => 49,
     overscan: 10,
@@ -254,12 +262,16 @@ export default function EInvoicePage() {
     );
   }
 
+  const th = "text-left py-3 px-4 text-xs font-bold text-[#4B5563]";
+  const thR = "text-right py-3 px-4 text-xs font-bold text-[#4B5563]";
+  const actBtn = "h-7 px-2 text-[#3E6570] hover:text-[#2E4D57] hover:bg-[#E0EDF0]";
+
   return (
     <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
       {/* Header (finance v2: the explanation sits behind the (i)) */}
       <FinancePageTitle
         title="e-Invoice"
-        explain="LHDN MyInvois: Malaysian e-Invoice XML generation. Sending to LHDN is not connected."
+        explain="LHDN MyInvois — builds and stores the UBL XML for each sales invoice, and keeps the record of what MyInvois and LHDN answered."
         actions={
           <Button variant="outline" onClick={fetchData} className="gap-2">
             <RefreshCw className="h-4 w-4" />
@@ -268,21 +280,27 @@ export default function EInvoicePage() {
         }
       />
 
-      {/* Standing notice. Until BUG-2026-08-13-014 the Submit button minted a
-          random `LHDN-SUB-…` id and a random 15-char UUID, marked the row
-          VALID and showed a green badge — with no LHDN client in the codebase
-          at all. Any VALID row created before this fix carries an identifier
-          LHDN never issued. */}
+      {/* Standing notice. Nothing on this page transmits to LHDN — until
+          BUG-2026-08-13-014 the Submit button minted a random `LHDN-SUB-…` id
+          and UUID and painted the row VALID. The record now only carries what
+          the owner keys from MyInvois. */}
       <div className="rounded-md border border-[#E8D597] bg-[#FAEFCB] px-3 py-2 text-xs text-[#7A5712]">
         <span className="font-semibold">Not connected to LHDN.</span> This page
-        builds and stores the e-Invoice UBL XML. It does not transmit anything —
-        submit through MyInvois. Any row already marked <em>VALID</em> with a
-        submission ID or UUID was stamped locally, not cleared by LHDN.
+        builds the e-Invoice XML and keeps the record. Send each invoice through
+        MyInvois, then come back: <em>Mark as Submitted</em> with the Submission
+        ID, and <em>Record Result</em> with the UUID when LHDN replies. Nothing
+        turns Valid without a UUID.
       </div>
 
-      {submitError && (
-        <div className="rounded-md border border-[#E8B2A1] bg-[#F9E1DA] px-3 py-2 text-xs text-[#9A3A2D]">
-          {submitError}
+      {notice && (
+        <div
+          className={`rounded-md border px-3 py-2 text-xs ${
+            notice.tone === "err"
+              ? "border-[#E8B2A1] bg-[#F9E1DA] text-[#9A3A2D]"
+              : "border-[#C6DBA8] bg-[#EEF3E4] text-[#4F7C3A]"
+          }`}
+        >
+          {notice.text}
         </div>
       )}
 
@@ -291,7 +309,7 @@ export default function EInvoicePage() {
         label="e-Invoice view"
         options={[
           { key: "dashboard", label: "Dashboard" },
-          { key: "generate", label: availableInvoices.length ? `Generate e-Invoice · ${availableInvoices.length}` : "Generate e-Invoice" },
+          { key: "generate", label: candidates.length ? `Generate e-Invoice · ${candidates.length}` : "Generate e-Invoice" },
           { key: "xml", label: "XML Preview" },
         ]}
         value={activeTab}
@@ -301,17 +319,15 @@ export default function EInvoicePage() {
       {/* Tab 1: Dashboard */}
       {activeTab === "dashboard" && (
         <>
-          {/* KPI Cards (finance v2: same four figures) */}
           <KpiCards
             items={[
-              { label: "Submitted (MTD)", value: String(submittedMTD) },
-              { label: "Validated", value: String(validCount), tone: "ok" },
-              { label: "Pending", value: String(pendingCount), tone: "warn" },
-              { label: "Invalid / Rejected", value: String(invalidCount), tone: "err" },
+              { label: "Uploaded (MTD)", value: String(kpi.uploadedMtd), note: "with a MyInvois ID" },
+              { label: "Validated by LHDN", value: String(kpi.validated), tone: "ok", note: "UUID recorded" },
+              { label: "Waiting", value: String(kpi.notSent + kpi.waitingLhdn), tone: "warn", note: `${kpi.notSent} not sent yet · ${kpi.waitingLhdn} waiting for LHDN` },
+              { label: "Invalid / Rejected", value: String(kpi.invalidRejected), tone: "err", note: "fix and send again" },
             ]}
           />
 
-          {/* Recent Submissions Table */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2">
@@ -322,7 +338,7 @@ export default function EInvoicePage() {
             <CardContent>
               {eInvoices.length === 0 ? (
                 <p className="text-sm text-[#6B7280] text-center py-8">
-                  No e-invoices found. Go to the Generate tab to create one.
+                  No e-invoices yet. Go to the Generate tab to build one.
                 </p>
               ) : (
                 <div
@@ -333,24 +349,13 @@ export default function EInvoicePage() {
                   <table data-fin-list className="w-full text-sm">
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
-                        <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                          Invoice No
-                        </th>
-                        <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                          Customer
-                        </th>
-                        <th className="text-right py-3 px-4 text-xs font-bold text-[#4B5563]">
-                          Total
-                        </th>
-                        <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                          Submitted
-                        </th>
-                        <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                          Status
-                        </th>
-                        <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                          Actions
-                        </th>
+                        <th className={th}>Invoice No</th>
+                        <th className={th}>Customer</th>
+                        <th className={thR}>Total (RM)</th>
+                        <th className={th}>Uploaded To MyInvois</th>
+                        <th className={th}>Status</th>
+                        <th className={th}>Where It Is</th>
+                        <th className={th}></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -366,59 +371,78 @@ export default function EInvoicePage() {
                           <>
                             {padTop > 0 && (
                               <tr aria-hidden="true" data-fin-nolift="">
-                                <td colSpan={6} style={{ height: padTop, padding: 0, border: 0 }} />
+                                <td colSpan={7} style={{ height: padTop, padding: 0, border: 0 }} />
                               </tr>
                             )}
                             {vItems.map((vi) => {
                               const einv = eInvoices[vi.index];
                               if (!einv) return null;
+                              const st = statusOf(einv);
+                              const next = eInvoiceNextStep(st);
+                              const bad = st === "INVALID" || st === "REJECTED";
                               return (
                         <tr
                           key={einv.id}
                           data-index={vi.index}
                           ref={submissionsVirtualizer.measureElement}
-                          className="border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50"
+                          className="border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50 cursor-pointer"
+                          title="Double-click to see the XML"
+                          onDoubleClick={() => {
+                            setSelectedXmlId(einv.id);
+                            setActiveTab("xml");
+                          }}
                         >
                           <td className="py-3 px-4 font-medium text-[#1F1D1B]">
                             {einv.invoiceNo}
                           </td>
-                          <td className="py-3 px-4 text-[#4B5563]">
-                            {einv.customerName}
+                          <td className="py-3 px-4">
+                            <div className="text-[#1F1D1B]">{einv.customerName}</div>
+                            <div className={`text-xs ${einv.customerTIN ? "text-[#6B7280]" : "text-[#9A3A2D]"}`}>
+                              {einv.customerTIN ? `TIN ${einv.customerTIN}` : "TIN missing"}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            RM {einv.totalIncludingTax.toFixed(2)}
+                            {formatCurrency(einv.totalIncludingTax)}
                           </td>
-                          <td className="py-3 px-4 text-[#4B5563]">
-                            {einv.submittedAt
-                              ? formatDate(einv.submittedAt)
-                              : "-"}
+                          <td className="py-3 px-4 text-[#374151]">
+                            {einv.submissionId && einv.submittedAt ? (
+                              <>
+                                <div>{formatDate(einv.submittedAt)}</div>
+                                <div className="text-xs text-[#6B7280]">
+                                  {new Date(einv.submittedAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
+                                </div>
+                              </>
+                            ) : (
+                              <span className="text-[#C4BDB3]">-</span>
+                            )}
                           </td>
-                          <td className="py-3 px-4">{statusBadge(einv.status)}</td>
+                          <td className="py-3 px-4">{statusBadge(st)}</td>
                           <td className="py-3 px-4">
-                            <div className="flex items-center gap-1">
-                              {(einv.status === "PENDING" ||
-                                einv.status === "INVALID") && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 px-2 text-[#3E6570] hover:text-[#2E4D57] hover:bg-[#E0EDF0]"
-                                  onClick={() => submitToLHDN(einv.id)}
-                                  disabled={submitting === einv.id}
-                                >
+                            <div className={bad ? "text-[#9A3A2D]" : "text-[#374151]"}>{E_INVOICE_WHERE[st]}</div>
+                            {whereDetail(einv) && (
+                              <div className={`text-xs ${bad ? "text-[#9A3A2D]" : "text-[#6B7280]"}`}>{whereDetail(einv)}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center justify-end gap-1">
+                              {next === "mark" && (
+                                <Button variant="ghost" size="sm" className={actBtn} onClick={() => openDialog("mark", einv)}>
                                   <Send className="h-3 w-3 mr-1" />
-                                  {submitting === einv.id
-                                    ? "Submitting..."
-                                    : "Submit"}
+                                  Mark as Submitted
                                 </Button>
                               )}
-                              {(einv.status === "VALID" ||
-                                einv.status === "SUBMITTED") && (
+                              {next === "record" && (
+                                <Button variant="ghost" size="sm" className={actBtn} onClick={() => openDialog("record", einv)}>
+                                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                                  Record Result
+                                </Button>
+                              )}
+                              {next === "cancel" && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   className="h-7 px-2 text-[#9A3A2D] hover:text-[#7A2E24] hover:bg-[#F9E1DA]"
-                                  onClick={() => setCancelConfirmId(einv.id)}
-                                  disabled={cancelling === einv.id}
+                                  onClick={() => openDialog("cancel", einv)}
                                 >
                                   <Ban className="h-3 w-3 mr-1" />
                                   Cancel
@@ -437,11 +461,135 @@ export default function EInvoicePage() {
                                 XML
                               </Button>
                             </div>
-                            {einv.errorMessage && (
-                              <p className="text-xs text-[#9A3A2D] mt-1">
-                                {einv.errorMessage}
-                              </p>
+                          </td>
+                        </tr>
+                              );
+                            })}
+                            {padBottom > 0 && (
+                              <tr aria-hidden="true" data-fin-nolift="">
+                                <td colSpan={7} style={{ height: padBottom, padding: 0, border: 0 }} />
+                              </tr>
                             )}
+                          </>
+                        );
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {/* Tab 2: Generate e-Invoice */}
+      {activeTab === "generate" && (
+        <>
+          <KpiCards
+            items={[
+              { label: "Ready to generate", value: String(candidates.length), note: `${candidates.length - readyWithTin.length} missing buyer TIN` },
+            ]}
+          />
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-[#6B5C32]" />
+                  Sales Invoices Without An e-Invoice
+                </CardTitle>
+                <Button
+                  variant="primary"
+                  disabled={readyWithTin.length === 0 || !!generating}
+                  onClick={() => generate(readyWithTin.map((c) => c.id))}
+                  title="Builds the XML for every invoice whose buyer has a TIN on file"
+                >
+                  <FileCheck className="h-4 w-4 mr-1" />
+                  {generating
+                    ? `Generating ${generating.done} / ${generating.total}...`
+                    : `Generate All Ready (${readyWithTin.length})`}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {candidates.length === 0 ? (
+                <p className="text-sm text-[#6B7280] text-center py-8">
+                  Every issued invoice already has an e-Invoice.
+                </p>
+              ) : (
+                <div
+                  ref={availableScrollRef}
+                  className="overflow-auto"
+                  style={{ maxHeight: "calc(100vh - 340px)" }}
+                >
+                  <table data-fin-list className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
+                        <th className={th}>Invoice No</th>
+                        <th className={th}>Date</th>
+                        <th className={th}>Customer</th>
+                        <th className={th}>Buyer TIN</th>
+                        <th className={thR}>Total (RM)</th>
+                        <th className={th}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const vItems = availableVirtualizer.getVirtualItems();
+                        const padTop = vItems.length > 0 ? vItems[0].start : 0;
+                        const padBottom =
+                          vItems.length > 0
+                            ? availableVirtualizer.getTotalSize() -
+                              vItems[vItems.length - 1].end
+                            : 0;
+                        return (
+                          <>
+                            {padTop > 0 && (
+                              <tr aria-hidden="true" data-fin-nolift="">
+                                <td colSpan={6} style={{ height: padTop, padding: 0, border: 0 }} />
+                              </tr>
+                            )}
+                            {vItems.map((vi) => {
+                              const inv = candidates[vi.index];
+                              if (!inv) return null;
+                              return (
+                        <tr
+                          key={inv.id}
+                          data-index={vi.index}
+                          ref={availableVirtualizer.measureElement}
+                          className="border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50"
+                        >
+                          <td className="py-3 px-4 font-medium text-[#1F1D1B]">
+                            {inv.invoiceNo}
+                          </td>
+                          <td className="py-3 px-4 text-[#6B7280]">
+                            {inv.invoiceDate ? formatDate(inv.invoiceDate) : "-"}
+                          </td>
+                          <td className="py-3 px-4 text-[#1F1D1B]">
+                            {inv.customerName}
+                          </td>
+                          <td className="py-3 px-4">
+                            {inv.buyerTin ? (
+                              <span className="text-[#374151]">{inv.buyerTin}</span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-[#F9E1DA] border-[#E8B2A1] text-[#9A3A2D]">
+                                TIN missing
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
+                            {formatCurrency(inv.totalSen)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={actBtn}
+                              disabled={!!generating}
+                              onClick={() => generate([inv.id])}
+                            >
+                              <FileCheck className="h-3 w-3 mr-1" />
+                              Generate XML
+                            </Button>
                           </td>
                         </tr>
                               );
@@ -463,143 +611,6 @@ export default function EInvoicePage() {
         </>
       )}
 
-      {/* Tab 2: Generate e-Invoice */}
-      {activeTab === "generate" && (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-[#6B5C32]" />
-                Invoices Available for e-Invoice Generation
-              </CardTitle>
-              <Button
-                variant="primary"
-                disabled={selectedInvoiceIds.size === 0 || generating}
-                onClick={generateEInvoices}
-              >
-                <FileCheck className="h-4 w-4 mr-1" />
-                {generating
-                  ? "Generating..."
-                  : `Generate e-Invoice (${selectedInvoiceIds.size})`}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {availableInvoices.length === 0 ? (
-              <p className="text-sm text-[#6B7280] text-center py-8">
-                All invoices have been submitted as e-invoices.
-              </p>
-            ) : (
-              <div
-                ref={availableScrollRef}
-                className="overflow-auto"
-                style={{ maxHeight: "calc(100vh - 340px)" }}
-              >
-                <table data-fin-list className="w-full text-sm">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
-                      <th className="py-3 px-4 text-left">
-                        <input
-                          type="checkbox"
-                          checked={
-                            selectedInvoiceIds.size ===
-                              availableInvoices.length &&
-                            availableInvoices.length > 0
-                          }
-                          onChange={toggleSelectAll}
-                          className="rounded border-[#E2DDD8] text-[#6B5C32] focus:ring-[#6B5C32]"
-                        />
-                      </th>
-                      <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                        Invoice No
-                      </th>
-                      <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                        Customer
-                      </th>
-                      <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                        Date
-                      </th>
-                      <th className="text-right py-3 px-4 text-xs font-bold text-[#4B5563]">
-                        Total
-                      </th>
-                      <th className="text-left py-3 px-4 text-xs font-bold text-[#4B5563]">
-                        Status
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const vItems = availableVirtualizer.getVirtualItems();
-                      const padTop = vItems.length > 0 ? vItems[0].start : 0;
-                      const padBottom =
-                        vItems.length > 0
-                          ? availableVirtualizer.getTotalSize() -
-                            vItems[vItems.length - 1].end
-                          : 0;
-                      return (
-                        <>
-                          {padTop > 0 && (
-                            <tr aria-hidden="true" data-fin-nolift="">
-                              <td colSpan={6} style={{ height: padTop, padding: 0, border: 0 }} />
-                            </tr>
-                          )}
-                          {vItems.map((vi) => {
-                            const inv = availableInvoices[vi.index];
-                            if (!inv) return null;
-                            return (
-                        <tr
-                          key={inv.id}
-                          data-index={vi.index}
-                          ref={availableVirtualizer.measureElement}
-                          className={`border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50 cursor-pointer ${
-                            selectedInvoiceIds.has(inv.id)
-                              ? "bg-[#6B5C32]/5"
-                              : ""
-                          }`}
-                          onClick={() => toggleSelect(inv.id)}
-                        >
-                          <td className="py-3 px-4">
-                            <input
-                              type="checkbox"
-                              checked={selectedInvoiceIds.has(inv.id)}
-                              onChange={() => toggleSelect(inv.id)}
-                              className="rounded border-[#E2DDD8] text-[#6B5C32] focus:ring-[#6B5C32]"
-                            />
-                          </td>
-                          <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                            {inv.invoiceNo}
-                          </td>
-                          <td className="py-3 px-4 text-[#4B5563]">
-                            {inv.customerName}
-                          </td>
-                          <td className="py-3 px-4 text-[#4B5563]">
-                            {formatDate(inv.invoiceDate)}
-                          </td>
-                          <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            {formatCurrency(inv.totalSen)}
-                          </td>
-                          <td className="py-3 px-4">
-                            <Badge variant="status" status={inv.status} />
-                          </td>
-                        </tr>
-                            );
-                          })}
-                          {padBottom > 0 && (
-                            <tr aria-hidden="true" data-fin-nolift="">
-                              <td colSpan={6} style={{ height: padBottom, padding: 0, border: 0 }} />
-                            </tr>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {/* Tab 3: XML Preview */}
       {activeTab === "xml" && (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -614,7 +625,7 @@ export default function EInvoicePage() {
                   <button
                     key={einv.id}
                     className={`w-full text-left px-4 py-3 border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50 transition-colors ${
-                      selectedXmlId === einv.id
+                      selectedXml?.id === einv.id
                         ? "bg-[#6B5C32]/10 border-l-2 border-l-[#6B5C32]"
                         : ""
                     }`}
@@ -626,7 +637,7 @@ export default function EInvoicePage() {
                     <p className="text-xs text-[#6B7280]">
                       {einv.customerName}
                     </p>
-                    <div className="mt-1">{statusBadge(einv.status)}</div>
+                    <div className="mt-1">{statusBadge(statusOf(einv))}</div>
                   </button>
                 ))}
               </div>
@@ -636,20 +647,34 @@ export default function EInvoicePage() {
           {/* XML Content */}
           <Card className="lg:col-span-3">
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <Code className="h-5 w-5 text-[#6B5C32]" />
-                XML Preview
-                {selectedXml && (
-                  <span className="text-sm font-normal text-[#6B7280]">
-                    - {selectedXml.invoiceNo}
-                  </span>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <CardTitle className="flex items-center gap-2">
+                  <Code className="h-5 w-5 text-[#6B5C32]" />
+                  XML Preview
+                  {selectedXml && (
+                    <span className="text-sm font-normal text-[#6B7280]">
+                      - {selectedXml.invoiceNo}.xml
+                    </span>
+                  )}
+                </CardTitle>
+                {selectedXml?.xmlContent && (
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="gap-1" onClick={copyXml}>
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy XML
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-1" onClick={downloadXml}>
+                      <Download className="h-3.5 w-3.5" />
+                      Download
+                    </Button>
+                  </div>
                 )}
-              </CardTitle>
+              </div>
             </CardHeader>
             <CardContent>
               {!selectedXml ? (
                 <p className="text-sm text-[#6B7280] text-center py-12">
-                  Select an e-invoice from the list to preview its XML content.
+                  No e-invoices yet. Generate one first.
                 </p>
               ) : !selectedXml.xmlContent ? (
                 <p className="text-sm text-[#6B7280] text-center py-12">
@@ -674,13 +699,13 @@ export default function EInvoicePage() {
                     <div className="bg-[#F0ECE9] rounded-md p-3">
                       <p className="text-xs text-[#6B7280]">Customer TIN</p>
                       <p className="text-sm font-mono font-medium text-[#1F1D1B]">
-                        {selectedXml.customerTIN || "N/A"}
+                        {selectedXml.customerTIN || "Missing"}
                       </p>
                     </div>
                     <div className="bg-[#F0ECE9] rounded-md p-3">
                       <p className="text-xs text-[#6B7280]">Status</p>
                       <div className="mt-0.5">
-                        {statusBadge(selectedXml.status)}
+                        {statusBadge(statusOf(selectedXml))}
                       </div>
                     </div>
                   </div>
@@ -698,35 +723,148 @@ export default function EInvoicePage() {
         </div>
       )}
 
-      {/* Cancel Confirmation Modal */}
-      {cancelConfirmId && (
+      {/* The step dialog: Mark as Submitted / Record Result / Cancel */}
+      {dialog && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-bold text-[#1F1D1B] mb-2">
-              Cancel e-Invoice
-            </h2>
-            <p className="text-sm text-[#6B7280] mb-4">
-              Are you sure you want to cancel this e-invoice? This action will
-              notify LHDN and the e-invoice will be marked as cancelled. This
-              cannot be undone.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setCancelConfirmId(null)}
-              >
-                No, Keep It
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
+            {dialog.kind === "mark" && (
+              <>
+                <h2 className="text-lg font-bold text-[#1F1D1B] mb-2">
+                  Mark as Submitted — {dialog.einv.invoiceNo}
+                </h2>
+                <p className="text-sm text-[#6B7280] mb-3">
+                  You sent {dialog.einv.invoiceNo} through MyInvois? Key the
+                  Submission ID MyInvois gave you.
+                </p>
+                {!dialog.einv.customerTIN && (
+                  <p className="text-xs text-[#9A3A2D] mb-3">
+                    No buyer TIN on this e-invoice. Add it on the customer
+                    first — without one it is recorded as Invalid, not sent.
+                  </p>
+                )}
+                <label className="block text-xs font-semibold text-[#4B5563] mb-1" htmlFor="einv-sub-id">
+                  Submission ID
+                </label>
+                <input
+                  id="einv-sub-id"
+                  autoFocus
+                  value={submissionId}
+                  onChange={(e) => setSubmissionId(e.target.value)}
+                  maxLength={100}
+                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm font-mono"
+                />
+              </>
+            )}
+            {dialog.kind === "record" && (
+              <>
+                <h2 className="text-lg font-bold text-[#1F1D1B] mb-2">
+                  Record Result — {dialog.einv.invoiceNo}
+                </h2>
+                <p className="text-sm text-[#6B7280] mb-3">
+                  What did LHDN answer for {dialog.einv.invoiceNo}
+                  {dialog.einv.submissionId ? ` (Submission ID ${dialog.einv.submissionId})` : ""}?
+                </p>
+                <div className="flex gap-4 mb-3 text-sm">
+                  <label className="inline-flex items-center gap-1.5">
+                    <input type="radio" name="einv-result" checked={result === "VALID"} onChange={() => setResult("VALID")} />
+                    Validated
+                  </label>
+                  <label className="inline-flex items-center gap-1.5">
+                    <input type="radio" name="einv-result" checked={result === "REJECTED"} onChange={() => setResult("REJECTED")} />
+                    Rejected
+                  </label>
+                </div>
+                {result === "VALID" ? (
+                  <>
+                    <label className="block text-xs font-semibold text-[#4B5563] mb-1" htmlFor="einv-uuid">
+                      UUID LHDN issued
+                    </label>
+                    <input
+                      id="einv-uuid"
+                      autoFocus
+                      value={uuid}
+                      onChange={(e) => setUuid(e.target.value)}
+                      maxLength={100}
+                      className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm font-mono"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-xs font-semibold text-[#4B5563] mb-1" htmlFor="einv-reason">
+                      Why did LHDN reject it?
+                    </label>
+                    <textarea
+                      id="einv-reason"
+                      autoFocus
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      maxLength={500}
+                      rows={3}
+                      className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm"
+                    />
+                  </>
+                )}
+              </>
+            )}
+            {dialog.kind === "cancel" && (
+              <>
+                <h2 className="text-lg font-bold text-[#1F1D1B] mb-2">
+                  Cancel e-Invoice {dialog.einv.invoiceNo}
+                </h2>
+                <p className="text-sm text-[#6B7280] mb-3">
+                  Cancel it in MyInvois first — LHDN allows this within 72
+                  hours of validation. This marks the record here as
+                  cancelled; nothing is sent to LHDN.
+                </p>
+              </>
+            )}
+            {dialogError && (
+              <p className="text-xs text-[#9A3A2D] mt-3">{dialogError}</p>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setDialog(null)} disabled={busy}>
+                {dialog.kind === "cancel" ? "No, Keep It" : "Close"}
               </Button>
-              <Button
-                variant="primary"
-                className="bg-[#9A3A2D] hover:bg-[#9A3A2D]"
-                onClick={() => cancelEInvoice(cancelConfirmId)}
-                disabled={cancelling === cancelConfirmId}
-              >
-                {cancelling === cancelConfirmId
-                  ? "Cancelling..."
-                  : "Yes, Cancel e-Invoice"}
-              </Button>
+              {dialog.kind === "mark" && (
+                <Button
+                  variant="primary"
+                  disabled={busy || !submissionId.trim()}
+                  onClick={() =>
+                    step(
+                      { action: "mark-submitted", submissionId: submissionId.trim() },
+                      `${dialog.einv.invoiceNo} marked submitted · ${submissionId.trim()}`,
+                    )
+                  }
+                >
+                  {busy ? "Saving..." : "Mark as Submitted"}
+                </Button>
+              )}
+              {dialog.kind === "record" && (
+                <Button
+                  variant="primary"
+                  disabled={busy || (result === "VALID" ? !uuid.trim() : !reason.trim())}
+                  onClick={() =>
+                    step(
+                      result === "VALID"
+                        ? { action: "record-result", result, uuid: uuid.trim() }
+                        : { action: "record-result", result, reason: reason.trim() },
+                      `${dialog.einv.invoiceNo} recorded as ${result === "VALID" ? "Valid" : "Rejected"}`,
+                    )
+                  }
+                >
+                  {busy ? "Saving..." : result === "VALID" ? "Record Valid" : "Record Rejected"}
+                </Button>
+              )}
+              {dialog.kind === "cancel" && (
+                <Button
+                  variant="primary"
+                  className="bg-[#9A3A2D] hover:bg-[#9A3A2D]"
+                  disabled={busy}
+                  onClick={() => step({ action: "cancel" }, `${dialog.einv.invoiceNo} cancelled`)}
+                >
+                  {busy ? "Saving..." : "Yes, Mark Cancelled"}
+                </Button>
+              )}
             </div>
           </div>
         </div>
