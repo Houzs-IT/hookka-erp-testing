@@ -6840,8 +6840,10 @@ async function liveInventory(
   fg: number;
   total: number;
 }> {
+  // Both loads once per read request (requestMemo, 2026-10-19): /pl values the
+  // opening and the closing month together — two full reads of the same rows.
   const [clRes, rmRes] = await Promise.all([
-    db
+    requestMemo("cost-ledger:live-inventory", () => db
       .prepare(
         "SELECT type, itemType, itemId, direction, totalCostSen, date FROM cost_ledger",
       )
@@ -6852,10 +6854,10 @@ async function liveInventory(
         direction: string;
         totalCostSen: number;
         date: string;
-      }>(),
-    db
+      }>()),
+    requestMemo("raw-materials:groups", () => db
       .prepare("SELECT id, itemGroup FROM raw_materials")
-      .all<{ id: string; itemGroup: string }>(),
+      .all<{ id: string; itemGroup: string }>()),
   ]);
   const grp = new Map<string, string>();
   for (const r of rmRes.results ?? []) grp.set(r.id, r.itemGroup || "OTHER");
@@ -7837,9 +7839,11 @@ async function loadMaterialCostDataUntimed(
   // any window ending <= lastYm, so they're dropped while assembling.
   const matEndIso = monthEndIso(lastYm);
   // 0. Ensure the opening-stock tables exist (deploys don't run migrations).
-  await ensureMaterialOpeningStock(db);
-  await ensureInventoryOpening(db);
-  await ensureStockTake(db);
+  await timed("mat-ensure", async () => {
+    await ensureMaterialOpeningStock(db);
+    await ensureInventoryOpening(db);
+    await ensureStockTake(db);
+  });
 
   // 0a. Cutover day: global kv `material_opening_date`, else the earliest
   //     as_of_date on file. Only GRN/issue movements strictly AFTER the cutover
@@ -7897,7 +7901,7 @@ async function loadMaterialCostDataUntimed(
   //      and the cost_ledger RM_ISSUE / ADJUSTMENT rows. Loaded in parallel.
   //      (cost_ledger is read whole — same pattern as stockSummaryRange — and
   //      filtered in JS; LABOR / FG rows are reused for WIP / FG below.)
-  const [grnRes, piRes, clRes, poRes, fgbRes, fguRes] = await Promise.all([
+  const [grnRes, piRes, clRes, poRes, fgbRes, fguRes] = await timed("mat-sources", () => Promise.all([
     db
       .prepare(
         `SELECT g.poId AS poId, g.receiveDate AS receiveDate, g.status AS status,
@@ -7953,7 +7957,7 @@ async function loadMaterialCostDataUntimed(
       )
       .bind(orgId)
       .all<{ batchId: string | null; date: string | null; qty: number | null }>(),
-  ]);
+  ]));
 
   // 3. PI-weighted-average layer cost, batched into one map keyed PO+material.
   //    round(Σ line_total_sen / Σ qty) over all APPROVED-PI STOCKED lines for
@@ -11030,7 +11034,9 @@ app.get("/pl", async (c) => {
     });
 
   // --- ledger legs ---
-  const legRes = await c.var.DB.prepare(
+  // Without a company filter this is the very query every ledger window of the
+  // request reads — loaded once (requestMemo "ledger-legs", 2026-10-19).
+  const legQuery = () => c.var.DB.prepare(
     `SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0${legWhere}`,
   )
     .bind(...(coFilter.active ? [coFilter.param] : []))
@@ -11042,6 +11048,7 @@ app.get("/pl", async (c) => {
     postedAt: string;
     sourceType: string;
   }>();
+  const legRes = await (coFilter.active ? legQuery() : requestMemo("ledger-legs", legQuery));
   const endYm = periodEndYm(period);
   // Per-account net for the P&L period and cumulative-as-of for the BS.
   // Phase 1 (2026-06): year-close legs zero the P&L accounts into 150-0000
@@ -17957,7 +17964,7 @@ app.get("/cash-position", async (c) => {
   // Every bank account at once (2026-10-19, 「优化加载速度」): the accounts are
   // independent, so their loads go out together instead of one account after
   // another. Same rows, same order; each account's tick warnings stay in its turn.
-  const perAccount = await Promise.all(bankAccounts.map(async (a) => {
+  const perAccount = await timed("cp-accounts", () => Promise.all(bankAccounts.map(async (a) => {
     const warnings: typeof tickWarnings = [];
     const { legs, clearedOn, openingDate } = await loadBankRecoState(c.var.DB, a.code);
     // The pending LIST only itemises vouchers after this account's last
@@ -18048,7 +18055,7 @@ app.get("/cash-position", async (c) => {
     const bankEstSen = bookSen - pendingSen + unbookedSen;
     const availableSen = bankEstSen + pendingSen; // = bookSen + unbookedSen
     return { row: { code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending }, warnings };
-  }));
+  })));
   for (const p of perAccount) {
     accounts.push(p.row);
     tickWarnings.push(...p.warnings);
@@ -18063,7 +18070,7 @@ app.get("/cash-position", async (c) => {
   // customer's terms) for the board's default "due now" scope.
   const obDateCp = await getOpeningDate(c.var.DB);
   const apExclCp = await loadOpeningApExcludes(c.var.DB);
-  const [piRes2, invRes2, ocbRes2, plannedRes] = await Promise.all([
+  const [piRes2, invRes2, ocbRes2, plannedRes] = await timed("cp-open-docs", () => Promise.all([
     c.var.DB.prepare(
       "SELECT id, supplierName, amountSen, paidAmountSen, status, invoiceDate, isOpening FROM purchase_invoices",
     ).all<{ id: string; supplierName: string; amountSen: number; paidAmountSen?: number | null; paid_amount_sen?: number | null; status: string; invoiceDate: string | null; isOpening: number | null }>(),
@@ -18080,7 +18087,7 @@ app.get("/cash-position", async (c) => {
     c.var.DB.prepare(
       "SELECT id, party_name, ref, expected_date, amount_sen FROM planned_payments WHERE done_at IS NULL ORDER BY expected_date",
     ).all<{ id: string; party_name?: string; partyName?: string; ref: string | null; expected_date?: string; expectedDate?: string; amount_sen?: number; amountSen?: number }>().catch(() => ({ results: [] as never[] })),
-  ]);
+  ]));
   const repayAgg = new Map<string, number>();
   for (const p of piRes2.results ?? []) {
     if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateCp, apExclCp)) continue;
