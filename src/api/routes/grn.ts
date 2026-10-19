@@ -2042,17 +2042,40 @@ app.put("/:id", async (c) => {
       } else {
         // ── Pre-commit (DRAFT) replace-items — unchanged behaviour ──────────
         const rawItems: Array<Record<string, unknown>> = body.items;
-        const newItems = rawItems.map((item) => ({
-          poItemIndex: Number(item.poItemIndex) || 0,
-          materialCode: (item.materialCode as string) ?? "",
-          materialName: (item.materialName as string) ?? "",
-          orderedQty: Number(item.orderedQty) || 0,
-          receivedQty: Number(item.receivedQty) || 0,
-          acceptedQty: Number(item.acceptedQty) || 0,
-          rejectedQty: Number(item.rejectedQty) || 0,
-          rejectionReason: (item.rejectionReason as string | null) ?? null,
-          unitPrice: Number(item.unitPrice) || 0,
-        }));
+        // HK-0107: each line's own PO link must survive the DELETE+INSERT
+        // below. Body poId/poItemId win; else carry the old line's link,
+        // matched by line id, then by position (GET order: poItemIndex, id).
+        await ensureGrnItemPoRef(c.var.DB);
+        const oldLines = ((
+          await c.var.DB
+            .prepare("SELECT * FROM grn_items WHERE grnId = ? ORDER BY id ASC")
+            .bind(id)
+            .all<GRNItemRow & GrnLinePoRef>()
+        ).results ?? []).sort((a, b) => (a.poItemIndex ?? 0) - (b.poItemIndex ?? 0));
+        const newItems = rawItems.map((item, i) => {
+          const old =
+            item.id != null
+              ? oldLines.find((l) => String(l.id) === String(item.id))
+              : oldLines[i];
+          const bodyItem = item.poItemId != null && String(item.poItemId).trim() !== "";
+          return {
+            poId: bodyItem
+              ? ((item.poId as string | null) ?? null)
+              : (old?.poId ?? old?.po_id ?? null),
+            poItemId: bodyItem
+              ? String(item.poItemId)
+              : (old?.poItemId ?? old?.po_item_id ?? null),
+            poItemIndex: Number(item.poItemIndex) || 0,
+            materialCode: (item.materialCode as string) ?? "",
+            materialName: (item.materialName as string) ?? "",
+            orderedQty: Number(item.orderedQty) || 0,
+            receivedQty: Number(item.receivedQty) || 0,
+            acceptedQty: Number(item.acceptedQty) || 0,
+            rejectedQty: Number(item.rejectedQty) || 0,
+            rejectionReason: (item.rejectionReason as string | null) ?? null,
+            unitPrice: Number(item.unitPrice) || 0,
+          };
+        });
         totalAmount = newItems.reduce(
           (sum, i) => sum + i.acceptedQty * i.unitPrice,
           0,
@@ -2063,13 +2086,15 @@ app.put("/:id", async (c) => {
         for (const item of newItems) {
           statements.push(
             c.var.DB.prepare(
-              `INSERT INTO grn_items (grnId, poItemIndex, materialCode, materialName,
+              `INSERT INTO grn_items (grnId, poItemIndex, po_id, po_item_id, materialCode, materialName,
                  orderedQty, receivedQty, acceptedQty, rejectedQty,
                  rejectionReason, unitPrice)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             ).bind(
               id,
               item.poItemIndex,
+              item.poId,
+              item.poItemId,
               item.materialCode,
               item.materialName,
               item.orderedQty,
