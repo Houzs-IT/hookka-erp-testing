@@ -15,6 +15,7 @@
 import invoices from "../routes/invoices";
 import { getOrgId } from "./tenant";
 import { customerScopeSql } from "./customer-scope";
+import { issuedNotesOnInvoice } from "./lock-helpers";
 import { RouteRefusal, type DocImportAdapter } from "./doc-import";
 import { currentFromListing, type CurrentDoc } from "../../lib/doc-import/core";
 import {
@@ -74,11 +75,16 @@ export const invoiceImportAdapter: DocImportAdapter = {
         partyCodes,
       },
     );
+    // Issued notes lock the invoice (PUT refuses it too); read them here so the
+    // preview shows the refusal instead of the apply.
+    const notesById = new Map(
+      await Promise.all(found.map(async (r) => [str(r.id), await issuedNotesOnInvoice(ctx.db, str(r.id))] as const)),
+    );
     const idByDocNo = new Map(found.map((r) => [str(r.invoiceNo), str(r.id)]));
     const meta = new Map<string, Record<string, unknown>>(
       found.map((r) => [
         str(r.invoiceNo),
-        { status: str(r.status), paidSen: Number(r.paidAmount) || 0, deliveryOrderId: str(r.deliveryOrderId) } satisfies InvoiceMeta,
+        { status: str(r.status), paidSen: Number(r.paidAmount) || 0, deliveryOrderId: str(r.deliveryOrderId), notes: notesById.get(str(r.id)) } satisfies InvoiceMeta,
       ]),
     );
     return currentFromListing(aoa, INVOICE_IMPORT_SPEC, idByDocNo, meta);

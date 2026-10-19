@@ -42,7 +42,8 @@ export const INVOICE_IMPORT_SPEC: ImportSpec = {
   ),
 };
 
-export type InvoiceMeta = { status: string; paidSen: number; deliveryOrderId: string };
+/** `notes` = credit / debit notes issued against the invoice; they lock its prices (owner 2026-10-17). */
+export type InvoiceMeta = { status: string; paidSen: number; deliveryOrderId: string; notes?: string[] };
 
 export type PriceEdit = {
   id: string;
@@ -89,6 +90,7 @@ export function invoiceEditPlan(doc: DocPlan): { edits: PriceEdit[]; errors: Iss
       invoiceId: cur.id,
       invoiceStatus: meta.status ?? "",
       invoicePaidSen: meta.paidSen ?? 0,
+      invoiceNotes: meta.notes,
       quantity: sen(v, "qty"),
       unitPriceSen: sen(v, "unitPrice"),
       basePriceSen: sen(v, "base"),
