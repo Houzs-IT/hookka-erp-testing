@@ -92,10 +92,11 @@ export function validatePiPlan(plan: ImportPlan): Issue[] {
     const first = doc.rows[0] ?? 0;
     if (doc.header.partyCode === undefined)
       errors.push({ row: first, docNo: label, message: "A new PI needs Party Code = the supplier code." });
-    // POST honours a typed number only when it looks like PI-…; anything else
-    // would be silently replaced by the next sequence number.
-    if (doc.docNo && !/^PI-\d/.test(doc.docNo))
-      errors.push({ row: first, docNo: label, message: `Doc No. "${doc.docNo}" is not a PI number (PI-…). Leave it blank or use NEW-1, NEW-2… to get the next number.` });
+    // The system always numbers a new PI (owner, 19 Oct): a typed number that
+    // is not an existing PI is refused, never sent as piNo — the route treats
+    // piNo as a historical import and skips its duplicate supplier-invoice check.
+    if (doc.docNo)
+      errors.push({ row: first, docNo: label, message: `${doc.docNo} is not an existing PI. A new PI's number is assigned on save — leave Doc No. blank or use NEW-1, NEW-2… to split new PIs.` });
     if (doc.lines.length === 0)
       errors.push({ row: first, docNo: label, message: "A new PI needs at least one line (Item Code / Description, Qty, Unit Price)." });
     for (const l of doc.lines) {
@@ -226,7 +227,6 @@ export const piImportAdapter: DocImportAdapter = {
       ...(doc.header.docDate !== undefined ? { invoiceDate: doc.header.docDate } : {}),
       ...(doc.header.supplierInvoiceNo !== undefined ? { supplierInvoiceNo: doc.header.supplierInvoiceNo } : {}),
       ...(purchaseOrderId ? { purchaseOrderId } : {}),
-      ...(doc.docNo ? { piNo: doc.docNo } : {}),
       items: doc.lines.map((l) => ({ ...fromTyped(l.typed), poId: purchaseOrderId })),
     })) as { data?: { id: string; piNo: string } | null };
     if (!created.data) throw new RouteRefusal("The purchase invoice route created nothing.", 500);

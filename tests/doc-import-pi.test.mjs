@@ -6,6 +6,8 @@
 //   * a blank cell keeps the stored value
 //   * create: POST with supplier (Party Code), PO (Ref Doc No.) and lines
 //   * one bad row and nothing from the file is written (all-or-nothing)
+//   * create never sends piNo: a typed unknown Doc No. is refused, and the
+//     route's duplicate supplier-invoice check always runs
 // ---------------------------------------------------------------------------
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +15,7 @@ import { Hono } from 'hono';
 
 import { piImportAdapter, PI_IMPORT_SPEC } from '../src/api/lib/doc-import-pi.ts';
 import purchaseInvoices from '../src/api/routes/purchase-invoices.ts';
-import { runDocImport } from '../src/api/lib/doc-import.ts';
+import { runDocImport, RouteRefusal } from '../src/api/lib/doc-import.ts';
 import { planDocImport, planHasWork } from '../src/lib/doc-import/core.ts';
 import { buildPiDetailRows } from '../src/lib/invoice-detail-export.ts';
 
@@ -91,6 +93,11 @@ function makeCtx() {
     db,
     async callRoute(app, method, path, body) {
       if (method !== 'GET') {
+        // The route's duplicate supplier-invoice guard, which it SKIPS when a
+        // piNo is supplied (purchase-invoices.ts, "historical import").
+        const dup = method === 'POST' && typeof body?.piNo !== 'string' && body?.supplierInvoiceNo &&
+          Object.values(PI_ROWS).find((r) => r.supplierId === body.supplierId && r.supplier_invoice_no === body.supplierInvoiceNo);
+        if (dup) throw new RouteRefusal(`Supplier document "${body.supplierInvoiceNo}" is already on ${dup.piNo} for this supplier — looks like a duplicate.`, 409);
         writes.push({ method, path, body });
         return { success: true, data: { id: 'pi-new', piNo: body?.piNo ?? 'PI-2610-099' } };
       }
@@ -213,7 +220,7 @@ test('create: missing Party Code / Description / a non-PI number are refused', a
   const { p } = await plan([H, row({ 'Doc Type': 'PI', 'Doc No.': 'X-1', 'Item Code': 'A', Qty: 1 }), row({ 'Doc Type': 'PI', 'Doc No.': 'X-1', 'Item Code': 'B', Description: 'b' })]);
   const msgs = p.errors.map((e) => e.message).join('\n');
   assert.match(msgs, /Party Code/);
-  assert.match(msgs, /not a PI number/);
+  assert.match(msgs, /X-1 is not an existing PI/);
   assert.match(msgs, /Description is blank/);
   assert.match(msgs, /Qty is blank/);
 });
@@ -235,4 +242,39 @@ test('all-or-nothing: one bad row and nothing from the file is written', async (
   assert.equal(r.rolledBack, true);
   assert.match(r.errors[0].message, /Qty: "lots" is not a number/);
   assert.deepEqual(db.committed, [], 'the good PI-2610-001 edit was not written either');
+});
+
+/** A one-PI create sheet with the given Doc No. and Supplier Invoice No. */
+async function createSheet(docNo, supplierInvoiceNo) {
+  const H = (await exportAoa())[0];
+  const row = (cells) => H.map((h) => cells[h] ?? '');
+  return [H, row({ 'Doc Type': 'PI', 'Doc No.': docNo, 'Doc Date': '2026-10-10', 'Party Code': 'S-OCEAN',
+    'Supplier Invoice No.': supplierInvoiceNo, 'Item Code': 'FAB-1', Description: 'Fabric', Qty: 10, 'Unit Price': 1.5 })];
+}
+
+test('create: a typed Doc No. that is not an existing PI is refused and nothing is written', async () => {
+  const sheet = await createSheet('PI-2610-050', 'OS-90');
+  const { p } = await plan(sheet);
+  assert.match(p.errors.map((e) => e.message).join('\n'), /PI-2610-050 is not an existing PI\. A new PI's number is assigned on save/);
+  const db = makeDb();
+  const app = new Hono();
+  app.use('*', async (c, next) => { c.set('DB', db); c.set('userId', 'u1'); await next(); });
+  app.post('/', async (c) => c.json(await runDocImport(c, piImportAdapter, sheet, { execute: true, checkPermission: async () => null })));
+  const r = await (await app.request('/', { method: 'POST' })).json();
+  assert.equal(r.success, false);
+  assert.deepEqual(db.committed, []);
+});
+
+test('create: never sends piNo, even when the doc carries a number', async () => {
+  const { p, ctx, writes } = await plan(await createSheet('PI-2610-050', 'OS-90'));
+  await piImportAdapter.create(ctx, p.docs[0]);
+  assert.equal(writes[0].body.piNo, undefined);
+});
+
+test('create: a supplier invoice no. already on a PI for that supplier is refused by the route', async () => {
+  for (const docNo of ['NEW-1', 'PI-2610-050']) {
+    const { p, ctx, writes } = await plan(await createSheet(docNo, 'OS-77'));
+    await assert.rejects(piImportAdapter.create(ctx, p.docs[0]), /OS-77" is already on PI-2610-001/);
+    assert.equal(writes.length, 0);
+  }
 });
