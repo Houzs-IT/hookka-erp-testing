@@ -62,7 +62,8 @@ test("the list is a DataGrid with the v2 rules and today's behaviour", () => {
   }
   assert.match(g, /onDoubleClick=\{\(r\) => \(r\.pv \? setDetailPvId\(r\.pv\.id\) : setDetailPayKey\(r\.key\)\)\}/);
   assert.match(g, /contextMenuItems=\{\(r\) => rowMenuItems\(r\.pv \? pvRowMenu\(r\.pv\) : payRowMenu\(r\)\)\}/);
-  assert.match(g, /alwaysSearchKeys=\{\["no", "payeeText", "descText", "billNos"\]\}/, "a bill number still finds its voucher");
+  // + the Reference (2026-10-19, tests/finance-reference-fields.test.mjs).
+  assert.match(g, /alwaysSearchKeys=\{\["no", "payeeText", "descText", "refText", "billNos"\]\}/, "a bill number still finds its voucher");
   assert.match(tab, /const gridRows = useMemo\(/, "stable rows (BUG-CLASSES C24: an unstable list loops the selection)");
   assert.match(tab, /const payColumns = useMemo<Column<PayGridRow>\[\]>\(/, "stable columns");
 });
@@ -71,7 +72,8 @@ test("the columns, in the design's order, with the money and the funnels right",
   const at = tab.indexOf("const payColumns = useMemo<Column<PayGridRow>[]>(");
   const cols = tab.slice(at, tab.indexOf("\n  ], [", at));
   const keys = [...cols.matchAll(/\{ key: "([a-zA-Z]+)", label: "([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(keys, ["no:PV No", "date:Date", "payeeText:Payee / Description", "viaLabel:Paid From", "lineText:Line", "totalSen:Total", "statusLabel:Status"]);
+  // + Reference after Payee / Description (2026-10-19, the owner's 「Reference 栏」).
+  assert.deepEqual(keys, ["no:PV No", "date:Date", "payeeText:Payee / Description", "refText:Reference", "viaLabel:Paid From", "lineText:Line", "totalSen:Total", "statusLabel:Status"]);
   assert.match(cols, /filterAccessor: \(r\) => PAY_DOOR_LABEL\[r\.door\], exportValue: \(r\) => r\.no/, "the PV No funnel lists doors; the export writes the number");
   assert.match(cols, /r\.viaLabel \|\| \(r\.door === "SP" \? "\(no bank leg\)" : "—"\)/, "a contra supplier payment is findable, never hidden");
   assert.match(cols, /type: "currency", align: "right", width: "140px", total: \(rows\) => activeTotalSen\(rows\)/, "the total skips void rows");

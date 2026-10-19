@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-19**: the owner's next asks logged (Reference fields, loading speed, the phone dashboard's missing sections).
 > **Last verified: 2026-10-18**: item 9 done — part B prod-verified read-only (#984); the ranked list is finished except item 8 (paused by the owner).
 > **Last verified: 2026-10-18**: item 9 part A prod-verified (#983); part B (Close Year / Reopen, the lock) on branch `feat/fiscal-year-close-lock`.
 > **Last verified: 2026-10-18**: item 10 done (#982 prod-read); item 9 part A on branch `feat/fiscal-year-pickers`.
@@ -238,6 +239,12 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 design/mobile-home-dashboard
 
 
+
+## 2026-10-19 — 🔵 The owner's next asks (「先做 Reference 栏，然后优化加载速度，手机和网页版，尤其是overview 和dashboard」; 「为什么我的手机版dashboard 只有两个dashboard?」)
+
+1. 🟡 Reference fields (built on branch `feat/finance-reference-fields`, tests `tests/finance-reference-fields.test.mjs`; prod check after the deploy): a Reference (TT / cheque no.) on payment vouchers — Payment, Transfer and AP Payment — and a Reference on journal entries, each its own field (not the description), shown on the lists, the popups and the prints (the design's pvF.reference / jvF.ref; the other-party bills already have theirs).
+2. ⚪ Faster loading on the phone and the web, especially the Overview and the dashboards — measure first, then fix the slowest.
+3. ⚪ The phone's Finance Dashboard shows 2 of the desktop's 7 sections (Income Statement — one line at a time — and Cash Flow; the design's phone mock drew only those two). Missing on the phone: Production Salary, Non-Production Salary, Cost Structure, Balance Sheet, Financial Ratios. Waiting for the owner: bring them over?
 
 ## 2026-10-17 — 🔵 Finance & Forecasting v2: the rest of the design, as the owner ranked it (his answers on "还有什么没做", item by item)(shipped in parts, each to `main`)
 

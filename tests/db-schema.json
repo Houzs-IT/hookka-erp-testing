@@ -1606,6 +1606,7 @@
     "entry_no",
     "id",
     "org_id",
+    "reference",
     "status"
   ],
   "journal_lines": [
@@ -2050,6 +2051,7 @@
     "product_line",
     "pv_kind",
     "pv_no",
+    "reference",
     "reject_reason",
     "settled_at",
     "status",
