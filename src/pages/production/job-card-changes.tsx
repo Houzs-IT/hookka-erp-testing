@@ -105,11 +105,11 @@ export function JobCardChangesList({ preview }: { preview: CardPreview }) {
   return (
     <div className="space-y-3 text-sm">
       {willChange.length === 0 ? (
-        <p className="bg-[#FAF8F5] p-3 rounded text-[#374151]">No unfinished job card will change.</p>
+        <p className="bg-[#FAF8F5] p-3 rounded text-[#374151]">No job card will change.</p>
       ) : (
         <>
           <p className="bg-[#EEF3E4] p-3 rounded text-[#374151]">
-            <span className="font-semibold">{willChange.length}</span> unfinished job card
+            <span className="font-semibold">{willChange.length}</span> job card
             {willChange.length === 1 ? "" : "s"} on <span className="font-semibold">{orders}</span> sales order
             {orders === 1 ? "" : "s"} will change. Total minutes go from{" "}
             <span className="font-semibold tabular-nums">{totalOld.toLocaleString()}</span> to{" "}

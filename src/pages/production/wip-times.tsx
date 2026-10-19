@@ -74,8 +74,8 @@ function cardsNoticeFrom(results: CardSync[]): string | null {
   const outOfDate = results.reduce((s, r) => s + (r.jobCards?.outOfDate ?? 0), 0);
   let text =
     updated === 0
-      ? "Saved. No unfinished job cards needed a change."
-      : `Saved. ${updated} unfinished job card${updated === 1 ? " now uses" : "s now use"} the new time.`;
+      ? "Saved. No job cards needed a change."
+      : `Saved. ${updated} job card${updated === 1 ? " now uses" : "s now use"} the new time.`;
   if (outOfDate > 0) {
     text += ` ${outOfDate} card${outOfDate === 1 ? " already had" : "s already had"} a different time from the old BOM and ${outOfDate === 1 ? "was" : "were"} left as ${outOfDate === 1 ? "it was" : "they were"}.`;
   }
