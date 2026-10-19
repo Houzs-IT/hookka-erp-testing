@@ -27,7 +27,7 @@ import {
 import { ClosedYearError, FYE_CHANGES_KV_KEY, FY_LOCKED_KV_KEY, closedYearError, getFyLockedEnds, getFySchedule, fyWindowAt } from "../lib/fiscal";
 import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
-import { timedFn } from "../lib/step-timing";
+import { requestMemo, timed, timedFn } from "../lib/step-timing";
 import { parseDebtorCode } from "../../lib/debtor";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
 import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
@@ -7602,12 +7602,15 @@ async function glWindowSignedUntimed(
   const memoKey = `${startYm ?? ""}|${endYm ?? ""}`;
   const cached = trace ? undefined : dc.glMemo?.get(memoKey);
   if (cached) return cached;
+  // Every window of a read request reads the same live legs and chart — loaded
+  // once (requestMemo; 2026-10-19 「优化加载速度」: the P&L statement asked for
+  // eight windows, eight full loads of the ledger). Shared rows: read-only here.
   const [legRes, coaRes] = await Promise.all([
-    db.prepare(trace
+    requestMemo(trace ? "ledger-legs:trace" : "ledger-legs", () => db.prepare(trace
       ? "SELECT id, accountCode, sourceId, debitSen, creditSen, postedAt, sourceType, description FROM ledger_journal_entries WHERE hidden = 0"
       : "SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0")
-      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>(),
-    db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>(),
+      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>()),
+    requestMemo("coa-name-type", () => db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>()),
   ]);
   const resolve = await loadAccountResolver(db);
   const { docDate, openingDate: obDate } = dc;
@@ -17951,7 +17954,11 @@ app.get("/cash-position", async (c) => {
     pending: { legId: string; day: string; sourceId: string; description: string; amountSen: number; ticked: boolean }[];
   }[] = [];
   const tickWarnings: { account: string; day: string; sourceId: string; description: string; amountSen: number }[] = [];
-  for (const a of bankAccounts) {
+  // Every bank account at once (2026-10-19, 「优化加载速度」): the accounts are
+  // independent, so their loads go out together instead of one account after
+  // another. Same rows, same order; each account's tick warnings stay in its turn.
+  const perAccount = await Promise.all(bankAccounts.map(async (a) => {
+    const warnings: typeof tickWarnings = [];
     const { legs, clearedOn, openingDate } = await loadBankRecoState(c.var.DB, a.code);
     // The pending LIST only itemises vouchers after this account's last
     // FINALISED month — earlier leftovers are reconciliation debt, collapsed
@@ -18018,7 +18025,7 @@ app.get("/cash-position", async (c) => {
         // The bank's own statement is the referee: month imported + still
         // unmatched means the tick claimed something the paper never showed.
         if (!matchedOn && importedMonths.has(l.day.slice(0, 7))) {
-          tickWarnings.push({ account: a.code, day: l.day, sourceId: l.sourceId, description: l.description, amountSen: l.amountSen });
+          warnings.push({ account: a.code, day: l.day, sourceId: l.sourceId, description: l.description, amountSen: l.amountSen });
         }
       }
     }
@@ -18040,7 +18047,11 @@ app.get("/cash-position", async (c) => {
     }
     const bankEstSen = bookSen - pendingSen + unbookedSen;
     const availableSen = bankEstSen + pendingSen; // = bookSen + unbookedSen
-    accounts.push({ code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending });
+    return { row: { code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending }, warnings };
+  }));
+  for (const p of perAccount) {
+    accounts.push(p.row);
+    tickWarnings.push(...p.warnings);
   }
   const totalBankEstSen = accounts.reduce((s, x) => s + x.bankEstSen, 0);
   const totalAvailableSen = accounts.reduce((s, x) => s + x.availableSen, 0);
@@ -18168,23 +18179,39 @@ app.get("/cash-position", async (c) => {
   // draw still owed — the same draws Creditor Aging's Trade Finance section
   // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
   const tradeFinance: { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number }[] = [];
-  try {
-    for (const s of await getTfSources(c.var.DB)) {
-      const derived = await loadTfDraws(c.var.DB, s);
-      for (const d of derived.draws) {
-        if (d.outstandingSen <= 0) continue;
-        let paidFor = "";
-        try {
-          const rs = await c.var.DB.prepare("SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?")
-            .bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
-          paidFor = [...new Set((rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean))].join(", ");
-        } catch { /* leave blank */ }
-        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender: s.lenderName, ref: d.drawSourceId, paidFor, outstandingSen: d.outstandingSen });
+  await timed("cp-trade-finance", async () => {
+    try {
+      const open: { lender: string; d: { dueDate: string; drawDate: string; drawSourceId: string; outstandingSen: number } }[] = [];
+      for (const s of await getTfSources(c.var.DB)) {
+        const derived = await loadTfDraws(c.var.DB, s);
+        for (const d of derived.draws) if (d.outstandingSen > 0) open.push({ lender: s.lenderName, d });
       }
+      // The supplier each draw paid — one query for all the draws (it was one
+      // per draw, in a row; 2026-10-19 「优化加载速度」).
+      const paidFor = new Map<string, Set<string>>();
+      const nos = [...new Set(open.map((o) => o.d.drawSourceId))];
+      for (let i = 0; i < nos.length; i += 200) {
+        const part = nos.slice(i, i + 200);
+        try {
+          const rs = await c.var.DB.prepare(`SELECT DISTINCT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN (${part.map(() => "?").join(",")})`)
+            .bind(...part).all<{ paymentNo?: string | null; payment_no?: string | null; supplierName: string | null; supplier_name: string | null }>();
+          for (const r of rs.results ?? []) {
+            const no = String(r.paymentNo ?? r.payment_no ?? "");
+            const name = String(r.supplierName ?? r.supplier_name ?? "").trim();
+            if (!no || !name) continue;
+            let set = paidFor.get(no);
+            if (!set) { set = new Set(); paidFor.set(no, set); }
+            set.add(name);
+          }
+        } catch { /* leave blank */ }
+      }
+      for (const { lender, d } of open) {
+        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender, ref: d.drawSourceId, paidFor: [...(paidFor.get(d.drawSourceId) ?? [])].join(", "), outstandingSen: d.outstandingSen });
+      }
+    } catch {
+      /* trade finance not set up → nothing to repay there */
     }
-  } catch {
-    /* trade finance not set up → nothing to repay there */
-  }
+  });
   tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
@@ -18410,27 +18437,33 @@ async function ensureFundTransfersTable(
 async function loadDocDateResolverUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<DocDateCtx> {
-  const openingDate = await getOpeningDate(db);
   const maps = new Map<string, Map<string, string>>(); // family → (id|no → 'YYYY-MM-DD')
-  for (const [fam, cfg] of Object.entries(DOC_DATE_FAMILIES)) {
-    const m = new Map<string, string>();
-    try {
-      const res = await db
+  // All families at once (2026-10-19, 「优化加载速度」): one awaited query per
+  // family in a row was 14 round trips before every report could start; sent
+  // together they share the request's connection. Same maps, same order.
+  const families = Object.entries(DOC_DATE_FAMILIES);
+  const [openingDate, famRows] = await Promise.all([
+    getOpeningDate(db),
+    Promise.all(families.map(([, cfg]) =>
+      db
         .prepare(
           `SELECT id AS rid, ${cfg.noCol} AS rno, ${cfg.dateCol} AS rdt FROM ${cfg.table}`,
         )
-        .all<{ rid: string | null; rno: string | null; rdt: string | null }>();
-      for (const r of res.results ?? []) {
-        const d = String(r.rdt ?? "").slice(0, 10);
-        if (!d) continue;
-        if (r.rid) m.set(String(r.rid), d);
-        if (r.rno) m.set(String(r.rno), d);
-      }
-    } catch {
-      /* table/column absent → this family falls back to postedAt */
+        .all<{ rid: string | null; rno: string | null; rdt: string | null }>()
+        // table/column absent → this family falls back to postedAt
+        .catch(() => null),
+    )),
+  ]);
+  families.forEach(([fam], i) => {
+    const m = new Map<string, string>();
+    for (const r of famRows[i]?.results ?? []) {
+      const d = String(r.rdt ?? "").slice(0, 10);
+      if (!d) continue;
+      if (r.rid) m.set(String(r.rid), d);
+      if (r.rno) m.set(String(r.rno), d);
     }
     maps.set(fam, m);
-  }
+  });
   const docDate = (
     sourceType: string,
     sourceId: string,
@@ -18453,7 +18486,13 @@ async function loadDocDateResolverUntimed(
   };
   return { docDate, openingDate, glMemo: new Map() };
 }
-const loadDocDateResolver = timedFn("doc-dates", loadDocDateResolverUntimed);
+// One load per read request (2026-10-19, 「优化加载速度」): Daily Cash Position
+// loaded every document date once PER BANK ACCOUNT (14 tables each time), and
+// a report's helpers each loaded their own. The context's own memos (ledger
+// windows, labour, stock, estimates) are per-request by design, so sharing it
+// only shares them further.
+const loadDocDateResolver = (db: Env["Variables"]["DB"]): Promise<DocDateCtx> =>
+  requestMemo("doc-dates", () => timed("doc-dates", () => loadDocDateResolverUntimed(db)));
 
 // Per-control-account sums of the opening invoices: AR per parseDebtorCode
 // control (300-x / 305-x), AP all into 400-0000. These become the locked

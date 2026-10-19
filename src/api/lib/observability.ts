@@ -194,7 +194,10 @@ export async function timingMiddleware(c: Context, next: Next): Promise<void> {
   // goes out as an s-<name> Server-Timing entry below.
   const stepMarks: StepMark[] = [];
   try {
-    await withStepTiming(stepMarks, () => next());
+    // A read gets a per-request memo too (requestMemo): the loads every
+    // report helper repeats — the document dates, the account aliases — run
+    // once per GET. Writes never share a copy taken before they wrote.
+    await withStepTiming(stepMarks, () => next(), { memo: c.req.method === "GET" });
   } catch (err) {
     errCaught = err;
     errMsg = ((err instanceof Error ? err.message : String(err)) || "").slice(

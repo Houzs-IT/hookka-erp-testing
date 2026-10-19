@@ -41,8 +41,10 @@ test("the API lists each draw still owed, by due date, with the supplier it paid
   const at = api.indexOf('app.get("/cash-position"');
   const block = api.slice(at, api.indexOf("\napp.", at + 10));
   assert.match(block, /for \(const s of await getTfSources\(c\.var\.DB\)\) \{\n\s*const derived = await loadTfDraws\(c\.var\.DB, s\);/);
-  assert.match(block, /if \(d\.outstandingSen <= 0\) continue;/);
-  assert.match(block, /tradeFinance\.push\(\{ dueDate: d\.dueDate, drawDate: d\.drawDate, lender: s\.lenderName, ref: d\.drawSourceId, paidFor, outstandingSen: d\.outstandingSen \}\);/);
+  // Since 2026-10-19 the draws' suppliers come from one IN query
+  // (tests/step-timing.test.mjs); the rows are the same.
+  assert.match(block, /for \(const d of derived\.draws\) if \(d\.outstandingSen > 0\) open\.push\(\{ lender: s\.lenderName, d \}\);/);
+  assert.match(block, /tradeFinance\.push\(\{ dueDate: d\.dueDate, drawDate: d\.drawDate, lender, ref: d\.drawSourceId, paidFor: \[\.\.\.\(paidFor\.get\(d\.drawSourceId\) \?\? \[\]\)\]\.join\(", "\), outstandingSen: d\.outstandingSen \}\);/);
   assert.match(block, /tradeFinance\.sort\(\(x, y\) => \(x\.dueDate \|\| "9999-12-31"\)\.localeCompare\(y\.dueDate \|\| "9999-12-31"\)/);
   assert.match(block, /awaitingApproval, awaitingCheckedSen, tradeFinance \},/);
 });
