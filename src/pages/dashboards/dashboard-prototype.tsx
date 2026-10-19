@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
-import { cachedFetchJson, useCachedJson } from "@/lib/cached-fetch";
+import { cachedFetchJson, invalidateCachePrefix, useCachedJson } from "@/lib/cached-fetch";
+import { useInterval } from "@/lib/scheduler";
 import { PeriodPicker } from "./dashboard-shared";
 import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, widgetPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
@@ -94,10 +95,17 @@ export default function DashboardPrototypePage() {
   // The page reads the feed only for `meta.months` — the months that actually
   // exist in the book, which bound the stepper. Every tab below calls the same
   // cached URL, so this costs no extra request.
-  const { data } = useCachedJson<{
+  const { data, refresh } = useCachedJson<{
     meta?: { months?: string[]; monthsWithSales?: string[] };
     sales?: { byDay?: { date: string }[] };
   }>("/api/dashboard/prototype");
+  // Live figures (today's hours worked so far, efficiency, attendance) step
+  // every 30 minutes on the server (owner 2026-10-19: "刷新半小时"); a page
+  // left open refetches on the same beat instead of going stale.
+  useInterval(() => {
+    invalidateCachePrefix("/api/dashboard/");
+    refresh();
+  }, 30 * 60 * 1000);
 
   // Driven by the months that actually HAVE SALES, not `meta.months` — that is
   // a union with attendance, and this org has three months holding one
