@@ -60,7 +60,8 @@ function Picker({ active }: { active: ViewAs | null }) {
       </span>
       <ChevronDown className="h-3.5 w-3.5 shrink-0" />
       {/* Native select over the whole pill, invisible: the pill sizes to the
-          picked name above, not to the longest name in the list. */}
+          picked name above, not to the longest name in the list. Its own
+          colours stop the open list inheriting the red pill's white text. */}
       <select
         value={active?.id ?? ""}
         onChange={(e) => {
@@ -68,7 +69,7 @@ function Picker({ active }: { active: ViewAs | null }) {
           apply(u ? { id: u.id, role: u.role, name: u.displayName || u.email } : null);
         }}
         aria-label="View as user"
-        className="absolute inset-0 cursor-pointer opacity-0"
+        className="absolute inset-0 cursor-pointer bg-white text-gray-900 opacity-0"
       >
         <option value="">Me</option>
         {active && !users.some((u) => u.id === active.id) && (
