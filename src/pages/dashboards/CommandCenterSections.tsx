@@ -7,6 +7,13 @@ import { widgetPeriod, type Period } from "./dashboard-shared-lib";
  * not copies: same code, same look, same numbers, driven by this page's
  * period picker.
  */
-export function CommandCenterSections({ period, sections }: { period: Period; sections: readonly CommandCenterSection[] }) {
-  return <DashboardBPage embed={{ period: widgetPeriod(period), sections }} />;
+export function CommandCenterSections({
+  period, sections, onPeriodChange,
+}: { period: Period; sections: readonly CommandCenterSection[]; onPeriodChange?: (p: Period) => void }) {
+  // A picked day reaches the cards that can show one (Department Revenue);
+  // a click on its chart picks a day of the same month, or clears it.
+  const onPickDay = onPeriodChange
+    ? (day: string | undefined) => onPeriodChange({ mode: "monthly", month: period.month, day })
+    : undefined;
+  return <DashboardBPage embed={{ period: widgetPeriod(period), sections, day: period.day, onPickDay }} />;
 }

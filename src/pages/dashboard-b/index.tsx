@@ -720,7 +720,7 @@ export type CommandCenterSection =
  * the period from the host page ("all" or "YYYY-MM") and renders only the
  * named sections. Without `embed` the page is unchanged.
  */
-export default function DashboardBPage({ embed }: { embed?: { period: string; sections: readonly CommandCenterSection[] } } = {}) {
+export default function DashboardBPage({ embed }: { embed?: { period: string; sections: readonly CommandCenterSection[]; day?: string; onPickDay?: (day: string | undefined) => void } } = {}) {
   // Open the Command Center on the CURRENT month by default (owner request) —
   // not all-time. CUR_YM (module-scope) is the current "YYYY-MM".
   const [periodState, setPeriod] = useState(CUR_YM);
@@ -1704,6 +1704,8 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
         data={splitRaw}
         loading={splitL}
         periodLabel={isAllTime ? "last 12 weeks" : period}
+        day={embed?.day}
+        onPickDay={embed?.onPickDay}
       />
       )}
 
