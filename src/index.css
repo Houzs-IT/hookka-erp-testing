@@ -175,3 +175,11 @@ body {
 table tbody tr:hover {
   background: rgba(107, 92, 50, 0.03);
 }
+
+/* Charts: a click focuses the recharts surface (tabindex=0); no focus box or selected axis text. */
+.recharts-wrapper {
+  user-select: none;
+}
+.recharts-wrapper *:focus {
+  outline: none;
+}
