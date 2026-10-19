@@ -226,6 +226,19 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-19-343 — Clicking a day on the Department Revenue chart jumped the page down to the worklist `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/tabs-no-page-scroll` → `staging`). Reported 2026-10-19 on staging, after BUG-2026-10-19-336 stopped the jump to the top.
+
+**Symptom.** On Operations, clicking a day on a Department Revenue small chart scrolled the page down to the overdue production orders / Due within 3 Days worklist.
+
+**Root cause.** Measured on staging in Chrome: after the click, `scrollIntoView` ran on four buttons in a row (`Overview`, `Still in production · 625`, `All · 625`, `All · 113`). All four are the active pill of a `scrollable` `Tabs` strip. `src/components/ui/tabs.tsx` passed an inline ref callback that called `el.scrollIntoView({ block: "nearest", inline: "center" })`. An inline ref is a new function on every render, so React re-ran it on every re-render of those cards, and `scrollIntoView` scrolls every scrollable ancestor, including the page. The last strip (the worklist filter) won, so the page landed there. It was meant only to centre the active pill inside its own horizontally scrolling row on phones.
+
+**Fix.** The ref now sets `scrollLeft` on the pill row itself, and does nothing when the row does not overflow (desktop). The page's vertical scroll is never touched. One shared component, so all 13 `scrollable` callers are covered. `main` carries the same code.
+
+**Regression.** `tests/tabs-no-page-scroll.test.mjs`.
+
+---
 ## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
 
 🟡 **Fixed on branch** (`fix/dashboard-period-keeps-scroll` → `staging`). Reported 2026-10-19 on staging, right after the Day view (#1003).

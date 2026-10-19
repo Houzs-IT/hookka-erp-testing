@@ -76,7 +76,12 @@ export function Tabs<T extends string = string>({
                 onClick={() => onChange(tab.key)}
                 ref={
                   scrollable && active
-                    ? (el) => el?.scrollIntoView?.({ block: "nearest", inline: "center" })
+                    ? (el) => {
+                        // Scroll only the pill row, never the page (scrollIntoView moved the page on every re-render).
+                        const row = el?.parentElement?.parentElement;
+                        if (!el || !row || row.scrollWidth <= row.clientWidth) return;
+                        row.scrollLeft += el.getBoundingClientRect().left - row.getBoundingClientRect().left - (row.clientWidth - el.offsetWidth) / 2;
+                      }
                     : undefined
                 }
                 className={cn(
