@@ -402,6 +402,46 @@ test("admin POST /:id/remind: returns the un-acked count and stamps reminded_at"
   );
 });
 
+// ---- 4c. Targeted notice: receipts + remind count only its audience ---------
+// HK-0025 (prod 19 Oct): a notice sent to 1 worker read "Read 1 of 39".
+
+test("admin acks + remind: a targeted notice counts only its audience", async () => {
+  const workers = [
+    { id: "w1", empNo: "E001", name: "Alice", status: "ACTIVE", departmentCode: "PACKING" },
+    { id: "w2", empNo: "E002", name: "Bob", status: "ACTIVE", departmentCode: "FOAM" },
+    { id: "w4", empNo: "E004", name: "Dan", status: "ACTIVE", departmentCodes: '["SEWING","packing"]' },
+    { id: "w5", empNo: "E005", name: "Eve", status: "ACTIVE", departmentCode: "FOAM" },
+  ];
+  const base = makeDb({
+    announcements: [
+      activeAnnouncement("one", { target_type: "WORKERS", target_worker_ids: '["w2"]' }),
+      activeAnnouncement("dept", { target_type: "DEPTS", target_dept_codes: '["PACKING"]' }),
+      activeAnnouncement("mix", { target_type: "MIXED", target_dept_codes: '["PACKING"]', target_worker_ids: '["w5"]' }),
+    ],
+    workers,
+    acks: [{ announcement_id: "one", worker_id: "w2", acked_at: iso(NOW) }],
+  });
+  const app = wrapAdmin(await importAdminApp("admin-targeted"), base.db);
+  const acks = async (id) =>
+    (await (await call(app, { method: "GET", path: `/${id}/acks` })).json()).data;
+
+  const one = await acks("one");
+  assert.equal(one.total, 1, "sent to 1 worker → 1 of 1, not 1 of 4");
+  assert.equal(one.ackedCount, 1);
+  assert.equal(one.pending.length, 0);
+  const dept = await acks("dept");
+  assert.deepEqual(dept.pending.map((w) => w.id).sort(), ["w1", "w4"], "dept match incl. multi-dept, any case");
+  const mix = await acks("mix");
+  assert.deepEqual(mix.pending.map((w) => w.id).sort(), ["w1", "w4", "w5"]);
+
+  const remind = await (await call(app, { method: "POST", path: "/one/remind" })).json();
+  assert.equal(remind.pendingCount, 0, "remind counts the audience only");
+  const remindAll = await (
+    await call(app, { method: "POST", path: "/dept/remind", body: { scope: "all" } })
+  ).json();
+  assert.equal(remindAll.pendingCount, 2, '"Remind all" = the dept audience, not everyone');
+});
+
 // ---- 5. Auth gates ----------------------------------------------------------
 
 test("worker ack: missing token → 401 (default-protect)", async () => {

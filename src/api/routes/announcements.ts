@@ -528,11 +528,9 @@ admin.get("/", async (c) => {
 });
 
 // GET /api/announcements/:id/acks — read-receipt for one announcement. Splits
-// the ACTIVE worker roster into who has acknowledged it (with the ack time) and
-// who hasn't. Gated by the same `read` permission as the list. The roster is
-// the canonical "all ACTIVE workers" query (matches payroll.ts / publicWorker);
-// the workers table predates the snake_case rule so it's queried with bare
-// camelCase column names directly. Read the join columns dual-keyed because the
+// the notice's audience (ACTIVE workers it targets, see audienceRoster) into
+// who has acknowledged it (with the ack time) and who hasn't. Gated by the same
+// `read` permission as the list. Read the join columns dual-keyed because the
 // PG driver folds acked_at → ackedAt on read.
 admin.get("/:id/acks", async (c) => {
   const denied = await requirePermission(c, "announcements", "read");
@@ -543,18 +541,15 @@ admin.get("/:id/acks", async (c) => {
   // Confirm the announcement exists for this org (404 otherwise) so the office
   // never sees a phantom read-receipt for a deleted/foreign id.
   const ann = await c.var.DB.prepare(
-    "SELECT id FROM announcements WHERE id = ? AND org_id = ?",
+    "SELECT * FROM announcements WHERE id = ? AND org_id = ?",
   )
     .bind(id, orgId)
-    .first<{ id: string }>();
+    .first<AnnouncementRow>();
   if (!ann) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
-  // Active roster — the "everyone who should have read this" side.
-  const rosterRes = await c.var.DB.prepare(
-    "SELECT id, empNo, name FROM workers WHERE status = 'ACTIVE' ORDER BY name ASC",
-  ).all<{ id: string; empNo?: string | null; name?: string | null }>();
-  const roster = rosterRes.results ?? [];
+  // The "everyone who should have read this" side.
+  const roster = await audienceRoster(c.var.DB, ann);
   // This announcement's ack rows → worker_id → acked_at (dual-keyed read).
   const ackRes = await c.var.DB.prepare(
     "SELECT worker_id, acked_at FROM announcement_acks WHERE announcement_id = ?",
@@ -986,11 +981,8 @@ admin.post("/:id/remind", async (c) => {
   } catch {
     /* no body / not json → default unacked */
   }
-  // Count the un-acked active roster (the same split the acks endpoint uses).
-  const rosterRes = await c.var.DB.prepare(
-    "SELECT id FROM workers WHERE status = 'ACTIVE'",
-  ).all<{ id: string }>();
-  const rosterIds = (rosterRes.results ?? []).map((w) => w.id);
+  // Count the un-acked audience (the same split the acks endpoint uses).
+  const rosterIds = (await audienceRoster(c.var.DB, ann)).map((w) => w.id);
   const ackRes = await c.var.DB.prepare(
     "SELECT worker_id FROM announcement_acks WHERE announcement_id = ?",
   )
@@ -1101,7 +1093,14 @@ async function workerDeptCodes(
       departmentCode?: string | null;
       departmentCodes?: string | null;
     }>();
-  if (!row) return out;
+  return row ? deptCodesOf(row) : out;
+}
+
+function deptCodesOf(row: {
+  departmentCode?: string | null;
+  departmentCodes?: string | null;
+}): Set<string> {
+  const out = new Set<string>();
   const add = (v: unknown) => {
     if (typeof v === "string" && v.trim()) out.add(v.trim().toUpperCase());
   };
@@ -1115,6 +1114,30 @@ async function workerDeptCodes(
     }
   }
   return out;
+}
+
+// The office read-receipt audience: ACTIVE workers this notice targets, by the
+// same workerCanSee rule the phone uses. Before this it was every ACTIVE worker,
+// so a notice sent to 1 person read "1 of 39" (HK-0025, prod 19 Oct). The
+// workers table predates the snake_case rule → bare camelCase column names.
+async function audienceRoster(
+  db: D1Database,
+  ann: AnnouncementRow,
+): Promise<Array<{ id: string; empNo?: string | null; name?: string | null }>> {
+  const res = await db
+    .prepare(
+      "SELECT id, empNo, name, departmentCode, departmentCodes FROM workers WHERE status = 'ACTIVE' ORDER BY name ASC",
+    )
+    .all<{
+      id: string;
+      empNo?: string | null;
+      name?: string | null;
+      departmentCode?: string | null;
+      departmentCodes?: string | null;
+    }>();
+  return (res.results ?? []).filter((w) =>
+    workerCanSee(ann, w.id, deptCodesOf(w)),
+  );
 }
 
 // A worker sees a notice iff it targets ALL, OR one of their dept codes is in
