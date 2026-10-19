@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// step-timing.ts — where a slow request spends its time, step by step.
+// step-timing.ts — where a slow request spends its time, step by step; and a
+// per-request memo for the loads many helpers repeat.
 //
 // The Server-Timing header already carries `app` (the whole request) and `db`
 // (every query added up). That says a report is slow, not WHICH part of it:
@@ -12,33 +13,58 @@
 // steps to Server-Timing as `s-<name>;dur=<total ms>;desc="<n>x"` (the largest
 // first, at most STEP_LIMIT of them). Outside a request — tests, cron — it
 // just runs fn. Read-only, no effect on what a request returns.
+//
+// `requestMemo(key, fn)` runs fn once per request and hands every later caller
+// the same promise — only for READ requests (the middleware turns it on for
+// GET), so a write never reads back a copy taken before it wrote. A failed
+// load is forgotten, so the next caller tries again.
 // ---------------------------------------------------------------------------
 import { AsyncLocalStorage } from "node:async_hooks";
 
 export type StepMark = { name: string; ms: number };
 
-const store = new AsyncLocalStorage<StepMark[]>();
+type RequestCtx = { marks: StepMark[]; memo: Map<string, Promise<unknown>> | null };
 
-/** Run a request's handler with a fresh list of step marks. */
-export function withStepTiming<T>(marks: StepMark[], fn: () => Promise<T>): Promise<T> {
-  return store.run(marks, fn);
+const store = new AsyncLocalStorage<RequestCtx>();
+
+/** Run a request's handler with a fresh list of step marks (and, for a read, a fresh memo). */
+export function withStepTiming<T>(marks: StepMark[], fn: () => Promise<T>, opts: { memo?: boolean } = {}): Promise<T> {
+  return store.run({ marks, memo: opts.memo ? new Map() : null }, fn);
 }
 
 /** Time one step of the current request (a no-op wrapper outside one). */
 export async function timed<T>(name: string, fn: () => Promise<T>): Promise<T> {
-  const marks = store.getStore();
-  if (!marks) return fn();
+  const ctx = store.getStore();
+  if (!ctx) return fn();
   const t0 = Date.now();
   try {
     return await fn();
   } finally {
-    marks.push({ name, ms: Date.now() - t0 });
+    ctx.marks.push({ name, ms: Date.now() - t0 });
   }
 }
 
 /** `fn` with every call timed as `name` — for a helper whose callers are many. */
 export function timedFn<A extends unknown[], R>(name: string, fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
   return (...args: A) => timed(name, () => fn(...args));
+}
+
+/**
+ * fn's result, loaded once per read request under `key` (a plain call when the
+ * request has no memo: writes, tests, cron). Every caller shares one promise;
+ * a rejected one is dropped so the next caller loads again.
+ */
+export function requestMemo<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const memo = store.getStore()?.memo;
+  if (!memo) return fn();
+  const hit = memo.get(key) as Promise<T> | undefined;
+  if (hit) return hit;
+  const p = fn();
+  memo.set(key, p);
+  p.catch(() => {
+    if (memo.get(key) === p) memo.delete(key);
+  });
+  return p;
 }
 
 export const STEP_LIMIT = 12;
