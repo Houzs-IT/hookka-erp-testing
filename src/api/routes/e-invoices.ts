@@ -210,6 +210,10 @@ async function loadEInvoice(db: Db, orgId: string, id: string): Promise<EInvoice
 
 const fail = (msg: string) => ({ success: false as const, error: msg });
 
+// The id of an invoice keyed on the Opening Balance page
+// (POST /api/accounting/opening-balance/ar).
+const OPENING_KEYED_PREFIX = "inv-ob-";
+
 // GET /api/e-invoices — list all
 app.get("/", async (c) => {
   // RBAC gate (P3.3-followup) — e-invoices:read.
@@ -227,8 +231,10 @@ app.get("/", async (c) => {
 
 // GET /api/e-invoices/candidates — the Generate tab: issued sales invoices
 // that have no e-invoice yet, each with its buyer's TIN (KYC) and BRN.
-// Opening-balance invoices are carried-forward balances, not sales issued
-// here, so they are not listed. Registered before /:id.
+// The balances keyed on the Opening Balance page (`inv-ob-…`, the old
+// system's invoices) are not sales issued here, so they are not listed; a
+// real invoice counted into the opening (ar-include sets its isOpening) is
+// still a sales invoice and is. Registered before /:id.
 app.get("/candidates", async (c) => {
   const denied = await requirePermission(c, "e-invoices", "read");
   if (denied) return denied;
@@ -239,7 +245,7 @@ app.get("/candidates", async (c) => {
        LEFT JOIN customers cu ON cu.id = i.customerId${withKyc ? " LEFT JOIN customer_onboarding co ON co.customer_id = i.customerId" : ""}
       WHERE i.orgId = ?
         AND i.status NOT IN ('DRAFT','CANCELLED')
-        AND COALESCE(i.isOpening, 0) = 0
+        AND i.id NOT LIKE '${OPENING_KEYED_PREFIX}%'
         AND NOT EXISTS (SELECT 1 FROM e_invoices e WHERE e.invoiceId = i.id)
       ORDER BY i.invoiceDate DESC, i.invoiceNo DESC`;
   type Cand = Record<string, unknown>;
@@ -289,6 +295,9 @@ app.post("/", async (c) => {
     }
     if (invoice.status === "DRAFT" || invoice.status === "CANCELLED") {
       return c.json(fail(`${invoice.invoiceNo} is ${invoice.status} — only an issued invoice gets an e-Invoice.`), 400);
+    }
+    if (invoice.id.startsWith(OPENING_KEYED_PREFIX)) {
+      return c.json(fail(`${invoice.invoiceNo} is an opening balance keyed from the old system — it gets no e-Invoice here.`), 400);
     }
 
     const existing = await c.var.DB.prepare(

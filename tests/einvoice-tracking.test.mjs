@@ -98,6 +98,7 @@ function makeDb() {
     { id: "inv-1", invoiceNo: "INV-2610-001", invoiceDate: "2026-10-08", customerName: "A & B Home", customerId: "cust-1", subtotalSen: 125025, taxSen: 10002, totalSen: 135027, status: "SENT", isOpening: 0, orgId: "hookka" },
     { id: "inv-2", invoiceNo: "INV-2610-002", invoiceDate: "2026-10-09", customerName: "No Tin Trading", customerId: "cust-2", subtotalSen: 50000, taxSen: 0, totalSen: 50000, status: "SENT", isOpening: 0, orgId: "hookka" },
     { id: "inv-3", invoiceNo: "INV-2610-003", invoiceDate: "2026-10-10", customerName: "Draft Co", customerId: "cust-1", subtotalSen: 1000, taxSen: 0, totalSen: 1000, status: "DRAFT", isOpening: 0, orgId: "hookka" },
+    { id: "inv-ob-1", invoiceNo: "I-2604-001", invoiceDate: "2026-04-20", customerName: "A & B Home", customerId: "cust-1", subtotalSen: 5000, taxSen: 0, totalSen: 5000, status: "SENT", isOpening: 1, orgId: "hookka" },
     { id: "inv-9", invoiceNo: "INV-2610-009", invoiceDate: "2026-10-10", customerName: "Other Org", customerId: "cust-9", subtotalSen: 1000, taxSen: 0, totalSen: 1000, status: "SENT", isOpening: 0, orgId: "acme" },
   ];
   const kyc = new Map([["cust-1", { customer_id: "cust-1", tin_number: "C12345678901" }]]);
@@ -228,6 +229,9 @@ test("Generate keeps the invoice's figures in sen — a total with cents saves (
   assert.match(draft.body.error, /INV-2610-003 is DRAFT/);
   const foreign = await call("POST", "/", { invoiceId: "inv-9" });
   assert.equal(foreign.status, 404, "another org's invoice is not found");
+  const keyed = await call("POST", "/", { invoiceId: "inv-ob-1" });
+  assert.equal(keyed.status, 400);
+  assert.equal(keyed.body.error, "I-2604-001 is an opening balance keyed from the old system — it gets no e-Invoice here.");
 });
 
 test("a buyer with no TIN: flagged at Generate, refused at Mark as Submitted, sent once the TIN is added", async () => {
@@ -333,14 +337,20 @@ test("Cancel only a Valid one; the old Submit still refuses; another org's recor
 // What the SQL and the page promise
 // ---------------------------------------------------------------------------
 
-const api = readFileSync("src/api/routes/e-invoices.ts", "utf8").replace(/\r\n/g, "\n");
+const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+const api = read("src/api/routes/e-invoices.ts");
 const page = readFileSync("src/pages/invoices/e-invoice.tsx", "utf8").replace(/\r\n/g, "\n");
 
-test("the Generate list: this org's issued invoices without an e-invoice, opening balances left out, before /:id", () => {
+test("the Generate list: this org's issued invoices without an e-invoice, keyed opening balances left out, before /:id", () => {
   const cand = api.slice(api.indexOf('app.get("/candidates"'), api.indexOf('app.post("/"'));
   assert.match(cand, /WHERE i\.orgId = \?/);
   assert.match(cand, /AND i\.status NOT IN \('DRAFT','CANCELLED'\)/);
-  assert.match(cand, /AND COALESCE\(i\.isOpening, 0\) = 0/);
+  // Only the balances keyed on the Opening Balance page; a real invoice
+  // counted into the opening (isOpening via ar-include) is still listed.
+  assert.match(cand, /AND i\.id NOT LIKE '\$\{OPENING_KEYED_PREFIX\}%'/);
+  assert.doesNotMatch(cand, /isOpening/);
+  assert.match(api, /const OPENING_KEYED_PREFIX = "inv-ob-";/);
+  assert.match(read("src/api/routes/accounting.ts"), /const id = `inv-ob-\$\{crypto\.randomUUID\(\)\.slice\(0, 8\)\}`;/, "the Opening Balance page's own id");
   assert.match(cand, /AND NOT EXISTS \(SELECT 1 FROM e_invoices e WHERE e\.invoiceId = i\.id\)/);
   assert.match(cand, /LEFT JOIN customer_onboarding co ON co\.customer_id = i\.customerId/);
   assert.match(cand, /buyerTin: s\(r, "tinNumber", "tin_number"\)\.trim\(\),/);

@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { KpiCards, SegmentedSwitch } from "@/components/finance/report-shell";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
+import { fmtAmt } from "@/lib/finance-reports";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   FileCheck,
@@ -402,7 +403,7 @@ export default function EInvoicePage() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            {formatCurrency(einv.totalIncludingTax)}
+                            {fmtAmt(einv.totalIncludingTax)}
                           </td>
                           <td className="py-3 px-4 text-[#374151]">
                             {einv.submissionId && einv.submittedAt ? (
@@ -577,7 +578,7 @@ export default function EInvoicePage() {
                             )}
                           </td>
                           <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            {formatCurrency(inv.totalSen)}
+                            {fmtAmt(inv.totalSen)}
                           </td>
                           <td className="py-3 px-4 text-right">
                             <Button
