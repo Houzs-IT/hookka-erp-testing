@@ -290,7 +290,7 @@ export function DeptRevenueChart({
                       : "no output"}
                 </span>
               </div>
-              <div style={{ height: 58 }}>
+              <div style={{ height: 64 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={data}
@@ -310,13 +310,13 @@ export function DeptRevenueChart({
                       ticks={first && last ? [first, last] : undefined}
                       interval={0}
                       tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
-                        <text x={x} y={y + 10} textAnchor={payload.value === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
+                        <text x={x} y={y} dy="0.71em" textAnchor={payload.value === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
                           {payload.value}
                         </text>
                       )}
                       axisLine={{ stroke: "#F0ECE6" }}
                       tickLine={false}
-                      height={14}
+                      height={20}
                     />
                     <YAxis hide domain={[0, max]} />
                     <Tooltip content={() => null} cursor={false} />
