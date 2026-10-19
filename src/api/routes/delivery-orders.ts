@@ -27,7 +27,7 @@ import { requirePermission, requireReadOrDashboardTab } from "../lib/rbac";
 import { customerScopeSql, salesOrderScopeSql, isCustomerScoped } from "../lib/customer-scope";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
-import { checkDeliveryOrderLocked } from "../lib/lock-helpers";
+import { checkDeliveryOrderLocked, issuedNotesOnInvoice } from "../lib/lock-helpers";
 import { nextInvoiceNo, buildInvoiceLedgerLegs } from "./invoices";
 import { readGstRatePct } from "../lib/note-ledger";
 import {
@@ -1566,7 +1566,14 @@ app.post("/backfill-void-reissue-underbilled", async (c) => {
         draftN++; // /backfill-fix-underbilled-invoices owns DRAFT
         continue;
       }
+      // A credit / debit note issued on the invoice locks it like a payment
+      // does: its total has already moved by the note, so a void-and-reissue
+      // would count the note twice (owner 2026-10-17, notes can be posted).
+      const noteLocked = (
+        await Promise.all(invs.map((v) => issuedNotesOnInvoice(c.var.DB, v.id)))
+      ).some((n) => n.length > 0);
       if (
+        noteLocked ||
         invs.some(
           (v) =>
             (Number(v.paidAmount) || 0) > 0 ||
@@ -1649,6 +1656,7 @@ app.post("/backfill-void-reissue-underbilled", async (c) => {
             c.var.DB,
             orgId,
             legs,
+            { docDate: String((oldInv as { invoiceDate?: string | null }).invoiceDate ?? "").slice(0, 10) || null },
           );
           b1.push(...statements);
         }
@@ -1760,6 +1768,7 @@ app.post("/backfill-void-reissue-underbilled", async (c) => {
           c.var.DB,
           orgId,
           legs,
+          { docDate: invoiceDate },
         );
         await c.var.DB.batch(statements);
       }

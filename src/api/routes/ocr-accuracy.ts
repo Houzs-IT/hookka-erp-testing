@@ -16,6 +16,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { mytDateSql } from "../lib/on-time-delivery";
 import {
   resolveCustomerHint,
   UNIDENTIFIED_CUSTOMER,
@@ -86,12 +87,10 @@ app.get("/", async (c) => {
   const dateWhere = (col: string): { sql: string; binds: string[] } => {
     const parts: string[] = ["correctedJson IS NOT NULL"];
     const binds: string[] = [];
-    if (from) { parts.push(`${col} >= ?`); binds.push(from); }
-    // Compare on the DATE PORTION only. The old `<= '<to> 23:59:59'` bound
-    // silently dropped every row on the `to` day when createdAt is stored as
-    // ISO with a 'T' separator ('T' 0x54 > ' ' 0x20 lexically) — the last day
-    // of any selected month never counted (owner audit 2026-07-11).
-    if (to) { parts.push(`substr(${col}::text, 1, 10) <= ?`); binds.push(to); }
+    // Compare on the Malaysia calendar date: createdAt is stored in UTC, so a
+    // scan before 08:00 MYT used to count on the previous day.
+    if (from) { parts.push(`${mytDateSql(col)} >= ?`); binds.push(from); }
+    if (to) { parts.push(`${mytDateSql(col)} <= ?`); binds.push(to); }
     return { sql: parts.join(" AND "), binds };
   };
 
@@ -307,8 +306,8 @@ app.get("/", async (c) => {
       "q.started_at IS NOT NULL",
     ];
     const binds: string[] = [];
-    if (from) { parts.push("substr(q.created_at::text, 1, 10) >= ?"); binds.push(from); }
-    if (to) { parts.push("substr(q.created_at::text, 1, 10) <= ?"); binds.push(to); }
+    if (from) { parts.push(`${mytDateSql("q.created_at")} >= ?`); binds.push(from); }
+    if (to) { parts.push(`${mytDateSql("q.created_at")} <= ?`); binds.push(to); }
     const res = await db
       .prepare(
         `SELECT CASE
@@ -384,8 +383,8 @@ app.get("/models", async (c) => {
 
   const parts = ["status IN ('done', 'failed')"];
   const binds: string[] = [];
-  if (from) { parts.push("substr(created_at::text, 1, 10) >= ?"); binds.push(from); }
-  if (to) { parts.push("substr(created_at::text, 1, 10) <= ?"); binds.push(to); }
+  if (from) { parts.push(`${mytDateSql("created_at")} >= ?`); binds.push(from); }
+  if (to) { parts.push(`${mytDateSql("created_at")} <= ?`); binds.push(to); }
 
   // Rows come back camelCased by the DB layer (created_at → createdAt), so
   // every read goes through readQueueRow's dual-key lookup — reading only the

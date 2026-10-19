@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useCachedJson, isUnknownOutcome } from "@/lib/cached-fetch";
+import { formatTimestampMY } from "@/lib/utils";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { OcrAccuracyCard } from "../dashboard-b/OcrAccuracyCard";
 import { monthWindow } from "./dashboard-widgets-lib";
 import { monthLabel, type Period } from "./dashboard-shared-lib";
+import { Kpi } from "./dashboard-shared";
 
 // ---------------------------------------------------------------------------
 // OCR tab (2026-09-25) — the detail behind Overview's OCR Accuracy card, built
@@ -107,6 +109,22 @@ export function OcrView({ period }: { period: Period }) {
         <h2 className="text-lg font-semibold text-[#1F1D1B]">OCR</h2>
         <span className="text-xs text-[#6B7280]">{label}</span>
       </div>
+      {/* Headline counts (owner 2026-10-18 polish) — raw totals across every
+          document type and model, so the tables below read in context. */}
+      {d && d.groups.length > 0 && (() => {
+        const sum = (f: (g: Group) => number) => d.groups.reduce((a, g) => a + f(g), 0);
+        const scans = sum((g) => g.scans);
+        const failed = sum((g) => g.failed);
+        const share = (n: number) => (scans ? `${((n / scans) * 100).toFixed(1)}% of scans` : undefined);
+        return (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Kpi label="Scans finished" value={scans.toLocaleString()} sub={`${d.groups.length} document / model pair${d.groups.length === 1 ? "" : "s"}`} valueSizeClass="text-xl" />
+            <Kpi label="Imported clean" value={sum((g) => g.clean).toLocaleString()} sub={share(sum((g) => g.clean))} valueSizeClass="text-xl" />
+            <Kpi label="Failed" value={failed.toLocaleString()} sub={share(failed)} valueSizeClass="text-xl" />
+            <Kpi label="Awaiting review" value={sum((g) => g.pending).toLocaleString()} sub="scanned, not yet imported" valueSizeClass="text-xl" />
+          </div>
+        );
+      })()}
       <Section
         title="Model comparison"
         note={`${label} · every finished scan counts, including failed and discarded ones · accuracy = imported with no edits · * = fewer than ${MIN_SAMPLE}, not enough to judge`}
@@ -224,7 +242,7 @@ export function OcrView({ period }: { period: Period }) {
               <tbody>
                 {d.problems.map((p) => (
                   <tr key={p.id} className="border-t border-[#F0ECE3] align-top">
-                    <td className={`${TD} whitespace-nowrap text-[#6B7280]`}>{p.createdAt.slice(0, 16).replace("T", " ")}</td>
+                    <td className={`${TD} whitespace-nowrap text-[#6B7280]`}>{formatTimestampMY(p.createdAt, { withYear: true })}</td>
                     <td className={TD}>
                       <a
                         href={`/api/scan-queue/${encodeURIComponent(p.id)}/original`}

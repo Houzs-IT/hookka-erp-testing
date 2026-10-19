@@ -9,6 +9,9 @@
 // the /dashboard-b route line, and the sidebar line to remove it.
 // ===========================================================================
 import { lazy, Suspense, useMemo, useState } from "react";
+import { CompletedDrill } from "./CompletedDrill";
+import { InvoiceListDrill, OutstandingDrill, PendingDeliveryDrill, SoListDrill } from "./KpiDrills";
+import { parseDashPeriod } from "../../api/lib/dash-period";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
@@ -48,7 +51,20 @@ type SoStats = {
   csRevenueSen?: number;
   deliveredItemsSen?: number;
   outstandingItemsSen?: number;
+  byStatus?: Record<string, number>;
+  revenueByStatus?: Record<string, number>;
 };
+
+// Order Pipeline's "by status" rows, in the order an SO moves through them.
+const PIPELINE_STATUSES = [
+  ["CONFIRMED", "Confirmed"],
+  ["IN_PRODUCTION", "In production"],
+  ["READY_TO_SHIP", "Ready to ship"],
+  ["SHIPPED", "Shipped"],
+  ["DELIVERED", "Delivered"],
+  ["INVOICED", "Invoiced"],
+  ["ON_HOLD", "On hold"],
+] as const;
 type JobsBreakdown = {
   bedframeUnits: number;
   sofaSets: number;
@@ -181,7 +197,7 @@ type Overview = {
         buyMinSen: number;
         buyMaxSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number }[];
+      monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
     };
     SOFA: {
       list: {
@@ -193,7 +209,7 @@ type Overview = {
         buyMinSen: number;
         buyMaxSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number }[];
+      monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
     };
   };
   monthlyRevenue?: {
@@ -310,17 +326,16 @@ function last7WorkingDays(): { from: string; to: string } {
 }
 // Date range for a selected "YYYY-MM": [1st .. month end]. The current
 // month is capped at today; a past month runs to its last calendar day.
-function monthWindow(ym: string): { from: string; to: string } {
+function monthWindow(key: string): { from: string; to: string } {
+  // A month, quarter (YYYY-Qn) or year (YYYY): first day .. last day, capped
+  // at today (owner 2026-10-17: quarter and year periods).
+  const dp = parseDashPeriod(key);
   const iso = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const yr = Number(ym.slice(0, 4));
-  const mo = Number(ym.slice(5, 7)); // 1-12
-  const from = iso(new Date(yr, mo - 1, 1));
-  const lastDay = new Date(yr, mo, 0); // day 0 of next month
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const to = ym === CUR_YM && today < lastDay ? iso(today) : iso(lastDay);
-  return { from, to };
+  const today = iso(new Date());
+  const from = dp.startISO || today;
+  const last = dp.lastDayISO || today;
+  return { from, to: last > today ? today : last };
 }
 
 // ---------- helpers (same tokens as /dashboard) ----------
@@ -335,20 +350,21 @@ const CUR_YM = new Date().toISOString().slice(0, 7);
 
 // Roll the last-12 monthly fabric series up into the last 8 quarters.
 function toQuarterly(
-  monthly: { month: string; meters: number; lateMeters?: number }[],
-): { label: string; meters: number; lateMeters: number }[] {
+  monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[],
+): { label: string; meters: number; lateMeters: number; costSen: number }[] {
   // The late share rolls up too: a quarter that absorbed the PREVIOUS
   // quarter's postings deserves the same warning a month gets. Late-within-
   // the-same-quarter is still flagged — the tag says "an earlier month", which
   // remains true, and a quarter bar is read against other quarters anyway.
-  const q = new Map<string, { meters: number; lateMeters: number }>();
+  const q = new Map<string, { meters: number; lateMeters: number; costSen: number }>();
   for (const m of monthly) {
     const [y, mm] = m.month.split("-");
     const qn = Math.ceil((Number(mm) || 1) / 3);
     const key = `${y}-Q${qn}`;
-    const e = q.get(key) ?? { meters: 0, lateMeters: 0 };
+    const e = q.get(key) ?? { meters: 0, lateMeters: 0, costSen: 0 };
     e.meters += m.meters;
     e.lateMeters += m.lateMeters ?? 0;
+    e.costSen += m.costSen ?? 0;
     q.set(key, e);
   }
   return [...q.entries()]
@@ -676,7 +692,7 @@ function Gauge({
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-[34px] leading-none font-[800] text-[#1F1D1B] tabular-nums">
+        <span className="text-[28px] leading-none font-[800] text-[#1F1D1B] tabular-nums">
           {big}
         </span>
         <span className="mt-1 text-[10px] uppercase tracking-wider text-[#9CA3AF]">
@@ -688,10 +704,24 @@ function Gauge({
 }
 
 // ---------- page ----------
-export default function DashboardBPage() {
+/** The Command Center's sections, in page order. The merged dashboard embeds them by name. */
+export type CommandCenterSection =
+  | "kpis" | "dailyReport" | "revenue" | "plantLoad" | "deptRevenue" | "pipeline" | "efficiency"
+  | "customers" | "topSellers" | "fabric" | "deptBacklog" | "purchasing" | "ocr";
+
+/**
+ * Merged dashboard (owner 2026-10-16/17): the owner's favourite cards are these
+ * Command Center cards, so the tabbed dashboard embeds them as they are
+ * instead of redrawing them. `embed` hides the page header and footer, takes
+ * the period from the host page ("all" or "YYYY-MM") and renders only the
+ * named sections. Without `embed` the page is unchanged.
+ */
+export default function DashboardBPage({ embed }: { embed?: { period: string; sections: readonly CommandCenterSection[] } } = {}) {
   // Open the Command Center on the CURRENT month by default (owner request) —
   // not all-time. CUR_YM (module-scope) is the current "YYYY-MM".
-  const [period, setPeriod] = useState(CUR_YM);
+  const [periodState, setPeriod] = useState(CUR_YM);
+  const period = embed?.period ?? periodState;
+  const show = (s: CommandCenterSection): boolean => !embed || embed.sections.includes(s);
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const toggleSeries = (k: string) =>
     setHiddenSeries((prev) => {
@@ -715,8 +745,12 @@ export default function DashboardBPage() {
     subtitle?: string;
     node: React.ReactNode;
   } | null>(null);
+  // Embedded (merged dashboard): fetch only what the shown sections draw. A
+  // tab used to embed this page several times and every copy fetched — and
+  // crunched — the whole Command Center (owner 2026-10-17: "哪里卡顿").
+  const needs = (...secs: CommandCenterSection[]) => secs.some(show);
   const { data: soRaw, loading: soL } =
-    useCachedJson<SoStats>("/api/sales-orders/stats");
+    useCachedJson<SoStats>(needs("kpis", "pipeline") ? "/api/sales-orders/stats" : null);
   const { data: ovRaw, loading: ovL } = useCachedJson<Overview>(
     `/api/dashboard/overview?period=${period}`,
   );
@@ -724,7 +758,7 @@ export default function DashboardBPage() {
   // 2026-10-15). Separate, fresh endpoint: the overview payload above is
   // snapshotted / frozen per month and has no split.
   const { data: splitRaw, loading: splitL } = useCachedJson<RevenueSplitResp>(
-    `/api/dashboard/overview/revenue-split?period=${period}`,
+    needs("revenue", "deptRevenue") ? `/api/dashboard/overview/revenue-split?period=${period}` : null,
   );
   const [revCat, setRevCat] = useState<RevCat>("all");
   // Pending Delivery money — ONE small server-computed number.
@@ -740,13 +774,13 @@ export default function DashboardBPage() {
   // page's Pending-Delivery tab lists) and returns just the sen total, so the
   // browser downloads a few dozen bytes instead of megabytes.
   const { data: pendingRaw, loading: pendingL } =
-    useCachedJson<PendingValueResp>("/api/delivery-orders/pending-value");
+    useCachedJson<PendingValueResp>(needs("kpis", "pipeline") ? "/api/delivery-orders/pending-value" : null);
   // Whole-dataset per-status value sums (valueByStatus) — the SAME aggregate
   // the Delivery list page reads. The dispatch-chain KPIs (pending-dispatch /
   // in-transit) sum from this so they reflect ALL DOs, not the 200-row page.
   const { data: doStatsRaw } = useCachedJson<{
     valueByStatus?: Record<string, number>;
-  }>("/api/delivery-orders/stats");
+  }>(needs("kpis", "pipeline") ? "/api/delivery-orders/stats" : null);
   // Worker-Efficiency window follows the selected month: a specific month →
   // [1st .. month end] (capped at today for the current month); All-time →
   // the rolling last 7 working days (unchanged).
@@ -755,10 +789,10 @@ export default function DashboardBPage() {
     return monthWindow(period);
   }, [period]);
   const { data: jcSumRaw, loading: jcSumL } = useCachedJson<JcSummaryResp>(
-    `/api/job-cards/summary?from=${effWin.from}&to=${effWin.to}`,
+    needs("efficiency") ? `/api/job-cards/summary?from=${effWin.from}&to=${effWin.to}` : null,
   );
   const { data: wheSumRaw, loading: wheSumL } = useCachedJson<WheSummaryResp>(
-    `/api/working-hour-entries/summary?from=${effWin.from}&to=${effWin.to}`,
+    needs("efficiency") ? `/api/working-hour-entries/summary?from=${effWin.from}&to=${effWin.to}` : null,
   );
   // Daily Report summary — independent fetch (own loading state), so it paints
   // the instant its data lands without blocking the rest of the dashboard.
@@ -767,7 +801,7 @@ export default function DashboardBPage() {
     loading: compL,
     failure: compFailure,
     refresh: compRefresh,
-  } = useCachedJson<ComplianceResp>("/api/reports/compliance.json");
+  } = useCachedJson<ComplianceResp>(needs("dailyReport") ? "/api/reports/compliance.json" : null);
   const compCounts = compRaw?.data?.counts;
   // A dead read must not become a green "All clear". `compCounts?.total ?? 0`
   // printed a large green 0 under "All clear — nothing flagged today" whenever
@@ -911,6 +945,18 @@ export default function DashboardBPage() {
     ? Math.max(0, pipeConfirmed - pipeDelivered)
     : outstanding;
   const pipeMax = Math.max(1, pipeConfirmed, pipeDelivered, pipeOutstanding);
+  // Average per working day (owner 2026-10-18: "加个 average … 平均一天多少,
+  // 要怎么去拉供需平衡"): orders in, production out, invoiced, over the
+  // revenue chart's own buckets. A month's buckets are days (idle days left
+  // out); quarter / year / all are weeks, counted as 6 working days each.
+  const perDay = (() => {
+    const daily = /^\d{4}-\d{2}$/.test(period);
+    const live = weekRev.filter((r) => r.salesOrderSen || r.invoiceSen || r.productionSen);
+    const days = daily ? live.length : live.length * 6;
+    if (days === 0) return null;
+    const sum = (f: (r: (typeof weekRev)[number]) => number) => live.reduce((a, r) => a + f(r), 0);
+    return { days, orders: sum((r) => r.salesOrderSen) / days, production: sum((r) => r.productionSen) / days, invoiced: sum((r) => r.invoiceSen) / days };
+  })();
   const backlogDays = prod?.backlogDays ?? 0;
   const util = Math.min(1, backlogDays / 14);
   const gaugeAccent = backlogDays > 12 ? C_RED : backlogDays > 7 ? C_PROD : C_GREEN;
@@ -940,6 +986,9 @@ export default function DashboardBPage() {
 
   const aovAll = useMemo(() => ov.aovByCustomer ?? [], [ov.aovByCustomer]);
   const topBed = ov.topSellers?.BEDFRAME ?? [];
+  // Share of the period's confirmed sales (the Sales KPI), so a seller reads
+  // as "x% of what we sold".
+  const salesBase = ov.salesThisMonthSen ?? 0;
   const topSofa = ov.topSellers?.SOFA ?? [];
 
   // Period-over-period deltas (last vs previous month in the series) for the
@@ -1028,6 +1077,8 @@ export default function DashboardBPage() {
   // and fast. While it resolves, show a layout-shaped skeleton instead of a
   // bare centred string, so the page never flashes empty.
   if (overviewLoading) {
+    // Embedded: one card-sized placeholder, not a whole-page skeleton per embed.
+    if (embed) return <Skeleton className="h-40 w-full rounded-xl" />;
     return (
       <div className="space-y-5">
         <p className="sr-only">Loading Dashboard</p>
@@ -1115,6 +1166,7 @@ export default function DashboardBPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
+      {!embed && (
       <div className="flex items-end justify-between flex-wrap gap-y-2">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#6B5C32]">
@@ -1137,12 +1189,14 @@ export default function DashboardBPage() {
           ))}
         </select>
       </div>
+      )}
 
       {/* KPI rail — four cards: This Month Sales · This Month Invoices ·
           Pending Delivery (consolidated) · Outstanding. Sales = confirmed-SO
           value; Invoices = invoice-sourced (owner 2026-06-12: "it captures
           straight from Invoices — when I deliver, the invoice is issued"), which
           replaced the old shipped-value Delivered card. */}
+      {show("kpis") && (
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 max-[360px]:grid-cols-1">
         {/* This Month Sales — confirmed-SO value for the selected month
             (all-time = cumulative). Owner 2026-06-12 kept this alongside the
@@ -1155,6 +1209,7 @@ export default function DashboardBPage() {
           accent={C_SO}
           spark={soSpark}
           delta={isMonthScoped ? null : salesDelta}
+          onClick={() => setDrill({ title: `${salesLabel} — orders`, subtitle: "Confirmed sales orders by SO date", node: <SoListDrill period={period} kind="sales" /> })}
         />
         {/* This Month Invoices — Σ invoice totals (excl. cancelled) by invoice
             date for the selected month (all-time = cumulative). Invoice-sourced,
@@ -1167,6 +1222,7 @@ export default function DashboardBPage() {
           accent={C_PROD}
           spark={invSpark}
           delta={isMonthScoped ? null : invoiceDelta}
+          onClick={() => setDrill({ title: `${invoicesLabel} — invoices`, subtitle: "Invoices by invoice date, cancelled excluded", node: <InvoiceListDrill period={period} /> })}
         />
         {/* Pending Delivery (consolidated) — one card for everything made but
             not yet delivered: pending delivery (made, not on a dispatched DO)
@@ -1186,6 +1242,7 @@ export default function DashboardBPage() {
           accent={C_GREEN}
           loading={pendingL}
           tag="live"
+          onClick={() => setDrill({ title: "Pending Delivery — by stage", subtitle: "Live: everything made but not yet delivered", node: <PendingDeliveryDrill pendingSen={pendingDeliveryValueSen} dispatchSen={dispatchChain.pendingDispatchSen} transitSen={dispatchChain.inTransitSen} /> })}
         />
         <KTile
           label="Outstanding"
@@ -1195,11 +1252,14 @@ export default function DashboardBPage() {
           accent={C_INV}
           loading={soL}
           tag="live"
+          onClick={() => setDrill({ title: "Outstanding — how it adds up", subtitle: "Confirmed order value minus value delivered (live)", node: <OutstandingDrill /> })}
         />
       </div>
+      )}
 
       {/* Daily Report — process / SOP exceptions summary. Independent fetch;
           links to the full /daily-report page. */}
+      {show("dailyReport") && (
       <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
         <CardContent className="p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1310,6 +1370,7 @@ export default function DashboardBPage() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* The Morning Brief · CNC Queue card was removed on 2026-08-05 at the
           owner's instruction ("CNCQ remove 掉"). The brief itself still exists
@@ -1319,7 +1380,9 @@ export default function DashboardBPage() {
           not a number anyone could act on from here. */}
 
       {/* Revenue + Plant load */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {(show("revenue") || show("plantLoad")) && (
+      <div className={show("revenue") && show("plantLoad") ? "grid grid-cols-1 lg:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
+        {show("revenue") && (
         <Card className="lg:col-span-2 bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -1380,10 +1443,14 @@ export default function DashboardBPage() {
             </div>
           </CardContent>
         </Card>
+        )}
 
+        {show("plantLoad") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5 flex flex-col items-center">
-            <SectionTitle title="Plant Load" sub="backlog vs daily capacity" />
+            <div className="w-full">
+              <SectionTitle title="Plant Load" sub="backlog vs daily capacity" />
+            </div>
             {stateLiveTag && (
               <span
                 title="Backlog, Active Jobs and Workforce are point-in-time counts. No daily snapshot was stored for this past month, so the current live figures are shown — not that month's true state."
@@ -1486,16 +1553,16 @@ export default function DashboardBPage() {
                     ),
                   });
                 }}
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <Factory className="h-4 w-4 text-[#6B5C32]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     Daily Capacity{" "}
                     <span className="text-[#C2BBAE]">· {capacityWindowLabel}</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {hrs(prod?.dailyCapacityMin)}
                 </span>
               </button>
@@ -1529,16 +1596,16 @@ export default function DashboardBPage() {
                     ),
                   })
                 }
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <Clock className="h-4 w-4 text-[#DC2626]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     Total Backlog{" "}
                     <span className="text-[#C2BBAE]">· per dept</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {backlogDays.toLocaleString()}d ·{" "}
                   {hrs(prod?.backlogMin)}
                 </span>
@@ -1564,16 +1631,16 @@ export default function DashboardBPage() {
                     ),
                   })
                 }
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <Package className="h-4 w-4 text-[#6B5C32]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     Active Jobs{" "}
                     <span className="text-[#C2BBAE]">· pending</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {(prod?.activeJobs?.bedframeUnits ?? 0).toLocaleString()} /{" "}
                   {(prod?.activeJobs?.sofaSets ?? 0).toLocaleString()}
                 </span>
@@ -1588,31 +1655,24 @@ export default function DashboardBPage() {
                     subtitle:
                       "Production finished per day (last upholstery completed)",
                     node: (
-                      <MiniTable
-                        cols={["Date", "Bedframe units", "Sofa sets"]}
-                        rows={dropIdleSundays(
-                          prod.completedLast7,
-                          (d) => d.date,
-                          (d) => [d.bedframeUnits, d.sofaSets],
-                        ).map((d) => [
-                          d.date,
-                          d.bedframeUnits.toLocaleString(),
-                          d.sofaSets.toLocaleString(),
-                        ])}
+                      <CompletedDrill
+                        days={prod.completedLast7}
+                        totalBf={completedHeadBf}
+                        totalSofa={completedHeadSofa}
                       />
                     ),
                   })
                 }
-                className="w-full flex items-center justify-between rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-[#15803D]" />
-                  <span className="text-xs text-[#5A5550]">
+                  <span className="min-w-0 text-xs leading-snug text-[#5A5550]">
                     {completedHeadlineLabel}{" "}
                     <span className="text-[#C2BBAE]">{completedHintLabel}</span>
                   </span>
                 </span>
-                <span className="text-sm font-bold text-[#1F1D1B] tabular-nums">
+                <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {completedHeadBf.toLocaleString()} /{" "}
                   {completedHeadSofa.toLocaleString()}
                 </span>
@@ -1620,17 +1680,23 @@ export default function DashboardBPage() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Department Revenue (owner 2026-10-15) */}
+      {show("deptRevenue") && (
       <DeptRevenueCard
         data={splitRaw}
         loading={splitL}
         periodLabel={isAllTime ? "last 12 weeks" : period}
       />
+      )}
 
       {/* Pipeline + Worker efficiency */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {(show("pipeline") || show("efficiency")) && (
+      <div className={show("pipeline") && show("efficiency") ? "grid grid-cols-1 lg:grid-cols-2 gap-4" : "grid grid-cols-1 gap-4"}>
+        {show("pipeline") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -1702,9 +1768,76 @@ export default function DashboardBPage() {
                 </p>
               </>
             )}
+            {/* Merged dashboard (owner 2026-10-17): the experimental
+                "Fulfillment pipeline" folded in here — where every order
+                stands right now, by status (count · value, all orders, live). */}
+            {so.byStatus && (
+              <div className="mt-4 border-t border-[#F0ECE6] pt-3">
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#9CA3AF]">
+                  By status · live, all orders
+                </p>
+                {(() => {
+                  const maxN = Math.max(1, ...PIPELINE_STATUSES.map(([k]) => so.byStatus?.[k] ?? 0));
+                  // How many days of the current pace each stage holds:
+                  // in production ÷ production per day, ready to ship ÷
+                  // invoiced per day (what leaves the factory).
+                  const daysOf = (k: string, sen: number) => {
+                    const rate = k === "IN_PRODUCTION" ? perDay?.production : k === "READY_TO_SHIP" ? perDay?.invoiced : null;
+                    return rate && rate > 0 ? sen / rate : null;
+                  };
+                  return PIPELINE_STATUSES.map(([k, label]) => {
+                    const n = so.byStatus?.[k] ?? 0;
+                    if (n === 0) return null;
+                    const sen = so.revenueByStatus?.[k] ?? 0;
+                    const d = daysOf(k, sen);
+                    return (
+                      <div key={k} className="flex items-center gap-3 py-1">
+                        <span className="w-24 shrink-0 text-xs text-[#5A5550]">{label}</span>
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#F5F2ED]">
+                          <div className="h-full rounded-full" style={{ width: `${Math.max(3, (n / maxN) * 100)}%`, background: k === "ON_HOLD" ? C_RED : C_PROD }} />
+                        </div>
+                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9CA3AF]">{n.toLocaleString()} SO</span>
+                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9C6F1E]" title={d == null ? undefined : k === "IN_PRODUCTION" ? "Days of production at the current pace" : "Days of invoicing at the current pace"}>
+                          {d == null ? "" : `≈ ${d.toFixed(1)} d`}
+                        </span>
+                        <span className="w-28 shrink-0 text-right text-xs font-semibold tabular-nums text-[#1F1D1B]">{rm(sen)}</span>
+                      </div>
+                    );
+                  });
+                })()}
+                {perDay && (
+                  <div className="mt-3 rounded-lg bg-[#F7F4EF] px-3 py-2">
+                    <p className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">
+                      Average per working day · {perDay.days} working day{perDay.days === 1 ? "" : "s"}
+                    </p>
+                    <div className="mt-1 grid grid-cols-3 gap-2 text-center">
+                      {[
+                        ["Orders in", perDay.orders, C_SO],
+                        ["Production", perDay.production, C_PROD],
+                        ["Invoiced", perDay.invoiced, C_INV],
+                      ].map(([k, v, c]) => (
+                        <div key={k as string} className="min-w-0">
+                          <p className="truncate text-[11px] text-[#6B7280]">{k as string}</p>
+                          <p className="truncate text-sm font-bold tabular-nums" style={{ color: c as string }}>{rm(Math.round(v as number))}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-[11px] text-[#6B7280]">
+                      {perDay.production > 0
+                        ? perDay.orders > perDay.production
+                          ? `Orders arrive ${(((perDay.orders - perDay.production) / perDay.production) * 100).toFixed(0)}% faster than we produce — the queue grows by about ${rm(Math.round(perDay.orders - perDay.production))} a day.`
+                          : `We produce ${(((perDay.production - perDay.orders) / perDay.production) * 100).toFixed(0)}% more than comes in — the queue shrinks by about ${rm(Math.round(perDay.production - perDay.orders))} a day.`
+                        : "No production recorded in this period yet."}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
+        )}
 
+        {show("efficiency") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -1767,9 +1900,12 @@ export default function DashboardBPage() {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Revenue by Customer — financial-report concentration exhibit */}
+      {show("customers") && (
       <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
         <CardContent className="p-5">
           <SectionTitle
@@ -2085,22 +2221,24 @@ export default function DashboardBPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Top sellers */}
+      {show("topSellers") && (
       <div>
 
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
               title="Top Sellers"
-              sub="bedframe by units · sofa by sets"
+              sub="top 10 · bedframe by units · sofa by sets · % = share of the period's sales"
             />
             <div className="grid grid-cols-2 gap-5 max-sm:grid-cols-1">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5A5550] mb-1.5">
                   Bedframe
                 </p>
-                {topBed.slice(0, 6).map((p) => {
+                {topBed.slice(0, 10).map((p) => {
                   const cr = tsByCust?.BEDFRAME?.[p.productCode] ?? [];
                   return (
                     <div
@@ -2140,6 +2278,7 @@ export default function DashboardBPage() {
                       </span>
                       <span className="text-xs font-semibold text-[#1F1D1B] tabular-nums">
                         {rm(p.valueSen)}
+                        <span className="ml-1.5 font-normal text-[#9CA3AF]">{salesBase > 0 ? `${((p.valueSen / salesBase) * 100).toFixed(1)}%` : ""}</span>
                       </span>
                     </div>
                   );
@@ -2149,7 +2288,7 @@ export default function DashboardBPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5A5550] mb-1.5">
                   Sofa
                 </p>
-                {topSofa.slice(0, 6).map((p) => {
+                {topSofa.slice(0, 10).map((p) => {
                   const cr = tsByCust?.SOFA?.[p.model] ?? [];
                   return (
                     <div
@@ -2189,6 +2328,7 @@ export default function DashboardBPage() {
                       </span>
                       <span className="text-xs font-semibold text-[#1F1D1B] tabular-nums">
                         {rm(p.valueSen)}
+                        <span className="ml-1.5 font-normal text-[#9CA3AF]">{salesBase > 0 ? `${((p.valueSen / salesBase) * 100).toFixed(1)}%` : ""}</span>
                       </span>
                     </div>
                   );
@@ -2198,8 +2338,10 @@ export default function DashboardBPage() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {/* Fabric */}
+      {show("fabric") && (
       <div>
         <div className="flex items-end justify-between mb-3 flex-wrap gap-y-2">
           <div>
@@ -2294,6 +2436,7 @@ export default function DashboardBPage() {
                       label: m.month,
                       meters: m.meters,
                       lateMeters: m.lateMeters ?? 0,
+                      costSen: m.costSen ?? 0,
                     }))
                     // Newest at the top (owner 2026-08-05). The series arrives
                     // oldest-first because that is the order a chart needs;
@@ -2427,6 +2570,7 @@ export default function DashboardBPage() {
                       {fabGran === "quarter"
                         ? "Quarterly meters posted — last 8"
                         : "Monthly meters posted — last 12"}
+                      <span className="float-right font-normal text-[#9CA3AF]">avg cost / m</span>
                     </p>
                     {trend.length === 0 ? (
                       <p className="text-xs text-[#9CA3AF]">No data.</p>
@@ -2455,6 +2599,10 @@ export default function DashboardBPage() {
                           <span className="w-16 text-right text-[11px] font-semibold text-[#1F1D1B] tabular-nums">
                             {Math.round(t.meters).toLocaleString()} m
                           </span>
+                          {/* That month's average cost per metre (owner 2026-10-17). */}
+                          <span className="w-20 text-right text-[11px] text-[#6B5C32] tabular-nums" title="Issue cost ÷ meters that month">
+                            {t.meters > 0 && t.costSen > 0 ? `${rm(Math.round(t.costSen / t.meters))}/m` : "—"}
+                          </span>
                         </div>
                       ))
                     )}
@@ -2472,11 +2620,14 @@ export default function DashboardBPage() {
           })}
         </div>
       </div>
+      )}
 
       {/* Department backlog + Purchasing */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {(show("deptBacklog") || show("purchasing")) && (
+      <div className={show("deptBacklog") && show("purchasing") ? "grid grid-cols-1 lg:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
+        {show("deptBacklog") && (
         <Card className="lg:col-span-2 bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-          <CardContent className="p-5">
+          <CardContent className="p-5 flex h-full flex-col">
             {stateLiveTag && (
               <span
                 title="Backlog is a point-in-time count. No daily snapshot was stored for this past month, so the current live figures are shown — not that month's true state."
@@ -2562,15 +2713,25 @@ export default function DashboardBPage() {
                 return { d, sofaDays, bedDays, showDays };
               });
               const mxDays = Math.max(1, ...rows.map((r) => r.showDays ?? 0));
-              return rows.map(({ d, sofaDays, bedDays, showDays }) => (
+              // Rows spread over the card's height (it stretches to Plant
+              // Load beside it); each row also says what the days are made of.
+              return (
+                <div className="flex flex-1 flex-col justify-evenly">
+                  <div className="flex items-center gap-3 pb-1 text-[10px] uppercase tracking-wide text-[#9CA3AF]">
+                    <span className="w-28 shrink-0">Department</span>
+                    <span className="flex-1">Days to clear</span>
+                    <span className="hidden w-32 shrink-0 text-right sm:block">Queued · capacity</span>
+                    <span className="w-12 shrink-0 text-right">Days</span>
+                  </div>
+                  {rows.map(({ d, sofaDays, bedDays, showDays }) => (
                 <div
                   key={d.dept}
-                  className="flex items-center gap-3 py-1"
+                  className="flex items-center gap-3 py-1.5 border-b border-[#F7F4EF] last:border-0"
                 >
-                  <span className="w-28 text-xs text-[#1F1D1B]">
+                  <span className="w-28 shrink-0 truncate text-xs text-[#1F1D1B]" title={d.dept}>
                     {d.dept}
                   </span>
-                  <div className="flex-1 h-2.5 rounded bg-[#F5F2ED] overflow-hidden flex">
+                  <div className="flex-1 h-3 rounded bg-[#F5F2ED] overflow-hidden flex">
                     {sofaOn && (
                       <div
                         className="h-full"
@@ -2590,15 +2751,22 @@ export default function DashboardBPage() {
                       />
                     )}
                   </div>
-                  <span className="w-12 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 7 working days — queue can't be sized in days" : undefined}>
+                  <span className="hidden w-32 shrink-0 text-right text-[11px] text-[#9CA3AF] tabular-nums sm:block">
+                    {hrs(d.totalMin)} · {hrs(d.dailyCapMin)}/d
+                  </span>
+                  <span className="w-12 shrink-0 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 7 working days — queue can't be sized in days" : undefined}>
                     {showDays == null ? "stalled" : `${showDays.toFixed(1)}d`}
                   </span>
                 </div>
-              ));
+                  ))}
+                </div>
+              );
             })()}
           </CardContent>
         </Card>
+        )}
 
+        {show("purchasing") && (
         <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
           <CardContent className="p-5">
             <SectionTitle
@@ -2679,16 +2847,22 @@ export default function DashboardBPage() {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
+      )}
 
       {/* OCR accuracy — automation-readiness gauge (owner 2026-07-04, placed
           at the bottom of the dashboard). Follows the same `period` dropdown as
           the rest of the Command Center (owner: pick a month → OCR for that month). */}
+      {show("ocr") && (
       <OcrAccuracyCard period={period} range={period === "all" ? null : monthWindow(period)} />
+      )}
 
+      {!embed && (
       <p className="text-center text-[11px] text-[#9CA3AF] pt-2">
         Hookka Command Center
       </p>
+      )}
 
       {drill && (
         <Modal

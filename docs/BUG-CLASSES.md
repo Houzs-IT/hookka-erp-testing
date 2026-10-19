@@ -1,5 +1,19 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-17**: branch `fix/edit-keeps-bank-match`, to `main`, closes **C5 rows 8–10** and **C31 rows 2–5** (one shared rule each: `restoreEditedFamilyStatements`, `planEditBankCarry`) and **adds C32, a stored account code the chart later renamed** (BUG-2026-10-17-320 to -323). Nothing else re-checked.
+
+> **Last verified: 2026-10-17**: branch `feat/or-edit`, to `main`, adds **C5 rows 7–11** (the official-receipt edit, born correct; three unvoid paths found open on the way) and **C31, an edit that re-posts a bank leg under a new id**. Nothing else re-checked.
+
+> **Last verified: 2026-10-17**: branch `feat/finance-notes-post`, to `main`, adds **C16 row 11** (the phone's Credit / Debit Notes lists read note-number and amount keys the API never returns, BUG-2026-10-17-317). Nothing else re-checked.
+
+> **Last verified: 2026-10-17**: branch `fix/m-dashboard-anchor-month`, to `main`, adds **C21 row 16** (the phone's Finance Dashboard took the API's last row as the latest month, BUG-2026-10-17-308). Nothing else re-checked.
+
+> **Last verified: 2026-10-17**: branch `fix/m-receivables-aging-total`, to `main`, adds **C16 row 9** (the phone's Receivables read a total the aging row does not carry, BUG-2026-10-17-307). Nothing else re-checked.
+
+> **Last verified: 2026-10-17**: branch `fix/ap-invoices-cancelled-outstanding`, to `main`, adds **C15 row 46** (AP Invoices counted cancelled documents as outstanding, BUG-2026-10-17-306). Nothing else re-checked.
+
+> **Last verified: 2026-10-16**: branch `feat/finance-v2-reports-4`, to `main`, adds **C15 row 45** (the P&L statement's FY-to-date % divided by the period's net sales, BUG-2026-10-16-305). Nothing else re-checked.
+
 > **Last verified: 2026-10-16**: branch `fix/po-edit-save-rowid`, to `main`, **adds C30, SQLite-only SQL reaching Postgres** (BUG-2026-10-16-300). Nothing else re-checked.
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main`, ports from `staging` C2 row 9, C15 rows 7 and 8 (row 6 is staging-only) and C22 row 4 (BUG-2026-10-16-295 to -298). Nothing else re-checked.
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` adds C29 row 6, the CN print reading CO No. / fabric from a stale-while-revalidate snapshot (BUG-2026-10-14-285). Nothing else re-checked.
@@ -377,6 +391,11 @@ the fallback is (postedAt dating, "no legs to reverse", "nothing to hide").
 | 4 | `applyLifecycle` reversal SELECT + hidden UPDATEs | raw sourceId | ⬜ latent — unreachable today (PIs don't use lifecycle; PI delete is DRAFT-only = no legs). Warning comment in place; widen the matches if a `:<tag>`-legged doc type is ever wired in |
 | 5 | supplier-payment UNVOID leg un-hiding | exact `supplier_payment` sourceType | ✅ fixed 2026-07-24 (BUG-2026-07-24-002: an edited payment's live legs are `restate_post:<stamp>` — unvoid resurrected the stale pre-edit base legs; now picks `latestRestatePostType`) |
 | 6 | P&L "salary already recorded" (`glWindowSigned` + cost & expense classes) | exact `sourceType::sourceId`, credit legs only | ✅ fixed 2026-10-09 (BUG-2026-10-09-275: an unposted Labour post / voided JV still marked the month recorded, hiding the payslip labour; now `recordedSalaryAccounts` nets the document's legs) |
+| 7 | official-receipt void / UNVOID after an edit | — | ✅ born correct 2026-10-17 (#968): void hides the whole `official_receipt%` family; unvoid runs `restoreEditedFamilyStatements` (`src/api/lib/document-lifecycle.ts`, since branch `fix/edit-keeps-bank-match`) |
+| 8 | payment-voucher UNVOID after an edit (`/payment-vouchers/:id/lifecycle`) | exact `payment_voucher` + `payment_voucher_settle` | ✅ fixed 2026-10-17 (BUG-2026-10-17-320): `restoreEditedFamilyStatements` — re-hide the family, un-hide the newest edit plus anything posted after it (`liveFamiliesAfterEdit`, `src/lib/lifecycle-machine.ts`). Prod had no affected voucher (measured) |
+| 9 | customer-receipt UNVOID after an edit (`buildCustomerPaymentLifecycle`) | exact `payment` | ✅ fixed 2026-10-17 (BUG-2026-10-17-320), same helper |
+| 10 | other-party-payment UNVOID after an edit (`buildOtherPartyPaymentLifecycle`) | exact `other_party_payment` | ✅ fixed 2026-10-17 (BUG-2026-10-17-320), same helper |
+| 11 | other-party-bill lifecycle (`otherPartyBillLegFamily`) | the whole family | ✅ net-correct: an unvoid un-hides every family (original, each reversal, each re-post) — the figures are right, the GL shows the cancelling pairs |
 
 **Enforced by** the `stripSourceIdSuffix` cases in `tests/doc-date.test.mjs`. When adding a NEW
 suffixed identity (a second `:<tag>` writer), grep every `sourceId = ?` / `.get(sourceId)`
@@ -996,6 +1015,8 @@ place: `/api/department-performance` must keep dividing by clocked time,
 | 42 | *"0 of 0 work orders · 0/0 cells complete"*, the Overview tab fraction, **all eight department tab fractions**, *"N of M orders"*, and *"No production orders found."* | `/production` Overview | the fetch is armed by `shouldFetch` (default `false` in overview mode) while the matrix is gated on `activeTab === "ALL"` alone — so on a cold landing **no request is ever sent** and the page printed a confident `0` next to its own *"No orders loaded yet."* callout. `orders` is `[]` for three different reasons (never fetched / in flight / dead read) and `failure` was not read, so a timeout was byte-identical to an empty factory | ✅ 2026-08-14 (-146) — one named `ordersObserved` predicate over `isUnknownOutcome`; every count states WHICH of the three cases it is in, because "—" with no reason is only a prettier lie |
 | 43 | all four totals tiles, incl. **"⚠️ Missing BOM time"** | `/production/wip-times` | `loading` was destructured and used only for the export button and the table; `failure` was never read. During the fetch, on a dead read and on an empty body all four printed `0` — and the Missing-BOM tile goes amber **only when `> 0`**, so a failed load rendered its `0` in the NEUTRAL colour and was pixel-identical to all-clear | ✅ 2026-08-14 (-147) — gated on `Array.isArray(resp?.data)` (**not** `!loading`: a dead read also ends with `loading === false`), unknown branch tested FIRST so it can never wear the all-clear colour, failure banner + Retry |
 | 44 | **"⚠️ Missing BOM time"** could not observe its own worst case | `/production/wip-times` | `loadActiveBomRows` filters `versionStatus = 'ACTIVE'` and `walkTree` emits a row only per `processes[]` entry carrying a `deptCode` — so a product with **no active BOM template at all**, the most complete form of "missing BOM time", produces no row and can never be counted. A `0` there asserted a coverage the query cannot establish (row 28's shape / BUG-2026-08-13-096) | ✅ 2026-08-14 (-147) — `countProductsWithoutActiveBom()` mirrors the exact filter that creates the blind spot and is published beside the figure as an EXCLUSION, never folded into `missing`; `number \| null` so a failed count reads "—", never 0; the caption states it is category-scoped and can never be dept-scoped |
+| 45 | the P&L statement's FY-to-date **% Sales** column | `/accounting?tab=pl` | every YTD % divided by the **period's** net sales (one month) instead of the FY to date's — Net Sales YTD read 241.8% on prod; the statement endpoint sent only the period's net sales, so the page had no other base to use. Found by the finance v2 prod check, not by a report | ✅ 2026-10-16 (-305, #927 prod-verified) — `/pl-statement` sends `ytdNetSalesSen`; the YTD cells and the download divide by it; `tests/pl-ytd-pct.test.mjs` counts the YTD and period call sites |
+| 46 | AP Invoices' *"N shown · outstanding"* (the default All view) and the Outstanding column on cancelled rows | `/accounting?tab=apinvoices` | `/ap-invoices` gave every row `outstandingSen = total − paid` whatever its status, so a voided bill or cancelled purchase invoice still "owed" its face amount and the All view added it in. The cards beside it counted OPEN rows only, so the two disagreed by every cancelled document. Found by the finance v2 prod check, not by a report | ✅ 2026-10-17 (-306) — only an OPEN row owes anything; `tests/ap-invoices-cancelled-outstanding.test.mjs` runs the route |
 | 28 | `production_time_minutes`, the `efficiencyPct` and the `deptBreakdown` on EVERY attendance row | `POST /api/attendance` + `POST /api/worker/clock` + the midnight auto-close → `GET /api/attendance`, `GET /api/worker/history` | `round(workingMinutes × 0.85)` — a fixed ratio of the clock time, written at clock-out and captioned as production. The efficiency divided it by the standard day, so it measured ATTENDANCE LENGTH; the dept split republished the same number under an EMPTY productCode. Prod Aug 2026: 180,928 / 212,850 = **0.85005**. Three writers, one of which (the forgotten-punch auto-close) produced a flat **85%** that could not vary — both sides came from `stdMin` | ✅ 2026-08-13 (-103) — writers cleared, readers publish `null` / `[]`, column made nullable |
 
 **Enforced by** six files, all structural (`readFileSync` source assertions),
@@ -1172,6 +1193,9 @@ narrowing has to state what it is dropping.
 | 6 | `finishedGoods` / `finishedProducts` | `/api/inventory` | `suppliers/detail.tsx:214` | ✅ 2026-08-13 (-024) — and note the fix was to DELETE the read, not rename it; the two payload halves are different entities |
 | 7 | `regNo` / `tin` / `address` | the PERMISSION projection on `GET /api/organisations` | `letterheadForPurchaseOrg` → the PO / GRN / PI letterhead | ✅ 2026-08-13 (-100) — caught **before** merge, by looking for this class rather than by an incident |
 | 8 | `customerSOLine` / `customerRefLine` / `companySO` (read as the DO names `customerSO` / `customerRef` / `salesOrderNo`) | `computeInvoicePrintExtras` | `buildUnifiedInvoiceData` → invoice download + customer e-mail PDF | ✅ 2026-09-23 (-186) — a RENAMED field, not a dropped one: the invoice and DO extras share the `DocLineExtra` type, so `tsc` saw every name as optional-and-valid. Every line printed the invoice-level SO/REF and a blank CO SO. Enforced by `tests/invoice-pdf-line-refs.test.mjs` |
+| 9 | `total` / `totalSen` (the AR aging row carries five buckets and no total) | `/api/accounting/aging` | `receivablesConfig` → the phone's Receivables list | ✅ 2026-10-17 (-307) — every debtor read RM 0.00; the outstanding is now the sum of the five buckets; `tests/m-receivables-aging-total.test.mjs` imports the real config |
+| 10 | `pvKind` = `TRANSFER` (OVERWRITTEN, not dropped: the mapper wrote `isAp ? "AP" : "EXPENSE"` over the stored kind) | `GET /api/accounting/payment-vouchers` | every `pvKind === "TRANSFER"` branch in `src/pages/accounting/index.tsx` (door, print, detail, edit mode) | ✅ 2026-10-17 (-309) — a mapper written before the value existed; `tests/ap-payment-print.test.mjs` pins it |
+| 11 | `cnNo` / `creditNoteNo` / `dnNo` / `debitNoteNo` and `totalSen` (NEVER returned: the rows carry `noteNumber` / `totalAmount`) | `GET /api/credit-notes`, `GET /api/debit-notes` | `creditNotesSource` / `debitNotesSource` → the phone's Credit / Debit Notes lists | ✅ 2026-10-17 (-317) — latent (no notes on prod yet); `tests/finance-notes-post.test.mjs` pins the keys |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same
@@ -1272,6 +1296,7 @@ parties in a single pass"* — which is true of the maths and false of the queri
 | 6 | `/ap-control` (`loadUnappliedSupplierAdvances`) vs `/ap-reconciliation` (`ap-recon.ts`) | trade-finance repayments (`TF_REPAYMENT`) left out of the advances | ✅ 2026-09-30 (-229) |
 | 7 | `/ar-control` (`loadUnappliedCustomerAdvances`) vs `/ar-reconciliation` | receipts held on account netted off as advances | ✅ 2026-09-30 (-229) |
 | 8 | customer vs supplier opening seeds (`openingControlSums`, `/opening-balance` lists) | CANCELLED seeds left out | ✅ 2026-09-30 (-230) |
+| 9 | single print (`printPvWithDetail`) vs batch print (`payVoucherOf`) of a payment voucher — not a ledger pair, the same shape | the bills an AP Payment settles | ✅ 2026-10-17 (-311) — batch now prints through the single print's spec |
 
 **The rule.** When you add a predicate to one subsidiary-ledger surface, open its twin in
 the same commit and diff the query — not the file. And when the two must agree on a
@@ -1484,6 +1509,7 @@ IDENTITY or MONEY.
 | 13 | UI selection defaults — `default-bank.ts:12`, `bom.tsx` ×6, `procurement/{create,detail,index}.tsx` + `pi/create.tsx` (`bindings.find(isMainSupplier) ?? bindings[0]`), `employees.tsx:5376`, `finance-dashboard.tsx:549`, `leads/index.tsx:402`, `m/FormSheet.tsx:527`, `m/ModuleListScreen.tsx:220-221`, `mail-center/index.tsx:3301`, `maintenance/sofa-combos.tsx:1212`, `inventory/index.tsx:2607`, `scan-supplier-modal.tsx` ×4 (`activeOrgs[0]?.code ?? "HOOKKA"`) | a **pre-filled** value the user sees and can change before saving | ✅ benign — see "Not every `[0]` is this class" above |
 | 14 | `accounting.ts:11043` (`others[0]` + `"+N"`), `delivery-orders.ts:2274` (error text) | display only, and the truncation is visible | ✅ benign |
 | 15 | grep false positives — `web-push.ts:107` (`pub[0] !== 0x04`, a byte), `do-component-breakdown.ts:102` (`a[0]`/`b[0]`, Map-entry tuples in a comparator), `sales/index.tsx:250-251` (`_flStatus[0]`, "any filter active?") | nothing | ✅ not this class |
+| 16 | the phone's Finance Dashboard — `rows[rows.length - 1]` read as "the latest month" | `src/pages/m/screens/finance/DashScreen.tsx` (#944) | the LAST-one-wins twin: `/api/accounting/dashboard` appends the months ahead that carry only a forecast, so the last row is never the running month; the screen showed "—", charted future months and gave a month with no books | ✅ 2026-10-17 (-308) — `dashAnchorIndex` picks the latest row with actuals; `tests/m-dashboard-anchor-month.test.mjs` |
 
 **Enforced by** `tests/first-one-wins-refusal.test.mjs` — 8 behavioural assertions driving
 the pure resolver with adversarial fixtures (two orders with the SAME line count, so a
@@ -1663,6 +1689,8 @@ in both, a read that cannot succeed returns a value that looks like data.
 | 5 | `dashboard-prototype.ts` — 260 reads, whole route | ✅ 2026-09-15 (BUG-2026-09-15-181) — converted from the rename map |
 | 6 | **every other route reading rows from `getSql`** | ⬜ unswept. No test forbids a sixth. The cheap sweep is `grep -oE "\br\.[a-z]+_[a-z_]+" src/api/routes/*.ts` — a hit is not automatically a bug (some are bound params or SQL fragments) but every hit deserves a look |
 | 7 | **no test asserts a payload's money field is non-zero** | ⬜ open. This class has now recurred five times and every instance was found by a human noticing a wrong number on a screen. One assertion per money-bearing endpoint — "this field is not 0 for a book with sales" — would have caught all five |
+| 8 | the customer KYC block (`KycPanel` over `GET /api/customer-crm/onboarding`) — the CLIENT read snake_case off a `SELECT *` row, and the upsert wrote the blanks back | ✅ 2026-10-17 (-313) — the write-back is what makes this variant destructive, not just wrong on screen |
+| 9 | `customers.default_company_code` in `rowToCustomer` and the PUT merge | ✅ 2026-10-17 (-312) — same destructive shape: the edit form sends the whole record |
 
 ## C24 — the parent feeds the grid's own output back into the grid's inputs
 
@@ -1793,3 +1821,39 @@ Tests: `tests/worker-history-snapshot-fresh.test.mjs` (row 4), `tests/cn-pdf-co-
 | 3 | sofa price backfill (`import-completion/price-backfill.ts`) | ✅ earlier, pairing by product code instead of position |
 
 Tests: `tests/no-sqlite-rowid-in-sql.test.mjs` (row 2 allow-listed until fixed).
+
+## C31 — an edit re-posts a bank leg under a new id; the bank side still points at the old one
+
+**Shape.** An in-place edit (restate) reverses the document's live legs and posts new ones — new ids. Bank reconciliation stores ids: a statement line's `matchedLegId`, a split's `bank_line_leg_splits.leg_id`, the cash board's daily tick `bank_board_cleared.leg_id`. Nothing moves them, so after the edit the statement line is "matched" to a hidden leg (the report treats a missing leg as booked) while the re-posted bank leg shows as not yet through the bank: the month is out by the amount, and a finalised month drifts.
+
+**The rule.** An edit that re-posts a bank / cash leg moves every bank-side reference from the old leg to the new one in the same batch — when the bank account and the amount are unchanged. When either changes, a statement match blocks the edit (unmatch first); a tick never blocks.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | official-receipt edit (`/official-receipts/:id/restate`) | ✅ born correct 2026-10-17 (#968); on the shared rule since branch `fix/edit-keeps-bank-match` |
+| 2 | payment-voucher edit (`/payment-vouchers/:id/restate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321): `planEditBankCarry` (`src/api/lib/bank-leg-carry.ts`, rule `planBankCarry` in `src/lib/bank-leg-carry.ts`) in the edit's own batch |
+| 3 | supplier-payment edit (`buildSupplierPaymentRestate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321) |
+| 4 | customer-receipt edit (`buildCustomerPaymentRestate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321) |
+| 5 | other-party-payment edit (`buildOtherPartyPaymentRestate`) | ✅ fixed 2026-10-17 (BUG-2026-10-17-321) |
+
+Production before the fix (measured 2026-10-17): every matched statement line on the bank account with statements pointed at a live leg — no instance had happened yet.
+
+Tests: `tests/bank-leg-carry.test.mjs` (the rule, a pin on every edit, an inventory of every `<x>_restate_post` writer), `tests/official-receipt-edit-flow.test.mjs` + `tests/edit-keeps-bank-match-flow.test.mjs` (the real routes on `tests/_ledger-mock.mjs`).
+
+## C32 — a stored account code the chart later renamed, looked up in today's chart
+
+**Shape.** A document keeps the account code it was posted with. A rename (`/coa/rename`) cannot rewrite the immutable ledger, so it adds an `account_aliases` row old → new and every ledger READ resolves through `loadAccountResolver`. A document read that hands its stored code straight to a screen does not: the edit form's account picker (today's chart) finds nothing and shows an empty account, the popup prints the code with no name, and saving the untouched form sends the old code, which the server refuses ("Account … not found").
+
+**The rule.** A read that feeds an edit form, a popup or a print resolves every stored account code through `loadAccountResolver` (`src/api/lib/account-resolver.ts`). The stored row is never rewritten.
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | `GET /official-receipts` — lines and Deposit To | ✅ fixed 2026-10-17 (BUG-2026-10-17-323); one receipt on prod carried a renamed line code (measured) |
+| 2 | `GET /payment-vouchers` — lines, Pay From, accrual account | ✅ fixed 2026-10-17 alongside row 1; none on prod (measured) |
+| 3 | other-party bills, other-party / customer / supplier payments | ⬜ not converted; none carries a renamed code on prod (measured 2026-10-17) — resolve the read if a rename ever touches them |
+
+Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tests/official-receipt-edit.test.mjs`.

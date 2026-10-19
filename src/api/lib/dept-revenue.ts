@@ -330,6 +330,32 @@ export function revenueBuckets(
     }
     return { from: first, to: end, buckets, bucketOf: (d) => d };
   }
+  // Quarter (YYYY-Qn): Monday-anchored weeks inside the quarter. Year (YYYY):
+  // one bucket per month, keyed YYYY-MM-01. Both stop at today.
+  const q = period.match(/^(\d{4})-Q([1-4])$/);
+  const yr = period.match(/^(\d{4})$/);
+  if (q || yr) {
+    const y = Number((q ?? yr)![1]);
+    const m1 = q ? (Number(q[2]) - 1) * 3 + 1 : 1;
+    const months = q ? 3 : 12;
+    const first = `${y}-${String(m1).padStart(2, "0")}-01`;
+    const lastDay = new Date(Date.UTC(y, m1 - 1 + months, 0)).toISOString().slice(0, 10);
+    const end = todayISO >= first && todayISO < lastDay ? todayISO : lastDay;
+    const buckets: string[] = [];
+    if (yr) {
+      for (let i = 0; i < 12; i++) {
+        const b = `${y}-${String(i + 1).padStart(2, "0")}-01`;
+        if (b <= end) buckets.push(b);
+      }
+      return { from: first, to: end, buckets, bucketOf: (d) => `${d.slice(0, 7)}-01` };
+    }
+    const cur = new Date(`${weekMonday(first)}T00:00:00Z`);
+    for (let g = 0; g < 20 && cur.toISOString().slice(0, 10) <= end; g++) {
+      buckets.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 7);
+    }
+    return { from: first, to: end, buckets, bucketOf: weekMonday };
+  }
   const mon = weekMonday(todayISO);
   const buckets: string[] = [];
   for (let i = 11; i >= 0; i--) {

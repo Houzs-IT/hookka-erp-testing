@@ -23,6 +23,7 @@ import {
   buildJournalEntryStatements,
   ledgerHasSource,
 } from "../lib/journal-hash";
+import { ClosedYearError } from "../lib/fiscal";
 import { nextMonthDueDate } from "../../lib/terms";
 import { roundUnitPriceSen, discountedLineSen } from "../../lib/unit-price";
 import { issueDocNumber } from "../lib/doc-number-service";
@@ -1636,6 +1637,7 @@ app.post("/", async (c) => {
       db,
       orgId,
       legs,
+      { docDate: piInvoiceDate },
     );
     statements.push(...ls);
   }
@@ -1792,7 +1794,7 @@ export async function backfillPiGlPostings(
 
   const pisRes = await db
     .prepare(
-      `SELECT id, piNo, supplierName, amountSen, is_opening
+      `SELECT id, piNo, supplierName, amountSen, is_opening, invoiceDate
          FROM purchase_invoices
         WHERE orgId = ? AND status NOT IN ('DRAFT','CANCELLED')${from ? " AND invoiceDate >= ?" : ""}
         ORDER BY invoiceDate ASC, id ASC`,
@@ -1840,7 +1842,7 @@ export async function backfillPiGlPostings(
         actorUserId,
         orgId,
       }));
-      const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
+      const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs, { docDate: String((pi as { invoiceDate?: string | null }).invoiceDate ?? "").slice(0, 10) || null });
       if (!dry) statements.push(...ls);
       posted++;
       postedSen += apTotalSen;
@@ -2310,6 +2312,7 @@ app.put("/:id", async (c) => {
           db,
           orgId,
           legs,
+          { docDate: [existing.invoiceDate ?? null, body.invoiceDate ?? null] },
         );
         statements.push(...ls);
       } else if (
@@ -2419,11 +2422,13 @@ app.put("/:id", async (c) => {
             db,
             orgId,
             legs,
+            { docDate: [existing.invoiceDate ?? null, body.invoiceDate ?? null] },
           );
           statements.push(...ls);
         }
       }
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       // Phase 1 (2026-06) — previously this catch only console.warn'd and
       // let the PI flip to APPROVED/PAID anyway, leaving the GL with NO AP
       // entry (trial balance silently out of sync, discoverable only via
@@ -2542,10 +2547,11 @@ app.put("/:id", async (c) => {
         });
       }
       if (legs.length > 0) {
-        const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
+        const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs, { docDate: [existing.invoiceDate ?? null, body.invoiceDate ?? null] });
         statements.push(...ls);
       }
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       console.error(`[ledger] failed to BUILD PI ${id} edit-correction — aborting:`, e);
       return c.json(
         {
@@ -2824,7 +2830,7 @@ app.post("/:id/void", async (c) => {
     orgId: legOrgId ?? getOrgId(c),
   });
   if (revLegs.length > 0) {
-    const { statements: ls } = await buildJournalEntryStatements(db, legOrgId ?? getOrgId(c), revLegs);
+    const { statements: ls } = await buildJournalEntryStatements(db, legOrgId ?? getOrgId(c), revLegs, { docDate: pi.invoiceDate ?? null });
     statements.push(...ls);
   }
 
@@ -2913,7 +2919,7 @@ app.post("/:id/unvoid", async (c) => {
     orgId: legOrgId ?? getOrgId(c),
   });
   if (restoreLegs.length > 0) {
-    const { statements: ls } = await buildJournalEntryStatements(db, legOrgId ?? getOrgId(c), restoreLegs);
+    const { statements: ls } = await buildJournalEntryStatements(db, legOrgId ?? getOrgId(c), restoreLegs, { docDate: pi.invoiceDate ?? null });
     statements.push(...ls);
   }
 
@@ -3104,7 +3110,7 @@ app.post("/:id/resync-gl", async (c) => {
     });
   }
 
-  const { statements } = await buildJournalEntryStatements(db, orgId, deltaLegs);
+  const { statements } = await buildJournalEntryStatements(db, orgId, deltaLegs, { docDate: pi.invoiceDate ?? null });
   await db.batch(statements);
 
   await emitAudit(c, {

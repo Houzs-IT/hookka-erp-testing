@@ -19,8 +19,15 @@
 // The PERSONAL per-user layout stays in localStorage — per-user-per-browser is
 // fine for a personal view and keeps the hot path free of a round-trip.
 //
-// Resolution order on the client stays: personal localStorage > server
-// org-default (mirrored into the localStorage cache keys) > code defaults.
+// A third kind (finance v2, owner 2026-10-16): 'user:<userId>' — the layout a
+// user saved with "Save Layout", so it follows them to any PC. Any signed-in
+// user may save or clear their OWN row (never another's: the client can only
+// name "user", see lib/datagrid-layout-kind.ts); GET returns it as `mine` with
+// its updated_at, and the grid applies it when it is newer than the browser's.
+//
+// Resolution order on the client stays: personal localStorage (or the saved
+// user layout when that is newer) > server org-default (mirrored into the
+// localStorage cache keys) > code defaults.
 //
 // Deliberate isolation (same posture as routes/mail-center.ts): ALL SQL here
 // is snake_case so it passes the camelCase→snake translator (supabase-compat)
@@ -35,10 +42,13 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requireSuperAdmin } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { layoutKindFor, USER_LAYOUT_KIND } from "../lib/datagrid-layout-kind";
 
 const app = new Hono<Env>();
 
-const VALID_KINDS = new Set(["org-default", "print"]);
+const KIND_ERROR = "kind must be 'org-default', 'print' or 'user'";
+const userIdOf = (c: { get: unknown }) =>
+  (c.get as unknown as (k: string) => string | undefined)("userId");
 
 // ---------------------------------------------------------------------------
 // Lazy schema. Module-level promise = one flight per isolate; per-statement
@@ -85,6 +95,8 @@ type LayoutRow = {
   col_order?: string | null;
   colWidths?: string | null;
   col_widths?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
   kind?: string;
 };
 
@@ -121,7 +133,8 @@ function rowToPreset(row: LayoutRow | null): {
 
 // ---------------------------------------------------------------------------
 // GET /api/datagrid-layouts?gridId=...
-// Returns { orgDefault: preset|null, print: preset|null } for the caller's org.
+// Returns { orgDefault, print, mine } for the caller's org: the two shared
+// presets and the caller's own saved layout (with updatedAt), each or null.
 // Any authenticated user may read (so every browser loads the shared layout).
 // ---------------------------------------------------------------------------
 app.get("/", async (c) => {
@@ -130,43 +143,48 @@ app.get("/", async (c) => {
   if (!gridId) {
     return c.json({ success: false, error: "gridId is required" }, 400);
   }
+  const userId = userIdOf(c);
+  // A caller without a user id matches no personal row ("" is never a kind).
+  const mineKind = layoutKindFor(USER_LAYOUT_KIND, userId) ?? "";
   await ensureLayoutSchema(c.var.DB);
   try {
     const res = await c.var.DB.prepare(
-      `SELECT kind, visible_cols, col_order, col_widths
+      `SELECT kind, visible_cols, col_order, col_widths, updated_at
          FROM datagrid_org_layouts
-        WHERE org_id = ? AND grid_id = ?`,
+        WHERE org_id = ? AND grid_id = ?
+          AND (kind IN ('org-default', 'print') OR kind = ?)`,
     )
-      .bind(orgId, gridId)
+      .bind(orgId, gridId, mineKind)
       .all<LayoutRow>();
     let orgDefault: ReturnType<typeof rowToPreset> = null;
     let print: ReturnType<typeof rowToPreset> = null;
+    let mine: (NonNullable<ReturnType<typeof rowToPreset>> & { updatedAt: string | null }) | null = null;
     for (const row of res.results ?? []) {
       if (row.kind === "org-default") orgDefault = rowToPreset(row);
       else if (row.kind === "print") print = rowToPreset(row);
+      else if (mineKind && row.kind === mineKind) {
+        const preset = rowToPreset(row);
+        if (preset) mine = { ...preset, updatedAt: row.updatedAt ?? row.updated_at ?? null };
+      }
     }
-    return c.json({ success: true, orgDefault, print });
+    return c.json({ success: true, orgDefault, print, mine });
   } catch (e) {
     console.error("[datagrid-layouts] GET failed:", e);
     // Fail soft — the FE falls back to its localStorage behavior on any error,
     // so a 500 here must never break a grid. Return empty presets.
-    return c.json({ success: true, orgDefault: null, print: null });
+    return c.json({ success: true, orgDefault: null, print: null, mine: null });
   }
 });
 
 // ---------------------------------------------------------------------------
 // PUT /api/datagrid-layouts
 // Body: { gridId, kind, visibleCols, colOrder, colWidths? }
-// Upsert the org-wide preset. SUPER_ADMIN only (same bar as the FE save button).
+// Upsert a preset. The org-wide kinds are SUPER_ADMIN only (same bar as the FE
+// save button); kind "user" saves the caller's own layout, for anyone signed in.
 // ---------------------------------------------------------------------------
 app.put("/", async (c) => {
-  const denied = requireSuperAdmin(c);
-  if (denied) return denied;
-
   const orgId = getOrgId(c);
-  const userId = (c.get as unknown as (k: string) => string | undefined)(
-    "userId",
-  );
+  const userId = userIdOf(c);
 
   let body: {
     gridId?: string;
@@ -183,14 +201,16 @@ app.put("/", async (c) => {
 
   const gridId = typeof body.gridId === "string" ? body.gridId.trim() : "";
   const kind = typeof body.kind === "string" ? body.kind : "";
+  if (kind !== USER_LAYOUT_KIND) {
+    const denied = requireSuperAdmin(c);
+    if (denied) return denied;
+  }
   if (!gridId) {
     return c.json({ success: false, error: "gridId is required" }, 400);
   }
-  if (!VALID_KINDS.has(kind)) {
-    return c.json(
-      { success: false, error: "kind must be 'org-default' or 'print'" },
-      400,
-    );
+  const storedKind = layoutKindFor(kind, userId);
+  if (!storedKind) {
+    return c.json({ success: false, error: KIND_ERROR }, 400);
   }
   if (!Array.isArray(body.visibleCols) || !Array.isArray(body.colOrder)) {
     return c.json(
@@ -228,7 +248,7 @@ app.put("/", async (c) => {
         crypto.randomUUID(),
         orgId,
         gridId,
-        kind,
+        storedKind,
         visibleCols,
         colOrder,
         colWidths,
@@ -245,24 +265,24 @@ app.put("/", async (c) => {
 
 // ---------------------------------------------------------------------------
 // DELETE /api/datagrid-layouts?gridId=&kind=
-// Remove the org-wide preset ("Reset to Org Default" clears the published
-// org-default). SUPER_ADMIN only.
+// Remove a preset ("Reset to Org Default" clears the published org-default —
+// SUPER_ADMIN only; "Reset Layout" clears the caller's own kind "user").
 // ---------------------------------------------------------------------------
 app.delete("/", async (c) => {
-  const denied = requireSuperAdmin(c);
-  if (denied) return denied;
-
   const orgId = getOrgId(c);
+  const userId = userIdOf(c);
   const gridId = c.req.query("gridId");
   const kind = c.req.query("kind") ?? "";
+  if (kind !== USER_LAYOUT_KIND) {
+    const denied = requireSuperAdmin(c);
+    if (denied) return denied;
+  }
   if (!gridId) {
     return c.json({ success: false, error: "gridId is required" }, 400);
   }
-  if (!VALID_KINDS.has(kind)) {
-    return c.json(
-      { success: false, error: "kind must be 'org-default' or 'print'" },
-      400,
-    );
+  const storedKind = layoutKindFor(kind, userId);
+  if (!storedKind) {
+    return c.json({ success: false, error: KIND_ERROR }, 400);
   }
   await ensureLayoutSchema(c.var.DB);
   try {
@@ -270,7 +290,7 @@ app.delete("/", async (c) => {
       `DELETE FROM datagrid_org_layouts
         WHERE org_id = ? AND grid_id = ? AND kind = ?`,
     )
-      .bind(orgId, gridId, kind)
+      .bind(orgId, gridId, storedKind)
       .run();
     return c.json({ success: true });
   } catch (e) {

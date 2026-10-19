@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useCachedJson } from "@/lib/cached-fetch";
+import { cachedFetchJson, useCachedJson } from "@/lib/cached-fetch";
 import { PeriodPicker } from "./dashboard-shared";
-import { resolvePeriod, opensOnToday, ymd, type Period, type PeopleSub, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
+import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, widgetPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
 import { useDashboardUrlState } from "./use-dashboard-url-state";
 import { FinanceView } from "./FinanceView";
-import { AllOverviewView } from "./AllOverviewView";
 import { SalesOrdersView } from "./SalesOrdersView";
 import { OperationsView } from "./OperationsView";
-import { EmployeesView } from "./EmployeesView";
+import { EmployeesDashboard } from "./EmployeesDashboard";
+import { ProblemsStrip } from "./ProblemsStrip";
 import { ServiceView } from "./ServiceView";
 import { OcrView } from "./OcrView";
 import { PageHeader } from "@/components/ui/page-header";
@@ -52,8 +52,10 @@ import { usePermissions } from "@/lib/use-permission";
 
 // Old keys (siti / lim / employee / department, people:departments) still resolve: see LEGACY in
 // dashboard-url-state-lib.ts.
-const TABS: TabItem<"overview" | "sales" | "operations" | "people" | "service" | "finance" | "ocr">[] = [
-  { key: "overview", label: "Overview" },
+// Merged dashboard (owner 2026-10-17): no separate Overview tab — its cards
+// moved into the tab that owns them (sales cards into Sales, production into
+// Operations, people into Employees). Old ?tab=overview links land on Sales.
+const TABS: TabItem<"sales" | "operations" | "people" | "service" | "finance" | "ocr">[] = [
   { key: "sales", label: "Sales" },
   { key: "operations", label: "Operations" },
   { key: "people", label: "Employees" },
@@ -85,7 +87,9 @@ export default function DashboardPrototypePage() {
   const blocked = !visibleTabs.some((t) => t.key === tab);
   /** The tab whose content renders: never a tab this role may not see. */
   const view: TabKey | null = blocked ? null : tab;
-  const subTabs = blocked ? undefined : TAB_SUBS[tab];
+  // Employees is one page in the merged dashboard (owner 2026-10-17: "no
+  // flipping to another page"), so it shows no sub-tab strip.
+  const subTabs = blocked || tab === "people" ? undefined : TAB_SUBS[tab];
 
   // The page reads the feed only for `meta.months` — the months that actually
   // exist in the book, which bound the stepper. Every tab below calls the same
@@ -124,10 +128,41 @@ export default function DashboardPrototypePage() {
   // DERIVED, not synced with an effect (a setState-in-effect here caused a
   // cascading re-render on every load). A bare URL opens on TODAY - see
   // resolvePeriod - except Overview and Sales, which open on the month.
-  const effectivePeriod = useMemo<Period>(
-    () => resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab)),
-    [period, months, tab],
-  );
+  // Only Employees has a Day view (owner 2026-10-17: Sales / Operations /
+  // Service figures are the same whichever day you pick) — elsewhere a picked
+  // day or a non-quarter range falls back to its month.
+  const dayTab = tab === "people";
+  const effectivePeriod = useMemo<Period>(() => {
+    const p = resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab));
+    if (dayTab) return p;
+    if (p.mode === "range" && !quarterOfPeriod(p)) return { mode: "monthly", month: p.month };
+    return p.day ? { ...p, day: undefined } : p;
+  }, [period, months, tab, dayTab]);
+
+  // Start the Command Center reads with the feed, not after it (owner
+  // 2026-10-17 "哪里卡顿": on Sales the 2.6s overview only began once the 2.6s
+  // feed had finished — ~6s). The tabs' own useCachedJson join these in-flight
+  // requests, so nothing is fetched twice.
+  const widgetKey = widgetPeriod(effectivePeriod);
+  useEffect(() => {
+    void cachedFetchJson(`/api/dashboard/overview?period=${widgetKey}`);
+    void cachedFetchJson(`/api/dashboard/overview/revenue-split?period=${widgetKey}`);
+  }, [widgetKey]);
+
+  // A "Today's problems" tile opens its tab and scrolls to the list behind the
+  // number (owner 2026-10-17: "我在上面点一下的时候，它就会跳下来"). The list
+  // renders once that tab's data is in, so poll briefly for it.
+  const openProblem = (t: string, s?: string, anchor?: string) => {
+    setTab(t as TabKey, s);
+    if (!anchor) return;
+    let tries = 0;
+    const go = () => {
+      const el = document.getElementById(anchor);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      else if (tries++ < 30) window.setTimeout(go, 100);
+    };
+    window.setTimeout(go, 50);
+  };
 
   // Publishes the sticky header's live height as --dash-sticky-top so a tab's
   // own sticky bar (Employees filter) docks right under it at any width.
@@ -144,11 +179,13 @@ export default function DashboardPrototypePage() {
   }, []);
 
   return (
-    // Dashboard cards are flat with a tighter radius and only lift on hover.
-    // Scoped here so every other page keeps the default Card look. pb-20
+    // Every card takes the Command Center (/dashboard) look: rounded-xl, a
+    // soft shadow, 20px padding, small bold titles (owner 2026-10-17: the old
+    // Overview UI is the standard). Scoped here so every other page keeps the
+    // default Card look. pb-20
     // lets the last card scroll clear of the floating chat button (56px at
     // bottom-6).
-    <div ref={rootRef} className="space-y-4 max-md:space-y-3 pb-20 [--card-pad:0.75rem] [&_[data-slot=card]]:rounded-md [&_[data-slot=card]]:shadow-none [&_[data-slot=card]]:transition-shadow [&_[data-slot=card]:hover]:shadow-md">
+    <div ref={rootRef} className="space-y-5 max-md:space-y-3 pb-20 [--card-pad:1.25rem] max-md:[--card-pad:1rem] [&_[data-slot=card]]:rounded-xl [&_[data-slot=card]]:shadow-[0_1px_3px_rgba(0,0,0,0.08)] [&_[data-slot=card]_h3]:text-sm [&_[data-slot=card]_h3]:font-bold [&_[data-slot=card]_h3]:tracking-[-0.2px]">
       {/* Sticky: the title, the tab strip and the period control stay put while
           a long tab scrolls, so you can switch tab or month without scrolling
           back up. -mx/px cancels the page gutter so the backdrop reaches the
@@ -161,7 +198,7 @@ export default function DashboardPrototypePage() {
         <PageHeader
           className="max-md:hidden"
           title="Dashboard"
-          subtitle="Experimental dashboard: Data may be inaccurate. Use with caution"
+          subtitle="Sales · Operations · Employees · Service · Finance"
           actions={<Tabs tabs={visibleTabs} value={tab} onChange={setTab} variant="pill" />}
         />
 
@@ -191,29 +228,26 @@ export default function DashboardPrototypePage() {
                 months={months}
                 latestDay={latestDay}
                 onChange={setPeriod}
+                allowDay={dayTab}
               />
             </div>
           )}
         </div>
       </div>
 
+      {/* Today's problems: on every tab, above its content (owner 2026-10-17). */}
+      <ProblemsStrip visibleTabs={visibleTabs.map((t) => t.key)} onOpen={openProblem} />
+
       {blocked && (
         <Card>
           <CardContent className="py-12 text-center text-sm text-[#6B7280]">Under maintenance</CardContent>
         </Card>
       )}
-      {view === "overview" && (
-        <AllOverviewView
-          period={effectivePeriod}
-          months={months}
-          onOpenTab={(t, s) => setTab(t as TabKey, s)}
-        />
-      )}
       {view === "sales" && (
         <SalesOrdersView period={effectivePeriod} months={months} onPeriodChange={setPeriod} />
       )}
       {view === "operations" && <OperationsView period={effectivePeriod} sub={sub as OpsSub} onPeriodChange={setPeriod} />}
-      {view === "people" && <EmployeesView period={effectivePeriod} sub={sub as PeopleSub} onPeriodChange={setPeriod} />}
+      {view === "people" && <EmployeesDashboard period={effectivePeriod} />}
       {view === "service" && <ServiceView period={effectivePeriod} sub={sub as ServiceSub} onPeriodChange={setPeriod} onSubChange={(x) => setSub(x)} />}
       {view === "finance" && <FinanceView period={effectivePeriod} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} />}
       {view === "ocr" && <OcrView period={effectivePeriod} />}

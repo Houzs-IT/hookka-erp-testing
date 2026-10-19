@@ -327,7 +327,7 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v3`, 60, async () => {
+  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v4`, 60, async () => {
   // ---- Sales ------------------------------------------------------------
   // Whole book, not a window: the prototype owns the month picker, so it
   // needs every month that exists. ~1,500 rows of seven columns is small
@@ -409,9 +409,21 @@ app.get("/", async (c) => {
   // Sales Attribution / Sales Forecast on the same view — MEASURED: without
   // it, this aggregate ran 1.44% ahead of the order-level total those three
   // already agree on, entirely from the 75 service-order rows.
+  // Merged dashboard (owner 2026-10-17, "确认一下数据对不对"): this breakdown now
+  // follows the Sales KPI's own definition so its total EQUALS that KPI — the
+  // order's SO DATE (created_at only when an order has none), confirmed
+  // statuses only (DRAFT / ON_HOLD / CANCELLED out, service orders in, as the
+  // Command Center counts them), and each order's WHOLE total spread over its
+  // lines in proportion to line value (delivery / discount on the header are
+  // not lost). In Oct 2026 the old created_at / line-value / DRAFT-included
+  // version sat RM 941 off the KPI.
   const soStateStatusById = new Map(
-    soRows.map((r) => [r.id, { state: r.customerState, status: r.status, isService: !!r.isServiceOrder, date: dayKey(r.createdAt) }]),
+    soRows.map((r) => [r.id, { state: r.customerState, status: r.status, totalSen: num(r.totalSen), date: dayKey(r.companySODate) ?? dayKey(r.createdAt) }]),
   );
+  const lineSumBySo = new Map<string, number>();
+  for (const it of soItemCatSec.rows) {
+    lineSumBySo.set(it.salesOrderId, (lineSumBySo.get(it.salesOrderId) ?? 0) + Math.max(0, num(it.lineTotalSen)));
+  }
   const stateCategorySkuMap = new Map<
     string,
     { date: string | null; state: string; category: string; sku: string; name: string; qty: number; revenueSen: number }
@@ -420,7 +432,8 @@ app.get("/", async (c) => {
   // donut / Top SKUs to the period picker like every other Sales card.
   for (const it of soItemCatSec.rows) {
     const so = soStateStatusById.get(it.salesOrderId);
-    if (!so || so.status === "CANCELLED" || so.isService) continue;
+    if (!so || !isConfirmed(so.status)) continue;
+    const lineSum = lineSumBySo.get(it.salesOrderId) ?? 0;
     const state = (so.state ?? "").trim() || "(no state)";
     const category = it.itemCategory ?? "(no category)";
     const sku = it.productCode ?? "(no SKU)";
@@ -431,8 +444,9 @@ app.get("/", async (c) => {
       stateCategorySkuMap.set(key, e);
     }
     e.qty += num(it.quantity);
-    e.revenueSen += num(it.lineTotalSen);
+    e.revenueSen += lineSum > 0 ? (so.totalSen * Math.max(0, num(it.lineTotalSen))) / lineSum : 0;
   }
+  for (const e of stateCategorySkuMap.values()) e.revenueSen = Math.round(e.revenueSen);
 
   // Day series. CANCELLED orders are counted but their value is NOT added to
   // revenue — a cancelled order is not money earned, and folding it in would
@@ -442,7 +456,8 @@ app.get("/", async (c) => {
     { date: string; orders: number; revenueSen: number; cancelled: number }
   >();
   for (const r of salesTabRows) {
-    const k = dayKey(r.createdAt);
+    // SO date, as the Sales KPI buckets it (created_at only when there is none).
+    const k = dayKey(r.companySODate) ?? dayKey(r.createdAt);
     if (!k) continue;
     let e = salesByDay.get(k);
     if (!e) salesByDay.set(k, (e = { date: k, orders: 0, revenueSen: 0, cancelled: 0 }));

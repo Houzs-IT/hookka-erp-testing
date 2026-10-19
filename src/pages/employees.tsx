@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, startTransition, Fra
 import { usePermissions } from "@/lib/use-permission";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { laborCostInclPayroll, loggedDayShare } from "@/lib/labor-cost-incl-payroll";
+import { dayTypedOt, workerDayEntryCostsSen } from "@/lib/labor-day-cost";
 import { humanizeError } from "@/lib/humanize-error";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -161,31 +162,8 @@ type Worker = {
   dailyRateSen?: number | null;
 };
 
-// Day-typed OT for the COST side — mirrors the engine so logged labor cost
-// values Sunday / public-holiday OT the SAME way payroll pays it. Multipliers
-// come from the EFFECTIVE-DATED pay rules (owner 2026-06-11): the rules in
-// force ON the logged date; no versions → defaults (2× / 3×).
-// Classify a logged day → its OT hours + multiplier:
-//   • Sunday         → every logged hour is OT (rest-day premium).
-//   • public holiday → every logged hour is OT.
-//   • weekday        → only hours above the standard day, at the worker's mult.
-// A holiday that falls on a Sunday is treated as a Sunday (Sunday checked first).
-function dayTypedOt(
-  date: string,
-  holidays: readonly string[],
-  totalH: number,
-  stdHours: number,
-  weekdayMult: number,
-  payRuleVersions?: PayRuleVersion[],
-): { otHours: number; mult: number } {
-  const [yy, mm, dd] = date.split("-").map(Number);
-  const dow = new Date(yy, (mm || 1) - 1, dd || 1).getDay();
-  const cfg = resolvePayRulesAsOf(payRuleVersions, date);
-  if (dow === 0) return { otHours: totalH, mult: cfg.sundayOtMultiplier };
-  if (holidays.includes(date))
-    return { otHours: totalH, mult: cfg.holidayOtMultiplier };
-  return { otHours: Math.max(0, totalH - stdHours), mult: weekdayMult };
-}
+// Day-typed OT for the COST side: dayTypedOt, now in src/lib/labor-day-cost.ts
+// (shared with the merged dashboard's Employees tab).
 // Hourly-rate divisor: imported `payrollHourDivisor` from pay-rules — the
 // SAME implementation the engine uses, so the recon bridges price docks
 // exactly like pay (mode-aware: hours+lunch / hours-only / fixed).
@@ -9187,29 +9165,24 @@ function LaborCostTab({
       }
       // A monthly worker with no salary on record has no rate to cost with.
       if (!w.basicSalarySen) continue;
-      // Per-worker rates — OT threshold, hours/day and days/month all come
-      // from this worker's own Employee Master figures (no hard-coded 9 h).
+      // Per-worker rates, day-typed OT and the pro-rata OT split: the shared
+      // Labor Cost rule in src/lib/labor-day-cost.ts (also used by the merged
+      // dashboard's Employees tab, so both price a worker-day identically).
       // Salary = the month's EFFECTIVE (day-weighted) figure so the rate matches
       // the payslip after a raise (no-op when the salary never changed).
-      const effSalarySen = effSalaryOf(w);
-      const stdHours = w.workingHoursPerDay > 0 ? w.workingHoursPerDay : 9;
-      const monthDays = w.workingDaysPerMonth > 0 ? w.workingDaysPerMonth : 26;
-      const regularDays = actualWorkingDays;
-      const regularRateSen = effSalarySen / regularDays / stdHours;
-      const otBaseRateSen = effSalarySen / monthDays / stdHours;
-      const otMult = w.otMultiplier ?? 1.5;
-      const totalH = segs.reduce((s, e) => s + (Number(e.hours) || 0), 0);
-      // Day-typed OT (owner spec 2026-06-10): Sunday → all hours at 2×, public
-      // holiday → all hours at 3×, weekday → hours above the standard day at the
-      // worker's multiplier — mirrors labor-engine.ts so cost ties to paid OT.
-      const otDay = dayTypedOt(k.split("|")[1], holidayList, totalH, stdHours, otMult, payRuleVersions);
-      const otShare = totalH > 0 ? otDay.otHours / totalH : 0;
+      const segCosts = workerDayEntryCostsSen({
+        worker: w,
+        effSalarySen: effSalaryOf(w),
+        date: k.split("|")[1],
+        entryHours: segs.map((e) => Number(e.hours) || 0),
+        actualWorkingDays,
+        holidays: holidayList,
+        payRuleVersions,
+      });
 
-      for (const e of segs) {
+      for (const [si, e] of segs.entries()) {
         const hours = Number(e.hours) || 0;
-        const otH = hours * otShare;
-        const regularH = hours - otH;
-        const cost = regularH * regularRateSen + otH * otBaseRateSen * otDay.mult;
+        const cost = segCosts[si];
         // Defensive uppercase normalize so any pre-migration lower-case
         // rows in working_hour_entries.category still compare correctly.
         const cat = (typeof e.category === "string" ? e.category.trim().toUpperCase() : "") as Category;

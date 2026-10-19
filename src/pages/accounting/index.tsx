@@ -1,5 +1,5 @@
 ﻿import * as React from "react";
-import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { humanizeError } from "@/lib/humanize-error";
@@ -15,26 +15,35 @@ import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/dat
 import { MoneyInput } from "@/components/ui/money-input";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
-import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
-import { monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
+import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
+import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
+import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
+import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
+import { clearFaQueue, faRemarkFor, fixedAssetPrefills, putFaQueue, readFaQueue, withoutRegistered, type FaPrefill } from "@/lib/fixed-asset-prompt";
+import { addDays as tfAddDays } from "@/lib/trade-finance";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
 // and a null the caller must refuse. See src/lib/parse-money.ts.
 import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/money-field";
-import { exportReportCsv, exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts } from "@/lib/export-report";
-import { buildAgingExportAoa, agingRowKind } from "@/lib/aging-export";
+import { exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
+import { buildGroupedAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
-import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine } from "@/lib/print-voucher";
+import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
+import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
+import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
+import { PartyFinanceFields } from "@/components/party/party-finance-fields";
+import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party-aging-rows";
+import { daysUntil, dueText, dueTone, monthBucket, nextDueOf, overdueSen } from "@/lib/aging-next-due";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
-import { useRowMenu, lifecycleMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
+import { lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { amountInWords } from "@/lib/amount-in-words";
 import { COMPANY } from "@/lib/constants";
-import { COA_TYPE_COLOR, SUCCESS, DANGER, INFO, ACCENT_PLUM } from "@/lib/design-tokens";
+import { COA_TYPE_COLOR, DANGER } from "@/lib/design-tokens";
 import {
   BookOpen,
   TrendingUp,
@@ -57,6 +66,7 @@ import {
   Printer,
   Upload,
   Download,
+  Settings,
 } from "lucide-react";
 import type {
   ChartOfAccount,
@@ -64,6 +74,7 @@ import type {
   JournalLine,
   ARAgingEntry,
   APAgingEntry,
+  AgingDocDetail,
   BalanceSheetEntry,
 } from "@/types";
 // Shared helpers + per-tab components extracted from this file (2026-07-04
@@ -81,7 +92,11 @@ import { buildSupplierPaymentVoucher } from "@/lib/supplier-payment-voucher";
 import type { SupplierPaymentGroup } from "@/lib/supplier-payment-alloc";
 import type { PaymentRecord } from "@/types";
 import { AuditLogTab } from "./tabs/AuditLogTab";
+import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
+import { useFiscalYears } from "./use-fiscal-years";
+import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
 import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
+import { PartyListTab } from "./tabs/PartyListTab";
 import { bestMatch } from "@/lib/party-fuzzy-match";
 import {
   resolveAlias,
@@ -89,6 +104,16 @@ import {
   teachPartyAlias,
 } from "@/lib/party-alias-client";
 import { OverviewTab } from "./overview-tab";
+import { FinancePageTitle } from "@/components/finance/page-title";
+import { FinanceTitleActions } from "@/components/finance/title-actions";
+import { FinanceTitleSlotContext } from "@/components/finance/title-slot";
+import { FinPill } from "@/components/finance/pill";
+import { SegmentedChips } from "@/components/finance/segmented-chips";
+import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus, type FinTone } from "@/lib/finance-daily";
+import { drawCashPositionImage, tfDueByMonthEnd } from "@/lib/cash-position-image";
+import { financePage } from "@/lib/finance-nav";
+import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -129,7 +154,7 @@ function CompanySelect({
 
 // =============== TYPES ===============
 
-type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
+type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
 
 // =============== VOUCHER PRINTING (PV / OR / JV) ===============
 //
@@ -152,6 +177,19 @@ const VOUCHER_COMPANY: VoucherSpec["company"] = {
 
 // "<code> · <name>" using the already-loaded chart of accounts; falls back to
 // the bare code if the account isn't in the COA (deleted / not yet synced).
+// The browser's per-tab storage, or null when the browser refuses it.
+const sessionStore = (): Storage | null => { try { return window.sessionStorage; } catch { return null; } };
+// The fixed-asset register as it stands (empty when it cannot be read — the
+// Add New Asset prompt then simply asks for every fixed-asset line).
+const fetchFaRegister = async (): Promise<{ remarks?: string | null; assetAccount: string; costSen: number }[]> => {
+  try {
+    const j = (await (await fetch("/api/accounting/fixed-assets")).json()) as { success?: boolean; data?: { remarks?: string | null; assetAccount: string; costSen: number }[] };
+    return j?.success ? j.data ?? [] : [];
+  } catch {
+    return [];
+  }
+};
+
 function accountLabel(accounts: ChartOfAccount[], code: string): string {
   const nm = accounts.find((a) => a.code === code)?.name;
   return nm ? `${code} · ${nm}` : code;
@@ -161,18 +199,23 @@ function todayDMY(): string {
   return formatDateDMY(new Date());
 }
 
-// PV → voucher: expense (DR) lines, "Paid from" bank note, amount in words.
+// PV → voucher: expense (DR) lines, "Paid from" under the payee, the amount
+// boxed beside it (print design 1a). An AP Payment prints the bills it
+// settles instead (apDetail, fetched on demand); a legacy payment whose lines
+// hit the creditor control lists them under the lines (detail).
 function buildPvVoucher(
   pv: PvRow,
   accounts: ChartOfAccount[],
   detail?: { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[],
+  apDetail?: ApPrintDetail,
 ): VoucherSpec {
   const lines: VoucherLine[] = pv.lines.map((l) => ({
     cells: [accountLabel(accounts, l.accountCode), l.description ?? "", formatCurrency(l.amountSen)],
   }));
-  const paidFrom = pv.accrued === 1 && !pv.settledAt
-    ? `Accrued to: ${pv.accrualAccount ? accountLabel(accounts, pv.accrualAccount) : "—"}`
-    : `Paid from: ${pv.payFrom ? accountLabel(accounts, pv.payFrom) : "—"}`;
+  const accruedOnly = pv.accrued === 1 && !pv.settledAt;
+  const paidFrom: VoucherFact = accruedOnly
+    ? { label: "Accrued to", value: pv.accrualAccount ? accountLabel(accounts, pv.accrualAccount) : "—" }
+    : { label: "Paid from", value: pv.payFrom ? accountLabel(accounts, pv.payFrom) : "—" };
   // Houzs-style voucher (owner 2026-09-22): the ladder's real signatories and
   // dates print under the signature lines; an unposted voucher carries a
   // watermark so it can never pass as a paid document; a supplier payment
@@ -186,21 +229,35 @@ function buildPvVoucher(
   const isTransfer = pv.pvKind === "TRANSFER";
   const billNo = (pv.billNo ?? pv.bill_no) ?? "";
   const billDate = String((pv.billDate ?? pv.bill_date) ?? "").slice(0, 10);
-  const billText = billNo ? `Bill no. ${billNo}${/^d{4}-d{2}-d{2}$/.test(billDate) ? ` dated ${formatDateDMY(billDate)}` : ""}` : "";
+  const billDateText = /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? formatDateDMY(billDate) : "";
+  const isAp = pv.pvKind === "AP";
+  const supplierAp = isAp && pv.partyKind === "SUPPLIER";
+  const bills = isAp && apDetail
+    ? apBillsBlock(apDetail, {
+        totalSen: pv.totalSen, money: formatCurrency,
+        docLabel: supplierAp ? "Purchase invoice" : "Bill", refLabel: supplierAp ? "Supplier inv no." : "Reference",
+        partyWord: supplierAp ? "Supplier" : "Creditor",
+      })
+    : null;
   return {
     // A voided voucher must never print as a clean/valid document.
     title: pv.status === "VOID" ? "PAYMENT VOUCHER — VOID" : "PAYMENT VOUCHER",
     company: VOUCHER_COMPANY,
     docNo: pv.pvNo,
     date: formatDateDMY(pv.date),
-    partyLabel: isTransfer ? "Transfer To" : "Pay To",
+    partyLabel: isTransfer ? "Transfer To" : supplierAp ? "Pay To (Supplier)" : "Pay To",
     partyName: isTransfer ? (pv.lines[0] ? accountLabel(accounts, pv.lines[0].accountCode) : "") : pv.payee ?? "",
-    columns: [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
-    lines,
-    footerNote: paidFrom,
-    totalCells: ["", "Total", formatCurrency(pv.totalSen)],
+    partyDetails: isTransfer
+      ? [{ label: "From", value: paidFrom.value }]
+      : [{ label: "Payee bank", value: apDetail?.payeeBank ?? "" }, paidFrom],
+    amountBox: { label: isTransfer ? "Amount transferred" : accruedOnly ? "Amount payable" : "Amount paid", value: formatCurrency(pv.totalSen) },
+    facts: billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : undefined,
+    columns: bills ? bills.columns : [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
+    lines: bills ? bills.lines : lines,
+    totalCells: bills ? bills.totalCells : ["", "Total", formatCurrency(pv.totalSen)],
+    balanceStrip: bills?.balanceStrip,
     amountWords: amountInWords(pv.totalSen),
-    remarks: [pv.description ?? "", billText].filter(Boolean).join(" · ") || undefined,
+    remarks: pv.description || undefined,
     signatures: [
       { label: "Prepared by", name: pvx.preparedByName ?? pvx.createdByName ?? undefined, on: dmy(pv.preparedAt ?? pv.prepared_at) ?? (pvx.preparedByName ? undefined : formatDateDMY(pv.date)) },
       { label: "Checked by", name: pvx.checkedByName ?? undefined, on: dmy(pv.checkedAt ?? pv.checked_at) },
@@ -209,7 +266,7 @@ function buildPvVoucher(
     ],
     printedOn: todayDMY(),
     watermark,
-    detail: detail && detail.length
+    detail: !bills && detail && detail.length
       ? {
           heading: "Bills settled by this payment",
           columns: [{ label: "Supplier" }, { label: "Bill" }, { label: "Amount", align: "right" }],
@@ -236,9 +293,10 @@ function buildOrVoucher(
     date: formatDateDMY(or.date),
     partyLabel: "Received From",
     partyName: or.receivedFrom ?? "",
+    partyDetails: [{ label: "Deposited to", value: or.payTo ? accountLabel(accounts, or.payTo) : "—" }],
+    amountBox: { label: "Amount received", value: formatCurrency(or.totalSen) },
     columns: [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
     lines,
-    footerNote: `Deposited to: ${or.payTo ? accountLabel(accounts, or.payTo) : "—"}`,
     totalCells: ["", "Total", formatCurrency(or.totalSen)],
     amountWords: amountInWords(or.totalSen),
     remarks: or.description ?? undefined,
@@ -300,11 +358,12 @@ function buildOtherPartyBillVoucher(b: OtherPartyBill, accounts: ChartOfAccount[
     company: VOUCHER_COMPANY,
     docNo: b.billNo,
     date: formatDateDMY(b.billDate),
-    partyLabel: "Party",
+    partyLabel: b.partyType === "DEBTOR" ? "Bill To" : "From",
     partyName: b.partyName,
+    amountBox: { label: "Bill amount", value: formatCurrency(b.totalSen) },
+    facts: [{ label: "Reference", value: b.referenceNo || "—" }],
     columns: [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
     lines,
-    footerNote: `Reference: ${b.referenceNo || "—"}`,
     totalCells: ["", "Total", formatCurrency(b.totalSen)],
     amountWords: amountInWords(b.totalSen),
     signatures: [{ label: "Prepared by" }, { label: "Approved by" }],
@@ -312,26 +371,43 @@ function buildOtherPartyBillVoucher(b: OtherPartyBill, accounts: ChartOfAccount[
   };
 }
 
-// Other-party payment → voucher: one line per allocated bill (Bill No · Amount),
-// "Paid from" bank note, amount in words. VOID-tagged if voided/deleted.
-function buildOtherPartyPaymentVoucher(p: PaymentGroup, accounts: ChartOfAccount[]): VoucherSpec {
+// Other-party payment → voucher (print design 1a): one line per allocated bill,
+// the bank under the party, the amount boxed beside it. Money in from an other
+// debtor prints as a receipt (BUG-2026-10-17-310: it printed as a payment
+// voucher "Paid from" the bank it was paid into); money out to an other
+// creditor prints as a payment, with the bills block when the print detail
+// (GET /api/accounting/ap-payment-print) is loaded. VOID-tagged if voided/deleted.
+function buildOtherPartyPaymentVoucher(p: PaymentGroup, accounts: ChartOfAccount[], apDetail?: ApPrintDetail): VoucherSpec {
   const voided = p.lifecycleState === "VOID" || p.lifecycleState === "DELETED";
+  const receipt = p.partyType === "DEBTOR";
   const lines: VoucherLine[] = p.lines.map((l) => ({
     cells: [l.billNo, formatCurrency(l.amountSen)],
   }));
+  const bills = !receipt && apDetail
+    ? apBillsBlock(apDetail, { totalSen: p.totalSen, money: formatCurrency, docLabel: "Bill", refLabel: "Reference", partyWord: "Creditor" })
+    : null;
+  const title = receipt ? "OTHER-PARTY RECEIPT" : "OTHER-PARTY PAYMENT VOUCHER";
   return {
-    title: voided ? "OTHER-PARTY PAYMENT VOUCHER — VOID" : "OTHER-PARTY PAYMENT VOUCHER",
+    title: voided ? `${title} — VOID` : title,
     company: VOUCHER_COMPANY,
     docNo: p.paymentNo,
     date: formatDateDMY(p.date),
-    partyLabel: "Party",
+    partyLabel: receipt ? "Received From" : "Pay To",
     partyName: p.partyName,
-    columns: [{ label: "Bill No" }, { label: "Amount", align: "right" }],
-    lines,
-    footerNote: `Paid from: ${p.bankAccount ? accountLabel(accounts, p.bankAccount) : "—"}`,
-    totalCells: ["Total", formatCurrency(p.totalSen)],
+    partyDetails: [
+      ...(receipt ? [] : [{ label: "Payee bank", value: apDetail?.payeeBank ?? "" }]),
+      { label: receipt ? "Deposited to" : "Paid from", value: p.bankAccount ? accountLabel(accounts, p.bankAccount) : "—" },
+    ],
+    amountBox: { label: receipt ? "Amount received" : "Amount paid", value: formatCurrency(p.totalSen) },
+    columns: bills ? bills.columns : [{ label: "Bill No" }, { label: "Amount", align: "right" }],
+    lines: bills ? bills.lines : lines,
+    totalCells: bills ? bills.totalCells : ["Total", formatCurrency(p.totalSen)],
+    balanceStrip: bills?.balanceStrip,
     amountWords: amountInWords(p.totalSen),
-    signatures: [{ label: "Prepared by" }, { label: "Approved by" }, { label: "Received by" }],
+    remarks: p.reference || undefined,
+    signatures: receipt
+      ? [{ label: "Received by" }, { label: "Issued by" }]
+      : [{ label: "Prepared by" }, { label: "Approved by" }, { label: "Received by" }],
     printedOn: todayDMY(),
   };
 }
@@ -346,8 +422,11 @@ function buildFundTransferVoucher(t: FtRow, accounts: ChartOfAccount[]): Voucher
     company: VOUCHER_COMPANY,
     docNo: t.no,
     date: formatDateDMY(t.date),
-    partyLabel: "Description",
-    partyName: t.description ?? "",
+    partyLabel: "Transfer To",
+    partyName: accountLabel(accounts, t.toAccount),
+    partyDetails: [{ label: "From", value: accountLabel(accounts, t.fromAccount) }],
+    amountBox: { label: "Amount transferred", value: formatCurrency(t.amountSen) },
+    remarks: t.description ?? undefined,
     columns: [{ label: "From" }, { label: "To" }, { label: "Amount", align: "right" }],
     lines: [{ cells: [accountLabel(accounts, t.fromAccount), accountLabel(accounts, t.toAccount), formatCurrency(t.amountSen)] }],
     totalCells: ["", "Total", formatCurrency(t.amountSen)],
@@ -369,9 +448,10 @@ function buildSupplierDiscountVoucher(d: SDHistoryRow): VoucherSpec {
     date: formatDateDMY(d.date),
     partyLabel: "Supplier",
     partyName: d.supplierName ?? "",
+    amountBox: { label: "Discount amount", value: formatCurrency(d.totalAmount) },
+    facts: [{ label: "Against PI", value: d.piNo ?? "" }],
     columns: [{ label: "Description" }, { label: "Amount", align: "right" }],
     lines: [{ cells: [d.reason || "Supplier discount", formatCurrency(d.totalAmount)] }],
-    footerNote: d.piNo ? `Against PI: ${d.piNo}` : undefined,
     totalCells: ["Total", formatCurrency(d.totalAmount)],
     amountWords: amountInWords(d.totalAmount),
     signatures: [{ label: "Prepared by" }, { label: "Approved by" }],
@@ -546,6 +626,9 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   // Debtor / Creditor
   { key: "ar", label: "Debtor Aging", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "ap", label: "Creditor Aging", icon: <Building2 className="h-4 w-4" />, group: "Debtor / Creditor" },
+  // Finance v2 (owner 2026-10-17): everyone who owes / is owed, in one list.
+  { key: "debtors", label: "Debtor List", icon: <List className="h-4 w-4" />, group: "Debtor / Creditor" },
+  { key: "creditors", label: "Creditor List", icon: <List className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "apinvoices", label: "AP Invoices", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "supplier-discount", label: "Supplier Discount", icon: <CreditCard className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtor", label: "Other Debtor", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
@@ -604,6 +687,10 @@ export default function AccountingPage() {
     if (tab === "ar" || tab === "ap") refreshAging();
   }, [tab, refreshAging]);
 
+  // The title row's button slot (finance v2): a tab portals its buttons into
+  // it through <FinanceTitleActions>.
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
+
   // Finance tables (owner 2026-10-01 「我不想要 wrap text」+「letterhead 可以
   // 左右拉」): no wrapping, and any column edge in a header can be dragged —
   // only that column changes, the rest move with it; widths remembered per
@@ -611,15 +698,12 @@ export default function AccountingPage() {
   const tablesRef = useResizableTables(`accounting:${tab}`);
 
   return (
-    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-[#1F1D1B]">Accounting</h1>
-          <p className="text-xs text-[#6B7280]">General ledger, accounts receivable, and accounts payable</p>
-        </div>
-      </div>
+    <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
+      {/* The page's name with its (i) explanation, and the tab's buttons on the
+          same line (finance v2) */}
+      <FinancePageTitle {...financePage(tab)} actions={<div ref={setTitleSlot} className="flex flex-wrap items-center gap-2" />} />
 
+      <FinanceTitleSlotContext.Provider value={titleSlot}>
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-[#6B7280]">Loading accounting data...</div>
@@ -646,13 +730,10 @@ export default function AccountingPage() {
           {tab === "tb" && <TrialBalanceTab />}
           {tab === "gl" && <GeneralLedgerTab accounts={accounts} />}
           {tab === "ar" && <ARTab arData={arData} onRefresh={fetchAll} />}
-          {tab === "ap" && (
-            <div className="space-y-4">
-              <ContraCard />
-              <APTab apData={apData} onRefresh={fetchAll} />
-            </div>
-          )}
+          {tab === "ap" && <APTab apData={apData} onRefresh={fetchAll} />}
           {tab === "supplier-discount" && <SupplierDiscountTab />}
+          {tab === "debtors" && <PartyListTab side="DEBTOR" />}
+          {tab === "creditors" && <PartyListTab side="CREDITOR" />}
           {tab === "odebtor" && <OtherPartiesTab side="DEBTOR" />}
           {tab === "odebtorbills" && <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />}
           {tab === "odebtorpay" && <OtherPartyPaymentsTab accounts={accounts} side="DEBTOR" />}
@@ -673,7 +754,6 @@ export default function AccountingPage() {
           {tab === "opening" && <OpeningBalanceTab accounts={accounts} onRefresh={fetchAll} />}
           {tab === "stockmap" && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-[#1F1D1B]">Stock Group Mapping</h2>
               <StockMapCard accounts={accounts} />
             </div>
           )}
@@ -681,9 +761,8 @@ export default function AccountingPage() {
           {tab === "stocktake" && <StockTakeTab />}
           {tab === "maint" && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-[#1F1D1B]">Account Maintenance</h2>
               <GstRateCard />
-              <FyeCard />
+              <FinancialYearsCard />
               <CleanupReportCard />
               <LandedCostCard />
               <DocNumberingCard accounts={accounts} />
@@ -691,6 +770,7 @@ export default function AccountingPage() {
           )}
         </>
       )}
+      </FinanceTitleSlotContext.Provider>
     </div>
   );
 }
@@ -700,24 +780,30 @@ export default function AccountingPage() {
 // untouched; this just switches between them.
 function PlHubTab({ initialView }: { initialView: "statement" | "monthly" | "cost" }) {
   const [view, setView] = useState(initialView);
+  // Finance v2: Overall / Sofa / Bedframe is one switch on the title row for
+  // all three views (each view used to carry its own).
+  const [line, setLine] = useState<PlLine>("all");
   const views: { key: typeof view; label: string; hint: string }[] = [
     { key: "statement", label: "P&L Statement", hint: "One period, the full statement" },
     { key: "monthly", label: "Monthly P&L", hint: "Month by month, side by side" },
     { key: "cost", label: "Cost Structure", hint: "Fixed / variable / other cost classes" },
   ];
+  const lines: { key: PlLine; label: string }[] = [
+    { key: "all", label: "Overall" },
+    { key: "sofa", label: "Sofa" },
+    { key: "bedframe", label: "Bedframe" },
+  ];
   return (
     <div className="space-y-3">
-      <div className="inline-flex rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
-        {views.map((v, i) => (
-          <button key={v.key} type="button" onClick={() => setView(v.key)} title={v.hint}
-            className={`px-3 py-1.5 font-semibold cursor-pointer ${view === v.key ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${i > 0 ? "border-l border-[#F0ECE9]" : ""}`}>
-            {v.label}
-          </button>
-        ))}
-      </div>
-      {view === "statement" && <PLStatementTab />}
-      {view === "monthly" && <MonthlyPlTab />}
-      {view === "cost" && <CostStructureTab />}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <SegmentedSwitch label="P&L view" options={views} value={view} onChange={setView} />
+          <SegmentedSwitch label="Product line" options={lines} value={line} onChange={setLine} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {view === "statement" && <PLStatementTab line={line} />}
+      {view === "monthly" && <MonthlyPlTab line={line} />}
+      {view === "cost" && <CostStructureTab line={line} />}
     </div>
   );
 }
@@ -898,7 +984,7 @@ function ContraCard() {
             <p className="text-xs text-[#9CA3AF]">No APPROVED (unpaid) purchase invoices for this supplier.</p>
           ) : (
             <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-2 py-1.5 w-8" />
@@ -1019,7 +1105,7 @@ function LandedCostCard() {
         )}
         {preview && (
           <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table data-fin-list className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                 <th className="px-2 py-1.5 text-left">Material</th>
@@ -1090,7 +1176,7 @@ function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
         </div>
         <p className="text-[11px] text-[#9CA3AF] mb-3">Number = prefix + voucher month + running no. Outgoing (Expense / Supplier payment) uses the OUT prefix; incoming (Customer payment / Receipt) uses the IN prefix. Per bank.</p>
         <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table data-fin-list className="w-full text-sm">
           <thead>
             <tr className="text-[12px] text-[#6B7280]">
               <td className="text-left pb-1">Bank / Cash account</td>
@@ -1100,13 +1186,13 @@ function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
           </thead>
           <tbody>
             {banks.map((a) => (
-              <tr key={a.code} className="border-t border-[#F0ECE9]">
+              <tr key={a.code} data-fin-nolift="" className="border-t border-[#F0ECE9]">
                 <td className="py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-2">{a.code}</span>{a.name}</td>
                 <td className="py-1.5"><input value={map[a.code]?.out ?? ""} onChange={(e) => setField(a.code, "out", e.target.value)} placeholder="e.g. HPV" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
                 <td className="py-1.5"><input value={map[a.code]?.in ?? ""} onChange={(e) => setField(a.code, "in", e.target.value)} placeholder="e.g. HOR" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
               </tr>
             ))}
-            {banks.length === 0 && <tr><td colSpan={3} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
+            {banks.length === 0 && <tr data-fin-nolift=""><td colSpan={3} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
           </tbody>
         </table>
         </div>
@@ -1188,88 +1274,6 @@ function GstRateCard() {
   );
 }
 
-// Operator-configurable financial year end (kv_config key `fye_month`).
-// Phase 1 (2026-06): every fiscal-year-aware report (P&L YTD window,
-// quarter/half buckets, year-end profit close, cost-structure pages)
-// reads this single setting.
-function FyeCard() {
-  const { toast } = useToast();
-  const [month, setMonth] = useState<number>(12);
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const MONTHS = [
-    "31 Jan", "28/29 Feb", "31 Mar", "30 Apr", "31 May", "30 Jun",
-    "31 Jul", "31 Aug", "30 Sep", "31 Oct", "30 Nov", "31 Dec",
-  ];
-  useEffect(() => {
-    fetch("/api/kv-config/fye_month")
-      .then((r) => r.json() as Promise<{ data?: { month?: number } | null }>)
-      .then((j) => {
-        const v = (j?.data as { month?: number } | null)?.month;
-        if (typeof v === "number" && v >= 1 && v <= 12) setMonth(v);
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
-  }, []);
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch("/api/kv-config/fye_month", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month }),
-      });
-      const j = (await res.json()) as { success?: boolean; error?: string };
-      if (j?.success) toast.success(`Financial year end saved: ${MONTHS[month - 1]}`);
-      else toast.error(j?.error || "Failed to save FYE");
-    } catch {
-      toast.error("Failed to save FYE");
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <Card className="mb-4">
-      <CardContent className="p-4 flex flex-wrap items-end gap-4">
-        <div>
-          <label className="text-xs font-medium text-[#6B7280] mb-1 block">
-            Financial Year End (FYE)
-          </label>
-          <select
-            value={month}
-            disabled={!loaded}
-            onChange={(e) => setMonth(Number(e.target.value))}
-            className="w-36 rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-          >
-            {MONTHS.map((label, i) => (
-              <option key={i + 1} value={i + 1}>{label}</option>
-            ))}
-          </select>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={save}
-          disabled={saving || !loaded}
-        >
-          {saving ? "Saving…" : "Save"}
-        </Button>
-        <p className="text-[11px] text-[#9CA3AF] max-w-sm">
-          Sets the FY window for YTD figures, quarter/half buckets, the
-          year-end profit close and cost-structure pages. Changing it after
-          posting re-bases historical YTD groupings — set once at go-live.
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Maintenance — AutoCount-style stock-group account grid (owner request
-// 2026-06-12: the raw JSON textarea was unusable). One row per raw-material
-// stock group with editable Purchase / Balance Stock / Opening / Closing
-// account cells, plus Default / WIP / FG rows. Loads the EFFECTIVE mapping
-// (kv overrides over built-in defaults) and saves the full grid back to
-// the same kv key the posting + manufacturing reports already read.
 function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   type Entry = { stock: string; opening: string; closing: string; purchase?: string };
@@ -1336,6 +1340,13 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <Card className="mb-4">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -1347,15 +1358,12 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
               Values shown are the ones currently in effect.
             </p>
           </div>
-          <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
         </div>
         {!rows ? (
           <div className="py-8 text-center text-[#6B7280] text-sm">Loading mapping…</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="text-sm">
+            <table data-fin-list className="text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-3 py-2 text-left">Stock Group</th>
@@ -1368,7 +1376,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.group} className="border-b border-[#F0ECE9]">
+                  <tr key={r.group} data-fin-nolift="" className="border-b border-[#F0ECE9]">
                     <td className="px-3 py-1.5 font-medium text-[#1F1D1B] whitespace-nowrap">{r.group}</td>
                     <td className="px-3 py-1.5 text-[#6B7280] whitespace-nowrap">{r.description ?? r.group}</td>
                     <td className="px-3 py-1">{cell(r.purchase ?? "", (v) => setCell(i, "purchase", v))}</td>
@@ -1377,7 +1385,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
                     <td className="px-3 py-1">{cell(r.closing, (v) => setCell(i, "closing", v))}</td>
                   </tr>
                 ))}
-                <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
                   <td className="px-3 py-1.5 font-medium text-[#6B7280] whitespace-nowrap">(Default)</td>
                   <td className="px-3 py-1.5 text-xs text-[#9CA3AF]">unmapped groups</td>
                   <td className="px-3 py-1">{cell(rmDefault.purchase, (v) => setRmDefault({ ...rmDefault, purchase: v }))}</td>
@@ -1385,7 +1393,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
                   <td className="px-3 py-1">{cell(rmDefault.opening, (v) => setRmDefault({ ...rmDefault, opening: v }))}</td>
                   <td className="px-3 py-1">{cell(rmDefault.closing, (v) => setRmDefault({ ...rmDefault, closing: v }))}</td>
                 </tr>
-                <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
                   <td className="px-3 py-1.5 font-medium text-[#6B7280]">WIP</td>
                   <td className="px-3 py-1.5 text-xs text-[#9CA3AF]">WORK IN PROGRESS</td>
                   <td className="px-3 py-1 text-xs text-[#9CA3AF]">—</td>
@@ -1393,7 +1401,7 @@ function StockMapCard({ accounts }: { accounts: ChartOfAccount[] }) {
                   <td className="px-3 py-1">{cell(wip.opening, (v) => setWip({ ...wip, opening: v }))}</td>
                   <td className="px-3 py-1">{cell(wip.closing, (v) => setWip({ ...wip, closing: v }))}</td>
                 </tr>
-                <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
                   <td className="px-3 py-1.5 font-medium text-[#6B7280]">FG</td>
                   <td className="px-3 py-1.5 text-xs text-[#9CA3AF]">FINISHED GOODS</td>
                   <td className="px-3 py-1 text-xs text-[#9CA3AF]">—</td>
@@ -1983,17 +1991,10 @@ function StockTakeTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Month-End Stock Take</h2>
-          <p className="text-xs text-[#6B7280] max-w-3xl">
-            Enter the closing stock value per material group at each month-end. The P&amp;L
-            uses it as that month&apos;s closing (and the next month&apos;s opening), so material
-            cost works without a full BOM. Leave a group blank OR enter 0 to keep the
-            system&apos;s automatic (FIFO) figure — only a positive amount overrides it.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      {/* Finance v2: the month and the same buttons on the title row. */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={ym} options={monthOptions(todayYmdMY().slice(0, 7), 18)} onChange={setYm} />
           <Button
             variant="outline"
             size="sm"
@@ -2027,8 +2028,14 @@ function StockTakeTab() {
           <Button variant="primary" size="sm" onClick={save} disabled={saving || !allRowGroups}>
             {saving ? "Saving…" : "Save"}
           </Button>
-        </div>
-      </div>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-xs text-[#6B7280] max-w-3xl">
+        Enter the closing stock value per material group at each month-end. The P&amp;L
+        uses it as that month&apos;s closing (and the next month&apos;s opening), so material
+        cost works without a full BOM. Leave a group blank OR enter 0 to keep the
+        system&apos;s automatic (FIFO) figure — only a positive amount overrides it.
+      </p>
 
       {/* Priced count (owner 2026-10-09 「用最近一次进货价」): a quantity-only count
           priced at each item's latest purchase on or before month-end. A group
@@ -2092,7 +2099,7 @@ function StockTakeTab() {
               </div>
 
               <div className="border rounded-md overflow-x-auto">
-                <table className="w-full text-sm" data-col-resize="off">
+                <table data-fin-list className="w-full text-sm" data-col-resize="off">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className={`${th} text-left w-20`}>Count in</th>
@@ -2166,7 +2173,7 @@ function StockTakeTab() {
               </div>
 
               <div className="border rounded-md overflow-auto max-h-[36rem]">
-                <table className="w-full text-sm" data-col-resize="off">
+                <table data-fin-list className="w-full text-sm" data-col-resize="off">
                   <thead className="bg-gray-50 sticky top-0 z-10">
                     <tr>
                       <th className={`${th} w-8`} />
@@ -2297,14 +2304,8 @@ function StockTakeTab() {
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-end gap-4">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-[#6B7280]">Month (closes at month-end)</label>
-              <input
-                type="month"
-                className="border border-[#E2DDD8] rounded-md px-3 py-2 text-sm"
-                value={ym}
-                onChange={(e) => setYm(e.target.value)}
-              />
+            <div className="text-sm font-semibold text-[#1F1D1B] pb-2">
+              Closing stock for {periodLabel(ym, "")} <span className="font-normal text-[#6B7280]">(closes at month-end; pick the month on the title row)</span>
             </div>
             {linesOnFile && linesOnFile.ym === ym && (
               <div className="text-xs text-[#6B7280] pb-2">
@@ -2326,7 +2327,7 @@ function StockTakeTab() {
             <p className="text-sm text-gray-400 italic">No material groups found.</p>
           ) : (
             <div className="border rounded-md overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium text-gray-600">Material Group</th>
@@ -2369,7 +2370,7 @@ function StockTakeTab() {
             </p>
           </div>
           <div className="border rounded-md overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="text-left px-3 py-2 font-medium text-gray-600">Line</th>
@@ -2418,7 +2419,7 @@ function StockTakeTab() {
               </p>
             </div>
             <div className="border rounded-md overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium text-gray-600">Item</th>
@@ -2585,9 +2586,15 @@ function OpeningStockTab() {
 
   return (
     <div className="space-y-4">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Opening Stock</h2>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Per-material cutover layer for the FIFO material-cost report: the
             quantity on hand and its unit cost as of the switch date. Fill once
@@ -2595,9 +2602,6 @@ function OpeningStockTab() {
             closing becomes next month&apos;s opening).
           </p>
         </div>
-        <Button variant="primary" size="sm" onClick={save} disabled={saving || !rows}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
       </div>
 
       <Card>
@@ -2633,7 +2637,7 @@ function OpeningStockTab() {
           ) : (
             <>
             <div ref={scrollRef} className="overflow-auto max-h-[70vh]">
-              <table className="text-sm w-full">
+              <table data-fin-list className="text-sm w-full">
                 <thead className="sticky top-0 z-10 bg-white">
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left">Item Code</th>
@@ -2648,7 +2652,7 @@ function OpeningStockTab() {
                   {virt.topSpacer}
                   {(virt.active ? virt.indices.map((i) => filtered[i]) : filtered).map((r) =>
                     !r ? null : (
-                    <tr key={r.id} className="border-b border-[#F0ECE9]" style={{ height: OPENING_STOCK_ROW_PX }}>
+                    <tr key={r.id} data-fin-nolift="" className="border-b border-[#F0ECE9]" style={{ height: OPENING_STOCK_ROW_PX }}>
                       <td className="px-3 py-1.5 font-medium text-[#1F1D1B] whitespace-nowrap">{r.itemCode}</td>
                       <td className="px-3 py-1.5 text-[#1F1D1B]">{r.description}</td>
                       <td className="px-3 py-1.5 text-[#6B7280] whitespace-nowrap">{r.itemGroup || "—"}</td>
@@ -2707,16 +2711,40 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({
-    code: "",
+  // The New Account form (backlog item 15, owner 2026-10-17 「可以，但前提不要
+  // 碰现在的」): section chips, the parent first (only existing groups — a new
+  // account never turns an existing posting account into a group), a
+  // suggested next free code, the reporting block. Existing accounts keep
+  // their own edit / move / rename paths below, unchanged.
+  const blankForm = (section = "EXP") => ({
+    code: nextFreeCode(accounts, section, ""),
+    codeAuto: true,
     name: "",
     // Owner: the create form offers the same NINE sections as the tree —
     // the section maps onto a DB type + code band on submit (handleAdd).
-    section: "NCA",
+    section,
     parentCode: "",
-    cashFlowCategory: "" as "" | "O" | "I" | "F",
+    cashFlowCategory: defaultCashFlowFor(section) as "" | "O" | "I" | "F",
     specialAccountType: "",
     pnlCategory: "" as "" | "FIXED" | "VARIABLE" | "OTHERS",
+  });
+  const [formData, setFormData] = useState(() => blankForm());
+  const openNewForm = () => { if (showForm) { setShowForm(false); return; } setFormData(blankForm()); setShowForm(true); };
+  const setSection = (section: string) => setFormData((f) => ({
+    ...f, section, parentCode: "",
+    cashFlowCategory: defaultCashFlowFor(section),
+    pnlCategory: isPnlType(COA_SECTIONS.find((x) => x.key === section)?.type ?? "EXPENSE") ? f.pnlCategory : "",
+    ...(f.codeAuto ? { code: nextFreeCode(accounts, section, "") } : {}),
+  }));
+  // Picking a parent carries its cash-flow and P&L category over.
+  const setParent = (parentCode: string) => setFormData((f) => {
+    const p = accounts.find((a) => a.code === parentCode);
+    return {
+      ...f, parentCode,
+      cashFlowCategory: p?.cashFlowCategory ?? f.cashFlowCategory,
+      pnlCategory: p?.pnlCategory ?? f.pnlCategory,
+      ...(f.codeAuto ? { code: nextFreeCode(accounts, f.section, parentCode) } : {}),
+    };
   });
   const [editCode, setEditCode] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -2727,47 +2755,10 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   //   LIABILITY 480-489 (hire purchase) → Non-Current; else Current
   //   REVENUE ≥530 (forex gain, discount received) → Other Income
   //   COST → Cost of Goods Sold · EXPENSE → Expenses · EQUITY → Equity
-  const SECTIONS = [
-    { key: "NCA", label: "Non-Current Assets", type: "ASSET" as const },
-    { key: "CA", label: "Current Assets", type: "ASSET" as const },
-    { key: "CL", label: "Current Liabilities", type: "LIABILITY" as const },
-    { key: "NCL", label: "Non-Current Liabilities", type: "LIABILITY" as const },
-    { key: "EQ", label: "Equity", type: "EQUITY" as const },
-    { key: "REV", label: "Revenue", type: "REVENUE" as const },
-    { key: "COGS", label: "Cost of Goods Sold", type: "COST" as const },
-    { key: "OI", label: "Other Income", type: "REVENUE" as const },
-    { key: "EXP", label: "Expenses", type: "EXPENSE" as const },
-  ];
-  const sectionOf = (a: ChartOfAccount): string => {
-    const p = parseInt(a.code.split("-")[0], 10) || 0;
-    switch (a.type) {
-      case "ASSET":
-        return p < 300 ? "NCA" : "CA";
-      case "LIABILITY":
-        return p >= 480 && p < 490 ? "NCL" : "CL";
-      case "EQUITY":
-        return "EQ";
-      case "REVENUE":
-        return p >= 530 ? "OI" : "REV";
-      case "COST":
-        return "COGS";
-      default:
-        return "EXP";
-    }
-  };
-  // Code bands per section (mirrors sectionOf) — placeholder example +
-  // the rejection hint when a new account's code lands outside its section.
-  const SECTION_CODE_BAND: Record<string, { example: string; hint: string }> = {
-    NCA: { example: "200-1000", hint: "below 300" },
-    CA: { example: "330-5000", hint: "300 and above" },
-    CL: { example: "440-0000", hint: "outside 480–489" },
-    NCL: { example: "480-0050", hint: "480–489" },
-    EQ: { example: "100-0005", hint: "any band" },
-    REV: { example: "500-0040", hint: "below 530" },
-    OI: { example: "530-0010", hint: "530 and above" },
-    COGS: { example: "701-0040", hint: "any band" },
-    EXP: { example: "900-A001", hint: "any band" },
-  };
+  // The nine sections and their code bands live in src/lib/coa-form.ts (one
+  // definition for the tree and the New Account form).
+  const SECTIONS = COA_SECTIONS;
+  const sectionOf = (a: ChartOfAccount): string => coaSectionOf(a.code, a.type);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(
     Object.fromEntries(SECTIONS.map((s) => [s.key, true])),
   );
@@ -2853,40 +2844,29 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
     const sec = SECTIONS.find((s) => s.key === formData.section);
     if (!sec) return;
     const code = formData.code.trim();
-    if (!code || !formData.name.trim()) {
-      toast.error("Code and name are required");
-      return;
-    }
     // The nine sections map onto six DB types + a code band (sectionOf) —
-    // refuse a code outside the chosen section's band, or the new account
-    // would silently render under a different section of the tree.
-    const landing = sectionOf({ code, type: sec.type } as ChartOfAccount);
-    if (landing !== sec.key) {
-      const other = SECTIONS.find((s) => s.key === landing);
-      toast.error(
-        `Code ${code} lands in ${other?.label ?? landing} — ${sec.label} uses codes ${SECTION_CODE_BAND[sec.key].hint}`,
-      );
-      return;
-    }
-    const { section: _section, ...rest } = formData;
-    void _section;
+    // a code outside the chosen section's band would silently render under
+    // a different section of the tree; a taken code is refused here too.
+    const chk = codeCheck(code, accounts, sec.key, formData.codeAuto);
+    if (chk.tone === "err") { toast.error(chk.text); return; }
+    if (!formData.name.trim()) { toast.error("Name is required"); return; }
     const res = await fetch("/api/accounting/coa", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...rest, code, name: formData.name.trim(), type: sec.type }),
+      body: JSON.stringify({
+        code,
+        name: formData.name.trim(),
+        type: sec.type,
+        parentCode: formData.parentCode,
+        cashFlowCategory: formData.cashFlowCategory,
+        specialAccountType: formData.specialAccountType,
+        pnlCategory: isPnlType(sec.type) ? formData.pnlCategory : "",
+      }),
     });
     const data = asMutationResponse(await res.json());
     if (data?.success) {
+      toast.success(`Added ${code}`);
       setShowForm(false);
-      setFormData({
-        code: "",
-        name: "",
-        section: "NCA",
-        parentCode: "",
-        cashFlowCategory: "",
-        specialAccountType: "",
-        pnlCategory: "",
-      });
       onRefresh();
     } else {
       toast.error(data?.error || "Failed to create account");
@@ -2958,139 +2938,109 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   return (
     <div className="space-y-4">
       {confirmDialog}
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Chart of Accounts</h2>
-        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
-          <Plus className="h-4 w-4" /> Add Account
-        </Button>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={openNewForm}>
+            <Plus className="h-4 w-4" /> Add Account
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
 
-      {showForm && (
-        <Card>
-          <CardContent className="p-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+      {showForm && (() => {
+        const sec = SECTIONS.find((x) => x.key === formData.section) ?? SECTIONS[SECTIONS.length - 1];
+        const chk = codeCheck(formData.code, accounts, sec.key, formData.codeAuto);
+        const groups = groupParentsIn(accounts, sec.key);
+        const pnl = isPnlType(sec.type);
+        const inputCls = "w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]";
+        const seg = <K extends string>(value: K, opts: [K, string][], set: (v: K) => void) => (
+          <div className="inline-flex overflow-hidden rounded-md border border-[#D9D3CA]">
+            {opts.map(([v, l], i) => (
+              <button key={v || "none"} type="button" onClick={() => set(v)} className={`px-3 py-1.5 text-xs font-medium cursor-pointer ${i ? "border-l border-[#D9D3CA]" : ""} ${value === v ? "bg-[#1F1D1B] text-white" : "bg-white text-[#374151] hover:bg-[#F7F5F2]"}`}>{l}</button>
+            ))}
+          </div>
+        );
+        return (
+          <Card>
+            <CardContent className="p-4 space-y-4">
+              <div className="text-sm font-semibold text-[#1F1D1B]">New Account</div>
               <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Code</label>
-                <input
-                  type="text"
-                  placeholder={`e.g. ${SECTION_CODE_BAND[formData.section].example}`}
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Name</label>
-                <input
-                  type="text"
-                  placeholder="Account Name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Section</label>
-                <select
-                  value={formData.section}
-                  onChange={(e) => setFormData({ ...formData, section: e.target.value, parentCode: "" })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  {SECTIONS.map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
+                <label className="text-xs font-medium text-[#6B7280] mb-1.5 block">Section</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {SECTIONS.map((x) => (
+                    <button key={x.key} type="button" onClick={() => setSection(x.key)} className={`rounded-full border px-3 py-1 text-xs font-medium cursor-pointer ${formData.section === x.key ? "border-[#1F1D1B] bg-[#1F1D1B] text-white" : "border-[#D9D3CA] bg-white text-[#374151] hover:border-[#1F1D1B]"}`}>{x.label}</button>
                   ))}
-                </select>
+                </div>
+                <p className="mt-1.5 text-[11px] text-[#6B7280]">Normal balance: {normalBalanceOf(sec.type)} · shows on the {pnl ? "P&L" : "Balance Sheet"}</p>
               </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Parent Code</label>
-                <select
-                  value={formData.parentCode}
-                  onChange={(e) => setFormData({ ...formData, parentCode: e.target.value })}
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None - Top Level)</option>
-                  {accounts
-                    .filter((a) => sectionOf(a) === formData.section)
-                    .map((a) => (
-                      <option key={a.code} value={a.code}>
-                        {a.code} - {a.name}
-                      </option>
-                    ))}
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                <div>
+                  <label className="text-xs font-medium text-[#6B7280] mb-1 block">Parent</label>
+                  <select value={formData.parentCode} onChange={(e) => setParent(e.target.value)} className={inputCls}>
+                    <option value="">(None — top level)</option>
+                    {groups.map((g) => <option key={g.code} value={g.code}>{g.code} · {g.name}</option>)}
+                  </select>
+                  <p className="mt-1 text-[11px] text-[#9CA3AF]">Only existing groups — a posting account is never turned into a group.</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6B7280] mb-1 block">Code</label>
+                  <input
+                    type="text"
+                    placeholder={`e.g. ${COA_SECTION_BAND[sec.key].example}`}
+                    value={formData.code}
+                    onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase(), codeAuto: false })}
+                    className={inputCls}
+                  />
+                  <p className={`mt-1 text-[11px] ${chk.tone === "err" ? "text-[#9A3A2D]" : chk.tone === "ok" ? "text-[#27500A]" : "text-[#9CA3AF]"}`}>{chk.text}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6B7280] mb-1 block">Name</label>
+                  <input type="text" placeholder="Account name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className={inputCls} />
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Cash Flow</label>
-                <select
-                  value={formData.cashFlowCategory}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      cashFlowCategory: e.target.value as "" | "O" | "I" | "F",
-                    })
-                  }
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None)</option>
-                  <option value="O">Operating</option>
-                  <option value="I">Investing</option>
-                  <option value="F">Financing</option>
-                </select>
+              <div className="rounded-md border border-[#EAE5DE] bg-[#FAF9F7] p-3 space-y-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">Reporting</div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-24 text-xs text-[#6B7280]">Cash flow</span>
+                  {seg(formData.cashFlowCategory, [["", "None"], ["O", "Operating"], ["I", "Investing"], ["F", "Financing"]], (v) => setFormData({ ...formData, cashFlowCategory: v }))}
+                </div>
+                {pnl && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="w-24 text-xs text-[#6B7280]">P&amp;L category</span>
+                    {seg(formData.pnlCategory, [["", "None"], ["FIXED", "Fixed"], ["VARIABLE", "Variable"], ["OTHERS", "Others"]], (v) => setFormData({ ...formData, pnlCategory: v }))}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-24 text-xs text-[#6B7280]">Special type</span>
+                  {/* Only the values the posting/report code consumes (or is
+                      committed to): SDC drives AR Control + customer
+                      control-account checks, SCC drives AP Control, SOS/SCS
+                      feed the Manufacturing P&L opening/closing stock lines,
+                      SBK/SCA gate the Phase-3 Payment/Expense paying-account
+                      picker. Anything else is inert, so free text only
+                      invited typos. */}
+                  <select value={formData.specialAccountType} onChange={(e) => setFormData({ ...formData, specialAccountType: e.target.value })} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm">
+                    <option value="">(None)</option>
+                    <option value="SDC">SDC — Debtor Control (AR)</option>
+                    <option value="SCC">SCC — Creditor Control (AP)</option>
+                    <option value="SBK">SBK — Bank Account (Payment)</option>
+                    <option value="SCH">SCH — Cash Account (Payment)</option>
+                    <option value="SOS">SOS — Opening Stock (Mfg P&amp;L)</option>
+                    <option value="SCS">SCS — Closing Stock (Mfg P&amp;L)</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Special Type</label>
-                {/* Only the values the posting/report code consumes (or is
-                    committed to): SDC drives AR Control + customer
-                    control-account checks, SCC drives AP Control, SOS/SCS
-                    feed the Manufacturing P&L opening/closing stock lines,
-                    SBK/SCA gate the Phase-3 Payment/Expense paying-account
-                    picker. Anything else is inert, so free text only
-                    invited typos. */}
-                <select
-                  value={formData.specialAccountType}
-                  onChange={(e) =>
-                    setFormData({ ...formData, specialAccountType: e.target.value })
-                  }
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None)</option>
-                  <option value="SDC">SDC — Debtor Control (AR)</option>
-                  <option value="SCC">SCC — Creditor Control (AP)</option>
-                  <option value="SBK">SBK — Bank Account (Payment)</option>
-                  <option value="SCH">SCH — Cash Account (Payment)</option>
-                  <option value="SOS">SOS — Opening Stock (Mfg P&L)</option>
-                  <option value="SCS">SCS — Closing Stock (Mfg P&L)</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">P&L Category</label>
-                <select
-                  value={formData.pnlCategory}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      pnlCategory: e.target.value as "" | "FIXED" | "VARIABLE" | "OTHERS",
-                    })
-                  }
-                  className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-                >
-                  <option value="">(None)</option>
-                  <option value="FIXED">Fixed</option>
-                  <option value="VARIABLE">Variable</option>
-                  <option value="OTHERS">Others</option>
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="primary" size="sm" onClick={handleAdd}>
+              <div className="flex gap-2 pt-1">
+                <Button variant="primary" size="sm" disabled={chk.tone === "err" || !formData.name.trim()} onClick={handleAdd}>
                   Save
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>
                   Cancel
                 </Button>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {SECTIONS.map((section) => {
         const type = section.type;
@@ -3339,6 +3289,16 @@ function JournalsTab({
     // Newest date first, as the journals come; on the same date the manual ones stay first.
     return [...journals, ...sys].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
   }, [journals, sysResp]);
+  // The list's debit / credit columns as plain sen fields (finance v2), so
+  // they sort, take the number filter, total and export as money.
+  const gridRows = useMemo(
+    () => rows.map((r) => ({
+      ...r,
+      totalDebit: r.lines.reduce((s, l) => s + l.debitSen, 0),
+      totalCredit: r.lines.reduce((s, l) => s + l.creditSen, 0),
+    })),
+    [rows],
+  );
   const openSystemTab = (sys: SystemPosting) => navigate(`/accounting?tab=${sys.tab}`);
 
   // Owner 2026-07-28 (JE-2607-0001): this used to ignore the response entirely
@@ -3448,19 +3408,17 @@ function JournalsTab({
       key: "totalDebit",
       label: "Total Debit",
       align: "right",
-      render: (value, row) => {
-        const total = row.lines.reduce((s, l) => s + l.debitSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
-      },
+      type: "currency",
+      total: "sum",
+      render: (value) => <span className="amount font-medium">{formatRM(Number(value) || 0)}</span>,
     },
     {
       key: "totalCredit",
       label: "Total Credit",
       align: "right",
-      render: (value, row) => {
-        const total = row.lines.reduce((s, l) => s + l.creditSen, 0);
-        return <span className="amount font-medium">{formatRM(total)}</span>;
-      },
+      type: "currency",
+      total: "sum",
+      render: (value) => <span className="amount font-medium">{formatRM(Number(value) || 0)}</span>,
     },
     {
       key: "status",
@@ -3551,12 +3509,12 @@ function JournalsTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Journal Entries</h2>
+      {/* On the page's title row (finance v2) */}
+      <FinanceTitleActions>
         <Button variant="primary" size="sm" onClick={() => { setEditingJv(null); setShowForm(!showForm); }}>
           <FileText className="h-4 w-4" /> New Journal Entry
         </Button>
-      </div>
+      </FinanceTitleActions>
 
       {showForm && <JournalEntryForm accounts={accounts} onSave={() => { setShowForm(false); onRefresh(); }} onCancel={() => setShowForm(false)} />}
       {editingJv && (
@@ -3597,10 +3555,13 @@ function JournalsTab({
         <CardContent className="p-4">
           <DataGrid
             columns={columns}
-            data={rows}
+            data={gridRows}
             keyField="id"
             virtualize
             gridId="accounting-journals"
+            headerMenu
+            reorderableHeaders
+            exportName="Journal Entries"
             contextMenuItems={contextMenuItems}
             selectable
             onSelectionChange={setSelectedJvs}
@@ -3982,34 +3943,62 @@ function JournalEntryForm({
 // Three numbers that must agree: the SDC control accounts in the ledger,
 // the invoice-derived outstanding (gross of SST), and the running
 // customers.outstandingSen counter. Drift badges make divergence loud.
-function ARControlPanel({ company = "" }: { company?: string }) {
-  const [data, setData] = useState<{
-    asOf: string;
-    controls: { code: string; name: string; balanceSen: number }[];
-    tradeControlSen: number;
-    invoiceOutstandingSen: number;
-    customerCounterSen: number;
-    driftControlVsInvoicesSen: number;
-    driftCounterVsInvoicesSen: number;
-  } | null>(null);
-  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
-  const [stmtCustomer, setStmtCustomer] = useState("");
-  const [stmtFrom, setStmtFrom] = useState("");
-  const [stmtTo, setStmtTo] = useState("");
-  const [stmt, setStmt] = useState<{
-    customer: { id: string; name: string; code: string };
-    openingSen: number;
-    closingSen: number;
-    rows: { date: string; ref: string; type: string; debitSen: number; creditSen: number; runningSen: number }[];
-  } | null>(null);
+// Finance v2 (2026-10-17): the three figures are Debtor Aging's KPI cards and
+// Recalculate counter sits on its title row (ARTab); the statement is its own card.
+type ArControlData = {
+  asOf: string;
+  controls: { code: string; name: string; balanceSen: number }[];
+  tradeControlSen: number;
+  invoiceOutstandingSen: number;
+  customerCounterSen: number;
+  driftControlVsInvoicesSen: number;
+  driftCounterVsInvoicesSen: number;
+};
+// Aging as at a month-end (owner 2026-10-17, Finance v2): the running month
+// reads today; an earlier month reads as at its last day, rebuilt from the
+// documents by the server (`?asOf=`). `pastKey` changes with the date and the
+// company, so a reply for an older pick is never shown for a newer one.
+function useAgingAsAt() {
+  const today = todayYmdMY();
+  const [ym, setYm] = useState(() => today.slice(0, 7));
+  const asOf = asAtDate(ym, today);
+  const isPast = asOf < today;
+  const ymOptions = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
+  return { today, ym, setYm, asOf, isPast, ymOptions };
+}
 
+/** Control-account balances as at a past date, from the trial balance — the
+ *  books' side of the aging check. Debit-normal (AR) or credit-normal (AP). */
+function useControlsAsAt(asOf: string | null, codes: string[], company: string, side: "debit" | "credit") {
+  const [tb, setTb] = useState<{ key: string; rows: TbRow[] } | null>(null);
+  const key = `${asOf}|${company}`;
+  useEffect(() => {
+    if (!asOf) return;
+    let stale = false;
+    fetch(`/api/accounting/trial-balance?asOf=${asOf}${orgIdParam(company)}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { rows: TbRow[] } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setTb({ key: `${asOf}|${company}`, rows: j.data.rows }); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [asOf, company]);
+  if (!asOf || tb?.key !== key) return null;
+  const bal = new Map<string, number>();
+  for (const code of codes) {
+    const r = tb.rows.find((x) => x.accountCode === code);
+    bal.set(code, r ? (side === "debit" ? r.debitSen - r.creditSen : r.creditSen - r.debitSen) : 0);
+  }
+  return bal;
+}
+
+function useArControl(company: string) {
+  const [data, setData] = useState<ArControlData | null>(null);
   // Multi-company (Phase 2): scope the control reconciliation to the selected
   // company. Absent (group) → URL unchanged = today's consolidated numbers.
   const [ctlRev, setCtlRev] = useState(0);
   useEffect(() => {
     let stale = false;
     fetch(`/api/accounting/ar-control${company ? `?orgId=${encodeURIComponent(company)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: typeof data }>)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ArControlData }>)
       .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
       .catch(() => {});
     return () => { stale = true; };
@@ -4023,7 +4012,7 @@ function ARControlPanel({ company = "" }: { company?: string }) {
   const rebuildCounter = async () => {
     if (!(await ctlConfirm({
       title: "Recalculate customer counters?",
-      message: "Reset every customer's running counter to its invoice-derived outstanding (the same figure as the middle card). The old counter values are overwritten; the action is logged in the Audit Log.",
+      message: "Reset every customer's running counter to its invoice-derived outstanding (the same figure as the Outstanding from invoices card). The old counter values are overwritten; the action is logged in the Audit Log.",
       danger: false,
     }))) return;
     setRebuilding(true);
@@ -4040,6 +4029,30 @@ function ARControlPanel({ company = "" }: { company?: string }) {
       setRebuilding(false);
     }
   };
+  return { data, rebuilding, rebuildCounter };
+}
+
+// A control figure against the documents: green when they agree, red with
+// the gap when they do not.
+function controlDriftNote(n: number) {
+  return (
+    <span className={n === 0 ? "text-[#27500A]" : "font-semibold text-[#9A3A2D]"}>
+      {n === 0 ? "matches ✓" : `drift ${formatCurrency(n)}`}
+    </span>
+  );
+}
+
+function CustomerStatementCard() {
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
+  const [stmtCustomer, setStmtCustomer] = useState("");
+  const [stmtFrom, setStmtFrom] = useState("");
+  const [stmtTo, setStmtTo] = useState("");
+  const [stmt, setStmt] = useState<{
+    customer: { id: string; name: string; code: string };
+    openingSen: number;
+    closingSen: number;
+    rows: { date: string; ref: string; type: string; debitSen: number; creditSen: number; runningSen: number }[];
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/customers")
@@ -4073,7 +4086,7 @@ function ARControlPanel({ company = "" }: { company?: string }) {
       .join("");
     w.document.write(`<html><head><title>Statement — ${stmt.customer.name}</title>
 <style>body{font-family:Segoe UI,sans-serif;font-size:12px;padding:24px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:4px 8px;text-align:left}h2{margin:0}p{color:#555}</style>
-</head><body><h2>HOOKKA MANUFACTURING SDN BHD</h2><p>Statement of Account — ${stmt.customer.name} (${stmt.customer.code})${stmtFrom || stmtTo ? ` · ${stmtFrom || "…"} → ${stmtTo || "…"}` : ""}</p>
+</head><body><h2>${COMPANY.HOOKKA.name}</h2><p>Statement of Account — ${stmt.customer.name} (${stmt.customer.code})${stmtFrom || stmtTo ? ` · ${stmtFrom || "…"} → ${stmtTo || "…"}` : ""}</p>
 <table><tr><th>Date</th><th>Ref</th><th>Type</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th><th style="text-align:right">Balance</th></tr>
 <tr><td colspan="5">Opening balance</td><td style="text-align:right">${formatCurrency(stmt.openingSen)}</td></tr>
 ${rows}
@@ -4083,116 +4096,228 @@ ${rows}
     w.print();
   };
 
-  const drift = (n: number) => (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${n === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
-      {n === 0 ? "matches ✓" : `drift ${formatCurrency(n)}`}
-    </span>
-  );
-
   return (
-    <div className="space-y-4 mb-2">
-      {data && (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Debtor control (ledger{data.controls.filter((x) => x.code !== "305-0000").map((x) => ` ${x.code}`).join(",")})</p>
-              <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(data.tradeControlSen)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Outstanding from invoices (gross)</p>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.invoiceOutstandingSen)}</p>
-              <div className="mt-1">{drift(data.driftControlVsInvoicesSen)}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-xs text-[#6B7280]">Customer running counter (outstandingSen)</p>
-                <Button variant="outline" size="sm" onClick={() => void rebuildCounter()} disabled={rebuilding} title="Reset every customer's counter to its invoice-derived outstanding (audited)">
-                  {rebuilding ? "Recalculating…" : "Recalculate"}
-                </Button>
-              </div>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.customerCounterSen)}</p>
-              <div className="mt-1">{drift(data.driftCounterVsInvoicesSen)}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs font-medium text-[#6B7280] mb-1 block">Customer statement</label>
-              <select
-                value={stmtCustomer}
-                onChange={(e) => { setStmtCustomer(e.target.value); setStmt(null); }}
-                className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-              >
-                <option value="">— select customer —</option>
-                {customers.map((c2) => (
-                  <option key={c2.id} value={c2.id}>{c2.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">From</label>
-              <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">To</label>
-              <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
-            {stmt && (
-              <Button variant="outline" size="sm" onClick={printStmt}>Print</Button>
-            )}
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Customer statement</label>
+            <select
+              value={stmtCustomer}
+              onChange={(e) => { setStmtCustomer(e.target.value); setStmt(null); }}
+              className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+            >
+              <option value="">— select customer —</option>
+              {customers.map((c2) => (
+                <option key={c2.id} value={c2.id}>{c2.name}</option>
+              ))}
+            </select>
           </div>
-          {stmtCustomer && !stmt && (
-            <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
-          )}
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">From</label>
+            <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">To</label>
+            <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
           {stmt && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 text-left">Ref</th>
-                    <th className="px-3 py-2 text-left">Type</th>
-                    <th className="px-3 py-2 text-right">Debit</th>
-                    <th className="px-3 py-2 text-right">Credit</th>
-                    <th className="px-3 py-2 text-right">Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                    <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
-                  </tr>
-                  {stmt.rows.map((r, i) => (
-                    <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="border-t border-[#1F1D1B] font-semibold">
-                    <td className="px-3 py-2" colSpan={5}>Closing balance</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <Button variant="outline" size="sm" onClick={printStmt}>Print</Button>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+        {stmtCustomer && !stmt && (
+          <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
+        )}
+        {stmt && (
+          <div className="overflow-x-auto">
+            <table data-fin-list className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Ref</th>
+                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-right">Debit</th>
+                  <th className="px-3 py-2 text-right">Credit</th>
+                  <th className="px-3 py-2 text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] text-[#6B7280]">
+                  <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
+                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
+                </tr>
+                {stmt.rows.map((r, i) => (
+                  <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
+                    <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
+                    <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-[#1F1D1B] font-semibold">
+                  <td className="px-3 py-2" colSpan={5}>Closing balance</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
+
+// The aging PDF's layout (Debtor and Creditor Aging): banded rows, the name and
+// document columns left-aligned, fixed widths.
+const AGING_PDF: PdfExportOpts = { rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } };
+
+// One aging list for Debtor and Creditor Aging (Finance v2, owner 2026-10-17):
+// trade parties and other parties (and, on the creditor side, trade-finance
+// draws) in the same five calendar-month columns. Under "All" each kind is its
+// own section with a subtotal; a row opens to the documents behind it.
+type AgingShow = string;
+type AgingListRow = {
+  key: string;
+  kind: string;
+  name: string;
+  /** The party's code (debtor / creditor code; a draw's TF account). */
+  code?: string;
+  /** A second line under the name (a draw's lender, supplier and date). */
+  sub?: string;
+  /** "YYYY-MM-DD" — the earliest open due date (Creditor Aging's Next Due). */
+  nextDue?: string;
+  currentSen: number;
+  days30Sen: number;
+  days60Sen: number;
+  days90Sen: number;
+  over90Sen: number;
+  docs: AgingDocDetail[];
+};
+type AgingGroup = { key: string; label: string; rows: AgingListRow[] };
+const AGING_KEYS = ["currentSen", "days30Sen", "days60Sen", "days90Sen", "over90Sen"] as const;
+const agingListTotal = (r: AgingListRow) => AGING_KEYS.reduce((s, k) => s + r[k], 0);
+/** The groups a chip shows: every non-empty group under "all", else just its own. */
+function agingGroupsFor(show: AgingShow, all: AgingGroup[]): AgingGroup[] {
+  return show === "all" ? all.filter((g) => g.rows.length) : all.filter((g) => g.key === show);
+}
+const AGING_BUCKET_TONE = ["", "", "text-[#9C6F1E]", "text-[#B8601A] font-medium", "text-[#9A3A2D] font-medium"];
+
+function AgingListTable({
+  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue,
+}: {
+  partyHeader: string;
+  groups: AgingGroup[];
+  sectioned: boolean;
+  open: Set<string>;
+  onToggle: (key: string) => void;
+  typeLabel: Record<string, string>;
+  /** Renders the Next Due cell (Creditor Aging); omitted = no column. */
+  nextDue?: (r: AgingListRow) => ReactNode;
+}) {
+  const rows = groups.flatMap((g) => g.rows);
+  const cols = 9 + (nextDue ? 1 : 0);
+  const money = (v: number, i: number) => (
+    <td key={i} className={`py-3 px-4 text-right ${v < 0 ? "text-[#9A3A2D]" : v > 0 ? AGING_BUCKET_TONE[i] : ""}`}>{v !== 0 ? formatCurrency(v) : "-"}</td>
+  );
+  const sumOf = (list: AgingListRow[], k: (typeof AGING_KEYS)[number]) => list.reduce((s, r) => s + r[k], 0);
+  const renderRow = (r: AgingListRow) => {
+    const isOpen = open.has(r.key);
+    return (
+      <Fragment key={r.key}>
+        <tr data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
+          <td className="py-3 px-4 font-mono text-xs text-[#6B7280] whitespace-nowrap" data-aging-code="">{r.code || "—"}</td>
+          <td className="py-3 px-4 font-medium text-[#1F1D1B]">
+            <button className="inline-flex items-start gap-1.5 text-left" onClick={() => onToggle(r.key)} title="Show the documents behind this balance">
+              {isOpen ? <ChevronDownIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
+              <span>{r.name}{r.sub ? <span className="block text-[11px] font-normal text-[#6B7280]">{r.sub}</span> : null}</span>
+            </button>
+          </td>
+          <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${AGING_TYPE_TAG[r.kind] ?? AGING_TYPE_TAG.trade}`}>{typeLabel[r.kind] ?? r.kind}</span></td>
+          {nextDue ? <td className="py-3 px-4 whitespace-nowrap">{nextDue(r)}</td> : null}
+          {AGING_KEYS.map((k, i) => money(r[k], i))}
+          <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(agingListTotal(r))}</td>
+        </tr>
+        {isOpen && r.docs.map((d, i) => (
+          <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+            <td colSpan={nextDue ? 4 : 3} className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
+            {[0, 1, 2, 3, 4].map((b) => (
+              <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
+                {d.mo === b ? formatCurrency(d.amountSen) : ""}
+              </td>
+            ))}
+            <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
+          </tr>
+        ))}
+        {isOpen && !r.docs.length && (
+          <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
+            <td colSpan={cols} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
+          </tr>
+        )}
+      </Fragment>
+    );
+  };
+  const subtotal = (g: AgingGroup) => (
+    <tr key={`s-${g.key}`} data-fin-nolift="" data-aging-subtotal={g.key} className="border-b border-[#E2DDD8] bg-[#F7F4EF] font-semibold">
+      <td colSpan={nextDue ? 4 : 3} className="py-2 px-4 text-[#1F1D1B]">{g.label} total</td>
+      {AGING_KEYS.map((k) => <td key={k} className="py-2 px-4 text-right">{formatCurrency(sumOf(g.rows, k))}</td>)}
+      <td className="py-2 px-4 text-right">{formatCurrency(g.rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
+    </tr>
+  );
+  return (
+    <table data-fin-list className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
+          <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Code</th>
+          <th className="py-3 px-4 text-left text-[#6B7280] font-medium">{partyHeader}</th>
+          <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Type</th>
+          {nextDue ? <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Next Due</th> : null}
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Current</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">1 mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">2 mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3 mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3+ mth</th>
+          <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr data-fin-nolift=""><td colSpan={cols} className="py-8 text-center text-[#9CA3AF]">Nothing outstanding.</td></tr>
+        ) : sectioned ? groups.map((g) => (
+          <Fragment key={g.key}>
+            <tr data-fin-nolift="" data-aging-section={g.key} className="bg-[#FAF8F5]">
+              <td colSpan={cols} className="py-2 px-4 text-[11px] font-semibold uppercase tracking-wide text-[#6B5C32]">{g.label} · {g.rows.length}</td>
+            </tr>
+            {g.rows.map(renderRow)}
+            {subtotal(g)}
+          </Fragment>
+        )) : rows.map(renderRow)}
+      </tbody>
+      <tfoot>
+        <tr className="bg-[#F0ECE9]/50 font-semibold">
+          <td colSpan={nextDue ? 4 : 3} className="py-3 px-4 text-[#1F1D1B]">Total</td>
+          {AGING_KEYS.map((k) => <td key={k} className="py-3 px-4 text-right">{formatCurrency(sumOf(rows, k))}</td>)}
+          <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+// The slice of GET /api/accounting/trade-finance Creditor Aging reads.
+type TfAgingSource = {
+  lenderName: string;
+  /** The TF account the draws sit on (the Code column). */
+  accountCode?: string;
+  draws: { drawSourceId: string; drawDate: string; dueDate: string; interestSen: number; outstandingSen: number; paidSupplier: string }[];
+};
+const AGING_TYPE_TAG: Record<string, string> = {
+  trade: "bg-[#EEF1F4] text-[#4B5563]",
+  other: "bg-[#F4EEE3] text-[#6B5C32]",
+  tf: "bg-[#E8EDF2] text-[#1F2A44]",
+};
 
 function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   // Expandable detail (owner 2026-07-08): click a row to show every open
@@ -4220,7 +4345,51 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
       .catch(() => {});
     return () => { stale = true; };
   }, [company]);
-  const rows = company ? (scopedAr ?? []) : arData;
+  // As at a past month-end: the server rolls every invoice back (?asOf=).
+  const at = useAgingAsAt();
+  const pastKey = `${at.asOf}|${company}`;
+  const [pastAr, setPastAr] = useState<{ key: string; rows: ARAgingEntry[] } | null>(null);
+  useEffect(() => {
+    if (!at.isPast) return;
+    let stale = false;
+    fetch(`/api/accounting/aging?asOf=${at.asOf}${company ? `&orgId=${encodeURIComponent(company)}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ar: ARAgingEntry[] } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setPastAr({ key: `${at.asOf}|${company}`, rows: j.data.ar ?? [] }); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [at.isPast, at.asOf, company]);
+  const pastLoading = at.isPast && pastAr?.key !== pastKey;
+  const rows = at.isPast ? (pastAr?.key === pastKey ? pastAr.rows : []) : company ? (scopedAr ?? []) : arData;
+
+  // Other debtors (owner 2026-10-17, Finance v2: "Debtor Aging includes
+  // other-debtor aging"): their open bills from /other-party-aging, bucketed
+  // by the same calendar-month rule as the invoices (`mo`), listed after the
+  // trade customers. They are not split by company (an other party has none).
+  const [odState, setOdState] = useState<{ key: string; bills: OtherPartyAgingBill[] } | null>(null);
+  useEffect(() => {
+    let stale = false;
+    const k = at.isPast ? at.asOf : "";
+    fetch(`/api/accounting/other-party-aging?type=DEBTOR${at.isPast ? `&asOf=${at.asOf}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { bills?: OtherPartyAgingBill[] } }>)
+      .then((j) => { if (!stale) setOdState({ key: k, bills: j?.success ? (j.data?.bills ?? []) : [] }); })
+      .catch(() => { if (!stale) setOdState({ key: k, bills: [] }); });
+    return () => { stale = true; };
+  }, [at.isPast, at.asOf]);
+  const odBills = odState?.key === (at.isPast ? at.asOf : "") ? odState.bills : null;
+  const [show, setShow] = useState<AgingShow>("all");
+  const tradeList: AgingListRow[] = rows.map((a) => ({
+    key: `t:${a.customerId}`, kind: "trade", name: a.customerName, code: a.customerCode,
+    currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs ?? [],
+  }));
+  const otherList: AgingListRow[] = otherPartyAgingRows(odBills ?? []).map((r) => ({
+    key: `o:${r.partyId}`, kind: "other", name: r.partyName,
+    currentSen: r.currentSen, days30Sen: r.days30Sen, days60Sen: r.days60Sen, days90Sen: r.days90Sen, over90Sen: r.over90Sen, docs: r.docs,
+  }));
+  const groups = agingGroupsFor(show, [
+    { key: "trade", label: "Trade customers", rows: tradeList },
+    { key: "other", label: "Other debtors", rows: otherList },
+  ]);
+  const shownList = groups.flatMap((g) => g.rows);
 
   // BUG-2026-08-13-090: there used to be a "Record Payment" button + form here
   // that POSTed to /api/accounting/aging. That endpoint UPDATEs the `ar_aging`
@@ -4232,104 +4401,111 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   // so even the 404 the dead table returns closed the form as if it had saved.
   // A control that cannot record a payment must not be offered; customer
   // receipts are recorded on /invoices/payments, which posts for real.
-  const totalOutstanding = rows.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
+  const totalOutstanding = shownList.reduce((s, a) => s + agingListTotal(a), 0);
+  const otherTotal = otherList.reduce((s, a) => s + agingListTotal(a), 0);
+  const ctl = useArControl(company);
+  const odControl = ctl.data?.controls.find((x) => x.code === "305-0000");
+  // As at a past date the control cards read the trial balance as at then.
+  const arCodes = (ctl.data?.controls ?? []).map((x) => x.code);
+  const pastCtl = useControlsAsAt(at.isPast ? at.asOf : null, arCodes, company, "debit");
+  const tradeList0 = tradeList.reduce((s, a) => s + agingListTotal(a), 0);
+
+  // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
+  // only (owner), from the same aging builder.
+  const asAt = at.asOf;
+  const fileBase = `debtor-aging-${asAt}${company ? `-${company}` : ""}`;
+  const buildAging = () => buildGroupedAgingExportAoa("Customer", groups.map((g) => ({ label: g.label, parties: g.rows })));
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Debtor Aging (AR)", buildAging(), { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        void exportReportPdf(`${fileBase}.pdf`, "Debtor Aging (AR)", `As at ${asAt}${company ? ` · ${company}` : " · All companies"}`, buildAging(), { ...AGING_PDF, print: true });
+      },
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
-      </div>
-      <ARControlPanel company={company} />
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Accounts Receivable</h2>
-          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#9C6F1E]">{formatCurrency(totalOutstanding)}</span></p>
-          <p className="text-xs text-[#9CA3AF]">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>.</p>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={at.ym} options={at.ymOptions} onChange={at.setYm} today={at.today} />
+          <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
+          {ctl.data && !at.isPast && (
+            <Button variant="outline" size="sm" onClick={() => void ctl.rebuildCounter()} disabled={ctl.rebuilding} title="Reset every customer's counter to its invoice-derived outstanding (audited)">
+              {ctl.rebuilding ? "Recalculating…" : "Recalculate counter"}
+            </Button>
+          )}
+          <DownloadMenu items={downloads} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {at.isPast && (
+        <StatusBanner done={false} title={"As at " + formatDateDMY(at.asOf)} sub={pastLoading ? "Loading…" : "Every invoice rolled back from today by what was received or noted after that date."} />
+      )}
+      <KpiCards
+        items={at.isPast ? [
+          ...(ctl.data ? [{
+            label: `Debtor control · ${ctl.data.controls.filter((x) => x.code !== "305-0000").map((x) => x.code).join(", ")}`,
+            value: pastCtl ? formatCurrency(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0)) : "—",
+            tone: "info" as const,
+            note: pastCtl && !pastLoading
+              ? <>per ledger as at {formatDateDMY(at.asOf)} · {controlDriftNote(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0) - tradeList0)}</>
+              : "per ledger",
+          }] : []),
+          {
+            label: "Other debtors · 305-0000",
+            value: odBills === null ? "—" : formatCurrency(otherTotal),
+            tone: "info" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{pastCtl?.has("305-0000") ? <> · {controlDriftNote((pastCtl.get("305-0000") ?? 0) - otherTotal)}</> : null}</>,
+          },
+          { label: "Total outstanding", value: pastLoading ? "—" : formatCurrency(totalOutstanding), tone: "warn" as const, note: `as at ${formatDateDMY(at.asOf)}` },
+        ] : [
+          ...(ctl.data ? [
+            { label: `Debtor control · ${ctl.data.controls.filter((x) => x.code !== "305-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.data.tradeControlSen), tone: "info" as const, note: "per ledger" },
+            { label: "Outstanding from invoices", value: formatCurrency(ctl.data.invoiceOutstandingSen), note: <>gross · {controlDriftNote(ctl.data.driftControlVsInvoicesSen)}</> },
+            { label: "Customer running counter", value: formatCurrency(ctl.data.customerCounterSen), note: controlDriftNote(ctl.data.driftCounterVsInvoicesSen) },
+          ] : []),
+          {
+            label: "Other debtors · 305-0000",
+            value: odBills === null ? "—" : formatCurrency(otherTotal),
+            tone: "info" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{odControl ? <> · {controlDriftNote(odControl.balanceSen - otherTotal)}</> : null}</>,
+          },
+          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "warn" as const, note: show === "all" ? "trade + other debtors" : show === "trade" ? "trade customers" : "other debtors" },
+        ]}
+      />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h3 className="text-[14px] font-semibold text-[#1F1D1B]">By debtor</h3>
+        <span className="text-[12px] text-[#6B7280]">{tradeList.length} customer{tradeList.length === 1 ? "" : "s"} · {otherList.length} other debtor{otherList.length === 1 ? "" : "s"}</span>
+        <div className="ml-auto">
+          <SegmentedChips
+            options={[
+              { key: "all", label: "All", count: tradeList.length + otherList.length },
+              { key: "trade", label: "Trade", count: tradeList.length },
+              { key: "other", label: "Other debtors", count: otherList.length },
+            ]}
+            value={show}
+            onChange={(k) => setShow(k as AgingShow)}
+          />
         </div>
-        <ExportButtons
-          build={() => buildAgingExportAoa("Customer", rows.map((a) => ({
-            name: a.customerName, currentSen: a.currentSen, days30Sen: a.days30Sen,
-            days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
-          })))}
-          filenameBase={`debtor-aging-${new Date().toISOString().slice(0, 10)}${company ? `-${company}` : ""}`}
-          title="Debtor Aging (AR)" pdfOpts={{ rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } }} moneyFormat
-          subtitle={`As at ${new Date().toISOString().slice(0, 10)}${company ? ` · ${company}` : " · All companies"}`}
-        />
       </div>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Record a customer receipt on <Link to="/invoices/payments" className="underline decoration-dotted text-[#6B5C32]">Customer Payments</Link>, an other debtor's on <Link to="/accounting?tab=receipts" className="underline decoration-dotted text-[#6B5C32]">Receipts</Link>.</p>
 
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                  <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Customer</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Current</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">1 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">2 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3+ mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((ar) => {
-                  const total = ar.currentSen + ar.days30Sen + ar.days60Sen + ar.days90Sen + ar.over90Sen;
-                  const open = openAging.has(ar.customerId);
-                  return (
-                    <Fragment key={ar.customerId}>
-                    <tr className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
-                      <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                        <button className="inline-flex items-center gap-1.5 text-left" onClick={() => toggleAging(ar.customerId)} title="Show the documents behind this balance">
-                          {open ? <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
-                          {ar.customerName}
-                        </button>
-                      </td>
-                      <td className={`py-3 px-4 text-right ${ar.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.currentSen !== 0 ? formatCurrency(ar.currentSen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ar.days30Sen !== 0 ? formatCurrency(ar.days30Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days60Sen < 0 ? "text-[#9A3A2D]" : ar.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ar.days60Sen !== 0 ? formatCurrency(ar.days60Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.days90Sen < 0 ? "text-[#9A3A2D]" : ar.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ar.days90Sen !== 0 ? formatCurrency(ar.days90Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ar.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ar.over90Sen !== 0 ? formatCurrency(ar.over90Sen) : "-"}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
-                    </tr>
-                    {open && (ar.docs ?? []).map((d, i) => (
-                      <tr key={`d-${i}`} className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
-                        {[0, 1, 2, 3, 4].map((b) => (
-                          <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
-                            {d.mo === b ? formatCurrency(d.amountSen) : ""}
-                          </td>
-                        ))}
-                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
-                      </tr>
-                    ))}
-                    {open && !(ar.docs ?? []).length && (
-                      <tr className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td colSpan={7} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
-                      </tr>
-                    )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-[#F0ECE9]/50 font-semibold">
-                  <td className="py-3 px-4 text-[#1F1D1B]">Total</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.currentSen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days30Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days60Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.over90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(totalOutstanding)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            <AgingListTable
+              partyHeader="Customer"
+              groups={groups}
+              sectioned={show === "all"}
+              open={openAging}
+              onToggle={toggleAging}
+              typeLabel={{ trade: "Trade", other: "Other debtor" }}
+            />
           </div>
         </CardContent>
       </Card>
+      <CustomerStatementCard />
     </div>
   );
 }
@@ -4337,19 +4513,36 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
 // =============== TAB 5: ACCOUNTS PAYABLE ===============
 
 // Phase 2 (2026-06) — AP control reconciliation + supplier statement.
-// Mirror of ARControlPanel for the payable side. NOTE: the third "supplier
+// Mirror of the debtor side (useArControl) for the payable side. NOTE: the third "supplier
 // running counter (outstandingSen)" card was removed (2026-06-25) — suppliers
 // .outstandingSen is never maintained on PI approve/pay, so it only ever showed
 // a false drift. The real reconciliation is Creditor-control-ledger vs PI.
-function APControlPanel({ company = "" }: { company?: string }) {
-  const [data, setData] = useState<{
-    controls: { code: string; name: string; balanceSen: number }[];
-    tradeControlSen: number;
-    piOutstandingSen: number;
-    unappliedAdvanceSen?: number;
-    netOutstandingSen?: number;
-    driftControlVsPiSen: number;
-  } | null>(null);
+// Finance v2 (2026-10-17): the figures are Creditor Aging's KPI cards (APTab);
+// the statement is its own card.
+type ApControlData = {
+  controls: { code: string; name: string; balanceSen: number }[];
+  tradeControlSen: number;
+  piOutstandingSen: number;
+  unappliedAdvanceSen?: number;
+  netOutstandingSen?: number;
+  driftControlVsPiSen: number;
+};
+function useApControl(company: string) {
+  const [data, setData] = useState<ApControlData | null>(null);
+  // Multi-company (Phase 2): scope the creditor-control reconciliation to the
+  // selected company. Absent (group) → URL unchanged = consolidated numbers.
+  useEffect(() => {
+    let stale = false;
+    fetch(`/api/accounting/ap-control${company ? `?orgId=${encodeURIComponent(company)}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ApControlData }>)
+      .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [company]);
+  return data;
+}
+
+function SupplierStatementCard() {
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [stmtSupplier, setStmtSupplier] = useState("");
   const [stmtFrom, setStmtFrom] = useState("");
@@ -4360,16 +4553,7 @@ function APControlPanel({ company = "" }: { company?: string }) {
     closingSen: number;
     rows: { date: string; ref: string; type: string; debitSen: number; creditSen: number; runningSen: number }[];
   } | null>(null);
-  // Multi-company (Phase 2): scope the creditor-control reconciliation to the
-  // selected company. Absent (group) → URL unchanged = consolidated numbers.
-  useEffect(() => {
-    let stale = false;
-    fetch(`/api/accounting/ap-control${company ? `?orgId=${encodeURIComponent(company)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: typeof data }>)
-      .then((j) => { if (!stale && j?.success && j.data) setData(j.data); })
-      .catch(() => {});
-    return () => { stale = true; };
-  }, [company]);
+
   useEffect(() => {
     fetch("/api/suppliers")
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { id: string; name: string }[] }>)
@@ -4390,106 +4574,75 @@ function APControlPanel({ company = "" }: { company?: string }) {
     return () => { stale = true; };
   }, [stmtSupplier, stmtFrom, stmtTo]);
 
-  const drift = (n: number) => (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${n === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
-      {n === 0 ? "matches ✓" : `drift ${formatCurrency(n)}`}
-    </span>
-  );
-
   return (
-    <div className="space-y-4 mb-2">
-      {data && (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Creditor control (ledger{data.controls.filter((x) => x.code !== "405-0000").map((x) => ` ${x.code}`).join(",")})</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{formatCurrency(data.tradeControlSen)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">Net owed to suppliers (bills − advances)</p>
-              <p className="text-xl font-bold text-[#1F1D1B]">{formatCurrency(data.netOutstandingSen ?? data.piOutstandingSen)}</p>
-              <div className="mt-1 flex items-center gap-2 flex-wrap">
-                {drift(data.driftControlVsPiSen)}
-                {(data.unappliedAdvanceSen ?? 0) > 0 && (
-                  <span className="text-xs text-[#6B7280]">
-                    bills {formatCurrency(data.piOutstandingSen)} − un-knocked advances {formatCurrency(data.unappliedAdvanceSen ?? 0)}
-                  </span>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs font-medium text-[#6B7280] mb-1 block">Supplier statement</label>
-              <select
-                value={stmtSupplier}
-                onChange={(e) => { setStmtSupplier(e.target.value); setStmt(null); }}
-                className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-              >
-                <option value="">— select supplier —</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">From</label>
-              <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
-            <div>
-              <label className="text-[11px] text-[#6B7280] block">To</label>
-              <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
-            </div>
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Supplier statement</label>
+            <select
+              value={stmtSupplier}
+              onChange={(e) => { setStmtSupplier(e.target.value); setStmt(null); }}
+              className="rounded-md border border-[#E2DDD8] px-3 py-2 text-sm min-w-56 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+            >
+              <option value="">— select supplier —</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </div>
-          {stmtSupplier && !stmt && (
-            <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
-          )}
-          {stmt && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                    <th className="px-3 py-2 text-left">Date</th>
-                    <th className="px-3 py-2 text-left">Ref</th>
-                    <th className="px-3 py-2 text-left">Type</th>
-                    <th className="px-3 py-2 text-right">Debit</th>
-                    <th className="px-3 py-2 text-right">Credit</th>
-                    <th className="px-3 py-2 text-right">Owing</th>
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">From</label>
+            <input type="date" value={stmtFrom} onChange={(e) => { setStmtFrom(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label className="text-[11px] text-[#6B7280] block">To</label>
+            <input type="date" value={stmtTo} onChange={(e) => { setStmtTo(e.target.value); setStmt(null); }} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-xs" />
+          </div>
+        </div>
+        {stmtSupplier && !stmt && (
+          <div className="py-6 text-center text-[#6B7280] text-sm">Loading statement…</div>
+        )}
+        {stmt && (
+          <div className="overflow-x-auto">
+            <table data-fin-list className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Ref</th>
+                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-right">Debit</th>
+                  <th className="px-3 py-2 text-right">Credit</th>
+                  <th className="px-3 py-2 text-right">Owing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-fin-nolift="" className="border-b border-[#F0ECE9] text-[#6B7280]">
+                  <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
+                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
+                </tr>
+                {stmt.rows.map((r, i) => (
+                  <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
+                    <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
+                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
+                    <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                    <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                    <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(stmt.openingSen)}</td>
-                  </tr>
-                  {stmt.rows.map((r, i) => (
-                    <tr key={`${r.ref}-${i}`} className="border-b border-[#F0ECE9]">
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.ref}</td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(r.runningSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="border-t border-[#1F1D1B] font-semibold">
-                    <td className="px-3 py-2" colSpan={5}>Closing balance</td>
-                    <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-[#1F1D1B] font-semibold">
+                  <td className="px-3 py-2" colSpan={5}>Closing balance</td>
+                  <td className="px-3 py-2 text-right">{formatCurrency(stmt.closingSen)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -4797,7 +4950,6 @@ function SupplierDiscountTab() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Supplier Discount</h2>
         <p className="text-xs text-[#6B7280]">Record a discount/credit from a supplier. Optionally knock it off specific unpaid bills.</p>
       </div>
 
@@ -4873,7 +5025,7 @@ function SupplierDiscountTab() {
                 <div className="py-6 text-center text-[#9CA3AF] text-sm">No unpaid bills for this supplier.</div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table data-fin-list className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                         <th className="px-3 py-2 text-left w-10" />
@@ -4889,7 +5041,7 @@ function SupplierDiscountTab() {
                       {openPIs.map((pi) => {
                         const row = allocRows[pi.id] ?? { checked: false, amountStr: "" };
                         return (
-                          <tr key={pi.id} className="border-b border-[#F0ECE9]">
+                          <tr key={pi.id} data-fin-nolift="" className="border-b border-[#F0ECE9]">
                             <td className="px-3 py-1.5">
                               <input
                                 type="checkbox"
@@ -4949,7 +5101,10 @@ function SupplierDiscountTab() {
       {/* History */}
       <Card>
         <CardContent className="p-4 space-y-3">
-          <h3 className="font-semibold text-[#1F1D1B]">History</h3>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <h3 className="font-semibold text-[#1F1D1B]">History</h3>
+            <span className="text-[12px] text-[#6B7280]">{visibleHistory.length} note{visibleHistory.length === 1 ? "" : "s"}</span>
+          </div>
           <BatchActionsBar
             count={sdSel.count}
             onClear={sdSel.clear}
@@ -4972,7 +5127,7 @@ function SupplierDiscountTab() {
             <div className="py-8 text-center text-[#9CA3AF] text-sm">No supplier discounts yet.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 w-8"><input type="checkbox" checked={sdSel.allSelected} onChange={sdSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
@@ -4991,7 +5146,7 @@ function SupplierDiscountTab() {
                     const inputCls = "rounded-md border border-[#E2DDD8] px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#6B5C32]";
                     return (
                     <Fragment key={n.id}>
-                    <tr className="border-b border-[#F0ECE9]">
+                    <tr data-fin-nolift={editing ? "" : undefined} className="border-b border-[#F0ECE9]">
                       <td className="px-3 py-1.5 w-8">
                         <input type="checkbox" checked={sdSel.isSelected(n.noteNumber ?? n.id)} onChange={() => sdSel.toggle(n.noteNumber ?? n.id)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
                       </td>
@@ -5033,7 +5188,7 @@ function SupplierDiscountTab() {
                       </td>
                     </tr>
                     {editing && (
-                      <tr className="border-b border-[#F0ECE9] bg-[#FAF9F7]">
+                      <tr data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#FAF9F7]">
                         <td />
                         <td colSpan={7} className="px-3 py-1.5">
                           <input type="text" value={editReason} onChange={(e) => setEditReason(e.target.value)} placeholder="Reason" className={`${inputCls} w-full`} />
@@ -5075,7 +5230,89 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       .catch(() => {});
     return () => { stale = true; };
   }, [company]);
-  const rows = company ? (scopedAp ?? []) : apData;
+  // As at a past month-end: the server rolls every bill back (?asOf=).
+  const at = useAgingAsAt();
+  const pastKey = `${at.asOf}|${company}`;
+  const [pastAp, setPastAp] = useState<{ key: string; rows: APAgingEntry[] } | null>(null);
+  useEffect(() => {
+    if (!at.isPast) return;
+    let stale = false;
+    fetch(`/api/accounting/aging?asOf=${at.asOf}${company ? `&orgId=${encodeURIComponent(company)}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ap: APAgingEntry[] } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setPastAp({ key: `${at.asOf}|${company}`, rows: j.data.ap ?? [] }); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [at.isPast, at.asOf, company]);
+  const pastLoading = at.isPast && pastAp?.key !== pastKey;
+  const rows = at.isPast ? (pastAp?.key === pastKey ? pastAp.rows : []) : company ? (scopedAp ?? []) : apData;
+
+  // Other creditors and trade-finance draws (owner 2026-10-17, Finance v2:
+  // "Groups: Trade Suppliers / Other Creditors / Trade Finance, where Trade
+  // Finance has one row per drawdown, sorted by due date", and a Next Due
+  // column). Each kind is its own section, never mixed into the supplier
+  // rows; the Trade Finance block below stays where draws are managed (owner
+  // 2026-08-11 / 2026-10-16). A draw ages by its draw date like any bill.
+  const [ocState, setOcState] = useState<{ key: string; bills: OtherPartyAgingBill[] } | null>(null);
+  const [tfState, setTfState] = useState<{ key: string; sources: TfAgingSource[] } | null>(null);
+  useEffect(() => {
+    let stale = false;
+    const k = at.isPast ? at.asOf : "";
+    const q = at.isPast ? `asOf=${at.asOf}` : "";
+    fetch(`/api/accounting/other-party-aging?type=CREDITOR${q ? `&${q}` : ""}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { bills?: OtherPartyAgingBill[] } }>)
+      .then((j) => { if (!stale) setOcState({ key: k, bills: j?.success ? (j.data?.bills ?? []) : [] }); })
+      .catch(() => { if (!stale) setOcState({ key: k, bills: [] }); });
+    fetch(`/api/accounting/trade-finance${q ? `?${q}` : ""}`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: TfAgingSource[] } }>)
+      .then((j) => { if (!stale) setTfState({ key: k, sources: j?.success ? (j.data?.sources ?? []) : [] }); })
+      .catch(() => { if (!stale) setTfState({ key: k, sources: [] }); });
+    return () => { stale = true; };
+  }, [at.isPast, at.asOf]);
+  const ocBills = ocState?.key === (at.isPast ? at.asOf : "") ? ocState.bills : null;
+  const tfSources = tfState?.key === (at.isPast ? at.asOf : "") ? tfState.sources : null;
+  // Ages, Next Due and Overdue are measured at the as-at date.
+  const today = at.asOf;
+  const [show, setShow] = useState<AgingShow>("all");
+  const supplierList: AgingListRow[] = rows.map((a) => ({
+    key: `s:${a.supplierId}`, kind: "trade", name: a.supplierName, code: a.supplierCode,
+    currentSen: a.currentSen, days30Sen: a.days30Sen, days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen,
+    docs: a.docs ?? [], nextDue: nextDueOf(a.docs ?? []),
+  }));
+  const otherList: AgingListRow[] = otherPartyAgingRows(ocBills ?? []).map((r) => ({
+    key: `o:${r.partyId}`, kind: "other", name: r.partyName,
+    currentSen: r.currentSen, days30Sen: r.days30Sen, days60Sen: r.days60Sen, days90Sen: r.days90Sen, over90Sen: r.over90Sen, docs: r.docs,
+  }));
+  const tfList: AgingListRow[] = (tfSources ?? [])
+    .flatMap((src) => src.draws.filter((d) => d.outstandingSen > 0).map((d) => {
+      const mo = monthBucket(d.drawDate, today);
+      const row: AgingListRow = {
+        key: `f:${d.drawSourceId}`, kind: "tf", name: src.lenderName, code: src.accountCode,
+        sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`, d.interestSen ? `incl. interest ${formatCurrency(d.interestSen)}` : ""].filter(Boolean).join(" · "),
+        currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 0, over90Sen: 0,
+        docs: [{ no: d.drawSourceId, date: d.drawDate, mo, amountSen: d.outstandingSen, due: d.dueDate }],
+        nextDue: d.dueDate,
+      };
+      row[AGING_KEYS[mo]] = d.outstandingSen;
+      return row;
+    }))
+    .sort((a, b) => (a.nextDue ?? "").localeCompare(b.nextDue ?? ""));
+  const groups = agingGroupsFor(show, [
+    { key: "tf", label: "Trade finance", rows: tfList },
+    { key: "trade", label: "Trade suppliers", rows: supplierList },
+    { key: "other", label: "Other creditors", rows: otherList },
+  ]);
+  const shownList = groups.flatMap((g) => g.rows);
+  const nextDueCell = (r: AgingListRow) => {
+    if (!r.nextDue) return <span className="text-[#C4BDB3]">-</span>;
+    const days = daysUntil(r.nextDue, today);
+    const tone = dueTone(days);
+    return (
+      <span data-due-tone={tone} className={tone === "overdue" ? "text-[#9A3A2D]" : tone === "soon" ? "text-[#7A5B12]" : "text-[#1F1D1B]"}>
+        {formatDateDMY(r.nextDue)}
+        <span className="block text-[11px]">{dueText(days)}</span>
+      </span>
+    );
+  };
 
   // BUG-2026-08-13-090, creditor twin of the debtor case in ARTab above. The
   // removed "Record Payment" form POSTed /api/accounting/aging, which UPDATEs
@@ -5084,107 +5321,123 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   // supplier_payments row, no GL leg, no PI paid_amount_sen change, and the
   // unchecked `await fetch(...)` swallowed the dead table's 404. Supplier
   // payments are made on /invoices/supplier-payments, which posts for real.
-  const totalOutstanding = rows.reduce(
-    (s, a) => s + a.currentSen + a.days30Sen + a.days60Sen + a.days90Sen + a.over90Sen,
-    0
-  );
+  const totalOutstanding = shownList.reduce((s, a) => s + agingListTotal(a), 0);
+  const ocTotal = otherList.reduce((s, a) => s + agingListTotal(a), 0);
+  const overdue = overdueSen(shownList.flatMap((r) => r.docs), today);
+
+  const ctl = useApControl(company);
+  const ocControl = ctl?.controls.find((x) => x.code === "405-0000");
+  // As at a past date the control cards read the trial balance as at then.
+  const apCodes = (ctl?.controls ?? []).map((x) => x.code);
+  const pastCtl = useControlsAsAt(at.isPast ? at.asOf : null, apCodes, company, "credit");
+  const supplierTotal = supplierList.reduce((s, a) => s + agingListTotal(a), 0);
+  const pastTradeCtl = ctl && pastCtl ? ctl.controls.filter((x) => x.code !== "405-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0) : null;
+
+  // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
+  // only (owner), from the same aging builder.
+  const asAt = at.asOf;
+  const fileBase = `creditor-aging-${asAt}${company ? `-${company}` : ""}`;
+  const buildAging = () => buildGroupedAgingExportAoa("Creditor", groups.map((g) => ({
+    label: g.label, parties: g.rows.map((r) => ({ ...r, name: r.sub ? `${r.name} (${r.sub})` : r.name })),
+  })));
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Creditor Aging (AP)", buildAging(), { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        void exportReportPdf(`${fileBase}.pdf`, "Creditor Aging (AP)", `As at ${asAt}${company ? ` · ${company}` : " · All companies"}`, buildAging(), { ...AGING_PDF, print: true });
+      },
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
-      </div>
-      <APControlPanel company={company} />
-      {/* Trade finance (owner 2026-08-11): its own section — owed to a LENDER
-          for bills it paid on our behalf, never mixed into trade creditors. */}
-      <TradeFinanceBlock />
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Accounts Payable</h2>
-          <p className="text-sm text-[#6B7280]">Total Outstanding: <span className="font-semibold text-[#3E6570]">{formatCurrency(totalOutstanding)}</span></p>
-          <p className="text-xs text-[#9CA3AF]">Read-only. Pay a supplier bill on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>.</p>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={at.ym} options={at.ymOptions} onChange={at.setYm} today={at.today} />
+          <CompanySelect value={company} onChange={pickCompany} options={companyOptions} />
+          <DownloadMenu items={downloads} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {at.isPast && (
+        <StatusBanner done={false} title={"As at " + formatDateDMY(at.asOf)} sub={pastLoading ? "Loading…" : "Every bill and drawdown rolled back from today by what was paid or repaid after that date."} />
+      )}
+      <KpiCards
+        items={at.isPast ? [
+          ...(ctl ? [{
+            label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`,
+            value: pastTradeCtl === null ? "—" : formatCurrency(pastTradeCtl),
+            tone: "err" as const,
+            note: pastTradeCtl !== null && !pastLoading ? <>per ledger as at {formatDateDMY(at.asOf)} · {controlDriftNote(pastTradeCtl - supplierTotal)}</> : "per ledger",
+          }] : []),
+          {
+            label: "Other creditors · 405-0000",
+            value: ocBills === null ? "—" : formatCurrency(ocTotal),
+            tone: "err" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{pastCtl?.has("405-0000") ? <> · {controlDriftNote((pastCtl.get("405-0000") ?? 0) - ocTotal)}</> : null}</>,
+          },
+          { label: "Overdue", value: pastLoading ? "—" : formatCurrency(overdue), tone: "err" as const, note: `past the due date at ${formatDateDMY(at.asOf)}` },
+          { label: "Total outstanding", value: pastLoading ? "—" : formatCurrency(totalOutstanding), tone: "info" as const, note: `as at ${formatDateDMY(at.asOf)}` },
+        ] : [
+          ...(ctl ? [
+            { label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.tradeControlSen), tone: "err" as const, note: "per ledger" },
+            {
+              label: "Net owed to suppliers",
+              value: formatCurrency(ctl.netOutstandingSen ?? ctl.piOutstandingSen),
+              note: (
+                <>
+                  {(ctl.unappliedAdvanceSen ?? 0) > 0 && <>bills {formatCurrency(ctl.piOutstandingSen)} − un-knocked advances {formatCurrency(ctl.unappliedAdvanceSen ?? 0)} · </>}
+                  {controlDriftNote(ctl.driftControlVsPiSen)}
+                </>
+              ),
+            },
+          ] : []),
+          {
+            label: "Other creditors · 405-0000",
+            value: ocBills === null ? "—" : formatCurrency(ocTotal),
+            tone: "err" as const,
+            note: <>{otherList.length} part{otherList.length === 1 ? "y" : "ies"}{ocControl ? <> · {controlDriftNote(ocControl.balanceSen - ocTotal)}</> : null}</>,
+          },
+          { label: "Overdue", value: formatCurrency(overdue), tone: "err" as const, note: "past the due date" },
+          { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "info" as const, note: show === "all" ? "trade finance + suppliers + other creditors" : show === "tf" ? "trade finance" : show === "trade" ? "trade suppliers" : "other creditors" },
+        ]}
+      />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h3 className="text-[14px] font-semibold text-[#1F1D1B]">By creditor</h3>
+        <span className="text-[12px] text-[#6B7280]">{tfList.length} drawdown{tfList.length === 1 ? "" : "s"} · {supplierList.length} supplier{supplierList.length === 1 ? "" : "s"} · {otherList.length} other creditor{otherList.length === 1 ? "" : "s"}</span>
+        <div className="ml-auto">
+          <SegmentedChips
+            options={[
+              { key: "all", label: "All", count: tfList.length + supplierList.length + otherList.length },
+              { key: "tf", label: "Trade Finance", count: tfList.length },
+              { key: "trade", label: "Trade", count: supplierList.length },
+              { key: "other", label: "Other creditors", count: otherList.length },
+            ]}
+            value={show}
+            onChange={(k) => setShow(k as AgingShow)}
+          />
         </div>
-        <ExportButtons
-          build={() => buildAgingExportAoa("Supplier", rows.map((a) => ({
-            name: a.supplierName, currentSen: a.currentSen, days30Sen: a.days30Sen,
-            days60Sen: a.days60Sen, days90Sen: a.days90Sen, over90Sen: a.over90Sen, docs: a.docs,
-          })))}
-          filenameBase={`creditor-aging-${new Date().toISOString().slice(0, 10)}${company ? `-${company}` : ""}`}
-          title="Creditor Aging (AP)" pdfOpts={{ rowKind: agingRowKind, leftCols: [1, 2], colWidths: { 0: 168, 1: 62, 2: 118, 3: 66, 4: 66, 5: 66, 6: 66, 7: 66, 8: 78 } }} moneyFormat
-          subtitle={`As at ${new Date().toISOString().slice(0, 10)}${company ? ` · ${company}` : " · All companies"}`}
-        />
       </div>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Pay a bill from <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>; repay trade finance on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>. Next Due is amber within 7 days and red once overdue.</p>
 
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                  <th className="py-3 px-4 text-left text-[#6B7280] font-medium">Supplier</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Current</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">1 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">2 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3 mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">3+ mth</th>
-                  <th className="py-3 px-4 text-right text-[#6B7280] font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((ap) => {
-                  const total = ap.currentSen + ap.days30Sen + ap.days60Sen + ap.days90Sen + ap.over90Sen;
-                  const open = openAging.has(ap.supplierId);
-                  return (
-                    <Fragment key={ap.supplierId}>
-                    <tr className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
-                      <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                        <button className="inline-flex items-center gap-1.5 text-left" onClick={() => toggleAging(ap.supplierId)} title="Show the documents behind this balance">
-                          {open ? <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
-                          {ap.supplierName}
-                        </button>
-                      </td>
-                      <td className={`py-3 px-4 text-right ${ap.currentSen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.currentSen !== 0 ? formatCurrency(ap.currentSen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days30Sen < 0 ? "text-[#9A3A2D]" : ""}`}>{ap.days30Sen !== 0 ? formatCurrency(ap.days30Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days60Sen < 0 ? "text-[#9A3A2D]" : ap.days60Sen > 0 ? "text-[#9C6F1E]" : ""}`}>{ap.days60Sen !== 0 ? formatCurrency(ap.days60Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.days90Sen < 0 ? "text-[#9A3A2D]" : ap.days90Sen > 0 ? "text-[#B8601A] font-medium" : ""}`}>{ap.days90Sen !== 0 ? formatCurrency(ap.days90Sen) : "-"}</td>
-                      <td className={`py-3 px-4 text-right ${ap.over90Sen !== 0 ? "text-[#9A3A2D] font-medium" : ""}`}>{ap.over90Sen !== 0 ? formatCurrency(ap.over90Sen) : "-"}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(total)}</td>
-                    </tr>
-                    {open && (ap.docs ?? []).map((d, i) => (
-                      <tr key={`d-${i}`} className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
-                        {[0, 1, 2, 3, 4].map((b) => (
-                          <td key={b} className={`py-1.5 px-4 text-right tabular-nums ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>
-                            {d.mo === b ? formatCurrency(d.amountSen) : ""}
-                          </td>
-                        ))}
-                        <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
-                      </tr>
-                    ))}
-                    {open && !(ap.docs ?? []).length && (
-                      <tr className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
-                        <td colSpan={7} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
-                      </tr>
-                    )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-[#F0ECE9]/50 font-semibold">
-                  <td className="py-3 px-4 text-[#1F1D1B]">Total</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.currentSen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days30Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days60Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.days90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, a) => s + a.over90Sen, 0))}</td>
-                  <td className="py-3 px-4 text-right">{formatCurrency(totalOutstanding)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            <AgingListTable
+              partyHeader="Creditor"
+              groups={groups}
+              sectioned={show === "all"}
+              open={openAging}
+              onToggle={toggleAging}
+              typeLabel={{ tf: "Trade Finance", trade: "Trade", other: "Other creditor" }}
+              nextDue={nextDueCell}
+            />
           </div>
         </CardContent>
       </Card>
+      <TradeFinanceBlock />
+      <ContraCard />
+      <SupplierStatementCard />
     </div>
   );
 }
@@ -5197,9 +5450,10 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
 // ITEM | FY YTD | YTD % | <period> | %  (% = of net sales).
 // A running-month estimate for a recurring cost nothing has been recorded for
 // yet (owner 2026-10-13 「不是真实的数据…字体颜色和 row 的 background colour
-// 不一样」): warning amber text on a pale amber row, italic, with an "est." tag.
-const EST_ROW = "bg-[#FAEFCB] text-[#9C6F1E] italic";
+// 不一样」): warning amber text on a pale amber row with an "est." tag — the
+// finance sheet paints it (tr[data-est], td[data-cell~="est"]; finance v2).
 const estTitle = (fromYm?: string) => `Estimated from ${fromYm ? drillMonthLabel(fromYm) : "last month"} — nothing recorded yet this month`;
+type PlLine = "all" | "sofa" | "bedframe";
 type PnlStmtRow = {
   kind: "group" | "line" | "total" | "grandtotal" | "gap";
   depth: number;
@@ -5234,13 +5488,12 @@ type PnlMaterialWarnings = {
 // S.* Sofa); shared groups (no prefix) appear under Overall only.
 type CsGroup = { group: string; description: string; months: { opening: number; purchase: number; closing: number; spend: number }[] };
 
-function CostStructureTab() {
+function CostStructureTab({ line }: { line: PlLine }) {
   const yrNow = new Date().getUTCFullYear();
   // fy=null → the SERVER picks the financial year containing today (owner
   // 2026-07-28: the old `yrNow` default pointed Jan–Aug users at the NEXT,
   // still-empty FY because the FYE is August). A number = user's pick.
   const [fy, setFy] = useState<number | null>(null);
-  const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
   const [data, setData] = useState<{ fyLabel: string; cols: string[]; groups: CsGroup[]; salesSofa: number[]; salesBed: number[]; salesAll: number[] } | null>(null);
   const loading = data === null;
   useEffect(() => {
@@ -5299,66 +5552,95 @@ function CostStructureTab() {
   const bedView = [...bedGroups, ...sharedGroups.map(allocateShared)];
   const sofaView = [...sofaGroups, ...sharedGroups.map(allocateShared)];
 
-  // One Cost-Structure table for a set of groups + that line's sales.
+  // One Cost-Structure table for a set of groups + that line's sales (finance
+  // v2: a framed section, months as rows, then a Total row for the months to
+  // date — opening = the first month's, closing = the latest month's, the rest
+  // added up from the rows above).
+  const thisMonth = todayYmdMY().slice(0, 7);
+  const toDate = data ? data.cols.map((m, i) => (m <= thisMonth ? i : -1)).filter((i) => i >= 0) : [];
   const renderCsTable = (title: string, grps: CsGroup[], salesArr: number[]) => {
     if (!data || grps.length === 0) return null;
+    const sumOf = (f: (i: number) => number) => toDate.reduce((t, i) => t + f(i), 0);
+    const first = toDate[0];
+    const last = toDate[toDate.length - 1];
+    const totSales = sumOf((i) => salesArr[i] || 0);
+    const gPct = (spend: number, s: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
+    const totSpend = sumOf((i) => grps.reduce((s, g) => s + g.months[i].spend, 0));
     return (
-      <Card key={title}>
-        <CardContent className="p-0 overflow-x-auto">
-          <div className="px-3 py-2 bg-[#6B5C32] text-white text-sm font-semibold">{title} · {data.fyLabel} · all amounts RM</div>
-          <table data-col-resize="first" className="text-[13px] whitespace-nowrap">
+      <div key={title} data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+        <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+          <span className="text-[15px] font-bold text-[#1F1D1B]">{title}</span>
+          <span className="text-[12px] text-[#9CA3AF]">{data.fyLabel} · {grps.length} material group{grps.length === 1 ? "" : "s"} · all amounts RM</span>
+        </div>
+        <div className="overflow-auto">
+          <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
-              <tr className="border-b border-[#E2DDD8] text-[11px] text-[#6B7280]">
-                <th className="px-3 py-2 text-left sticky left-0 bg-white">MONTH</th>
-                <th className="px-3 py-2 text-right">SALES</th>
+              <tr data-row="h1">
+                <th rowSpan={2} data-cell="stick">Month</th>
+                <th rowSpan={2} data-cell="num split">Sales</th>
                 {grps.map((g) => (
-                  <th key={g.group} colSpan={5} className="px-3 py-2 text-center border-l border-[#E2DDD8]">{g.description}</th>
+                  <th key={g.group} colSpan={5} data-cell="split center">{g.description}</th>
                 ))}
-                <th className="px-3 py-2 text-right border-l border-[#E2DDD8]">SPEND % SALES</th>
+                <th rowSpan={2} data-cell="num split">Spend % Sales</th>
               </tr>
-              <tr className="border-b border-[#E2DDD8] text-[10px] text-[#9CA3AF]">
-                <th className="sticky left-0 bg-white" /><th />
+              <tr data-row="h2">
                 {grps.map((g) => (
                   <React.Fragment key={g.group}>
-                    <th className="px-2.5 py-1.5 text-right border-l border-[#E2DDD8]">O/P</th>
-                    <th className="px-2.5 py-1.5 text-right">PUR</th>
-                    <th className="px-2.5 py-1.5 text-right">C/L</th>
-                    <th className="px-2.5 py-1.5 text-right">SPEND</th>
-                    <th className="px-2.5 py-1.5 text-right">%</th>
+                    <th data-cell="num split">O/P</th>
+                    <th data-cell="num">PUR</th>
+                    <th data-cell="num">C/L</th>
+                    <th data-cell="num">Spend</th>
+                    <th data-cell="num pct">%</th>
                   </React.Fragment>
                 ))}
-                <th className="border-l border-[#E2DDD8]" />
               </tr>
             </thead>
             <tbody>
               {data.cols.map((m, i) => {
                 const monthSpend = grps.reduce((s, g) => s + g.months[i].spend, 0);
                 const s = salesArr[i] || 0;
-                const pctTxt = s > 0 ? `${((monthSpend / s) * 100).toFixed(1)}%` : "-";
                 // Per-group spend as % of the SAME section's sales (owner
                 // 2026-07-28: 「spend 旁边放 percentage,就是 spend / sales」).
-                const gPct = (spend: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
                 return (
-                  <tr key={m} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5 text-left sticky left-0 bg-white">{m}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{n(s)}</td>
+                  <tr key={m} data-row="line">
+                    <td data-cell="stick">{periodLabel(m, "")}</td>
+                    <td data-cell="num split">{n(s)}</td>
                     {grps.map((g) => (
                       <React.Fragment key={g.group}>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums border-l border-[#F0ECE9]">{n(g.months[i].opening)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums">{n(g.months[i].purchase)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums">{n(g.months[i].closing)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums font-medium">{n(g.months[i].spend)}</td>
-                        <td className="px-2.5 py-1.5 text-right tabular-nums text-[#9A3A2D]">{gPct(g.months[i].spend)}</td>
+                        <td data-cell="num split">{n(g.months[i].opening)}</td>
+                        <td data-cell="num">{n(g.months[i].purchase)}</td>
+                        <td data-cell="num">{n(g.months[i].closing)}</td>
+                        <td data-cell="num">{n(g.months[i].spend)}</td>
+                        <td data-cell="num pct">{gPct(g.months[i].spend, s)}</td>
                       </React.Fragment>
                     ))}
-                    <td className="px-3 py-1.5 text-right tabular-nums text-[#9A3A2D] border-l border-[#F0ECE9]">{pctTxt}</td>
+                    <td data-cell="num split">{gPct(monthSpend, s)}</td>
                   </tr>
                 );
               })}
+              {toDate.length > 0 && (
+                <tr data-row="sub">
+                  <td data-cell="stick">Total to date</td>
+                  <td data-cell="num split">{n(totSales)}</td>
+                  {grps.map((g) => {
+                    const spend = sumOf((i) => g.months[i].spend);
+                    return (
+                      <React.Fragment key={g.group}>
+                        <td data-cell="num split">{n(g.months[first].opening)}</td>
+                        <td data-cell="num">{n(sumOf((i) => g.months[i].purchase))}</td>
+                        <td data-cell="num">{n(g.months[last].closing)}</td>
+                        <td data-cell="num">{n(spend)}</td>
+                        <td data-cell="num pct">{gPct(spend, totSales)}</td>
+                      </React.Fragment>
+                    );
+                  })}
+                  <td data-cell="num split">{gPct(totSpend, totSales)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   };
 
@@ -5366,53 +5648,49 @@ function CostStructureTab() {
   // including the apportioned shared materials.
   const exportGroups = line === "sofa" ? sofaView : line === "bedframe" ? bedView : data?.groups ?? [];
   const exportSales = data ? (line === "sofa" ? data.salesSofa : line === "bedframe" ? data.salesBed : data.salesAll) : [];
+  const buildExport = (): Aoa => {
+    if (!data) return [];
+    const head = ["MONTH", "SALES", ...exportGroups.flatMap((g) => [`${g.description} O/P`, "PUR", "C/L", "SPEND", "%"]), "SPEND % SALES"];
+    const body: Aoa = data.cols.map((m, i) => {
+      const monthSpend = exportGroups.reduce((s, g) => s + g.months[i].spend, 0);
+      const s = exportSales[i] || 0;
+      const gp = (spend: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
+      return [m, (s / 100).toFixed(2), ...exportGroups.flatMap((g) => [(g.months[i].opening / 100).toFixed(2), (g.months[i].purchase / 100).toFixed(2), (g.months[i].closing / 100).toFixed(2), (g.months[i].spend / 100).toFixed(2), gp(g.months[i].spend)]), s > 0 ? `${((monthSpend / s) * 100).toFixed(1)}%` : "-"];
+    });
+    return [head, ...body];
+  };
+  const fileBase = `CostStructure-${line}-FY${fyShown}`;
+  const exportTitle = `Cost Structure (${line})`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, data?.fyLabel ?? "", buildExport(), { print: true }); } },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {([["all", "Overall"], ["sofa", "Sofa"], ["bedframe", "Bedframe"]] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setLine(k)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${line === k ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{lbl}</button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          {data && (
-            <ExportButtons
-              build={() => {
-                const head = ["MONTH", "SALES", ...exportGroups.flatMap((g) => [`${g.description} O/P`, "PUR", "C/L", "SPEND", "%"]), "SPEND % SALES"];
-                const body: Aoa = data.cols.map((m, i) => {
-                  const monthSpend = exportGroups.reduce((s, g) => s + g.months[i].spend, 0);
-                  const s = exportSales[i] || 0;
-                  const gp = (spend: number) => (s > 0 && spend !== 0 ? `${((spend / s) * 100).toFixed(1)}%` : "-");
-                  return [m, (s / 100).toFixed(2), ...exportGroups.flatMap((g) => [(g.months[i].opening / 100).toFixed(2), (g.months[i].purchase / 100).toFixed(2), (g.months[i].closing / 100).toFixed(2), (g.months[i].spend / 100).toFixed(2), gp(g.months[i].spend)]), s > 0 ? `${((monthSpend / s) * 100).toFixed(1)}%` : "-"];
-                });
-                return [head, ...body];
-              }}
-              filenameBase={`CostStructure-${line}-FY${fyShown}`}
-              title={`Cost Structure (${line})`}
-              subtitle={data.fyLabel}
-            />
-          )}
-          <select value={fyShown} onChange={(e) => setFy(parseInt(e.target.value, 10))} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-            {[...new Set([yrNow, yrNow - 1, yrNow - 2, fyShown])].sort((a, b) => b - a).map((y) => <option key={y} value={y}>FY {y}</option>)}
-          </select>
-        </div>
-      </div>
+      <ReportToolbar>
+        <select aria-label="Financial year" value={fyShown} onChange={(e) => setFy(parseInt(e.target.value, 10))} className="h-8 rounded-lg border border-[#D9D3CA] bg-white px-3 text-[12.5px] font-semibold text-[#1F1D1B]">
+          {[...new Set([yrNow, yrNow - 1, yrNow - 2, fyShown])].sort((a, b) => b - a).map((y) => <option key={y} value={y}>FY {y}</option>)}
+        </select>
+        {data && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
       {loading ? (
         <Card><CardContent className="py-12 text-center text-[#6B7280] text-sm">Loading…</CardContent></Card>
       ) : line === "sofa" ? (
-        renderCsTable("SOFA COST STRUCTURE", sofaView, data!.salesSofa)
+        renderCsTable("Sofa Cost Structure", sofaView, data!.salesSofa)
       ) : line === "bedframe" ? (
-        renderCsTable("BEDFRAME COST STRUCTURE", bedView, data!.salesBed)
+        renderCsTable("Bedframe Cost Structure", bedView, data!.salesBed)
       ) : (
         // Overall — stacked: Bedframe on top, Sofa below, then shared.
         <>
-          {renderCsTable("BEDFRAME COST STRUCTURE", bedGroups, data!.salesBed)}
-          {renderCsTable("SOFA COST STRUCTURE", sofaGroups, data!.salesSofa)}
-          {renderCsTable("SHARED / COMMON MATERIALS", sharedGroups, data!.salesAll)}
+          {renderCsTable("Bedframe Cost Structure", bedGroups, data!.salesBed)}
+          {renderCsTable("Sofa Cost Structure", sofaGroups, data!.salesSofa)}
+          {renderCsTable("Shared / Common Materials", sharedGroups, data!.salesAll)}
         </>
       )}
       <p className="text-[11px] text-[#9CA3AF]">
         O/P = opening stock, PUR = purchases, C/L = closing stock, SPEND = consumed (O/P + PUR − C/L). % = month spend ÷ that
-        line's sales.{" "}
+        line's sales. Total to date runs to this month: opening from the first month, closing from the latest.{" "}
         {line === "all"
           ? "Shared materials (no B./S. prefix) are listed as their own section here — pick Sofa or Bedframe to see them apportioned."
           : "Rows marked (shared) are common materials apportioned into this line by its share of that month's sales — the same rule the Sofa / Bedframe P&L uses."}
@@ -5634,12 +5912,12 @@ function MonthlyTrendTab() {
   );
 }
 
-type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
+type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; totalLabel?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
 type PlMonthlyData = { fyLabel: string; line: string; anchor: string; columns: { key: string; label: string; accum: boolean }[]; rows: PlMatrixRow[] };
 
-function MonthlyPlTab() {
-  const thisMonth = new Date().toISOString().slice(0, 7);
-  const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
+function MonthlyPlTab({ line }: { line: PlLine }) {
+  const today = todayYmdMY();
+  const thisMonth = today.slice(0, 7);
   const [anchor, setAnchor] = useState(thisMonth);
   const [data, setData] = useState<PlMonthlyData | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -5657,7 +5935,9 @@ function MonthlyPlTab() {
   }, [line, anchor]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const fmt = (sen: number) => { const v = sen / 100; const s = Math.abs(v).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+  const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
+  // The server's % of net sales (one decimal), a negative in brackets.
+  const pctTxt = (p: number) => (p === 0 ? "-" : p < 0 ? `(${Math.abs(p).toFixed(1)}%)` : `${p.toFixed(1)}%`);
 
   const cols = data?.columns ?? [];
   const rows = data?.rows ?? [];
@@ -5669,16 +5949,10 @@ function MonthlyPlTab() {
     setLevel(L);
     setCollapsed(new Set(rows.filter((r) => r.kind === "group" && r.groupId && r.depth >= L - 1).map((r) => r.groupId!)));
   };
-  const visible: PlMatrixRow[] = [];
-  {
-    let hideDepth = Infinity;
-    for (const r of rows) {
-      if (r.depth > hideDepth) continue;
-      hideDepth = Infinity;
-      visible.push(r);
-      if (r.kind === "group" && r.groupId && collapsed.has(r.groupId)) hideDepth = r.depth;
-    }
-  }
+  // Finance v2, as the statement: a folded group carries its figures, an open
+  // one shows them on its total line (the server's own values).
+  const shown = foldStatementRows(rows, collapsed);
+  const lastGrand = rows.filter((r) => r.kind === "grandtotal").pop();
   const toggle = (gid: string) => { setLevel(null); setCollapsed((s) => { const n = new Set(s); if (n.has(gid)) n.delete(gid); else n.add(gid); return n; }); };
 
   const buildExport = (): (string | number)[][] => {
@@ -5694,89 +5968,111 @@ function MonthlyPlTab() {
     }
     return aoa;
   };
+  const fileBase = `monthly-pl-${data?.anchor ?? anchor}-${line}`;
+  const exportSub = `${data?.fyLabel ?? ""} · ${line}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Monthly P&L", buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Monthly P&L", exportSub, buildExport(), { print: true }); } },
+  ];
+  const anchorOptions = useMemo(() => monthOptions(thisMonth, 18), [thisMonth]);
+  const span = cols.length * 2 + 1;
+  // A row's month cells and their % — Accumulated shaded, an estimate amber
+  // (only lines carry estimates). `show` false = an open group's heading.
+  const cells = (r: PlMatrixRow, show: boolean) =>
+    cols.map((c, j) => {
+      const v = r.values[j] ?? 0;
+      const est = (r.estValues?.[j] ?? 0) !== 0;
+      const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}`;
+      return (
+        <React.Fragment key={c.key}>
+          <td data-cell={`num split${tag}`} data-neg={show && v < 0 ? "" : undefined} title={est ? estTitle(r.estFrom) : undefined}>
+            {show ? amt(v) : ""}{show && est && <span className="ml-1 text-[9px] font-semibold">est.</span>}
+          </td>
+          <td data-cell={`num pct${tag}`}>{show ? pctTxt(r.pctValues[j] ?? 0) : ""}</td>
+        </React.Fragment>
+      );
+    });
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-[#3E6570]">Monthly P&amp;L</h2>
-          <p className="text-xs text-[#9CA3AF]">{data ? `${data.fyLabel} · read-only · all amounts RM` : "Loading…"}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input type="month" value={anchor} onChange={(e) => setAnchor(e.target.value || thisMonth)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-          <select value={line} onChange={(e) => setLine(e.target.value as "all" | "sofa" | "bedframe")} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm">
-            <option value="all">All</option><option value="sofa">Sofa</option><option value="bedframe">Bedframe</option>
-          </select>
-          {data && maxLevel > 1 && (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-[#9CA3AF] mr-0.5">DETAIL</span>
-              {Array.from({ length: maxLevel }, (_, i) => i + 1).map((L) => (
-                <button key={L} onClick={() => applyLevel(L)} title={`Expand to level ${L}`} className={`rounded-md border px-2.5 py-1.5 text-xs cursor-pointer ${level === L ? "border-[#3E6570] bg-[#3E6570] text-white" : "border-[#E2DDD8] bg-white text-[#4B5563] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-              ))}
-            </div>
-          )}
-          {data && <ExportButtons build={buildExport} filenameBase={`monthly-pl-${data.anchor}-${line}`} title="Monthly P&L" subtitle={`${data.fyLabel} · ${line}`} />}
-        </div>
-      </div>
+      <ReportToolbar>
+        <PeriodStepper value={anchor} options={anchorOptions} onChange={setAnchor} today={today} />
+        {data && maxLevel > 1 && (
+          <DetailLevels levels={Array.from({ length: maxLevel }, (_, i) => i + 1)} value={level ?? -1} onChange={applyLevel} />
+        )}
+        {data && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
 
-      <Card><CardContent className="p-0 overflow-x-auto">
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={line === "all" ? "Monthly Profit-and-Loss (Overall)" : line === "sofa" ? "Monthly Profit-and-Loss — SOFA" : "Monthly Profit-and-Loss — BEDFRAME"}
+        note={data ? `${data.fyLabel} · read-only · all amounts RM · % = of net sales` : "Loading…"}
+        maxHeight="calc(100vh - 300px)"
+      >
         {!data ? (
           <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
         ) : (
-          <table data-col-resize="first" className="text-[13px]">
+          <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
-              <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                <th rowSpan={2} className="px-3 py-2 text-left sticky left-0 bg-white align-bottom">Item</th>
-                {cols.map((c) => <th key={c.key} colSpan={2} className={`px-3 py-2 text-center whitespace-nowrap border-l border-[#F0ECE9] ${c.accum ? "font-semibold text-[#3E6570]" : ""}`}>{c.label}</th>)}
+              <tr data-row="h1">
+                <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
+                {cols.map((c) => <th key={c.key} colSpan={2} data-cell={`split center${c.accum ? " acc" : ""}`}>{c.label}</th>)}
               </tr>
-              <tr className="border-b border-[#E2DDD8] text-[10px] text-[#9CA3AF]">
+              <tr data-row="h2">
                 {cols.map((c) => (
                   <React.Fragment key={c.key}>
-                    <th className="px-3 py-1 text-right border-l border-[#F0ECE9]">RM</th>
-                    <th className="px-2 py-1 text-right">%</th>
+                    <th data-cell={`num split${c.accum ? " acc" : ""}`}>RM</th>
+                    <th data-cell={`num pct${c.accum ? " acc" : ""}`}>%</th>
                   </React.Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {visible.map((r, i) => {
-                if (r.kind === "gap") return <tr key={`gap${i}`}><td colSpan={cols.length * 2 + 1} className="py-1"></td></tr>;
-                const isGroup = r.kind === "group";
-                const isTot = r.kind === "total" || r.kind === "grandtotal";
-                const open = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
-                // Visual hierarchy: section heads (depth-0 groups) tinted +
-                // semibold; totals bordered; deep detail lines recede. The
-                // sticky Item cell carries the SAME background as its row so
-                // horizontal scrolling never shows a white notch.
-                const rowBg = r.kind === "grandtotal" ? "bg-[#F7F5F2]" : r.kind === "total" ? "bg-[#FBFAF8]" : isGroup && r.depth === 0 ? "bg-[#F3F0EC]" : "bg-white";
-                const rowCls = r.kind === "grandtotal" ? "font-semibold border-t-2 border-[#C9C2BA]" : r.kind === "total" ? "font-medium border-t border-[#E2DDD8]" : isGroup && r.depth === 0 ? "font-semibold border-t border-[#E2DDD8]" : isGroup ? "font-medium" : "";
-                const deepLine = !isGroup && !isTot && r.depth >= 3;
+              {shown.map(({ row: r, close }, i) => {
+                const pad = { paddingLeft: `${14 + r.depth * 18}px` };
+                if (close) {
+                  return (
+                    <tr key={`c${i}`} data-row="sub">
+                      <td data-cell="stick" className="uppercase" style={pad}>{r.totalLabel ?? `TOTAL ${r.label}`}</td>
+                      {cells(r, true)}
+                    </tr>
+                  );
+                }
+                if (r.kind === "gap") return <tr key={`gap${i}`} aria-hidden="true" data-row="gap"><td colSpan={span} /></tr>;
+                if (r.kind === "grandtotal" || r.kind === "total") {
+                  const grand = r.kind === "grandtotal";
+                  return (
+                    <tr key={i} data-row={grand ? "res" : "sub"} data-fin-double={grand && r === lastGrand ? "" : undefined}>
+                      <td data-cell="stick" className="uppercase" style={pad}>{r.label}</td>
+                      {cells(r, true)}
+                    </tr>
+                  );
+                }
+                if (r.kind === "group") {
+                  const open = r.groupId ? !collapsed.has(r.groupId) : false;
+                  return (
+                    <tr key={i} data-row={r.depth === 0 ? "sec" : "grp"} className="cursor-pointer select-none" title={open ? "Click to fold" : "Click to open"}
+                      onClick={r.groupId ? () => toggle(r.groupId!) : undefined}>
+                      <td data-cell="stick" className="uppercase" style={pad}><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{open ? "▾" : "▸"}</span>{r.label}</td>
+                      {cells(r, !open)}
+                    </tr>
+                  );
+                }
                 const drillCode = r.kind === "line" ? (r.drillCode ?? r.accountCode) : undefined;
                 const drilled = !!drillCode && drillOpen.has(drillCode);
                 return (
                   <Fragment key={i}>
-                  <tr className={`${rowBg} ${rowCls} ${isGroup ? "cursor-pointer" : ""}`} onClick={isGroup && r.groupId ? () => toggle(r.groupId!) : undefined}>
+                  <tr data-row="line">
                     {/* uppercase = display-only: unifies the COA's ALL-CAPS names with the owner-keyed Title Case historical labels */}
-                    <td className={`px-3 py-1.5 sticky left-0 ${rowBg} uppercase whitespace-nowrap ${deepLine ? "text-[12px] text-[#6B7280]" : ""} ${isGroup && r.depth === 0 ? "tracking-wide" : ""}`} style={{ paddingLeft: `${12 + r.depth * 16}px` }}>
-                      {isGroup ? (open ? "▾ " : "▸ ") : ""}
+                    <td data-cell="stick" className={`uppercase ${r.depth >= 3 ? "text-[12px] text-[#6B7280]" : ""}`} style={pad}>
                       {drillCode ? (
                         <button type="button" className="uppercase text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this row"
                           onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillCode)) n.delete(drillCode); else n.add(drillCode); return n; })}>
-                          <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{r.label}
+                          <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{r.label}
                         </button>
                       ) : r.label}
                     </td>
-                    {r.values.map((v, j) => {
-                      const est = (r.estValues?.[j] ?? 0) !== 0;
-                      return (
-                      <React.Fragment key={j}>
-                        <td className={`px-3 py-1.5 text-right tabular-nums border-l border-[#F0ECE9] ${deepLine ? "text-[12px]" : ""} ${est ? EST_ROW : v < 0 ? "text-[#9A3A2D]" : ""}`} title={est ? estTitle(r.estFrom) : undefined}>
-                          {fmt(v)}{est && <span className="ml-1 text-[9px] not-italic font-semibold">est.</span>}
-                        </td>
-                        <td className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${est ? EST_ROW : "text-[#9CA3AF]"}`}>{(r.pctValues[j] ?? 0).toFixed(1)}%</td>
-                      </React.Fragment>
-                      );
-                    })}
+                    {cells(r, true)}
                   </tr>
                   {drilled && drillCode && <PlMonthlyDrillRows account={drillCode} cols={cols} line={line} rowValues={r.values} depth={r.depth} />}
                   </Fragment>
@@ -5785,13 +6081,13 @@ function MonthlyPlTab() {
             </tbody>
           </table>
         )}
-        {rows.some((r) => r.estValues) && (
-          <p className="text-[11px] text-[#9C6F1E] mt-3">
-            Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
-            month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
-          </p>
-        )}
-      </CardContent></Card>
+      </ReportFrame>
+      {rows.some((r) => r.estValues) && (
+        <p className="text-[11px] text-[#9C6F1E]">
+          Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+        </p>
+      )}
     </div>
   );
 }
@@ -5803,11 +6099,8 @@ function MonthlyPlTab() {
 // row's figure for that month) and opens the General Ledger. Same pass as the
 // statement drill (/pl-drill over the financial year's months), so the lines
 // add up to the row; months keyed from the old books have no lines behind them.
-const glHref = (account: string, fromYm: string, toYm: string) => {
-  const [y, m] = toYm.split("-").map(Number);
-  const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-  return `/accounting?tab=gl&account=${encodeURIComponent(account)}&from=${fromYm}-01&to=${last}`;
-};
+const glHref = (account: string, fromYm: string, toYm: string) =>
+  glLink({ account, fromYm, toDate: monthEnd(toYm) });
 const drillCellAmt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
 function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   account: string;
@@ -5830,12 +6123,11 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
       .catch(() => { if (!dead) setErr("Could not load the ledger lines"); });
     return () => { dead = true; };
   }, [account, from, to]);
-  const pad = { paddingLeft: `${28 + depth * 16}px` };
+  const pad = { paddingLeft: `${34 + depth * 18}px` };
   const span = cols.length * 2;
-  const bg = "bg-[#FAF8F5]";
   if (!data) {
     return (
-      <tr className={bg}><td className={`px-3 py-1 sticky left-0 ${bg} text-[12px] ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{err ?? "Loading the ledger lines…"}</td><td colSpan={span} /></tr>
+      <tr data-row="det"><td data-cell="stick" className={err ? "text-[#9A3412]" : "text-[#9CA3AF]"} style={pad}>{err ?? "Loading the ledger lines…"}</td><td colSpan={span} /></tr>
     );
   }
   // Income reads credit as positive, everything else debit — the row's own way.
@@ -5864,28 +6156,31 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   // The lines must make the row, month by month (the All view only — the
   // Sofa / Bedframe rows carry a share of each line).
   const tied = line !== "all" || cols.every((c, j) => c.accum || oldBooks(c.key) || (perMonth.get(c.key) ?? 0) === (rowValues[j] ?? 0));
-  const amtCls = (sen: number) => `px-3 py-1 text-right tabular-nums border-l border-[#F0ECE9] ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
+  // Finance v2: a material group's PURCHASE line is not one account, so it
+  // has no ledger to open.
+  const glOk = /^\d{3}-/.test(account);
   return (
     <>
       {entries.map((e) => (
-        <tr key={e.key} className={`${bg} text-[12px] text-[#4B5563] ${e.italic ? "italic" : ""}`}>
-          <td className={`px-3 py-1 sticky left-0 ${bg}`} style={pad} title={e.title || e.text}>
+        <tr key={e.key} data-row="det" className={e.italic ? "italic" : undefined}>
+          <td data-cell="stick" style={pad} title={e.title || e.text}>
             <div className="truncate max-w-[34rem]">{e.text}</div>
           </td>
           {cols.map((c) => {
             const on = c.accum || c.key === e.ym;
             return (
               <React.Fragment key={c.key}>
-                <td className={on ? amtCls(e.sen) : "border-l border-[#F0ECE9]"}>{on ? drillCellAmt(e.sen) : ""}</td>
-                <td />
+                <td data-cell="num split" data-neg={on && e.sen < 0 ? "" : undefined}>{on ? drillCellAmt(e.sen) : ""}</td>
+                <td data-cell="num pct" />
               </React.Fragment>
             );
           })}
         </tr>
       ))}
-      <tr className="bg-[#F7F4EF] text-[12px] font-semibold text-[#4B5563] border-t border-[#E2DDD8]">
-        <td className="px-3 py-1 sticky left-0 bg-[#F7F4EF]" style={pad}>
-          {entries.length} entr{entries.length === 1 ? "y" : "ies"} · <Link to={glHref(account, from, to)} className="underline decoration-dotted text-[#6B5C32]">open in GL</Link>
+      <tr data-row="detsum">
+        <td data-cell="stick" style={pad}>
+          {entries.length} entr{entries.length === 1 ? "y" : "ies"}
+          {glOk && <> · <Link to={glHref(account, from, to)} className="text-[#6B5C32] hover:text-[#574A28]">Open In GL →</Link></>}
           {line !== "all" && <span className="font-normal text-[#9CA3AF]"> · full amounts — this view carries a share</span>}
           {!tied && <span className="font-normal text-[#9A3412]"> · these lines do not add up to the row — please report it</span>}
         </td>
@@ -5894,8 +6189,8 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
           const old = !c.accum && oldBooks(c.key);
           return (
             <React.Fragment key={c.key}>
-              <td className={amtCls(sen)} title={old ? "Keyed from the old books — no ledger lines behind it" : undefined}>{old ? "old books" : drillCellAmt(sen)}</td>
-              <td />
+              <td data-cell="num split" data-neg={!old && sen < 0 ? "" : undefined} title={old ? "Keyed from the old books — no ledger lines behind it" : undefined}>{old ? "old books" : drillCellAmt(sen)}</td>
+              <td data-cell="num pct" />
             </React.Fragment>
           );
         })}
@@ -5918,7 +6213,6 @@ function ExportButtons({ build, filenameBase, title, subtitle, pdfOpts, moneyFor
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <button onClick={() => exportReportCsv(`${filenameBase}.csv`, build(), moneyFormat ? { moneyFormat: true } : undefined)} className="rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1.5 text-xs text-[#4B5563] hover:bg-[#F0ECE9] cursor-pointer">CSV</button>
       <button onClick={() => exportReportXlsx(`${filenameBase}.xlsx`, title.slice(0, 28), build(), moneyFormat ? { moneyFormat: true } : undefined)} className="rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1.5 text-xs text-[#4B5563] hover:bg-[#F0ECE9] cursor-pointer">Excel</button>
       <button onClick={() => exportReportPdf(`${filenameBase}.pdf`, title, subtitle, build(), pdfOpts)} className="rounded-md border border-[#E2DDD8] bg-white px-2.5 py-1.5 text-xs text-[#4B5563] hover:bg-[#F0ECE9] cursor-pointer">PDF</button>
     </div>
@@ -5971,6 +6265,9 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
   const extraSum = (data?.extra ?? []).reduce((s, e) => s + (creditNormal ? -e.sen : e.sen), 0);
   const total = lineSum(lines) + extraSum;
   const th = "py-1 pr-3 font-medium text-left";
+  // Finance v2: the drill's total opens the account in the General Ledger for
+  // the same months (a material group's PURCHASE line is not one account).
+  const glRange = /^\d{3}-/.test(account) ? periodMonths(period) : null;
   const row = (l: PlDrillLine) => {
     const sen = signed(l.debitSen, l.creditSen);
     return (
@@ -5989,7 +6286,7 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
     );
   };
   return (
-    <div className="bg-[#FAF8F5] border-y border-dashed border-[#E2DDD8] px-4 py-2">
+    <div data-fin-drill className="bg-[#F4F6F8] border-y border-[#E2E8F0] px-4 py-2">
       {!data && !err && <div className="text-xs text-[#9CA3AF] py-1">Loading the ledger lines…</div>}
       {err && <div className="text-xs text-[#9A3412] py-1">{err}</div>}
       {data?.historical && <div className="text-xs text-[#6B7280] py-1">This month was keyed from the old books (historical P&amp;L), so there are no ledger lines behind it.</div>}
@@ -6035,8 +6332,11 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
               {lines.length === 0 && data.extra.length === 0 && (
                 <tr><td colSpan={6} className="py-1 text-[#9CA3AF]">No ledger lines in this period.</td></tr>
               )}
-              <tr className="border-t border-[#9CA3AF] font-semibold text-[#1F1D1B]">
-                <td className="py-1" colSpan={5}>Total</td>
+              <tr className="border-t border-[#94A3B8] bg-[#E8EDF2] font-semibold text-[#1F1D1B]">
+                <td className="py-1 pl-1" colSpan={5}>
+                  Total · {lines.length} entr{lines.length === 1 ? "y" : "ies"}
+                  {glRange && <Link to={glHref(account, glRange[0], glRange[1])} className="ml-3 text-[#6B5C32] hover:text-[#574A28]">Open In GL →</Link>}
+                </td>
                 <td className={amtCls(total)}>{amt(total)}</td>
               </tr>
             </tbody>
@@ -6050,15 +6350,15 @@ function PlDrillPanel({ period, account, line }: { period: string; account: stri
   );
 }
 
-function PLStatementTab() {
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
-  const [line, setLine] = useState<"all" | "sofa" | "bedframe">("all");
+function PLStatementTab({ line }: { line: PlLine }) {
+  const today = todayYmdMY();
+  const [period, setPeriod] = useState(() => today.slice(0, 7));
   const [level, setLevel] = useState(4);
   // Lines opened in the inline drill, keyed by period + account so a new
   // period starts with everything closed.
   const [drillOpen, setDrillOpen] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [data, setData] = useState<{ rows: PnlStmtRow[]; netSalesSen: number; fyLabel: string; periodLabel: string; materialWarnings?: PnlMaterialWarnings } | null>(null);
+  const [data, setData] = useState<{ rows: PnlStmtRow[]; netSalesSen: number; ytdNetSalesSen?: number; fyLabel: string; periodLabel: string; materialWarnings?: PnlMaterialWarnings } | null>(null);
   const loading = data === null;
   const { toast } = useToast();
   const [edit, setEdit] = useState(false);
@@ -6105,83 +6405,94 @@ function PLStatementTab() {
 
   const rows = data?.rows ?? [];
   const net = data?.netSalesSen || 0;
-  const pct = (v: number | undefined) => (net > 0 && v !== undefined ? `${((v / net) * 100).toFixed(1)}%` : "");
+  // Each column's % is of its OWN net sales: the period's, and the FY to date's
+  // (BUG-2026-10-16-305: the YTD column used to divide by the period's).
+  const ytdNet = data?.ytdNetSalesSen || 0;
+  const pct = (v: number | undefined) => fmtPctOfSales(v, net);
+  const pctYtd = (v: number | undefined) => fmtPctOfSales(v, ytdNet);
+  const amt = (v: number | undefined) => (v === undefined ? "" : v === 0 ? "-" : fmtAmt(v));
 
-  // Walk rows honouring collapsed groups: when a group is collapsed, skip
-  // its descendants and render the group row WITH its total; when open,
-  // render the group header (no amount) + children + a TOTAL line.
-  const visible: { row: PnlStmtRow; showGroupTotal?: boolean }[] = [];
-  let skipDepth: number | null = null;
-  for (const r of rows) {
-    if (skipDepth !== null) {
-      if (r.depth > skipDepth) continue;
-      skipDepth = null;
-    }
-    visible.push({ row: r });
-    if (r.kind === "group" && r.groupId && collapsed.has(r.groupId)) skipDepth = r.depth;
-  }
-
-  const numCell = (v: number | undefined) =>
-    v === undefined ? "" : v < 0 ? `(${formatCurrency(Math.abs(v))})` : formatCurrency(v);
+  // Walk rows honouring folded groups (finance v2, the design's statement): a
+  // folded group is one row carrying its figure; an open group is a heading,
+  // its rows, then its total line — the server's own group figure under the
+  // group's totalLabel. Nothing is added up here.
+  const shown = foldStatementRows(rows, collapsed);
+  const lastGrand = rows.filter((r) => r.kind === "grandtotal").pop();
 
   // Export: every row (indented by depth), with both money columns.
   const buildExport = (): Aoa => {
-    const aoa: Aoa = [["ITEM", "FY YTD (RM)", "YTD %", `${data?.periodLabel ?? period} (RM)`, "%"]];
+    const aoa: Aoa = [["ITEM", "FY YTD (RM)", "YTD %", `${periodLabel(period, "")} (RM)`, "%"]];
     for (const r of rows) {
       if (r.kind === "gap") { aoa.push(["", "", "", "", ""]); continue; }
       const indent = "  ".repeat(r.depth) + (r.kind === "group" ? "› " : "");
       aoa.push([
         indent + r.label,
         r.ytdSen === undefined ? "" : (r.ytdSen / 100).toFixed(2),
-        pct(r.ytdSen),
+        r.ytdSen === undefined || !(ytdNet > 0) ? "" : `${((r.ytdSen / ytdNet) * 100).toFixed(1)}%`,
         r.periodSen === undefined ? "" : (r.periodSen / 100).toFixed(2),
-        pct(r.periodSen),
+        r.periodSen === undefined || !(net > 0) ? "" : `${((r.periodSen / net) * 100).toFixed(1)}%`,
       ]);
     }
     return aoa;
   };
-
-  const lineTabs: { k: "all" | "sofa" | "bedframe"; label: string }[] = [
-    { k: "all", label: "Overall" },
-    { k: "sofa", label: "Sofa P&L" },
-    { k: "bedframe", label: "Bedframe P&L" },
+  const lineName = line === "all" ? "Overall" : line === "sofa" ? "Sofa" : "Bedframe";
+  const exportTitle = `P&L ${lineName}`;
+  // The period's own words (a financial-year key reads "Q1 FY 2026/27"),
+  // and a file name without the key's ":" (item 9).
+  const exportSub = `Period: ${periodLabel(period, "")} · ${data?.fyLabel ?? ""}`;
+  const fileBase = `PL-${line}-${period.replace(/[^0-9A-Za-z-]+/g, "_")}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, exportTitle.slice(0, 28), buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, exportTitle, exportSub, buildExport(), { print: true }); } },
   ];
 
-  // Phase 5.5 — grouped period selector: Monthly + Accumulated (quarters,
-  // half-years, full year). Values are the period strings the /pl-statement
-  // endpoint already understands (YYYY-MM, YYYY-Qn, YYYY).
-  const months: string[] = [];
-  {
-    const now = new Date();
-    for (let i = 0; i < 18; i++) {
-      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-      months.push(d.toISOString().slice(0, 7));
-    }
-  }
-  const yrNow = new Date().getUTCFullYear();
-  const years = [yrNow, yrNow - 1];
+  // The periods /pl-statement reads: 18 months, and the financial years —
+  // this one and the one before — with their quarters so far (item 9: the
+  // years follow the year end and its changes, GET /fiscal-years).
+  const fiscal = useFiscalYears();
+  const periodOptions = useMemo(() => {
+    const ym = today.slice(0, 7);
+    const months = monthOptions(ym, 18);
+    const recent = (fiscal?.years ?? []).filter((y) => y.startYm <= ym).slice(-2);
+    return [
+      ...months,
+      ...recent.flatMap((y) => fyQuarters(y).filter((q) => q.startYm <= ym).map((q) => fyqKey(y, q.q))),
+      ...recent.map((y) => fyKey(y)),
+    ];
+  }, [today, fiscal]);
 
   const matWarn = data?.materialWarnings;
   const negCount = matWarn?.negatives.length ?? 0;
   const unresCount = matWarn?.unresolved.length ?? 0;
   const hasMatWarnings = negCount > 0 || unresCount > 0;
+  const cols = 5;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      <ReportToolbar>
+        <PeriodStepper value={period} options={periodOptions} onChange={setPeriod} today={today} />
+        <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(4); setCollapsed(new Set()); } }} />
+        {!edit && <DetailLevels levels={[1, 2, 3, 4]} value={level} onChange={(L) => applyLevel(rows, L)} />}
+        {!loading && rows.length > 0 && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
+
       {hasMatWarnings && (
-        <div className="rounded-md border border-[#F7C1C1] bg-[#FCEBEB] px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setShowMatWarnings((v) => !v)}
-            className="flex w-full items-center gap-1.5 text-left text-sm font-semibold text-[#9A3A2D] cursor-pointer"
-          >
-            {showMatWarnings ? <ChevronDownIcon className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-            <span>
-              ⚠ {negCount} material{negCount === 1 ? "" : "s"} with negative stock and {unresCount} unresolved — material cost may be understated. Click to {showMatWarnings ? "hide" : "view"}.
+        <div data-fin-warn className="rounded-[10px] border border-[#E8D597] bg-[#FAEFCB] px-3.5 py-2.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex-1 text-[13px] font-semibold text-[#7A5712]">
+              ⚠ {negCount} material{negCount === 1 ? "" : "s"} with negative stock and {unresCount} unresolved — material cost may be understated.
             </span>
-          </button>
+            <button
+              type="button"
+              aria-expanded={showMatWarnings}
+              onClick={() => setShowMatWarnings((v) => !v)}
+              className="h-[30px] rounded-lg border border-[#D9C77F] bg-white px-3 text-[12.5px] font-semibold text-[#1F1D1B] hover:bg-[#FBF7E8]"
+            >
+              {showMatWarnings ? "Hide" : "View"}
+            </button>
+          </div>
           {showMatWarnings && (
-            <div className="mt-2 space-y-3 pl-6 text-sm">
+            <div className="mt-2 space-y-3 rounded-lg bg-white px-3 py-2 text-sm">
               {negCount > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-[#9A3A2D] mb-1">Negative stock ({negCount}) — fix opening stock or GRN receipts so layers cover issues:</p>
@@ -6206,150 +6517,131 @@ function PLStatementTab() {
           )}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        {lineTabs.map((t) => (
-          <button key={t.k} onClick={() => setLine(t.k)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${line === t.k ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{t.label}</button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-            <optgroup label="Monthly">
-              {months.map((m) => <option key={m} value={m}>{m}</option>)}
-            </optgroup>
-            <optgroup label="Quarter">
-              {years.flatMap((yr) => [1, 2, 3, 4].map((q) => <option key={`${yr}-Q${q}`} value={`${yr}-Q${q}`}>Q{q} {yr}</option>))}
-            </optgroup>
-            <optgroup label="Full year">
-              {years.map((yr) => <option key={`${yr}`} value={`${yr}`}>Full Year {yr}</option>)}
-            </optgroup>
-          </select>
-          <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(4); setCollapsed(new Set()); } }}
-            className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
-            {edit ? "Done" : "Edit"}
-          </button>
-          {[1, 2, 3, 4].map((L) => (
-            <button key={L} onClick={() => applyLevel(rows, L)} className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${level === L ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-          ))}
-          {!loading && rows.length > 0 && (
-            <ExportButtons build={buildExport} filenameBase={`PL-${line}-${period}`} title={`P&L ${line === "all" ? "Overall" : line === "sofa" ? "Sofa" : "Bedframe"}`} subtitle={`Period: ${data?.periodLabel ?? period} · ${data?.fyLabel ?? ""}`} />
-          )}
-        </div>
-      </div>
-      {edit && <p className="text-[11px] text-[#6B5C32]">Drag an account row onto a target group to reclassify it (within the same side: Revenue ↔ Other Income; Labour / Manufacturing / Operating Expenses / Payroll are interchangeable) · all months recompute under the new rule · Net Profit unchanged · drag back to undo</p>}
+      {edit && (
+        <EditLayoutBanner>
+          Drag an account row (⠿) onto a target group to reclassify it (within the same side: Revenue ↔ Other Income; Labour / Manufacturing / Operating Expenses / Payroll are interchangeable) · all months recompute under the new rule · Net Profit unchanged · drag back to undo
+        </EditLayoutBanner>
+      )}
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="text-center mb-3">
-            <div className="font-semibold text-[15px] text-[#1F1D1B]">HOOKKA MANUFACTURING SDN BHD</div>
-            <div className="text-[13px] text-[#6B7280] mt-0.5">{line === "all" ? "Manufacturing & Profit-and-Loss Account (Overall)" : line === "sofa" ? "Profit-and-Loss Account — SOFA" : "Profit-and-Loss Account — BEDFRAME"}</div>
-            <div className="text-[12px] text-[#9CA3AF] mt-0.5">Period: {data?.periodLabel ?? period} · {data?.fyLabel ?? ""} · % = of net sales</div>
-          </div>
-          {loading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <div className="overflow-x-auto">
-            <table data-col-resize="first" className="w-full text-[13px]">
-              <thead>
-                <tr className="text-[12px] text-[#6B7280]">
-                  <td />
-                  <td className="text-right px-2 pb-1">FY YTD (RM)</td>
-                  <td className="text-right px-2 pb-1 w-14">YTD %</td>
-                  <td className="text-right px-2 pb-1">{data?.periodLabel ?? period} (RM)</td>
-                  <td className="text-right px-2 pb-1 w-14">%</td>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map(({ row }, i) => {
-                  if (row.kind === "gap") return <tr key={i}><td colSpan={5} className="py-1.5" /></tr>;
-                  const isOpen = row.kind === "group" && row.groupId ? !collapsed.has(row.groupId) : false;
-                  const pad = { paddingLeft: `${8 + row.depth * 18}px` };
-                  if (row.kind === "grandtotal") {
-                    return (
-                      <tr key={i} className="border-t-2 border-[#1F1D1B] font-bold text-[#1F1D1B]">
-                        <td className="py-2" style={pad}>{row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
-                      </tr>
-                    );
-                  }
-                  if (row.kind === "total") {
-                    return (
-                      <tr key={i} className="border-t border-[#9CA3AF] font-semibold bg-[#F0ECE9]/40">
-                        <td className="py-1" style={pad}>{row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
-                      </tr>
-                    );
-                  }
-                  if (row.kind === "group") {
-                    const dropOk = edit && !!row.bucket && dragClass !== null && classOfBucket(row.bucket) === dragClass;
-                    return (
-                      <tr key={i} className={`font-semibold text-[#1F1D1B] bg-[#F0ECE9]/40 ${!edit ? "cursor-pointer hover:bg-[#F7F4EF]" : ""} ${dropOk && dragOverBucket === row.bucket ? "ring-2 ring-inset ring-[#6B5C32]" : ""}`}
-                        onClick={!edit ? () => { const n = new Set(collapsed); if (n.has(row.groupId!)) n.delete(row.groupId!); else n.add(row.groupId!); setCollapsed(n); } : undefined}
-                        onDragOver={dropOk ? (e) => { e.preventDefault(); setDragOverBucket(row.bucket!); } : undefined}
-                        onDragLeave={dropOk ? () => { if (dragOverBucket === row.bucket) setDragOverBucket(null); } : undefined}
-                        onDrop={dropOk ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverBucket(null); setDragCode(null); setDragClass(null); if (src && row.bucket) void moveTo(src, row.bucket); } : undefined}>
-                        <td className="py-1" style={pad}>{!edit ? (isOpen ? "▾" : "▸") : "•"} {row.label}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                        <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                        <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
-                      </tr>
-                    );
-                  }
-                  const draggable = edit && !!row.accountCode;
-                  const drillCode = row.drillCode ?? row.accountCode;
-                  const drillKey = drillCode ? `${period}|${drillCode}` : "";
-                  const canDrill = !edit && !!drillCode;
-                  const drilled = canDrill && drillOpen.has(drillKey);
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={line === "all" ? "Manufacturing & Profit-and-Loss Account (Overall)" : line === "sofa" ? "Profit-and-Loss Account — SOFA" : "Profit-and-Loss Account — BEDFRAME"}
+        note={[`Period: ${periodLabel(period, today)}`, data?.fyLabel, "% = of net sales"].filter(Boolean).join(" · ")}
+        maxHeight="calc(100vh - 300px)"
+      >
+        {loading ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
+        ) : (
+          <table data-col-resize="first" data-fin-report className="min-w-[640px]">
+            <thead>
+              <tr data-row="h1">
+                <th rowSpan={2} data-cell="stick" className="min-w-[280px]">Item</th>
+                <th colSpan={2} data-cell="split" className="text-center">{data?.fyLabel ?? "FY"} YTD</th>
+                <th colSpan={2} data-cell="split" className="text-center">{periodLabel(period, "")}</th>
+              </tr>
+              <tr data-row="h2">
+                <th data-cell="num split">RM</th>
+                <th data-cell="num pct">% Sales</th>
+                <th data-cell="num split">RM</th>
+                <th data-cell="num pct">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map(({ row, close }, i) => {
+                const pad = { paddingLeft: `${14 + row.depth * 18}px` };
+                if (close) {
                   return (
-                    <Fragment key={i}>
-                    <tr className={`${row.estSen ? EST_ROW : "hover:bg-[#F7F4EF]"} ${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""} ${drilled && !row.estSen ? "bg-[#F7F4EF]" : ""}`}
-                      title={row.estSen ? estTitle(row.estFrom) : undefined}
-                      draggable={draggable}
-                      onDragStart={draggable ? (e) => { setDragCode(row.accountCode!); setDragClass(classOfBucket(row.bucket)); e.dataTransfer.setData("text/plain", row.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
-                      onDragEnd={draggable ? () => { setDragCode(null); setDragClass(null); setDragOverBucket(null); } : undefined}>
-                      <td className={`py-0.5 ${row.estSen ? "" : "text-[#4B5563]"}`} style={pad}>
-                        {canDrill ? (
-                          <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
-                            onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{row.label}
-                          </button>
-                        ) : <>{draggable ? "⠿ " : ""}{row.label}</>}
-                        {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
-                        {row.estSen ? <span className="ml-1.5 text-[9px] not-italic font-semibold">est.</span> : null}
-                      </td>
-                      <td className="text-right px-2 tabular-nums">{numCell(row.ytdSen)}</td>
-                      <td className="text-right px-2 text-[#6B7280]">{pct(row.ytdSen)}</td>
-                      <td className="text-right px-2 tabular-nums">{numCell(row.periodSen)}</td>
-                      <td className="text-right px-2 text-[#6B7280]">{pct(row.periodSen)}</td>
+                    <tr key={i} data-row="sub">
+                      <td data-cell="stick" style={pad}>{row.totalLabel ?? `TOTAL ${row.label}`}</td>
+                      <td data-cell="num split">{amt(row.ytdSen)}</td>
+                      <td data-cell="num pct">{pctYtd(row.ytdSen)}</td>
+                      <td data-cell="num split">{amt(row.periodSen)}</td>
+                      <td data-cell="num pct">{pct(row.periodSen)}</td>
                     </tr>
-                    {drilled && drillCode && (
-                      <tr><td colSpan={5} className="p-0"><PlDrillPanel period={period} account={drillCode} line={line} /></td></tr>
-                    )}
-                    </Fragment>
                   );
-                })}
-              </tbody>
-            </table>
-            </div>
-          )}
-          {rows.some((r) => r.estSen) && (
-            <p className="text-[11px] text-[#9C6F1E] mt-3">
-              Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
-              month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
-            </p>
-          )}
-          <p className="text-[11px] text-[#9CA3AF] mt-3">
-            Stock (raw material / WIP / FG) is live from the cost ledger; labour, overhead, carriage, SST, revenue and
-            expenses from the GL. Sofa = Sofa + Accessory. For Sofa/Bedframe, directly-attributable material &amp; labour
-            follow the production order; shared/indirect costs are apportioned by the net-sales ratio.
-          </p>
-        </CardContent>
-      </Card>
+                }
+                if (row.kind === "gap") return <tr key={i} aria-hidden="true" data-row="gap"><td colSpan={cols} /></tr>;
+                if (row.kind === "grandtotal" || row.kind === "total") {
+                  const grand = row.kind === "grandtotal";
+                  return (
+                    <tr key={i} data-row={grand ? "res" : "sub"} data-fin-double={grand && row === lastGrand ? "" : undefined}>
+                      <td data-cell="stick" style={pad}>{row.label}</td>
+                      <td data-cell="num split">{amt(row.ytdSen)}</td>
+                      <td data-cell="num pct">{pctYtd(row.ytdSen)}</td>
+                      <td data-cell="num split">{amt(row.periodSen)}</td>
+                      <td data-cell="num pct">{pct(row.periodSen)}</td>
+                    </tr>
+                  );
+                }
+                if (row.kind === "group") {
+                  const isOpen = row.groupId ? !collapsed.has(row.groupId) : false;
+                  const dropOk = edit && !!row.bucket && dragClass !== null && classOfBucket(row.bucket) === dragClass;
+                  return (
+                    <tr key={i} data-row={row.depth === 0 ? "sec" : "grp"}
+                      data-fin-drop={dropOk && dragOverBucket === row.bucket ? "" : undefined}
+                      className={!edit ? "cursor-pointer select-none" : undefined}
+                      title={!edit ? (isOpen ? "Click to fold" : "Click to open") : undefined}
+                      onClick={!edit ? () => { const n = new Set(collapsed); if (n.has(row.groupId!)) n.delete(row.groupId!); else n.add(row.groupId!); setCollapsed(n); } : undefined}
+                      onDragOver={dropOk ? (e) => { e.preventDefault(); setDragOverBucket(row.bucket!); } : undefined}
+                      onDragLeave={dropOk ? () => { if (dragOverBucket === row.bucket) setDragOverBucket(null); } : undefined}
+                      onDrop={dropOk ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverBucket(null); setDragCode(null); setDragClass(null); if (src && row.bucket) void moveTo(src, row.bucket); } : undefined}>
+                      <td data-cell="stick" style={pad}><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{!edit ? (isOpen ? "▾" : "▸") : "•"}</span>{row.label}</td>
+                      {/* An open group shows its figure on its total line below. */}
+                      <td data-cell="num split">{isOpen ? "" : amt(row.ytdSen)}</td>
+                      <td data-cell="num pct">{isOpen ? "" : pctYtd(row.ytdSen)}</td>
+                      <td data-cell="num split">{isOpen ? "" : amt(row.periodSen)}</td>
+                      <td data-cell="num pct">{isOpen ? "" : pct(row.periodSen)}</td>
+                    </tr>
+                  );
+                }
+                const draggable = edit && !!row.accountCode;
+                const drillCode = row.drillCode ?? row.accountCode;
+                const drillKey = drillCode ? `${period}|${drillCode}` : "";
+                const canDrill = !edit && !!drillCode;
+                const drilled = canDrill && drillOpen.has(drillKey);
+                return (
+                  <Fragment key={i}>
+                  <tr data-row="line" data-est={row.estSen ? "" : undefined} className={`${draggable ? "cursor-move" : ""} ${dragCode === row.accountCode ? "opacity-40" : ""}`}
+                    title={row.estSen ? estTitle(row.estFrom) : undefined}
+                    draggable={draggable}
+                    onDragStart={draggable ? (e) => { setDragCode(row.accountCode!); setDragClass(classOfBucket(row.bucket)); e.dataTransfer.setData("text/plain", row.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                    onDragEnd={draggable ? () => { setDragCode(null); setDragClass(null); setDragOverBucket(null); } : undefined}>
+                    <td data-cell="stick" style={pad}>
+                      {canDrill ? (
+                        <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this figure"
+                          onClick={() => setDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                          <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{row.label}
+                        </button>
+                      ) : <>{draggable ? <span className="mr-1.5 text-[12px] text-[#9CA3AF]">⠿</span> : null}{row.label}</>}
+                      {row.badge ? <span className="ml-1 text-[10px] text-[#9CA3AF]">[{row.badge}]</span> : null}
+                      {row.estSen ? <span className="ml-1.5 text-[10px] font-semibold">· est.</span> : null}
+                    </td>
+                    <td data-cell="num split">{amt(row.ytdSen)}</td>
+                    <td data-cell="num pct">{pctYtd(row.ytdSen)}</td>
+                    <td data-cell="num split">{amt(row.periodSen)}</td>
+                    <td data-cell="num pct">{pct(row.periodSen)}</td>
+                  </tr>
+                  {drilled && drillCode && (
+                    <tr><td colSpan={cols} style={{ padding: 0 }}><PlDrillPanel period={period} account={drillCode} line={line} /></td></tr>
+                  )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
+      {rows.some((r) => r.estSen) && (
+        <p className="text-[11px] text-[#9C6F1E]">
+          Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
+        </p>
+      )}
+      <p className="text-[11px] text-[#9CA3AF]">
+        Stock (raw material / WIP / FG) is live from the cost ledger; labour, overhead, carriage, SST, revenue and
+        expenses from the GL. Sofa = Sofa + Accessory. For Sofa/Bedframe, directly-attributable material &amp; labour
+        follow the production order; shared/indirect costs are apportioned by the net-sales ratio.
+      </p>
     </div>
   );
 }
@@ -6374,7 +6666,16 @@ type OtherParty = {
   address: string;
   notes: string;
   isActive: boolean;
+  // Finance v2 party fields (owner 2026-10-17); absent on an older API.
+  sstRegNo?: string;
+  currency?: string;
+  bankAccount?: string;
 };
+
+// The names list's status filter (finance v2: chips with counts, was a select).
+const PARTY_STATUS_CHIPS: { key: "ALL" | "ACTIVE" | "INACTIVE"; label: string }[] = [
+  { key: "ALL", label: "All" }, { key: "ACTIVE", label: "Active" }, { key: "INACTIVE", label: "Inactive" },
+];
 
 function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   const { toast } = useToast();
@@ -6382,7 +6683,6 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   const [parties, setParties] = useState<OtherParty[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [form, setForm] = useState({
     type: side as "DEBTOR" | "CREDITOR",
@@ -6394,6 +6694,9 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     registrationNo: "",
     address: "",
     notes: "",
+    sstRegNo: "",
+    currency: "MYR",
+    bankAccount: "",
   });
   const [controls, setControls] = useState<{ od: number; oc: number } | null>(null);
 
@@ -6426,16 +6729,32 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     const j = asMutationResponse(await res.json());
     if (j?.success) {
       setShowForm(false); setEditingId(null);
-      setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" });
+      setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "", sstRegNo: "", currency: "MYR", bankAccount: "" });
       load();
     } else toast.error(j?.error || (editingId ? "Failed to update party" : "Failed to create party"));
   };
 
   const startEdit = (p: OtherParty) => {
     setEditingId(p.id);
-    setForm({ type: p.type, name: p.name, contactPerson: p.contactPerson, phone: p.phone, email: p.email, tin: p.tin, registrationNo: p.registrationNo, address: p.address, notes: p.notes });
+    setForm({ type: p.type, name: p.name, contactPerson: p.contactPerson, phone: p.phone, email: p.email, tin: p.tin, registrationNo: p.registrationNo, address: p.address, notes: p.notes, sstRegNo: p.sstRegNo ?? "", currency: p.currency || "MYR", bankAccount: p.bankAccount ?? "" });
     setShowForm(true);
   };
+  // Finance › Debtor / Creditor List (2026-10-17) opens a party here:
+  // ?edit=<id> once the names have loaded, ?new=1 for a blank form. Once.
+  const [deepLink] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return { edit: q.get("edit") || "", isNew: q.get("new") === "1" };
+  });
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || (!deepLink.edit && !deepLink.isNew) || parties === null) return;
+    deepLinkDone.current = true;
+    const p = deepLink.edit ? parties.find((x) => x.id === deepLink.edit) : undefined;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot deep link, ref-guarded
+    if (p) startEdit(p);
+    else if (deepLink.isNew) { setEditingId(null); setShowForm(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot, ref-guarded
+  }, [parties]);
   const del = async (p: OtherParty) => {
     if (!(await confirm({ title: "Delete party?", message: `Delete ${p.name}? (only allowed if it has no bills/payments)`, danger: true }))) return;
     const res = await fetch(`/api/accounting/other-parties/${p.id}`, { method: "DELETE" });
@@ -6455,49 +6774,64 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
     else toast.error(j?.error || "Failed to update party");
   };
 
-  const kw = q.trim().toLowerCase();
-  const visible = (parties ?? []).filter((p) => {
+  const passes = (p: OtherParty, st: typeof statusFilter) => {
     if (p.type !== side) return false;
-    if (statusFilter === "ACTIVE" && !p.isActive) return false;
-    if (statusFilter === "INACTIVE" && p.isActive) return false;
-    if (kw && ![p.name, p.email, p.contactPerson, p.phone].some((s) => (s ?? "").toLowerCase().includes(kw))) return false;
+    if (st === "ACTIVE" && !p.isActive) return false;
+    if (st === "INACTIVE" && p.isActive) return false;
     return true;
-  });
+  };
+  const visible = (parties ?? []).filter((p) => passes(p, statusFilter));
+  // Each chip counts what it would show (free-text search is the grid's own).
+  const statusCount = (st: typeof statusFilter) => (parties ?? []).filter((p) => passes(p, st)).length;
+  // The names list is the Payment Vouchers table (owner 2026-10-17): a row's
+  // actions are its right-click / ⋮ menu; double-click edits it.
+  const partyRowMenu = (p: OtherParty): RowMenuGroups => [
+    [{ label: "Edit", action: () => startEdit(p) }],
+    [{ label: p.isActive ? "Deactivate" : "Reactivate", action: () => void setActive(p.id, !p.isActive) }],
+    [{ label: "Delete", danger: true, action: () => void del(p) }],
+  ];
+  const partyColumns = useMemo<Column<OtherParty>[]>(() => [
+    {
+      key: "name", label: "Name", width: "240px", noFilter: true,
+      render: (_v, p) => <span className="block leading-tight"><span className="text-[#1F1D1B] font-medium">{p.name}</span>{p.address ? <span className="block text-[11px] font-normal text-[#9CA3AF]">{p.address}</span> : null}</span>,
+    },
+    {
+      key: "tin", label: "TIN / Reg No", width: "170px",
+      filterAccessor: (p) => [p.tin, p.registrationNo].filter(Boolean).join(" / "), exportValue: (p) => [p.tin, p.registrationNo].filter(Boolean).join(" / "),
+      render: (_v, p) => <span className="text-[#6B7280] text-xs tabular-nums">{[p.tin, p.registrationNo].filter(Boolean).join(" / ")}</span>,
+    },
+    { key: "contactPerson", label: "Contact", width: "150px" },
+    { key: "email", label: "Email", width: "200px", render: (_v, p) => <span className="text-[#6B7280] text-xs">{p.email}</span> },
+    { key: "phone", label: "Phone", width: "140px" },
+    { key: "notes", label: "Notes", width: "200px", render: (_v, p) => <span className="text-[#6B7280] text-xs">{p.notes}</span> },
+    {
+      key: "isActive", label: "Status", width: "100px",
+      filterAccessor: (p) => (p.isActive ? "Active" : "Inactive"), exportValue: (p) => (p.isActive ? "Active" : "Inactive"),
+      render: (_v, p) => (p.isActive
+        ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-[#E7F0E3] text-[#27500A]">Active</span>
+        : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-[#F3F4F6] text-[#6B7280]">Inactive</span>),
+    },
+  ], []);
+  const mine = (parties ?? []).filter((p) => p.type === side);
+  const newParty = () => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "", sstRegNo: "", currency: "MYR", bankAccount: "" }); setShowForm(!showForm); };
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#3E6570]">{side === "DEBTOR" ? "Other Debtor" : "Other Creditor"}</h2>
-      <div className="grid gap-4 grid-cols-1">
-        {side === "DEBTOR" ? (
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">305-0000 OTHER DEBTOR — control balance</p>
-              <p className="text-xl font-bold text-[#3E6570]">{controls ? formatCurrency(controls.od) : "—"}</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-xs text-[#6B7280]">405-0000 OTHER CREDITORS — control balance</p>
-              <p className="text-xl font-bold text-[#9A3A2D]">{controls ? formatCurrency(controls.oc) : "—"}</p>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / email / contact" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm">
-            <option value="ALL">All status</option>
-            <option value="ACTIVE">Active</option>
-            <option value="INACTIVE">Inactive</option>
-          </select>
-        </div>
-        <Button variant="primary" size="sm" onClick={() => { setEditingId(null); setForm({ type: side, name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" }); setShowForm(!showForm); }}>
-          <Plus className="h-4 w-4" /> Add Party
-        </Button>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" onClick={newParty}>
+            <Plus className="h-4 w-4" /> Add Party
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <KpiCards
+        items={[
+          side === "DEBTOR"
+            ? { label: "Other debtor control · 305-0000", value: controls ? formatCurrency(controls.od) : "—", tone: "info" as const, note: "per ledger" }
+            : { label: "Other creditor control · 405-0000", value: controls ? formatCurrency(controls.oc) : "—", tone: "err" as const, note: "per ledger" },
+          { label: side === "DEBTOR" ? "Other debtors" : "Other creditors", value: parties === null ? "—" : String(mine.length), note: `${mine.filter((p) => p.isActive).length} active` },
+        ]}
+      />
 
       {showForm && (
         <Card>
@@ -6519,16 +6853,21 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
               <input type="text" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
             </div>
             <div>
-              <label className="text-xs font-medium text-[#6B7280] mb-1 block">TIN</label>
-              <input type="text" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })} placeholder="e.g. C12345678900 / IG…" className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-            </div>
-            <div>
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Registration No (SSM)</label>
               <input type="text" value={form.registrationNo} onChange={(e) => setForm({ ...form, registrationNo: e.target.value })} placeholder="e.g. 202301012345" className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
             </div>
             <div className="sm:col-span-3">
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Address</label>
               <textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={2} placeholder="Full address for statements / e-Invoice" className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
+            </div>
+            {/* Finance v2 party fields (owner 2026-10-17): TIN, SST Reg. No.,
+                Currency, Bank & account no. — the block every party form shares. */}
+            <div className="sm:col-span-3">
+              <PartyFinanceFields
+                labelClassName="text-xs font-medium text-[#6B7280] mb-1 block"
+                value={{ tin: form.tin, sstRegNo: form.sstRegNo, currency: form.currency, bankAccount: form.bankAccount }}
+                onChange={(v) => setForm({ ...form, tin: v.tin, sstRegNo: v.sstRegNo, currency: v.currency, bankAccount: v.bankAccount })}
+              />
             </div>
             <div className="sm:col-span-2">
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Notes</label>
@@ -6543,54 +6882,31 @@ function OtherPartiesTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
       )}
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {parties === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : visible.length === 0 ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">No parties yet — add transporters, deposit holders, staff advances…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-4 py-2 text-left">Type</th>
-                  <th className="px-4 py-2 text-left">Name</th>
-                  <th className="px-4 py-2 text-left">TIN / Reg No</th>
-                  <th className="px-4 py-2 text-left">Contact</th>
-                  <th className="px-4 py-2 text-left">Email</th>
-                  <th className="px-4 py-2 text-left">Phone</th>
-                  <th className="px-4 py-2 text-left">Notes</th>
-                  <th className="px-4 py-2 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((p) => (
-                  <tr key={p.id} className={`border-b border-[#F0ECE9] ${p.isActive ? "" : "opacity-50"}`}>
-                    <td className="px-4 py-1.5">
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border ${p.type === "DEBTOR" ? "bg-[#E6F1FB] text-[#0C447C] border-[#B5D4F4]" : "bg-[#FAEEDA] text-[#633806] border-[#FAC775]"}`}>
-                        {p.type === "DEBTOR" ? "Other Debtor" : "Other Creditor"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-1.5 text-[#1F1D1B] font-medium">{p.name}{p.address ? <span className="block text-[11px] font-normal text-[#9CA3AF]">{p.address}</span> : null}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280] text-xs tabular-nums">{[p.tin, p.registrationNo].filter(Boolean).join(" / ")}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280]">{p.contactPerson}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280] text-xs">{p.email}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280]">{p.phone}</td>
-                    <td className="px-4 py-1.5 text-[#6B7280] text-xs">{p.notes}</td>
-                    <td className="px-4 py-1.5 text-right">
-                      <button onClick={() => startEdit(p)} className="text-[#6B5C32] hover:underline text-xs mr-3">Edit</button>
-                      <button onClick={() => del(p)} className="text-[#9A3A2D] hover:underline text-xs mr-3">Delete</button>
-                      <button
-                        onClick={() => setActive(p.id, !p.isActive)}
-                        className={`text-xs underline decoration-dotted cursor-pointer ${p.isActive ? "text-[#9A3A2D]" : "text-[#4F7C3A]"}`}
-                      >
-                        {p.isActive ? "Deactivate" : "Reactivate"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={partyColumns}
+            data={visible}
+            keyField="id"
+            gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-parties`}
+            onDoubleClick={startEdit}
+            contextMenuItems={(p) => rowMenuItems(partyRowMenu(p))}
+            rowClassName={(p) => (p.isActive ? "" : "opacity-50")}
+            toolbarStart={
+              <SegmentedChips
+                options={PARTY_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+                value={statusFilter}
+                onChange={setStatusFilter}
+              />
+            }
+            searchPlaceholder="Search name / email / contact"
+            alwaysSearchKeys={["name", "email", "contactPerson", "phone"]}
+            headerMenu
+            reorderableHeaders
+            exportName={side === "CREDITOR" ? "Other Creditors" : "Other Debtors"}
+            emptyMessage="No parties yet — add transporters, deposit holders, staff advances…"
+            loading={parties === null}
+            maxHeight="calc(100vh - 320px)"
+          />
         </CardContent>
       </Card>
     </div>
@@ -6630,7 +6946,7 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
   return (
     <Card><CardContent className="p-0 overflow-x-auto">
       <div className="px-4 pt-3 pb-1 text-sm font-semibold text-[#3E6570]">Outstanding by {side === "DEBTOR" ? "debtor" : "creditor"} — aging</div>
-      <table className="w-full text-sm">
+      <table data-fin-list className="w-full text-sm">
         <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
           <th className="px-4 py-2 text-left">Party</th>
           <th className="px-4 py-2 text-right">Current</th>
@@ -6643,13 +6959,13 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
         <tbody>
           {data.aging.map((r) => (
             <React.Fragment key={r.partyId}>
-              <tr className="border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5]" onClick={() => setOpenParty(openParty === r.partyId ? null : r.partyId)}>
+              <tr data-fin-nolift={openParty === r.partyId ? "" : undefined} className="border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5]" onClick={() => setOpenParty(openParty === r.partyId ? null : r.partyId)}>
                 <td className="px-4 py-1.5 font-medium">{openParty === r.partyId ? "▾ " : "▸ "}{r.partyName}</td>
                 {cell(r.current)}{cell(r.d31_60)}{cell(r.d61_90)}{cell(r.d91_120)}{cell(r.d120plus, true)}
                 <td className="px-4 py-1.5 text-right tabular-nums font-semibold">{formatCurrency(r.totalSen)}</td>
               </tr>
               {openParty === r.partyId && data.bills.filter((b) => b.partyId === r.partyId).map((b) => (
-                <tr key={b.billNo} className="border-b border-[#F0ECE9] bg-[#FAF8F5] text-xs text-[#6B7280]">
+                <tr key={b.billNo} data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#FAF8F5] text-xs text-[#6B7280]">
                   <td className="px-4 py-1 pl-8">{b.billNo} · {b.billDate}</td>
                   <td colSpan={5} />
                   <td className="px-4 py-1 text-right tabular-nums">{formatCurrency(b.outstandingSen)}</td>
@@ -6657,12 +6973,14 @@ function OtherPartyAging({ side }: { side: "DEBTOR" | "CREDITOR" }) {
               ))}
             </React.Fragment>
           ))}
+        </tbody>
+        <tfoot>
           <tr className="border-t border-[#C9C2BA] bg-[#F7F5F2] font-semibold">
             <td className="px-4 py-1.5">Total outstanding</td>
             <td colSpan={5} />
             <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(grand)}</td>
           </tr>
-        </tbody>
+        </tfoot>
       </table>
     </CardContent></Card>
   );
@@ -7310,57 +7628,93 @@ function SelfCheckTab() {
     return () => { dead = true; };
   }, [compute, runKey]);
   const run = () => { setRunning(true); setRunKey((k) => k + 1); };
-  const tone = (ok: boolean | null) => ok === true ? "border-[#B7D9A8] bg-[#EAF3DE]/50" : ok === false ? "border-[#D9A79C] bg-[#F7E5E1]/50" : "border-[#E0C989] bg-[#FBF3E4]/50";
-  const dot = (ok: boolean | null) => ok === true ? "bg-[#27500A]" : ok === false ? "bg-[#9A3A2D]" : "bg-[#C9A227]";
+  // Finance v2: one list — the result as a pill, the area, the check, what it
+  // found (the items behind it open under the row) and where to fix it.
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+  const areaOf = (key: string) =>
+    key === "ap" ? "Creditors" : key === "ar" ? "Debtors" : key === "tb" ? "Ledger" : key === "pv" || key === "accrued" ? "Payments" : "Bank";
+  const resultPill = (ok: boolean | null) =>
+    ok === true ? <FinPill tone="ok">OK</FinPill> : ok === false ? <FinPill tone="err">FIX</FinPill> : <FinPill tone="warn">CHECK</FinPill>;
+  const okCount = (cards ?? []).filter((k) => k.ok === true).length;
   const red = (cards ?? []).filter((k) => k.ok === false).length;
   const amber = (cards ?? []).filter((k) => k.ok === null).length;
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Self-check</h2>
-          <p className="text-[11px] text-[#9CA3AF]">Every consistency probe on one page. Green = ties to the sen · Red = something to fix · Amber = needs a look. Read-only; each card links to where the fix lives.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {cards && <span className="text-xs text-[#6B7280]">{red === 0 && amber === 0 ? <span className="text-[#27500A] font-semibold">All clear ✓</span> : <>{red > 0 && <span className="text-[#9A3A2D] font-semibold">{red} red</span>}{red > 0 && amber > 0 && " · "}{amber > 0 && <span className="text-[#7A5B12] font-semibold">{amber} amber</span>}</>}{ranAt && <span className="ml-2 text-[#9CA3AF]">checked {ranAt}</span>}</span>}
-          <Button variant="outline" size="sm" disabled={running} onClick={run}>{running ? "Checking…" : "Run again"}</Button>
-        </div>
-      </div>
+      <FinanceTitleActions>
+        {ranAt && <span className="text-[12px] text-[#9CA3AF]">checked {ranAt}</span>}
+        <Button variant="outline" size="sm" disabled={running} onClick={run}>{running ? "Checking…" : "Run again"}</Button>
+      </FinanceTitleActions>
+      {cards !== null && (
+        <KpiCards
+          items={[{
+            label: "Checks",
+            value: `${okCount} of ${cards.length} OK`,
+            tone: red > 0 ? "err" : amber > 0 ? "warn" : "ok",
+            note: red === 0 && amber === 0 ? "All clear ✓" : [red > 0 ? `${red} to fix` : "", amber > 0 ? `${amber} to look at` : ""].filter(Boolean).join(" · "),
+          }]}
+        />
+      )}
       {cards === null ? (
         <Card><CardContent className="py-12 text-center text-[#6B7280] text-sm">Running checks…</CardContent></Card>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {cards.map((k) => (
-            <Card key={k.key} className={`border ${tone(k.ok)}`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-2 min-w-0">
-                    <span className={`mt-1.5 h-2.5 w-2.5 rounded-full shrink-0 ${dot(k.ok)}`} />
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[#1F1D1B]">{k.title}</div>
-                      <div className={`text-sm mt-0.5 ${k.ok === false ? "text-[#9A3A2D] font-medium" : "text-[#4B5563]"}`}>{k.headline}</div>
-                      {k.detail && <div className="text-[11px] text-[#6B7280] mt-0.5">{k.detail}</div>}
-                    </div>
-                  </div>
-                  {k.fixHref && k.ok !== true && <Link to={k.fixHref} className="shrink-0"><Button variant="outline" size="sm">{k.fixLabel ?? "Open"}</Button></Link>}
-                </div>
-                {k.items && k.items.length > 0 && (
-                  <table className="w-full text-xs mt-2">
-                    <tbody>
-                      {k.items.map((it, i) => (
-                        <tr key={i} className="border-t border-[#F0ECE9]">
-                          <td className="py-1 pr-3 w-full max-w-0"><div className="truncate" title={it.note ?? it.label}>{it.label}</div>{it.note && <div className="text-[10px] text-[#9CA3AF] truncate" title={it.note}>{it.note}</div>}</td>
-                          {it.amount !== undefined && <td className={`py-1 text-right tabular-nums whitespace-nowrap ${it.amount < 0 ? "text-[#9A3A2D]" : ""}`}>{formatCurrency(it.amount)}</td>}
+        <Card>
+          <CardContent className="p-0 overflow-x-auto">
+            <table data-fin-list className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="px-3 py-2 text-left w-[90px]">Result</th>
+                  <th className="px-3 py-2 text-left w-[110px]">Area</th>
+                  <th className="px-3 py-2 text-left">Check</th>
+                  <th className="px-3 py-2 text-left">Detail</th>
+                  <th className="px-3 py-2 text-right w-[1%]" />
+                </tr>
+              </thead>
+              <tbody>
+                {cards.map((k) => {
+                  const open = openKeys.has(k.key);
+                  const n = k.items?.length ?? 0;
+                  return (
+                    <Fragment key={k.key}>
+                      <tr data-fin-nolift={open ? "" : undefined}>
+                        <td className="px-3 py-2 align-top">{resultPill(k.ok)}</td>
+                        <td className="px-3 py-2 align-top text-[#4B5563]">{areaOf(k.key)}</td>
+                        <td className="px-3 py-2 align-top font-semibold text-[#1F1D1B]">{k.title}</td>
+                        <td className="px-3 py-2 align-top">
+                          <div className={k.ok === false ? "text-[#9A3A2D] font-medium" : "text-[#4B5563]"}>{k.headline}</div>
+                          {k.detail && <div className="text-[11px] text-[#6B7280] mt-0.5">{k.detail}</div>}
+                          {n > 0 && (
+                            <button
+                              type="button"
+                              aria-expanded={open}
+                              onClick={() => setOpenKeys((prev) => { const s = new Set(prev); if (s.has(k.key)) s.delete(k.key); else s.add(k.key); return s; })}
+                              className="mt-0.5 text-[11.5px] font-semibold text-[#6B5C32] hover:text-[#574A28]"
+                            >
+                              {open ? "▾" : "▸"} {n} item{n === 1 ? "" : "s"}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top text-right whitespace-nowrap">
+                          {k.fixHref && k.ok !== true && (
+                            <Link to={k.fixHref} className="text-[12.5px] font-semibold text-[#6B5C32] hover:text-[#574A28]">{k.fixLabel ?? "Open"} →</Link>
+                          )}
+                        </td>
+                      </tr>
+                      {open && k.items?.map((it, i) => (
+                        <tr key={`${k.key}:${i}`} data-fin-nolift="" className="bg-[#F4F6F8] text-[12px] text-[#4B5563]">
+                          <td colSpan={3} />
+                          <td className="px-3 py-1 max-w-0"><div className="truncate" title={it.note ?? it.label}>{it.label}</div>{it.note && <div className="text-[10px] text-[#9CA3AF] truncate" title={it.note}>{it.note}</div>}</td>
+                          <td className={`px-3 py-1 text-right tabular-nums whitespace-nowrap ${it.amount !== undefined && it.amount < 0 ? "text-[#9A3A2D]" : ""}`}>{it.amount !== undefined ? formatCurrency(it.amount) : ""}</td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
       )}
+      <p className="text-[11px] text-[#9CA3AF]">Every consistency probe on one page. OK = ties to the sen · FIX = something to fix · CHECK = needs a look. Read-only; each line links to where the fix lives.</p>
     </div>
   );
 }
@@ -7371,7 +7725,17 @@ function SelfCheckTab() {
 // void (cancel) and bank-reconciliation re-open, dug out of the ledger's
 // own leg families — the trail a reviewer asks for.
 type CorrRow = { kind: "edit" | "cancel" | "opening" | "reopen"; docType: string; docId: string; docNo: string; at: string; actor: string; reason: string; reversedSen: number; repostedSen: number };
+type CorrGridRow = CorrRow & { id: string; kindLabel: string; docLabel: string };
+const CORR_KIND: Record<CorrRow["kind"], { label: string; tone: FinTone }> = {
+  edit: { label: "Edited", tone: "info" },
+  cancel: { label: "Cancelled", tone: "err" },
+  reopen: { label: "Reco re-opened", tone: "warn" },
+  opening: { label: "Opening re-posted", tone: "neutral" },
+};
+const corrDocLabel = (t: string) => t.replace(/_/g, " ");
 function CorrectionsTab() {
+  const today = todayYmdMY();
+  // "" = the last 90 days (the default); a month = that month only.
   const [month, setMonth] = useState("");
   const [data, setData] = useState<{ since: string; rows: CorrRow[] } | null>(null);
   useEffect(() => {
@@ -7382,61 +7746,91 @@ function CorrectionsTab() {
       .catch(() => {});
     return () => { dead = true; };
   }, [month]);
-  const kindChip = (k: CorrRow["kind"]) =>
-    k === "edit" ? ["Edited", "bg-[#EEF2FB] text-[#2C4170]"] : k === "cancel" ? ["Cancelled", "bg-[#F7E5E1] text-[#9A3A2D]"] : k === "reopen" ? ["Reco re-opened", "bg-[#FBF3E4] text-[#7A5B12]"] : ["Opening re-posted", "bg-[#F0ECE9] text-[#6B7280]"];
-  const docLabel = (t: string) => t.replace(/_/g, " ");
+  // Memoised — the grid compares row identity (BUG-CLASSES C24).
+  const gridRows = useMemo<CorrGridRow[]>(
+    () => (data?.rows ?? []).map((r, i) => ({
+      ...r,
+      id: `${r.docType}:${r.docId}:${r.at}:${i}`,
+      kindLabel: CORR_KIND[r.kind].label,
+      docLabel: corrDocLabel(r.docType),
+    })),
+    [data],
+  );
+  const columns = useMemo<Column<CorrGridRow>[]>(() => [
+    {
+      key: "at",
+      label: "When",
+      type: "date",
+      render: (_v, r) => (
+        <span className="leading-tight">
+          <span className="block text-[#1F1D1B]">{fmtDocDate(r.at)}</span>
+          <span className="block text-[11px] text-[#9CA3AF]">{r.at.slice(11, 16)}</span>
+        </span>
+      ),
+    },
+    { key: "kindLabel", label: "Kind", render: (_v, r) => <FinPill tone={CORR_KIND[r.kind].tone}>{CORR_KIND[r.kind].label}</FinPill> },
+    {
+      key: "docNo",
+      label: "Document",
+      type: "docno",
+      render: (_v, r) => (
+        <span className="leading-tight">
+          <span className="block font-medium text-[#1F1D1B] tabular-nums">{r.docNo}</span>
+          <span className="block text-[11px] text-[#9CA3AF]">{r.docLabel}</span>
+        </span>
+      ),
+    },
+    { key: "actor", label: "By", render: (_v, r) => r.actor || <span className="text-[#9CA3AF]">system</span> },
+    { key: "reason", label: "Reason", render: (_v, r) => (r.reason ? <span title={r.reason}>{r.reason}</span> : <span className="text-[#C7C1BA]">—</span>) },
+    { key: "reversedSen", label: "Reversed", align: "right", type: "currency", total: "sum", render: (_v, r) => (r.reversedSen ? <span className="tabular-nums text-[#9A3A2D]">{formatCurrency(r.reversedSen)}</span> : "—") },
+    { key: "repostedSen", label: "Re-posted", align: "right", type: "currency", total: "sum", render: (_v, r) => (r.repostedSen ? <span className="tabular-nums">{formatCurrency(r.repostedSen)}</span> : "—") },
+  ], []);
+  const counts = (Object.keys(CORR_KIND) as CorrRow["kind"][])
+    .map((k) => [k, (data?.rows ?? []).filter((r) => r.kind === k).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${CORR_KIND[k].label.toLowerCase()}`);
+  const monthOpts = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Corrections</h2>
-          <p className="text-[11px] text-[#9CA3AF]">Every posted document that was later edited or cancelled, and every reconciliation month re-opened — who, when, how much reversed and re-posted. Read from the ledger itself.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" />
-          {month && <Button variant="outline" size="sm" onClick={() => setMonth("")}>Last 90 days</Button>}
-          <ExportButtons build={() => [["When", "Kind", "Document", "No.", "By", "Reason", "Reversed (RM)", "Re-posted (RM)"], ...(data?.rows ?? []).map((r) => [r.at.slice(0, 16).replace("T", " "), r.kind, docLabel(r.docType), r.docNo, r.actor, r.reason, (r.reversedSen / 100).toFixed(2), (r.repostedSen / 100).toFixed(2)])]} filenameBase={`Corrections-${month || "recent"}`} title="Corrections" subtitle={month ? `Month: ${month}` : "Last 90 days"} />
-        </div>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <SegmentedSwitch
+            label="Window"
+            options={[{ key: "recent", label: "Last 90 days" }, { key: "month", label: "By month" }]}
+            value={month ? "month" : "recent"}
+            onChange={(k) => setMonth(k === "month" ? today.slice(0, 7) : "")}
+          />
+          {month && <PeriodStepper value={month} options={monthOpts} onChange={setMonth} today={today} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {data && (
+        <KpiCards
+          items={[{
+            label: `Corrections · ${month ? periodLabel(month, "") : "last 90 days"}`,
+            value: String(data.rows.length),
+            note: counts.join(" · ") || "none",
+          }]}
+        />
+      )}
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0">
           {data === null ? (
             <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">When</th>
-                  <th className="px-3 py-2 text-left">Kind</th>
-                  <th className="px-3 py-2 text-left">Document</th>
-                  <th className="px-3 py-2 text-left">By</th>
-                  <th className="px-3 py-2 text-left">Reason</th>
-                  <th className="px-3 py-2 text-right">Reversed</th>
-                  <th className="px-3 py-2 text-right">Re-posted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((r, i) => {
-                  const [label, cls] = kindChip(r.kind);
-                  return (
-                    <tr key={i} className="border-b border-[#F0ECE9] hover:bg-[#FAF8F5]">
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.at.slice(0, 16).replace("T", " ")}</td>
-                      <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span></td>
-                      <td className="px-3 py-1.5 text-xs"><span className="text-[#6B7280]">{docLabel(r.docType)}</span> · <span className="tabular-nums">{r.docNo}</span></td>
-                      <td className="px-3 py-1.5 text-xs">{r.actor || <span className="text-[#9CA3AF]">system</span>}</td>
-                      <td className="px-3 py-1.5 text-xs w-full max-w-0"><div className="truncate" title={r.reason}>{r.reason || <span className="text-[#C7C1BA]">—</span>}</div></td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-[#9A3A2D]">{r.reversedSen ? formatCurrency(r.reversedSen) : "—"}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{r.repostedSen ? formatCurrency(r.repostedSen) : "—"}</td>
-                    </tr>
-                  );
-                })}
-                {data.rows.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No corrections in this window</td></tr>}
-              </tbody>
-            </table>
+            <DataGrid
+              columns={columns}
+              data={gridRows}
+              keyField="id"
+              gridId="accounting-corrections"
+              headerMenu
+              reorderableHeaders
+              exportName={`Corrections-${month || "recent"}`}
+              emptyMessage="No corrections in this window"
+            />
           )}
         </CardContent>
       </Card>
-      <p className="text-[11px] text-[#9CA3AF]">Reasons are recorded where the action asks for one (voucher reject, reconciliation re-open). Edits and cancels of other documents show the trail without a reason for now.</p>
+      <p className="text-[11px] text-[#9CA3AF]">Every posted document that was later edited or cancelled, and every reconciliation month re-opened — who, when, how much reversed and re-posted, read from the ledger itself. Reasons are recorded where the action asks for one (voucher reject, reconciliation re-open).</p>
     </div>
   );
 }
@@ -7497,7 +7891,6 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [kind, setKind] = useState<"ALL" | "AP" | "PI">("ALL");
   // Owner 2026-09-22: default ALL (the mirror is for looking things up, not only chasing).
   const [status, setStatus] = useState<"OPEN" | "PAID" | "CANCELLED" | "ALL">("ALL");
-  const [q, setQ] = useState("");
   // One load of everything, then every filter is client-side: the chips can
   // carry counts, and a supplier picker narrows without a round-trip.
   const [supplier, setSupplier] = useState("");
@@ -7514,116 +7907,113 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (skip !== "kind" && kind !== "ALL" && r.kind !== kind) return false;
     if (skip !== "status" && status !== "ALL" && r.status !== status) return false;
     if (supplier && r.supplier !== supplier) return false;
-    if (q.trim()) { const kw = q.toLowerCase(); if (![r.no, r.supplier, r.supplierRef, r.description].some((s) => s.toLowerCase().includes(kw))) return false; }
     return true;
   };
-  const rows = all.filter((r) => passes(r));
+  // Rows for the grid (owner 2026-10-17: every finance list behaves like the
+  // Payment Vouchers table): a key per document; free-text search is the
+  // grid's own (no / supplier / ref / description).
+  const rows = useMemo(() => all.filter((r) => passes(r)).map((r) => ({ ...r, key: `${r.kind}-${r.id}` })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads exactly these
+    [all, kind, status, supplier]);
   // Each chip counts what it would show given the OTHER filters.
   const kindCount = (k: typeof kind) => all.filter((r) => passes(r, "kind") && (k === "ALL" || r.kind === k)).length;
   const statusCount = (s: typeof status) => all.filter((r) => passes(r, "status") && (s === "ALL" || r.status === s)).length;
   const supplierOpts = [...new Set(all.map((r) => r.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((s) => ({ value: s, label: s }));
-  const chipBtn = (on: boolean, first: boolean) =>
-    `px-3 py-1.5 font-semibold uppercase tracking-wide cursor-pointer ${on ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${first ? "" : "border-l border-[#F0ECE9]"}`;
-  const shownSen = rows.reduce((s, r) => s + r.outstandingSen, 0);
   const chip = (r: ApInvRow) =>
     r.status === "PAID" ? "bg-[#EAF3DE] text-[#27500A]" : r.status === "CANCELLED" ? "bg-[#F0ECE9] text-[#9CA3AF]" : "bg-[#FBF3E4] text-[#7A5B12]";
+  // Owner 2026-09-29 「直接点开 invoice，而不是跳去 purchase invoice list」: a PI
+  // opens ITS OWN detail page; an AP bill its detail popup.
+  const openApInv = (r: ApInvRow) => { if (r.kind === "PI") navigate(`/procurement/pi/${r.id}`); else setDetailBillNo(r.no); };
+  const payHref = (r: ApInvRow) => `/accounting?tab=payments&pay=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId ?? "")}`;
+  const apInvRowMenu = (r: ApInvRow): RowMenuGroups => [
+    [{ label: r.kind === "PI" ? "Open the purchase invoice" : "Open the bill", action: () => openApInv(r) }],
+    r.status === "OPEN" && r.partyId ? [{ label: "Pay", action: () => navigate(payHref(r)) }] : [],
+  ];
+  const liveSum = (list: ApInvRow[], pick: (r: ApInvRow) => number) => list.filter((r) => r.status !== "CANCELLED").reduce((t, r) => t + pick(r), 0);
+  const apInvColumns = useMemo<Column<ApInvRow & { key: string }>[]>(() => [
+    {
+      key: "kind", label: "Kind", width: "90px",
+      render: (_v, r) => <><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${r.kind === "PI" ? "bg-[#EEF2FB] text-[#2C4170]" : "bg-[#F6F1E7] text-[#6B5C32]"}`}>{r.kind}</span>{r.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}</>,
+    },
+    {
+      key: "no", label: "No.", type: "docno", width: "130px", noFilter: true,
+      render: (_v, r) => (r.kind === "PI"
+        ? <Link to={`/procurement/pi/${r.id}`} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32]" title="Open this purchase invoice">{r.no}</Link>
+        : <button type="button" onClick={() => setDetailBillNo(r.no)} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32] cursor-pointer" title="Open this bill">{r.no}</button>),
+    },
+    { key: "supplier", label: "Supplier", width: "220px" },
+    { key: "supplierRef", label: "Supplier ref", width: "140px", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.supplierRef}</span> },
+    { key: "date", label: "Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.date}</span> },
+    { key: "dueDate", label: "Due", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.totalSen) },
+    { key: "paidSen", label: "Paid", type: "currency", align: "right", width: "120px", total: (list) => liveSum(list, (r) => r.paidSen), render: (_v, r) => <span className="tabular-nums text-[#6B7280]">{r.paidSen ? formatCurrency(r.paidSen) : "—"}</span> },
+    { key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.outstandingSen), render: (_v, r) => <span className="tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</span> },
+    {
+      key: "status", label: "Status", width: "120px",
+      render: (_v, r) => (
+        <span className="whitespace-nowrap">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{r.status}</span>
+          {r.status === "OPEN" && r.partyId && (
+            // Houzs "Record payment": opens New AP Payment with this creditor picked and the bill ticked.
+            <Link to={payHref(r)} className="ml-2 text-[11px] underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B]">pay</Link>
+          )}
+        </span>
+      ),
+    },
+  ], []);
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">AP Invoices</h2>
-          <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
-        </div>
-        <div className="flex gap-2">
+      <FinanceTitleActions>
+        <ReportToolbar>
           <Button variant="outline" size="sm" onClick={() => setBillPopup({ mode: "new" })}>New AP bill</Button>
           <Link to="/accounting?tab=payments"><Button variant="primary" size="sm">New AP Payment</Button></Link>
-        </div>
-      </div>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
       {data && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · all</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.openSen)}</div><div className="text-[11px] text-[#9CA3AF]">{data.totals.openCount} invoice{data.totals.openCount === 1 ? "" : "s"}</div></CardContent></Card>
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · AP bills</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.apOpenSen)}</div></CardContent></Card>
-          <Card><CardContent className="p-3"><div className="text-[11px] text-[#6B7280]">Open · purchase invoices</div><div className="text-lg font-semibold tabular-nums">{formatCurrency(data.totals.piOpenSen)}</div></CardContent></Card>
-        </div>
+        <KpiCards
+          items={[
+            { label: "Open · all", value: formatCurrency(data.totals.openSen), note: `${data.totals.openCount} invoice${data.totals.openCount === 1 ? "" : "s"}` },
+            { label: "Open · AP bills", value: formatCurrency(data.totals.apOpenSen) },
+            { label: "Open · purchase invoices", value: formatCurrency(data.totals.piOpenSen) },
+          ]}
+        />
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs" title="Which kind of invoice">
-          {AP_KIND_CHIPS.map((ch, i) => {
-            const n = kindCount(ch.key); const on = kind === ch.key;
-            return (
-              <button key={ch.key} type="button" onClick={() => setKind(ch.key)} className={chipBtn(on, i === 0)}>
-                {ch.label}<span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs" title="Status">
-          {AP_STATUS_CHIPS.map((ch, i) => {
-            const n = statusCount(ch.key); const on = status === ch.key;
-            return (
-              <button key={ch.key} type="button" onClick={() => setStatus(ch.key)} className={chipBtn(on, i === 0)}>
-                {ch.label}<span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>
-              </button>
-            );
-          })}
-        </div>
+        <SegmentedChips
+          options={AP_KIND_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: kindCount(ch.key) }))}
+          value={kind}
+          onChange={setKind}
+        />
+        <SegmentedChips
+          options={AP_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+          value={status}
+          onChange={setStatus}
+        />
         <div className="w-64">
           <SearchableSelect value={supplier} onChange={setSupplier} options={supplierOpts} placeholder="All suppliers" allowClear />
         </div>
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search no / supplier / ref" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-56" />
-        <span className="ml-auto text-xs text-[#6B7280]">Shown outstanding <span className="font-semibold tabular-nums text-[#1F1D1B]">{formatCurrency(shownSen)}</span></span>
       </div>
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {data === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Kind</th>
-                  <th className="px-3 py-2 text-left">No.</th>
-                  <th className="px-3 py-2 text-left">Supplier</th>
-                  <th className="px-3 py-2 text-left">Supplier ref</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Due</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-right">Paid</th>
-                  <th className="px-3 py-2 text-right">Outstanding</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} className={`border-b border-[#F0ECE9] hover:bg-[#FAF8F5] ${r.status === "CANCELLED" ? "opacity-50" : ""}`}
-                    // Owner 2026-09-29 「直接点开 invoice，而不是跳去 purchase invoice list」:
-                    // a PI opens ITS OWN detail page, not the list.
-                    onDoubleClick={() => { if (r.kind === "PI") navigate(`/procurement/pi/${r.id}`); else setDetailBillNo(r.no); }}
-                    title={r.kind === "PI" ? "Double-click: open this purchase invoice" : "Double-click: open the bill editor below"}>
-                    <td className="px-3 py-1.5"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${r.kind === "PI" ? "bg-[#EEF2FB] text-[#2C4170]" : "bg-[#F6F1E7] text-[#6B5C32]"}`}>{r.kind}</span>{r.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap">
-                      {r.kind === "PI" ? <Link to={`/procurement/pi/${r.id}`} className="underline decoration-dotted text-[#6B5C32]" title="Open this purchase invoice">{r.no}</Link> : <button type="button" onClick={() => setDetailBillNo(r.no)} className="underline decoration-dotted text-[#6B5C32] cursor-pointer" title="Open this bill">{r.no}</button>}
-                    </td>
-                    <td className="px-3 py-1.5">{r.supplier}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.supplierRef}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{r.paidSen ? formatCurrency(r.paidSen) : "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</td>
-                    <td className="px-3 py-1.5 whitespace-nowrap">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{r.status}</span>
-                      {r.status === "OPEN" && r.partyId && (
-                        // Houzs "Record payment": opens New AP Payment with this creditor picked and the bill ticked.
-                        <Link to={`/accounting?tab=payments&pay=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId)}`} className="ml-2 text-[11px] underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B]">pay</Link>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">Nothing matches</td></tr>}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={apInvColumns}
+            data={rows}
+            keyField="key"
+            gridId="accounting-ap-invoices"
+            onDoubleClick={openApInv}
+            contextMenuItems={(r) => rowMenuItems(apInvRowMenu(r))}
+            rowClassName={(r) => (r.status === "CANCELLED" ? "opacity-50" : "")}
+            searchPlaceholder="Search no / supplier / ref / description"
+            alwaysSearchKeys={["no", "supplier", "supplierRef", "description"]}
+            headerMenu
+            reorderableHeaders
+            exportName="AP Invoices"
+            footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">of {all.length} · cancelled not counted</span></>}
+            emptyMessage="Nothing matches"
+            loading={data === null}
+            maxHeight="calc(100vh - 320px)"
+          />
         </CardContent>
       </Card>
 
@@ -7652,7 +8042,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <DetailField label="Creditor" span={2}>{b.partyName || "—"}</DetailField>
-              <DetailField label="Bill date">{b.billDate}</DetailField>
+              <DetailField label="Bill date">{fmtDocDate(b.billDate) || "—"}</DetailField>
               <DetailField label="Reference">{b.referenceNo || "—"}</DetailField>
               <DetailField label="Description" span={4}>{b.description || "—"}</DetailField>
               <DetailField label="Total"><span className="tabular-nums">{formatCurrency(b.totalSen)}</span></DetailField>
@@ -7709,20 +8099,23 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
 }) {
   // Esc closes it (owner 2026-10-02 「点开后无法用esc 关闭」) — the ✕ always said so.
   useEscapeClose(onClose);
+  // The v2 frame (finance v2, owner 2026-10-16): white header and action bar,
+  // a light body whose blocks read as white cards (finance-v2.css,
+  // [data-fin-modal-body]); the body scrolls, the header and actions stay.
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className={`bg-white rounded-lg shadow-xl w-full ${wide ? "max-w-4xl" : "max-w-3xl"} max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-semibold text-[#1F1D1B]">{title}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
+      <div className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-[16px] font-semibold text-[#1F1D1B]">{title}</h2>
             {badges}
           </div>
-          <button onClick={onClose} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none" title="Close (Esc)">✕</button>
+          <button onClick={onClose} aria-label="Close" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg leading-none text-[#9CA3AF] hover:bg-[#F0ECE9] hover:text-[#6B7280]" title="Close (Esc)">✕</button>
         </div>
-        <div className="p-5 space-y-4 text-sm">
+        <div data-fin-modal-body className="flex-1 space-y-3 overflow-y-auto p-5 text-sm">
           {children}
-          {actions && <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-[#F0ECE9]">{actions}</div>}
         </div>
+        {actions && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#E2DDD8] bg-white px-5 py-3">{actions}</div>}
       </div>
     </div>
   );
@@ -7730,8 +8123,8 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
 function DetailField({ label, children, span }: { label: string; children: React.ReactNode; span?: number }) {
   return (
     <div className={span === 2 ? "col-span-2" : span === 3 ? "col-span-3" : span === 4 ? "col-span-2 sm:col-span-4" : undefined}>
-      <p className="text-[#9CA3AF] text-xs">{label}</p>
-      <p className="font-medium">{children}</p>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#6B7280]">{label}</p>
+      <p className="mt-0.5 font-medium text-[#1F1D1B]">{children}</p>
     </div>
   );
 }
@@ -7830,7 +8223,11 @@ function OtherPartyBillsTab({ accounts, side }: { accounts: ChartOfAccount[]; si
       <OtherPartyAging side={side} />
       <OtherPartyBillsManager parties={parties} accounts={accounts} side={side} />
       <FoldSection title={side === "DEBTOR" ? "Other debtors — names & contacts" : "Other creditors — names & contacts"} hint="add / edit the parties these bills belong to">
-        <OtherPartiesTab side={side} />
+        {/* Inside this fold the names list keeps its buttons with it, not on
+            the Bills page's title row. */}
+        <FinanceTitleSlotContext.Provider value={null}>
+          <OtherPartiesTab side={side} />
+        </FinanceTitleSlotContext.Provider>
       </FoldSection>
       <FoldSection title={side === "DEBTOR" ? "Receipts against these bills" : "Payments against these bills"} hint={side === "DEBTOR" ? "also on Daily › Receipts › New Other Debtor Receipt" : "also on Daily › Payment Vouchers › New AP Payment"}>
         <OtherPartyPaymentsManager parties={parties} accounts={accounts} side={side} />
@@ -7877,12 +8274,16 @@ function billFormFrom(b: OtherPartyBill, mode: "edit" | "copy", today: string) {
 }
 
 function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties: OtherParty[]; accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR"; formOnly?: BillPopupSpec }) {
+  const navigate = useNavigate();
   const { toast } = useToast();
   const { confirm } = useConfirm();
   const [bills, setBills] = useState<OtherPartyBill[] | null>(null);
   const [showForm, setShowForm] = useState(!!formOnly);
-  const [q, setQ] = useState("");
-  const [openBill, setOpenBill] = useState<string | null>(null);
+  // The bill whose popup is open (double-click a row).
+  const [detailBillId, setDetailBillId] = useState<string | null>(null);
+  // Ticked rows (the grid owns the boxes) for batch print / export.
+  const [billPicked, setBillPicked] = useState<OtherPartyBill[]>([]);
+  const [billClearToken, setBillClearToken] = useState(0);
   // Edit-in-place (owner 2026-07-09): non-null = the form saves via PUT to
   // this bill number instead of creating a new bill.
   const [editingBillNo, setEditingBillNo] = useState<string | null>(formOnly?.mode === "edit" && formOnly.bill ? formOnly.bill.billNo : null);
@@ -7941,12 +8342,14 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
     { label: "Tax / SST", value: form.taxStr },
   ]);
 
-  const submit = async () => {
-    if (billMoneyError) { toast.error(billMoneyError); return; }
-    if (!editingBillNo && !form.partyId) { toast.error("Select a party"); return; }
+  // `keepOpen`: a scanned file still has bills to go — the form stays up for
+  // the next one instead of closing. Resolves true once the bill is saved.
+  const submit = async (keepOpen = false): Promise<boolean> => {
+    if (billMoneyError) { toast.error(billMoneyError); return false; }
+    if (!editingBillNo && !form.partyId) { toast.error("Select a party"); return false; }
     const items = postableBillLines
       .map((l) => ({ counterAccount: l.counterAccount, amountSen: toSen(l.amountStr), description: l.description }));
-    if (items.length === 0) { toast.error("Add at least one line with account + amount"); return; }
+    if (items.length === 0) { toast.error("Add at least one line with account + amount"); return false; }
     const payload = { partyId: form.partyId, billDate: form.billDate, referenceNo: form.referenceNo, description: form.description, taxSen: toSen(form.taxStr), items, isOpening: form.isOpening };
     const res = editingBillNo
       ? await fetch(`/api/accounting/other-party-bills/${encodeURIComponent(editingBillNo)}`, {
@@ -7984,12 +8387,31 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       }
       setScannedPartyName(null);
       forgetScanMemory();
-      setShowForm(false);
+      // An AP bill with a line on a fixed-asset account → the Fixed Assets
+      // page opens Add New Asset filled in from it (backlog item 11). Not in
+      // the middle of a multi-bill scan.
+      const faPrefills = side === "CREDITOR" && !keepOpen ? fixedAssetPrefills({
+        ref: newBillNo ?? editingBillNo ?? "",
+        date: form.billDate,
+        description: form.description,
+        lines: items.map((i) => ({ accountCode: i.counterAccount, description: i.description, amountSen: i.amountSen })),
+      }, accounts) : [];
       setEditingBillNo(null);
       setForm({ partyId: "", billDate: today, referenceNo: "", description: "", taxStr: "", lines: [blankLine()], isOpening: false });
       load();
-      formOnly?.onDone();
-    } else toast.error(j?.error || (editingBillNo ? "Failed to save changes" : "Failed to create bill"));
+      if (!keepOpen) {
+        setShowForm(false);
+        formOnly?.onDone();
+      }
+      const faFresh = faPrefills.length ? withoutRegistered(faPrefills, await fetchFaRegister()) : [];
+      if (putFaQueue(sessionStore(), faFresh)) {
+        toast.info(`${faFresh.length} line${faFresh.length === 1 ? "" : "s"} went to a fixed-asset account — add the asset to the register.`);
+        navigate("/accounting?tab=assets");
+      }
+      return true;
+    }
+    toast.error(j?.error || (editingBillNo ? "Failed to save changes" : "Failed to create bill"));
+    return false;
   };
 
   // Copy = open a fresh bill prefilled from an existing one. F4 #1.
@@ -8007,11 +8429,37 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
     setShowForm(true);
   };
 
-  const kw = q.trim().toLowerCase();
-  const visibleBills = (bills ?? []).filter((b) =>
-    !kw || [b.billNo, b.partyName, b.referenceNo, b.description].some((s) => (s ?? "").toLowerCase().includes(kw)),
-  );
-  const billSel = useRowSelection(visibleBills, (b) => b.billNo ?? b.id);
+  // The list's columns (DataGrid, the Payment Vouchers table's features;
+  // memoised — BUG-CLASSES C24). Totals leave voided bills out.
+  const liveBills = (list: OtherPartyBill[]) => list.filter((b) => (b.lifecycleState ?? "ACTIVE") === "ACTIVE");
+  const billColumns = useMemo<Column<OtherPartyBill>[]>(() => [
+    {
+      key: "billNo", label: "Bill No", type: "docno", width: "150px", noFilter: true,
+      render: (_v, b) => (
+        <span className="font-mono text-xs">
+          {b.billNo}
+          {(b.attachmentCount ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-[#6B7280] font-sans" title={`${b.attachmentCount} attachment${b.attachmentCount === 1 ? "" : "s"} — open the bill to see`}>📎{b.attachmentCount}</span>}
+        </span>
+      ),
+    },
+    { key: "partyName", label: "Party", width: "200px" },
+    {
+      key: "description", label: "Description", width: "260px",
+      filterAccessor: (b) => [b.referenceNo, b.description].filter(Boolean).join(" · "),
+      exportValue: (b) => [b.referenceNo, b.description].filter(Boolean).join(" · "),
+      render: (_v, b) => <span className="text-xs text-[#6B7280]">{[b.referenceNo, b.description].filter(Boolean).join(" · ")}</span>,
+    },
+    { key: "billDate", label: "Date", type: "date", width: "110px" },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "130px", total: (list) => liveBills(list).reduce((t, b) => t + b.totalSen, 0) },
+    { key: "paidAmountSen", label: "Paid", type: "currency", align: "right", width: "130px", total: (list) => liveBills(list).reduce((t, b) => t + b.paidAmountSen, 0) },
+    { key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: (list) => liveBills(list).reduce((t, b) => t + b.outstandingSen, 0), render: (_v, b) => <span className="tabular-nums font-medium">{formatCurrency(b.outstandingSen)}</span> },
+    {
+      key: "status", label: "Status", width: "120px",
+      filterAccessor: (b) => ((b.lifecycleState ?? "ACTIVE") === "ACTIVE" ? String(b.status ?? "") : String(b.lifecycleState)),
+      exportValue: (b) => ((b.lifecycleState ?? "ACTIVE") === "ACTIVE" ? String(b.status ?? "") : String(b.lifecycleState)),
+      render: (_v, b) => <span className="text-xs"><LifecycleBadge state={b.lifecycleState} />{(b.lifecycleState ?? "ACTIVE") === "ACTIVE" && b.status}</span>,
+    },
+  ], []);
 
   const handleLifecycle = async (billNo: string, action: "void" | "delete" | "unvoid") => {
     const verb = action === "unvoid" ? "Restore" : action === "delete" ? "Delete" : "Void";
@@ -8050,6 +8498,11 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   // any picked by hand (owner 2026-10-01 「OCB 附件要做」).
   const [pendingBillFiles, setPendingBillFiles] = useState<File[]>([]);
   const billFileRef = useRef<HTMLInputElement | null>(null);
+  // A file that carries several bills (owner 2026-10-17 「scan bill 要改」):
+  // each one is drafted in turn — the form shows bill 1, saving it fills the
+  // form with the next, the last one closes the form. Every bill keeps the
+  // scanned file as its attachment. null = a one-bill file.
+  const [scanQueue, setScanQueue] = useState<{ docs: ScanFinanceDoc[]; file: File; index: number } | null>(null);
   const allSideParties = [...sideParties, ...extraParties.filter((p) => p.type === side)];
   // Unknown scanned party → a small NEW-PARTY dialog: name prefilled from the
   // letterhead, every other field OPTIONAL and left to the operator (owner
@@ -8066,6 +8519,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       && !(await confirm({ title: "Close without saving?", message: "What you keyed in this bill will be lost.", confirmLabel: "Discard", cancelLabel: "Keep editing", danger: true }))) return;
     setShowForm(false);
     setEditingBillNo(null);
+    setScanQueue(null);
     formOnly?.onDone();
   };
   useEscapeClose(() => void requestCloseBillPopup(), !!formOnly);
@@ -8091,7 +8545,8 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       setCreatingParty(false);
     }
   };
-  const applyScan = async (d: ScanFinanceResult, file: File) => {
+  // One scanned bill → the form (a multi-bill file calls this once per bill).
+  const prefillFromDoc = async (d: ScanFinanceDoc, file: File) => {
     setEditingBillNo(null); // a scan always drafts a NEW bill, never overwrites an edit
     setScannedPartyName(d.partyName ?? null);
     setPendingBillFiles([file]); // the scanned bill is the new bill's evidence
@@ -8147,6 +8602,25 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
         : "Scanned — review the lines and pick the account(s).",
     );
   };
+  const applyScan = async (d: ScanFinanceResult, file: File) => {
+    const docs = d.docs && d.docs.length > 1 ? d.docs : null;
+    setScanQueue(docs ? { docs, file, index: 0 } : null);
+    await prefillFromDoc(docs ? docs[0] : d, file);
+  };
+  // The next bill of the scanned file (after a save, or Skip) — on a clean form.
+  const startQueuedBill = async (q: { docs: ScanFinanceDoc[]; file: File; index: number }, index: number) => {
+    setScanQueue({ ...q, index });
+    setForm({ partyId: "", billDate: today, referenceNo: "", description: "", taxStr: "", lines: [blankLine()], isOpening: false });
+    await prefillFromDoc(q.docs[index], q.file);
+  };
+  const saveBill = async () => {
+    const q = scanQueue;
+    const hasNext = !editingBillNo && !!q && q.index + 1 < q.docs.length;
+    const saved = await submit(hasNext);
+    if (!saved) return;
+    if (hasNext && q) await startQueuedBill(q, q.index + 1);
+    else setScanQueue(null);
+  };
   // A reference already on our books (creditor side) — said under the field.
   const refDup = side === "CREDITOR" && scanMemory && form.referenceNo.trim()
     ? findDuplicate(
@@ -8156,13 +8630,12 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       )
     : null;
 
-  // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
-  // links in the rows; double-click still opens the bill.
-  const rowMenu = useRowMenu();
+  // Row actions on right-click or the row's ⋮ (owner 2026-10-02; the grid's
+  // own menu since 2026-10-17) — double-click opens the bill.
   const billRowMenu = (b: OtherPartyBill): RowMenuGroups => {
     const active = (b.lifecycleState ?? "ACTIVE") === "ACTIVE";
     return [
-      [{ label: openBill === b.id ? "Close the bill" : "Open the bill", action: () => setOpenBill(openBill === b.id ? null : b.id) }],
+      [{ label: "Open the bill", action: () => setDetailBillId(b.id) }],
       [
         { label: "Print", action: () => printVoucher(buildOtherPartyBillVoucher(b, accounts)) },
         ...((b.attachmentCount ?? 0) > 0 ? [{ label: "Print + files", action: () => void printBillWithFiles(b, accounts).catch((e: Error) => toast.error(`Not printed — ${e.message}`)) }] : []),
@@ -8181,9 +8654,8 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
 
   return (
     <div className="space-y-3">
-      {rowMenu.element}
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" onResult={applyScan} />}
+        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} />}
         {!formOnly && <Button variant="primary" size="sm" onClick={() => {
           if (editingBillNo) {
             setEditingBillNo(null);
@@ -8253,6 +8725,20 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
 
       {showForm && (
         <Card><CardContent className="p-4 space-y-3">
+          {scanQueue && !editingBillNo && (
+            <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#D9E2E5] bg-[#EEF3F5] px-3 py-2 text-xs text-[#3E6570]" data-bill-scan-queue="">
+              <span className="font-semibold">Bill {scanQueue.index + 1} of {scanQueue.docs.length} in {scanQueue.file.name}</span>
+              <span>Save & Post fills the next one.</span>
+              {scanQueue.index + 1 < scanQueue.docs.length && (
+                <button type="button" className="underline decoration-dotted cursor-pointer" onClick={() => void startQueuedBill(scanQueue, scanQueue.index + 1)}>
+                  Skip this one
+                </button>
+              )}
+              <button type="button" className="underline decoration-dotted cursor-pointer" onClick={() => setScanQueue(null)}>
+                Stop after this one
+              </button>
+            </div>
+          )}
           {editingBillNo && (
             <div className="text-xs font-medium text-[#6B5C32] bg-[#F6F1E7] rounded-md px-3 py-2">
               Editing {editingBillNo} — saving reverses its ledger entry and posts the corrected one under the same number. The party cannot change (Copy for that).
@@ -8371,25 +8857,21 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="primary" size="sm" disabled={!!billMoneyError} onClick={submit}>{editingBillNo ? "Save Changes (re-post)" : "Save & Post"}</Button>
-            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setEditingBillNo(null); formOnly?.onDone(); }}>Cancel</Button>
+            <Button variant="primary" size="sm" disabled={!!billMoneyError} onClick={() => void saveBill()}>{editingBillNo ? "Save Changes (re-post)" : "Save & Post"}</Button>
+            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setEditingBillNo(null); setScanQueue(null); formOnly?.onDone(); }}>Cancel</Button>
           </div>
         </CardContent></Card>
       )}
 
       {!formOnly && (<>
-      <div className="flex items-center">
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search bill no / party / reference / description" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-80 focus:outline-none focus:ring-2 focus:ring-[#6B5C32]" />
-      </div>
-
       <BatchActionsBar
-        count={billSel.count}
-        onClear={billSel.clear}
-        onPrint={() => printVouchers(billSel.selectedRows.map((b) => buildOtherPartyBillVoucher(b, accounts)))}
+        count={billPicked.length}
+        onClear={() => setBillClearToken((n) => n + 1)}
+        onPrint={() => printVouchers(billPicked.map((b) => buildOtherPartyBillVoucher(b, accounts)))}
         exportName="other-party-bills"
         exportAoa={() => [
           ["Bill No", "Date", "Party", "Status", "Reference No", "Voucher Total (RM)", "Account", "Description", "Amount (RM)"],
-          ...billSel.selectedRows.flatMap((b) =>
+          ...billPicked.flatMap((b) =>
             b.items.map((it) => [
               b.billNo,
               formatDateDMY(b.billDate),
@@ -8405,143 +8887,146 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
         ]}
       />
 
-      <Card><CardContent className="p-0 overflow-x-auto">
-        {bills === null ? (
-          <div className="py-10 text-center text-[#6B7280] text-sm">Loading…</div>
-        ) : bills.length === 0 ? (
-          <div className="py-10 text-center text-[#6B7280] text-sm">No bills yet.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-              <th className="px-3 py-2 w-8"><input type="checkbox" checked={billSel.allSelected} onChange={billSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
-              <th className="px-4 py-2 text-left">Bill No</th><th className="px-4 py-2 text-left">Party</th>
-              <th className="px-4 py-2 text-left">Description</th>
-              <th className="px-4 py-2 text-left">Date</th><th className="px-4 py-2 text-right">Total</th>
-              <th className="px-4 py-2 text-right">Paid</th><th className="px-4 py-2 text-right">Outstanding</th>
-              <th className="px-4 py-2 text-center">Status</th><th className="px-4 py-2 text-right"></th>
-            </tr></thead>
-            <tbody>
-              {visibleBills.map((b) => (
-                <React.Fragment key={b.id}>
-                  <tr className={`border-b border-[#F0ECE9] ${rowMenu.openKey === b.id ? "bg-[#F0ECE9]" : ""}`} onDoubleClick={() => setOpenBill(openBill === b.id ? null : b.id)} onContextMenu={rowMenu.onContextMenu(b.id, () => billRowMenu(b))} title="Double-click to open the full bill · right-click for actions">
-                    <td className="px-3 py-1.5 w-8" onDoubleClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={billSel.isSelected(b.billNo ?? b.id)} onChange={() => billSel.toggle(b.billNo ?? b.id)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
-                    </td>
-                    <td className="px-4 py-1.5 font-mono text-xs">
-                      <button onClick={() => setOpenBill(openBill === b.id ? null : b.id)} className="cursor-pointer hover:underline">{openBill === b.id ? "▾ " : "▸ "}{b.billNo}</button>
-                      {(b.attachmentCount ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-[#6B7280] font-sans" title={`${b.attachmentCount} attachment${b.attachmentCount === 1 ? "" : "s"} — open the bill to see`}>📎{b.attachmentCount}</span>}
-                    </td>
-                    <td className="px-4 py-1.5">{b.partyName}</td>
-                    <td className="px-4 py-1.5 text-xs text-[#6B7280] max-w-[16rem] truncate">{[b.referenceNo, b.description].filter(Boolean).join(" · ")}</td>
-                    <td className="px-4 py-1.5">{b.billDate}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(b.totalSen)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(b.paidAmountSen)}</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums font-medium">{formatCurrency(b.outstandingSen)}</td>
-                    <td className="px-4 py-1.5 text-center text-xs">
-                      <LifecycleBadge state={b.lifecycleState} />
-                      {(b.lifecycleState ?? "ACTIVE") === "ACTIVE" && b.status}
-                    </td>
-                    <td className="px-1 py-1 text-right w-8">{rowMenu.button(b.id, () => billRowMenu(b))}</td>
-                  </tr>
-                  {openBill === b.id && (
-                    /* Full bill detail (owner 2026-08-31: 「我要看bill 的全部
-                       detail」+「做好看一点」) — a voucher-style card: header
-                       strip with status pill, airy lines table with account
-                       NAMES, and a summary column for the money. */
-                    <tr className="border-b border-[#F0ECE9] bg-[#FAF8F5]">
-                      <td colSpan={10} className="px-6 py-4">
-                        <div className="max-w-4xl rounded-lg border border-[#E2DDD8] bg-white shadow-sm overflow-hidden">
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 bg-[#F7F4EF] border-b border-[#E2DDD8]">
-                            <span className="font-mono text-sm font-semibold text-[#1F1D1B]">{b.billNo}</span>
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
-                              (b.lifecycleState ?? "ACTIVE") !== "ACTIVE"
-                                ? "bg-[#F0ECE9] text-[#6B7280]"
-                                : b.outstandingSen <= 0
-                                  ? "bg-[#EAF3DE] text-[#27500A]"
-                                  : "bg-[#FBEED9] text-[#9C6F1E]"
-                            }`}>
-                              {(b.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? b.lifecycleState : b.status}
-                            </span>
-                            {b.isOpening ? (
-                              <span className="rounded-full bg-[#F0ECE9] px-2 py-0.5 text-[10px] font-semibold tracking-wide text-[#6B7280]">OPENING</span>
-                            ) : null}
-                            <span className="text-sm font-medium text-[#1F1D1B]">{b.partyName}</span>
-                            <span className="ml-auto text-xs text-[#6B7280] tabular-nums">{b.billDate}</span>
-                          </div>
-                          {(b.referenceNo || b.description) && (
-                            <div className="flex flex-wrap gap-x-6 gap-y-0.5 px-4 py-2 text-xs text-[#5A5550] border-b border-[#F0ECE9]">
-                              {b.referenceNo ? <span><span className="text-[#9CA3AF] mr-1.5">Reference</span>{b.referenceNo}</span> : null}
-                              {b.description ? <span><span className="text-[#9CA3AF] mr-1.5">Description</span>{b.description}</span> : null}
-                            </div>
-                          )}
-                          <div className="flex flex-col md:flex-row">
-                            <table className="flex-1 text-xs">
-                              <thead>
-                                <tr className="text-[10px] uppercase tracking-wider text-[#6B5C32]">
-                                  <th className="px-4 py-2 text-left w-8 font-semibold">#</th>
-                                  <th className="px-3 py-2 text-left font-semibold">Account</th>
-                                  <th className="px-3 py-2 text-left font-semibold">Line description</th>
-                                  <th className="px-4 py-2 text-right w-32 font-semibold">Amount</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {b.items.map((it, i) => {
-                                  const acct = accounts.find((a) => a.code === it.counterAccount);
-                                  return (
-                                    <tr key={i} className={`border-t border-[#F0ECE9] ${i % 2 === 1 ? "bg-[#FBFAF8]" : ""}`}>
-                                      <td className="px-4 py-1.5 text-[#C7C1BA] tabular-nums">{i + 1}</td>
-                                      <td className="px-3 py-1.5 whitespace-nowrap">
-                                        <span className="font-mono text-[11px] text-[#9CA3AF] mr-1.5">{it.counterAccount}</span>
-                                        <span className="text-[#1F1D1B]">{acct?.name ?? ""}</span>
-                                      </td>
-                                      <td className="px-3 py-1.5 text-[#5A5550]">{it.description || <span className="text-[#C7C1BA]">—</span>}</td>
-                                      <td className="px-4 py-1.5 text-right tabular-nums font-medium text-[#1F1D1B]">{formatCurrency(it.amountSen)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                            <div className="md:w-60 shrink-0 border-t md:border-t-0 md:border-l border-[#E2DDD8] bg-[#FBFAF8] px-4 py-3 space-y-1.5 text-xs">
-                              {b.taxSen ? (
-                                <div className="flex justify-between text-[#6B7280]">
-                                  <span>Tax / SST</span>
-                                  <span className="tabular-nums">{formatCurrency(b.taxSen)}</span>
-                                </div>
-                              ) : null}
-                              <div className="flex justify-between font-semibold text-[#1F1D1B] border-b border-[#E2DDD8] pb-1.5">
-                                <span>Total</span>
-                                <span className="tabular-nums">{formatCurrency(b.totalSen)}</span>
-                              </div>
-                              <div className="flex justify-between text-[#6B7280]">
-                                <span>Paid</span>
-                                <span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span>
-                              </div>
-                              <div className={`flex justify-between font-semibold ${b.outstandingSen > 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
-                                <span>Outstanding</span>
-                                <span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="px-4 pb-3">
-                            <BillAttachmentsBlock bill={b} onChanged={load} />
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-              {visibleBills.length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-[#9CA3AF]">No bills match</td></tr>
-              )}
-            </tbody>
-          </table>
-        )}
+      <Card><CardContent className="p-0">
+        <DataGrid
+          columns={billColumns}
+          data={bills ?? []}
+          keyField="id"
+          gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-bills`}
+          selectable
+          checkboxSelectOnly
+          onSelectionChange={setBillPicked}
+          clearSelectionToken={billClearToken}
+          onDoubleClick={(b) => setDetailBillId(b.id)}
+          contextMenuItems={(b) => rowMenuItems(billRowMenu(b))}
+          rowClassName={(b) => ((b.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : "")}
+          searchPlaceholder="Search bill no / party / reference / description"
+          alwaysSearchKeys={["billNo", "partyName", "referenceNo", "description"]}
+          headerMenu
+          reorderableHeaders
+          exportName={side === "CREDITOR" ? "Other Creditor Bills" : "Other Debtor Bills"}
+          footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">· voided not counted</span></>}
+          emptyMessage="No bills yet"
+          loading={bills === null}
+          maxHeight="calc(100vh - 320px)"
+        />
       </CardContent></Card>
+
+      {detailBillId && (() => {
+        const b = (bills ?? []).find((x) => x.id === detailBillId);
+        if (!b) return null;
+        const close = () => setDetailBillId(null);
+        const active = (b.lifecycleState ?? "ACTIVE") === "ACTIVE";
+        return (
+          <DocDetailModal
+            title={`${side === "CREDITOR" ? "Other creditor" : "Other debtor"} bill ${b.billNo}`}
+            badges={<LifecycleBadge state={b.lifecycleState} />}
+            onClose={close}
+            wide
+            actions={<>
+              <Button variant="outline" size="sm" onClick={() => printVoucher(buildOtherPartyBillVoucher(b, accounts))}><Printer className="h-4 w-4" /> Print</Button>
+              {(b.attachmentCount ?? 0) > 0 && (
+                <Button variant="outline" size="sm" onClick={() => void printBillWithFiles(b, accounts).catch((e: Error) => toast.error(`Not printed — ${e.message}`))}><Printer className="h-4 w-4" /> Print + files</Button>
+              )}
+              {active && <Button variant="outline" size="sm" onClick={() => { close(); editBill(b); }}>Edit</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); copyBill(b); }}>Copy</Button>
+            </>}
+          >
+            <OtherPartyBillCard b={b} accounts={accounts} onChanged={load} />
+          </DocDetailModal>
+        );
+      })()}
       </>)}
     </div>
   );
 }
+
+// One other-party bill as a voucher-style card (owner 2026-08-31: 「我要看bill
+// 的全部 detail」+「做好看一点」): header strip with its status, the lines with
+// account NAMES, the money summary and its attachments. Shown in the bill's
+// popup — double-click a row (the list is the PV table since 2026-10-17, so
+// the card left the inline row).
+function OtherPartyBillCard({ b, accounts, onChanged }: { b: OtherPartyBill; accounts: ChartOfAccount[]; onChanged: () => void }) {
+  return (
+    <div className="max-w-4xl rounded-lg border border-[#E2DDD8] bg-white shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 bg-[#F7F4EF] border-b border-[#E2DDD8]">
+        <span className="font-mono text-sm font-semibold text-[#1F1D1B]">{b.billNo}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+          (b.lifecycleState ?? "ACTIVE") !== "ACTIVE"
+            ? "bg-[#F0ECE9] text-[#6B7280]"
+            : b.outstandingSen <= 0
+              ? "bg-[#EAF3DE] text-[#27500A]"
+              : "bg-[#FBEED9] text-[#9C6F1E]"
+        }`}>
+          {(b.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? b.lifecycleState : b.status}
+        </span>
+        {b.isOpening ? (
+          <span className="rounded-full bg-[#F0ECE9] px-2 py-0.5 text-[10px] font-semibold tracking-wide text-[#6B7280]">OPENING</span>
+        ) : null}
+        <span className="text-sm font-medium text-[#1F1D1B]">{b.partyName}</span>
+        <span className="ml-auto text-xs text-[#6B7280] tabular-nums">{b.billDate}</span>
+      </div>
+      {(b.referenceNo || b.description) && (
+        <div className="flex flex-wrap gap-x-6 gap-y-0.5 px-4 py-2 text-xs text-[#5A5550] border-b border-[#F0ECE9]">
+          {b.referenceNo ? <span><span className="text-[#9CA3AF] mr-1.5">Reference</span>{b.referenceNo}</span> : null}
+          {b.description ? <span><span className="text-[#9CA3AF] mr-1.5">Description</span>{b.description}</span> : null}
+        </div>
+      )}
+      <div className="flex flex-col md:flex-row">
+        <table className="flex-1 text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-[#6B5C32]">
+              <th className="px-4 py-2 text-left w-8 font-semibold">#</th>
+              <th className="px-3 py-2 text-left font-semibold">Account</th>
+              <th className="px-3 py-2 text-left font-semibold">Line description</th>
+              <th className="px-4 py-2 text-right w-32 font-semibold">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {b.items.map((it, i) => {
+              const acct = accounts.find((a) => a.code === it.counterAccount);
+              return (
+                <tr key={i} className={`border-t border-[#F0ECE9] ${i % 2 === 1 ? "bg-[#FBFAF8]" : ""}`}>
+                  <td className="px-4 py-1.5 text-[#C7C1BA] tabular-nums">{i + 1}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">
+                    <span className="font-mono text-[11px] text-[#9CA3AF] mr-1.5">{it.counterAccount}</span>
+                    <span className="text-[#1F1D1B]">{acct?.name ?? ""}</span>
+                  </td>
+                  <td className="px-3 py-1.5 text-[#5A5550]">{it.description || <span className="text-[#C7C1BA]">—</span>}</td>
+                  <td className="px-4 py-1.5 text-right tabular-nums font-medium text-[#1F1D1B]">{formatCurrency(it.amountSen)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="md:w-60 shrink-0 border-t md:border-t-0 md:border-l border-[#E2DDD8] bg-[#FBFAF8] px-4 py-3 space-y-1.5 text-xs">
+          {b.taxSen ? (
+            <div className="flex justify-between text-[#6B7280]">
+              <span>Tax / SST</span>
+              <span className="tabular-nums">{formatCurrency(b.taxSen)}</span>
+            </div>
+          ) : null}
+          <div className="flex justify-between font-semibold text-[#1F1D1B] border-b border-[#E2DDD8] pb-1.5">
+            <span>Total</span>
+            <span className="tabular-nums">{formatCurrency(b.totalSen)}</span>
+          </div>
+          <div className="flex justify-between text-[#6B7280]">
+            <span>Paid</span>
+            <span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span>
+          </div>
+          <div className={`flex justify-between font-semibold ${b.outstandingSen > 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
+            <span>Outstanding</span>
+            <span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="px-4 pb-3">
+        <BillAttachmentsBlock bill={b} onChanged={onChanged} />
+      </div>
+    </div>
+  );
+}
+
 
 type OpenBill = { id: string; billNo: string; outstandingSen: number };
 type PaymentGroup = {
@@ -8789,15 +9274,44 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
     setEditing(g);
   };
 
-  const opaySel = useRowSelection(history ?? [], (p) => p.paymentNo);
+  // Ticked rows (the grid owns the boxes) for batch print / export.
+  const [opayPicked, setOpayPicked] = useState<PaymentGroup[]>([]);
+  const [opayClearToken, setOpayClearToken] = useState(0);
+  // The list's columns (DataGrid, the Payment Vouchers table's features;
+  // memoised — BUG-CLASSES C24). The total leaves voided payments out.
+  const opayColumns = useMemo<Column<PaymentGroup>[]>(() => [
+    { key: "paymentNo", label: "No", type: "docno", width: "150px", noFilter: true, render: (_v, g) => <span className="font-mono text-xs">{g.paymentNo}</span> },
+    { key: "partyName", label: "Party", width: "220px" },
+    { key: "date", label: "Date", type: "date", width: "110px" },
+    {
+      key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px",
+      total: (list) => list.filter((g) => (g.lifecycleState ?? "ACTIVE") === "ACTIVE").reduce((t, g) => t + g.totalSen, 0),
+    },
+    {
+      key: "lines", label: "Bills", width: "80px", align: "center",
+      filterAccessor: (g) => g.lines.length, sortAccessor: (g) => g.lines.length, exportValue: (g) => g.lines.length,
+      render: (_v, g) => <span>{g.lines.length}</span>,
+    },
+    {
+      key: "lifecycleState", label: "Status", width: "110px",
+      filterAccessor: (g) => g.lifecycleState ?? "ACTIVE", exportValue: (g) => g.lifecycleState ?? "ACTIVE",
+      render: (_v, g) => <LifecycleBadge state={g.lifecycleState} />,
+    },
+  ], []);
+  // A payment to an other creditor prints with its bills detail (dates,
+  // balances before — print design 1a), loaded first; a receipt from an other
+  // debtor needs none.
+  const printOtherPayments = async (list: PaymentGroup[]) => {
+    const details = await Promise.all(list.map((p) => (p.partyType === "CREDITOR" ? fetchApPrintDetail(p.paymentNo) : Promise.resolve(null))));
+    printVouchers(list.map((p, i) => buildOtherPartyPaymentVoucher(p, accounts, details[i] ?? undefined)));
+  };
 
-  // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
-  // links in the rows; a click still opens the payment.
-  const rowMenu = useRowMenu();
+  // Row actions on right-click or the row's ⋮ (owner 2026-10-02; the grid's
+  // own menu since 2026-10-17) — double-click opens the payment.
   const opayRowMenu = (g: PaymentGroup): RowMenuGroups => [
     [{ label: "Open", action: () => setDetail(g) }],
     [
-      { label: "Print", action: () => printVoucher(buildOtherPartyPaymentVoucher(g, accounts)) },
+      { label: "Print", action: () => void printOtherPayments([g]) },
       ...((g.lifecycleState ?? "ACTIVE") === "ACTIVE" ? [{ label: "Edit", action: () => editPayment(g) }] : []),
     ],
     lifecycleMenuItems(g.lifecycleState, {
@@ -8809,7 +9323,6 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
 
   return (
     <div className="space-y-3">
-      {rowMenu.element}
       <OtherPartyPaymentForm
         key={editing?.paymentNo ?? "new"}
         parties={parties}
@@ -8821,13 +9334,13 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
       />
 
       <BatchActionsBar
-        count={opaySel.count}
-        onClear={opaySel.clear}
-        onPrint={() => printVouchers(opaySel.selectedRows.map((p) => buildOtherPartyPaymentVoucher(p, accounts)))}
+        count={opayPicked.length}
+        onClear={() => setOpayClearToken((n) => n + 1)}
+        onPrint={() => void printOtherPayments(opayPicked)}
         exportName="other-party-payments"
         exportAoa={() => [
           ["Payment No", "Date", "Party", "Status", "Voucher Total (RM)", "Bill No", "Amount (RM)"],
-          ...opaySel.selectedRows.flatMap((p) =>
+          ...opayPicked.flatMap((p) =>
             p.lines.map((l) => [
               p.paymentNo,
               formatDateDMY(p.date),
@@ -8841,38 +9354,28 @@ function OtherPartyPaymentsManager({ parties, accounts, side }: { parties: Other
         ]}
       />
 
-      <Card><CardContent className="p-0 overflow-x-auto">
-        {history === null ? (
-          <div className="py-8 text-center text-[#6B7280] text-sm">Loading…</div>
-        ) : history.length === 0 ? (
-          <div className="py-8 text-center text-[#6B7280] text-sm">No {verb.toLowerCase()}s yet.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280] text-left">
-              <th className="px-3 py-2 w-8"><input type="checkbox" checked={opaySel.allSelected} onChange={opaySel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
-              <th className="px-4 py-2">No</th><th className="px-4 py-2">Party</th><th className="px-4 py-2">Date</th>
-              <th className="px-4 py-2 text-right">Total</th><th className="px-4 py-2 text-center">Bills</th><th className="px-4 py-2 text-right"></th>
-            </tr></thead>
-            <tbody>
-              {history.map((g) => (
-                <tr key={g.paymentNo} onClick={() => setDetail(g)} onDoubleClick={() => setDetail(g)} onContextMenu={rowMenu.onContextMenu(g.paymentNo, () => opayRowMenu(g))} title="Click to open · right-click for actions" className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === g.paymentNo ? "bg-[#F0ECE9]" : ""}`}>
-                  <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={opaySel.isSelected(g.paymentNo)} onChange={() => opaySel.toggle(g.paymentNo)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
-                  </td>
-                  <td className="px-4 py-1.5 font-mono text-xs">{g.paymentNo}</td>
-                  <td className="px-4 py-1.5">{g.partyName}</td>
-                  <td className="px-4 py-1.5">{g.date}</td>
-                  <td className="px-4 py-1.5 text-right tabular-nums">{formatCurrency(g.totalSen)}</td>
-                  <td className="px-4 py-1.5 text-center">{g.lines.length}</td>
-                  <td className="px-4 py-1.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                    <span className="mr-2"><LifecycleBadge state={g.lifecycleState} /></span>
-                    {rowMenu.button(g.paymentNo, () => opayRowMenu(g))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <Card><CardContent className="p-0">
+        <DataGrid
+          columns={opayColumns}
+          data={history ?? []}
+          keyField="paymentNo"
+          gridId={`accounting-${side === "CREDITOR" ? "creditor" : "debtor"}-payments`}
+          selectable
+          checkboxSelectOnly
+          onSelectionChange={setOpayPicked}
+          clearSelectionToken={opayClearToken}
+          onDoubleClick={(g) => setDetail(g)}
+          contextMenuItems={(g) => rowMenuItems(opayRowMenu(g))}
+          rowClassName={(g) => ((g.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : "")}
+          searchPlaceholder="Search no / party"
+          headerMenu
+          reorderableHeaders
+          exportName={side === "CREDITOR" ? "Other Creditor Payments" : "Other Debtor Receipts"}
+          footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">· voided not counted</span></>}
+          emptyMessage={`No ${verb.toLowerCase()}s yet`}
+          loading={history === null}
+          maxHeight="calc(100vh - 320px)"
+        />
       </CardContent></Card>
 
       {detail && (
@@ -8967,7 +9470,13 @@ function sourceHref(sourceType: string, sourceId: string): string | null {
 // Phase 2 follow-up (owner): Trial Balance is its OWN tab now — just the
 // statement, no inquiry attached.
 function TrialBalanceTab() {
-  const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
+  const navigate = useNavigate();
+  const today = todayYmdMY();
+  // Finance v2: a month stepper; a closed month reads as at its last day, the
+  // running month as at today ("Oct 2026 · so far").
+  const [ym, setYm] = useState(() => today.slice(0, 7));
+  const asOf = asAtDate(ym, today);
+  const ymOptions = useMemo(() => monthOptions(today.slice(0, 7), 24), [today]);
   // Multi-company (Phase 2): "" = All companies (group). trial-balance accepts
   // ?orgId= — absent = today's consolidated TB, unchanged.
   const [company, setCompany] = useState("");
@@ -8979,6 +9488,11 @@ function TrialBalanceTab() {
     balanced: boolean;
   } | null>(null);
   const loadingTb = tb === null;
+  // L1 = section totals only, L2 = every account; a click on a section heading
+  // folds or opens just that one (a level button resets the clicks).
+  const [level, setLevel] = useState(2);
+  const [shut, setShut] = useState<Partial<Record<TbSectionKey, boolean>>>({});
+  const isOpen = (k: TbSectionKey) => (shut[k] !== undefined ? !shut[k] : level >= 2);
 
   useEffect(() => {
     let stale = false;
@@ -8989,73 +9503,133 @@ function TrialBalanceTab() {
     return () => { stale = true; };
   }, [asOf, company]);
 
+  // Sections by the Chart of Accounts rules; the rows are the server's, as is.
+  const secs = useMemo(() => (tb ? tbSections(tb.rows) : []), [tb]);
+  const amt = (sen: number) => (sen ? fmtAmt(sen) : "");
+  // Same balance both sides: the ledger runs to the same as-at date, by
+  // document date, with everything before the month as Balance B/F.
+  const openLedger = (code: string) => navigate(glLink({ account: code, fromYm: ym, toDate: asOf }));
+
+  // The download carries what is on screen (folded sections as one line).
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Code", "Account", "Debit (RM)", "Credit (RM)"]];
+    const kinds: PdfRowKind[] = [];
+    const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
+    const n = (sen: number) => (sen ? sen / 100 : "");
+    for (const s of secs) {
+      const open = isOpen(s.key);
+      push(["", s.label, open ? "" : n(s.debitSen), open ? "" : n(s.creditSen)], "section");
+      if (!open) continue;
+      for (const r of s.rows) push([r.accountCode, `  ${r.accountName}`, n(r.debitSen), n(r.creditSen)], undefined);
+      push(["", `Total ${s.label}`, n(s.debitSen), n(s.creditSen)], "subtotal");
+    }
+    if (tb) push(["", "TOTAL", tb.totalDr / 100, tb.totalCr / 100], "grand");
+    return { aoa, kinds };
+  };
+  const fileBase = `trial-balance-${asOf}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Trial Balance", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf(`${fileBase}.pdf`, "Trial Balance", `As at ${fmtDocDate(asOf)}`, aoa, {
+          rowKind: (_r, i) => kinds[i + 1],
+          leftCols: [1],
+          company: COMPANY.HOOKKA.name,
+          print: true,
+        });
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Trial Balance</h2>
-        <div className="flex items-end gap-3">
-          <div className="pb-0.5">
-            <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-[#6B7280] mb-1 block">As of</label>
-            <input
-              type="date"
-              value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
-              className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
-            />
-          </div>
-          {tb && (
-            <span
-              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium border ${tb.balanced ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}
-            >
-              {tb.balanced ? "Balanced ✓" : "OUT OF BALANCE"}
-            </span>
-          )}
-        </div>
-      </div>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
+          <PeriodStepper value={ym} options={ymOptions} onChange={setYm} today={today} />
+          <DetailLevels levels={[1, 2]} value={level} onChange={(L) => { setLevel(L); setShut({}); }} tips={{ 1: "Section totals only", 2: "Every account" }} />
+          {tb && <DownloadMenu items={downloads} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
 
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {loadingTb || !tb ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading trial balance…</div>
-          ) : (
-            <table data-col-resize="first" className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-4 py-2 text-left">Account</th>
-                  <th className="px-4 py-2 text-left">Type</th>
-                  <th className="px-4 py-2 text-right">Debit</th>
-                  <th className="px-4 py-2 text-right">Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tb.rows.map((r) => (
-                  <tr
-                    key={r.accountCode}
-                    className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30"
-                  >
-                    <td className="px-4 py-1.5">
-                      <span className="tabular-nums text-xs text-[#6B7280] mr-2">{r.accountCode}</span>
-                      <span className="text-[#1F1D1B]">{r.accountName}</span>
-                    </td>
-                    <td className="px-4 py-1.5 text-xs text-[#6B7280]">{r.type}</td>
-                    <td className="px-4 py-1.5 text-right font-medium">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                    <td className="px-4 py-1.5 text-right font-medium">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                  </tr>
-                ))}
-                <tr className="border-t-2 border-[#1F1D1B] font-semibold">
-                  <td className="px-4 py-2" colSpan={2}>TOTAL</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(tb.totalDr)}</td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(tb.totalCr)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
+      {tb && (
+        <CheckStrip ok={tb.balanced} label={tb.balanced ? "Balanced ✓" : checkLabel(tb.totalDr - tb.totalCr)}>
+          <span>Total Debit <b className="tabular-nums">{fmtAmt(tb.totalDr)}</b></span>
+          <span className="text-[#6B7280]">=</span>
+          <span>Total Credit <b className="tabular-nums">{fmtAmt(tb.totalCr)}</b></span>
+        </CheckStrip>
+      )}
 
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={`Trial Balance As At ${fmtDocDate(asOf)}`}
+        note="All figures RM · double-click an account to open its ledger"
+      >
+        {loadingTb || !tb ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">Loading trial balance…</div>
+        ) : (
+          <table data-col-resize="first" data-fin-report className="min-w-[640px]">
+            <thead>
+              <tr>
+                <th className="w-[110px]">Code</th>
+                <th>Account</th>
+                <th data-cell="num split" className="w-[180px]">Debit (RM)</th>
+                <th data-cell="num" className="w-[180px]">Credit (RM)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {secs.map((s) => {
+                const open = isOpen(s.key);
+                return (
+                  <Fragment key={s.key}>
+                    <tr
+                      data-row="sec"
+                      onClick={() => setShut({ ...shut, [s.key]: open })}
+                      title={open ? "Click to fold" : "Click to open"}
+                      className="cursor-pointer select-none"
+                    >
+                      <td />
+                      <td><span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[#6B7280]">{open ? "▾" : "▸"}</span>{s.label}</td>
+                      <td data-cell="num split">{open ? "" : amt(s.debitSen)}</td>
+                      <td data-cell="num">{open ? "" : amt(s.creditSen)}</td>
+                    </tr>
+                    {open && s.rows.map((r) => (
+                      <tr
+                        key={r.accountCode}
+                        data-row="line"
+                        onDoubleClick={() => openLedger(r.accountCode)}
+                        title="Double-click to open the ledger"
+                        className="cursor-pointer"
+                      >
+                        <td data-cell="code">{r.accountCode}</td>
+                        <td style={{ paddingLeft: 28 }}>{r.accountName}</td>
+                        <td data-cell="num split">{amt(r.debitSen)}</td>
+                        <td data-cell="num">{amt(r.creditSen)}</td>
+                      </tr>
+                    ))}
+                    {open && (
+                      <tr data-row="sub">
+                        <td />
+                        <td>Total {s.label}</td>
+                        <td data-cell="num split">{amt(s.debitSen)}</td>
+                        <td data-cell="num">{amt(s.creditSen)}</td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              <tr data-row="fin">
+                <td />
+                <td>TOTAL</td>
+                <td data-cell="num split">{fmtAmt(tb.totalDr)}</td>
+                <td data-cell="num">{fmtAmt(tb.totalCr)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
     </div>
   );
 }
@@ -9147,7 +9721,7 @@ function PartyLedgerTab({ side }: { side: "DEBTOR" | "CREDITOR" }) {
       .join("");
     const grandLine = `<p style="margin-top:16px;font-size:12px;font-weight:bold;text-align:right">TOTAL DR ${formatCurrency(grandDrSen)} &nbsp;·&nbsp; TOTAL CR ${formatCurrency(grandCrSen)} &nbsp;·&nbsp; Balance ${formatCurrency(grandBalSen)}</p>`;
     w.document.write(
-      `<html><head><title>${title}</title></head><body><h2>HOOKKA MANUFACTURING SDN BHD</h2><p>${title}${data.from || data.to ? ` · ${data.from || "…"} → ${data.to || "…"}` : ""}</p>${sections}${grandLine}</body></html>`,
+      `<html><head><title>${title}</title></head><body><h2>${COMPANY.HOOKKA.name}</h2><p>${title}${data.from || data.to ? ` · ${data.from || "…"} → ${data.to || "…"}` : ""}</p>${sections}${grandLine}</body></html>`,
     );
     w.document.close();
     w.print();
@@ -9255,15 +9829,31 @@ function BackToTopButton() {
   );
 }
 
-// Grouped-ledger geometry, measured on prod. GL_ROW_PX is one leg row;
+// Grouped-ledger geometry. GL_ROW_PX is one leg row (every GL row is pinned to
+// it, so the windowed listings and the off-screen placeholders agree);
 // GL_CARD_CHROME_PX is everything else in an account card (the clickable
-// account header, the table header, the BALANCE B/F row and the per-account
+// account header, the table header, the Balance B/F row and the per-account
 // totals row). Together they size the placeholder that holds a card's space
-// while it is off-screen.
+// while it is off-screen — a few pixels out costs a small jump, nothing more.
+// Measured on prod 2026-10-16 (v2 look): chrome 140–141px, folded card 44px.
 const GL_ROW_PX = 29;
-const GL_CARD_CHROME_PX = 128;
+const GL_CARD_CHROME_PX = 141;
+const GL_CARD_HEAD_PX = 44;
+
+const GL_CTRL = "h-[34px] rounded-lg border border-[#D9D3CA] bg-white px-3 text-[13px] text-[#1F1D1B] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]";
+
+// A labelled control in the ledger's filter row.
+function GlField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[12px] font-semibold text-[#374151]">{label}</span>
+      {children}
+    </div>
+  );
+}
 
 function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
+  const navigate = useNavigate();
   // Multi-account review (owner): 0 picked = full ledger; 1 picked =
   // inquiry mode with running balance; 2+ picked = listing filtered to
   // the picked set. A report drill's "open in GL" lands here with
@@ -9279,6 +9869,7 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   } | null>(null);
   const [gl, setGl] = useState<{
     account: { code: string; name: string; type: string };
+    debitNormal?: boolean;
     openingSen: number;
     closingSen: number;
     totalDebitSen?: number;
@@ -9313,7 +9904,6 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const inquiryScrollRef = useRef<HTMLDivElement>(null);
   const account = picked.length === 1 ? picked[0] : "";
   const loading = account ? gl === null : view === "grouped" ? report === null : all === null;
-  const nameOf = (code: string) => accounts.find((a) => a.code === code)?.name ?? "";
   const flatVirt = useVirtualRows({
     count: all?.rows.length ?? 0,
     rowHeight: GL_ROW_PX,
@@ -9339,6 +9929,10 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
         return true;
     }
   };
+  const scopeOptions = accounts
+    .filter(inLedgerScope)
+    .map((a) => ({ code: a.code, name: a.name }))
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   useEffect(() => {
     let stale = false;
@@ -9373,15 +9967,41 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setGl(null);
     setReport(null);
   };
-  const addAccount = (code: string) => {
-    if (!code || picked.includes(code)) return;
-    setPicked([...picked, code]);
-    reset();
-  };
-  const removeAccount = (code: string) => {
-    setPicked(picked.filter((c) => c !== code));
-    reset();
-  };
+
+  // Finance v2: a balance reads debit plain, credit in brackets. The grouped
+  // report already runs debit minus credit; the one-account inquiry runs in
+  // the account's natural direction, so a credit-normal account turns round.
+  const inquiryDebitNormal = gl ? (gl.debitNormal ?? ["ASSET", "EXPENSE", "COST"].includes(gl.account.type)) : true;
+  const drCr = (natural: number) => (inquiryDebitNormal ? natural : -natural);
+  const openSource = (href: string | null) => (href ? () => navigate(href) : undefined);
+  const sourceCell = (sourceType: string, sourceId: string, href: string | null) =>
+    href ? (
+      <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={sourceId}>{sourceType}</a>
+    ) : (
+      <span className="text-[#6B7280]" title={sourceId}>{sourceType}</span>
+    );
+
+  const scopeSelect = (
+    <GlField label="Scope">
+      <select
+        aria-label="Scope"
+        value={ledger}
+        onChange={(e) => {
+          setLedger(e.target.value as typeof ledger);
+          // Scope change clears the picked set — keeping accounts
+          // outside the new scope would just intersect to nothing.
+          setPicked([]);
+          reset();
+        }}
+        className={GL_CTRL}
+      >
+        <option value="all">All</option>
+        <option value="general">General</option>
+        <option value="sales">Sales (Debtors)</option>
+        <option value="purchase">Purchase (Creditors)</option>
+      </select>
+    </GlField>
+  );
 
   // Sales / Purchase Ledger scope shows the per-customer / per-supplier ledger
   // (one section each) — the "subsidiary" ledger — instead of the flat
@@ -9389,116 +10009,117 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
   if (ledger === "sales" || ledger === "purchase") {
     return (
       <div className="space-y-4">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">General Ledger</h2>
-        <Card>
-          <CardContent className="p-4 bg-[#F7F4EF] rounded-lg">
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Ledger</label>
-            <select
-              value={ledger}
-              onChange={(e) => { setLedger(e.target.value as typeof ledger); setPicked([]); reset(); }}
-              className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm"
-            >
-              <option value="all">All Ledgers</option>
-              <option value="general">General Ledger</option>
-              <option value="sales">Sales Ledger (Debtors)</option>
-              <option value="purchase">Purchase Ledger (Creditors)</option>
-            </select>
-          </CardContent>
-        </Card>
+        <div className="flex flex-wrap items-end gap-3">{scopeSelect}</div>
         <PartyLedgerTab side={ledger === "sales" ? "DEBTOR" : "CREDITOR"} />
         <BackToTopButton />
       </div>
     );
   }
 
+  // The download carries the view on screen.
+  const period = `${from ? fmtDocDate(from) : "From the start"} – ${to ? fmtDocDate(to) : "today"}${ledger !== "all" ? ` · ${ledger === "general" ? "General" : ledger}` : ""}`;
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } | null => {
+    const n = (sen: number) => (sen ? sen / 100 : "");
+    const kinds: PdfRowKind[] = [];
+    if (account && gl) {
+      const aoa: Aoa = [["Date", "Description", "Source", "Debit (RM)", "Credit (RM)", "Balance (RM)"]];
+      aoa.push(["", "Balance B/F", "", "", "", drCr(gl.openingSen) / 100]); kinds.push("section");
+      for (const r of gl.rows) { aoa.push([String(r.postedAt).slice(0, 10), r.description, `${r.sourceType} ${r.sourceId}`, n(r.debitSen), n(r.creditSen), drCr(r.runningSen) / 100]); kinds.push(undefined); }
+      aoa.push(["", "Total", "", (gl.totalDebitSen ?? 0) / 100, (gl.totalCreditSen ?? 0) / 100, drCr(gl.closingSen) / 100]); kinds.push("grand");
+      return { aoa, kinds };
+    }
+    if (view === "grouped" && report) {
+      const aoa: Aoa = [["Account", "Date", "Description", "DE Account", "Source", "Debit (RM)", "Credit (RM)", "Balance (RM)"]];
+      for (const a of report.accounts) {
+        aoa.push([`${a.code} ${a.name}`, "", "Balance B/F", "", "", "", "", a.openingSen / 100]); kinds.push("section");
+        for (const r of a.rows) { aoa.push(["", r.day, r.description, r.deDesc, `${r.sourceType} ${r.sourceId}`, n(r.debitSen), n(r.creditSen), r.runningSen / 100]); kinds.push(undefined); }
+        aoa.push([`${a.code} total`, "", "", "", "", a.totalDr / 100, a.totalCr / 100, a.closingSen / 100]); kinds.push("subtotal");
+      }
+      aoa.push(["TOTAL", "", "", "", "", report.grandDr / 100, report.grandCr / 100, ""]); kinds.push("grand");
+      return { aoa, kinds };
+    }
+    if (view === "flat" && all) {
+      const aoa: Aoa = [["Date", "Account", "Description", "Source", "Debit (RM)", "Credit (RM)"]];
+      for (const r of all.rows) { aoa.push([String(r.postedAt).slice(0, 10), `${r.accountCode} ${r.accountName}`, r.description, `${r.sourceType} ${r.sourceId}`, n(r.debitSen), n(r.creditSen)]); kinds.push(undefined); }
+      return { aoa, kinds };
+    }
+    return null;
+  };
+  const fileBase = `general-ledger${account ? `-${account}` : ""}${from ? `-${from}` : ""}${to ? `-${to}` : ""}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { const x = buildExport(); if (x) void exportReportXlsx(`${fileBase}.xlsx`, "General Ledger", x.aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const x = buildExport();
+        if (!x) return;
+        void exportReportPdf(`${fileBase}.pdf`, "General Ledger", period, x.aoa, {
+          rowKind: (_r, i) => x.kinds[i],
+          leftCols: account ? [1, 2] : view === "grouped" ? [1, 2, 3, 4] : [1, 2, 3],
+          company: COMPANY.HOOKKA.name,
+          print: true,
+        });
+      },
+    },
+  ];
+  const shownData = account ? gl : view === "grouped" ? report : all;
+
+  const anyShut = Object.values(collapsedAccts).some(Boolean);
+  const grandDiff = report ? report.grandDr - report.grandCr : 0;
+  const summaryBar = report && report.accounts.length > 0 && (
+    <div data-fin-gl-summary className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[10px] border border-[#E2DDD8] bg-white px-4 py-3">
+      <span className="text-[12.5px] text-[#6B7280]">{report.accounts.length} account{report.accounts.length === 1 ? "" : "s"}</span>
+      <button
+        type="button"
+        onClick={() => setCollapsedAccts(anyShut ? {} : Object.fromEntries(report.accounts.map((a) => [a.code, true])))}
+        className="text-[12.5px] font-semibold text-[#6B5C32] hover:text-[#574A28]"
+      >
+        {anyShut ? "Expand all" : "Collapse all"}
+      </button>
+      <span className="ml-auto text-[14px] font-bold tabular-nums text-[#1F1D1B]">TOTAL DR {formatCurrency(report.grandDr)}</span>
+      <span className="text-[14px] font-bold tabular-nums text-[#1F1D1B]">TOTAL CR {formatCurrency(report.grandCr)}</span>
+      <span className={`text-[13px] font-bold tabular-nums ${grandDiff === 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>
+        {grandDiff === 0 ? "Diff RM 0.00 ✓" : `Diff ${formatCurrency(grandDiff)}`}
+      </span>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">General Ledger</h2>
-
-      {/* Filter bar — deliberately loud (owner: "不够明显") */}
-      <Card>
-        <CardContent className="p-4 space-y-3 bg-[#F7F4EF] rounded-lg">
-          <div className="flex flex-wrap items-end gap-4">
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Ledger</label>
-              <select
-                value={ledger}
-                onChange={(e) => {
-                  setLedger(e.target.value as typeof ledger);
-                  // Scope change clears the picked set — keeping accounts
-                  // outside the new scope would just intersect to nothing.
-                  setPicked([]);
-                  reset();
-                }}
-                className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm"
-              >
-                <option value="all">All Ledgers</option>
-                <option value="general">General Ledger</option>
-                <option value="sales">Sales Ledger (Debtors)</option>
-                <option value="purchase">Purchase Ledger (Creditors)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">View</label>
-              <select
-                value={view}
-                onChange={(e) => { setView(e.target.value as typeof view); reset(); }}
-                className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm"
-              >
-                <option value="grouped">By Account (AutoCount style)</option>
-                <option value="flat">Flat listing</option>
-              </select>
-            </div>
-            <div className="w-80">
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">
-                Account filter <span className="font-normal text-[#6B7280]">(type keyword, pick one or MORE)</span>
-              </label>
-              <AccountPicker
-                accounts={accounts.filter((a) => !picked.includes(a.code) && inLedgerScope(a))}
-                value=""
-                onChange={addAccount}
-                placeholder="Type code or name to add an account…"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">From</label>
-              <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">To</label>
-              <input type="date" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
-            </div>
-            {(picked.length > 0 || ledger !== "all" || from || to) && (
-              <Button variant="outline" size="sm" onClick={() => { setPicked([]); setLedger("all"); setFrom(""); setTo(""); reset(); }}>
-                Clear all
-              </Button>
-            )}
-          </div>
-          {picked.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {picked.map((code) => (
-                <span key={code} className="inline-flex items-center gap-1.5 rounded-full border border-[#6B5C32] bg-white px-3 py-1 text-xs font-medium text-[#6B5C32]">
-                  <span className="tabular-nums">{code}</span> {nameOf(code)}
-                  <button onClick={() => removeAccount(code)} className="ml-1 text-[#9A3A2D] hover:text-[#791F1F] cursor-pointer" title="Remove">✕</button>
-                </span>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-[#9CA3AF]">
-            Ledger scope first (AutoCount-style: Sales = debtor controls, Purchase = creditor controls, General = the rest) · no account picked = whole scope · pick ONE for running balances · pick SEVERAL to review together
-          </p>
-        </CardContent>
-      </Card>
-
-      {account && gl && (
-        <p className="text-sm text-[#6B7280]">
-          <span className="tabular-nums text-xs mr-1">{gl.account.code}</span>
-          <span className="font-medium text-[#1F1D1B]">{gl.account.name}</span>
-          {" · "}Opening {formatCurrency(gl.openingSen)} · Total DR {formatCurrency(gl.totalDebitSen ?? 0)} · Total CR {formatCurrency(gl.totalCreditSen ?? 0)} · Closing {formatCurrency(gl.closingSen)} ({gl.account.type})
-        </p>
+      {shownData && (
+        <FinanceTitleActions>
+          <ReportToolbar>
+            <DownloadMenu items={downloads} />
+          </ReportToolbar>
+        </FinanceTitleActions>
       )}
+
+      <div className="flex flex-wrap items-end gap-3">
+        {scopeSelect}
+        <GlField label="View">
+          <select aria-label="View" value={view} onChange={(e) => { setView(e.target.value as typeof view); reset(); }} className={GL_CTRL}>
+            <option value="grouped">By Account</option>
+            <option value="flat">Flat listing</option>
+          </select>
+        </GlField>
+        <GlField label="Accounts">
+          <AccountMultiPicker options={scopeOptions} picked={picked} onChange={(codes) => { setPicked(codes); reset(); }} />
+        </GlField>
+        <GlField label="From">
+          <input type="date" aria-label="From" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} className={GL_CTRL} />
+        </GlField>
+        <GlField label="To">
+          <input type="date" aria-label="To" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} className={GL_CTRL} />
+        </GlField>
+        {(picked.length > 0 || ledger !== "all" || from || to) && (
+          <Button variant="outline" size="sm" onClick={() => { setPicked([]); setLedger("all"); setFrom(""); setTo(""); reset(); }}>
+            Clear all
+          </Button>
+        )}
+      </div>
+
       {!account && view === "flat" && all && (
-        <p className="text-sm text-[#6B7280]">
+        <p className="text-[12.5px] text-[#6B7280]">
           {all.totalRows} entries{picked.length > 1 ? ` across ${picked.length} accounts` : ""}{all.capped ? ` — showing latest ${all.rows.length}, narrow the date range to see older ones` : ""}
         </p>
       )}
@@ -9516,100 +10137,85 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
             )}
             {/* Owner 2026-07-24: the grand DR/CR totals also live UP HERE —
                 the bottom card alone meant scrolling past the whole report. */}
-            {report.accounts.length > 0 && (
-              <Card>
-                <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-                  <span>TOTAL DR {formatCurrency(report.grandDr)}</span>
-                  <span>TOTAL CR {formatCurrency(report.grandCr)}</span>
-                  <span className={report.grandDr - report.grandCr !== 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}>
-                    {report.grandDr - report.grandCr === 0 ? "Balanced ✓" : `Diff ${formatCurrency(report.grandDr - report.grandCr)}`}
-                  </span>
-                </CardContent>
-              </Card>
-            )}
+            {summaryBar}
             {report.accounts.map((a) => {
               const open = !collapsedAccts[a.code];
               // Height to hold while the card is off-screen: the account
               // header + the table's own header, B/F and totals rows, plus one
-              // GL_ROW_PX per leg. Only used to keep the scrollbar steady —
-              // being a few pixels out costs a small jump, nothing more.
-              const estimated = open ? GL_CARD_CHROME_PX + a.rows.length * GL_ROW_PX : GL_CARD_CHROME_PX;
+              // GL_ROW_PX per leg.
+              const estimated = open ? GL_CARD_CHROME_PX + a.rows.length * GL_ROW_PX : GL_CARD_HEAD_PX;
               return (
                 <DeferredBlock key={a.code} estimatedHeight={estimated}>
-                <Card>
-                  <CardContent className="p-0 overflow-x-auto">
+                  <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
                     <button
+                      type="button"
+                      aria-expanded={open}
                       onClick={() => setCollapsedAccts({ ...collapsedAccts, [a.code]: open })}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-[#F0ECE9]/60 text-left cursor-pointer"
+                      className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5 text-left hover:bg-[#FBFAF7]"
                     >
-                      <span className="text-sm font-semibold text-[#1F1D1B]">
-                        {open ? "▾" : "▸"} Acc. No.: <span className="tabular-nums">{a.code}</span> {a.name}
+                      <span className="text-[14px] font-bold text-[#1F1D1B]">
+                        <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[#6B7280]">{open ? "▾" : "▸"}</span>
+                        Acc. No.: <span className="tabular-nums">{a.code}</span> {a.name.toUpperCase()}
                       </span>
-                      <span className="text-xs text-[#6B7280] tabular-nums">
-                        DR = {formatCurrency(a.totalDr)} · CR = {formatCurrency(a.totalCr)} · Balance = <span className={a.closingSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}>{formatCurrency(a.closingSen)}</span>
+                      <span className="text-[12.5px] tabular-nums text-[#6B7280]">
+                        DR = {formatCurrency(a.totalDr)} · CR = {formatCurrency(a.totalCr)} · Balance = <span className="text-[#1F1D1B]">{fmtLedgerBal(a.closingSen)}</span>
                       </span>
                     </button>
                     {open && (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                            <th className="px-3 py-1.5 text-left">Date</th>
-                            <th className="px-3 py-1.5 text-left">Description</th>
-                            <th className="px-3 py-1.5 text-left">DE Account</th>
-                            <th className="px-3 py-1.5 text-left">Source</th>
-                            <th className="px-3 py-1.5 text-right">Debit</th>
-                            <th className="px-3 py-1.5 text-right">Credit</th>
-                            <th className="px-3 py-1.5 text-right">Balance</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                            <td className="px-3 py-1" colSpan={6}>BALANCE B/F</td>
-                            <td className={`px-3 py-1 text-right tabular-nums ${a.openingSen < 0 ? "text-[#9A3A2D]" : ""}`}>{formatCurrency(a.openingSen)}</td>
-                          </tr>
-                          {a.rows.map((r) => {
-                            const href = sourceHref(r.sourceType, r.sourceId);
-                            return (
-                              <tr key={r.id} className="border-b border-[#F0ECE9]">
-                                <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{r.day}</td>
-                                <td className="px-3 py-1 text-[#1F1D1B]">{r.description}</td>
-                                <td className="px-3 py-1 text-xs text-[#6B7280]">{r.deDesc}</td>
-                                <td className="px-3 py-1 text-xs">
-                                  {href ? (
-                                    <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={r.sourceId}>{r.sourceType}</a>
-                                  ) : (
-                                    <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-1 text-right tabular-nums">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                                <td className={`px-3 py-1 text-right tabular-nums ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(r.runningSen)}</td>
-                              </tr>
-                            );
-                          })}
-                          <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
-                            <td className="px-3 py-1.5" colSpan={4} />
-                            <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.totalDr)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.totalCr)}</td>
-                            <td className={`px-3 py-1.5 text-right tabular-nums ${a.closingSen < 0 ? "text-[#9A3A2D]" : ""} bg-[#EAF3DE]`}>{formatCurrency(a.closingSen)}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                      <div className="overflow-x-auto border-t-[1.5px] border-[#7A6E5E]">
+                        <table data-fin-report data-fin-dense>
+                          <thead>
+                            <tr>
+                              <th className="w-[110px]">Date</th>
+                              <th>Description</th>
+                              <th className="w-[220px]">DE Account</th>
+                              <th className="w-[130px]">Source</th>
+                              <th data-cell="num split" className="w-[150px]">Debit</th>
+                              <th data-cell="num" className="w-[150px]">Credit</th>
+                              <th data-cell="num" className="w-[160px]">Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr data-row="bf" style={{ height: GL_ROW_PX }}>
+                              <td colSpan={6}>Balance B/F</td>
+                              <td data-cell="num">{fmtLedgerBal(a.openingSen)}</td>
+                            </tr>
+                            {a.rows.map((r) => {
+                              const href = sourceHref(r.sourceType, r.sourceId);
+                              return (
+                                <tr
+                                  key={r.id}
+                                  data-row="line"
+                                  style={{ height: GL_ROW_PX }}
+                                  onDoubleClick={openSource(href)}
+                                  title={href ? "Double-click to open the source" : undefined}
+                                  className={href ? "cursor-pointer" : undefined}
+                                >
+                                  <td className="text-[12px] text-[#6B7280]">{fmtDocDate(r.day)}</td>
+                                  <td className="text-[#1F1D1B]">{r.description}</td>
+                                  <td className="text-[12px] text-[#6B7280]">{r.deDesc}</td>
+                                  <td className="text-[12px]">{sourceCell(r.sourceType, r.sourceId, href)}</td>
+                                  <td data-cell="num split">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                                  <td data-cell="num">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                                  <td data-cell="num">{fmtLedgerBal(r.runningSen)}</td>
+                                </tr>
+                              );
+                            })}
+                            <tr data-row="sub" style={{ height: GL_ROW_PX }}>
+                              <td colSpan={4}>Total</td>
+                              <td data-cell="num split">{formatCurrency(a.totalDr)}</td>
+                              <td data-cell="num">{formatCurrency(a.totalCr)}</td>
+                              <td data-cell="num">{fmtLedgerBal(a.closingSen)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
                 </DeferredBlock>
               );
             })}
-            <Card>
-              <CardContent className="px-3 py-2 flex justify-end gap-8 text-sm font-semibold text-[#1F1D1B] tabular-nums">
-                <span>TOTAL DR {formatCurrency(report.grandDr)}</span>
-                <span>TOTAL CR {formatCurrency(report.grandCr)}</span>
-                <span className={report.grandDr - report.grandCr !== 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}>
-                  {report.grandDr - report.grandCr === 0 ? "Balanced ✓" : `Diff ${formatCurrency(report.grandDr - report.grandCr)}`}
-                </span>
-              </CardContent>
-            </Card>
+            {summaryBar}
             {report.accounts.length === 0 && (
               <Card><CardContent className="py-12 text-center text-[#9CA3AF] text-sm">No activity in this window</CardContent></Card>
             )}
@@ -9621,164 +10227,168 @@ function GeneralLedgerTab({ accounts }: { accounts: ChartOfAccount[] }) {
           server-side over EVERY matching leg, so it stays right even when
           the listing below is capped at 1000 rows. */}
       {!account && view === "flat" && all && (all.accountTotals?.length ?? 0) > 0 && (
-        <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+          <div className="overflow-x-auto">
+            <table data-fin-report data-fin-dense>
               <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Account totals{from || to ? " (filtered period)" : ""}</th>
-                  <th className="px-3 py-2 text-right">Total Debit</th>
-                  <th className="px-3 py-2 text-right">Total Credit</th>
-                  <th className="px-3 py-2 text-right">Net (DR−CR)</th>
+                <tr>
+                  <th>Account totals{from || to ? " (filtered period)" : ""}</th>
+                  <th data-cell="num split">Total Debit</th>
+                  <th data-cell="num">Total Credit</th>
+                  <th data-cell="num">Net (DR−CR)</th>
                 </tr>
               </thead>
               <tbody>
                 {all.accountTotals!.map((t) => (
-                  <tr key={t.accountCode} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5">
+                  <tr key={t.accountCode} data-row="line" style={{ height: GL_ROW_PX }}>
+                    <td>
                       <button
                         onClick={() => { setPicked([t.accountCode]); reset(); }}
                         className="text-left cursor-pointer hover:underline"
                         title="Open this account's running-balance inquiry"
                       >
-                        <span className="tabular-nums text-xs text-[#6B7280] mr-1">{t.accountCode}</span>
+                        <span className="tabular-nums text-xs text-[#6B5C32] mr-1">{t.accountCode}</span>
                         <span className="text-[#1F1D1B]">{t.accountName}</span>
                       </button>
                     </td>
-                    <td className="px-3 py-1.5 text-right">{t.debitSen ? formatCurrency(t.debitSen) : "-"}</td>
-                    <td className="px-3 py-1.5 text-right">{t.creditSen ? formatCurrency(t.creditSen) : "-"}</td>
-                    <td className={`px-3 py-1.5 text-right font-medium ${t.debitSen - t.creditSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                      {formatCurrency(t.debitSen - t.creditSen)}
-                    </td>
+                    <td data-cell="num split">{t.debitSen ? formatCurrency(t.debitSen) : "-"}</td>
+                    <td data-cell="num">{t.creditSen ? formatCurrency(t.creditSen) : "-"}</td>
+                    <td data-cell="num">{fmtLedgerBal(t.debitSen - t.creditSen)}</td>
                   </tr>
                 ))}
-                <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen, 0))}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.creditSen, 0))}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen - t.creditSen, 0))}</td>
+                <tr data-row="fin">
+                  <td>TOTAL</td>
+                  <td data-cell="num split">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.debitSen, 0))}</td>
+                  <td data-cell="num">{formatCurrency(all.accountTotals!.reduce((s, t) => s + t.creditSen, 0))}</td>
+                  <td data-cell="num">{fmtLedgerBal(all.accountTotals!.reduce((s, t) => s + t.debitSen - t.creditSen, 0))}</td>
                 </tr>
               </tbody>
             </table>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {(account || view === "flat") && (
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {loading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading ledger…</div>
-          ) : account && gl ? (
-            <div ref={inquiryScrollRef} className="overflow-auto max-h-[75vh]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-white">
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Description</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                  <th className="px-3 py-2 text-right">Debit</th>
-                  <th className="px-3 py-2 text-right">Credit</th>
-                  <th className="px-3 py-2 text-right">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* The B/F line stays mounted above the window rather than
-                    becoming item 0 — an opening balance that scrolls away is
-                    worse than the one-row coordinate offset it introduces,
-                    which the 10-row overscan absorbs. */}
-                <tr className="border-b border-[#F0ECE9] text-[#6B7280]" style={{ height: GL_ROW_PX }}>
-                  <td className="px-3 py-1.5" colSpan={5}>Opening balance</td>
-                  <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(gl.openingSen)}</td>
-                </tr>
-                {inquiryVirt.topSpacer}
-                {(inquiryVirt.active ? inquiryVirt.indices.map((i) => gl.rows[i]) : gl.rows).map((r) => {
-                  if (!r) return null;
-                  const href = sourceHref(r.sourceType, r.sourceId);
-                  return (
-                    <tr key={r.id} className="border-b border-[#F0ECE9]" style={{ height: GL_ROW_PX }}>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{String(r.postedAt).slice(0, 10)}</td>
-                      <td className="px-3 py-1.5 text-[#1F1D1B]">{r.description}</td>
-                      <td className="px-3 py-1.5 text-xs">
-                        {href ? (
-                          <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={r.sourceId}>
-                            {r.sourceType}
-                          </a>
-                        ) : (
-                          <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                      <td className={`px-3 py-1.5 text-right font-medium ${r.runningSen < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{formatCurrency(r.runningSen)}</td>
-                    </tr>
-                  );
-                })}
-                {inquiryVirt.bottomSpacer}
-                {/* Owner: window totals — total DR / total CR within the
-                    picked date range, with the closing balance alongside. */}
-                <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
-                  <td className="px-3 py-2" colSpan={3}>TOTAL{from || to ? " (filtered period)" : ""}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.totalDebitSen ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.totalCreditSen ?? 0)}</td>
-                  <td className="px-3 py-2 text-right">{formatCurrency(gl.closingSen)}</td>
-                </tr>
-              </tbody>
-            </table>
+        loading ? (
+          <Card><CardContent className="py-12 text-center text-[#6B7280] text-sm">Loading ledger…</CardContent></Card>
+        ) : account && gl ? (
+          <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5">
+              <span className="text-[14px] font-bold text-[#1F1D1B]">
+                Acc. No.: <span className="tabular-nums">{gl.account.code}</span> {gl.account.name.toUpperCase()}
+              </span>
+              <span className="text-[12.5px] tabular-nums text-[#6B7280]">
+                DR = {formatCurrency(gl.totalDebitSen ?? 0)} · CR = {formatCurrency(gl.totalCreditSen ?? 0)} · Balance = <span className="text-[#1F1D1B]">{fmtLedgerBal(drCr(gl.closingSen))}</span>
+              </span>
             </div>
-          ) : all ? (
-            <div ref={flatScrollRef} className="overflow-auto max-h-[75vh]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-white">
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Account</th>
-                  <th className="px-3 py-2 text-left">Description</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                  <th className="px-3 py-2 text-right">Debit</th>
-                  <th className="px-3 py-2 text-right">Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {flatVirt.topSpacer}
-                {(flatVirt.active ? flatVirt.indices.map((i) => all.rows[i]) : all.rows).map((r) => {
-                  if (!r) return null;
-                  const href = sourceHref(r.sourceType, r.sourceId);
-                  return (
-                    <tr key={r.id} className="border-b border-[#F0ECE9]" style={{ height: GL_ROW_PX }}>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{String(r.postedAt).slice(0, 10)}</td>
-                      <td className="px-3 py-1.5">
-                        <button
-                          onClick={() => { setPicked([r.accountCode]); reset(); }}
-                          className="text-left cursor-pointer hover:underline"
-                          title="Filter to this account"
-                        >
-                          <span className="tabular-nums text-xs text-[#6B7280] mr-1">{r.accountCode}</span>
-                          <span className="text-[#1F1D1B]">{r.accountName}</span>
-                        </button>
-                      </td>
-                      <td className="px-3 py-1.5 text-[#4B5563]">{r.description}</td>
-                      <td className="px-3 py-1.5 text-xs">
-                        {href ? (
-                          <a href={href} className="text-[#6B5C32] underline decoration-dotted hover:text-[#1F1D1B]" title={r.sourceId}>
-                            {r.sourceType}
-                          </a>
-                        ) : (
-                          <span className="text-[#6B7280]" title={r.sourceId}>{r.sourceType}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5 text-right">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
-                      <td className="px-3 py-1.5 text-right">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
-                    </tr>
-                  );
-                })}
-                {flatVirt.bottomSpacer}
-              </tbody>
-            </table>
+            <div ref={inquiryScrollRef} className="max-h-[75vh] overflow-auto border-t-[1.5px] border-[#7A6E5E]">
+              <table data-fin-report data-fin-dense>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Source</th>
+                    <th data-cell="num split">Debit</th>
+                    <th data-cell="num">Credit</th>
+                    <th data-cell="num">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* The B/F line stays mounted above the window rather than
+                      becoming item 0 — an opening balance that scrolls away is
+                      worse than the one-row coordinate offset it introduces,
+                      which the 10-row overscan absorbs. */}
+                  <tr data-row="bf" style={{ height: GL_ROW_PX }}>
+                    <td colSpan={5}>Balance B/F</td>
+                    <td data-cell="num">{fmtLedgerBal(drCr(gl.openingSen))}</td>
+                  </tr>
+                  {inquiryVirt.topSpacer}
+                  {(inquiryVirt.active ? inquiryVirt.indices.map((i) => gl.rows[i]) : gl.rows).map((r) => {
+                    if (!r) return null;
+                    const href = sourceHref(r.sourceType, r.sourceId);
+                    return (
+                      <tr
+                        key={r.id}
+                        data-row="line"
+                        style={{ height: GL_ROW_PX }}
+                        onDoubleClick={openSource(href)}
+                        title={href ? "Double-click to open the source" : undefined}
+                        className={href ? "cursor-pointer" : undefined}
+                      >
+                        <td className="text-[12px] text-[#6B7280]">{fmtDocDate(r.postedAt)}</td>
+                        <td className="text-[#1F1D1B]">{r.description}</td>
+                        <td className="text-[12px]">{sourceCell(r.sourceType, r.sourceId, href)}</td>
+                        <td data-cell="num split">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                        <td data-cell="num">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                        <td data-cell="num">{fmtLedgerBal(drCr(r.runningSen))}</td>
+                      </tr>
+                    );
+                  })}
+                  {inquiryVirt.bottomSpacer}
+                  {/* Owner: window totals — total DR / total CR within the
+                      picked date range, with the closing balance alongside. */}
+                  <tr data-row="sub" style={{ height: GL_ROW_PX }}>
+                    <td colSpan={3}>TOTAL{from || to ? " (filtered period)" : ""}</td>
+                    <td data-cell="num split">{formatCurrency(gl.totalDebitSen ?? 0)}</td>
+                    <td data-cell="num">{formatCurrency(gl.totalCreditSen ?? 0)}</td>
+                    <td data-cell="num">{fmtLedgerBal(drCr(gl.closingSen))}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : all ? (
+          <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+            <div ref={flatScrollRef} className="max-h-[75vh] overflow-auto">
+              <table data-fin-report data-fin-dense>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Account</th>
+                    <th>Description</th>
+                    <th>Source</th>
+                    <th data-cell="num split">Debit</th>
+                    <th data-cell="num">Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {flatVirt.topSpacer}
+                  {(flatVirt.active ? flatVirt.indices.map((i) => all.rows[i]) : all.rows).map((r) => {
+                    if (!r) return null;
+                    const href = sourceHref(r.sourceType, r.sourceId);
+                    return (
+                      <tr
+                        key={r.id}
+                        data-row="line"
+                        style={{ height: GL_ROW_PX }}
+                        onDoubleClick={openSource(href)}
+                        title={href ? "Double-click to open the source" : undefined}
+                        className={href ? "cursor-pointer" : undefined}
+                      >
+                        <td className="text-[12px] text-[#6B7280]">{fmtDocDate(r.postedAt)}</td>
+                        <td>
+                          <button
+                            onClick={() => { setPicked([r.accountCode]); reset(); }}
+                            className="text-left cursor-pointer hover:underline"
+                            title="Filter to this account"
+                          >
+                            <span className="tabular-nums text-xs text-[#6B5C32] mr-1">{r.accountCode}</span>
+                            <span className="text-[#1F1D1B]">{r.accountName}</span>
+                          </button>
+                        </td>
+                        <td className="text-[#4B5563]">{r.description}</td>
+                        <td className="text-[12px]">{sourceCell(r.sourceType, r.sourceId, href)}</td>
+                        <td data-cell="num split">{r.debitSen ? formatCurrency(r.debitSen) : ""}</td>
+                        <td data-cell="num">{r.creditSen ? formatCurrency(r.creditSen) : ""}</td>
+                      </tr>
+                    );
+                  })}
+                  {flatVirt.bottomSpacer}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null
       )}
       <BackToTopButton />
     </div>
@@ -9816,13 +10426,17 @@ type PvRow = {
   partyKind?: "SUPPLIER" | "OTHER" | null;
   partyId?: string | null;
   advanceSen?: number;
+  // An AP Payment that draws on trade finance (finance backlog item 17).
+  tfDueDate?: string | null; tf_due_date?: string | null;
+  tfInterestSen?: number | null; tf_interest_sen?: number | null;
   advanceOpenSen?: number;
   allocs?: PvAllocOut[];
   // Evidence on file (Houzs adoption 2026-09-22): count on the row, the list
   // loads on expand; print bundle = voucher + every attachment.
   attachmentCount?: number;
 };
-type PvAllocOut = { docKind: "PI" | "AP"; docId: string; docNo: string; docRef: string; amountSen: number };
+// TF = a trade-finance drawdown repaid by an AP Payment to the lender (item 17).
+type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; docRef: string; amountSen: number };
 // The voucher form (owner 2026-10-01, the layout he showed): Payment = expense
 // lines; Transfer = money between our own bank / cash accounts.
 type PvFormState = {
@@ -9914,10 +10528,15 @@ async function attachmentToPages(a: PvAttachment): Promise<string[]> {
   throw new Error(`${a.filename}: ${a.contentType} cannot be printed`);
 }
 type PvOpenBill = {
-  docKind: "PI" | "AP"; id: string; no: string; ref: string; date: string; dueDate: string | null;
+  docKind: "PI" | "AP" | "TF"; id: string; no: string; ref: string; date: string; dueDate: string | null;
   totalSen: number; paidSen: number; outstandingSen: number; reservedSen: number; reservedBy: string[]; availableSen: number;
   currency: string; foreign: boolean; opening: boolean;
+  /** A drawdown (docKind TF): the interest in its balance. */
+  interestSen?: number;
 };
+// The supplier picked on an AP Payment is a trade-finance lender: its lines are
+// drawdowns and the voucher repays them (finance backlog item 17).
+type PvTfLender = { accountCode: string; lenderName: string };
 type PvStatusChip = "ALL" | "DRAFT" | "PREPARED" | "CHECKED" | "APPROVED" | "ADVANCE_OPEN" | "CANCELLED";
 const PV_STATUS_CHIPS: { key: PvStatusChip; label: string }[] = [
   { key: "ALL", label: "All" }, { key: "DRAFT", label: "Draft" }, { key: "PREPARED", label: "Prepared" }, { key: "CHECKED", label: "Checked" },
@@ -10020,14 +10639,81 @@ function buildPayRows(pv: PvRow[] | null, sp: SupplierPaymentGroup[] | null, ocp
   return rows.sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
 }
 
-// The settled-bills detail block for a voucher's print: an AP voucher carries
-// its ticks (draft or posted), so no round-trip is needed.
-function pvApPrintDetail(pv: PvRow): { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[] | undefined {
+// The Payment Vouchers list rows (finance v2, owner 2026-10-16): each payment
+// with the text its columns show, so the grid sorts, filters, searches and
+// exports what the eye reads. Built once per load (stable rows — BUG-CLASSES
+// C24: an unstable list re-emits the selection forever).
+type PayGridRow = PayRow & {
+  payeeText: string; descText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
+  statusLabel: string; status: FinStatus;
+};
+function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
+  const bank = (code: string | null | undefined) => {
+    if (!code) return "";
+    const short = shortBankName(accounts.find((a) => a.code === code)?.name);
+    return short ? `${code} ${short}` : code;
+  };
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const r = row.pv;
+  let payeeText = row.payee;
+  let descText = "";
+  let viaLabel = bank(row.via);
+  let lineText = "";
+  let lineTitle = "";
+  let billNos = "";
+  let status: FinStatus;
+  if (r) {
+    const toAcct = r.lines[0]?.accountCode ?? "";
+    const toName = shortBankName(accounts.find((a) => a.code === toAcct)?.name) || toAcct;
+    payeeText = r.pvKind === "TRANSFER" ? `Transfer to ${toName}` : (r.payee ?? "");
+    descText = r.description ?? "";
+    viaLabel = r.accrued === 1 && !r.settledAt ? `accrued → ${r.accrualAccount ?? ""}` : bank(r.payFrom);
+    if (r.pvKind === "AP") {
+      const allocs = r.allocs ?? [];
+      lineText = `${plural(allocs.length, "bill")}${(r.advanceSen ?? 0) > 0 ? " + advance" : ""}`;
+      lineTitle = allocs.map((a) => `${a.docNo} ${formatCurrency(a.amountSen)}`).join("\n");
+      billNos = allocs.map((a) => a.docNo).join(" ");
+    } else if (r.pvKind === "TRANSFER") {
+      lineText = `→ ${toName}`;
+    } else {
+      lineText = plural(r.lines.length, "line");
+    }
+    status = pvStatus({
+      status: r.status, approvalState: r.approvalState ?? r.approval_state, advanceOpenSen: r.advanceOpenSen,
+      accrued: r.accrued, settledAt: r.settledAt, rejectReason: r.rejectReason ?? r.reject_reason, pvNo: r.pvNo,
+    });
+  } else if (row.sp) {
+    const invoices = row.sp.lines.filter((l) => l.purchaseInvoiceId).length;
+    const advance = spAdvanceOpenSen(row.sp);
+    lineText = `${plural(invoices, "invoice")}${advance > 0 ? " + advance" : ""}`;
+    lineTitle = row.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n");
+    billNos = row.sp.lines.map((l) => l.piNo ?? "").join(" ");
+    status = foreignPayStatus(row.state, advance, PAY_DOOR_HINT[row.door]);
+  } else if (row.ocp) {
+    descText = row.ocp.reference ?? "";
+    lineText = plural(row.ocp.lines.length, "bill");
+    lineTitle = row.ocp.lines.map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n");
+    billNos = row.ocp.lines.map((l) => l.billNo).join(" ");
+    status = foreignPayStatus(row.state, 0, PAY_DOOR_HINT[row.door]);
+  } else {
+    descText = row.ft?.description ?? "";
+    lineText = `→ ${row.ft?.toName || row.ft?.toAccount || ""}`;
+    status = foreignPayStatus(row.state, 0, PAY_DOOR_HINT[row.door]);
+  }
+  return { ...row, payeeText, descText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
+}
+
+// The settled-bills detail block for a voucher's print when its print detail
+// (GET /api/accounting/ap-payment-print) cannot be loaded: an AP voucher
+// carries its ticks (draft or posted), so the bills still print — without
+// their dates and balances.
+function pvApFallbackDetail(pv: PvRow): ApPrintDetail | undefined {
   if (pv.pvKind !== "AP") return undefined;
-  const rows: { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number }[] =
-    (pv.allocs ?? []).map((a) => ({ supplierName: pv.payee ?? "", piNo: a.docNo || a.docId, opening: false, method: "", bookedSen: a.amountSen }));
-  if ((pv.advanceSen ?? 0) > 0) rows.push({ supplierName: pv.payee ?? "", piNo: null, opening: false, method: "", bookedSen: pv.advanceSen ?? 0 });
-  return rows.length ? rows : undefined;
+  return {
+    bills: (pv.allocs ?? []).map((a) => ({ docNo: a.docNo || a.docId, supplierInvNo: a.docRef ?? "", billDate: "", dueDate: "", outstandingBeforeSen: null, paidSen: a.amountSen })),
+    advanceSen: pv.advanceSen ?? 0,
+    balanceBeforeSen: null,
+  };
 }
 
 // Attachments block inside an expanded voucher row: the files on record, add
@@ -10170,13 +10856,14 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     { accountCode: "", description: "", amount: "" },
   ]);
 
-  const [q, setQ] = useState("");
+  // The status chip; search, dates, bank and door are the grid's own search
+  // box and column funnels (finance v2).
   const [statusFilter, setStatusFilter] = useState<PvStatusChip>("ALL");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [bankFilter, setBankFilter] = useState("");
-  // Which door the row came in by (all four by default).
-  const [doorFilter, setDoorFilter] = useState<"" | PayDoor>("");
+  // The ticked rows — the grid owns the ticks (only the checkbox changes
+  // them); a batch clears them by bumping the token.
+  const [picked, setPicked] = useState<PayGridRow[]>([]);
+  const [clearPickedToken, setClearPickedToken] = useState(0);
+  const clearPicked = () => setClearPickedToken((t) => t + 1);
   // Ladder actions in flight (single or batch) — buttons disable meanwhile.
   const [ladderBusy, setLadderBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -10206,10 +10893,16 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     partyId: initialPay?.partyId ?? "",
     reference: "",
     advance: "",
+    // Paid from a trade-finance line (a drawdown): its due date (blank =
+    // the payment date + the line's tenor) and the interest at drawdown.
+    tfDue: "",
+    tfInterest: "",
   });
+  // The trade-finance lines (GET /trade-finance): Paid from may draw on one.
+  const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[]>([]);
   const [apAlloc, setApAlloc] = useState<Record<string, string>>({});
   // apBills carries the key it was loaded for; a key mismatch = loading.
-  const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[] } | null>(null);
+  const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } | null>(null);
   const [suppliers, setSuppliers] = useState<{ id: string; code?: string | null; name: string; isActive?: boolean }[]>([]);
   const [otherCreditors, setOtherCreditors] = useState<{ id: string; name: string; type: string; isActive?: boolean }[]>([]);
   // The deep-linked bill gets ticked in full once the creditor's list is here.
@@ -10222,6 +10915,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     fetch("/api/accounting/other-parties").then((r) => r.json() as Promise<{ success?: boolean; data?: typeof otherCreditors }>)
       .then((j) => { if (!dead && j?.success) setOtherCreditors((j.data ?? []).filter((p) => p.type === "CREDITOR" && p.isActive !== false)); })
       .catch(() => {});
+    fetch("/api/accounting/trade-finance").then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: { accountCode: string; accountName?: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[] } }>)
+      .then((j) => { if (!dead && j?.success) setTfLines((j.data?.sources ?? []).map((t) => ({ accountCode: t.accountCode, accountName: t.accountName ?? "", lenderName: t.lenderName, lenderSupplierId: t.lenderSupplierId, tenorDays: Number(t.tenorDays) || 90 }))); })
+      .catch(() => {});
     return () => { dead = true; };
   }, []);
   // Bills reload whenever the creditor changes (and once on edit, keyed by the
@@ -10233,7 +10929,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const [partyKind, partyId, exclude] = apBillsKey.split("|");
     let dead = false;
     fetch(`/api/accounting/payment-vouchers/open-bills?partyKind=${partyKind}&partyId=${encodeURIComponent(partyId)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: { partyName: string; advanceOpenSen: number; bills: PvOpenBill[] } }>)
+      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: { partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } }>)
       .then((j) => {
         if (dead) return;
         if (j?.success && j.data) {
@@ -10344,29 +11040,63 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   };
   const chipCount = (chip: PvStatusChip) => payRows.filter((r) => matchesChip(r, chip)).length;
   const doorCount = (d: PayDoor) => payRows.filter((r) => r.door === d).length;
-  const visibleRows = payRows.filter((row) => {
-    if (doorFilter && row.door !== doorFilter) return false;
-    if (q.trim()) {
-      const kw = q.toLowerCase();
-      const hay = [
-        row.no, row.payee, row.note,
-        ...(row.pv?.allocs ?? []).map((a) => a.docNo),
-        ...(row.sp?.lines ?? []).map((l) => l.piNo ?? ""),
-        ...(row.ocp?.lines ?? []).map((l) => l.billNo),
-      ];
-      if (!hay.some((s) => s.toLowerCase().includes(kw))) return false;
-    }
-    if (!matchesChip(row, statusFilter)) return false;
-    if (dateFrom && row.date < dateFrom) return false;
-    if (dateTo && row.date > dateTo) return false;
-    if (bankFilter && row.via !== bankFilter) return false;
-    return true;
-  });
-  // A supplier payment with no bank leg on the ledger (contra) has no bank to
-  // match, so picking a bank hides it — say so instead of letting it vanish.
-  const bankHiddenSp = bankFilter ? payRows.filter((r) => r.door === "SP" && !r.via).length : 0;
-
-  const pvSel = useRowSelection(visibleRows, (r) => r.key);
+  // The list (finance v2): the chip narrows it here; the grid's search (with
+  // the settled bill numbers) and its funnels do the rest. A supplier payment
+  // with no bank leg (contra) reads "(no bank leg)" in the Paid From funnel,
+  // so it is never hidden without a word. Memoised: the grid's selection
+  // emission compares row identity (BUG-CLASSES C24).
+  const gridRows = useMemo(
+    () => payRows.filter((row) => matchesChip(row, statusFilter)).map((row) => payGridRow(row, accounts)),
+    // matchesChip reads only the row and the chip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [payRows, statusFilter, accounts],
+  );
+  // The design's PV table columns. Stable (BUG-CLASSES C24); every cell reads
+  // only its row.
+  const payColumns = useMemo<Column<PayGridRow>[]>(() => [
+    { key: "no", label: "PV No", width: "190px", filterAccessor: (r) => PAY_DOOR_LABEL[r.door], exportValue: (r) => r.no, sortAccessor: (r) => r.no,
+      render: (_v, r) => (
+        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+          <span className="font-semibold tabular-nums text-[#1F1D1B]">{r.no}</span>
+          {payDoorChip(r.door)}
+          {(r.pv?.attachmentCount ?? 0) > 0 && (
+            <span className="text-[11px] text-[#6B7280]" title={`${r.pv?.attachmentCount} attachment${r.pv?.attachmentCount === 1 ? "" : "s"} — double-click to see`}>📎{r.pv?.attachmentCount}</span>
+          )}
+        </span>
+      ) },
+    { key: "date", label: "Date", type: "date", width: "120px",
+      render: (_v, r) => <span className="text-[#6B7280]">{fmtDocDate(r.date)}</span> },
+    { key: "payeeText", label: "Payee / Description", width: "300px", noClip: true,
+      exportValue: (r) => [r.payeeText, r.descText].filter(Boolean).join(" · "),
+      render: (_v, r) => (
+        <div className="min-w-0 py-0.5">
+          <div className="truncate font-medium text-[#1F2937]" title={r.payeeText}>{r.payeeText}</div>
+          {r.descText && <div className="truncate text-[12px] text-[#6B7280]" title={r.descText}>{r.descText}</div>}
+        </div>
+      ) },
+    { key: "viaLabel", label: "Paid From", width: "190px", filterAccessor: (r) => r.viaLabel || (r.door === "SP" ? "(no bank leg)" : "—"),
+      render: (_v, r) => (r.pv && r.pv.accrued === 1 && !r.pv.settledAt
+        ? <span className="text-[12px] text-[#9A3A2D]">{r.viaLabel}</span>
+        : r.viaLabel
+          ? <span className="text-[12px]">{r.viaLabel}</span>
+          : <span className="text-[#9CA3AF]" title="No bank leg on this payment's ledger posting (contra settlement)">—</span>) },
+    { key: "lineText", label: "Line", width: "150px",
+      render: (_v, r) => <span className="text-[12px] text-[#6B7280]" title={r.lineTitle || undefined}>{r.lineText}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px", total: (rows) => activeTotalSen(rows),
+      render: (v) => <span className="font-semibold tabular-nums">{formatCurrency(Number(v) || 0)}</span> },
+    { key: "statusLabel", label: "Status", width: "250px", noClip: true,
+      render: (_v, r) => {
+        const reason = r.pv ? (r.pv.rejectReason ?? r.pv.reject_reason) : null;
+        return (
+          <div className="py-0.5">
+            <FinPill tone={r.status.tone} title={r.status.title}>{r.status.label}</FinPill>
+            {reason && r.pv && r.pv.status !== "VOID" && (r.pv.approvalState ?? r.pv.approval_state) === "DRAFT" && (
+              <div className="mt-0.5 max-w-[16rem] truncate text-[11px] text-[#9A3A2D]" title={reason}>↩ {reason}</div>
+            )}
+          </div>
+        );
+      } },
+  ], []);
 
   const resetForm = () => {
     setShowForm(false);
@@ -10375,7 +11105,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setPendingScanFiles([]);
     setForm(blankPvForm());
     setLines([{ accountCode: "", description: "", amount: "" }]);
-    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", advance: "" });
+    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", advance: "", tfDue: "", tfInterest: "" });
     setApAlloc({});
     setApBills(null);
   };
@@ -10388,21 +11118,27 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // AP form derived figures. Unreadable amounts stop the save (same money
   // parser as the expense lines — BUG-2026-08-13-095).
   const apTicked = (apBills?.bills ?? []).filter((b) => (apAlloc[b.id] ?? "").trim() !== "");
+  const apTfLender = apBills?.tfLender ?? null;
+  // Paid from a trade-finance line = a drawdown (an ordinary supplier only).
+  const apTfDraw = !apTfLender && apForm.partyKind === "SUPPLIER"
+    ? tfLines.find((t) => t.accountCode === apForm.payFrom && t.lenderSupplierId !== apForm.partyId) ?? null
+    : null;
   const apMoneyError = firstMoneyFieldError([
     ...apTicked.map((b) => ({ label: `${b.no} amount`, value: apAlloc[b.id] ?? "" })),
     ...(apForm.advance.trim() ? [{ label: "Advance", value: apForm.advance }] : []),
+    ...(apTfDraw && apForm.tfInterest.trim() ? [{ label: "Interest at drawdown", value: apForm.tfInterest }] : []),
   ]);
   // One parser for the AP form's money cells (display + payload); an
   // unreadable cell is refused by handleSaveAp before any figure is sent.
   const apSen = (v: string) => moneyFieldToSen(v) ?? 0;
   const apAllocSen = apTicked.reduce((s, b) => s + apSen(apAlloc[b.id] ?? ""), 0);
-  const apAdvanceSen = apSen(apForm.advance);
+  const apAdvanceSen = apTfLender ? 0 : apSen(apForm.advance);
   const apTotalSen = apAllocSen + apAdvanceSen;
   const apOverAlloc = apTicked.find((b) => apSen(apAlloc[b.id] ?? "") > b.availableSen);
   const handleSaveAp = async (mode: "draft" | "post") => {
     if (apMoneyError) { toast.error(apMoneyError); return; }
     if (apOverAlloc) { toast.error(`${apOverAlloc.no}: more than the ${formatCurrency(apOverAlloc.availableSen)} still payable`); return; }
-    if (apTotalSen <= 0) { toast.error("Tick at least one bill (or enter an advance)"); return; }
+    if (apTotalSen <= 0) { toast.error(apTfLender ? "Tick at least one drawdown to repay" : "Tick at least one bill (or enter an advance)"); return; }
     const body = {
       kind: "AP",
       date: apForm.date,
@@ -10412,6 +11148,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       description: apForm.reference,
       advanceSen: apForm.partyKind === "SUPPLIER" ? apAdvanceSen : 0,
       allocations: apTicked.map((b) => ({ docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") })).filter((a) => a.amountSen > 0),
+      ...(apTfDraw ? { tfDueDate: apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays), tfInterestSen: apSen(apForm.tfInterest) } : {}),
       saveAs: mode === "draft" && !editingId ? "draft" : undefined,
     };
     setSaving(true);
@@ -10423,7 +11160,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       });
       const j = asMutationResponse(await res.json());
       if (j?.success) {
-        toast.success(editingId ? "AP payment updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : "AP payment posted — bills knocked off");
+        toast.success(editingId ? "AP payment updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : apTfLender ? "Trade-finance repayment posted" : apTfDraw ? "Drawdown posted — the bills are paid through trade finance" : "AP payment posted — bills knocked off");
         resetForm();
         load();
       } else toast.error(j?.error || "Save failed");
@@ -10474,9 +11211,17 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const raw = (await res.json()) as { data?: { id?: string } };
+      const raw = (await res.json()) as { data?: { id?: string; pvNo?: string } };
       const j = asMutationResponse(raw);
       if (j?.success) {
+        // A line on a fixed-asset account → the Fixed Assets page opens Add
+        // New Asset filled in from it (backlog item 11, owner 2026-10-17).
+        const faPrefills = isTransfer ? [] : fixedAssetPrefills({
+          ref: raw?.data?.pvNo ?? (rows ?? []).find((x) => x.id === editingId)?.pvNo ?? "",
+          date: form.date,
+          description: form.description || form.payee,
+          lines: postableLines.map((l) => ({ accountCode: l.accountCode, description: l.description, amountSen: toSen(l.amount) })),
+        }, accounts);
         // Scan Receipt → the scanned file rides along as the new voucher's evidence.
         const newId = !editingId ? raw?.data?.id : undefined;
         if (newId) {
@@ -10490,6 +11235,11 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         toast.success(editingId ? "Voucher updated" : mode === "draft" ? "Draft saved — Prepare it when ready" : isTransfer ? "Transfer posted" : "Payment posted");
         resetForm();
         load();
+        const faFresh = faPrefills.length ? withoutRegistered(faPrefills, await fetchFaRegister()) : [];
+        if (putFaQueue(sessionStore(), faFresh)) {
+          toast.info(`${faFresh.length} line${faFresh.length === 1 ? "" : "s"} went to a fixed-asset account — add the asset to the register.`);
+          navigate("/accounting?tab=assets");
+        }
       } else toast.error(j?.error || (editingId ? "Update failed" : "Save failed"));
     } finally {
       setSaving(false);
@@ -10523,7 +11273,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Batch rung over the ticked vouchers (date order on the server).
   const handleLadderBatch = async (action: "prepare" | "check" | "approve") => {
     // Only this page's own vouchers ride the ladder; a ticked foreign row is skipped.
-    const ids = pvSel.selectedRows.map((r) => r.pv?.id).filter((id): id is string => !!id);
+    const ids = picked.map((r) => r.pv?.id).filter((id): id is string => !!id);
     if (!ids.length) return;
     if (action === "approve" && !(await confirm({ title: "Approve & post all?", message: `${ids.length} voucher${ids.length === 1 ? "" : "s"} will be posted to the ledger.` }))) return;
     setLadderBusy(true);
@@ -10537,7 +11287,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         const failed = j.data.results.filter((x) => !x.ok);
         if (failed.length === 0) toast.success(`${j.data.done} voucher${j.data.done === 1 ? "" : "s"} ${action === "approve" ? "approved & posted" : action === "check" ? "checked" : "prepared"}`);
         else toast.error(`${j.data.done} done · ${failed.length} skipped — ${failed[0].error ?? ""}`);
-        pvSel.clear();
+        clearPicked();
         load();
       } else toast.error(j?.error || "Batch failed");
     } finally { setLadderBusy(false); }
@@ -10560,12 +11310,18 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (j?.success) { setPrintFooter(footerDraft); setFooterOpen(false); toast.success("Print footer saved"); }
     else toast.error(j?.error || "Save failed");
   };
-  // Print with the settled-bills detail when the voucher is a supplier payment
-  // (its lines hit the AP control) — fetched on demand so the list stays light.
+  // Print with the bills a payment settles — an AP Payment's from its print
+  // detail (dates, balances before; print design 1a), a legacy voucher whose
+  // lines hit the creditor control from the bank-reco payment detail — fetched
+  // on demand so the list stays light.
   const pvPrintSpec = async (r: PvRow): Promise<VoucherSpec> => {
+    if (r.pvKind === "AP") {
+      const ap = (await fetchApPrintDetail(r.pvNo)) ?? pvApFallbackDetail(r);
+      return { ...buildPvVoucher(r, accounts, undefined, ap), footerText: printFooter };
+    }
     type DetailRow = { supplierName: string; piNo: string | null; opening: boolean; method: string; bookedSen: number };
-    let detail: DetailRow[] | undefined = pvApPrintDetail(r);
-    if (!detail && r.lines.some((l) => l.accountCode.startsWith("400") || l.accountCode.startsWith("405"))) {
+    let detail: DetailRow[] | undefined;
+    if (r.lines.some((l) => l.accountCode.startsWith("400") || l.accountCode.startsWith("405"))) {
       try {
         const res = await fetch(`/api/accounting/bank-reco/payment-detail?paymentNo=${encodeURIComponent(r.pvNo)}`);
         const j = await res.json() as { success?: boolean; data?: { rows: DetailRow[] } };
@@ -10591,12 +11347,15 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     } finally { setBundleBusy(null); }
   };
   // Print one row whatever door it came in by — each document's own builder,
-  // so the paper is identical to its own page's.
-  const payVoucherOf = (row: PayRow): VoucherSpec =>
-    row.pv ? { ...buildPvVoucher(row.pv, accounts), footerText: printFooter }
-    : row.sp ? buildSupplierPaymentVoucher(row.sp)
+  // so the paper is identical to its own page's; the bills detail is loaded
+  // for every door that pays bills, in a batch too (BUG-2026-10-17-311: batch
+  // print used to drop an AP voucher's bills).
+  const payVoucherOf = async (row: PayRow): Promise<VoucherSpec> =>
+    row.pv ? pvPrintSpec(row.pv)
+    : row.sp ? buildSupplierPaymentVoucher({ ...row.sp, bankLabel: row.sp.bankAccount ? accountLabel(accounts, row.sp.bankAccount) : null }, (await fetchApPrintDetail(row.sp.paymentNo)) ?? undefined)
     : row.ft ? buildFundTransferVoucher(row.ft, accounts)
-    : buildOtherPartyPaymentVoucher(row.ocp!, accounts);
+    : buildOtherPartyPaymentVoucher(row.ocp!, accounts, (await fetchApPrintDetail(row.ocp!.paymentNo)) ?? undefined);
+  const printPayRows = async (list: PayRow[]) => { printVouchers(await Promise.all(list.map(payVoucherOf))); };
   // A foreign row voids / restores through its own document's endpoint — the
   // same call its own page makes (the Receipts hub does exactly this).
   const handleForeignLifecycle = async (row: PayRow, action: "void" | "delete" | "unvoid") => {
@@ -10705,6 +11464,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       const af = {
         date: r.date, payFrom: r.payFrom ?? "", partyKind: (r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER", partyId: r.partyId ?? "",
         reference: r.description ?? "", advance: (r.advanceSen ?? 0) > 0 ? ((r.advanceSen ?? 0) / 100).toFixed(2) : "",
+        tfDue: String(r.tfDueDate ?? r.tf_due_date ?? "").slice(0, 10),
+        tfInterest: (Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) > 0 ? ((Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) / 100).toFixed(2) : "",
       };
       const alloc: Record<string, string> = Object.fromEntries((r.allocs ?? []).map((a) => [a.docId, (a.amountSen / 100).toFixed(2)]));
       setFormKind("AP");
@@ -10841,9 +11602,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02 「这个显示太多了，
   // 能不能 right click 才选我的东西」) — the same actions as the popup's buttons;
-  // the rows carry no action links.
+  // the rows carry no action links. The list is a DataGrid (finance v2): its
+  // own context menu shows these groups through rowMenuItems.
   const navigate = useNavigate();
-  const rowMenu = useRowMenu();
   const pvRowMenu = (r: PvRow): RowMenuGroups => {
     const st = apState(r);
     const live = r.status !== "VOID";
@@ -10881,7 +11642,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     [{ label: "Open", action: () => setDetailPayKey(g.key) }],
     [
       ...(g.ft && g.state === "ACTIVE" ? [{ label: "Edit description", action: () => setEditFtNo(g.no) }] : []),
-      { label: "Print", action: () => printVoucher(payVoucherOf(g)) },
+      { label: "Print", action: () => void printPayRows([g]) },
       { label: `Open on the ${PAY_DOOR_LABEL[g.door]} page ↗`, action: () => navigate(foreignHref(g)) },
     ],
     lifecycleMenuItems(g.state, {
@@ -10893,35 +11654,34 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      {rowMenu.element}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Payment Vouchers</h2>
-          <p className="text-[11px] text-[#9CA3AF]">Every payment out, one door. <b>AP Payment</b> pays a creditor's bills (purchase invoices / other-creditor bills); <b>Payment Voucher</b> pays an expense. Draft → Prepared → Checked → Approved (posted), or Post now. Foreign-currency PIs, advance knock-off and trade-finance repayment: <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payment page</Link>. Payments recorded there and on <Link to="/accounting?tab=ocreditorpay" className="underline decoration-dotted text-[#6B5C32]">Other Creditor Payments</Link> are listed below too (badges <b>SP</b> / <b>OCP</b>) — same HPV number series, one list.</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <ScanVouchers accounts={accounts} bankCash={bankCash} onDone={load} onOpenInForm={openScanInForm} />
-          <Button variant="primary" size="sm" onClick={() => (showForm && formKind === "AP" && !editingId ? resetForm() : openNew("AP"))} title="Pay a supplier's purchase invoices or an other creditor's bills">
-            <Plus className="h-4 w-4" /> New AP Payment
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => (showForm && formKind === "EXPENSE" && !editingId ? resetForm() : openNew("EXPENSE"))} title="Pay an expense straight to its account">
-            <Plus className="h-4 w-4" /> New Payment Voucher
-          </Button>
-        </div>
-      </div>
+      {/* On the page's title row (finance v2): ⚙ print footer · Scan · New
+          Payment Voucher · New AP Payment (the main action, last). The page's
+          explanation sits behind the (i) next to the title. */}
+      <FinanceTitleActions>
+        <Button
+          variant="outline" size="sm" aria-label="Print footer"
+          title={`Print footer${printFooter ? `: ${printFooter.split(/\r?\n/)[0].slice(0, 60)}${printFooter.length > 60 || /\n/.test(printFooter) ? "…" : ""}` : " — none, nothing extra printed"} · click to edit`}
+          onClick={() => { setFooterDraft(printFooter); setFooterOpen(true); }}
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+        <ScanVouchers accounts={accounts} bankCash={bankCash} onDone={load} onOpenInForm={openScanInForm} />
+        <Button variant="outline" size="sm" onClick={() => (showForm && formKind === "EXPENSE" && !editingId ? resetForm() : openNew("EXPENSE"))} title="Pay an expense straight to its account">
+          <Plus className="h-4 w-4" /> New Payment Voucher
+        </Button>
+        <Button variant="primary" size="sm" onClick={() => (showForm && formKind === "AP" && !editingId ? resetForm() : openNew("AP"))} title="Pay a supplier's purchase invoices or an other creditor's bills">
+          <Plus className="h-4 w-4" /> New AP Payment
+        </Button>
+      </FinanceTitleActions>
       {migrationMissing && (
         <Card><CardContent className="p-4 text-sm text-[#9A3A2D]">Migration 0159 not applied yet — run the paste-version SQL first.</CardContent></Card>
       )}
-      <div className="text-[11px] text-[#9CA3AF] flex items-center gap-2">
-        <span>Print footer{printFooter ? `: ${printFooter.split(/\r?\n/)[0].slice(0, 60)}${printFooter.length > 60 || /\n/.test(printFooter) ? "…" : ""}` : ": (none — nothing extra printed)"}</span>
-        <button onClick={() => { setFooterDraft(printFooter); setFooterOpen(true); }} className="underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B] cursor-pointer">edit</button>
-      </div>
       {footerOpen && (
         <Card>
           <CardContent className="p-4 space-y-2">
             <div className="text-sm font-semibold text-[#1F1D1B]">Print footer — payment details / terms on every voucher</div>
             <p className="text-[11px] text-[#6B7280]">Printed above the signature lines. Leave empty to print nothing. Line breaks are kept.</p>
-            <textarea value={footerDraft} onChange={(e) => setFooterDraft(e.target.value)} rows={4} className="w-full rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" placeholder={"e.g. Payment by bank transfer — Hong Leong Bank 123-456789-0 / All cheques payable to HOOKKA MANUFACTURING SDN BHD"} />
+            <textarea value={footerDraft} onChange={(e) => setFooterDraft(e.target.value)} rows={4} className="w-full rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" placeholder={"e.g. Payment by bank transfer — Hong Leong Bank 123-456789-0 / All cheques payable to HOOKKA INDUSTRIES SDN BHD"} />
             <div className="flex gap-2">
               <Button variant="primary" size="sm" onClick={() => void saveFooter()}>Save</Button>
               <Button variant="outline" size="sm" onClick={() => setFooterOpen(false)}>Cancel</Button>
@@ -10989,11 +11749,32 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <select value={apForm.payFrom || defaultBankCode(bankCash)} onChange={(e) => setApForm({ ...apForm, payFrom: e.target.value })} className={`${selCls} w-full`}>
                           <option value="">— pick bank / cash —</option>
                           {bankCash.map((a) => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}
+                          {apForm.partyKind === "SUPPLIER" && !apTfLender && tfLines.filter((t) => t.lenderSupplierId !== apForm.partyId).map((t) => (
+                            <option key={t.accountCode} value={t.accountCode}>{t.accountCode} · {t.accountName || t.lenderName} · trade finance</option>
+                          ))}
                         </select>
                       </div>
+                      {apTfDraw && (
+                        <div className="sm:col-span-2 rounded-md border border-[#C9D4E5] bg-[#EEF2FB] p-3 space-y-2">
+                          <div className="text-[11px] text-[#2C4170]">
+                            <span className="font-semibold">Drawing on trade finance</span> — {apTfDraw.lenderName} pays the supplier for us: DR creditor control · CR {apTfDraw.accountCode}. No bank money moves now; the drawdown shows in Creditor Aging and Daily Cash Position until it is repaid. The interest is recorded at drawdown: DR 900-I004 · CR {apTfDraw.accountCode}, dated the payment date.
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className={fieldLabel}>Due date *</label>
+                              <input type="date" value={apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays)} onChange={(e) => setApForm({ ...apForm, tfDue: e.target.value })} className={`${selCls} w-full`} />
+                              <div className="mt-1 text-[10px] text-[#6B7280]">default: payment date + {apTfDraw.tenorDays} days</div>
+                            </div>
+                            <div>
+                              <label className={fieldLabel}>Interest at drawdown (RM)</label>
+                              <input type="text" placeholder="0.00" value={apForm.tfInterest} onChange={(e) => setApForm({ ...apForm, tfInterest: e.target.value })} className={`${selCls} w-full text-right tabular-nums ${isUnreadableMoney(apForm.tfInterest) ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <div className="sm:col-span-2">
                         <label className={fieldLabel}>Reference / remarks</label>
-                        <input type="text" placeholder="e.g. TT ref, cheque no" value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
+                        <input type="text" placeholder={apTfDraw ? "Bank's drawdown no." : "e.g. TT ref, cheque no"} value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
                       </div>
                     </div>
                   </div>
@@ -11001,7 +11782,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
                 <section className="rounded-md border border-[#E2DDD8] bg-white">
                   <div className={sectionHead}>
-                    <span>Bills to pay{apBills?.partyName ? ` · ${apBills.partyName}` : ""}</span>
+                    <span>{apTfLender ? "Drawdowns to repay" : "Bills to pay"}{apBills?.partyName ? ` · ${apBills.partyName}` : ""}</span>
                     <span className="normal-case font-normal text-[#6B7280] tracking-normal">total {apMoneyError ? "—" : formatCurrency(apTotalSen)}</span>
                   </div>
                   <div className="p-4 space-y-3">
@@ -11010,6 +11791,57 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   <div className="text-xs text-[#9CA3AF] border border-dashed border-[#E2DDD8] rounded-md px-3 py-4">Pick the creditor first — its unpaid bills appear here.</div>
                 ) : apBillsLoading || apBills === null ? (
                   <div className="text-xs text-[#9CA3AF] px-3 py-4">Loading bills…</div>
+                ) : apTfLender && apBills.bills.length === 0 ? (
+                  <div className="text-xs text-[#9CA3AF] border border-dashed border-[#E2DDD8] rounded-md px-3 py-4">No open drawdowns on this trade-finance line.</div>
+                ) : apTfLender ? (
+                  <div className="space-y-2">
+                    <div className="text-[11px] text-[#6B7280]">Repays trade finance: DR {apTfLender.accountCode} · CR Paid from. Tick a drawdown to repay it in full, or type a part payment. The interest was recorded at drawdown and is part of the balance.</div>
+                    <div className="border border-[#E2DDD8] rounded-md overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-[#FAF8F5] text-[11px] font-medium text-[#9CA3AF]">
+                            <th className="px-2.5 py-1.5 w-8" />
+                            <th className="px-2.5 py-1.5 text-left">Drawdown</th>
+                            <th className="px-2.5 py-1.5 text-left">For</th>
+                            <th className="px-2.5 py-1.5 text-left">Drawn</th>
+                            <th className="px-2.5 py-1.5 text-left">Due</th>
+                            <th className="px-2.5 py-1.5 text-right">Balance</th>
+                            <th className="px-2.5 py-1.5 text-right">Interest (at drawdown)</th>
+                            <th className="px-2.5 py-1.5 text-right">Repay (RM)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {apBills.bills.map((b) => {
+                            const ticked = (apAlloc[b.id] ?? "") !== "";
+                            const over = ticked && apSen(apAlloc[b.id] ?? "") > b.availableSen;
+                            return (
+                              <tr key={b.id} className="border-t border-[#F0ECE9]">
+                                <td className="px-2.5 py-1">
+                                  <input type="checkbox" checked={ticked} disabled={b.availableSen <= 0}
+                                    onChange={(e) => setAmt(b.id, e.target.checked ? (b.availableSen / 100).toFixed(2) : "")}
+                                    className="h-3.5 w-3.5 accent-[#6B5C32]" title="Tick = repay in full; edit the amount for a part payment" />
+                                </td>
+                                <td className="px-2.5 py-1 whitespace-nowrap tabular-nums font-semibold">{b.no}</td>
+                                <td className="px-2.5 py-1 text-[#6B7280]">{b.ref || "—"}</td>
+                                <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.date ? fmtDocDate(b.date) : "—"}</td>
+                                <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.dueDate ? fmtDocDate(b.dueDate) : "—"}</td>
+                                <td className="px-2.5 py-1 text-right tabular-nums">
+                                  {formatCurrency(b.outstandingSen)}
+                                  {b.reservedSen > 0 && <div className="text-[10px] text-[#9A3A2D]" title={`Already ticked on ${b.reservedBy.join(", ")}`}>−{formatCurrency(b.reservedSen)} on {b.reservedBy.join(", ")}</div>}
+                                </td>
+                                <td className="px-2.5 py-1 text-right tabular-nums text-[#6B7280]">{b.interestSen ? formatCurrency(b.interestSen) : "—"}</td>
+                                <td className="px-2.5 py-1 text-right">
+                                  <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={b.availableSen <= 0}
+                                    onChange={(e) => setAmt(b.id, e.target.value)}
+                                    className={`w-28 rounded border border-[#E2DDD8] bg-white px-2 py-1 text-right tabular-nums text-xs ${over || isUnreadableMoney(apAlloc[b.id] ?? "") ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 ) : apBills.bills.length === 0 ? (
                   <div className="text-xs text-[#9CA3AF] border border-dashed border-[#E2DDD8] rounded-md px-3 py-4">No open bills for this creditor.{apForm.partyKind === "SUPPLIER" ? " You can still pay an advance below." : ""}</div>
                 ) : (
@@ -11067,7 +11899,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               </div>
 
               <div className="flex flex-wrap items-end justify-between gap-3">
-                {apForm.partyKind === "SUPPLIER" ? (
+                {apForm.partyKind === "SUPPLIER" && !apTfLender ? (
                   <div>
                     <label className="text-xs font-medium text-[#6B7280] mb-1 block">Advance / unallocated (RM) <span className="ml-1 text-[#B4B2A9] cursor-help" title="Paid on top of the bills — sits as a prepayment on this supplier's ledger; knock it off later on the Supplier Payment page">ⓘ</span></label>
                     <input type="text" placeholder="0.00" value={apForm.advance} onChange={(e) => setApForm({ ...apForm, advance: e.target.value })} className={`${selCls} w-40 text-right tabular-nums ${isUnreadableMoney(apForm.advance) ? "text-[#9A3A2D]" : ""}`} />
@@ -11289,51 +12121,16 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         );
       })()}
 
-      {!payLoading && (
-        <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]" title="Every payment out, whichever page it was recorded on — all four share one HPV number series">
-          {payRows.length} payment{payRows.length === 1 ? "" : "s"} · {doorCount("PV")} voucher · {doorCount("AP")} AP · {doorCount("TR")} transfer · {doorCount("SP")} supplier · {doorCount("OCP")} other creditor · {doorCount("FT")} old fund transfer
-        </div>
-      )}
-      <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
-        {PV_STATUS_CHIPS.map((ch) => {
-          const n = chipCount(ch.key);
-          const on = statusFilter === ch.key;
-          return (
-            <button key={ch.key} type="button" onClick={() => setStatusFilter(ch.key)}
-              className={`px-3 py-1.5 font-semibold uppercase tracking-wide cursor-pointer ${on ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${ch.key !== "ALL" ? "border-l border-[#F0ECE9]" : ""}`}>
-              {ch.label}{ch.key !== "ALL" && n > 0 && <span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search PV no / payee / bill no / description" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64" />
-        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-        <span className="text-xs text-[#9CA3AF]">→</span>
-        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-        <select value={bankFilter} onChange={(e) => setBankFilter(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm">
-          <option value="">All banks</option>
-          {bankCash.map((b) => <option key={b.code} value={b.code}>{b.code} {b.name}</option>)}
-        </select>
-        <select value={doorFilter} onChange={(e) => setDoorFilter(e.target.value as "" | PayDoor)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" title="Which page the payment was recorded on">
-          <option value="">All doors</option>
-          {(["PV", "AP", "TR", "SP", "OCP", "FT"] as PayDoor[]).map((d) => <option key={d} value={d}>{PAY_DOOR_LABEL[d]}</option>)}
-        </select>
-        {bankHiddenSp > 0 && (
-          <span className="text-[11px] text-[#9A3A2D]">{bankHiddenSp} supplier payment{bankHiddenSp === 1 ? "" : "s"} hidden — no bank leg on their ledger posting (contra settlement); pick All banks to see them</span>
-        )}
-      </div>
-
-      {pvSel.count > 0 && (() => {
+      {picked.length > 0 && (() => {
         // Ladder batch: offer each rung only when at least one ticked voucher
         // can take it (the server still re-checks every one).
-        const sel = pvSel.selectedRows.map((x) => x.pv).filter((x): x is PvRow => !!x);
+        const sel = picked.map((x) => x.pv).filter((x): x is PvRow => !!x);
         const n = (s: PvApprovalState) => sel.filter((r) => r.status !== "VOID" && apState(r) === s).length;
         const drafts = n("DRAFT"), prepared = n("PREPARED"), checked = n("CHECKED");
         if (!drafts && !prepared && !checked) return null;
         return (
           <div className="flex flex-wrap items-center gap-2 rounded-md bg-[#FBF3E4] border border-[#E0C989] px-3 py-2 text-xs">
-            <span className="font-semibold text-[#7A5B12]">Approval ladder for the {pvSel.count} ticked:</span>
+            <span className="font-semibold text-[#7A5B12]">Approval ladder for the {picked.length} ticked:</span>
             {drafts > 0 && <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => handleLadderBatch("prepare")}>Prepare {drafts}</Button>}
             {prepared > 0 && <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => handleLadderBatch("check")}>Check {prepared}</Button>}
             {checked > 0 && <Button variant="primary" size="sm" disabled={ladderBusy} onClick={() => handleLadderBatch("approve")}>Approve &amp; post {checked}</Button>}
@@ -11342,13 +12139,13 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       })()}
 
       <BatchActionsBar
-        count={pvSel.count}
-        onClear={pvSel.clear}
-        onPrint={() => printVouchers(pvSel.selectedRows.map(payVoucherOf))}
+        count={picked.length}
+        onClear={clearPicked}
+        onPrint={() => void printPayRows(picked)}
         exportName="payment-vouchers"
         exportAoa={() => [
           ["Door", "PV No", "Date", "Pay To", "Paid From", "Status", "Remarks", "Product Line", "Voucher Total (RM)", "Account Code", "Account Name", "Line Description", "Amount (RM)"],
-          ...pvSel.selectedRows.flatMap((row) => {
+          ...picked.flatMap((row) => {
             // A foreign row exports one line per invoice / bill it settled —
             // the control account it relieves, the document number as the line.
             if (row.sp) {
@@ -11396,128 +12193,40 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       />
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {payLoading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={pvSel.allSelected} onChange={pvSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32]" /></th>
-                  <th className="px-3 py-2 text-left">PV No</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Payee / Description</th>
-                  <th className="px-3 py-2 text-left">Paid From / Accrual</th>
-                  <th className="px-3 py-2 text-left">Line</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row) => {
-                  // A row from another door: read-only here apart from print /
-                  // void (its own endpoint) — double-click opens the popup with
-                  // everything, right-click (or ⋮) has print / its page / void.
-                  // Single click does nothing (owner 2026-10-01 「我不要点一次打开」).
-                  if (!row.pv) {
-                    const g = row;
-                    return (
-                      <React.Fragment key={g.key}>
-                        <tr
-                          className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === g.key ? "bg-[#F0ECE9]" : ""} ${g.state !== "ACTIVE" ? "opacity-50" : g.advanceOpen ? "text-blue-600" : ""}`}
-                          onDoubleClick={() => setDetailPayKey(g.key)}
-                          onContextMenu={rowMenu.onContextMenu(g.key, () => payRowMenu(g))}
-                          title="Double-click to open · right-click for actions"
-                        >
-                          <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                            <input type="checkbox" checked={pvSel.isSelected(g.key)} onChange={() => pvSel.toggle(g.key)} className="h-3.5 w-3.5 accent-[#6B5C32]" />
-                          </td>
-                          <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap">
-                            {g.no}
-                            <span className="ml-2">{payDoorChip(g.door)}</span>
-                          </td>
-                          <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{g.date}</td>
-                          <td className="px-3 py-1.5">{[g.payee, g.ocp?.reference, g.ft?.description].filter(Boolean).join(" · ")}</td>
-                          <td className="px-3 py-1.5 text-xs">{g.via || <span className="text-[#9CA3AF]" title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</td>
-                          <td className="px-3 py-1.5 text-xs text-[#6B7280]">
-                            {g.ft
-                              ? <span>→ {g.ft.toName || g.ft.toAccount}</span>
-                              : g.sp
-                              ? <span title={g.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n")}>{g.sp.lines.filter((l) => l.purchaseInvoiceId).length} invoice{g.sp.lines.filter((l) => l.purchaseInvoiceId).length === 1 ? "" : "s"}{spAdvanceOpenSen(g.sp) > 0 ? " + advance" : ""}</span>
-                              : <span title={(g.ocp?.lines ?? []).map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n")}>{g.ocp?.lines.length ?? 0} bill{(g.ocp?.lines.length ?? 0) === 1 ? "" : "s"}</span>}
-                          </td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(g.totalSen)}</td>
-                          <td className="px-3 py-1.5 text-xs">
-                            {g.state !== "ACTIVE"
-                              ? <span className="text-[#9CA3AF]">{g.state}</span>
-                              : g.sp && spAdvanceOpenSen(g.sp) > 0
-                                ? <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#FBF3E4] text-[#7A5B12]" title="Unapplied supplier advance — knock it off on the Supplier Payment page">Approved · advance open {formatCurrency(spAdvanceOpenSen(g.sp))}</span>
-                                : <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title={`Posted on save — ${PAY_DOOR_HINT[g.door]}`}>Approved · paid</span>}
-                          </td>
-                          <td className="px-1 py-1 text-right w-8">{rowMenu.button(g.key, () => payRowMenu(g))}</td>
-                        </tr>
-                      </React.Fragment>
-                    );
-                  }
-                  const r = row.pv;
-                  return (
-                  <React.Fragment key={r.id}>
-                  <tr
-                    className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === row.key ? "bg-[#F0ECE9]" : ""} ${r.status === "VOID" ? "opacity-50" : ""}`}
-                    onDoubleClick={() => setDetailPvId(r.id)}
-                    onContextMenu={rowMenu.onContextMenu(row.key, () => pvRowMenu(r))}
-                    title="Double-click to open · right-click for actions"
-                  >
-                    <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={pvSel.isSelected(row.key)} onChange={() => pvSel.toggle(row.key)} className="h-3.5 w-3.5 accent-[#6B5C32]" />
-                    </td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap">
-                      {r.pvNo}
-                      <span className="ml-2">{payDoorChip(row.door)}</span>
-                      {(r.attachmentCount ?? 0) > 0 && <span className="ml-1.5 text-[10px] text-[#6B7280]" title={`${r.attachmentCount} attachment${r.attachmentCount === 1 ? "" : "s"} — double-click to see`}>📎{r.attachmentCount}</span>}
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                    <td className="px-3 py-1.5">{r.pvKind === "TRANSFER" ? [`Transfer to ${shortBankName(accounts.find((a) => a.code === r.lines[0]?.accountCode)?.name) || (r.lines[0]?.accountCode ?? "")}`, r.description].filter(Boolean).join(" · ") : [r.payee, r.description].filter(Boolean).join(" · ")}</td>
-                    <td className="px-3 py-1.5 text-xs">
-                      {r.accrued === 1 && !r.settledAt
-                        ? <span className="text-[#9A3A2D]">accrued → {r.accrualAccount}</span>
-                        : (r.payFrom ?? "")}
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">
-                      {r.pvKind === "AP"
-                        ? <span title={(r.allocs ?? []).map((a) => `${a.docNo} ${formatCurrency(a.amountSen)}`).join("\n")}>{(r.allocs ?? []).length} bill{(r.allocs ?? []).length === 1 ? "" : "s"}{(r.advanceSen ?? 0) > 0 ? " + advance" : ""}</span>
-                        : r.pvKind === "TRANSFER"
-                          ? <span>→ {shortBankName(accounts.find((a) => a.code === r.lines[0]?.accountCode)?.name) || r.lines[0]?.accountCode}</span>
-                          : `${r.lines.length} line${r.lines.length === 1 ? "" : "s"}`}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
-                    <td className="px-3 py-1.5 text-xs">
-                      {(() => {
-                        if (r.status === "VOID") return <span className="text-[#9CA3AF]">VOID</span>;
-                        const st = apState(r);
-                        const chip = (label: string, cls: string, title?: string) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`} title={title}>{label}</span>;
-                        if (st === "DRAFT") return chip("Draft", "bg-[#F0ECE9] text-[#6B7280]", (r.rejectReason ?? r.reject_reason) ? `Rejected: ${r.rejectReason ?? r.reject_reason}` : undefined);
-                        if (st === "PREPARED") return chip("Prepared", "bg-[#EEF2FB] text-[#2C4170]");
-                        if (st === "CHECKED") return chip("Checked · awaiting approval", "bg-[#FBF3E4] text-[#7A5B12]", `Formal No. ${r.pvNo} — pending in Cash Position`);
-                        if ((r.advanceOpenSen ?? 0) > 0) return chip(`Approved · advance open ${formatCurrency(r.advanceOpenSen ?? 0)}`, "bg-[#FBF3E4] text-[#7A5B12]", "Unapplied supplier advance — knock it off on the Supplier Payment page");
-                        return r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", "bg-[#F7E5E1] text-[#9A3A2D]") : chip("Approved · paid", "bg-[#EAF3DE] text-[#27500A]");
-                      })()}
-                      {(r.rejectReason ?? r.reject_reason) && apState(r) === "DRAFT" && r.status !== "VOID" && (
-                        <div className="text-[10px] text-[#9A3A2D] mt-0.5 max-w-[16rem] truncate" title={r.rejectReason ?? r.reject_reason ?? ""}>↩ {r.rejectReason ?? r.reject_reason}</div>
-                      )}
-                    </td>
-                    <td className="px-1 py-1 text-right w-8">{rowMenu.button(row.key, () => pvRowMenu(r))}</td>
-                  </tr>
-                  </React.Fragment>
-                  );
-                })}
-                {visibleRows.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No payments match</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={payColumns}
+            data={gridRows}
+            keyField="key"
+            gridId="accounting-payments"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setPicked}
+            clearSelectionToken={clearPickedToken}
+            onDoubleClick={(r) => (r.pv ? setDetailPvId(r.pv.id) : setDetailPayKey(r.key))}
+            contextMenuItems={(r) => rowMenuItems(r.pv ? pvRowMenu(r.pv) : payRowMenu(r))}
+            rowClassName={(r) => (r.state !== "ACTIVE" ? "opacity-50" : r.advanceOpen ? "text-blue-600" : "")}
+            toolbarStart={
+              <SegmentedChips
+                options={PV_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: ch.key === "ALL" ? undefined : chipCount(ch.key) }))}
+                value={statusFilter}
+                onChange={setStatusFilter}
+              />
+            }
+            searchPlaceholder="Search PV no / payee / bill no"
+            alwaysSearchKeys={["no", "payeeText", "descText", "billNos"]}
+            headerMenu
+            reorderableHeaders
+            exportName="Payment Vouchers"
+            footerLabel={(shown) => (
+              <span title={`Every payment out, whichever page it was recorded on: ${doorCount("PV")} voucher · ${doorCount("AP")} AP · ${doorCount("TR")} transfer · ${doorCount("SP")} supplier · ${doorCount("OCP")} other creditor · ${doorCount("FT")} old fund transfer`}>
+                Total · {shown} shown <span className="text-[11px] font-normal">of {payRows.length}</span>
+              </span>
+            )}
+            emptyMessage="No payments match"
+            loading={payLoading}
+            maxHeight="calc(100vh - 260px)"
+          />
         </CardContent>
       </Card>
 
@@ -11575,7 +12284,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   ? <DetailField label="Transfer to" span={2}>{r.lines[0] ? accountLabel(accounts, r.lines[0].accountCode) : "—"}</DetailField>
                   : <DetailField label={r.pvKind === "AP" ? (r.partyKind === "OTHER" ? "Other creditor" : "Supplier") : "Payee"} span={2}>{r.payee || "—"}</DetailField>}
                 <DetailField label="PV #">{r.pvNo.startsWith("DRAFT-") ? "(assigned at Check)" : r.pvNo}</DetailField>
-                <DetailField label="Voucher date">{r.date}</DetailField>
+                <DetailField label="Voucher date">{fmtDocDate(r.date)}</DetailField>
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
                 <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
                 <DetailField label="Kind">{r.pvKind === "AP" ? "AP payment" : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
@@ -11583,7 +12292,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
                   <>
                     <DetailField label="Bill no.">{(r.billNo ?? r.bill_no) || "—"}</DetailField>
-                    <DetailField label="Bill date">{String((r.billDate ?? r.bill_date) ?? "").slice(0, 10) || "—"}</DetailField>
+                    <DetailField label="Bill date">{fmtDocDate(r.billDate ?? r.bill_date) || "—"}</DetailField>
                   </>
                 )}
                 <DetailField label="Notes (internal)" span={r.pvKind !== "AP" && r.pvKind !== "TRANSFER" ? 2 : 4}>{r.notes || "—"}</DetailField>
@@ -11598,7 +12307,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Bill</th><th className="text-left px-3 py-1.5 font-medium">Ref</th><th className="text-right px-3 py-1.5 font-medium">Paid</th></tr></thead>
                       <tbody>
                         {(r.allocs ?? []).map((a, i) => (
-                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
+                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : a.docKind === "TF" ? "trade-finance drawdown" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
                         ))}
                         {(r.advanceSen ?? 0) > 0 && <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5">Advance / unallocated{(r.advanceOpenSen ?? 0) > 0 && isPosted(r) ? <span className="ml-1 text-[10px] text-[#7A5B12]">· {formatCurrency(r.advanceOpenSen ?? 0)} still unapplied</span> : null}</td><td /><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.advanceSen ?? 0)}</td></tr>}
                         <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>
@@ -11648,7 +12357,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             badges={<>{payDoorChip(g.door)}{statusChip}</>}
             onClose={close}
             actions={<>
-              <Button variant="outline" size="sm" onClick={() => printVoucher(payVoucherOf(g))}><Printer className="h-4 w-4" /> Print</Button>
+              <Button variant="outline" size="sm" onClick={() => void printPayRows([g])}><Printer className="h-4 w-4" /> Print</Button>
               <Link to={foreignHref(g)}><Button variant="outline" size="sm">Open on its page ↗</Button></Link>
               {g.ft && g.state === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); setEditFtNo(g.no); }}>Edit description</Button>}
               {g.state === "ACTIVE"
@@ -11659,7 +12368,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </>}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <DetailField label="Date">{g.date}</DetailField>
+              <DetailField label="Date">{fmtDocDate(g.date)}</DetailField>
               <DetailField label={g.sp ? "Supplier" : g.ft ? "Transfer" : "Other creditor"} span={2}>{g.payee || "—"}</DetailField>
               <DetailField label="Paid from">{g.via ? accountLabel(accounts, g.via) : <span title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</DetailField>
               <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.ocp?.reference) || "—"}</DetailField>
@@ -11701,18 +12410,23 @@ type OrRow = {
 // bank/cash account, CR each income line. Posts immediately (no ladder on
 // money in). Unchanged rules: one money parser, an unreadable amount refuses
 // the post and blanks the Total (BUG-2026-08-13-094/095).
-function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartOfAccount[]; onSaved: () => void; onCancel: () => void }) {
+// With `editing` (owner 2026-10-17 「可以」) the same form edits a posted
+// receipt: same OR number, the server reverses the posted entry and re-posts
+// the edited one (/official-receipts/:id/restate).
+function OfficialReceiptForm({ accounts, editing, onSaved, onCancel }: { accounts: ChartOfAccount[]; editing?: OrRow | null; onSaved: () => void; onCancel: () => void }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    date: new Date().toISOString().slice(0, 10),
-    receivedFrom: "",
-    description: "",
-    payTo: "",
+    date: editing ? String(editing.date ?? "").slice(0, 10) : new Date().toISOString().slice(0, 10),
+    receivedFrom: editing?.receivedFrom ?? "",
+    description: editing?.description ?? "",
+    payTo: editing?.payTo ?? "",
   });
-  const [lines, setLines] = useState<{ accountCode: string; description: string; amount: string }[]>([
-    { accountCode: "", description: "", amount: "" },
-  ]);
+  const [lines, setLines] = useState<{ accountCode: string; description: string; amount: string }[]>(
+    editing && editing.lines.length > 0
+      ? editing.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) }))
+      : [{ accountCode: "", description: "", amount: "" }],
+  );
 
   const bankCash = accounts.filter(
     (a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH",
@@ -11755,13 +12469,16 @@ function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartO
     }
     setSaving(true);
     try {
-      const res = await fetch("/api/accounting/official-receipts", {
+      const res = await fetch(editing ? `/api/accounting/official-receipts/${encodeURIComponent(editing.id)}/restate` : "/api/accounting/official-receipts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const j = asMutationResponse(await res.json());
-      if (j?.success) {
+      if (j?.success && editing) {
+        toast.success(`${editing.orNo} updated`);
+        onSaved();
+      } else if (j?.success) {
         toast.success("Receipt posted");
         setForm({ date: new Date().toISOString().slice(0, 10), receivedFrom: "", description: "", payTo: "" });
         setLines([{ accountCode: "", description: "", amount: "" }]);
@@ -11777,7 +12494,11 @@ function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartO
   return (
     <Card>
       <CardContent className="p-4 space-y-4">
-        <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">sundry income / recovery — DR bank, CR the income account</span></div>
+        {editing ? (
+          <div className="text-sm font-semibold text-[#1F1D1B]">Edit Official Receipt {editing.orNo} <span className="text-[11px] font-normal text-[#9CA3AF]">same number — the posted entry is reversed and the edited one posted</span></div>
+        ) : (
+          <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">sundry income / recovery — DR bank, CR the income account</span></div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-[#6B7280] mb-1 block">Date</label>
@@ -11844,7 +12565,7 @@ function OfficialReceiptForm({ accounts, onSaved, onCancel }: { accounts: ChartO
 
         <div className="flex gap-2 pt-3 border-t border-[#F0ECE9]">
           <Button variant="primary" size="sm" disabled={saving || totalSen <= 0 || !!orMoneyError || !(form.payTo || defaultBankCode(bankCash))} onClick={handleSave}>
-            {saving ? "Posting…" : "Post receipt"}
+            {saving ? (editing ? "Saving…" : "Posting…") : editing ? "Save changes" : "Post receipt"}
           </Button>
           <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
         </div>
@@ -11873,6 +12594,25 @@ const RECEIPT_CHIPS: { key: ReceiptChip; label: string }[] = [
   { key: "ALL", label: "All" }, { key: "CUSTOMER", label: "Customer" }, { key: "OTHER", label: "Other debtor" },
   { key: "OFFICIAL", label: "Official" }, { key: "CANCELLED", label: "Cancelled" },
 ];
+// The Receipts list rows (finance v2): the text the columns show, the state
+// the total and the pill read, and whether money is still on account (blue).
+type ReceiptGridRow = ReceiptHubRow & { state: string; viaLabel: string; unallocated: boolean; statusLabel: string; status: FinStatus };
+function receiptGridRow(r: ReceiptHubRow, accounts: ChartOfAccount[]): ReceiptGridRow {
+  const state = r.lifecycleState;
+  const unallocated = !!r.cust && hasUnallocated(r.cust);
+  // A customer receipt names its method; the others name the bank they went to.
+  const short = r.cust ? "" : shortBankName(accounts.find((a) => a.code === r.via)?.name);
+  const viaLabel = r.cust ? r.via : short ? `${r.via} ${short}` : r.via;
+  const status = receiptStatus({ state, custStatus: r.cust?.status, unallocated });
+  return { ...r, state, viaLabel, unallocated, statusLabel: status.label, status };
+}
+const RECEIPT_KIND_LABEL: Record<ReceiptKind, string> = {
+  CUSTOMER: "Customer Receipt", OTHER: "Other Debtor Receipt", OFFICIAL: "Official Receipt",
+};
+const receiptKindChip = (k: ReceiptKind) =>
+  k === "CUSTOMER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title="Customer receipt — settles sales invoices">CUST</span>
+  : k === "OTHER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EEF2FB] text-[#2C4170]" title="Other debtor receipt — settles other-debtor bills">OD</span>
+  : <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#F6F1E7] text-[#6B5C32]" title="Official receipt — sundry income">OR</span>;
 
 function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
@@ -11904,10 +12644,11 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [door, setDoor] = useState<ReceiptKind | null>(null);
   const [custEditing, setCustEditing] = useState<PaymentRecord | null>(null);
   const [odEditing, setOdEditing] = useState<PaymentGroup | null>(null);
-  const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setDoor(door === k ? null : k); };
-  const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); };
+  const [orEditing, setOrEditing] = useState<OrRow | null>(null);
+  const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setDoor(door === k ? null : k); };
+  const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); setOrEditing(null); };
 
-  const rows: ReceiptHubRow[] = [
+  const rows = useMemo<ReceiptHubRow[]>(() => [
     ...(cust ?? []).map((p): ReceiptHubRow => ({
       kind: "CUSTOMER", key: `c:${p.id}`, no: p.receiptNumber, date: String(p.date ?? "").slice(0, 10), from: p.customerName ?? "",
       via: String(p.method ?? "").replace(/_/g, " "), totalSen: Number(p.amount) || 0, lifecycleState: p.lifecycleState ?? "ACTIVE",
@@ -11923,29 +12664,28 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       via: r.payTo ?? "", totalSen: r.totalSen, lifecycleState: r.status === "VOID" ? "VOID" : (r.lifecycleState ?? "ACTIVE"),
       note: r.description ?? "", or: r,
     })),
-  ].sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
+  ].sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no)), [cust, od, ors]);
   const loading = cust === null || od === null || ors === null;
 
   const [chip, setChip] = useState<ReceiptChip>("ALL");
-  const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const matches = (r: ReceiptHubRow, c: ReceiptChip) => c === "ALL" ? true : c === "CANCELLED" ? r.lifecycleState !== "ACTIVE" : r.kind === c;
   const chipCount = (c: ReceiptChip) => rows.filter((r) => matches(r, c)).length;
-  const visible = rows.filter((r) => {
-    if (!matches(r, chip)) return false;
-    if (q.trim()) { const kw = q.toLowerCase(); if (![r.no, r.from, r.note, r.via].some((s) => s.toLowerCase().includes(kw))) return false; }
-    if (dateFrom && r.date < dateFrom) return false;
-    if (dateTo && r.date > dateTo) return false;
-    return true;
-  });
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // The list (finance v2): the chip narrows it; the grid's search and column
+  // funnels do the rest (dates are the Date funnel). Memoised — the grid's
+  // selection emission compares row identity (BUG-CLASSES C24).
+  const gridRows = useMemo(
+    () => rows.filter((r) => matches(r, chip)).map((r) => receiptGridRow(r, accounts)),
+    [rows, chip, accounts],
+  );
   // Double-click → detail popup (resolved from `rows` by key so it refreshes).
   const [detailKey, setDetailKey] = useState<string | null>(null);
-  const sel = useRowSelection(visible, (r) => r.key);
+  // The ticked rows — the grid owns the ticks (only the checkbox changes them).
+  const [picked, setPicked] = useState<ReceiptGridRow[]>([]);
+  const [clearPickedToken, setClearPickedToken] = useState(0);
+  const clearPicked = () => setClearPickedToken((t) => t + 1);
 
-  // The lines / allocations of one receipt — shown inline on expand and in
-  // the detail popup.
+  // The lines / allocations of one receipt — shown in the detail popup (the
+  // click-to-expand row went with finance v2: double-click shows the same).
   const detailTable = (r: ReceiptHubRow) => (
     <table className="w-full text-xs">
       <thead>
@@ -12010,23 +12750,44 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else toast.error(j?.error || `${verb} failed`);
   };
   const startEdit = (r: ReceiptHubRow) => {
-    if (r.cust) { setOdEditing(null); setCustEditing(r.cust); setDoor("CUSTOMER"); }
-    else if (r.od) { setCustEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
+    if (r.cust) { setOdEditing(null); setOrEditing(null); setCustEditing(r.cust); setDoor("CUSTOMER"); }
+    else if (r.od) { setCustEditing(null); setOrEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
+    else if (r.or) { setCustEditing(null); setOdEditing(null); setOrEditing(r.or); setDoor("OFFICIAL"); }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  const kindChip = (k: ReceiptKind) =>
-    k === "CUSTOMER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EAF3DE] text-[#27500A]" title="Customer receipt — settles sales invoices">CUST</span>
-    : k === "OTHER" ? <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#EEF2FB] text-[#2C4170]" title="Other debtor receipt — settles other-debtor bills">OD</span>
-    : <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-[#F6F1E7] text-[#6B5C32]" title="Official receipt — sundry income">OR</span>;
+  const kindChip = receiptKindChip;
+  // The design's Receipts columns. Stable (BUG-CLASSES C24); every cell reads
+  // only its row.
+  const receiptColumns = useMemo<Column<ReceiptGridRow>[]>(() => [
+    { key: "no", label: "No", width: "180px", filterAccessor: (r) => RECEIPT_KIND_LABEL[r.kind], exportValue: (r) => r.no, sortAccessor: (r) => r.no,
+      render: (_v, r) => (
+        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+          <span className="font-semibold tabular-nums text-[#1F1D1B]">{r.no}</span>
+          {receiptKindChip(r.kind)}
+        </span>
+      ) },
+    { key: "date", label: "Date", type: "date", width: "120px",
+      render: (_v, r) => <span className="text-[#6B7280]">{fmtDocDate(r.date)}</span> },
+    { key: "from", label: "From", width: "260px",
+      render: (_v, r) => <span className={r.unallocated ? "font-medium text-[#2C4170]" : "font-medium text-[#1F2937]"} title={r.from}>{r.from}</span> },
+    { key: "viaLabel", label: "Via / Deposit To", width: "180px",
+      render: (_v, r) => <span className="text-[12px]">{r.viaLabel || "—"}</span> },
+    { key: "note", label: "Note", width: "200px",
+      render: (_v, r) => <span className="text-[12px] text-[#6B7280]" title={r.note || undefined}>{r.note}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px", total: (rows) => activeTotalSen(rows),
+      render: (v) => <span className="font-semibold tabular-nums">{formatCurrency(Number(v) || 0)}</span> },
+    { key: "statusLabel", label: "Status", width: "190px", noClip: true,
+      render: (_v, r) => <FinPill tone={r.status.tone} title={r.status.title}>{r.status.label}</FinPill> },
+  ], []);
 
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02) — no action
-  // links in the rows; double-click still opens the popup.
-  const rowMenu = useRowMenu();
+  // links in the rows; double-click still opens the popup. Shown by the grid's
+  // own context menu through rowMenuItems (finance v2).
   const receiptRowMenu = (r: ReceiptHubRow): RowMenuGroups => [
     [{ label: "Open", action: () => setDetailKey(r.key) }],
     [
       { label: "Print", action: () => printVoucher(voucherOf(r)) },
-      ...(r.lifecycleState === "ACTIVE" && (r.cust || r.od) ? [{ label: "Edit", action: () => startEdit(r) }] : []),
+      ...(r.lifecycleState === "ACTIVE" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
     ],
     lifecycleMenuItems(r.lifecycleState, {
       void: () => void lifecycle(r, "void"),
@@ -12037,18 +12798,14 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      {rowMenu.element}
-      <div className="flex justify-between items-center flex-wrap gap-2">
-        <div>
-          <h2 className="text-lg font-semibold text-[#1F1D1B]">Receipts</h2>
-          <p className="text-[11px] text-[#9CA3AF]">Every payment in, one door. <b>Customer Receipt</b> settles sales invoices; <b>Other Debtor Receipt</b> settles other-debtor bills; <b>Official Receipt</b> books sundry income. Each posts on save.</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Button variant="primary" size="sm" onClick={() => openDoor("CUSTOMER")}><Plus className="h-4 w-4" /> New Customer Receipt</Button>
-          <Button variant="outline" size="sm" onClick={() => openDoor("OTHER")}><Plus className="h-4 w-4" /> New Other Debtor Receipt</Button>
-          <Button variant="outline" size="sm" onClick={() => openDoor("OFFICIAL")}><Plus className="h-4 w-4" /> New Official Receipt</Button>
-        </div>
-      </div>
+      {/* On the page's title row (finance v2): New Official Receipt · New Other
+          Debtor Receipt · New Customer Receipt (the main action, last). The
+          explanation sits behind the (i) next to the title. */}
+      <FinanceTitleActions>
+        <Button variant="outline" size="sm" onClick={() => openDoor("OFFICIAL")}><Plus className="h-4 w-4" /> New Official Receipt</Button>
+        <Button variant="outline" size="sm" onClick={() => openDoor("OTHER")}><Plus className="h-4 w-4" /> New Other Debtor Receipt</Button>
+        <Button variant="primary" size="sm" onClick={() => openDoor("CUSTOMER")}><Plus className="h-4 w-4" /> New Customer Receipt</Button>
+      </FinanceTitleActions>
 
       {door === "CUSTOMER" && (
         <CustomerReceiptForm key={custEditing?.id ?? "new"} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} />
@@ -12057,37 +12814,17 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
         <OtherPartyPaymentForm key={odEditing?.paymentNo ?? "new"} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} />
       )}
       {door === "OFFICIAL" && (
-        <OfficialReceiptForm accounts={accounts} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
+        <OfficialReceiptForm key={orEditing?.id ?? "new"} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
       )}
 
-      {!loading && <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">{rows.length} receipt{rows.length === 1 ? "" : "s"}</div>}
-      <div className="inline-flex flex-wrap rounded-md border border-[#E2DDD8] bg-white overflow-hidden text-xs">
-        {RECEIPT_CHIPS.map((ch) => {
-          const n = chipCount(ch.key);
-          const on = chip === ch.key;
-          return (
-            <button key={ch.key} type="button" onClick={() => setChip(ch.key)}
-              className={`px-3 py-1.5 font-semibold uppercase tracking-wide cursor-pointer ${on ? "bg-[#6B5C32] text-white" : "text-[#6B7280] hover:bg-[#FAF8F5]"} ${ch.key !== "ALL" ? "border-l border-[#F0ECE9]" : ""}`}>
-              {ch.label}{ch.key !== "ALL" && n > 0 && <span className={`ml-1 tabular-nums ${on ? "text-white/80" : "text-[#9CA3AF]"}`}>{n}</span>}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search no / from / reference" className="rounded-md border border-[#E2DDD8] px-3 py-1.5 text-sm w-64" />
-        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-        <span className="text-xs text-[#9CA3AF]">→</span>
-        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-md border border-[#E2DDD8] px-2 py-1.5 text-sm" />
-      </div>
-
       <BatchActionsBar
-        count={sel.count}
-        onClear={sel.clear}
-        onPrint={() => printVouchers(sel.selectedRows.map(voucherOf))}
+        count={picked.length}
+        onClear={clearPicked}
+        onPrint={() => printVouchers(picked.map(voucherOf))}
         exportName="receipts"
         exportAoa={() => [
           ["Kind", "No", "Date", "From", "Via / Deposit To", "Status", "Note", "Total (RM)", "Detail", "Amount (RM)"],
-          ...sel.selectedRows.flatMap((r) => {
+          ...picked.flatMap((r) => {
             const head = [r.kind, r.no, r.date, r.from, r.via, r.lifecycleState, r.note, (r.totalSen / 100).toFixed(2)];
             if (r.cust) return r.cust.allocations.length ? r.cust.allocations.map((a) => [...head, a.invoiceNumber, (a.amount / 100).toFixed(2)]) : [[...head, "unallocated", (r.totalSen / 100).toFixed(2)]];
             if (r.od) return r.od.lines.map((l) => [...head, l.billNo, (l.amountSen / 100).toFixed(2)]);
@@ -12097,59 +12834,38 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       />
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {loading ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={sel.allSelected} onChange={sel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32]" /></th>
-                  <th className="px-3 py-2 text-left">No</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">From</th>
-                  <th className="px-3 py-2 text-left">Via / Deposit to</th>
-                  <th className="px-3 py-2 text-left">Note</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((r) => (
-                  <React.Fragment key={r.key}>
-                    <tr
-                      className={`border-b border-[#F0ECE9] cursor-pointer hover:bg-[#FAF8F5] ${rowMenu.openKey === r.key ? "bg-[#F0ECE9]" : ""} ${r.lifecycleState !== "ACTIVE" ? "opacity-50" : r.cust && hasUnallocated(r.cust) ? "text-blue-600" : ""}`}
-                      onClick={() => setExpanded((m) => ({ ...m, [r.key]: !m[r.key] }))}
-                      onDoubleClick={() => setDetailKey(r.key)}
-                      onContextMenu={rowMenu.onContextMenu(r.key, () => receiptRowMenu(r))}
-                      title="Click to expand · double-click to open · right-click for actions"
-                    >
-                      <td className="px-3 py-1.5 w-8" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={sel.isSelected(r.key)} onChange={() => sel.toggle(r.key)} className="h-3.5 w-3.5 accent-[#6B5C32]" />
-                      </td>
-                      <td className="px-3 py-1.5 tabular-nums text-xs whitespace-nowrap"><span className="inline-block w-3 text-[#9CA3AF]">{expanded[r.key] ? "▾" : "▸"}</span> {r.no} <span className="ml-1.5">{kindChip(r.kind)}</span></td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1.5">{r.from}</td>
-                      <td className="px-3 py-1.5 text-xs">{r.via}</td>
-                      <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.note}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td>
-                      <td className="px-3 py-1.5 text-xs"><LifecycleBadge state={r.lifecycleState} />{r.lifecycleState === "ACTIVE" && (r.cust ? r.cust.status : "POSTED")}</td>
-                      <td className="px-1 py-1 text-right w-8" onClick={(e) => e.stopPropagation()}>{rowMenu.button(r.key, () => receiptRowMenu(r))}</td>
-                    </tr>
-                    {expanded[r.key] && (
-                      <tr className="bg-[#FAF8F5] border-b border-[#F0ECE9]">
-                        <td colSpan={9} className="px-8 py-2">{detailTable(r)}</td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-                {visible.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No receipts match</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={receiptColumns}
+            data={gridRows}
+            keyField="key"
+            gridId="accounting-receipts"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setPicked}
+            clearSelectionToken={clearPickedToken}
+            onDoubleClick={(r) => setDetailKey(r.key)}
+            contextMenuItems={(r) => rowMenuItems(receiptRowMenu(r))}
+            rowClassName={(r) => (r.state !== "ACTIVE" ? "opacity-50" : r.unallocated ? "text-blue-600" : "")}
+            toolbarStart={
+              <SegmentedChips
+                options={RECEIPT_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: ch.key === "ALL" ? undefined : chipCount(ch.key) }))}
+                value={chip}
+                onChange={setChip}
+              />
+            }
+            searchPlaceholder="Search no / from / reference"
+            alwaysSearchKeys={["no", "from", "note", "viaLabel"]}
+            headerMenu
+            reorderableHeaders
+            exportName="Receipts"
+            footerLabel={(shown) => (
+              <span>Total · {shown} shown <span className="text-[11px] font-normal">of {rows.length}</span></span>
+            )}
+            emptyMessage="No receipts match"
+            loading={loading}
+            maxHeight="calc(100vh - 260px)"
+          />
         </CardContent>
       </Card>
 
@@ -12165,7 +12881,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             onClose={close}
             actions={<>
               <Button variant="outline" size="sm" onClick={() => printVoucher(voucherOf(r))}><Printer className="h-4 w-4" /> Print</Button>
-              {r.lifecycleState === "ACTIVE" && (r.cust || r.od) && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
+              {r.lifecycleState === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
               {r.lifecycleState === "ACTIVE"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void lifecycle(r, "void"); }}>Void</Button>
                 : r.lifecycleState === "VOID"
@@ -12174,7 +12890,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </>}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <DetailField label="Date">{r.date}</DetailField>
+              <DetailField label="Date">{fmtDocDate(r.date)}</DetailField>
               <DetailField label="From" span={2}>{r.from || "—"}</DetailField>
               <DetailField label={r.cust ? "Method" : "Deposit to"}>{r.via ? (r.cust ? r.via : accountLabel(accounts, r.via)) : "—"}</DetailField>
               <DetailField label="Note" span={3}>{r.note || "—"}</DetailField>
@@ -12255,7 +12971,7 @@ function FtDescriptionEditor({ ft, onClose, onSaved }: { ft: FtRow; onClose: () 
         </div>
         <div className="p-5 space-y-4 text-sm">
           <div className="grid grid-cols-2 gap-3">
-            <DetailField label="Date">{ft.date}</DetailField>
+            <DetailField label="Date">{fmtDocDate(ft.date)}</DetailField>
             <DetailField label="Amount"><span className="tabular-nums">{formatCurrency(ft.amountSen)}</span></DetailField>
             <DetailField label="From" span={2}>{ft.fromAccount} · {ft.fromName}</DetailField>
             <DetailField label="To" span={2}>{ft.toAccount} · {ft.toName}</DetailField>
@@ -12303,7 +13019,10 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<FtRow[] | null>(null);
-  const ftSel = useRowSelection(rows ?? [], (t) => t.no);
+  // Ticked rows (the grid owns the boxes; owner 2026-10-17: every finance list
+  // behaves like the Payment Vouchers table).
+  const [ftPicked, setFtPicked] = useState<FtRow[]>([]);
+  const [ftClearToken, setFtClearToken] = useState(0);
 
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
 
@@ -12380,7 +13099,35 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02). A transfer's
   // description can be edited (owner 「我要可以edit, 因为我发现description 少了」);
   // its accounts, amount and date are voided and posted again.
-  const rowMenu = useRowMenu();
+  // The list's columns (DataGrid, the Payment Vouchers table's features;
+  // memoised — BUG-CLASSES C24). The total counts active transfers only.
+  const ftColumns = useMemo<Column<FtRow>[]>(() => [
+    { key: "no", label: "No", type: "docno", width: "130px", noFilter: true, render: (_v, r) => <span className="tabular-nums text-xs">{r.no}</span> },
+    { key: "date", label: "Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{fmtDocDate(r.date)}</span> },
+    {
+      key: "fromAccount", label: "From", width: "220px",
+      filterAccessor: (r) => `${r.fromAccount} ${r.fromName}`, exportValue: (r) => `${r.fromAccount} ${r.fromName}`,
+      render: (_v, r) => <span className="text-xs">{r.fromAccount} {r.fromName}</span>,
+    },
+    {
+      key: "toAccount", label: "To", width: "220px",
+      filterAccessor: (r) => `${r.toAccount} ${r.toName}`, exportValue: (r) => `${r.toAccount} ${r.toName}`,
+      render: (_v, r) => <span className="text-xs">{r.toAccount} {r.toName}</span>,
+    },
+    {
+      key: "amountSen", label: "Amount", type: "currency", align: "right", width: "140px",
+      total: (list) => activeTotalSen(list.map((r) => ({ state: r.lifecycleState ?? "ACTIVE", totalSen: r.amountSen }))),
+    },
+    { key: "description", label: "Description", width: "260px", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.description ?? ""}</span> },
+    {
+      key: "lifecycleState", label: "Status", width: "110px",
+      filterAccessor: (r) => ((r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : String(r.lifecycleState)),
+      exportValue: (r) => ((r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : String(r.lifecycleState)),
+      // Owner 2026-08-28 「fund transfer 没有办法 print out voucher」— every row
+      // prints from its right-click / ⋮ menu.
+      render: (_v, r) => <FinPill tone={(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "ok" : "faint"}>{(r.lifecycleState ?? "ACTIVE") === "ACTIVE" ? "Posted" : r.lifecycleState}</FinPill>,
+    },
+  ], []);
   const ftRowMenu = (r: FtRow): RowMenuGroups => [
     [{ label: "Open", action: () => setDetailFt(r.no) }],
     [
@@ -12396,9 +13143,6 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      {rowMenu.element}
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Fund Transfer</h2>
-
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-end gap-3">
@@ -12455,13 +13199,13 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
       </Card>
 
       <BatchActionsBar
-        count={ftSel.count}
-        onClear={ftSel.clear}
-        onPrint={() => printVouchers(ftSel.selectedRows.map((t) => buildFundTransferVoucher(t, accounts)))}
+        count={ftPicked.length}
+        onClear={() => setFtClearToken((n) => n + 1)}
+        onPrint={() => printVouchers(ftPicked.map((t) => buildFundTransferVoucher(t, accounts)))}
         exportName="fund-transfers"
         exportAoa={() => [
           ["No", "Date", "From", "To", "Status", "Description", "Amount (RM)"],
-          ...ftSel.selectedRows.map((t) => [
+          ...ftPicked.map((t) => [
             t.no,
             formatDateDMY(t.date),
             accountLabel(accounts, t.fromAccount),
@@ -12474,52 +13218,28 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
       />
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {rows === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={ftSel.allSelected} onChange={ftSel.toggleAll} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" /></th>
-                  <th className="px-3 py-2 text-left">No</th>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">From</th>
-                  <th className="px-3 py-2 text-center">→</th>
-                  <th className="px-3 py-2 text-left">To</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
-                  <th className="px-3 py-2 text-left">Description</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.no} className={`border-b border-[#F0ECE9] ${rowMenu.openKey === r.no ? "bg-[#F0ECE9]" : ""} ${(r.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : ""}`} onDoubleClick={() => setDetailFt(r.no)} onContextMenu={rowMenu.onContextMenu(r.no, () => ftRowMenu(r))} title="Double-click to open · right-click for actions">
-                    <td className="px-3 py-1.5 w-8" onDoubleClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={ftSel.isSelected(r.no)} onChange={() => ftSel.toggle(r.no)} className="h-3.5 w-3.5 accent-[#6B5C32] align-middle" />
-                    </td>
-                    <td className="px-3 py-1.5 tabular-nums text-xs">{r.no}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.date}</td>
-                    <td className="px-3 py-1.5 text-xs">{r.fromAccount} {r.fromName}</td>
-                    <td className="px-3 py-1.5 text-center text-[#6B7280]">→</td>
-                    <td className="px-3 py-1.5 text-xs">{r.toAccount} {r.toName}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.description ?? ""}</td>
-                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                      {/* Owner 2026-08-28 「fund transfer 没有办法 print out
-                          voucher」— every row prints: since 2026-10-02 from its
-                          right-click / ⋮ menu, as the JV grid's does. */}
-                      <span className="mr-2"><LifecycleBadge state={r.lifecycleState} /></span>
-                      {rowMenu.button(r.no, () => ftRowMenu(r))}
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No transfers yet</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
+        <CardContent className="p-0">
+          <DataGrid
+            columns={ftColumns}
+            data={rows ?? []}
+            keyField="no"
+            gridId="accounting-fund-transfers"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setFtPicked}
+            clearSelectionToken={ftClearToken}
+            onDoubleClick={(r) => setDetailFt(r.no)}
+            contextMenuItems={(r) => rowMenuItems(ftRowMenu(r))}
+            rowClassName={(r) => ((r.lifecycleState ?? "ACTIVE") !== "ACTIVE" ? "opacity-50" : "")}
+            searchPlaceholder="Search no / account / description"
+            headerMenu
+            reorderableHeaders
+            exportName="Fund Transfers"
+            footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">· active transfers only</span></>}
+            emptyMessage="No transfers yet"
+            loading={rows === null}
+            maxHeight="calc(100vh - 320px)"
+          />
         </CardContent>
       </Card>
 
@@ -12541,7 +13261,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
             </>}
           >
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <DetailField label="Date">{r.date}</DetailField>
+              <DetailField label="Date">{fmtDocDate(r.date)}</DetailField>
               <DetailField label="Amount"><span className="tabular-nums">{formatCurrency(r.amountSen)}</span></DetailField>
               <DetailField label="From" span={2}>{r.fromAccount} · {r.fromName}</DetailField>
               <DetailField label="To" span={2}>{r.toAccount} · {r.toName}</DetailField>
@@ -12583,7 +13303,9 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
 // real check possible, but choosing that basis is an owner/finance decision.
 
 function StockSummaryTab() {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [month, setMonth] = useState(() => today.slice(0, 7));
+  const monthOpts = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
   const [data, setData] = useState<{
     rows: { group: string; description: string; openingSen: number; purchasesSen: number; consumptionSen: number; closingSen: number; balanced: boolean; accounts: { stock: string; opening: string; closing: string } }[];
     wip: { openingSen: number; closingSen: number };
@@ -12624,117 +13346,162 @@ function StockSummaryTab() {
   // sheet 就让他的 closing stock 和 P&L closing stock 一样」): the Balance Sheet
   // reads this month-end's closing stock itself, so nothing needs posting.
 
+  // Finance v2: a report amount ("-" for none), the period stepper's months
+  // and one download.
+  const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
+  // TOTAL STOCK = raw materials + work in progress + finished goods, each the
+  // server's own figure (the design's total line).
+  const stockOpening = data ? data.totals.openingSen + data.wip.openingSen + data.fg.openingSen : 0;
+  const stockClosing = data ? data.totals.closingSen + data.wip.closingSen + data.fg.closingSen : 0;
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Code", "Material Group", "Opening (RM)", "Purchases (RM)", "Consumption (RM)", "Closing (RM)"]];
+    const kinds: PdfRowKind[] = [];
+    if (!data) return { aoa, kinds };
+    const n = (sen: number) => sen / 100;
+    for (const r of data.rows) { aoa.push([r.accounts.stock, r.description, n(r.openingSen), n(r.purchasesSen), n(r.consumptionSen), n(r.closingSen)]); kinds.push(undefined); }
+    aoa.push(["", "RAW MATERIAL TOTAL", n(data.totals.openingSen), n(data.totals.purchasesSen), n(data.totals.consumptionSen), n(data.totals.closingSen)]); kinds.push("subtotal");
+    aoa.push(["330-8000", "WORK IN PROGRESS", n(data.wip.openingSen), "", "", n(data.wip.closingSen)]); kinds.push(undefined);
+    aoa.push(["330-9000", "FINISHED GOODS", n(data.fg.openingSen), "", "", n(data.fg.closingSen)]); kinds.push(undefined);
+    aoa.push(["", "TOTAL STOCK", n(stockOpening), n(data.totals.purchasesSen), n(data.totals.consumptionSen), n(stockClosing)]); kinds.push("grand");
+    return { aoa, kinds };
+  };
+  const fileBase = `stock-summary-${month}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Stock Summary", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf(`${fileBase}.pdf`, "Stock Summary", periodLabel(month, today), aoa, { rowKind: (_r, i) => kinds[i], leftCols: [1], company: COMPANY.HOOKKA.name, print: true });
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Stock Summary</h2>
-      <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Month</label>
-            <input type="month" value={month} onChange={(e) => { setData(null); setMonth(e.target.value); }} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm" />
-          </div>
-          {data && (
-            <span className="text-xs text-[#6B7280] pb-2">The Balance Sheet shows this month-end&apos;s closing stock by itself — the same figure as the P&amp;L.</span>
-          )}
-          <p className="text-[11px] text-[#9CA3AF] pb-1">Opening + Purchases − Consumption = Closing, per material group, live from the cost ledger.</p>
-        </CardContent>
-      </Card>
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={month} options={monthOpts} onChange={(m) => { setData(null); setMonth(m); }} today={today} />
+          {data && <DownloadMenu items={downloads} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
 
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {data === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Material group</th>
-                  <th className="px-3 py-2 text-right">Opening</th>
-                  <th className="px-3 py-2 text-right">Purchases</th>
-                  <th className="px-3 py-2 text-right">Consumption</th>
-                  <th className="px-3 py-2 text-right">Closing</th>
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={`Stock Summary · ${periodLabel(month, today)}`}
+        note="All figures RM · Opening + Purchases − Consumption = Closing, per material group, live from the cost ledger · the Balance Sheet shows this month-end's closing stock by itself — the same figure as the P&L"
+      >
+        {data === null ? (
+          <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
+        ) : (
+          <table data-fin-report className="min-w-[720px]">
+            <thead>
+              <tr>
+                <th className="w-[110px]">Code</th>
+                <th>Material Group</th>
+                <th data-cell="num split" className="w-[150px]">Opening</th>
+                <th data-cell="num" className="w-[150px]">Purchases</th>
+                <th data-cell="num" className="w-[150px]">Consumption</th>
+                <th data-cell="num" className="w-[150px]">Closing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r) => (
+                <tr key={r.group} data-row="line">
+                  <td data-cell="code">{r.accounts.stock}</td>
+                  <td>{r.description}</td>
+                  <td data-cell="num split" data-neg={r.openingSen < 0 ? "" : undefined}>{amt(r.openingSen)}</td>
+                  <td data-cell="num" data-neg={r.purchasesSen < 0 ? "" : undefined}>{amt(r.purchasesSen)}</td>
+                  <td data-cell="num" data-neg={r.consumptionSen < 0 ? "" : undefined}>{amt(r.consumptionSen)}</td>
+                  <td data-cell="num" data-neg={r.closingSen < 0 ? "" : undefined}>{amt(r.closingSen)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((r) => (
-                  <tr key={r.group} className="border-b border-[#F0ECE9]">
-                    <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{r.accounts.stock}</span>{r.description}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.openingSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.purchasesSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.consumptionSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(r.closingSen)}</td>
-                  </tr>
-                ))}
-                <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                  <td className="px-3 py-1.5">330-8000 WORK IN PROGRESS</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(data.wip.openingSen)}</td>
-                  <td className="px-3 py-1.5 text-right" colSpan={2} />
-                  <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(data.wip.closingSen)}</td>
-                </tr>
-                <tr className="border-b border-[#F0ECE9] text-[#6B7280]">
-                  <td className="px-3 py-1.5">330-9000 FINISHED GOODS</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(data.fg.openingSen)}</td>
-                  <td className="px-3 py-1.5 text-right" colSpan={2} />
-                  <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(data.fg.closingSen)}</td>
-                </tr>
-                <tr className="bg-[#F0ECE9]/60 font-semibold">
-                  <td className="px-3 py-2">RAW MATERIAL TOTAL</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.openingSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.purchasesSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.consumptionSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totals.closingSen)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
+              ))}
+              <tr data-row="sub">
+                <td />
+                <td>RAW MATERIAL TOTAL</td>
+                <td data-cell="num split">{amt(data.totals.openingSen)}</td>
+                <td data-cell="num">{amt(data.totals.purchasesSen)}</td>
+                <td data-cell="num">{amt(data.totals.consumptionSen)}</td>
+                <td data-cell="num">{amt(data.totals.closingSen)}</td>
+              </tr>
+              <tr data-row="line">
+                <td data-cell="code">330-8000</td>
+                <td>WORK IN PROGRESS</td>
+                <td data-cell="num split">{amt(data.wip.openingSen)}</td>
+                <td data-cell="num" />
+                <td data-cell="num" />
+                <td data-cell="num">{amt(data.wip.closingSen)}</td>
+              </tr>
+              <tr data-row="line">
+                <td data-cell="code">330-9000</td>
+                <td>FINISHED GOODS</td>
+                <td data-cell="num split">{amt(data.fg.openingSen)}</td>
+                <td data-cell="num" />
+                <td data-cell="num" />
+                <td data-cell="num">{amt(data.fg.closingSen)}</td>
+              </tr>
+              <tr data-row="fin">
+                <td />
+                <td>TOTAL STOCK</td>
+                <td data-cell="num split">{amt(stockOpening)}</td>
+                <td data-cell="num">{amt(data.totals.purchasesSen)}</td>
+                <td data-cell="num">{amt(data.totals.consumptionSen)}</td>
+                <td data-cell="num">{amt(stockClosing)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
 
       {/* Phase 4.5 — consumption + labour split by product line, following
           the RM_ISSUE / LABOR_POSTED → production-order category. */}
       {byLine && (
-        <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+          <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+            <span className="text-[15px] font-bold text-[#1F1D1B]">By Product Line</span>
+            <span className="text-[12px] text-[#9CA3AF]">{periodLabel(month, today)} · consumption and labour follow the production order · all figures RM</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table data-fin-report className="min-w-[560px]">
               <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">By product line (this month)</th>
-                  <th className="px-3 py-2 text-right">Material consumed</th>
-                  <th className="px-3 py-2 text-right">Labour</th>
-                  <th className="px-3 py-2 text-right">Sales</th>
+                <tr>
+                  <th>Product Line</th>
+                  <th data-cell="num split" className="w-[170px]">Material Consumed</th>
+                  <th data-cell="num" className="w-[150px]">Labour</th>
+                  <th data-cell="num" className="w-[150px]">Sales</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-[#F0ECE9]">
-                  <td className="px-3 py-1.5">Sofa <span className="text-[11px] text-[#9CA3AF]">(incl. Accessory)</span></td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.sofa.materialSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.sofa.labourSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.salesByLine.sofa)}</td>
+                <tr data-row="line">
+                  <td>Sofa <span className="text-[11px] text-[#9CA3AF]">(incl. Accessory)</span></td>
+                  <td data-cell="num split">{amt(byLine.sofa.materialSen)}</td>
+                  <td data-cell="num">{amt(byLine.sofa.labourSen)}</td>
+                  <td data-cell="num">{amt(byLine.salesByLine.sofa)}</td>
                 </tr>
-                <tr className="border-b border-[#F0ECE9]">
-                  <td className="px-3 py-1.5">Bedframe</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.bedframe.materialSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.bedframe.labourSen)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.salesByLine.bedframe)}</td>
+                <tr data-row="line">
+                  <td>Bedframe</td>
+                  <td data-cell="num split">{amt(byLine.bedframe.materialSen)}</td>
+                  <td data-cell="num">{amt(byLine.bedframe.labourSen)}</td>
+                  <td data-cell="num">{amt(byLine.salesByLine.bedframe)}</td>
                 </tr>
                 {(byLine.unallocated.materialSen !== 0 || byLine.unallocated.labourSen !== 0) && (
-                  <tr className="border-b border-[#F0ECE9] text-[#9A3A2D]">
-                    <td className="px-3 py-1.5">Unallocated <span className="text-[11px]">(issue/labour with no PO category — fix the PO)</span></td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.unallocated.materialSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(byLine.unallocated.labourSen)}</td>
-                    <td className="px-3 py-1.5 text-right" />
+                  <tr data-row="line" className="text-[#9A3A2D]">
+                    <td>Unallocated <span className="text-[11px]">(issue/labour with no PO category — fix the PO)</span></td>
+                    <td data-cell="num split">{amt(byLine.unallocated.materialSen)}</td>
+                    <td data-cell="num">{amt(byLine.unallocated.labourSen)}</td>
+                    <td data-cell="num" />
                   </tr>
                 )}
-                <tr className="bg-[#F0ECE9]/60 font-semibold">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.totalMaterialSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.totalLabourSen)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(byLine.salesByLine.sofa + byLine.salesByLine.bedframe)}</td>
+                <tr data-row="fin">
+                  <td>TOTAL</td>
+                  <td data-cell="num split">{amt(byLine.totalMaterialSen)}</td>
+                  <td data-cell="num">{amt(byLine.totalLabourSen)}</td>
+                  <td data-cell="num">{amt(byLine.salesByLine.sofa + byLine.salesByLine.bedframe)}</td>
                 </tr>
               </tbody>
             </table>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
       <p className="text-[11px] text-[#9CA3AF]">
         Sofa material + Bedframe material + Unallocated = total consumption (the COGS material part). Shared/indirect
@@ -12746,51 +13513,127 @@ function StockSummaryTab() {
   );
 }
 
-// Phase 4.3 — WIP per open production order: material + labour − completed.
+// Work in progress by production order (finance backlog item 12): the orders
+// that make up the WORK IN PROGRESS line above — the line the Balance Sheet
+// carries. GET /api/accounting/wip-detail; the server spreads the line over
+// the orders to the sen, so TOTAL is the line itself. A month whose WIP is
+// keyed in Stock Take lists the orders for comparison, with the difference.
+type WipDetail = {
+  asOf: string;
+  basis: "production-orders" | "stock-take" | "none";
+  asOfDate: string | null;
+  ratio: number | null;
+  lineSen: number;
+  rows: { orderId: string; poNo: string | null; productCode: string | null; productName: string | null; itemCategory: string | null; qty: number; completion: number; unitPriceSen: number; valueAtPriceSen: number; wipSen: number }[];
+  totalSen: number;
+};
+
+const wipLineLabel = (cat: string | null) => {
+  const c = String(cat ?? "").trim();
+  return c ? c.charAt(0).toUpperCase() + c.slice(1).toLowerCase() : "—";
+};
+
 function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number }) {
-  const [wip, setWip] = useState<{ rows: { poId: string; poNumber: string; category: string; status: string; materialSen: number; labourSen: number; completedSen: number; wipSen: number }[]; totalSen: number } | null>(null);
+  const today = todayYmdMY();
+  const [wip, setWip] = useState<WipDetail | null>(null);
   useEffect(() => {
     let stale = false;
     fetch(`/api/accounting/wip-detail?asOf=${month}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: NonNullable<typeof wip> }>)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: WipDetail }>)
       .then((j) => { if (!stale && j?.success && j.data) setWip(j.data); })
       .catch(() => {});
     return () => { stale = true; };
   }, [month, reloadKey]);
-  if (!wip || wip.rows.length === 0) return null;
+  // A month still loading shows nothing rather than the last month's orders.
+  if (!wip || wip.asOf !== month || wip.basis === "none") return null;
+  const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
+  const atPriceSen = Math.round(wip.rows.reduce((s, r) => s + r.valueAtPriceSen, 0));
+  const keyed = wip.basis === "stock-take";
+  // No cost ratio (no goods completed the month before — the first month of
+  // the books): the orders can only be shown at selling price, and a
+  // difference against the Stock Take figure would mean nothing.
+  const noRatio = wip.ratio === 0;
   return (
-    <Card>
-      <CardContent className="p-0 overflow-x-auto">
-        <table className="w-full text-sm">
+    <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+      <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+        <span className="text-[15px] font-bold text-[#1F1D1B]">Work in Progress by Production Order</span>
+        <span className="text-[12px] text-[#9CA3AF]">
+          {periodLabel(month, today)}{wip.asOfDate ? ` · as of ${formatDateDMY(wip.asOfDate)}` : ""} · {wip.rows.length} order{wip.rows.length === 1 ? "" : "s"} · all figures RM
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table data-fin-report className="min-w-[760px]">
           <thead>
-            <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-              <th className="px-3 py-2 text-left">Work in progress — by production order (as of {month})</th>
-              <th className="px-3 py-2 text-left">Line</th>
-              <th className="px-3 py-2 text-right">Material</th>
-              <th className="px-3 py-2 text-right">Labour</th>
-              <th className="px-3 py-2 text-right">Completed</th>
-              <th className="px-3 py-2 text-right">WIP value</th>
+            <tr>
+              <th className="w-[130px]">PO No.</th>
+              <th>Product</th>
+              <th className="w-[100px]">Line</th>
+              <th data-cell="num" className="w-[60px]">Qty</th>
+              <th data-cell="num" className="w-[70px]">Done</th>
+              <th data-cell="num split" className="w-[150px]">At selling price</th>
+              <th data-cell="num" className="w-[150px]">WIP value</th>
             </tr>
           </thead>
           <tbody>
-            {wip.rows.slice(0, 200).map((w) => (
-              <tr key={w.poId} className="border-b border-[#F0ECE9]">
-                <td className="px-3 py-1.5 tabular-nums text-xs">{w.poNumber}{w.status ? <span className="text-[#9CA3AF]"> · {w.status}</span> : null}</td>
-                <td className="px-3 py-1.5 text-xs text-[#6B7280]">{w.category || "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(w.materialSen)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(w.labourSen)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-[#9CA3AF]">{w.completedSen ? formatCurrency(w.completedSen) : "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(w.wipSen)}</td>
+            {wip.rows.length === 0 && (
+              <tr data-row="line">
+                <td colSpan={7} className="text-center text-[#9CA3AF]">No production order is in progress{wip.asOfDate ? ` as of ${formatDateDMY(wip.asOfDate)}` : ""}.</td>
+              </tr>
+            )}
+            {wip.rows.map((r) => (
+              <tr key={r.orderId} data-row="line">
+                <td data-cell="code">{r.poNo || r.orderId}</td>
+                <td>{[r.productCode, r.productName].filter(Boolean).join(" · ") || "—"}</td>
+                <td>{wipLineLabel(r.itemCategory)}</td>
+                <td data-cell="num">{r.qty}</td>
+                <td data-cell="num">{Math.round(r.completion * 100)}%</td>
+                <td data-cell="num split">{amt(Math.round(r.valueAtPriceSen))}</td>
+                <td data-cell="num">{amt(r.wipSen)}</td>
               </tr>
             ))}
-            <tr className="bg-[#F0ECE9]/60 font-semibold">
-              <td className="px-3 py-2" colSpan={5}>TOTAL WIP{wip.rows.length > 200 ? ` (showing top 200 of ${wip.rows.length})` : ""}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(wip.totalSen)}</td>
-            </tr>
+            {keyed ? (
+              <>
+                <tr data-row="sub">
+                  <td />
+                  <td colSpan={4}>TOTAL BY PRODUCTION ORDER</td>
+                  <td data-cell="num split">{amt(atPriceSen)}</td>
+                  <td data-cell="num">{amt(wip.totalSen)}</td>
+                </tr>
+                <tr data-row="line">
+                  <td />
+                  <td colSpan={4}>WORK IN PROGRESS per Stock Take (the line above)</td>
+                  <td data-cell="num split" />
+                  <td data-cell="num">{amt(wip.lineSen)}</td>
+                </tr>
+                {!noRatio && (
+                  <tr data-row="fin">
+                    <td />
+                    <td colSpan={4}>DIFFERENCE (Stock Take − orders)</td>
+                    <td data-cell="num split" />
+                    <td data-cell="num" data-neg={wip.lineSen - wip.totalSen < 0 ? "" : undefined}>{amt(wip.lineSen - wip.totalSen)}</td>
+                  </tr>
+                )}
+              </>
+            ) : (
+              <tr data-row="fin">
+                <td />
+                <td colSpan={4}>TOTAL — WORK IN PROGRESS</td>
+                <td data-cell="num split">{amt(atPriceSen)}</td>
+                <td data-cell="num">{amt(wip.lineSen)}</td>
+              </tr>
+            )}
           </tbody>
         </table>
-      </CardContent>
-    </Card>
+      </div>
+      <p className="border-t border-[#E2DDD8] px-4 py-2 text-[11px] text-[#6B7280]">
+        {keyed
+          ? "This month's WIP is the Stock Take figure — the P&L and the Balance Sheet use it. The orders are the production-order valuation, for comparison."
+          : "TOTAL is the WORK IN PROGRESS closing above, the same figure the P&L closes on and the Balance Sheet's work-in-progress line."}
+        {" "}At selling price = the order's selling price × qty × the share of its job-card minutes done; WIP value = that × the cost ratio
+        {wip.ratio !== null ? ` ${wip.ratio.toFixed(4)}` : ""} (last month's materials ÷ last month's completed goods + this month's direct labour ÷ this month's completed goods, both at selling price), spread over the orders to the sen.
+        {noRatio && " There is no cost ratio for this month — no goods were completed the month before — so the orders show at selling price only."}
+      </p>
+    </div>
   );
 }
 
@@ -12804,7 +13647,8 @@ function WipDetailCard({ month, reloadKey }: { month: string; reloadKey: number 
 function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [month, setMonth] = useState(() => today.slice(0, 7));
   const [data, setData] = useState<{
     posted: boolean;
     totalSen: number;
@@ -12905,13 +13749,35 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
   };
 
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
+  const monthOpts = monthOptions(today.slice(0, 7), 18);
+  const mLabel = periodLabel(month, "");
+  const workers = (data?.byDept ?? []).reduce((s, d) => s + d.workers, 0);
+  const deptCost = (data?.byDept ?? []).reduce((s, d) => s + d.costSen, 0);
+  const creditCodes = (data?.postedCredits ?? []).map((c) => c.code).join(", ") || data?.accrualAccount || "";
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Labour — Month-end Posting</h2>
-        <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>Department → Account map</Button>
-      </div>
+      {/* Finance v2: the month and the month-end actions on the title row —
+          the same Post / Unpost as before (owner presses them). */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={month} options={monthOpts} onChange={(m) => { setData(null); setMonth(m); }} today={today} />
+          <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>Department → Account map</Button>
+          <Link to="/employees" title="Opens HR › Employees — check the month on its Payroll tab">
+            <Button variant="outline" size="sm">Check in Payroll ↗</Button>
+          </Link>
+          {data && (data.posted ? (
+            <Button variant="outline" size="sm" disabled={posting} onClick={handleUnpost}
+              className="text-[#9A3A2D] hover:bg-[#9A3A2D]/5">
+              {posting ? "Unposting…" : "Unpost"}
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" disabled={posting || data.totalSen <= 0} onClick={handlePost}>
+              {posting ? "Posting…" : `Post ${formatCurrency(data.totalSen)} to GL`}
+            </Button>
+          ))}
+        </ReportToolbar>
+      </FinanceTitleActions>
 
       {showMap && (
         <Card>
@@ -12957,47 +13823,36 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
         </Card>
       )}
 
-      <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Month</label>
-            <input type="month" value={month} onChange={(e) => { setData(null); setMonth(e.target.value); }} className={selCls} />
-          </div>
-          {data && (
-            <>
-              <span className="text-sm text-[#6B7280] pb-1">Total labour cost <span className="font-semibold text-[#1F1D1B] tabular-nums">{formatCurrency(data.totalSen)}</span></span>
-              {data.posted ? (
-                <>
-                  <span className="text-xs text-[#27500A] pb-2">Already posted ✓ (CR {(data.postedCredits ?? []).map((c) => c.code).join(", ") || data.accrualAccount})</span>
-                  {/* Posted before the statutory accruals were split out (2026-10-09):
-                      the ledger has fewer credit accounts than the posting now makes. */}
-                  {(data.postedCredits?.length ?? 0) > 0 && (data.credits?.length ?? 0) > (data.postedCredits?.length ?? 0) && (
-                    <span className="text-xs text-[#7A5B12] pb-2">Posted before EPF / SOCSO / EIS had their own accruals — Unpost, then Post again to split it.</span>
-                  )}
-                  {/* Without this the month is frozen in whatever shape it was
-                      first posted — the only way back was a hand-written JE. */}
-                  <Button variant="outline" size="sm" disabled={posting} onClick={handleUnpost}
-                    className="text-[#9A3A2D] hover:bg-[#9A3A2D]/5">
-                    {posting ? "Unposting…" : "Unpost"}
-                  </Button>
-                </>
-              ) : (
-                <Button variant="primary" size="sm" disabled={posting || data.totalSen <= 0} onClick={handlePost}>
-                  {posting ? "Posting…" : `Post ${formatCurrency(data.totalSen)} to GL`}
-                </Button>
-              )}
-            </>
+      {data && (
+        <>
+          <StatusBanner
+            done={data.posted}
+            title={data.posted ? "Posted" : "Not posted"}
+            sub={data.posted
+              ? `Production labour for ${mLabel} is in the ledger (CR ${creditCodes}) · read-only. Unpost to change it.`
+              : `Check ${mLabel} in Payroll, then post.`}
+          />
+          {/* Posted before the statutory accruals were split out (2026-10-09):
+              the ledger has fewer credit accounts than the posting now makes. */}
+          {data.posted && (data.postedCredits?.length ?? 0) > 0 && (data.credits?.length ?? 0) > (data.postedCredits?.length ?? 0) && (
+            <p className="text-xs text-[#7A5B12]">Posted before EPF / SOCSO / EIS had their own accruals — Unpost, then Post again to split it.</p>
           )}
-        </CardContent>
-      </Card>
+          <KpiCards
+            items={[
+              { label: `Production labour · ${mLabel}`, value: formatCurrency(data.totalSen), note: `${workers} worker${workers === 1 ? "" : "s"}` },
+              { label: "Status", value: data.posted ? "Posted" : "Not posted", tone: data.posted ? "ok" : "warn", note: data.posted ? `CR ${creditCodes}` : "post before closing the month" },
+            ]}
+          />
+        </>
+      )}
 
       {data && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <Card>
             <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <tr>
                     <th className="px-3 py-2 text-left">Department</th>
                     <th className="px-3 py-2 text-left">→ Account</th>
                     <th className="px-3 py-2 text-right">Workers</th>
@@ -13006,7 +13861,7 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 </thead>
                 <tbody>
                   {data.byDept.map((d) => (
-                    <tr key={d.departmentCode} className="border-b border-[#F0ECE9]">
+                    <tr key={d.departmentCode}>
                       <td className="px-3 py-1.5">{d.departmentCode}</td>
                       <td className="px-3 py-1.5 text-xs"><span className="tabular-nums text-[#6B7280] mr-1">{d.account}</span>{d.accountName}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{d.workers}</td>
@@ -13014,17 +13869,26 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                     </tr>
                   ))}
                   {data.byDept.length === 0 && (
-                    <tr><td colSpan={4} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No payslips for {month}</td></tr>
+                    <tr data-fin-nolift=""><td colSpan={4} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No payslips for {month}</td></tr>
                   )}
                 </tbody>
+                {data.byDept.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td className="px-3 py-2" colSpan={2}>Total</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{workers}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(deptCost)}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
+                  <tr>
                     <th className="px-3 py-2 text-left">GL posting preview</th>
                     <th className="px-3 py-2 text-right">Debit</th>
                     <th className="px-3 py-2 text-right">Credit</th>
@@ -13032,25 +13896,27 @@ function LaborTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 </thead>
                 <tbody>
                   {data.accounts.map((a) => (
-                    <tr key={a.code} className="border-b border-[#F0ECE9]">
+                    <tr key={a.code}>
                       <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{a.code}</span>{a.name}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.costSen)}</td>
                       <td className="px-3 py-1.5 text-right" />
                     </tr>
                   ))}
                   {(data.credits ?? [{ code: data.accrualAccount, name: "ACCRUAL - SALARY", sen: data.totalSen }]).map((cr) => (
-                    <tr key={cr.code} className="border-b border-[#F0ECE9]">
+                    <tr key={cr.code}>
                       <td className="px-3 py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-1">{cr.code}</span>{cr.name}</td>
                       <td className="px-3 py-1.5 text-right" />
                       <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(cr.sen)}</td>
                     </tr>
                   ))}
-                  <tr className="bg-[#F0ECE9]/60 font-semibold">
+                </tbody>
+                <tfoot>
+                  <tr>
                     <td className="px-3 py-2">TOTAL</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totalSen)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(data.totalSen)}</td>
                   </tr>
-                </tbody>
+                </tfoot>
               </table>
             </CardContent>
           </Card>
@@ -13097,36 +13963,22 @@ type FaRow = {
   accumSen: number; lastMonth: string | null;
 };
 
-function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
+// The Add Asset form — one component for a manual add and for Add New Asset
+// from a saved voucher / AP bill (backlog item 11). It starts from `initial`
+// (the parent keys it, so each waiting line gets a fresh form) and records
+// "From <document>" as the asset's remark.
+function FixedAssetAddForm({ accounts, initial, left, onSaved, onCancel }: {
+  accounts: ChartOfAccount[]; initial: FaPrefill | null; left: number; onSaved: () => void; onCancel: () => void;
+}) {
   const { toast } = useToast();
-  const { confirm } = useConfirm();
-  const [rows, setRows] = useState<FaRow[] | null>(null);
-  const [migrationMissing, setMigrationMissing] = useState(false);
-  const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({
-    name: "", assetAccount: "", accumAccount: "", expenseAccount: "",
-    purchaseDate: "", cost: "", residual: "", lifeMonths: "", openingAccum: "",
-  });
-  const [runMonth, setRunMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
-  const [posting, setPosting] = useState(false);
-
+  const [form, setForm] = useState(() => ({
+    name: initial?.name ?? "", assetAccount: initial?.assetAccount ?? "", accumAccount: initial?.accumAccount ?? "",
+    expenseAccount: initial?.expenseAccount ?? "", purchaseDate: initial?.purchaseDate ?? "",
+    cost: initial ? (initial.costSen / 100).toFixed(2) : "", residual: "", lifeMonths: "", openingAccum: "",
+  }));
   const ncaAccounts = accounts.filter((a) => a.type === "ASSET" && a.isPostable !== false);
   const expAccounts = accounts.filter((a) => (a.type === "EXPENSE" || a.type === "COST") && a.isPostable !== false);
-
-  const load = useCallback(() => {
-    fetch("/api/accounting/fixed-assets")
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: FaRow[]; migrationMissing?: boolean }>)
-      .then((j) => {
-        if (j?.success) {
-          setRows(j.data ?? []);
-          setMigrationMissing(!!j.migrationMissing);
-        }
-      })
-      .catch(() => {});
-  }, []);
-  useEffect(() => { load(); }, [load]);
 
   // BUG-2026-08-13-095 — THE reported instance. Cost / residual / opening
   // accumulated are `type="text"` inputs; an asset entered as "12,000" was
@@ -13157,19 +14009,115 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           residualSen: toSen(form.residual),
           usefulLifeMonths: parseInt(form.lifeMonths, 10) || 0,
           openingAccumSen: toSen(form.openingAccum),
+          ...(initial ? { remarks: faRemarkFor(initial.sourceRef) } : {}),
         }),
       });
       const j = asMutationResponse(await res.json());
       if (j?.success) {
         toast.success("Asset added");
-        setShowForm(false);
-        setForm({ name: "", assetAccount: "", accumAccount: "", expenseAccount: "", purchaseDate: "", cost: "", residual: "", lifeMonths: "", openingAccum: "" });
-        load();
+        onSaved();
       } else toast.error(j?.error || "Save failed");
     } finally {
       setSaving(false);
     }
   };
+
+  const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        {initial && (
+          <div className="rounded-md border border-[#E0C989] bg-[#FBF3E4] px-3 py-2 text-xs text-[#7A5B12]">
+            <span className="font-semibold">Add New Asset</span> — from {initial.sourceRef || "the document just saved"}: this payment went to a fixed-asset account. Check the details, enter the useful life, and add it to the register.
+            {left > 0 && <span className="ml-1 font-semibold">{left} more after this one.</span>}
+          </div>
+        )}
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset name</label>
+            <input type="text" placeholder="e.g. CNC Cutting Machine" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={`${selCls} w-64`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Purchase date</label>
+            <input type="date" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} className={selCls} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Cost (RM)</label>
+            <input type="text" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.cost) ? "border-[#9A3A2D]" : ""}`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Residual (RM)</label>
+            <input type="text" placeholder="0" value={form.residual} onChange={(e) => setForm({ ...form, residual: e.target.value })} className={`${selCls} w-24 text-right tabular-nums ${isUnreadableMoney(form.residual) ? "border-[#9A3A2D]" : ""}`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Life (months)</label>
+            <input type="text" placeholder="e.g. 60" value={form.lifeMonths} onChange={(e) => setForm({ ...form, lifeMonths: e.target.value })} className={`${selCls} w-20 text-center`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accum. depn b/f (RM)</label>
+            <input type="text" placeholder="0" value={form.openingAccum} onChange={(e) => setForm({ ...form, openingAccum: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.openingAccum) ? "border-[#9A3A2D]" : ""}`} title="Depreciation already taken before the opening date" />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-72">
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset (cost) account</label>
+            <AccountPicker accounts={ncaAccounts} value={form.assetAccount} onChange={(code) => setForm({ ...form, assetAccount: code })} placeholder="e.g. 200-1001…" />
+          </div>
+          <div className="w-72">
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accumulated depn account</label>
+            <AccountPicker accounts={ncaAccounts} value={form.accumAccount} onChange={(code) => setForm({ ...form, accumAccount: code })} placeholder="e.g. 200-1005…" />
+          </div>
+          <div className="w-72">
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">Depreciation expense account</label>
+            <AccountPicker accounts={expAccounts} value={form.expenseAccount} onChange={(code) => setForm({ ...form, expenseAccount: code })} placeholder="780-0080 / 780-0090 / 900-D001…" />
+          </div>
+          <Button variant="primary" size="sm" disabled={saving || !!faMoneyError} onClick={handleAdd}>{saving ? "Saving…" : "Save asset"}</Button>
+          {faMoneyError && <span className="text-[11px] text-[#9A3A2D] self-center">{faMoneyError}</span>}
+          <Button variant="outline" size="sm" onClick={onCancel}>{initial ? "Skip for now" : "Cancel"}</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  const [rows, setRows] = useState<FaRow[] | null>(null);
+  const [migrationMissing, setMigrationMissing] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const today = todayYmdMY();
+  const [runMonth, setRunMonth] = useState(() => today.slice(0, 7));
+  // Re-read the month's preview after a run (finance v2: the preview loads
+  // with the month — a read; Post stays the owner's click).
+  const [previewKey, setPreviewKey] = useState(0);
+  const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
+  const [posting, setPosting] = useState(false);
+  // Add New Asset from a saved voucher / AP bill (backlog item 11): the lines
+  // the saving page left waiting, opened one at a time (each a fresh form,
+  // keyed by its place in the queue); read once, cleared after mounting.
+  const [faQueue] = useState<FaPrefill[]>(() => readFaQueue(sessionStore()));
+  useEffect(() => { clearFaQueue(sessionStore()); }, []);
+  const [faAt, setFaAt] = useState(0);
+  const faCurrent = faQueue[faAt] ?? null;
+  const skipFromDoc = async () => {
+    if (!faCurrent) return;
+    if (!(await confirm({ title: "Skip this asset?", message: `${faCurrent.sourceRef || "The document"} stays as it is — you can add the asset later with Add Asset.`, danger: false }))) return;
+    setFaAt((i) => i + 1);
+  };
+
+  const load = useCallback(() => {
+    fetch("/api/accounting/fixed-assets")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: FaRow[]; migrationMissing?: boolean }>)
+      .then((j) => {
+        if (j?.success) {
+          setRows(j.data ?? []);
+          setMigrationMissing(!!j.migrationMissing);
+        }
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const handleDispose = async (row: FaRow) => {
     if (!(await confirm({ title: "Dispose asset?", message: `Dispose ${row.name}? Depreciation stops; the disposal gain/loss entry stays a manual JV for now.`, danger: true }))) return;
@@ -13191,13 +14139,14 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else toast.error(j?.error || "Delete failed");
   };
 
-  const handlePreview = async () => {
-    setPreview(null);
-    const res = await fetch(`/api/accounting/fixed-assets/depreciation-preview?month=${runMonth}`);
-    const j = await res.json() as { success?: boolean; data?: NonNullable<typeof preview>; error?: string };
-    if (j?.success && j.data) setPreview(j.data);
-    else toast.error(j?.error || "Preview failed");
-  };
+  useEffect(() => {
+    let dead = false;
+    fetch(`/api/accounting/fixed-assets/depreciation-preview?month=${runMonth}`)
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: NonNullable<typeof preview>; error?: string }>)
+      .then((j) => { if (!dead && j?.success && j.data) setPreview(j.data); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [runMonth, previewKey]);
 
   const handleRun = async () => {
     setPosting(true);
@@ -13212,172 +14161,236 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         toast.success(`Depreciation ${runMonth} posted — ${j.data.assets} assets, ${formatCurrency(j.data.totalSen)}`);
         setPreview(null);
         load();
+        setPreviewKey((k) => k + 1);
       } else toast.error(j?.error || "Run failed");
     } finally {
       setPosting(false);
     }
   };
 
-  const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
   const nbv = (r: FaRow) => r.costSen - r.accumSen;
+
+  // Finance v2: the register and this month's run grouped by the asset (cost)
+  // account, a subtotal per group; disposed assets stay listed (faded) but are
+  // left out of the totals.
+  const acctName = (code: string) => accounts.find((a) => a.code === code)?.name ?? "";
+  const live = (rows ?? []).filter((r) => !r.disposedAt);
+  const groupCodes = [...new Set((rows ?? []).map((r) => r.assetAccount))].sort();
+  const sumOf = (xs: FaRow[], f: (r: FaRow) => number) => xs.filter((r) => !r.disposedAt).reduce((s, r) => s + f(r), 0);
+  const assetOf = new Map((rows ?? []).map((r) => [r.id, r] as const));
+  const previewGroups = preview
+    ? [...new Set(preview.rows.map((p) => assetOf.get(p.assetId)?.assetAccount ?? ""))].sort()
+    : [];
+  const monthOpts = monthOptions(today.slice(0, 7), 18);
+  const mLabel = periodLabel(runMonth, "");
+  const runState: "loading" | "none" | "todo" | "done" =
+    rows === null || preview === null ? "loading" : live.length === 0 ? "none" : preview.rows.length > 0 ? "todo" : "done";
+
+  // The download carries the register as shown.
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Asset", "Accounts (cost / accum / expense)", "Purchased", "Cost (RM)", "Accum. depn (RM)", "NBV (RM)", "Life (months)"]];
+    const kinds: PdfRowKind[] = [];
+    for (const g of groupCodes) {
+      const xs = (rows ?? []).filter((r) => r.assetAccount === g);
+      aoa.push([`${g} ${acctName(g)}`, "", "", "", "", "", ""]); kinds.push("section");
+      for (const r of xs) {
+        aoa.push([`${r.name}${r.disposedAt ? " (disposed)" : ""}`, `${r.assetAccount} / ${r.accumAccount} / ${r.expenseAccount}`, r.purchaseDate, r.costSen / 100, r.accumSen / 100, nbv(r) / 100, r.usefulLifeMonths]);
+        kinds.push(undefined);
+      }
+      aoa.push([`Total ${acctName(g) || g}`, "", "", sumOf(xs, (r) => r.costSen) / 100, sumOf(xs, (r) => r.accumSen) / 100, sumOf(xs, nbv) / 100, ""]); kinds.push("subtotal");
+    }
+    aoa.push(["TOTAL (in use)", "", "", sumOf(rows ?? [], (r) => r.costSen) / 100, sumOf(rows ?? [], (r) => r.accumSen) / 100, sumOf(rows ?? [], nbv) / 100, ""]); kinds.push("grand");
+    return { aoa, kinds };
+  };
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx("fixed-assets.xlsx", "Fixed Assets", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf("fixed-assets.pdf", "Fixed Asset Register", `As at ${fmtDocDate(today)}`, aoa, { rowKind: (_r, i) => kinds[i], leftCols: [1, 2], company: COMPANY.HOOKKA.name, print: true });
+      },
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Fixed Assets · Depreciation</h2>
-        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
-          <Plus className="h-4 w-4" /> Add Asset
-        </Button>
-      </div>
+      {/* Finance v2: the month and the month-end actions on the title row —
+          the same Add Asset form and the same Post (owner presses it). */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <PeriodStepper value={runMonth} options={monthOpts} onChange={(m) => { setPreview(null); setRunMonth(m); }} today={today} />
+          <Button variant="outline" size="sm" onClick={() => setShowForm(!showForm)}>
+            <Plus className="h-4 w-4" /> Add Asset
+          </Button>
+          {preview && preview.rows.length > 0 && (
+            <Button variant="primary" size="sm" disabled={posting} onClick={handleRun}>
+              {posting ? "Posting…" : `Post ${formatCurrency(preview.totalSen)} (${preview.rows.length} assets)`}
+            </Button>
+          )}
+          {rows && rows.length > 0 && <DownloadMenu items={downloads} />}
+        </ReportToolbar>
+      </FinanceTitleActions>
       {migrationMissing && (
         <Card><CardContent className="p-4 text-sm text-[#9A3A2D]">Migration 0161 not applied yet — run the paste-version SQL first.</CardContent></Card>
       )}
 
-      {showForm && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset name</label>
-                <input type="text" placeholder="e.g. CNC Cutting Machine" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={`${selCls} w-64`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Purchase date</label>
-                <input type="date" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} className={selCls} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Cost (RM)</label>
-                <input type="text" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.cost) ? "border-[#9A3A2D]" : ""}`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Residual (RM)</label>
-                <input type="text" placeholder="0" value={form.residual} onChange={(e) => setForm({ ...form, residual: e.target.value })} className={`${selCls} w-24 text-right tabular-nums ${isUnreadableMoney(form.residual) ? "border-[#9A3A2D]" : ""}`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Life (months)</label>
-                <input type="text" placeholder="e.g. 60" value={form.lifeMonths} onChange={(e) => setForm({ ...form, lifeMonths: e.target.value })} className={`${selCls} w-20 text-center`} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accum. depn b/f (RM)</label>
-                <input type="text" placeholder="0" value={form.openingAccum} onChange={(e) => setForm({ ...form, openingAccum: e.target.value })} className={`${selCls} w-28 text-right tabular-nums ${isUnreadableMoney(form.openingAccum) ? "border-[#9A3A2D]" : ""}`} title="Depreciation already taken before the opening date" />
-              </div>
-            </div>
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="w-72">
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Asset (cost) account</label>
-                <AccountPicker accounts={ncaAccounts} value={form.assetAccount} onChange={(code) => setForm({ ...form, assetAccount: code })} placeholder="e.g. 200-1001…" />
-              </div>
-              <div className="w-72">
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Accumulated depn account</label>
-                <AccountPicker accounts={ncaAccounts} value={form.accumAccount} onChange={(code) => setForm({ ...form, accumAccount: code })} placeholder="e.g. 200-1005…" />
-              </div>
-              <div className="w-72">
-                <label className="text-xs font-medium text-[#6B7280] mb-1 block">Depreciation expense account</label>
-                <AccountPicker accounts={expAccounts} value={form.expenseAccount} onChange={(code) => setForm({ ...form, expenseAccount: code })} placeholder="780-0080 / 780-0090 / 900-D001…" />
-              </div>
-              <Button variant="primary" size="sm" disabled={saving || !!faMoneyError} onClick={handleAdd}>{saving ? "Saving…" : "Save asset"}</Button>
-              {faMoneyError && <span className="text-[11px] text-[#9A3A2D] self-center">{faMoneyError}</span>}
-              <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
-            </div>
-          </CardContent>
-        </Card>
+      {(faCurrent || showForm) && (
+        <FixedAssetAddForm
+          key={faCurrent ? `doc-${faAt}` : "manual"}
+          accounts={accounts}
+          initial={faCurrent}
+          left={faCurrent ? faQueue.length - faAt - 1 : 0}
+          onSaved={() => { load(); if (faCurrent) setFaAt((i) => i + 1); else setShowForm(false); }}
+          onCancel={() => { if (faCurrent) void skipFromDoc(); else setShowForm(false); }}
+        />
       )}
 
-      {/* Monthly run */}
-      <Card>
-        <CardContent className="p-4 space-y-3 bg-[#F7F4EF] rounded-lg">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Depreciation month</label>
-              <input type="month" value={runMonth} onChange={(e) => { setRunMonth(e.target.value); setPreview(null); }} className={selCls} />
-            </div>
-            <Button variant="outline" size="sm" onClick={handlePreview}>Preview</Button>
-            {preview && preview.rows.length > 0 && (
-              <Button variant="primary" size="sm" disabled={posting} onClick={handleRun}>
-                {posting ? "Posting…" : `Post ${formatCurrency(preview.totalSen)} (${preview.rows.length} assets)`}
-              </Button>
-            )}
-          </div>
-          {preview && (
-            preview.rows.length === 0 ? (
-              <p className="text-sm text-[#6B7280]">Nothing to depreciate for {runMonth} — already run, disposed, or fully depreciated.</p>
-            ) : (
-              <div className="overflow-x-auto">
-              <table className="w-full text-sm bg-white rounded">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                    <th className="px-3 py-2 text-left">Asset</th>
-                    <th className="px-3 py-2 text-left">DR expense</th>
-                    <th className="px-3 py-2 text-left">CR accum.</th>
-                    <th className="px-3 py-2 text-right">This month</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.rows.map((r) => (
-                    <tr key={r.assetId} className="border-b border-[#F0ECE9]">
-                      <td className="px-3 py-1.5">{r.name}</td>
-                      <td className="px-3 py-1.5 text-xs tabular-nums">{r.expenseAccount}</td>
-                      <td className="px-3 py-1.5 text-xs tabular-nums">{r.accumAccount}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.amountSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-[#F0ECE9]/60 font-semibold">
-                    <td className="px-3 py-2" colSpan={3}>TOTAL</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(preview.totalSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-              </div>
-            )
-          )}
-        </CardContent>
-      </Card>
+      {runState !== "loading" && runState !== "none" && (
+        <StatusBanner
+          done={runState === "done"}
+          title={runState === "done" ? "Nothing left to run" : "Not run"}
+          sub={runState === "done"
+            ? `Depreciation for ${mLabel} is already posted, or every asset is disposed or fully depreciated.`
+            : `Check the list below, then post ${mLabel}'s depreciation.`}
+        />
+      )}
+      {runState !== "loading" && (
+        <KpiCards
+          items={[
+            { label: `Depreciation · ${mLabel}`, value: formatCurrency(preview?.totalSen ?? 0), note: `${preview?.rows.length ?? 0} asset${preview?.rows.length === 1 ? "" : "s"} still to run` },
+            { label: "Net book value", value: formatCurrency(sumOf(rows ?? [], nbv)), note: `${live.length} asset${live.length === 1 ? "" : "s"} in use` },
+            {
+              label: "Status",
+              value: runState === "done" ? "Done" : runState === "todo" ? "Not run" : "No assets",
+              tone: runState === "done" ? "ok" : runState === "todo" ? "warn" : "ink",
+              note: runState === "todo" ? "post before closing the month" : runState === "done" ? `nothing left for ${mLabel}` : "add the register first",
+            },
+          ]}
+        />
+      )}
 
-      {/* Register */}
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          {rows === null ? (
-            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
-          ) : (
-            <table className="w-full text-sm">
+      {/* This month's run, grouped like the register. */}
+      {preview && preview.rows.length > 0 && (
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+          <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+            <span className="text-[15px] font-bold text-[#1F1D1B]">This month&apos;s depreciation</span>
+            <span className="text-[12px] text-[#9CA3AF]">{mLabel} · by asset account · not posted yet</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table data-fin-report className="min-w-[640px]">
               <thead>
-                <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
-                  <th className="px-3 py-2 text-left">Asset</th>
-                  <th className="px-3 py-2 text-left">Accounts (cost / accum / expense)</th>
-                  <th className="px-3 py-2 text-left">Purchased</th>
-                  <th className="px-3 py-2 text-right">Cost</th>
-                  <th className="px-3 py-2 text-right">Accum. depn</th>
-                  <th className="px-3 py-2 text-right">NBV</th>
-                  <th className="px-3 py-2 text-left">Life</th>
-                  <th className="px-3 py-2" />
+                <tr>
+                  <th>Asset</th>
+                  <th>DR expense</th>
+                  <th>CR accum. depn</th>
+                  <th data-cell="num split" className="w-[160px]">This month</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className={`border-b border-[#F0ECE9] ${r.disposedAt ? "opacity-50" : ""}`}>
-                    <td className="px-3 py-1.5">{r.name}{r.disposedAt ? " (disposed)" : ""}</td>
-                    <td className="px-3 py-1.5 text-xs tabular-nums text-[#6B7280]">{r.assetAccount} / {r.accumAccount} / {r.expenseAccount}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280] whitespace-nowrap">{r.purchaseDate}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.costSen)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.accumSen)}{r.lastMonth ? <span className="text-[11px] text-[#9CA3AF]"> (to {r.lastMonth})</span> : null}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatCurrency(nbv(r))}</td>
-                    <td className="px-3 py-1.5 text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
-                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                      {!r.disposedAt && (
-                        <button onClick={() => handleDispose(r)} className="text-[#6B7280] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer mr-3">dispose</button>
-                      )}
-                      <button onClick={() => handleDelete(r)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer">del</button>
-                    </td>
+                {previewGroups.map((g) => {
+                  const ps = preview.rows.filter((p) => (assetOf.get(p.assetId)?.assetAccount ?? "") === g);
+                  return (
+                    <Fragment key={g || "—"}>
+                      <tr data-row="grp"><td colSpan={4}>{g ? `${g} ${acctName(g)}` : "Other"}</td></tr>
+                      {ps.map((p) => (
+                        <tr key={p.assetId} data-row="line">
+                          <td style={{ paddingLeft: 28 }}>{p.name}</td>
+                          <td><span data-cell="code" className="mr-1.5">{p.expenseAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.expenseAccount)}</span></td>
+                          <td><span data-cell="code" className="mr-1.5">{p.accumAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.accumAccount)}</span></td>
+                          <td data-cell="num split">{formatCurrency(p.amountSen)}</td>
+                        </tr>
+                      ))}
+                      <tr data-row="sub">
+                        <td colSpan={3} style={{ paddingLeft: 28 }}>Total {g ? acctName(g) || g : "Other"}</td>
+                        <td data-cell="num split">{formatCurrency(ps.reduce((s, p) => s + p.amountSen, 0))}</td>
+                      </tr>
+                    </Fragment>
+                  );
+                })}
+                <tr data-row="fin">
+                  <td colSpan={3}>TOTAL</td>
+                  <td data-cell="num split">{formatCurrency(preview.totalSen)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Register */}
+      <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+        <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+          <span className="text-[15px] font-bold text-[#1F1D1B]">Asset register</span>
+          <span className="text-[12px] text-[#9CA3AF]">by asset account · totals leave out disposed assets</span>
+        </div>
+        <div className="overflow-x-auto">
+          {rows === null ? (
+            <div className="py-12 text-center text-[#6B7280] text-sm">Loading…</div>
+          ) : (
+            <table data-fin-report className="min-w-[860px]">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Accounts (accum / expense)</th>
+                  <th>Purchased</th>
+                  <th data-cell="num split">Cost</th>
+                  <th data-cell="num">Accum. depn</th>
+                  <th data-cell="num">NBV</th>
+                  <th>Life</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {groupCodes.map((g) => {
+                  const xs = rows.filter((r) => r.assetAccount === g);
+                  return (
+                    <Fragment key={g}>
+                      <tr data-row="grp"><td colSpan={8}><span data-cell="code" className="mr-1.5">{g}</span>{acctName(g)}</td></tr>
+                      {xs.map((r) => (
+                        <tr key={r.id} data-row="line" className={r.disposedAt ? "opacity-50" : undefined}>
+                          <td style={{ paddingLeft: 28 }}>{r.name}{r.disposedAt ? " (disposed)" : ""}</td>
+                          <td className="text-xs tabular-nums text-[#6B7280]">{r.accumAccount} / {r.expenseAccount}</td>
+                          <td className="text-xs text-[#6B7280]">{fmtDocDate(r.purchaseDate) || r.purchaseDate}</td>
+                          <td data-cell="num split">{formatCurrency(r.costSen)}</td>
+                          <td data-cell="num">{formatCurrency(r.accumSen)}{r.lastMonth ? <span className="text-[11px] text-[#9CA3AF]"> (to {r.lastMonth})</span> : null}</td>
+                          <td data-cell="num">{formatCurrency(nbv(r))}</td>
+                          <td className="text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
+                          <td className="text-right">
+                            {!r.disposedAt && (
+                              <button onClick={() => handleDispose(r)} className="text-[#6B7280] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer mr-3">dispose</button>
+                            )}
+                            <button onClick={() => handleDelete(r)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer">del</button>
+                          </td>
+                        </tr>
+                      ))}
+                      <tr data-row="sub">
+                        <td colSpan={3} style={{ paddingLeft: 28 }}>Total {acctName(g) || g}</td>
+                        <td data-cell="num split">{formatCurrency(sumOf(xs, (r) => r.costSen))}</td>
+                        <td data-cell="num">{formatCurrency(sumOf(xs, (r) => r.accumSen))}</td>
+                        <td data-cell="num">{formatCurrency(sumOf(xs, nbv))}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    </Fragment>
+                  );
+                })}
+                {rows.length > 0 && (
+                  <tr data-row="fin">
+                    <td colSpan={3}>TOTAL (in use)</td>
+                    <td data-cell="num split">{formatCurrency(sumOf(rows, (r) => r.costSen))}</td>
+                    <td data-cell="num">{formatCurrency(sumOf(rows, (r) => r.accumSen))}</td>
+                    <td data-cell="num">{formatCurrency(sumOf(rows, nbv))}</td>
+                    <td colSpan={2} />
                   </tr>
-                ))}
+                )}
                 {rows.length === 0 && (
                   <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-[#9CA3AF]">No assets yet — add the register here (or hand me the list and I will seed it)</td></tr>
                 )}
               </tbody>
             </table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
@@ -13411,7 +14424,66 @@ type CashPosData = {
   // Vouchers on the approval ladder, not posted yet (2026-09-22).
   awaitingApproval?: { id: string; pvNo: string; date: string; payee: string; description: string; payFrom: string; amountSen: number; state: "DRAFT" | "PREPARED" | "CHECKED" }[];
   awaitingCheckedSen?: number;
+  // Trade-finance draws still owed, by due date (2026-10-17).
+  tradeFinance?: CashPosTfRow[];
 };
+type CashPosTfRow = { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number };
+
+// Trade finance to repay, by due date (owner 2026-10-17, Finance v2 「要」):
+// every draw still owed — the same draws Creditor Aging's Trade Finance
+// section lists. Overdue in red, due within a week in amber.
+function CashPosTfPanel({ rows, date, scope, onScope }: { rows: CashPosTfRow[]; date: string; scope: boolean; onScope: (v: boolean) => void }) {
+  const total = rows.reduce((s, r) => s + r.outstandingSen, 0);
+  const daysTo = (iso: string) => Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86400000);
+  return (
+    <Card data-cash-tf="">
+      <CardContent className="p-0">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E2DDD8]">
+          <span className="text-sm font-semibold text-[#1F1D1B]">TO REPAY — Trade finance (by due date)</span>
+          <button
+            onClick={() => onScope(!scope)}
+            className="rounded-full border border-[#E2DDD8] px-2 py-0.5 text-[11px] text-[#6B7280] hover:border-[#6B5C32] cursor-pointer"
+            title="Switch scope"
+          >
+            {scope ? "Due by month end" : "All outstanding"} ⇄
+          </button>
+        </div>
+        {rows.length === 0 ? (
+          <div className="px-4 py-5 text-sm text-[#9CA3AF]">Nothing in this scope ✓</div>
+        ) : (
+          <table className="w-full text-sm">
+            <tbody>
+              {rows.map((r) => {
+                const d = r.dueDate ? daysTo(r.dueDate) : null;
+                const tone = d === null || d < 0 ? "text-[#9A3A2D]" : d <= 7 ? "text-[#9C6F1E]" : "text-[#6B7280]";
+                const when = d === null ? "no due date" : d < 0 ? `${-d} day${d === -1 ? "" : "s"} overdue` : d === 0 ? "due today" : `in ${d} day${d === 1 ? "" : "s"}`;
+                return (
+                  <tr key={r.ref} className="border-b border-[#F0ECE9]">
+                    <td className="px-4 py-1 text-xs whitespace-nowrap">
+                      <span className="tabular-nums">{r.dueDate ? formatDateDMY(r.dueDate) : "—"}</span>
+                      <span className={`ml-2 text-[10px] ${tone}`}>{when}</span>
+                    </td>
+                    <td className="px-2 py-1 text-xs w-full max-w-0">
+                      <div className="truncate" title={[r.lender, r.paidFor && `for ${r.paidFor}`, r.ref].filter(Boolean).join(" · ")}>
+                        {r.lender}{r.paidFor ? <span className="text-[#6B7280]"> · for {r.paidFor}</span> : null}
+                        <span className="ml-1 text-[10px] text-[#9CA3AF]">{r.ref}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap">{formatCurrency(r.outstandingSen)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="bg-[#F7E5E1]/60">
+                <td className="px-4 py-1.5 text-sm font-semibold" colSpan={2}>TOTAL TRADE FINANCE</td>
+                <td className="px-4 py-1.5 text-right tabular-nums font-bold whitespace-nowrap">{formatCurrency(total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // Month-grouped breakdown the owner sketched: per month → one row per party
 // → month total → grand total.
@@ -13516,6 +14588,7 @@ function DailyCashTab() {
   // customers = already due per each invoice's terms).
   const [repayAll, setRepayAll] = useState(false);
   const [recvAll, setRecvAll] = useState(false);
+  const [tfAll, setTfAll] = useState(false);
   // Planned payments: default OFF (「可以做，但我不一定会用到」).
   const [showPlanned, setShowPlanned] = useState(() => {
     try { return localStorage.getItem("cashpos-planned") === "1"; } catch { return false; }
@@ -13603,145 +14676,30 @@ function DailyCashTab() {
   // instead of "due per terms". The toggle widens to all months.
   const recvRows = (cur?.receive ?? []).filter((r) => recvAll || r.month < curMonth);
   const recvAmt = (r: CashPosPartyRow) => r.totalSen ?? 0;
+  // Trade finance (owner 2026-10-17): due by the end of the viewed month by
+  // default (overdue included); the toggle widens to every draw still owed.
+  const tfRows = (cur?.tradeFinance ?? []).filter((t) => tfAll || tfDueByMonthEnd(t, curMonth));
   const repayShownSen = repayRows.reduce((s, r) => s + repayAmt(r), 0);
   const recvShownSen = recvRows.reduce((s, r) => s + recvAmt(r), 0);
-  const netAfterSen = (cur?.totalAvailableSen ?? 0) - repayShownSen + recvShownSen;
+  const tfShownSen = tfRows.reduce((s, t) => s + t.outstandingSen, 0);
+  const netAfterSen = (cur?.totalAvailableSen ?? 0) - repayShownSen - tfShownSen + recvShownSen;
 
-  // The share image is DRAWN FROM DATA, not screenshotted from the DOM.
-  // Both DOM-capture libraries were tried and rejected on prod: html2canvas
-  // dies silently on modern CSS color functions, and html-to-image spent
-  // 56 SECONDS serialising this board's thousands of nodes (measured
-  // 2026-09-03). A plain canvas render of the same numbers takes <100ms and
-  // can never rot with the stylesheet.
+  // The share image is drawn from data on a canvas (src/lib/cash-position-image.ts,
+  // shared with the phone's Daily Cash Position since finance v2 mobile).
   const getImage = () => {
     if (!cur) return;
-    try {
-      const W = 1000;
-      const line = 26;
-      const acctRows = cur.accounts.map((a) => ({ a, rows: a.pending.filter((p) => !p.ticked) }));
-      let H = 96; // title block
-      for (const { a, rows } of acctRows) {
-        H += 44; // dark band
-        if (a.unbookedCount > 0) H += line;
-        if (rows.length > 0) H += line + rows.length * line; // header + rows
-        if (a.oldPendingCount > 0) H += line;
-        H += 36; // available band
-        H += 14; // gap
-      }
-      H += 52 + 46 + 40; // current cash + net + footer
-      const canvas = document.createElement("canvas");
-      canvas.width = W * 2;
-      canvas.height = H * 2;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) { toast.error("Canvas unavailable"); return; }
-      ctx.scale(2, 2);
-      const rm = (n: number) => formatCurrency(n);
-      const trunc = (s: string, max: number) => {
-        let t = s;
-        while (t.length > 3 && ctx.measureText(t).width > max) t = t.slice(0, -2);
-        return t === s ? s : `${t}…`;
-      };
-      ctx.fillStyle = "#FAF8F5";
-      ctx.fillRect(0, 0, W, H);
-      let y = 40;
-      ctx.fillStyle = "#1F1D1B";
-      ctx.font = "bold 22px Arial";
-      ctx.fillText(`Cash Position — ${cur.date}`, 24, y);
-      ctx.font = "12px Arial";
-      ctx.fillStyle = "#6B7280";
-      ctx.fillText("Hookka ERP · estimated from the books ± bank reconciliation", 24, y + 20);
-      y += 56;
-      for (const { a, rows } of acctRows) {
-        ctx.fillStyle = "#1F2937";
-        ctx.fillRect(16, y, W - 32, 34);
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = "bold 14px Arial";
-        ctx.fillText(trunc(`${a.code} ${a.name}${a.reconciled ? "" : " (book only)"}`, 560), 28, y + 22);
-        const bankTxt = `Bank balance (est.) ${rm(a.bankEstSen)}`;
-        ctx.fillText(bankTxt, W - 28 - ctx.measureText(bankTxt).width, y + 22);
-        y += 44;
-        ctx.font = "12px Arial";
-        if (a.unbookedCount > 0) {
-          ctx.fillStyle = "#7A5B12";
-          ctx.fillText(trunc(`Includes ${a.unbookedCount} bank items not booked yet (${rm(a.unbookedSen)})`, W - 60), 28, y + 12);
-          y += line;
-        }
-        if (rows.length > 0) {
-          ctx.fillStyle = "#6B7280";
-          ctx.fillText("Date", 28, y + 12);
-          ctx.fillText("PV No.", 110, y + 12);
-          ctx.fillText("Description", 230, y + 12);
-          const h1 = "Received", h2 = "Pending payment";
-          ctx.fillText(h1, W - 200 - ctx.measureText(h1).width, y + 12);
-          ctx.fillText(h2, W - 28 - ctx.measureText(h2).width, y + 12);
-          y += line;
-          for (const p of rows) {
-            ctx.fillStyle = "#6B7280";
-            ctx.fillText(p.day, 28, y + 12);
-            ctx.fillStyle = "#1F1D1B";
-            ctx.fillText(trunc(p.sourceId, 110), 110, y + 12);
-            ctx.fillText(trunc(p.description, W - 230 - 260), 230, y + 12);
-            if (p.amountSen > 0) {
-              ctx.fillStyle = "#27500A";
-              const t = rm(p.amountSen);
-              ctx.fillText(t, W - 200 - ctx.measureText(t).width, y + 12);
-            } else {
-              ctx.fillStyle = "#1F1D1B";
-              const t = rm(-p.amountSen);
-              ctx.fillText(t, W - 28 - ctx.measureText(t).width, y + 12);
-            }
-            y += line;
-          }
-        }
-        if (a.oldPendingCount > 0) {
-          ctx.fillStyle = "#9CA3AF";
-          ctx.fillText(`Older reconciliation items: ${a.oldPendingCount} · ${rm(a.oldPendingSen)} (counted above)`, 28, y + 12);
-          y += line;
-        }
-        ctx.fillStyle = "#EAF3DE";
-        ctx.fillRect(16, y, W - 32, 28);
-        ctx.fillStyle = "#1F1D1B";
-        ctx.font = "bold 13px Arial";
-        ctx.fillText("Available (after pending)", 28, y + 19);
-        const avTxt = rm(a.availableSen);
-        ctx.fillText(avTxt, W - 28 - ctx.measureText(avTxt).width, y + 19);
-        y += 36 + 14;
-        ctx.font = "12px Arial";
-      }
-      ctx.fillStyle = "#FFFFFF";
-      ctx.fillRect(16, y, W - 32, 40);
-      ctx.strokeStyle = "#E2DDD8";
-      ctx.strokeRect(16, y, W - 32, 40);
-      ctx.fillStyle = "#1F1D1B";
-      ctx.font = "bold 15px Arial";
-      ctx.fillText("CURRENT CASH AVAILABLE", 28, y + 26);
-      ctx.fillStyle = "#27500A";
-      const totTxt = rm(cur.totalAvailableSen);
-      ctx.fillText(totTxt, W - 28 - ctx.measureText(totTxt).width, y + 26);
-      y += 52;
-      ctx.fillStyle = "#1F1D1B";
-      ctx.font = "bold 14px Arial";
-      ctx.fillText("CASH AFTER REPAY & RECEIVE", 28, y + 18);
-      ctx.fillStyle = netAfterSen >= 0 ? "#27500A" : "#9A3A2D";
-      const netTxt = rm(netAfterSen);
-      ctx.fillText(netTxt, W - 28 - ctx.measureText(netTxt).width, y + 18);
-      ctx.fillStyle = "#9CA3AF";
-      ctx.font = "11px Arial";
-      const sub = `= available ${rm(cur.totalAvailableSen)} − to repay ${rm(repayShownSen)} + to receive ${rm(recvShownSen)}`;
-      ctx.fillText(sub, W - 28 - ctx.measureText(sub).width, y + 36);
-      y += 46;
-      canvas.toBlob((blob) => {
-        if (!blob) { toast.error("Could not render the image"); return; }
+    drawCashPositionImage(cur, { netAfterSen, repayShownSen, recvShownSen, tfShownSen })
+      .then((blob) => {
         const url = URL.createObjectURL(blob);
         setImgPopup((old) => {
           if (old) URL.revokeObjectURL(old);
           return url;
         });
-      }, "image/png");
-    } catch (e) {
-      console.error("[cash-position] image export failed:", e);
-      toast.error("Image export failed");
-    }
+      })
+      .catch((e: unknown) => {
+        console.error("[cash-position] image export failed:", e);
+        toast.error(e instanceof Error && (e.message === "Canvas unavailable" || e.message === "Could not render the image") ? e.message : "Image export failed");
+      });
   };
 
   const printBoard = () => {
@@ -13749,8 +14707,8 @@ function DailyCashTab() {
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const acctBlock = (a: CashPosAccount) => `
       <h2>${a.code} ${esc(a.name)} — Bank balance (est.) <b>${formatCurrency(a.bankEstSen)}</b>${a.reconciled ? "" : " (book only)"}</h2>
-      ${a.pending.filter((p) => !p.ticked).length ? `<table><thead><tr><th>Date</th><th>PV No.</th><th>Description</th><th class="r">Received</th><th class="r">Pending payment</th></tr></thead><tbody>${a.pending.filter((p) => !p.ticked)
-        .map((p) => `<tr><td>${p.day}</td><td>${esc(p.sourceId)}</td><td>${esc(p.description)}</td><td class="r">${p.amountSen > 0 ? formatCurrency(p.amountSen) : ""}</td><td class="r">${p.amountSen < 0 ? formatCurrency(-p.amountSen) : ""}</td></tr>`)
+      ${a.pending.filter((p) => !p.ticked).length ? `<table><thead><tr><th>Date</th><th>PV No.</th><th>Description</th><th class="r">Received</th><th class="r">Pending payment</th></tr></thead><tbody>${pendingReceiptsFirst(a.pending.filter((p) => !p.ticked))
+        .map((p) => `<tr><td>${fmtDocDate(p.day)}</td><td>${esc(p.sourceId)}</td><td>${esc(p.description)}</td><td class="r">${p.amountSen > 0 ? formatCurrency(p.amountSen) : ""}</td><td class="r">${p.amountSen < 0 ? formatCurrency(-p.amountSen) : ""}</td></tr>`)
         .join("")}</tbody></table>` : ""}
       ${a.oldPendingCount > 0 ? `<p>Older reconciliation items: ${a.oldPendingCount} · ${formatCurrency(a.oldPendingSen)}</p>` : ""}
       <p class="avail">Available (after pending): <b>${formatCurrency(a.availableSen)}</b></p>`;
@@ -13803,25 +14761,21 @@ function DailyCashTab() {
           </div>
         </div>
       )}
-      <div className="flex justify-between items-center flex-wrap gap-2">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Daily Cash Position</h2>
-        <div className="flex gap-2">
+      {/* On the page's title row (finance v2) */}
+      <FinanceTitleActions>
           <Button variant="outline" size="sm" onClick={() => { const v = !showPlanned; setShowPlanned(v); try { localStorage.setItem("cashpos-planned", v ? "1" : "0"); } catch { /* ignore */ } }}>
             {showPlanned ? "Hide planned" : "Show planned"}
           </Button>
           <Button variant="outline" size="sm" disabled={!cur} onClick={getImage}>Get image</Button>
           <Button variant="outline" size="sm" disabled={!cur} onClick={printBoard}>Print</Button>
-        </div>
-      </div>
+      </FinanceTitleActions>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-center gap-3 bg-[#F7F4EF] rounded-lg">
           <Button variant="outline" size="sm" onClick={() => shiftDay(-1)}>‹</Button>
           <input type="date" value={date} onChange={(e) => { if (e.target.value) setDate(e.target.value); }} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" />
           <Button variant="outline" size="sm" onClick={() => shiftDay(1)}>›</Button>
           <Button variant="outline" size="sm" onClick={() => setDate(today)}>Today</Button>
-          <span className="text-[11px] text-[#9CA3AF]">
-            Tick a row when your banking app shows it went through — the estimate turns daily-accurate. Statements still referee at month end.
-          </span>
+          <span className="text-[12px] text-[#6B7280]">{weekdayOf(date)}{date === today ? " · today" : ""}</span>
         </CardContent>
       </Card>
       {isFuture && (
@@ -13842,9 +14796,9 @@ function DailyCashTab() {
           {cur.accounts.map((a) => (
             <Card key={a.code}>
               <CardContent className="p-0">
-                <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-[#1F2937] rounded-t-lg">
-                  <div className="text-sm font-semibold text-white">{a.code} {a.name}{!a.reconciled && <span className="ml-2 text-[10px] font-normal text-[#D1D5DB]">book only — no statements imported</span>}</div>
-                  <div className="text-sm text-white">Bank balance (est.) <span className="font-bold tabular-nums">{formatCurrency(a.bankEstSen)}</span></div>
+                <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-[#E2E8F0] rounded-t-[10px] border-b-[1.5px] border-[#7A6E5E]">
+                  <div className="text-[14px] font-bold text-[#1F1D1B]">{a.code} {a.name}{!a.reconciled && <span className="ml-2 text-[11px] font-normal text-[#6B7280]">book only — no statements imported</span>}</div>
+                  <div className="text-[13px] text-[#374151]">Bank balance (est.) <span className="ml-1 text-[16px] font-bold tabular-nums text-[#1F1D1B]">{formatCurrency(a.bankEstSen)}</span></div>
                 </div>
                 {a.unbookedCount > 0 && (
                   <div className="px-4 py-1.5 text-[11px] text-[#7A5B12] bg-[#FBF3E4]">
@@ -13852,8 +14806,8 @@ function DailyCashTab() {
                   </div>
                 )}
                 {a.pending.length > 0 && (() => {
-                  const open = a.pending.filter((p) => !p.ticked);
-                  const ticked = a.pending.filter((p) => p.ticked);
+                  const open = pendingReceiptsFirst(a.pending.filter((p) => !p.ticked));
+                  const ticked = pendingReceiptsFirst(a.pending.filter((p) => p.ticked));
                   const tickedIn = ticked.reduce((s, p) => s + (p.amountSen > 0 ? p.amountSen : 0), 0);
                   const tickedOut = ticked.reduce((s, p) => s + (p.amountSen < 0 ? -p.amountSen : 0), 0);
                   const showing = !!showTicked[a.code];
@@ -13868,7 +14822,7 @@ function DailyCashTab() {
                           title={p.ticked ? "Untick — it has NOT gone through after all" : "Tick — my banking app shows this went through"}
                         />
                       </td>
-                      <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{p.day}</td>
+                      <td className="px-3 py-1 text-xs text-[#6B7280] whitespace-nowrap">{fmtDocDate(p.day)}</td>
                       <td className="px-3 py-1 text-xs whitespace-nowrap">{p.sourceId}</td>
                       <td className="px-3 py-1 text-xs w-full max-w-0"><div className="truncate" title={p.description}>{p.description}</div></td>
                       <td className="px-3 py-1 text-right tabular-nums text-xs whitespace-nowrap text-[#27500A]">{tdInC(p.amountSen)}</td>
@@ -13877,7 +14831,7 @@ function DailyCashTab() {
                   );
                   return (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table data-fin-list className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                             <th className="px-3 py-2 text-left">✓</th>
@@ -13891,10 +14845,10 @@ function DailyCashTab() {
                         <tbody>
                           {open.map(row)}
                           {open.length === 0 && (
-                            <tr><td colSpan={6} className="px-3 py-2 text-xs text-[#9CA3AF]">Nothing pending — everything booked has gone through the bank.</td></tr>
+                            <tr data-fin-nolift><td colSpan={6} className="px-3 py-2 text-xs text-[#9CA3AF]">Nothing pending — everything booked has gone through the bank.</td></tr>
                           )}
                           {ticked.length > 0 && (
-                            <tr className="bg-[#FAF8F5]">
+                            <tr data-fin-nolift className="bg-[#FAF8F5]">
                               <td colSpan={6} className="px-3 py-1.5 text-xs">
                                 <button type="button" onClick={() => setShowTicked((m) => ({ ...m, [a.code]: !m[a.code] }))} className="text-[#27500A] hover:text-[#1F1D1B] cursor-pointer" title="Ticked = seen in the banking app; they leave the pending list. Open to review or untick.">
                                   {showing ? "▾" : "▸"} ✓ Ticked as gone through: {ticked.length}
@@ -13997,14 +14951,19 @@ function DailyCashTab() {
             );
           })()}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-            <CashPosPartyPanel
-              title="TO REPAY — Suppliers & creditors"
-              rows={repayRows}
-              amountOf={repayAmt}
-              scope={!repayAll} scopeLabel="Before this month" scopeAlt="All outstanding"
-              onScope={() => setRepayAll(!repayAll)}
-              tone="pay"
-            />
+            <div className="space-y-4">
+              <CashPosPartyPanel
+                title="TO REPAY — Suppliers & creditors"
+                rows={repayRows}
+                amountOf={repayAmt}
+                scope={!repayAll} scopeLabel="Before this month" scopeAlt="All outstanding"
+                onScope={() => setRepayAll(!repayAll)}
+                tone="pay"
+              />
+              {(cur.tradeFinance?.length ?? 0) > 0 && (
+                <CashPosTfPanel rows={tfRows} date={date} scope={!tfAll} onScope={() => setTfAll(!tfAll)} />
+              )}
+            </div>
             <CashPosPartyPanel
               title="TO RECEIVE — Customers"
               rows={recvRows}
@@ -14023,14 +14982,14 @@ function DailyCashTab() {
                 <span className={`text-xl font-bold tabular-nums ${netAfterSen >= 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>{formatCurrency(netAfterSen)}</span>
               </div>
               <div className="text-[11px] text-[#9CA3AF] text-right mt-0.5">
-                = available {formatCurrency(cur.totalAvailableSen)} − to repay {formatCurrency(repayShownSen)} + to receive {formatCurrency(recvShownSen)} (current scopes)
+                = available {formatCurrency(cur.totalAvailableSen)} − to repay {formatCurrency(repayShownSen)}{tfShownSen ? ` − trade finance ${formatCurrency(tfShownSen)}` : ""} + to receive {formatCurrency(recvShownSen)} (current scopes)
               </div>
             </CardContent>
           </Card>
           <p className="text-[11px] text-[#9CA3AF]">
             Repay / Receive use the SAME rules as Creditor & Debtor Aging, grouped by invoice month; a green negative
-            row is money already received but not yet knocked to invoices. TF / loans are not included here — they live
-            on the AP tab's Trade Finance block.
+            row is money already received but not yet knocked to invoices. Trade finance lists each draw still owed by
+            its due date, as on Creditor Aging; other loans are not included.
           </p>
         </div>
       )}
@@ -14092,7 +15051,8 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Monthly session view (owner 2026-09-01 「每个月我upload文件自动对账」+
   // 「现在太乱了」): one month at a time, with earlier unmatched leftovers
   // pulled in so last month's in-transit cheques can still be ticked off.
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [month, setMonth] = useState(() => today.slice(0, 7));
   const [includeEarlier, setIncludeEarlier] = useState(true);
   const [data, setData] = useState<{ migrationMissing: boolean; openingDate?: string | null; finalizedMonths?: string[]; legs: RecoLeg[]; statementLines: RecoLine[] } | null>(null);
   const [report, setReport] = useState<RecoReport | null>(null);
@@ -14131,18 +15091,25 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (j?.success) { setStrictLock(on); toast.success(on ? "Strict lock ON" : "Strict lock off"); }
     else toast.error(j?.error || "Failed");
   };
-  // Reverse combo: one bank line → several book legs (2026-09-22).
-  const [splitFor, setSplitFor] = useState<{ id: string; amountSen: number; legIds: Set<string> } | null>(null);
-  const handleSplitMatch = async () => {
-    if (!splitFor || splitFor.legIds.size < 2) return;
+  // The Pick list (finance backlog item 16, owner 2026-10-17): one bank line,
+  // the book entries it paid — one with the same amount (a plain match) or
+  // several adding up to it exactly (a split match, 2026-09-22's reverse
+  // combo). Replaces the old per-line drop-down and the separate split panel.
+  const [pickFor, setPickFor] = useState<{ id: string; legIds: Set<string>; q: string } | null>(null);
+  const handlePickMatch = async (lineId: string, legIds: string[]) => {
+    if (legIds.length === 1) {
+      if (await handleMatch(lineId, legIds[0])) setPickFor(null);
+      return;
+    }
+    if (legIds.length < 2) return;
     setBusy(true);
     try {
       const res = await fetch("/api/accounting/bank-reco/match-split", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ statementLineId: splitFor.id, legIds: [...splitFor.legIds] }),
+        body: JSON.stringify({ statementLineId: lineId, legIds }),
       });
       const j = (await res.json()) as { success?: boolean; error?: string; data?: { legs: number } };
-      if (j?.success) { toast.success(`Bank line split across ${j.data?.legs} book entries`); setSplitFor(null); load(); }
+      if (j?.success) { toast.success(`Bank line split across ${j.data?.legs} book entries`); setPickFor(null); load(); }
       else toast.error(j?.error || "Split match failed");
     } finally { setBusy(false); }
   };
@@ -14359,16 +15326,17 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     }
   };
 
-  const handleMatch = async (lineId: string, legId: string) => {
-    if (!legId) return;
+  const handleMatch = async (lineId: string, legId: string): Promise<boolean> => {
+    if (!legId) return false;
     const res = await fetch("/api/accounting/bank-reco/match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ statementLineId: lineId, legId }),
     });
     const j = asMutationResponse(await res.json());
-    if (j?.success) load();
-    else toast.error(j?.error || "Match failed");
+    if (j?.success) { load(); return true; }
+    toast.error(j?.error || "Match failed");
+    return false;
   };
 
   const handleUnmatch = async (lineId: string) => {
@@ -14555,9 +15523,15 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Cash Book · Bank Reconciliation</h2>
-        <div className="flex gap-2">
+      {/* Finance v2: the account, the month and the same import / match
+          buttons on the title row. */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <select aria-label="Bank / Cash account" value={account} onChange={(e) => { setAccount(e.target.value); setData(null); setReport(null); }} className="h-8 w-64 rounded-lg border border-[#D9D3CA] bg-white px-2.5 text-[12.5px] font-semibold text-[#1F1D1B]">
+            <option value="">— pick account —</option>
+            {bankCash.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+          </select>
+          <PeriodStepper value={month} options={monthOptions(today.slice(0, 7), 18)} onChange={setMonth} today={today} />
           <input
             ref={pdfInputRef}
             type="file"
@@ -14570,22 +15544,12 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
           </Button>
           <Button variant="outline" size="sm" disabled={!account} onClick={() => setShowImport(!showImport)}>Import CSV</Button>
           <Button variant="outline" size="sm" disabled={!account || busy || unmatchedStmt.length === 0} onClick={handleAutoMatch}>Auto-match</Button>
-        </div>
-      </div>
+        </ReportToolbar>
+      </FinanceTitleActions>
 
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-4 bg-[#F7F4EF] rounded-lg">
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Bank / Cash account</label>
-            <select value={account} onChange={(e) => { setAccount(e.target.value); setData(null); setReport(null); }} className={`${selCls} w-72`}>
-              <option value="">— pick account —</option>
-              {bankCash.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-[#1F1D1B] mb-1 block">Month</label>
-            <input type="month" value={month} onChange={(e) => { if (e.target.value) setMonth(e.target.value); }} className={selCls} />
-          </div>
+        <CardContent className="p-4 flex flex-wrap items-end gap-4 rounded-lg">
+          {!account && <span className="text-sm text-[#6B7280] pb-2">Pick the bank or cash account on the title row.</span>}
           <label className="flex items-center gap-2 text-sm pb-2 cursor-pointer">
             <input type="checkbox" checked={includeEarlier} onChange={(e) => setIncludeEarlier(e.target.checked)} className="h-4 w-4 accent-[#6B5C32]" />
             Include earlier unmatched items
@@ -14665,6 +15629,25 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
           </CardContent>
         </Card>
       )}
+
+      {account && data && !data.migrationMissing && report?.importedAt && !preview && (() => {
+        // The reconciliation card's own figures, as cards (finance v2).
+        const shown = recoFinal ?? report;
+        const diffSen = shown.statementClosingSen != null ? shown.glSen - shown.statementClosingSen : null;
+        const unexplained = diffSen == null ? null : diffSen - (shown.unclearedBookSen - shown.unbookedStmtSen);
+        return (
+          <KpiCards
+            items={[
+              { label: `Bank balance · ${fmtDocDate(monthEnd(month))}`, value: shown.statementClosingSen != null ? formatCurrency(shown.statementClosingSen) : "—", note: "per statement" },
+              { label: "Book balance", value: formatCurrency(shown.glSen), note: recoFinal ? "per ledger, at finalising" : "per ledger" },
+              { label: "Open items", value: `${shown.unbookedStmtCount} bank · ${shown.unclearedBookCount} book`, note: "bank not in book · book not in bank" },
+              unexplained == null
+                ? { label: "Unexplained", value: "—", note: "no statement closing balance" }
+                : { label: "Unexplained", value: `${formatCurrency(Math.abs(unexplained))}${unexplained === 0 ? " ✓" : ""}`, tone: unexplained === 0 ? "ok" : "err", note: unexplained === 0 ? "book − bank fully explained" : "book − bank not fully explained" },
+            ]}
+          />
+        );
+      })()}
 
       {account && data && !data.migrationMissing && report?.importedAt && !preview && (
         <Card>
@@ -14765,7 +15748,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             {!dailyRows ? (
               <div className="px-4 py-4 text-sm text-[#9CA3AF]">Loading…</div>
             ) : (
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left">Day</th>
@@ -14850,36 +15833,40 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 // Combo bar: several bank lines that together paid ONE book
                 // payment (HPV-2607-024: 32.00 + 879.00 = 911.00).
                 const sel = unmatchedStmt.filter((s) => comboSel.has(s.id));
-                if (sel.length < 2) return null;
+                if (sel.length === 0) return null;
                 const sum = sel.reduce((t, s) => t + s.amountSen, 0);
-                const cands = unmatchedLegs.filter((l) => l.amountSen === sum);
+                const cands = comboCandidates(sel, unmatchedLegs);
                 return (
                   <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-[#FBF3E4] border-b border-[#E0C989] text-xs">
-                    <span className="font-semibold text-[#7A5B12]">{sel.length} lines selected · {formatCurrency(Math.abs(sum))} {sum < 0 ? "out" : "in"}</span>
-                    {cands.length > 0 ? (
-                      <select defaultValue="" onChange={(e) => { void handleGroupMatch(e.target.value); e.currentTarget.value = ""; }} className="rounded border border-[#E0C989] bg-white px-1 py-0.5 text-[11px] max-w-72">
-                        <option value="">combine &amp; match to…</option>
-                        {cands.map((l) => <option key={l.id} value={l.id}>{l.day} {l.description.slice(0, 40)}</option>)}
-                      </select>
+                    <span className="font-semibold text-[#7A5B12]">
+                      {sel.length === 1 ? "Tick another line to combine them into one book entry" : `${sel.length} ticked · ${formatCurrency(Math.abs(sum))} ${sum < 0 ? "out" : "in"}`}
+                    </span>
+                    {sel.length >= 2 && (cands.length > 0 ? (
+                      cands.map((l) => (
+                        <Button key={l.id} variant="primary" size="sm" disabled={busy} onClick={() => void handleGroupMatch(l.id)} title={l.description}>
+                          Combine &amp; match to {docNoFromDescription(l.description) ?? l.day}
+                        </Button>
+                      ))
                     ) : (
-                      <span className="text-[#9A3A2D]">no single book entry equals this total</span>
-                    )}
-                    <button onClick={() => setComboSel(new Set())} className="ml-auto underline decoration-dotted text-[#9CA3AF] hover:text-[#1F1D1B] cursor-pointer">clear</button>
+                      <span className="text-[#9A3A2D]">no book entry of this amount</span>
+                    ))}
+                    <button onClick={() => setComboSel(new Set())} className="ml-auto underline decoration-dotted text-[#9CA3AF] hover:text-[#1F1D1B] cursor-pointer">Clear ticks</button>
                   </div>
                 );
               })()}
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left" colSpan={2}>Bank statement — to match ({unmatchedStmt.length})</th>
                     <th className="px-3 py-2 text-right">In</th>
                     <th className="px-3 py-2 text-right">Out</th>
+                    <th className="px-3 py-2 text-left">Suggested book entry</th>
                     <th className="px-3 py-2 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {unmatchedStmt.map((s) => {
-                    const candidates = unmatchedLegs.filter((l) => l.amountSen === s.amountSen);
+                    const sug = suggestionFor(s, unmatchedLegs);
                     const earlier = s.txnDate.slice(0, 7) < month;
                     return (
                       <Fragment key={s.id}>
@@ -14894,40 +15881,47 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         <td className="px-3 py-1.5 text-xs w-full max-w-0"><div className="truncate" title={s.description ?? ""}>{s.description}</div></td>
                         <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{tdIn(s.amountSen)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{tdOut(s.amountSen)}</td>
+                        <td className="px-3 py-1.5 text-xs min-w-[12rem] max-w-[16rem]">
+                          {sug.kind === "one" ? (
+                            <div className="leading-tight">
+                              <div className="font-semibold text-[#1F1D1B] whitespace-nowrap">{docNoFromDescription(sug.leg.description) ?? fmtDocDate(sug.leg.day)}</div>
+                              <div className="truncate text-[11px] text-[#6B7280]" title={sug.leg.description}>{sug.leg.description}</div>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-[#9CA3AF]">{sug.kind === "several" ? `${sug.n} same-amount entries — use Pick` : "None with the same amount — use Pick or Book"}</span>
+                          )}
+                        </td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
                           {isFinalMonth(s.txnDate) ? (
                             <span className="text-[11px] text-[#9CA3AF]" title="Month finalised — re-open it on the report card to change anything">🔒 finalised</span>
                           ) : (
-                            <>
-                              {candidates.length > 0 ? (
-                                <select defaultValue="" onChange={(e) => handleMatch(s.id, e.target.value)} className="rounded border border-[#E2DDD8] bg-white px-1 py-0.5 text-[11px] max-w-40">
-                                  <option value="">match to…</option>
-                                  {candidates.map((l) => (
-                                    <option key={l.id} value={l.id}>{l.day} {l.description.slice(0, 30)}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="text-[11px] text-[#9A3A2D]">not in book</span>
-                              )}
+                            <div className="inline-flex items-center gap-1.5">
+                              <Button
+                                variant={sug.kind === "one" ? "primary" : "outline"}
+                                size="sm"
+                                disabled={sug.kind !== "one" || busy}
+                                onClick={() => { if (sug.kind === "one") void handleMatch(s.id, sug.leg.id); }}
+                                title={sug.kind === "one" ? `Match to ${docNoFromDescription(sug.leg.description) ?? sug.leg.description}` : "No single same-amount entry — use Pick"}
+                              >
+                                Match
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={() => setPickFor(pickFor?.id === s.id ? null : { id: s.id, legIds: new Set(), q: "" })} title="Tick the book entry this bank line paid — or several that add up to it">
+                                {pickFor?.id === s.id ? "Close" : "Pick"}
+                              </Button>
                               {s.txnDate >= (data.openingDate ?? "") && (
-                                <button onClick={() => setBookLine(bookLine?.id === s.id ? null : { id: s.id, amountSen: s.amountSen, txnDate: s.txnDate, description: s.description ?? "", accountCode: "", party: "", note: "" })} className={`ml-2 text-[11px] font-semibold cursor-pointer ${bookLine?.id === s.id ? "text-[#1F1D1B]" : "text-[#27500A] hover:text-[#1F1D1B]"}`} title={s.amountSen < 0 ? "Record this as a payment voucher and match it here" : "Record this as a receipt and match it here"}>
-                                {s.amountSen < 0 ? "book as expense" : "book as receipt"}
-                              </button>
+                                <Button variant="outline" size="sm" onClick={() => setBookLine(bookLine?.id === s.id ? null : { id: s.id, amountSen: s.amountSen, txnDate: s.txnDate, description: s.description ?? "", accountCode: "", party: "", note: "" })} title={s.amountSen < 0 ? "Not in the book yet — record it as a payment voucher and match it here" : "Not in the book yet — record it as a receipt and match it here"}>
+                                  Book
+                                </Button>
                               )}
-                              {unmatchedLegs.filter((l) => Math.sign(l.amountSen) === Math.sign(s.amountSen) && Math.abs(l.amountSen) < Math.abs(s.amountSen)).length >= 2 && (
-                                <button onClick={() => setSplitFor(splitFor?.id === s.id ? null : { id: s.id, amountSen: s.amountSen, legIds: new Set() })} className={`ml-2 text-[11px] font-semibold cursor-pointer ${splitFor?.id === s.id ? "text-[#1F1D1B]" : "text-[#2C4170] hover:text-[#1F1D1B]"}`} title="This ONE bank line paid several book entries — pick them">
-                                  split across…
-                                </button>
-                              )}
-                              <button onClick={() => handleIgnore(s.id, true)} className="ml-2 text-[#9CA3AF] hover:text-[#1F1D1B] text-[11px] underline decoration-dotted cursor-pointer" title="Leave this line out of the reconciliation">ignore</button>
-                              <button onClick={() => handleDeleteLine(s.id)} className="ml-1.5 text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer">del</button>
-                            </>
+                              <Button variant="outline" size="sm" onClick={() => handleIgnore(s.id, true)} title="Leave this line out of the reconciliation">Ignore</Button>
+                              <button onClick={() => handleDeleteLine(s.id)} className="ml-0.5 text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer" title="Delete this imported line">del</button>
+                            </div>
                           )}
                         </td>
                       </tr>
                       {bookLine?.id === s.id && (
                         <tr className="border-b border-[#F0ECE9] bg-[#EAF3DE]/40">
-                          <td colSpan={5} className="px-3 py-2">
+                          <td colSpan={6} className="px-3 py-2">
                             <div className="flex flex-wrap items-end gap-2 text-xs">
                               <span className="font-semibold text-[#27500A] mr-1">
                                 {s.amountSen < 0 ? "Book as expense" : "Book as receipt"} · {formatCurrency(Math.abs(s.amountSen))} on {s.txnDate}
@@ -14950,29 +15944,57 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           </td>
                         </tr>
                       )}
-                      {splitFor?.id === s.id && (() => {
-                        const cands = unmatchedLegs.filter((l) => Math.sign(l.amountSen) === Math.sign(s.amountSen) && Math.abs(l.amountSen) < Math.abs(s.amountSen));
-                        const picked = cands.filter((l) => splitFor.legIds.has(l.id));
-                        const sum = picked.reduce((t, l) => t + l.amountSen, 0);
-                        const exact = picked.length >= 2 && sum === s.amountSen;
+                      {pickFor?.id === s.id && (() => {
+                        const cands = pickCandidates(s, unmatchedLegs);
+                        const q = pickFor.q.trim().toLowerCase();
+                        const shown = q
+                          ? cands.filter((l) => l.description.toLowerCase().includes(q) || l.day.includes(q) || formatCurrency(Math.abs(l.amountSen)).toLowerCase().includes(q) || (Math.abs(l.amountSen) / 100).toFixed(2).includes(q))
+                          : cands;
+                        const picked = cands.filter((l) => pickFor.legIds.has(l.id));
+                        const ps = pickState(s, picked);
+                        const act = pickAction(picked);
+                        const toggle = (id: string) => setPickFor((cur) => { if (!cur) return cur; const n = new Set(cur.legIds); if (n.has(id)) n.delete(id); else n.add(id); return { ...cur, legIds: n }; });
                         return (
-                          <tr className="border-b border-[#F0ECE9] bg-[#EEF2FB]/50">
-                            <td colSpan={5} className="px-3 py-2 text-xs">
-                              <div className="flex flex-wrap items-center gap-2 mb-1">
-                                <span className="font-semibold text-[#2C4170]">Split {formatCurrency(Math.abs(s.amountSen))} across book entries · picked {formatCurrency(Math.abs(sum))}{exact ? " ✓ exact" : picked.length ? ` (${formatCurrency(Math.abs(s.amountSen - sum))} to go)` : ""}</span>
-                                <Button variant="primary" size="sm" disabled={!exact || busy} onClick={() => void handleSplitMatch()}>Match all {picked.length}</Button>
-                                <Button variant="outline" size="sm" onClick={() => setSplitFor(null)}>Cancel</Button>
+                          <tr className="border-b border-[#F0ECE9] bg-[#F4EFE6]">
+                            <td colSpan={6} className="px-3 py-2 text-xs">
+                              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                                <span className="font-semibold text-[#1F1D1B]">Tick the book entries this bank line paid</span>
+                                <span className="text-[#6B7280] tabular-nums">picked {formatCurrency(Math.abs(picked.reduce((t, l) => t + l.amountSen, 0)))} of {formatCurrency(Math.abs(s.amountSen))}</span>
+                                {picked.length > 0 && (
+                                  <span className={ps.exact ? "font-semibold text-[#27500A]" : "font-semibold text-[#9A3A2D]"}>
+                                    {ps.exact ? "Exact ✓" : `${ps.diffSen > 0 ? "Short" : "Over"} ${formatCurrency(Math.abs(ps.diffSen))}`}
+                                  </span>
+                                )}
+                                {picked.length > PICK_MAX && <span className="text-[#9A3A2D]">at most {PICK_MAX} entries per bank line</span>}
+                                <input
+                                  type="text"
+                                  value={pickFor.q}
+                                  onChange={(e) => setPickFor((cur) => (cur ? { ...cur, q: e.target.value } : cur))}
+                                  placeholder="Filter by ref, name, date or amount"
+                                  className="ml-auto rounded border border-[#E2DDD8] bg-white px-2 py-1 text-xs w-64"
+                                />
+                                <Button variant="outline" size="sm" onClick={() => setPickFor(null)}>Cancel</Button>
+                                <Button variant="primary" size="sm" disabled={!ps.exact || !act || busy} onClick={() => void handlePickMatch(s.id, picked.map((l) => l.id))}>
+                                  {picked.length > 1 ? `Match ${picked.length} entries` : "Match"}
+                                </Button>
                               </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-                                {cands.map((l) => (
-                                  <label key={l.id} className="flex items-center gap-2 py-0.5 cursor-pointer">
-                                    <input type="checkbox" checked={splitFor.legIds.has(l.id)} onChange={() => setSplitFor((cur) => { if (!cur) return cur; const n = new Set(cur.legIds); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return { ...cur, legIds: n }; })} />
-                                    <span className="text-[#6B7280] whitespace-nowrap">{l.day}</span>
-                                    <span className="truncate flex-1" title={l.description}>{l.description}</span>
-                                    <span className="tabular-nums whitespace-nowrap">{formatCurrency(Math.abs(l.amountSen))}</span>
-                                  </label>
-                                ))}
-                              </div>
+                              {cands.length === 0 ? (
+                                <div className="py-2 text-[#9CA3AF]">No open book entry {s.amountSen < 0 ? "paying out" : "coming in"} up to this amount — use Book to record it.</div>
+                              ) : (
+                                <div className="max-h-72 overflow-y-auto rounded border border-[#E2DDD8] bg-white">
+                                  {shown.map((l) => (
+                                    <label key={l.id} className={`flex items-center gap-2 px-2 py-1 border-b border-[#F0ECE9] last:border-b-0 cursor-pointer ${pickFor.legIds.has(l.id) ? "bg-[#F7F5F2]" : ""}`}>
+                                      <input type="checkbox" checked={pickFor.legIds.has(l.id)} onChange={() => toggle(l.id)} className="accent-[#6B5C32]" />
+                                      <span className="text-[#6B7280] whitespace-nowrap w-24">{fmtDocDate(l.day)}</span>
+                                      <span className="font-semibold whitespace-nowrap w-28">{docNoFromDescription(l.description) ?? ""}</span>
+                                      <span className="truncate flex-1" title={l.description}>{l.description}</span>
+                                      {l.amountSen === s.amountSen && <span className="rounded bg-[#EAF3DE] px-1.5 py-0.5 text-[10px] font-semibold text-[#27500A]">same amount</span>}
+                                      <span className="tabular-nums whitespace-nowrap w-28 text-right">{formatCurrency(Math.abs(l.amountSen))}</span>
+                                    </label>
+                                  ))}
+                                  {shown.length === 0 && <div className="px-2 py-2 text-[#9CA3AF]">Nothing matches the filter</div>}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -14982,7 +16004,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                   })}
                   {unmatchedStmt.length === 0 && (
                     <tr>
-                      <td className="px-3 py-8 text-center text-sm text-[#9CA3AF]" colSpan={5}>
+                      <td className="px-3 py-8 text-center text-sm text-[#9CA3AF]" colSpan={6}>
                         {stmt.length === 0 ? "No statement lines yet — Upload bank PDF above" : "Every statement line is matched ✓"}
                       </td>
                     </tr>
@@ -14994,7 +16016,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
           {/* Book side — open legs */}
           <Card>
             <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-3 py-2 text-left" colSpan={2}>Book — not yet in the bank ({unmatchedLegs.length})</th>
@@ -15052,7 +16074,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <details className="rounded-lg border border-[#E2DDD8] bg-white">
               <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-[#1F1D1B]">Matched ({matchedStmt.length})</summary>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <tbody>
                     {matchedStmt.map((s) => (
                       <tr key={s.id} className="border-b border-[#F0ECE9] bg-[#EAF3DE]/30">
@@ -15080,7 +16102,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 Before opening ({preStmt.length}) <span className="font-normal text-[#6B7280]">— already inside the opening balance</span>
               </summary>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <tbody>
                     {preStmt.map((s) => (
                       <tr key={s.id} className="border-b border-[#F0ECE9] opacity-60">
@@ -15106,7 +16128,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <details className="rounded-lg border border-[#E2DDD8] bg-white">
               <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-[#1F1D1B]">Ignored ({ignoredStmt.length})</summary>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table data-fin-list className="w-full text-sm">
                   <tbody>
                     {ignoredStmt.map((s) => (
                       <tr key={s.id} className="border-b border-[#F0ECE9] opacity-60">
@@ -15470,7 +16492,6 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-[#1F1D1B]">Opening Balance</h2>
 
       {data?.migrationMissing && (
         <Card>
@@ -15481,7 +16502,14 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
         </Card>
       )}
 
-      {/* Opening date + balance check + Post */}
+      {/* Opening date + balance check; Post on the title row (finance v2) */}
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="primary" size="sm" disabled={posting || diff !== 0 || !openingDate || !!openingMoneyError} onClick={handlePost}>
+            {posting ? "Posting…" : data?.posted ? "Re-post opening balance" : "Post opening balance"}
+          </Button>
+        </ReportToolbar>
+      </FinanceTitleActions>
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-4">
           <div>
@@ -15498,18 +16526,12 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
               </Button>
             </div>
           </div>
-          <div className="text-sm">
-            <span className="text-[#6B7280] mr-2">Total DR</span>
-            <span className="font-medium tabular-nums">{formatCurrency(totalDr)}</span>
-            <span className="text-[#6B7280] mx-2">· Total CR</span>
-            <span className="font-medium tabular-nums">{formatCurrency(totalCr)}</span>
-            <span className={`ml-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium border ${diff === 0 ? "bg-[#EAF3DE] text-[#27500A] border-[#C0DD97]" : "bg-[#FCEBEB] text-[#791F1F] border-[#F7C1C1]"}`}>
-              {diff === 0 ? "Balanced ✓" : `Difference ${formatCurrency(Math.abs(diff))} ${diff > 0 ? "DR" : "CR"}`}
-            </span>
+          <div className="min-w-[320px] flex-1">
+            <CheckStrip ok={diff === 0} label={diff === 0 ? "Balanced ✓" : `Difference ${formatCurrency(Math.abs(diff))} ${diff > 0 ? "DR" : "CR"}`}>
+              <span>Total DR <b className="tabular-nums">{formatCurrency(totalDr)}</b></span>
+              <span>Total CR <b className="tabular-nums">{formatCurrency(totalCr)}</b></span>
+            </CheckStrip>
           </div>
-          <Button variant="primary" size="sm" disabled={posting || diff !== 0 || !openingDate || !!openingMoneyError} onClick={handlePost}>
-            {posting ? "Posting…" : data?.posted ? "Re-post opening balance" : "Post opening balance"}
-          </Button>
           {openingMoneyError && <span className="text-xs text-[#9A3A2D]">{openingMoneyError}</span>}
           {data?.posted && (
             <span className="text-xs text-[#6B7280]">
@@ -15541,7 +16563,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
           </div>
           {(data?.arInvoices.length ?? 0) > 0 && (
             <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-2 py-1.5 text-left">Customer</th>
@@ -15601,7 +16623,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
           </div>
           {(data?.apInvoices.length ?? 0) > 0 && (
             <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table data-fin-list className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                   <th className="px-2 py-1.5 text-left">Supplier</th>
@@ -15659,7 +16681,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
             </button>
             {preApOpen && (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table data-fin-list className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                     <th className="px-2 py-1.5 text-left">Supplier</th>
@@ -15759,7 +16781,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                     Re-post the opening entry after changing this list.
                   </p>
                   <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                    <table className="w-full text-sm">
+                    <table data-fin-list className="w-full text-sm">
                       <thead className="sticky top-0 bg-white">
                         <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                           <th className="px-2 py-1.5 text-left">Customer</th>
@@ -15804,7 +16826,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
       <Card>
         <CardContent className="p-0">
           <div ref={obScrollRef} className="overflow-auto max-h-[70vh]">
-          <table className="w-full text-sm">
+          <table data-fin-list className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-white">
               <tr className="border-b border-[#E2DDD8] text-xs text-[#6B7280]">
                 <th className="px-3 py-2 text-left">Account (balance sheet &amp; P&amp;L)</th>
@@ -15816,7 +16838,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
               {obVirt.topSpacer}
               {(obVirt.active ? obVirt.indices.map((i) => obGridItems[i]) : obGridItems).map((it) =>
                 !it ? null : it.kind === "auto" ? (
-                <tr key={`auto-${it.code}`} className="border-b border-[#F0ECE9] bg-[#F7F4EF]" style={{ height: OPENING_BALANCE_ROW_PX }}>
+                <tr key={`auto-${it.code}`} data-fin-nolift="" className="border-b border-[#F0ECE9] bg-[#F7F4EF]" style={{ height: OPENING_BALANCE_ROW_PX }}>
                   <td className="px-3 py-1.5">
                     <span className="tabular-nums text-xs text-[#6B7280] mr-1">{it.code}</span>
                     {it.name}
@@ -15830,7 +16852,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                   </td>
                 </tr>
               ) : (
-                <tr key={it.code} className="border-b border-[#F0ECE9]" style={{ height: OPENING_BALANCE_ROW_PX }}>
+                <tr key={it.code} data-fin-nolift="" className="border-b border-[#F0ECE9]" style={{ height: OPENING_BALANCE_ROW_PX }}>
                   <td className="px-3 py-1.5">
                     <span className="tabular-nums text-xs text-[#6B7280] mr-1">{it.code}</span>
                     <span className="text-[#1F1D1B]">{it.name}</span>
@@ -15857,7 +16879,7 @@ function OpeningBalanceTab({ accounts, onRefresh }: { accounts: ChartOfAccount[]
                 ),
               )}
               {obVirt.bottomSpacer}
-              <tr className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
+              <tr data-fin-nolift="" className="bg-[#F0ECE9]/60 font-semibold text-[#1F1D1B]">
                 <td className="px-3 py-2">TOTAL (incl. auto control rows)</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(totalDr)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(totalCr)}</td>
@@ -15903,7 +16925,7 @@ function YearCloseCard() {
     if (!preview) return;
     if (!(await confirm({
       title: "Close financial year?",
-      message: `Close FY ended ${preview.fyEnd}?\n\nNet ${preview.netSen >= 0 ? "profit" : "loss"} of ${formatCurrency(Math.abs(preview.netSen))} across ${preview.accountCount} P&L accounts will be posted to 150-0000 RETAINED EARNING. This writes immutable ledger entries.`,
+      message: `Close FY ended ${preview.fyEnd}?\n\nNet ${preview.netSen >= 0 ? "profit" : "loss"} of ${formatCurrency(Math.abs(preview.netSen))} across ${preview.accountCount} P&L accounts will be posted to 150-0000 RETAINED EARNING. This writes immutable ledger entries, and the year is locked: nothing dated in it can be posted or changed until a Super Admin reopens it (Settings › Financial Years).`,
       danger: false,
     }))) return;
     setPosting(true);
@@ -16139,19 +17161,13 @@ function BsDrillPanel({ period, account, company }: { period: string; account: s
 }
 
 function BalanceSheetTab() {
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [period, setPeriod] = useState(() => today.slice(0, 7));
   // Multi-company (Phase 2): "" = All companies (group) → URL unchanged =
   // today's consolidated sheet. A company code scopes /pl via &orgId=.
   const [company, setCompany] = useState("");
   const companyOptions = useCompanyOptions();
-  const months: string[] = [];
-  {
-    const now = new Date();
-    for (let i = 0; i < 18; i++) {
-      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-      months.push(d.toISOString().slice(0, 7));
-    }
-  }
+  const periodOpts = monthOptions(today.slice(0, 7), 18);
   const { data: bsResp, loading: bsLoading, refresh: bsRefresh } = useCachedJson<{ success?: boolean; data?: { balanceSheet?: BalanceSheetEntry[]; cashFlow?: CashFlowResp; sheetStock?: { month: string; totalSen: number } | null; sheetStockError?: string | null } }>(`/api/accounting/pl?period=${period}${orgIdParam(company)}`);
   const bsData: BalanceSheetEntry[] = useMemo(
     () => (bsResp?.success && bsResp.data?.balanceSheet ? bsResp.data.balanceSheet : []),
@@ -16169,6 +17185,11 @@ function BalanceSheetTab() {
   // Accounts opened in the inline drill, keyed by period + company + account
   // so a new month starts with everything closed.
   const [bsDrillOpen, setBsDrillOpen] = useState<Set<string>>(new Set());
+  // Finance v2 (owner 2026-10-17): DETAIL L1 totals only, L2 sections, L3 every
+  // account (the default), L4 every account with its ledger lines; a heading
+  // click folds or opens one section.
+  const [level, setLevel] = useState(3);
+  const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (!edit) return;
     fetch("/api/accounting/bs/section-map")
@@ -16203,176 +17224,207 @@ function BalanceSheetTab() {
 
   const totalCurrentAssets = currentAssets.reduce((s, e) => s + e.balance, 0);
   const totalFixedAssets = fixedAssets.reduce((s, e) => s + e.balance, 0);
-  const totalAssets = totalCurrentAssets + totalFixedAssets;
   const totalCurrentLiab = currentLiabilities.reduce((s, e) => s + e.balance, 0);
   const totalLongTermLiab = longTermLiabilities.reduce((s, e) => s + e.balance, 0);
-  const totalLiabilities = totalCurrentLiab + totalLongTermLiab;
   const totalEquity = equityItems.reduce((s, e) => s + e.balance, 0);
-  const totalLiabEquity = totalLiabilities + totalEquity;
+  // The design's sheet (owner 2026-10-17 「可以」): Fixed Assets, then Current
+  // Assets less Current Liabilities = Net Current Assets, financed by Equity and
+  // Non-Current Liabilities. Same entries, same sections — only the arrangement
+  // and the two totals compared change (left − right = assets − liabilities − equity).
+  const netCurrent = totalCurrentAssets - totalCurrentLiab;
+  const leftTotal = totalFixedAssets + netCurrent;
+  const rightTotal = totalEquity + totalLongTermLiab;
+  const sheetDiff = leftTotal - rightTotal;
 
+  // A section: its heading (folds; a drop target while editing), its accounts,
+  // its total. At L1 only the total shows.
   const renderBSSection = (
+    key: string,
     title: string,
     entries: BalanceSheetEntry[],
     total: number,
-    colorClass: string,
-    bgClass: string,
     section: string,
-  ) => (
-    <>
-      <tr className={`${bgClass} ${edit && dragCode && dragOverSec === section ? "ring-2 ring-inset ring-[#6B5C32]" : ""}`}
-        onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
-        onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
-        onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
-        <td colSpan={3} className={`px-4 py-2 font-semibold ${colorClass}`}>{title}</td>
-      </tr>
-      {entries.map((e) => {
-        const draggable = edit && e.accountCode !== "NP-CURRENT";
-        // The unclosed-earnings line is the P&L's result, not an account.
-        const canDrill = !edit && e.accountCode !== "NP-CURRENT";
-        const drillKey = `${period}|${company}|${e.accountCode}`;
-        const drilled = canDrill && bsDrillOpen.has(drillKey);
-        return (
-          <Fragment key={e.id}>
-          <tr className={`border-t border-[#E2DDD8]/50 ${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
-            draggable={draggable}
-            onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
-            onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
-            <td className="px-4 py-1.5 pl-8 text-[#6B7280] text-xs">{draggable ? "⠿ " : ""}{e.accountCode}</td>
-            <td className="px-4 py-1.5 text-[#4B5563]">
-              {canDrill ? (
-                <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
-                  onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                  <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{e.accountName}
-                </button>
-              ) : e.accountName}
-            </td>
-            <td className={`px-4 py-1.5 text-right font-medium ${e.balance < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-              {e.balance < 0 ? `(${formatCurrency(Math.abs(e.balance))})` : formatCurrency(e.balance)}
-            </td>
+  ) => {
+    const totalLabel = `Total ${title.replace("Less: ", "")}`;
+    if (level < 2 && !edit) {
+      return (
+        <tr data-row="sub">
+          <td />
+          <td style={{ paddingLeft: 26 }}>{totalLabel}</td>
+          <td data-cell="num split" data-neg={total < 0 ? "" : undefined}>{fmtAmt(total)}</td>
+        </tr>
+      );
+    }
+    const open = edit || (openSec[key] !== undefined ? openSec[key] : level >= 3);
+    return (
+      <>
+        <tr data-row="grp" data-fin-drop={edit && dragCode && dragOverSec === section ? "" : undefined}
+          className={!edit ? "cursor-pointer select-none" : undefined}
+          title={!edit ? (open ? "Click to fold" : "Click to open") : undefined}
+          onClick={!edit ? () => setOpenSec({ ...openSec, [key]: !open }) : undefined}
+          onDragOver={edit && dragCode ? (e) => { e.preventDefault(); setDragOverSec(section); } : undefined}
+          onDragLeave={edit && dragCode ? () => { if (dragOverSec === section) setDragOverSec(null); } : undefined}
+          onDrop={edit && dragCode ? (e) => { e.preventDefault(); const src = e.dataTransfer.getData("text/plain"); setDragOverSec(null); setDragCode(null); if (src) void moveTo(src, section); } : undefined}>
+          <td colSpan={2} style={{ paddingLeft: 14 }}>
+            {!edit && <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{open ? "▾" : "▸"}</span>}
+            {title}{edit && entries.length === 0 ? "  (empty — drop here)" : ""}
+          </td>
+          <td data-cell="num split" data-neg={!open && total < 0 ? "" : undefined}>{open ? "" : fmtAmt(total)}</td>
+        </tr>
+        {open && entries.map((e) => {
+          const draggable = edit && e.accountCode !== "NP-CURRENT";
+          // The unclosed-earnings line is the P&L's result, not an account.
+          const canDrill = !edit && e.accountCode !== "NP-CURRENT";
+          const drillKey = `${period}|${company}|${e.accountCode}`;
+          // L4 opens every account's ledger lines; a click then folds one.
+          const drilled = canDrill && (level >= 4 ? !bsDrillOpen.has(drillKey) : bsDrillOpen.has(drillKey));
+          return (
+            <Fragment key={e.id}>
+            <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
+              draggable={draggable}
+              onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
+              onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
+              <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
+              <td style={{ paddingLeft: 32 }}>
+                {canDrill ? (
+                  <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
+                    onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                    <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
+                  </button>
+                ) : e.accountName}
+              </td>
+              <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
+            </tr>
+            {drilled && (
+              <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
+            )}
+            </Fragment>
+          );
+        })}
+        {open && (
+          <tr data-row="sub">
+            <td />
+            <td style={{ paddingLeft: 14 }}>{totalLabel}</td>
+            <td data-cell="num split" data-neg={total < 0 ? "" : undefined}>{fmtAmt(total)}</td>
           </tr>
-          {drilled && (
-            <tr><td colSpan={3} className="p-0"><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
-          )}
-          </Fragment>
-        );
-      })}
-      <tr className={`border-t border-[#E2DDD8] ${bgClass} font-semibold`}>
-        <td colSpan={2} className={`px-4 py-2 ${colorClass}`}>Total {title}</td>
-        <td className={`px-4 py-2 text-right ${colorClass}`}>{formatCurrency(total)}</td>
-      </tr>
-    </>
-  );
+        )}
+      </>
+    );
+  };
+
+  // The download carries the sheet in the same arrangement, every account.
+  const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
+    const aoa: Aoa = [["Code", "Account", "Amount (RM)"]];
+    const kinds: PdfRowKind[] = [];
+    const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
+    const sec = (title: string, entries: BalanceSheetEntry[], total: number) => {
+      push(["", title, ""], "section");
+      for (const e of entries) push([e.accountCode === "NP-CURRENT" ? "" : e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+      push(["", `Total ${title.replace("Less: ", "")}`, total / 100], "subtotal");
+    };
+    sec("Fixed Assets (Net)", fixedAssets, totalFixedAssets);
+    push(["", "CURRENT ASSETS LESS CURRENT LIABILITIES", ""], "section");
+    sec("Current Assets", currentAssets, totalCurrentAssets);
+    sec("Less: Current Liabilities", currentLiabilities, totalCurrentLiab);
+    push(["", "Net Current Assets", netCurrent / 100], "subtotal");
+    push(["", "FIXED ASSETS + CURRENT ASSETS − CURRENT LIABILITIES", leftTotal / 100], "grand");
+    push(["", "FINANCED BY", ""], "section");
+    sec("Equity", equityItems, totalEquity);
+    sec("Non-Current Liabilities", longTermLiabilities, totalLongTermLiab);
+    push(["", "TOTAL EQUITY + NON-CURRENT LIABILITIES", rightTotal / 100], "grand");
+    return { aoa, kinds };
+  };
+  const fileBase = `balance-sheet-${period}${company ? `-${company}` : ""}`;
+  const asAtLabel = `As At End Of ${periodLabel(period, today)}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Balance Sheet", buildExport().aoa, { moneyFormat: true }); } },
+    {
+      label: "Print / PDF",
+      onSelect: () => {
+        const { aoa, kinds } = buildExport();
+        void exportReportPdf(`${fileBase}.pdf`, "Balance Sheet", asAtLabel, aoa, { rowKind: (_r, i) => kinds[i], leftCols: [1], company: COMPANY.HOOKKA.name, print: true });
+      },
+    },
+  ];
 
   return (
-    <div className="space-y-6 max-md:space-y-4">
+    <div className="space-y-4">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
+          <PeriodStepper value={period} options={periodOpts} onChange={(p) => { setPeriod(p); setBsDrillOpen(new Set()); }} today={today} />
+          <EditLayoutToggle on={edit} onToggle={() => setEdit((v) => !v)} />
+          {!edit && (
+            <DetailLevels
+              levels={[1, 2, 3, 4]}
+              value={level}
+              onChange={(L) => { setLevel(L); setOpenSec({}); setBsDrillOpen(new Set()); }}
+              tips={{ 1: "Totals only", 2: "Sections", 3: "Every account", 4: "Every account with its ledger lines" }}
+            />
+          )}
+          <DownloadMenu items={downloads} />
+        </ReportToolbar>
+      </FinanceTitleActions>
       <YearCloseCard />
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs font-semibold text-[#1F1D1B]">As at month-end</label>
-        <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-          {months.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <CompanySelect value={company} onChange={setCompany} options={companyOptions} />
-        <button onClick={() => setEdit((v) => !v)}
-          className={`ml-2 rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
-          {edit ? "Done" : "Edit"}
-        </button>
-        {edit && <span className="text-[11px] text-[#6B5C32]">Drag an account row onto a target section to reclassify it · Assets ↔ Liabilities is allowed too (the sign flips on the move, the statement still balances) · all months recompute under the new rule · drag back to undo</span>}
-      </div>
+      {edit && (
+        <EditLayoutBanner>
+          Drag an account row (⠿) onto a target section to reclassify it · Assets ↔ Liabilities is allowed too (the sign flips on the move, the statement still balances) · all months recompute under the new rule · drag back to undo
+        </EditLayoutBanner>
+      )}
       {/* Group P&L / net-worth by company — only on the consolidated (group)
           view; picking a single company hides it (you're already scoped). */}
       {company === "" && <GroupByCompanyCard period={period} options={companyOptions} />}
-      {/* Balance equation */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-[#6B7280]">Total Assets</p>
-            <p className="text-xl font-bold text-[#3E6570]">{formatCurrency(totalAssets)}</p>
-          </CardContent>
-        </Card>
-        <Card className="flex items-center justify-center">
-          <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-[#6B5C32]">=</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-[#6B7280]">Liabilities + Equity</p>
-            <p className="text-xl font-bold text-[#6B4A6D]">{formatCurrency(totalLiabEquity)}</p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Balance check: what the business holds against how it is financed. */}
+      <CheckStrip ok={sheetDiff === 0} label={sheetDiff === 0 ? "Balanced ✓" : checkLabel(sheetDiff)}>
+        <span>Fixed Assets + Current Assets − Current Liabilities <b className="tabular-nums">{fmtAmt(leftTotal)}</b></span>
+        <span className="text-[#6B7280]">=</span>
+        <span>Total Equity + Non-Current Liabilities <b className="tabular-nums">{fmtAmt(rightTotal)}</b></span>
+      </CheckStrip>
 
-      {/* Balance Sheet Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <Scale className="h-5 w-5 text-[#6B5C32]" />
-            Balance Sheet as at end {period}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="border border-[#E2DDD8] rounded-lg overflow-hidden overflow-x-auto">
-            <table data-col-resize="first" className="w-full text-sm">
-              <thead>
-                <tr className="bg-[#F0ECE9]">
-                  <th className="text-left px-4 py-2 font-semibold text-[#1F1D1B] w-28">Code</th>
-                  <th className="text-left px-4 py-2 font-semibold text-[#1F1D1B]">Account</th>
-                  <th className="text-right px-4 py-2 font-semibold text-[#1F1D1B] w-40">Amount (RM)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* ASSETS — INFO (teal) tint */}
-                <tr className={`${INFO.bg} border-t-2 ${INFO.border}`}>
-                  <td colSpan={3} className={`px-4 py-2 font-bold text-base ${INFO.text}`}>ASSETS</td>
-                </tr>
-                {renderBSSection("Current Assets", currentAssets, totalCurrentAssets, INFO.text, INFO.bg, "CURRENT_ASSET")}
-                {renderBSSection("Fixed Assets (Net)", fixedAssets, totalFixedAssets, INFO.text, INFO.bg, "FIXED_ASSET")}
-                <tr className={`border-t-2 ${INFO.border} ${INFO.bg} font-bold`}>
-                  <td colSpan={2} className={`px-4 py-3 ${INFO.text}`}>TOTAL ASSETS</td>
-                  <td className={`px-4 py-3 text-right ${INFO.text}`}>{formatCurrency(totalAssets)}</td>
-                </tr>
-
-                {/* LIABILITIES — DANGER (red) tint */}
-                <tr className={`${DANGER.bg} border-t-2 ${DANGER.border}`}>
-                  <td colSpan={3} className={`px-4 py-2 font-bold text-base ${DANGER.text}`}>LIABILITIES</td>
-                </tr>
-                {renderBSSection("Current Liabilities", currentLiabilities, totalCurrentLiab, DANGER.text, DANGER.bg, "CURRENT_LIABILITY")}
-                {renderBSSection("Long-Term Liabilities", longTermLiabilities, totalLongTermLiab, DANGER.text, DANGER.bg, "LONG_TERM_LIABILITY")}
-                <tr className={`border-t border-[#E2DDD8] font-semibold ${DANGER.bg}`}>
-                  <td colSpan={2} className={`px-4 py-2 ${DANGER.text}`}>Total Liabilities</td>
-                  <td className={`px-4 py-2 text-right ${DANGER.text}`}>{formatCurrency(totalLiabilities)}</td>
-                </tr>
-
-                {/* EQUITY — ACCENT_PLUM tint */}
-                {renderBSSection("Equity", equityItems, totalEquity, ACCENT_PLUM.text, ACCENT_PLUM.bg, "EQUITY")}
-
-                {/* Total L+E */}
-                <tr className="border-t-2 border-[#1F1D1B] bg-[#1F1D1B] text-white font-bold">
-                  <td colSpan={2} className="px-4 py-3">TOTAL LIABILITIES + EQUITY</td>
-                  <td className="px-4 py-3 text-right">{formatCurrency(totalLiabEquity)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* Balance check */}
-          <div className={`mt-3 p-3 rounded-lg text-sm border ${totalAssets === totalLiabEquity ? `${SUCCESS.bg} ${SUCCESS.text} ${SUCCESS.border}` : `${DANGER.bg} ${DANGER.text} ${DANGER.border}`}`}>
-            {totalAssets === totalLiabEquity ? (
-              <span className="flex items-center gap-2"><Check className="h-4 w-4" /> Balance sheet is balanced. Assets = Liabilities + Equity</span>
-            ) : (
-              <span className="flex items-center gap-2"><X className="h-4 w-4" /> Balance sheet is NOT balanced. Difference: {formatCurrency(Math.abs(totalAssets - totalLiabEquity))}</span>
-            )}
-          </div>
-          {bsStock && (
-            <p className="mt-2 text-xs text-[#6B7280]">
-              Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
-            </p>
-          )}
-          {bsStockError && (
-            <p className="mt-2 text-xs text-[#9A3412]">The stock could not be read ({bsStockError}) — the stock lines show the ledger&apos;s own balance.</p>
-          )}
-        </CardContent>
-      </Card>
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title={`Balance Sheet ${asAtLabel}`}
+        note="All figures RM · brackets = negative · stock = the P&L's closing stock · click an account to see the ledger lines behind it"
+      >
+        <table data-col-resize="first" data-fin-report className="min-w-[560px]">
+          <thead>
+            <tr>
+              <th className="w-28">Code</th>
+              <th>Account</th>
+              <th data-cell="num split" className="w-44">Amount (RM)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {renderBSSection("FA", "Fixed Assets (Net)", fixedAssets, totalFixedAssets, "FIXED_ASSET")}
+            <tr data-row="sec"><td colSpan={3}>CURRENT ASSETS LESS CURRENT LIABILITIES</td></tr>
+            {renderBSSection("CA", "Current Assets", currentAssets, totalCurrentAssets, "CURRENT_ASSET")}
+            {renderBSSection("CL", "Less: Current Liabilities", currentLiabilities, totalCurrentLiab, "CURRENT_LIABILITY")}
+            <tr data-row="res">
+              <td colSpan={2}>Net Current Assets</td>
+              <td data-cell="num split" data-neg={netCurrent < 0 ? "" : undefined}>{fmtAmt(netCurrent)}</td>
+            </tr>
+            <tr data-row="fin">
+              <td colSpan={2}>FIXED ASSETS + CURRENT ASSETS − CURRENT LIABILITIES</td>
+              <td data-cell="num split" data-neg={leftTotal < 0 ? "" : undefined}>{fmtAmt(leftTotal)}</td>
+            </tr>
+            <tr data-row="sec"><td colSpan={3}>FINANCED BY</td></tr>
+            {renderBSSection("EQ", "Equity", equityItems, totalEquity, "EQUITY")}
+            {renderBSSection("LL", "Non-Current Liabilities", longTermLiabilities, totalLongTermLiab, "LONG_TERM_LIABILITY")}
+            <tr data-row="fin">
+              <td colSpan={2}>TOTAL EQUITY + NON-CURRENT LIABILITIES</td>
+              <td data-cell="num split" data-neg={rightTotal < 0 ? "" : undefined}>{fmtAmt(rightTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </ReportFrame>
+      {bsStock && (
+        <p className="text-xs text-[#6B7280]">
+          Stock lines show the P&amp;L&apos;s closing stock for {drillMonthLabel(bsStock.month)} (the Stock Summary figure), read live — nothing is posted to the ledger. Current Year Earnings carries the difference from the ledger.
+        </p>
+      )}
+      {bsStockError && (
+        <p className="text-xs text-[#9A3412]">The stock could not be read ({bsStockError}) — the stock lines show the ledger&apos;s own balance.</p>
+      )}
     </div>
   );
 }
@@ -16431,13 +17483,12 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
       .catch(() => { if (!dead) setErr("Could not load the payments"); });
     return () => { dead = true; };
   }, [period, lineKey]);
-  const pad = { paddingLeft: `${24 + depth * 16}px` };
-  const bg = "bg-[#FAF8F5]";
+  const pad = { paddingLeft: `${34 + depth * 18}px` };
+  const acc = (c: { accum?: boolean }) => (c.accum ? " acc" : "");
   if (!data || !data.found) {
     const msg = err ?? (data ? "This line is not on the statement any more — reload the page." : "Loading the payments…");
-    return <tr className={bg}><td className={`py-1 text-[12px] ${err ? "text-[#9A3412]" : "text-[#9CA3AF]"}`} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
+    return <tr data-row="det"><td data-cell="stick" className={err ? "text-[#9A3412]" : "text-[#9CA3AF]"} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
   }
-  const amtCls = (sen: number) => `text-right px-2 tabular-nums whitespace-nowrap ${sen < 0 ? "text-[#9A3A2D]" : ""}`;
   const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
   const perMonth = new Map<string, number>();
   for (const it of data.items) perMonth.set(it.ym, (perMonth.get(it.ym) ?? 0) + it.sen);
@@ -16454,26 +17505,26 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
         ].filter(Boolean).join("\n");
         const text = `${it.date.slice(8, 10)}/${it.date.slice(5, 7)} · ${it.description || "—"}${it.ref2 ? ` · ${it.ref2}` : ""} — ${it.ref1}`;
         return (
-          <tr key={it.key} className={`${bg} text-[12px] text-[#4B5563]`} title={hover || undefined}>
-            <td className="py-1" style={pad}>
+          <tr key={it.key} data-row="det" title={hover || undefined}>
+            <td data-cell="stick" style={pad}>
               <div className="truncate max-w-[34rem]">{text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
             </td>
             {cols.map((c) => {
               const on = c.accum || c.key === it.ym;
-              return <td key={c.key} className={`${on ? amtCls(it.sen) : ""} ${c.accum ? "bg-[#F6F1E7]" : ""}`}>{on ? amt(it.sen) : ""}</td>;
+              return <td key={c.key} data-cell={`num split${acc(c)}`} data-neg={on && it.sen < 0 ? "" : undefined}>{on ? amt(it.sen) : ""}</td>;
             })}
           </tr>
         );
       })}
-      <tr className="bg-[#F7F4EF] text-[12px] font-semibold text-[#4B5563] border-t border-[#E2DDD8]">
-        <td className="py-1" style={pad}>
+      <tr data-row="detsum">
+        <td data-cell="stick" style={pad}>
           {data.items.length} entr{data.items.length === 1 ? "y" : "ies"}
-          {accountCode && months.length > 0 && <> · <Link to={glHref(accountCode, months[0], months[months.length - 1])} className="underline decoration-dotted text-[#6B5C32]">open in GL</Link></>}
+          {accountCode && months.length > 0 && <> · <Link to={glHref(accountCode, months[0], months[months.length - 1])} className="text-[#6B5C32] hover:text-[#574A28]">Open In GL →</Link></>}
           {!data.tied && <span className="font-normal text-[#9A3412]"> · these payments do not add up to the line — please report it</span>}
         </td>
         {cols.map((c) => {
           const sen = c.accum ? total : (perMonth.get(c.key) ?? 0);
-          return <td key={c.key} className={`${amtCls(sen)} ${c.accum ? "bg-[#F6F1E7]" : ""}`}>{amt(sen)}</td>;
+          return <td key={c.key} data-cell={`num split${acc(c)}`} data-neg={sen < 0 ? "" : undefined}>{amt(sen)}</td>;
         })}
       </tr>
     </>
@@ -16494,7 +17545,8 @@ const SECTION_CATEGORIES: { value: string; label: string }[] = [
 
 function CashFlowTab() {
   const { toast } = useToast();
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const today = todayYmdMY();
+  const [period, setPeriod] = useState(() => today.slice(0, 7));
   const [level, setLevel] = useState(3);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState(false);
@@ -17052,8 +18104,8 @@ function CashFlowTab() {
     const a = Math.abs(v / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return v < 0 ? `(${a})` : a;
   };
-  const months: string[] = [];
-  { const now = new Date(); for (let i = 0; i < 18; i++) { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); months.push(d.toISOString().slice(0, 7)); } }
+  // Months only (BUG-2026-08-13-092): the engine reads YYYY-MM.
+  const periodOpts = useMemo(() => monthOptions(today.slice(0, 7), 18), [today]);
 
   // Owner 2026-09-04: accounts with no amount anywhere in the window stay out
   // of the statement and its exports. Edit mode still shows every row — you
@@ -17102,40 +18154,38 @@ function CashFlowTab() {
 
   const isDropTarget = (r: CfApiRow) => edit && (r.kind === "group" || r.kind === "section") && !!r.section;
 
+  const fileBase = `CashFlow-${period}`;
+  const downloads = [
+    { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Statement of Cash Flow", buildExport()); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}`, buildExport(), { print: true }); } },
+  ];
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold text-[#1F1D1B]">Statement of Cash Flow</h2>
-        <span className="text-xs text-[#9CA3AF]">cash basis · full detail</span>
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }}
-            className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${edit ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>
-            {edit ? "Done" : "Edit"}
-          </button>
-          {[1, 2, 3].map((L) => (
-            <button key={L} onClick={() => applyLevel(L)}
-              className={`rounded-md border px-3 py-1.5 text-sm cursor-pointer ${level === L ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>L{L}</button>
-          ))}
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-3 py-1.5 text-sm">
-            {/* BUG-2026-08-13-092 — the Quarter ("2026-Q1") and Full-year
-                ("2026") options used to sit here. `fyMonths` (cashflow-engine)
-                parses the period as `YYYY-MM`, so those values produced 13
-                columns all keyed "2026-NaN" and labelled "undefined'26": no
-                real month matched a column and `inFy` was false for every leg,
-                so EVERY income and expense line — and Cash Surplus — rendered
-                "-", while `balBefore("2026-NaN")` string-compared TRUE against
-                every real month and printed a large, real Bank b/f and c/f
-                identically in all 14 columns. A statement reading "no income,
-                no expenses, bank RM X" is the most dangerous shape there is.
-                Whether cash flow should support quarter / full-year windows is
-                an owner decision; the fix here is to stop offering a period
-                the engine cannot compute. */}
-            <optgroup label="Monthly">{months.map((m) => <option key={m} value={m}>{m}</option>)}</optgroup>
-          </select>
-          <ExportButtons build={buildExport} filenameBase={`CashFlow-${period}`} title="Statement of Cash Flow" subtitle={`Period: ${period}`} />
-        </div>
-      </div>
-      {edit && <p className="text-[11px] text-[#6B5C32]">Drag an account row onto a target section heading to reclassify it · this changes the rule, so all months recompute under it · Bank c/f total unchanged · drag back to undo</p>}
+    <div className="space-y-3">
+      <ReportToolbar>
+        {/* BUG-2026-08-13-092 — months only. Quarter ("2026-Q1") and Full-year
+            ("2026") periods used to be offered here. `fyMonths` (cashflow-engine)
+            parses the period as `YYYY-MM`, so those values produced 13
+            columns all keyed "2026-NaN" and labelled "undefined'26": no
+            real month matched a column and `inFy` was false for every leg,
+            so EVERY income and expense line — and Cash Surplus — rendered
+            "-", while `balBefore("2026-NaN")` string-compared TRUE against
+            every real month and printed a large, real Bank b/f and c/f
+            identically in all 14 columns. A statement reading "no income,
+            no expenses, bank RM X" is the most dangerous shape there is.
+            Whether cash flow should support quarter / full-year windows is
+            an owner decision; the fix here is to stop offering a period
+            the engine cannot compute. */}
+        <PeriodStepper value={period} options={periodOpts} onChange={setPeriod} today={today} />
+        <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }} />
+        {!edit && <DetailLevels levels={[1, 2, 3]} value={level} onChange={applyLevel} />}
+        {data && <DownloadMenu items={downloads} />}
+      </ReportToolbar>
+      {edit && (
+        <EditLayoutBanner>
+          Drag an account row (⠿) onto a target section heading to reclassify it · this changes the rule, so all months recompute under it · Bank c/f total unchanged · drag back to undo
+        </EditLayoutBanner>
+      )}
       {edit && supRows.length > 0 && (
         <Card>
           <CardContent className="p-4">
@@ -17170,97 +18220,96 @@ function CashFlowTab() {
           </CardContent>
         </Card>
       )}
-      <Card>
-        <CardContent className="p-4 overflow-x-auto">
-          {!data ? (
-            <div className="py-8 text-center text-[#6B7280] text-sm">No cash-flow data for {period}.</div>
-          ) : (
-            <>
-            {/* Statement letterhead (owner 2026-08-27 排版 pass) — the report
-                reads as a REPORT, not a grid: company on the left, statement
-                title on the right, ruled off before the figures start. */}
-            <div className="flex flex-wrap justify-between items-start border-b-2 border-[#1F1D1B] pb-2 mb-3 gap-2">
-              <div>
-                <div className="text-[15px] font-extrabold tracking-wide text-[#1F1D1B]">HOOKKA INDUSTRIES SDN. BHD.</div>
-                <div className="text-[11px] text-[#6B7280]">Prepared on cash basis · all figures in RM</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[14px] font-extrabold tracking-[0.15em] text-[#6B5C32]">STATEMENT OF CASH FLOW</div>
-                <div className="text-[11px] text-[#6B7280]">Accumulated + trailing 12 months · view {period}</div>
-              </div>
-            </div>
-            <table data-col-resize="first" className="text-[13px]">
-              <thead>
-                {/* PERIOD row bold on top (house rule), Accumulated tinted so
-                    the cumulative column never reads as a 13th month. */}
-                <tr className="text-[12px] font-bold text-[#1F1D1B] border-b-2 border-[#1F1D1B] bg-[#F7F4EF]">
-                  <td className="px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-[#6B5C32]">PERIOD</td>
-                  {cols.map((c) => (
-                    <td key={c.key} className={`text-right px-2 py-1.5 whitespace-nowrap ${c.accum ? "bg-[#F6F1E7] text-[#6B5C32]" : ""}`}>{c.label}</td>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((r, i) => {
-                  if (r.kind === "gap") return <tr key={i}><td colSpan={cols.length + 1} className="py-1.5" /></tr>;
-                  const pad = { paddingLeft: `${8 + r.depth * 16}px` };
-                  const isGroup = r.kind === "group";
-                  const isOpen = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
-                  const strong = r.kind === "subtotal" || r.kind === "result" || r.kind === "total" || r.kind === "cf" || r.kind === "section" || isGroup;
-                  const draggable = edit && r.kind === "line" && !!r.accountCode;
-                  const dropHere = isDropTarget(r);
-                  const rowCls =
-                    r.kind === "result" ? "bg-[#F0ECE9] font-bold border-t border-[#1F1D1B]" :
-                    r.kind === "total" ? "bg-[#EAF3DE] font-bold border-t-2 border-[#1F1D1B]" :
-                    r.kind === "cf" ? "font-bold border-t border-[#1F1D1B] [border-bottom:3px_double_#1F1D1B]" :
-                    r.kind === "bf" ? "text-[#6B7280] italic" :
-                    r.kind === "subtotal" ? "font-semibold border-t border-[#E2DDD8]" :
-                    r.kind === "section" ? "font-extrabold tracking-wide text-[#6B5C32] text-[12px]" : "";
-                  const canDrill = !edit && r.kind === "line" && !!r.lineKey;
-                  const drillKey = canDrill ? `${period}|${r.lineKey}` : "";
-                  const drilled = canDrill && cfDrillOpen.has(drillKey);
-                  return (
-                    <Fragment key={i}>
-                    <tr
-                      className={`${rowCls} ${isGroup ? "cursor-pointer hover:bg-[#F7F4EF] bg-[#F0ECE9]/30 font-semibold" : ""} ${draggable ? "cursor-move" : ""} ${dragCode === r.accountCode ? "opacity-40" : ""} ${dropHere && dragOverSec === r.section ? "ring-2 ring-inset ring-[#6B5C32]" : ""} ${drilled ? "bg-[#F7F4EF]" : ""}`}
-                      draggable={draggable}
-                      onDragStart={draggable ? (e) => { setDragCode(r.accountCode!); e.dataTransfer.setData("text/plain", r.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
-                      onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}
-                      onDragOver={(dropHere || (edit && r.kind === "line" && !!r.accountCode)) && dragCode ? (e) => { e.preventDefault(); if (r.section) setDragOverSec(r.section); } : undefined}
-                      onDragLeave={dropHere ? () => { if (dragOverSec === r.section) setDragOverSec(null); } : undefined}
-                      onDrop={(edit && dragCode) ? (e) => {
-                        e.preventDefault();
-                        const src = e.dataTransfer.getData("text/plain");
-                        setDragOverSec(null); setDragCode(null);
-                        if (!src || !r.section) return;
-                        if (r.kind === "line" && r.accountCode && r.accountCode !== src) void moveTo(src, r.section, r.accountCode);
-                        else void moveTo(src, r.section);
-                      } : undefined}
-                      onClick={isGroup && !edit ? () => { const n = new Set(collapsed); if (n.has(r.groupId!)) n.delete(r.groupId!); else n.add(r.groupId!); setCollapsed(n); } : undefined}>
-                      <td className="py-1 whitespace-nowrap" style={pad}>
-                        {canDrill ? (
-                          <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the payments behind this line"
-                            onClick={() => setCfDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                            <span className="text-[10px] text-[#9CA3AF] mr-1">{drilled ? "▾" : "▸"}</span>{r.label}
-                          </button>
-                        ) : <>{isGroup ? (isOpen ? "▾ " : "▸ ") : ""}{draggable ? "⠿ " : ""}{r.label}</>}
-                      </td>
-                      {r.values.map((v, j) => (
-                        <td key={j} className={`text-right px-2 tabular-nums whitespace-nowrap ${typeof v === "number" && v < 0 ? "text-[#9A3A2D]" : ""} ${v === 0 ? "text-[#C7C1BA]" : ""} ${strong ? "font-semibold" : ""} ${cols[j]?.accum ? "bg-[#F6F1E7]" : ""}`}>{fmt(v)}</td>
-                      ))}
-                    </tr>
-                    {drilled && r.lineKey && <CfMonthlyDrillRows period={period} lineKey={r.lineKey} cols={cols} depth={r.depth} accountCode={r.accountCode} />}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-            </>
-          )}
-          <p className="text-[11px] text-[#9CA3AF] mt-3">Cash basis · classified from bank/cash ledger movements · Raw Materials traced to PI stock groups · Bank c/f = b/f + Cash Surplus.</p>
-          <p className="text-[11px] text-[#9CA3AF]">Signs: every line reads the bank's way — amount = money in, (amount) = money out.</p>
-        </CardContent>
-      </Card>
+      {/* The statement's letterhead (owner 2026-08-27 排版 pass), now the v2
+          frame; the company line is what the statement has printed so far. */}
+      <ReportFrame
+        company={COMPANY.HOOKKA.name}
+        title="Statement Of Cash Flow"
+        note={`Prepared on cash basis · all figures RM · Accumulated + trailing 12 months · view ${periodLabel(period, "")}`}
+        maxHeight="calc(100vh - 280px)"
+      >
+        {!data ? (
+          <div className="py-8 text-center text-[#6B7280] text-sm">No cash-flow data for {period}.</div>
+        ) : (
+          <table data-col-resize="first" data-fin-report data-fin-fit>
+            <thead>
+              {/* Accumulated shaded so the cumulative column never reads as a
+                  13th month. */}
+              <tr>
+                <th data-cell="stick" className="min-w-[280px]">Item</th>
+                {cols.map((c) => (
+                  <th key={c.key} data-cell={`num split${c.accum ? " acc" : ""}`}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((r, i) => {
+                if (r.kind === "gap") return <tr key={i} aria-hidden="true" data-row="gap"><td colSpan={cols.length + 1} /></tr>;
+                const pad = { paddingLeft: `${14 + r.depth * 18}px` };
+                const isGroup = r.kind === "group";
+                const isOpen = isGroup && r.groupId ? !collapsed.has(r.groupId) : false;
+                const draggable = edit && r.kind === "line" && !!r.accountCode;
+                const dropHere = isDropTarget(r);
+                // The engine's row kinds in the v2 report look.
+                const look =
+                  r.kind === "result" || r.kind === "total" ? "res" :
+                  r.kind === "cf" ? "fin" :
+                  r.kind === "bf" ? "bf" :
+                  r.kind === "subtotal" ? "sub" :
+                  r.kind === "section" ? "sec" :
+                  isGroup ? "grp" : "line";
+                const canDrill = !edit && r.kind === "line" && !!r.lineKey;
+                const drillKey = canDrill ? `${period}|${r.lineKey}` : "";
+                const drilled = canDrill && cfDrillOpen.has(drillKey);
+                return (
+                  <Fragment key={i}>
+                  <tr
+                    data-row={look}
+                    data-fin-drop={dropHere && dragOverSec === r.section ? "" : undefined}
+                    className={`${isGroup && !edit ? "cursor-pointer select-none" : ""} ${draggable ? "cursor-move" : ""} ${dragCode === r.accountCode ? "opacity-40" : ""}`}
+                    title={isGroup && !edit ? (isOpen ? "Click to fold" : "Click to open") : undefined}
+                    draggable={draggable}
+                    onDragStart={draggable ? (e) => { setDragCode(r.accountCode!); e.dataTransfer.setData("text/plain", r.accountCode!); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                    onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}
+                    onDragOver={(dropHere || (edit && r.kind === "line" && !!r.accountCode)) && dragCode ? (e) => { e.preventDefault(); if (r.section) setDragOverSec(r.section); } : undefined}
+                    onDragLeave={dropHere ? () => { if (dragOverSec === r.section) setDragOverSec(null); } : undefined}
+                    onDrop={(edit && dragCode) ? (e) => {
+                      e.preventDefault();
+                      const src = e.dataTransfer.getData("text/plain");
+                      setDragOverSec(null); setDragCode(null);
+                      if (!src || !r.section) return;
+                      if (r.kind === "line" && r.accountCode && r.accountCode !== src) void moveTo(src, r.section, r.accountCode);
+                      else void moveTo(src, r.section);
+                    } : undefined}
+                    onClick={isGroup && !edit ? () => { const n = new Set(collapsed); if (n.has(r.groupId!)) n.delete(r.groupId!); else n.add(r.groupId!); setCollapsed(n); } : undefined}>
+                    <td data-cell="stick" style={pad}>
+                      {canDrill ? (
+                        <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the payments behind this line"
+                          onClick={() => setCfDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                          <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{r.label}
+                        </button>
+                      ) : (
+                        <>
+                          {isGroup ? <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{isOpen ? "▾" : "▸"}</span> : null}
+                          {draggable ? <span className="mr-1.5 text-[12px] text-[#9CA3AF]">⠿</span> : null}
+                          {r.label}
+                        </>
+                      )}
+                    </td>
+                    {r.values.map((v, j) => (
+                      <td key={j} data-cell={`num split${cols[j]?.accum ? " acc" : ""}`} data-neg={typeof v === "number" && v < 0 ? "" : undefined} data-zero={v === 0 ? "" : undefined}>{fmt(v)}</td>
+                    ))}
+                  </tr>
+                  {drilled && r.lineKey && <CfMonthlyDrillRows period={period} lineKey={r.lineKey} cols={cols} depth={r.depth} accountCode={r.accountCode} />}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </ReportFrame>
+      <p className="text-[11px] text-[#9CA3AF]">Cash basis · classified from bank/cash ledger movements · Raw Materials traced to PI stock groups · Bank c/f = b/f + Cash Surplus.</p>
+      <p className="text-[11px] text-[#9CA3AF]">Signs: every line reads the bank's way — amount = money in, (amount) = money out.</p>
     </div>
   );
 }

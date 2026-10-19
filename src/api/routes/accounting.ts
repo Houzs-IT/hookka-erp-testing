@@ -16,7 +16,7 @@ import { Hono } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
-import { requirePermission, requireFinance } from "../lib/rbac";
+import { requirePermission, requireFinance, hasPermission } from "../lib/rbac";
 import { monthsOverdue, nextMonthDueDate } from "../../lib/terms";
 import { getOrgId, companyFilter } from "../lib/tenant";
 import {
@@ -24,9 +24,12 @@ import {
   ledgerHasSource,
   type LedgerEntryInput,
 } from "../lib/journal-hash";
-import { getFyeMonth, fyWindowFor } from "../lib/fiscal";
+import { ClosedYearError, FYE_CHANGES_KV_KEY, FY_LOCKED_KV_KEY, closedYearError, getFyLockedEnds, getFySchedule, fyWindowAt } from "../lib/fiscal";
+import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
 import { parseDebtorCode } from "../../lib/debtor";
+import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
+import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
@@ -37,8 +40,11 @@ import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { ensureFinanceOrgColumns } from "../lib/ensure-finance-org";
 import { apRowBeforeOpening, legBeforeOpening, rowBeforeOpening } from "../../lib/opening-floor";
+import { billOutstandingBefore, statementBalanceBefore, type ApPrintBill as ApPrintBillOut, type BillSettlement } from "../../lib/ap-payment-print";
+import { normalisePartyCurrency, partyText } from "../../lib/party-finance";
 import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
+import { actionLabel, auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, payloadRef, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
@@ -47,14 +53,14 @@ import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "..
 import { projectedLabourByDept } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
 import { loadPreparedProduction, mytDay } from "../lib/production-stock";
-import { productionStockAt, completedPriceSen, costRatio, type PreparedProduction } from "../../lib/production-stock";
+import { productionStockDetailAt, costedWipRows, completedPriceSen, costRatio, type PreparedProduction, type PsWipRow } from "../../lib/production-stock";
 import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
-import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws } from "../lib/trade-finance";
+import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
-import { tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
+import { addDays, tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
@@ -83,8 +89,11 @@ import { buildHistIdentityRemap } from "../../lib/pnl-hist-remap";
 import { rmLineOf, rmScale } from "../../lib/product-line-rm";
 import { buildInventoryOpeningSeed, applyOpeningSeed, type InventoryOpeningRow } from "../../lib/inventory-opening";
 import { bucketAging } from "../../lib/other-party-aging";
-import { applyLifecycle, getDocState } from "../lib/document-lifecycle";
+import { applyLifecycle, getDocState, restoreEditedFamilyStatements } from "../lib/document-lifecycle";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
+import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
+import { planEditBankCarry } from "../lib/bank-leg-carry";
+import { loadAccountResolver } from "../lib/account-resolver";
 import {
   computeMaterialCheckpoints,
   windowFromCheckpoints,
@@ -102,7 +111,7 @@ import {
 // The Payment Vouchers "AP Payment" road posts a supplier payment at APPROVE
 // through the SAME builders the Supplier Payment page uses (owner 2026-09-22,
 // Houzs adoption: 「ap payment 和 payment voucher 一起」).
-import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle } from "./supplier-payments";
+import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, tfRepaymentStatements, validateTfRepayment } from "./supplier-payments";
 // PV attachments ride the generic file store (Supabase Storage + file_assets)
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
@@ -159,11 +168,14 @@ type JournalLineRow = {
 // each open document under its party, amount in its aging column). `mo` is
 // the bucket index 0..4 (current / 1 / 2 / 3 / 3+ months); advances appear
 // as negative current-bucket docs.
-type AgingDocRow = { no: string; date: string; mo: number; amountSen: number };
+// `due`: a purchase invoice's due date (Creditor Aging's Next Due, 2026-10-17).
+type AgingDocRow = { no: string; date: string; mo: number; amountSen: number; due?: string };
 
 type ArAgingRow = {
   customerId: string;
   customerName: string;
+  /** The debtor code (owner 2026-10-17: a Code column on Debtor Aging). */
+  customerCode: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -175,6 +187,8 @@ type ArAgingRow = {
 type ApAgingRow = {
   supplierId: string;
   supplierName: string;
+  /** The creditor code (owner 2026-10-17: a Code column on Creditor Aging). */
+  supplierCode: string;
   currentSen: number;
   days30Sen: number;
   days60Sen: number;
@@ -249,33 +263,7 @@ async function nextJeNo(db: D1Database): Promise<string> {
   return `JE-${yymm}-${String(seq).padStart(4, "0")}`;
 }
 
-// ---------------------------------------------------------------------------
-// Account-code rename aliases (migration 0157). The immutable ledger
-// hash-chains accountCode into every row, so a rename can never rewrite
-// history — instead old→new mappings live in account_aliases and EVERY
-// read surface resolves through this (transitively, for chained renames).
-// Identity fallback when the table hasn't been migrated yet.
-// ---------------------------------------------------------------------------
-async function loadAccountResolver(
-  db: Env["Variables"]["DB"],
-): Promise<(code: string) => string> {
-  try {
-    const res = await db
-      .prepare("SELECT oldCode, newCode FROM account_aliases")
-      .all<{ oldCode: string; newCode: string }>();
-    const m = new Map(
-      (res.results ?? []).map((r) => [r.oldCode, r.newCode] as const),
-    );
-    if (m.size === 0) return (c) => c;
-    return (code) => {
-      let c = code;
-      for (let i = 0; i < 10 && m.has(c); i++) c = m.get(c)!;
-      return c;
-    };
-  } catch {
-    return (c) => c;
-  }
-}
+// Account-code rename aliases: loadAccountResolver, src/api/lib/account-resolver.ts.
 
 // Accounts the POSTING CODE references directly (control accounts, tax,
 // sales split, default purchase/stock maps, bank/cash, retained earnings,
@@ -532,10 +520,19 @@ app.get("/aging", async (c) => {
   // cacheKey partitions the consolidated ("") result from each per-company
   // ("company:<orgId>") result so a filtered request never poisons the
   // default cache — the default read stays byte-identical to today.
-  const cacheKey = coFilter.active ? `company:${coFilter.orgId}` : "";
-  const data = await withSnapshot(
-    c.var.DB,
-    {
+  // The suffix versions the cached shape so a snapshot built before a shape
+  // change is never served: "|due" (2026-10-17) — purchase-invoice docs carry
+  // their due date (Creditor Aging's Next Due); "|notes" (2026-10-17) — a
+  // credit / debit note is its own Debtor Aging line; "|code" (2026-10-17) —
+  // every row carries its party's code.
+  const cacheKey = coFilter.active ? `company:${coFilter.orgId}|due|notes|code` : "|due|notes|code";
+  // As at a past date (owner 2026-10-17): ?asOf=YYYY-MM-DD before today rolls
+  // every item back from today (src/api/lib/aging-as-at.ts) — built fresh,
+  // never cached. Absent / today / later = today's aging, cached as before.
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const nowRef = asOf ? asAtNow(asOf) : undefined;
+  const snapshotConfig = {
       tableName: "accounting_aging_snapshot",
       // kv_config so the snapshot rebuilds when opening_date (the pre-opening
       // floor) is saved — not just when invoices/PIs change.
@@ -543,19 +540,24 @@ app.get("/aging", async (c) => {
       // snapshot (advances appear as negative rows below).
       sourceTables: [
         "invoices", "purchase_invoices", "supplier_payments", "kv_config", "opening_ap_excludes",
+        // Credit / debit notes are their own Debtor Aging lines (a post or a
+        // Back to Draft also touches its invoice, which rebuilds it anyway).
+        "credit_notes", "debit_notes",
+        // A party's code shows on its row.
+        "customers", "suppliers",
         // Trade-finance section: a repayment allocation or a due-date edit
         // must rebuild the snapshot (kv_config above covers the Setup save).
         "trade_finance_draws", "trade_finance_repay_allocs",
       ],
-    },
-    orgId,
-    async () => {
-      const [invRes, piRes] = await Promise.all([
+  };
+  const buildAging = async () => {
+      const [invRes, piRes, cnAgRes, dnAgRes, custCodeRes, supCodeRes] = await Promise.all([
         c.var.DB.prepare(
-          `SELECT customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
+          `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
         )
           .bind(...(coFilter.active ? [coFilter.param] : []))
           .all<{
+          id: string;
           customerId: string;
           customerName: string;
           invoiceNo?: string | null;
@@ -585,22 +587,60 @@ app.get("/aging", async (c) => {
           invoiceDate: string | null;
           isOpening: number | null;
         }>(),
+        c.var.DB.prepare(
+          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')",
+        ).all<Record<string, unknown>>(),
+        c.var.DB.prepare(
+          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'",
+        ).all<Record<string, unknown>>(),
+        c.var.DB.prepare("SELECT id, code FROM customers").all<{ id: string; code: string | null }>(),
+        c.var.DB.prepare("SELECT id, code FROM suppliers").all<{ id: string; code: string | null }>(),
       ]);
+      const custCode = new Map((custCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+      const supCode = new Map((supCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+      // As at a past date: what was settled after it, to roll each item back.
+      const [arBack, notesBack, apBack] = asOf
+        ? await Promise.all([receiptsAfter(c.var.DB, asOf), notesAfter(c.var.DB, asOf), supplierPaymentsAfter(c.var.DB, orgId, asOf)])
+        : [null, null, null];
+      // Issued notes per invoice — each becomes its own Debtor Aging line
+      // (owner 2026-10-17), bucketed on its own date like an advance.
+      const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
+      for (const [rows, kind] of [[cnAgRes.results ?? [], "CN"], [dnAgRes.results ?? [], "DN"]] as const) {
+        for (const n of rows) {
+          const invId = String(n.invoiceId ?? n.invoice_id ?? "");
+          const amt = Math.round(Number(n.totalAmount ?? n.total_amount) || 0);
+          if (!invId || amt <= 0) continue;
+          if (asOf && String(n.date ?? "").slice(0, 10) > asOf) continue; // issued after the as-at date
+          const list = agingNotes.get(invId) ?? [];
+          list.push({
+            no: `${String(n.noteNumber ?? n.note_number ?? "")} · ${kind === "CN" ? "Credit note" : "Debit note"}`,
+            date: String(n.date ?? "").slice(0, 10),
+            sen: kind === "CN" ? -amt : amt,
+          });
+          agingNotes.set(invId, list);
+        }
+      }
       const obDateAg = await getOpeningDate(c.var.DB);
       const apExclAg = await loadOpeningApExcludes(c.var.DB);
 
       const arMap = new Map<string, ArAgingRow>();
       for (const i of invRes.results ?? []) {
         if (rowBeforeOpening(i.invoiceDate, obDateAg, i.isOpening)) continue; // pre-opening: not extracted
-        if (["DRAFT", "CANCELLED", "PAID"].includes(i.status)) continue;
-        const outstanding =
-          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0);
+        // As at a past date a PAID invoice may still have been open then, and
+        // one dated after it did not exist yet.
+        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(i.status)) continue;
+        if (asOf && String(i.invoiceDate ?? "").slice(0, 10) > asOf) continue;
+        const outstanding = owedAt(
+          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0),
+          (arBack?.get(i.id) ?? 0) + (notesBack?.get(i.id) ?? 0),
+        );
         if (outstanding <= 0) continue;
         let row = arMap.get(i.customerId);
         if (!row) {
           row = {
             customerId: i.customerId,
             customerName: i.customerName || "Unknown",
+            customerCode: custCode.get(i.customerId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -610,32 +650,54 @@ app.get("/aging", async (c) => {
           };
           arMap.set(i.customerId, row);
         }
-        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate);
-        addToBucket(row, moAr, outstanding);
-        row.docs.push({
-          no: String(i.invoiceNo ?? i.invoice_no ?? ""),
-          date: String(i.invoiceDate ?? "").slice(0, 10),
-          mo: agingBucketIdx(moAr),
-          amountSen: outstanding,
-        });
+        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate, nowRef);
+        // A credit / debit note on the invoice is its own line: the invoice
+        // shows what was owed before its notes, each note its own amount on
+        // its own date. A debit note already paid would leave the invoice line
+        // negative — that invoice keeps its one combined line.
+        const notesAr = agingNotes.get(i.id) ?? [];
+        const invoiceSen = notesAr.length ? splitOutstandingByNotes(outstanding, notesAr) : null;
+        const split = invoiceSen !== null;
+        const ownSen = split ? invoiceSen : outstanding;
+        if (ownSen !== 0) {
+          addToBucket(row, moAr, ownSen);
+          row.docs.push({
+            no: String(i.invoiceNo ?? i.invoice_no ?? ""),
+            date: String(i.invoiceDate ?? "").slice(0, 10),
+            mo: agingBucketIdx(moAr),
+            amountSen: ownSen,
+          });
+        }
+        if (split) {
+          for (const n of notesAr) {
+            const moN = monthsOverdue(n.date || null, nowRef);
+            addToBucket(row, moN, n.sen);
+            row.docs.push({ no: n.no, date: n.date, mo: agingBucketIdx(moN), amountSen: n.sen });
+          }
+        }
       }
 
       const apMap = new Map<string, ApAgingRow>();
       for (const p of piRes.results ?? []) {
         // Pre-opening PIs count as opening by default; only excluded ones drop.
         if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateAg, apExclAg)) continue;
-        if (["DRAFT", "CANCELLED", "PAID"].includes(p.status)) continue;
+        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(p.status)) continue;
+        if (asOf && String(p.invoiceDate ?? "").slice(0, 10) > asOf) continue;
         // Net outstanding = face − paid (BUG-2026-07-05-001: this tab showed the
         // FULL face amount for partially-paid PIs — the AR loop above always
-        // netted, the AP loop didn't).
-        const outstanding =
-          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
+        // netted, the AP loop didn't); as at a past date, plus what was paid
+        // on it after.
+        const outstanding = owedAt(
+          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0),
+          apBack?.get(p.id) ?? 0,
+        );
         if (outstanding <= 0) continue;
         let row = apMap.get(p.supplierId);
         if (!row) {
           row = {
             supplierId: p.supplierId,
             supplierName: p.supplierName || "Unknown",
+            supplierCode: supCode.get(p.supplierId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -645,24 +707,39 @@ app.get("/aging", async (c) => {
           };
           apMap.set(p.supplierId, row);
         }
-        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate);
+        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate, nowRef);
         addToBucket(row, moAp, outstanding);
         row.docs.push({
           no: String(p.piNo ?? p.pi_no ?? ""),
           date: String(p.invoiceDate ?? "").slice(0, 10),
           mo: agingBucketIdx(moAp),
           amountSen: outstanding,
+          due: String(p.dueDate ?? "").slice(0, 10),
         });
       }
       // Unapplied supplier advances → NEGATIVE current-bucket rows (owner rule
       // 2026-07-05), so the AP aging total ties the 400-0000 control exactly.
       // Each advance also joins the expandable detail as its own negative doc.
-      for (const [supplierId, adv] of await loadUnappliedSupplierAdvances(c.var.DB, orgId)) {
+      // As at a past date, money paid ahead of a bill dated after it was on
+      // account then — an advance at the date (src/api/lib/aging-as-at.ts).
+      const supAdv = await loadUnappliedSupplierAdvances(c.var.DB, orgId);
+      if (asOf) {
+        const piDate = new Map((piRes.results ?? []).map((p) => [p.id, String(p.invoiceDate ?? "").slice(0, 10)] as const));
+        for (const [id, a] of await supplierPaymentsAheadOf(c.var.DB, orgId, asOf, piDate)) {
+          const cur = supAdv.get(id) ?? { supplierName: a.name, sen: 0, items: [] };
+          for (const it of a.items) { cur.items.push({ paymentNo: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+          supAdv.set(id, cur);
+        }
+      }
+      for (const [supplierId, adv] of supAdv) {
+        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+        if (!advItems.length) continue;
         let row = apMap.get(supplierId);
         if (!row) {
           row = {
             supplierId,
             supplierName: adv.supplierName || "Unknown",
+            supplierCode: supCode.get(supplierId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -675,8 +752,8 @@ app.get("/aging", async (c) => {
         // Bucket each advance by ITS payment date (owner 2026-07-08: a May
         // advance belongs in the May column, not Current) — same month-based
         // bucketing as the bills above.
-        for (const it of adv.items) {
-          const moAdv = monthsOverdue(it.date || null);
+        for (const it of advItems) {
+          const moAdv = monthsOverdue(it.date || null, nowRef);
           addToBucket(row, moAdv, -it.sen);
           row.docs.push({
             no: `${it.paymentNo} · Advance`,
@@ -688,12 +765,25 @@ app.get("/aging", async (c) => {
       }
       // Unapplied customer advances → NEGATIVE rows, the mirror of the supplier
       // block above, so the AR aging total ties the 300-0000 control exactly.
-      for (const [customerId, adv] of await loadUnappliedCustomerAdvances(c.var.DB, orgId)) {
+      // The customer mirror: received ahead of an invoice dated after it.
+      const custAdv = await loadUnappliedCustomerAdvances(c.var.DB, orgId);
+      if (asOf) {
+        const invDate = new Map((invRes.results ?? []).map((i) => [i.id, String(i.invoiceDate ?? "").slice(0, 10)] as const));
+        for (const [id, a] of await receiptsAheadOf(c.var.DB, asOf, invDate)) {
+          const cur = custAdv.get(id) ?? { customerName: a.name, sen: 0, items: [] };
+          for (const it of a.items) { cur.items.push({ receiptNumber: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+          custAdv.set(id, cur);
+        }
+      }
+      for (const [customerId, adv] of custAdv) {
+        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+        if (!advItems.length) continue;
         let row = arMap.get(customerId);
         if (!row) {
           row = {
             customerId,
             customerName: adv.customerName || "Unknown",
+            customerCode: custCode.get(customerId) ?? "",
             currentSen: 0,
             days30Sen: 0,
             days60Sen: 0,
@@ -703,8 +793,8 @@ app.get("/aging", async (c) => {
           };
           arMap.set(customerId, row);
         }
-        for (const it of adv.items) {
-          const moAdv = monthsOverdue(it.date || null);
+        for (const it of advItems) {
+          const moAdv = monthsOverdue(it.date || null, nowRef);
           addToBucket(row, moAdv, -it.sen);
           row.docs.push({
             no: `${it.receiptNumber} · Advance`,
@@ -729,9 +819,12 @@ app.get("/aging", async (c) => {
         for (const s of tfSrcs) {
           const acctRow = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
             .bind(s.accountCode).first<{ name: string }>();
-          const derived = await loadTfDraws(c.var.DB, s);
+          // As at a past date: the draws rebuilt from the ledger lines dated by
+          // then (loadTfDrawsAt).
+          const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
+          const drawsAt = derived.draws;
           const tfDraws = [];
-          for (const d of derived.draws) {
+          for (const d of drawsAt) {
             let paidSupplier = "";
             try {
               const rs = await c.var.DB.prepare(
@@ -751,7 +844,7 @@ app.get("/aging", async (c) => {
             tenorDays: s.tenorDays,
             accountNetSen: derived.accountNetSen,
             unallocatedSen: derived.unallocatedSen,
-            totals: tfTotals(derived.draws, todayIsoTf),
+            totals: tfTotals(drawsAt, asOf ?? todayIsoTf),
             draws: tfDraws,
           });
         }
@@ -770,10 +863,11 @@ app.get("/aging", async (c) => {
           tf: tfSection,
         },
       };
-    },
-    cacheKey,
-  );
-  return c.json({ success: true, ...data });
+  };
+  const data = asOf
+    ? await buildAging()
+    : await withSnapshot(c.var.DB, snapshotConfig, orgId, buildAging, cacheKey);
+  return c.json({ success: true, ...data, ...(asOf ? { asOf } : {}) });
 });
 
 app.post("/aging", async (c) => {
@@ -954,6 +1048,7 @@ app.post("/coa", async (c) => {
     )
       .bind(code)
       .first<CoaRow>();
+    await emitAudit(c, { resource: "chart-of-accounts", resourceId: code, action: "create", after: rowToCoa(created!) });
     return c.json({ success: true, data: rowToCoa(created!) }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -1090,6 +1185,7 @@ app.put("/coa", async (c) => {
     )
       .bind(code)
       .first<CoaRow>();
+    await emitAudit(c, { resource: "chart-of-accounts", resourceId: code, action: "update", before: rowToCoa(existing), after: rowToCoa(updated!) });
     return c.json({ success: true, data: rowToCoa(updated!) });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -1497,10 +1593,11 @@ app.put("/journals/:id", async (c) => {
             orgId,
           }));
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: [entry.date, typeof body.date === "string" ? body.date : null] });
           statements.push(...ledgerStmts);
         }
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] JV ${id} GL build failed — aborting:`, e);
         return c.json(
           {
@@ -1570,7 +1667,7 @@ app.put("/journals/:id", async (c) => {
             orgId,
           }));
           const { statements: ledgerStmts } =
-            await buildJournalEntryStatements(c.var.DB, orgId, legs);
+            await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: entry.date });
           statements.push(...ledgerStmts);
         }
         // T5d (correctness): legacy reverse rolls back balanceSen + creates the
@@ -1595,6 +1692,7 @@ app.put("/journals/:id", async (c) => {
           ).bind(id, orgId),
         );
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(
           `[ledger] JV ${id} reversal GL build failed — aborting:`,
           e,
@@ -1700,7 +1798,7 @@ app.post("/journals/:id/lifecycle", async (c) => {
   if (!["void", "delete", "unvoid"].includes(action)) return c.json({ success: false, error: "action must be void|delete|unvoid" }, 400);
 
   // Entry-point read → tenant-scoped (BUG-2026-08-13-083).
-  const entry = await c.var.DB.prepare("SELECT id, entryNo, status FROM journal_entries WHERE id = ? AND orgId = ?").bind(id, orgId).first<{ id: string; entryNo: string; status: string }>();
+  const entry = await c.var.DB.prepare("SELECT id, entryNo, date, status FROM journal_entries WHERE id = ? AND orgId = ?").bind(id, orgId).first<{ id: string; entryNo: string; date: string | null; status: string }>();
   if (!entry) return c.json({ success: false, error: "Journal entry not found" }, 404);
   // A DRAFT JV has no ledger posting — there is nothing to void/delete/unvoid.
   if (entry.status === "DRAFT") {
@@ -1711,7 +1809,7 @@ app.post("/journals/:id/lifecycle", async (c) => {
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   let lc: { statements: D1PreparedStatement[]; newState: string; prevState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["manual"], voidSourceType: "manual_reversal", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · JV ${entry.entryNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: entry.date, baseSourceTypes: ["manual"], voidSourceType: "manual_reversal", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · JV ${entry.entryNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // Boundary-aware: only adjust balanceSen when crossing the ACTIVE boundary.
@@ -1742,6 +1840,7 @@ app.post("/journals/:id/lifecycle", async (c) => {
   }
 
   await c.var.DB.batch(statements);
+  await emitAudit(c, { resource: "journals", resourceId: id, action, after: { state: lc.newState, entryNo: entry.entryNo } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -1765,6 +1864,7 @@ app.delete("/journals/:id", async (c) => {
   await c.var.DB.prepare("DELETE FROM journal_entries WHERE id = ?")
     .bind(id)
     .run();
+  await emitAudit(c, { resource: "journals", resourceId: id, action: "delete", before: entry });
   return c.json({ success: true });
 });
 
@@ -1943,11 +2043,11 @@ app.get("/customer-statement", async (c) => {
       .bind(customerId)
       .first<{ id: string; name: string; code: string; outstandingSen: number }>(),
     c.var.DB.prepare(
-      `SELECT invoiceNo, invoiceDate, totalSen, status, isOpening FROM invoices
+      `SELECT id, invoiceNo, invoiceDate, totalSen, status, isOpening FROM invoices
         WHERE customerId = ? AND status NOT IN ('DRAFT','CANCELLED')`,
     )
       .bind(customerId)
-      .all<{ invoiceNo: string; invoiceDate: string; totalSen: number; status: string; isOpening: number | null }>(),
+      .all<{ id: string; invoiceNo: string; invoiceDate: string; totalSen: number; status: string; isOpening: number | null }>(),
     c.var.DB.prepare(
       // VOID/DELETED receipts are excluded, exactly as /debtor-ledger does it
       // (BUG-2026-08-13-080). The two build the SAME line model — this query was
@@ -1960,17 +2060,17 @@ app.get("/customer-statement", async (c) => {
       .bind(customerId)
       .all<{ receiptNumber: string; date: string; amount: number; status: string; method: string }>(),
     c.var.DB.prepare(
-      `SELECT noteNumber, date, totalAmount, status FROM credit_notes
+      `SELECT noteNumber, invoiceId, date, totalAmount, status FROM credit_notes
         WHERE customerId = ? AND status IN ('APPROVED','POSTED')`,
     )
       .bind(customerId)
-      .all<{ noteNumber: string; date: string; totalAmount: number; status: string }>(),
+      .all<{ noteNumber: string; invoiceId: string | null; date: string; totalAmount: number; status: string }>(),
     c.var.DB.prepare(
-      `SELECT noteNumber, date, totalAmount, status FROM debit_notes
+      `SELECT noteNumber, invoiceId, date, totalAmount, status FROM debit_notes
         WHERE customerId = ? AND status = 'POSTED'`,
     )
       .bind(customerId)
-      .all<{ noteNumber: string; date: string; totalAmount: number; status: string }>(),
+      .all<{ noteNumber: string; invoiceId: string | null; date: string; totalAmount: number; status: string }>(),
   ]);
   if (!cust) {
     return c.json({ success: false, error: "Customer not found" }, 404);
@@ -1984,12 +2084,15 @@ app.get("/customer-statement", async (c) => {
     isOpening?: number | null;
   };
   const lines: Line[] = [];
+  // The notes are their own lines below, so each invoice shows the amount it
+  // was issued at — its stored total already carries them (BUG-2026-10-17-315).
+  const noteSums = sumIssuedNotesByInvoice(cnRes.results ?? [], dnRes.results ?? []);
   for (const i of invRes.results ?? [])
     lines.push({
       date: i.invoiceDate ?? "",
       ref: i.invoiceNo,
       type: "INVOICE",
-      debitSen: Number(i.totalSen) || 0,
+      debitSen: invoiceIssuedSen(Number(i.totalSen) || 0, noteSums.get(i.id)),
       creditSen: 0,
       isOpening: i.isOpening,
     });
@@ -2365,10 +2468,12 @@ app.put("/purchase-credit-notes/:id", async (c) => {
           c.var.DB,
           orgId,
           legs,
+          { docDate: existing.date ?? null },
         );
         statements.push(...ledgerStmts);
       }
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       console.error(`[ledger] PCN ${id} GL build failed — aborting:`, e);
       return c.json(
         {
@@ -2681,6 +2786,7 @@ app.post("/purchase-credit-notes/:id/restate", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: [existing.date ?? null, cnDate] },
     );
     statements.push(...ledgerStmts);
     statements.push(
@@ -2698,6 +2804,7 @@ app.post("/purchase-credit-notes/:id/restate", async (c) => {
       .first<PcnRow>();
     return c.json({ success: true, data: rowToPcn(updated!) });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error(`[ledger] PCN ${id} restate failed:`, e);
     return c.json(
       {
@@ -2782,6 +2889,7 @@ app.post("/purchase-credit-notes/:id/void", async (c) => {
       c.var.DB,
       orgId,
       revLegs,
+      { docDate: existing.date ?? null },
     );
     statements.push(...ls);
     statements.push(
@@ -3554,20 +3662,27 @@ app.post("/ap-control/rebuild-counter", async (c) => {
   });
 });
 
-app.get("/supplier-statement", async (c) => {
-  const denied = await requirePermission(c, "accounting", "read");
-  if (denied) return denied;
-  const supplierId = c.req.query("supplierId");
-  if (!supplierId) {
-    return c.json({ success: false, error: "supplierId is required" }, 400);
-  }
-  const from = c.req.query("from") || "";
-  const to = c.req.query("to") || "9999-12-31";
+// The supplier statement's line model, shared by /supplier-statement and
+// /ap-payment-print (a printed AP payment's "supplier balance before" is this
+// statement's balance — owner 2026-10-17, print design 1a). Credit-normal:
+// what we still owe = credits − debits.
+type SupplierStmtLine = {
+  date: string;
+  ref: string;
+  type: string;
+  debitSen: number;
+  creditSen: number;
+  isOpening?: number | null;
+};
+async function supplierStatementLines(
+  db: Env["Variables"]["DB"],
+  supplierId: string,
+): Promise<{ sup: { id: string; name: string } | null; lines: SupplierStmtLine[] }> {
   const [sup, piRes, payRes, pcnStmtRes] = await Promise.all([
-    c.var.DB.prepare("SELECT id, name FROM suppliers WHERE id = ?")
+    db.prepare("SELECT id, name FROM suppliers WHERE id = ?")
       .bind(supplierId)
       .first<{ id: string; name: string }>(),
-    c.var.DB.prepare(
+    db.prepare(
       // Include PARTIAL_PAID (a partly-paid PI still owes money — its full
       // amount is a credit here, the payment a debit; omitting it would drop
       // the credit leg and unbalance the statement). Matches /creditor-ledger.
@@ -3576,7 +3691,7 @@ app.get("/supplier-statement", async (c) => {
     )
       .bind(supplierId)
       .all<{ id: string; piNo: string; invoiceDate: string; amountSen: number; status: string; isOpening: number | null }>(),
-    c.var.DB.prepare(
+    db.prepare(
       // Exclude #6 supplier-discount markers (method='CREDIT_NOTE', amountSen=0,
       // no GL leg) — they'd render as 0.00 PAYMENT noise rows; the CN itself
       // already appears via the purchase_credit_notes query below.
@@ -3596,29 +3711,19 @@ app.get("/supplier-statement", async (c) => {
     )
       .bind(supplierId)
       .all<{ paymentNo: string; date: string; amountSen: number }>(),
-    c.var.DB.prepare(
+    db.prepare(
       `SELECT noteNumber, date, totalAmount FROM purchase_credit_notes
         WHERE supplierId = ? AND status = 'POSTED'`,
     )
       .bind(supplierId)
       .all<{ noteNumber: string; date: string; totalAmount: number }>(),
   ]);
-  if (!sup) {
-    return c.json({ success: false, error: "Supplier not found" }, 404);
-  }
-  type Line = {
-    date: string;
-    ref: string;
-    type: string;
-    debitSen: number;
-    creditSen: number;
-    isOpening?: number | null;
-  };
-  const lines: Line[] = [];
+  if (!sup) return { sup: null, lines: [] };
+  const lines: SupplierStmtLine[] = [];
   // Pre-opening PIs count as opening by default (owner rule 2026-07-02) — mark
   // every non-excluded PI floor-exempt here. Harmless for post-opening rows
   // (the floor only consults the flag for pre-opening dates).
-  const apExclSs = await loadOpeningApExcludes(c.var.DB);
+  const apExclSs = await loadOpeningApExcludes(db);
   for (const pi of piRes.results ?? [])
     lines.push({
       date: pi.invoiceDate ?? "",
@@ -3647,10 +3752,26 @@ app.get("/supplier-statement", async (c) => {
   lines.sort((a, b) =>
     a.date === b.date ? a.ref.localeCompare(b.ref) : a.date.localeCompare(b.date),
   );
+  return { sup, lines };
+}
+
+app.get("/supplier-statement", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const supplierId = c.req.query("supplierId");
+  if (!supplierId) {
+    return c.json({ success: false, error: "supplierId is required" }, 400);
+  }
+  const from = c.req.query("from") || "";
+  const to = c.req.query("to") || "9999-12-31";
+  const { sup, lines } = await supplierStatementLines(c.var.DB, supplierId);
+  if (!sup) {
+    return c.json({ success: false, error: "Supplier not found" }, 404);
+  }
   // AP balance is credit-normal: what we still owe = credits − debits.
   const obDateSs = await getOpeningDate(c.var.DB);
   let openingSen = 0;
-  const rows: (Line & { runningSen: number })[] = [];
+  const rows: (SupplierStmtLine & { runningSen: number })[] = [];
   let running = 0;
   for (const l of lines) {
     if (rowBeforeOpening(l.date, obDateSs, l.isOpening)) continue; // pre-opening: not extracted (not even into B/F)
@@ -3691,14 +3812,17 @@ app.get("/debtor-ledger", async (c) => {
   const to = c.req.query("to") || "9999-12-31";
   const [custRes, invRes, payRes, cnRes, dnRes] = await Promise.all([
     c.var.DB.prepare("SELECT id, name, code FROM customers").all<{ id: string; name: string; code: string }>(),
-    c.var.DB.prepare(`SELECT customerId, invoiceNo, invoiceDate, totalSen, isOpening FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`).all<{ customerId: string; invoiceNo: string; invoiceDate: string; totalSen: number; isOpening: number | null }>(),
+    c.var.DB.prepare(`SELECT id, customerId, invoiceNo, invoiceDate, totalSen, isOpening FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED')`).all<{ id: string; customerId: string; invoiceNo: string; invoiceDate: string; totalSen: number; isOpening: number | null }>(),
     c.var.DB.prepare(`SELECT customerId, receiptNumber, date, amount, status FROM payment_records WHERE id NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'payment' AND state IN ('VOID','DELETED'))`).all<{ customerId: string; receiptNumber: string; date: string; amount: number; status: string }>(),
-    c.var.DB.prepare(`SELECT customerId, noteNumber, date, totalAmount FROM credit_notes WHERE status IN ('APPROVED','POSTED')`).all<{ customerId: string; noteNumber: string; date: string; totalAmount: number }>(),
-    c.var.DB.prepare(`SELECT customerId, noteNumber, date, totalAmount FROM debit_notes WHERE status = 'POSTED'`).all<{ customerId: string; noteNumber: string; date: string; totalAmount: number }>(),
+    c.var.DB.prepare(`SELECT customerId, invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')`).all<{ customerId: string; invoiceId: string | null; noteNumber: string; date: string; totalAmount: number; status: string }>(),
+    c.var.DB.prepare(`SELECT customerId, invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'`).all<{ customerId: string; invoiceId: string | null; noteNumber: string; date: string; totalAmount: number; status: string }>(),
   ]);
   const byParty = new Map<string, LedgerLine[]>();
   const push = (id: string, l: LedgerLine) => { if (!id) return; const arr = byParty.get(id) ?? []; arr.push(l); byParty.set(id, arr); };
-  for (const i of invRes.results ?? []) push(i.customerId, { date: i.invoiceDate ?? "", ref: i.invoiceNo, type: "INVOICE", debitSen: Number(i.totalSen) || 0, creditSen: 0, isOpening: i.isOpening });
+  // Invoices at the amount they were issued at — the notes are their own lines
+  // (BUG-2026-10-17-315), as on the customer statement.
+  const noteSumsDl = sumIssuedNotesByInvoice(cnRes.results ?? [], dnRes.results ?? []);
+  for (const i of invRes.results ?? []) push(i.customerId, { date: i.invoiceDate ?? "", ref: i.invoiceNo, type: "INVOICE", debitSen: invoiceIssuedSen(Number(i.totalSen) || 0, noteSumsDl.get(i.id)), creditSen: 0, isOpening: i.isOpening });
   for (const p of payRes.results ?? []) {
     push(p.customerId, { date: p.date ?? "", ref: p.receiptNumber, type: "RECEIPT", debitSen: 0, creditSen: Number(p.amount) || 0 });
     if (p.status === "BOUNCED") push(p.customerId, { date: p.date ?? "", ref: p.receiptNumber, type: "BOUNCED", debitSen: Number(p.amount) || 0, creditSen: 0 });
@@ -3796,6 +3920,13 @@ type OtherPartyRow = {
   address: string | null;
   notes: string | null;
   isActive: number;
+  // Finance v2 party fields (2026-10-17). Dual-keyed read; absent until the
+  // first write self-applies them.
+  sstRegNo?: string | null;
+  sst_reg_no?: string | null;
+  currency?: string | null;
+  bankAccount?: string | null;
+  bank_account?: string | null;
 };
 
 function rowToOtherParty(r: OtherPartyRow) {
@@ -3811,7 +3942,27 @@ function rowToOtherParty(r: OtherPartyRow) {
     address: r.address ?? "",
     notes: r.notes ?? "",
     isActive: r.isActive === 1,
+    sstRegNo: (r.sstRegNo ?? r.sst_reg_no ?? "").trim(),
+    currency: normalisePartyCurrency(r.currency),
+    bankAccount: (r.bankAccount ?? r.bank_account ?? "").trim(),
   };
+}
+
+// Finance v2 party fields (owner 2026-10-17): SST Reg. No., currency and the
+// bank & account no. on an other debtor / creditor (TIN and SSM were already
+// here). snake_case, runtime self-applied before the first write; the flag is
+// set only once all three exist (C9).
+let otherPartyFinanceColsEnsured = false;
+async function ensureOtherPartyFinanceColumns(db: Env["Variables"]["DB"]): Promise<void> {
+  if (otherPartyFinanceColsEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS sst_reg_no TEXT NOT NULL DEFAULT ''").run();
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'MYR'").run();
+    await db.prepare("ALTER TABLE other_parties ADD COLUMN IF NOT EXISTS bank_account TEXT NOT NULL DEFAULT ''").run();
+    otherPartyFinanceColsEnsured = true;
+  } catch (err) {
+    console.warn("[accounting] ensureOtherPartyFinanceColumns:", err instanceof Error ? err.message : err);
+  }
 }
 
 type OtherPartyBillRow = {
@@ -3874,6 +4025,7 @@ app.get("/other-parties", async (c) => {
 app.post("/other-parties", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
+  await ensureOtherPartyFinanceColumns(c.var.DB);
   try {
     const body = (await c.req.json()) as {
       type?: string;
@@ -3885,6 +4037,9 @@ app.post("/other-parties", async (c) => {
       registrationNo?: string;
       address?: string;
       notes?: string;
+      sstRegNo?: string;
+      currency?: string;
+      bankAccount?: string;
     };
     if (body.type !== "DEBTOR" && body.type !== "CREDITOR") {
       return c.json(
@@ -3901,8 +4056,9 @@ app.post("/other-parties", async (c) => {
     const now = new Date().toISOString();
     await c.var.DB.prepare(
       `INSERT INTO other_parties
-         (id, type, name, contactPerson, phone, email, tin, registrationNo, address, notes, isActive, orgId, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+         (id, type, name, contactPerson, phone, email, tin, registrationNo, address, notes, isActive, orgId, createdAt,
+          sst_reg_no, currency, bank_account)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -3917,6 +4073,9 @@ app.post("/other-parties", async (c) => {
         body.notes ?? null,
         orgId,
         now,
+        partyText(body.sstRegNo),
+        normalisePartyCurrency(body.currency),
+        partyText(body.bankAccount),
       )
       .run();
     const created = await c.var.DB.prepare(
@@ -3924,6 +4083,7 @@ app.post("/other-parties", async (c) => {
     )
       .bind(id)
       .first<OtherPartyRow>();
+    await emitAudit(c, { resource: "other-parties", resourceId: id, action: "create", after: rowToOtherParty(created!) });
     return c.json({ success: true, data: rowToOtherParty(created!) }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -3933,6 +4093,7 @@ app.post("/other-parties", async (c) => {
 app.put("/other-parties/:id", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  await ensureOtherPartyFinanceColumns(c.var.DB);
   try {
     const id = c.req.param("id");
     const existing = await c.var.DB.prepare(
@@ -3954,6 +4115,9 @@ app.put("/other-parties/:id", async (c) => {
       notes: string;
       isActive: boolean;
       type: string;
+      sstRegNo: string;
+      currency: string;
+      bankAccount: string;
     }>;
     if (body.type !== undefined && body.type !== existing.type) {
       // Switching DEBTOR↔CREDITOR retroactively moves the party between
@@ -3976,13 +4140,18 @@ app.put("/other-parties/:id", async (c) => {
       notes: body.notes !== undefined ? body.notes : existing.notes,
       isActive:
         body.isActive === undefined ? existing.isActive : body.isActive ? 1 : 0,
+      // Finance v2 party fields — only change when the body sends them.
+      sstRegNo: body.sstRegNo !== undefined ? partyText(body.sstRegNo) : (existing.sstRegNo ?? existing.sst_reg_no ?? ""),
+      currency: body.currency !== undefined ? normalisePartyCurrency(body.currency) : normalisePartyCurrency(existing.currency),
+      bankAccount: body.bankAccount !== undefined ? partyText(body.bankAccount) : (existing.bankAccount ?? existing.bank_account ?? ""),
     };
     if (!merged.name) {
       return c.json({ success: false, error: "name cannot be empty" }, 400);
     }
     await c.var.DB.prepare(
       `UPDATE other_parties
-          SET name = ?, contactPerson = ?, phone = ?, email = ?, tin = ?, registrationNo = ?, address = ?, notes = ?, isActive = ?, updatedAt = ?
+          SET name = ?, contactPerson = ?, phone = ?, email = ?, tin = ?, registrationNo = ?, address = ?, notes = ?, isActive = ?, updatedAt = ?,
+              sst_reg_no = ?, currency = ?, bank_account = ?
         WHERE id = ?`,
     )
       .bind(
@@ -3996,6 +4165,9 @@ app.put("/other-parties/:id", async (c) => {
         merged.notes,
         merged.isActive,
         new Date().toISOString(),
+        merged.sstRegNo,
+        merged.currency,
+        merged.bankAccount,
         id,
       )
       .run();
@@ -4004,6 +4176,7 @@ app.put("/other-parties/:id", async (c) => {
     )
       .bind(id)
       .first<OtherPartyRow>();
+    await emitAudit(c, { resource: "other-parties", resourceId: id, action: "update", before: rowToOtherParty(existing), after: rowToOtherParty(updated!) });
     return c.json({ success: true, data: rowToOtherParty(updated!) });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -4030,7 +4203,9 @@ app.delete("/other-parties/:id", async (c) => {
     return c.json({ success: false, error: "This party has bills or payments — deactivate it instead of deleting." }, 400);
   }
 
+  const gone = await c.var.DB.prepare("SELECT * FROM other_parties WHERE id = ? AND orgId = ?").bind(id, orgId).first<OtherPartyRow>().catch(() => null);
   await c.var.DB.prepare("DELETE FROM other_parties WHERE id = ? AND orgId = ?").bind(id, orgId).run();
+  await emitAudit(c, { resource: "other-parties", resourceId: id, action: "delete", before: gone ? rowToOtherParty(gone) : null });
   return c.json({ success: true });
 });
 
@@ -4150,9 +4325,10 @@ app.post("/other-party-bills", async (c) => {
         actorUserId,
         orgId,
       }));
-      const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: billDate });
       statements.push(...ledgerStmts);
     } catch (e) {
+      if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
       console.error(`[ledger] other_party_bill ${billNo} GL build failed — aborting:`, e);
       return c.json({ success: false, error: "Failed to build the ledger posting — nothing was saved. Retry, and report if it persists." }, 500);
     }
@@ -4299,7 +4475,7 @@ app.put("/other-party-bills/:billNo", async (c) => {
         orgId,
       });
     });
-    const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements: ledgerStmts } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: [bill.billDate, billDate] });
     statements.push(...ledgerStmts);
     statements.push(
       c.var.DB.prepare(
@@ -4318,6 +4494,7 @@ app.put("/other-party-bills/:billNo", async (c) => {
     });
     return c.json({ success: true, data: { billNo, totalSen, status: st.status } });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[PUT /other-party-bills/:billNo] failed:", e);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -4341,12 +4518,12 @@ export async function sweepOtherPartyBillGl(
   const orgIdOb = defaultOrgId;
   const actorUserId: string | null = null;
   const billsRes = await db.prepare(
-    `SELECT b.id, b.billNo, b.partyType, b.partyName, b.taxSen, b.orgId
+    `SELECT b.id, b.billNo, b.billDate, b.partyType, b.partyName, b.taxSen, b.orgId
        FROM other_party_bills b
        LEFT JOIN document_lifecycle dl
          ON dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo AND dl.orgId = b.orgId
       WHERE (dl.state IS NULL OR dl.state = 'ACTIVE')`,
-  ).all<{ id: string; billNo: string; partyType: string; partyName: string; taxSen: number; orgId?: string | null }>();
+  ).all<{ id: string; billNo: string; billDate?: string | null; partyType: string; partyName: string; taxSen: number; orgId?: string | null }>();
   const fixed: { billNo: string; totalSen: number }[] = [];
   const skippedOb: { billNo: string; reason: string }[] = [];
   const statements: D1PreparedStatement[] = [];
@@ -4385,7 +4562,7 @@ export async function sweepOtherPartyBillGl(
         orgId: String(b.orgId ?? orgIdOb),
       }));
       const totalSen = legs.reduce((s, l) => s + l.debitSen, 0);
-      const { statements: ls } = await buildJournalEntryStatements(db, String(b.orgId ?? orgIdOb), legs);
+      const { statements: ls } = await buildJournalEntryStatements(db, String(b.orgId ?? orgIdOb), legs, { docDate: b.billDate ?? null });
       statements.push(...ls);
       fixed.push({ billNo: b.billNo, totalSen });
     } catch (e) {
@@ -4541,6 +4718,7 @@ app.post("/other-party-bills/:billNo/attachments", async (c) => {
   if (!(file instanceof File)) return c.json({ success: false, error: "file field required" }, 400);
   const stored = await storeUploadedFile(c, { file, resourceType: OCB_ATTACH_RESOURCE, resourceId: bill.id });
   if (!stored.ok) return c.json({ success: false, error: stored.error }, stored.status);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: c.req.param("billNo"), action: "attach", after: stored.data });
   return c.json({ success: true, data: stored.data }, 201);
 });
 
@@ -4561,6 +4739,7 @@ app.delete("/other-party-bills/:billNo/attachments/:fileId", async (c) => {
   if (!own) return c.json({ success: false, error: "Attachment not found on this bill" }, 404);
   const removed = await removeStoredFile(c, fileId);
   if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: c.req.param("billNo"), action: "detach", before: { fileId } });
   return c.json({ success: true });
 });
 
@@ -4681,12 +4860,15 @@ app.get("/ap-invoices", async (c) => {
     const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
     const lc = String(b.lifecycleState ?? b.lifecycle_state ?? "ACTIVE");
     const st = String(b.status ?? "");
+    const rowStatus = lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN";
     rows.push({
       kind: "AP", id: String(b.id), no: String(b.billNo ?? b.bill_no ?? ""), supplier: String(b.partyName ?? b.party_name ?? ""),
       partyId: String(b.partyId ?? b.party_id ?? ""),
       supplierRef: String(b.referenceNo ?? b.reference_no ?? ""), date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null,
-      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: total - paid,
-      status: lc !== "ACTIVE" ? "CANCELLED" : st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN",
+      // Only an open bill still owes anything (BUG-2026-10-17-306: a cancelled
+      // bill kept its face amount as "outstanding" and the All view added it in).
+      description: String(b.description ?? ""), totalSen: total, paidSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0,
+      status: rowStatus,
       opening: false,
     });
   }
@@ -4694,13 +4876,15 @@ app.get("/ap-invoices", async (c) => {
     const total = Math.round(Number(p.amountSen ?? p.amount_sen) || 0);
     const paid = Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0);
     const st = String(p.status ?? "");
+    const rowStatus = st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN";
     rows.push({
       kind: "PI", id: String(p.id), no: String(p.piNo ?? p.pi_no ?? ""), supplier: String(p.supplierName ?? p.supplier_name ?? ""),
       partyId: String(p.supplierId ?? p.supplier_id ?? ""),
       supplierRef: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""), date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
       dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
-      description: "", totalSen: total, paidSen: paid, outstandingSen: total - paid,
-      status: st === "CANCELLED" || st === "VOID" ? "CANCELLED" : st === "PAID" || total - paid <= 0 ? "PAID" : "OPEN",
+      // Same rule as the bills: a cancelled or paid invoice owes nothing (BUG-2026-10-17-306).
+      description: "", totalSen: total, paidSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0,
+      status: rowStatus,
       opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
     });
   }
@@ -4734,12 +4918,13 @@ app.delete("/other-party-bills/:billNo", async (c) => {
   // Soft delete: keep the row, build the reversal + state=DELETED via the lifecycle helper.
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action: "delete", actorUserId, descriptionTag: `DELETE · ${billNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: bill.billDate, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action: "delete", actorUserId, descriptionTag: `DELETE · ${billNo}` });
   } catch (e) {
     console.error(`[ledger] other_party_bill ${billNo} delete lifecycle build failed — aborting:`, e);
     return c.json({ success: false, error: (e as Error).message }, 400);
   }
   await c.var.DB.batch(lc.statements);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: billNo, action: "delete" });
   return c.json({ success: true });
 });
 
@@ -4791,12 +4976,13 @@ app.post("/other-party-bills/:billNo/lifecycle", async (c) => {
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${billNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: bill.billDate, baseSourceTypes: await otherPartyBillLegFamily(c.var.DB, orgId, billNo), voidSourceType: "other_party_bill_void", sourceId: billNo, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${billNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // No status-column change: other_party_bills.status carries payment progress
   // (OPEN/PARTIAL_PAID/PAID); lifecycle state lives in document_lifecycle.
   await c.var.DB.batch(lc.statements);
+  await emitAudit(c, { resource: "other-party-bills", resourceId: billNo, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -4872,7 +5058,7 @@ async function buildOtherPartyPaymentCreate(
     id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "other_party_payment", sourceId: payNo,
     legNo: l.legNo, accountCode: l.accountCode, debitSen: l.debitSen, creditSen: l.creditSen, description: l.description, actorUserId, orgId,
   }));
-  const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs);
+  const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs, { docDate: date });
   statements.push(...ledgerStmts);
   return statements;
 }
@@ -4928,6 +5114,7 @@ app.post("/other-party-payments", async (c) => {
           orgId, actorUserId, party, bankAccount, date, reference: body.reference ?? null, allocs, paymentNo: payNo,
         });
       } catch (e) {
+        if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
         console.error(`[ledger] other_party_payment ${payNo} GL build failed — aborting:`, e);
         return c.json({ success: false, error: "Failed to build the ledger posting — nothing was saved." }, 500);
       }
@@ -5078,6 +5265,252 @@ app.get("/audit-log", async (c) => {
   return c.json({ success: true, data });
 });
 
+// A payment voucher as the audit trail shows it before / after a change
+// (finance backlog item 10 part 2): header and lines ("account amount; …").
+async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<Record<string, unknown> | null> {
+  try {
+    const h = await db.prepare("SELECT date, payee, description, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    if (!h) return null;
+    const ls = await db.prepare("SELECT accountCode, amountSen FROM payment_voucher_lines WHERE voucherId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>();
+    const sen = (v: unknown) => ((Number(v) || 0) / 100).toFixed(2);
+    return {
+      date: h.date ?? null,
+      payee: h.payee ?? null,
+      description: h.description ?? null,
+      payFrom: h.payFrom ?? h.pay_from ?? null,
+      total: sen(h.totalSen ?? h.total_sen),
+      lines: (ls.results ?? []).map((l) => `${String(l.accountCode ?? l.account_code ?? "")} ${sen(l.amountSen ?? l.amount_sen)}`).join("; "),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// The stored value of settings (kv_config) before a change, for the audit
+// trail's before / after (finance backlog item 10 part 2). Unreadable = none.
+async function kvSnapshot(db: Env["Variables"]["DB"], keys: string[]): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  try {
+    const res = await db.prepare(`SELECT key, value FROM kv_config WHERE key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all<{ key: string; value: string | null }>();
+    for (const r of res.results ?? []) {
+      try { out[r.key] = r.value ? JSON.parse(r.value) : null; } catch { out[r.key] = r.value; }
+    }
+  } catch { /* no before */ }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// GET /change-log?month=YYYY-MM — the Audit Log's "All changes" (finance
+// backlog item 10, the design's "a full Audit Log of every change"): every
+// change made in Finance in the month (Malaysia time; default the running
+// month), newest first — postings, edits (the legs before and after), voids,
+// restores, undos and deletes, the payment-voucher ladder, and the settings
+// and other steps the audit trail records (src/lib/change-log.ts). One act
+// seen by two trails is listed once. Read-only.
+// ---------------------------------------------------------------------------
+const CHANGE_LOG_RESOURCES = [
+  "accounting", "trade-finance", "supplier-payments", "other-party-payments", "payments", "invoices", "purchase-invoices", "credit-notes", "debit-notes",
+  // Recorded since item 10 part 2.
+  "chart-of-accounts", "journals", "other-parties", "other-party-bills", "payment-vouchers", "official-receipts", "fund-transfers", "finance-settings",
+  "fixed-assets", "bank-reco", "cash-position", "opening-balance", "stock-take", "material-opening-stock",
+];
+// An audit resource → the ledger's name for the same document.
+const AUDIT_DOC_TYPE: Record<string, string> = {
+  "supplier-payments": "supplier_payment",
+  "other-party-payments": "other_party_payment",
+  "other-party-bills": "other_party_bill",
+  "payment-vouchers": "payment_voucher",
+  "official-receipts": "official_receipt",
+  "fund-transfers": "fund_transfer",
+  journals: "manual",
+  payments: "payment",
+  invoices: "invoice",
+  "purchase-invoices": "purchase_invoice",
+  "credit-notes": "credit_note",
+  "debit-notes": "debit_note",
+};
+
+// Document number and party per (ledger doc type, id). One batched read per
+// kind; a failed read leaves the event's own id.
+async function resolveChangeRefs(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  keys: { docType: string; docId: string }[],
+): Promise<Map<string, { reference: string | null; party: string | null }>> {
+  const out = new Map<string, { reference: string | null; party: string | null }>();
+  const ids = (t: string) => [...new Set(keys.filter((k) => k.docType === t).map((k) => k.docId))];
+  const str = (v: unknown) => (v === null || v === undefined ? "" : String(v)).trim();
+  const read = async (type: string, sql: (ph: string) => string, map: (r: Record<string, unknown>) => [string, string, string], extra: unknown[] = []) => {
+    const all = ids(type);
+    try {
+      for (let i = 0; i < all.length; i += 200) {
+        const part = all.slice(i, i + 200);
+        const res = await db.prepare(sql(part.map(() => "?").join(","))).bind(...part, ...extra).all<Record<string, unknown>>();
+        for (const r of res.results ?? []) {
+          const [id, reference, party] = map(r);
+          if (id) out.set(`${type}|${id}`, { reference: reference || null, party: party || null });
+        }
+      }
+    } catch { /* the event keeps its own id */ }
+  };
+  await Promise.all([
+    read("payment_voucher", (ph) => `SELECT id, pv_no, payee FROM payment_vouchers WHERE id IN (${ph})`, (r) => [str(r.id), str(r.pvNo ?? r.pv_no), str(r.payee)]),
+    read("official_receipt", (ph) => `SELECT id, or_no, received_from FROM official_receipts WHERE id IN (${ph})`, (r) => [str(r.id), str(r.orNo ?? r.or_no), str(r.receivedFrom ?? r.received_from)]),
+    read("manual", (ph) => `SELECT id, entry_no, description FROM journal_entries WHERE id IN (${ph})`, (r) => [str(r.id), str(r.entryNo ?? r.entry_no), ""]),
+    read("invoice", (ph) => `SELECT id, invoice_no, customer_name FROM invoices WHERE id IN (${ph})`, (r) => [str(r.id), str(r.invoiceNo ?? r.invoice_no), str(r.customerName ?? r.customer_name)]),
+    read("purchase_invoice", (ph) => `SELECT id, pi_no, supplier_name FROM purchase_invoices WHERE id IN (${ph})`, (r) => [str(r.id), str(r.piNo ?? r.pi_no), str(r.supplierName ?? r.supplier_name)]),
+    read("payment", (ph) => `SELECT id, receipt_number, customer_name FROM payment_records WHERE id IN (${ph})`, (r) => [str(r.id), str(r.receiptNumber ?? r.receipt_number), str(r.customerName ?? r.customer_name)]),
+    read("credit_note", (ph) => `SELECT id, note_number, customer_name FROM credit_notes WHERE id IN (${ph})`, (r) => [str(r.id), str(r.noteNumber ?? r.note_number), str(r.customerName ?? r.customer_name)]),
+    read("debit_note", (ph) => `SELECT id, note_number, customer_name FROM debit_notes WHERE id IN (${ph})`, (r) => [str(r.id), str(r.noteNumber ?? r.note_number), str(r.customerName ?? r.customer_name)]),
+    read("purchase_credit_note", (ph) => `SELECT id, note_number, supplier_name FROM purchase_credit_notes WHERE id IN (${ph})`, (r) => [str(r.id), str(r.noteNumber ?? r.note_number), str(r.supplierName ?? r.supplier_name)]),
+    read("supplier_payment", (ph) => `SELECT payment_no, MAX(supplier_name) AS supplier_name FROM supplier_payments WHERE payment_no IN (${ph}) AND org_id = ? GROUP BY payment_no`, (r) => { const no = str(r.paymentNo ?? r.payment_no); return [no, no, str(r.supplierName ?? r.supplier_name)]; }, [orgId]),
+    read("other_party_payment", (ph) => `SELECT payment_no, MAX(party_name) AS party_name FROM other_party_payments WHERE payment_no IN (${ph}) GROUP BY payment_no`, (r) => { const no = str(r.paymentNo ?? r.payment_no); return [no, no, str(r.partyName ?? r.party_name)]; }),
+    read("other_party_bill", (ph) => `SELECT bill_no, party_name FROM other_party_bills WHERE bill_no IN (${ph}) AND org_id = ?`, (r) => { const no = str(r.billNo ?? r.bill_no); return [no, no, str(r.partyName ?? r.party_name)]; }, [orgId]),
+  ]);
+  return out;
+}
+
+app.get("/change-log", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const q = c.req.query("month") || "";
+  const ym = /^\d{4}-\d{2}$/.test(q) ? q : runningMonthYm();
+  const w = monthWindowMy(ym);
+  const { lo, hi } = sqlDayBounds(ym);
+  const warnings: string[] = [];
+  const optional = async (label: string, run: () => Promise<{ results?: Record<string, unknown>[] }>) => {
+    try {
+      return (await run()).results ?? [];
+    } catch {
+      warnings.push(`${label} could not be read`);
+      return [] as Record<string, unknown>[];
+    }
+  };
+  // The ledger is the backbone: a failed read is an error, not an empty month.
+  const [legRes, life, ladder, audit, coaRes] = await Promise.all([
+    db.prepare(
+      `SELECT sourceType, sourceId, accountCode, debitSen, creditSen, description, actorUserId, postedAt
+         FROM ledger_journal_entries WHERE orgId = ? AND postedAt >= ? AND postedAt < ?`,
+    ).bind(orgId, lo, hi).all<Record<string, unknown>>(),
+    optional("Voided / deleted documents", () => db.prepare(
+      `SELECT sourceType, sourceId, state, actionAt, actorUserId FROM document_lifecycle WHERE orgId = ? AND actionAt >= ? AND actionAt < ?`,
+    ).bind(orgId, lo, hi).all<Record<string, unknown>>()),
+    optional("Payment voucher approvals", () => db.prepare(
+      `SELECT id, pv_no, payee, total_sen, prepared_at, prepared_by, checked_at, checked_by, approved_at, approved_by
+         FROM payment_vouchers
+        WHERE (prepared_at >= ? AND prepared_at < ?) OR (checked_at >= ? AND checked_at < ?) OR (approved_at >= ? AND approved_at < ?)`,
+    ).bind(lo, hi, lo, hi, lo, hi).all<Record<string, unknown>>()),
+    optional("The audit trail", () => db.prepare(
+      `SELECT id, ts, actorUserId, actorUserName, resource, resourceId, action, beforeJson, afterJson
+         FROM audit_events
+        WHERE (orgId = ? OR orgId IS NULL) AND resource IN (${CHANGE_LOG_RESOURCES.map(() => "?").join(",")}) AND ts >= ? AND ts < ?`,
+    ).bind(orgId, ...CHANGE_LOG_RESOURCES, lo, hi).all<Record<string, unknown>>()),
+    db.prepare("SELECT code, name FROM chart_of_accounts").all<{ code: string; name: string }>().catch(() => ({ results: [] as { code: string; name: string }[] })),
+  ]);
+  const v = (r: Record<string, unknown>, camel: string, snake: string) => r[camel] ?? r[snake];
+  const s = (x: unknown) => (x === null || x === undefined ? null : String(x));
+  const events: ChangeEvent[] = [
+    ...ledgerEvents((legRes.results ?? []).map((r) => ({
+      sourceType: String(v(r, "sourceType", "source_type") ?? ""), sourceId: String(v(r, "sourceId", "source_id") ?? ""),
+      accountCode: String(v(r, "accountCode", "account_code") ?? ""), debitSen: Number(v(r, "debitSen", "debit_sen")) || 0,
+      creditSen: Number(v(r, "creditSen", "credit_sen")) || 0, description: s(r.description), actorUserId: s(v(r, "actorUserId", "actor_user_id")),
+      postedAt: v(r, "postedAt", "posted_at"),
+    }))),
+    ...ladderEvents(ladder.map((r) => ({
+      id: String(r.id), pvNo: s(v(r, "pvNo", "pv_no")), payee: s(r.payee), totalSen: Number(v(r, "totalSen", "total_sen")) || 0,
+      preparedAt: v(r, "preparedAt", "prepared_at"), preparedBy: s(v(r, "preparedBy", "prepared_by")),
+      checkedAt: v(r, "checkedAt", "checked_at"), checkedBy: s(v(r, "checkedBy", "checked_by")),
+      approvedAt: v(r, "approvedAt", "approved_at"), approvedBy: s(v(r, "approvedBy", "approved_by")),
+    }))),
+    ...lifecycleEvents(life.map((r) => ({
+      sourceType: String(v(r, "sourceType", "source_type") ?? ""), sourceId: String(v(r, "sourceId", "source_id") ?? ""),
+      state: String(r.state ?? ""), actionAt: v(r, "actionAt", "action_at"), actorUserId: s(v(r, "actorUserId", "actor_user_id")),
+    }))),
+    ...auditEvents(audit.map((r) => ({
+      id: String(r.id), ts: r.ts, actorUserId: s(v(r, "actorUserId", "actor_user_id")), actorUserName: s(v(r, "actorUserName", "actor_user_name")),
+      resource: String(r.resource ?? ""), resourceId: String(v(r, "resourceId", "resource_id") ?? ""), action: String(r.action ?? ""),
+      beforeJson: s(v(r, "beforeJson", "before_json")), afterJson: s(v(r, "afterJson", "after_json")),
+    }))),
+  ].filter((e) => inWindow(e.at, w));
+
+  // Document numbers and parties: the ledger's own name for the document, an
+  // audit resource mapped onto it; a ledger posting falls back to the number
+  // in its line text, an id that already is a document number to itself.
+  const refType = (e: ChangeEvent) => (e.source === "audit" ? AUDIT_DOC_TYPE[e.docType] ?? e.docType : e.docType.split(":")[0]);
+  const refs = await resolveChangeRefs(db, orgId, events.map((e) => ({ docType: refType(e), docId: e.docId })));
+  for (const e of events) {
+    const r = refs.get(`${refType(e)}|${e.docId}`);
+    const own = docNoFromDescription(e.docId) === e.docId ? e.docId : null;
+    e.reference = e.reference ?? r?.reference ?? own ?? (e.source === "ledger" ? docNoFromDescription(e.legs.find((l) => l.description)?.description) : null) ?? (e.source === "audit" ? payloadRef(e) : null);
+    e.party = e.party ?? r?.party ?? null;
+  }
+  // A bank match / cash-position tick names a ledger line: the document it
+  // belongs to, from the line's own text.
+  const legIdsOf = (e: ChangeEvent) => {
+    const out: string[] = [];
+    for (const o of [e.after, e.before]) {
+      if (!o || typeof o !== "object") continue;
+      const rec = o as Record<string, unknown>;
+      if (typeof rec.legId === "string") out.push(rec.legId);
+      if (Array.isArray(rec.legIds)) out.push(...rec.legIds.filter((x): x is string => typeof x === "string"));
+    }
+    return out;
+  };
+  const legEvents = events.filter((e) => e.source === "audit" && (e.docType === "bank-reco" || e.docType === "cash-position"));
+  const legIds = [...new Set(legEvents.flatMap(legIdsOf))];
+  if (legIds.length) {
+    const docByLeg = new Map<string, string>();
+    try {
+      for (let i = 0; i < legIds.length; i += 200) {
+        const part = legIds.slice(i, i + 200);
+        const res = await db.prepare(`SELECT id, description, sourceId FROM ledger_journal_entries WHERE id IN (${part.map(() => "?").join(",")}) AND orgId = ?`).bind(...part, orgId).all<Record<string, unknown>>();
+        for (const x of res.results ?? []) docByLeg.set(String(x.id), docNoFromDescription(String(x.description ?? "")) ?? String(x.sourceId ?? x.source_id ?? ""));
+      }
+    } catch { /* the step keeps its own text */ }
+    for (const e of legEvents) {
+      const docs = [...new Set(legIdsOf(e).map((id) => docByLeg.get(id)).filter((x): x is string => !!x))];
+      if (docs.length) e.note = `→ ${docs.join(", ")}`;
+    }
+  }
+  const merged = mergeEvents(events);
+
+  const actorIds = [...new Set(merged.filter((e) => !e.actorName && e.actorUserId).map((e) => e.actorUserId as string))];
+  const names = new Map<string, string>();
+  for (let i = 0; i < actorIds.length; i += 200) {
+    const part = actorIds.slice(i, i + 200);
+    try {
+      const u = await db.prepare(`SELECT id, displayName FROM users WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all<Record<string, unknown>>();
+      for (const x of u.results ?? []) {
+        const nm = String(x.displayName ?? x.display_name ?? "").trim();
+        if (nm) names.set(String(x.id), nm);
+      }
+    } catch { /* the id stays */ }
+  }
+  const coaName = new Map((coaRes.results ?? []).map((a) => [a.code, a.name] as const));
+  const rows = merged.map((e) => ({
+    id: e.id,
+    at: e.at,
+    kind: e.kind,
+    source: e.source,
+    action: e.action,
+    actionLabel: actionLabel(e),
+    type: docTypeLabel(e),
+    docType: e.docType,
+    docId: e.docId,
+    reference: e.reference ?? e.docId,
+    party: e.party,
+    amountSen: e.amountSen,
+    beforeSen: e.beforeSen,
+    summary: changeSummary(e),
+    who: e.actorName ?? (e.actorUserId ? names.get(e.actorUserId) ?? e.actorUserId : null),
+    legs: e.legs.map((l) => ({ ...l, accountName: coaName.get(l.accountCode) ?? "" })),
+    changes: e.source === "audit" ? fieldChanges(e.before, e.after, e.docType).slice(0, 40) : [],
+  }));
+  return c.json({ success: true, data: { month: ym, from: w.from, to: w.to, rows, warnings } });
+});
+
 // ---------------------------------------------------------------------------
 // GET /other-party-aging?type=DEBTOR|CREDITOR — per-party aging for Other
 // Debtor/Creditor bills (F4 #3). Live: reads unpaid bills (outstanding > 0,
@@ -5093,27 +5526,43 @@ app.get("/other-party-aging", async (c) => {
   if (type !== "DEBTOR" && type !== "CREDITOR") {
     return c.json({ success: false, error: "type must be DEBTOR or CREDITOR" }, 400);
   }
+  // As at a past date (owner 2026-10-17): bills dated by then, each rolled
+  // back by the payments made on it after (src/api/lib/aging-as-at.ts).
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const paidBack = asOf ? await otherPartyPaymentsAfter(c.var.DB, orgId, asOf) : null;
   const rows =
     (
       await c.var.DB.prepare(
-        `SELECT b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
+        `SELECT b.id AS id, b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
                 (b.totalSen - b.paidAmountSen) AS amt, b.is_opening AS is_opening
            FROM other_party_bills b
            LEFT JOIN document_lifecycle dl
              ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
-          WHERE b.orgId = ? AND b.partyType = ? AND (b.totalSen - b.paidAmountSen) > 0
+          WHERE b.orgId = ? AND b.partyType = ? AND (${asOf ? "b.billDate <= ?" : "(b.totalSen - b.paidAmountSen) > 0"})
             AND (dl.state IS NULL OR dl.state NOT IN ('DELETED','VOID'))
           ORDER BY b.billDate ASC`,
       )
-        .bind(orgId, type)
-        .all<{ partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
+        .bind(orgId, type, ...(asOf ? [asOf] : []))
+        .all<{ id: string; partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
     ).results ?? [];
   const obDateOpa = await getOpeningDate(c.var.DB);
   const bills = rows
-    .filter((r) => !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening)) // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01
-    .map((r) => ({ partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: r.amt }));
-  const today = new Date().toISOString().slice(0, 10);
-  return c.json({ success: true, data: { aging: bucketAging(bills, today), bills } });
+    // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01.
+    // As at a past date a pre-opening bill still counts for what was paid on
+    // it AFTER the date: the opening balance held that much then (what it owes
+    // now stays with the opening balance, exactly as today's view leaves it).
+    .filter((r) => asOf || !rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening))
+    // `mo` = the calendar-month bucket /aging gives an invoice (same helpers),
+    // so Debtor / Creditor Aging can list an other party's bills in the trade
+    // rows' columns (owner 2026-10-17, Finance v2).
+    .map((r) => {
+      const pre = rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening);
+      return { partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(pre ? 0 : r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) };
+    })
+    .filter((b) => b.outstandingSen > 0);
+  const today = asOf ?? new Date().toISOString().slice(0, 10);
+  return c.json({ success: true, data: { aging: bucketAging(bills, today), bills, ...(asOf ? { asOf } : {}) } });
 });
 
 // Shared internal builder (NOT a route): used by both the rewired /void
@@ -5137,7 +5586,7 @@ async function buildOtherPartyPaymentLifecycle(
   if (rows.length === 0) throw new Error("PAYMENT_NOT_FOUND");
 
   const lc = await applyLifecycle(db, {
-    orgId, baseSourceTypes: ["other_party_payment"], voidSourceType: "other_party_payment_void",
+    orgId, docDate: rows[0].date, baseSourceTypes: ["other_party_payment"], voidSourceType: "other_party_payment_void",
     sourceId: paymentNo, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${paymentNo}`,
   });
   const statements = [...lc.statements];
@@ -5156,6 +5605,8 @@ async function buildOtherPartyPaymentLifecycle(
         .bind(paymentNo, orgId),
     );
   }
+  // An unvoid brings back the EDITED legs, not the pre-edit ones (class C5).
+  if (reactivated) statements.push(...(await restoreEditedFamilyStatements(db, orgId, "other_party_payment", paymentNo)));
   if (deactivated || reactivated) {
     const now = new Date().toISOString();
     for (const r of rows) {
@@ -5204,6 +5655,10 @@ async function buildOtherPartyPaymentRestate(
     ).results ?? [];
   const first = rows[0];
   if (!first) throw new Error("PAYMENT_NOT_FOUND");
+  // A cancelled payment's legs are hidden; editing it would post live ones.
+  if ((await getDocState(db, orgId, "other_party_payment", paymentNo)) !== "ACTIVE") {
+    throw new Error(`Payment ${paymentNo} is cancelled — restore it before editing.`);
+  }
   const now = new Date().toISOString();
   const statements: D1PreparedStatement[] = [];
 
@@ -5264,11 +5719,11 @@ async function buildOtherPartyPaymentRestate(
     (
       await db
         .prepare(
-          `SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
             WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'other_party_payment%'`,
         )
         .bind(paymentNo, orgId)
-        .all<{ accountCode: string; debitSen: number; creditSen: number }>()
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
     ).results ?? [];
   const revLegs = cur.map((l, i) => ({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
@@ -5303,10 +5758,13 @@ async function buildOtherPartyPaymentRestate(
           orgId,
         }))
       : [];
+  // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+  const carry = await planEditBankCarry(db, cur, postLegs, "payment");
+  if (!carry.ok) throw new BankMatchedEditRefused(carry.error);
   const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [
     ...revLegs,
     ...postLegs,
-  ]);
+  ], { docDate: [first.date, date] });
   statements.push(...jeStmts);
   statements.push(
     db
@@ -5315,6 +5773,7 @@ async function buildOtherPartyPaymentRestate(
       )
       .bind(paymentNo, orgId, `other_party_payment_restate_post:${stamp}`),
   );
+  statements.push(...carry.statements);
 
   return statements;
 }
@@ -5333,6 +5792,7 @@ app.post("/other-party-payments/:paymentNo/void", async (c) => {
   try {
     const { statements } = await buildOtherPartyPaymentLifecycle(c.var.DB, orgId, paymentNo, "void", actorUserId);
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "other-party-payments", resourceId: paymentNo, action: "void" });
     return c.json({ success: true });
   } catch (e) {
     if ((e as Error).message === "PAYMENT_NOT_FOUND") return c.json({ success: false, error: "Payment not found" }, 404);
@@ -5353,6 +5813,7 @@ app.post("/other-party-payments/:paymentNo/lifecycle", async (c) => {
   try {
     const { statements, newState } = await buildOtherPartyPaymentLifecycle(c.var.DB, orgId, paymentNo, action, actorUserId);
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "other-party-payments", resourceId: paymentNo, action, after: { state: newState } });
     return c.json({ success: true, data: { state: newState } });
   } catch (e) {
     if ((e as Error).message === "PAYMENT_NOT_FOUND") return c.json({ success: false, error: "Payment not found" }, 404);
@@ -5402,6 +5863,7 @@ app.post("/other-party-payments/:paymentNo/restate", async (c) => {
   } catch (e) {
     if ((e as Error).message === "PAYMENT_NOT_FOUND")
       return c.json({ success: false, error: "Payment not found" }, 404);
+    if (e instanceof BankMatchedEditRefused) return c.json({ success: false, error: e.message }, 409);
     return c.json({ success: false, error: (e as Error).message }, 400);
   }
 });
@@ -5820,8 +6282,8 @@ app.get("/gl", async (c) => {
 const RETAINED_EARNINGS_ACCT = "150-0000";
 
 // Most recent FYE date strictly before `today`.
-function lastEndedFyeIso(today: Date, fyeMonth: number): string {
-  const win = fyWindowFor(today, fyeMonth);
+function lastEndedFyeIso(today: Date, sched: FySchedule): string {
+  const win = fyWindowAt(today, sched);
   const start = new Date(`${win.startIso}T00:00:00Z`);
   return new Date(start.getTime() - 86400000).toISOString().slice(0, 10);
 }
@@ -5904,9 +6366,10 @@ async function computeUnclosedAsOf(
 app.get("/year-close/preview", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const fyeMonth = await getFyeMonth(c.var.DB);
+  const fySched = await getFySchedule(c.var.DB);
   const fyEndIso =
-    c.req.query("fyEnd") || lastEndedFyeIso(new Date(), fyeMonth);
+    c.req.query("fyEnd") || lastEndedFyeIso(new Date(), fySched);
+  const fyeMonth = Number(fyEndIso.slice(5, 7));
   const orgId = getOrgId(c);
   const alreadyClosed = await ledgerHasSource(
     c.var.DB,
@@ -5929,7 +6392,147 @@ app.get("/year-close/preview", async (c) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The financial years (finance backlog item 9; the design's Settings ›
+// Financial Year End — "Change Year End is Super Admin only, closed years
+// are locked, transition-year preview"; src/lib/fiscal-year.ts).
+// GET /fiscal-years: every year from the one holding the books' opening to
+// the one after this — name, months, transition, status (Closed = its
+// year-end close is posted, Current, Future, Open = over but not closed) —
+// the year end before any change, the saved changes, and whether this user
+// may change the year end.
+// PUT /fiscal-years/year-end { from, to } (Super Admin): the year starting
+// `from` becomes a transition year ending `to`, 1–18 months; a closed year
+// or one already over cannot change (yearEndChangeError).
+// ---------------------------------------------------------------------------
+async function closedFyEndYms(db: Env["Variables"]["DB"], orgId: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  const res = await db.prepare("SELECT DISTINCT sourceId FROM ledger_journal_entries WHERE orgId = ? AND sourceType = 'year_close'")
+    .bind(orgId).all<Record<string, unknown>>();
+  for (const r of res.results ?? []) {
+    const m = /^fyclose-(\d{4}-\d{2})-\d{2}$/.exec(String(r.sourceId ?? r.source_id ?? ""));
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+app.get("/fiscal-years", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const [sched, openingDate, posted, locked] = await Promise.all([getFySchedule(db), getOpeningDate(db), closedFyEndYms(db, orgId), getFyLockedEnds(db)]);
+  const todayYm = runningMonthYm();
+  const current = fyFor(todayYm, sched);
+  const fromYm = openingDate ? openingDate.slice(0, 7) : addFyMonths(todayYm, -24);
+  const years = fyPeriods(sched, fromYm < current.startYm ? fromYm : current.startYm, addFyMonths(current.endYm, 12)).map((y) => ({
+    ...y,
+    status: locked.has(y.endYm) ? "closed" : posted.has(y.endYm) ? "reopened" : y.startYm <= todayYm && todayYm <= y.endYm ? "current" : y.startYm > todayYm ? "future" : "open",
+  }));
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
+  return c.json({
+    success: true,
+    data: { fyeMonth: sched.fyeMonth, currentFyeMonth: Number(current.endYm.slice(5, 7)), changes: sched.changes, years, canChangeYearEnd: role === "SUPER_ADMIN", canCloseYear: await hasPermission(c, "accounting", "create"), canReopenYear: role === "SUPER_ADMIN" },
+  });
+});
+
+app.put("/fiscal-years/year-end", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
+  if (role !== "SUPER_ADMIN") return c.json({ success: false, error: "Only a Super Admin can change the financial year end." }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as { from?: unknown; to?: unknown };
+  const change = { from: String(body.from ?? ""), to: String(body.to ?? "") };
+  const db = c.var.DB;
+  const [sched, posted, locked] = await Promise.all([getFySchedule(db), closedFyEndYms(db, getOrgId(c)), getFyLockedEnds(db)]);
+  const closed = new Set([...posted, ...locked]);
+  const err = yearEndChangeError(sched, change, closed, runningMonthYm());
+  if (err) return c.json({ success: false, error: err }, 400);
+  const next = withYearEndChange(sched, change);
+  await db.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(FYE_CHANGES_KV_KEY, JSON.stringify(next.changes), new Date().toISOString()).run();
+  await emitAudit(c, { resource: "finance-settings", resourceId: FYE_CHANGES_KV_KEY, action: "update", before: { changes: sched.changes }, after: { changes: next.changes } });
+  return c.json({ success: true, data: { changes: next.changes } });
+});
+
+// The year-end close entry for the year ending `fyEndIso` under `sourceId`:
+// every P&L account's residual to that day flipped into retained earnings
+// (prior closes included, so a close after a reopen posts only what was added
+// since). legs [] = nothing left to close.
+async function yearCloseLegs(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  fyEndIso: string,
+  sourceId: string,
+  actorUserId: string | null,
+): Promise<{ ok: true; legs: LedgerEntryInput[]; netSen: number; accountCount: number } | { ok: false; error: string; status: 400 | 500 }> {
+  const re = await db.prepare("SELECT code FROM chart_of_accounts WHERE code = ?").bind(RETAINED_EARNINGS_ACCT).first<{ code: string }>();
+  if (!re) return { ok: false, error: `Retained-earnings account ${RETAINED_EARNINGS_ACCT} not found in the chart of accounts.`, status: 500 };
+  const { accounts, netSen } = await computeUnclosedAsOf(db, fyEndIso);
+  const legs: LedgerEntryInput[] = [];
+  let legNo = 1;
+  let totalDr = 0;
+  let totalCr = 0;
+  for (const a of accounts) {
+    // Flip the residual: a credit-normal residual is DEBITED away and
+    // vice versa. Negative residuals flip the flip.
+    const closesAsDebit = a.type === "REVENUE" ? a.residualSen > 0 : a.residualSen < 0;
+    const amt = Math.abs(a.residualSen);
+    legs.push({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: "year_close",
+      sourceId,
+      legNo: legNo++,
+      accountCode: a.code,
+      debitSen: closesAsDebit ? amt : 0,
+      creditSen: closesAsDebit ? 0 : amt,
+      description: `Year-end close · FY ended ${fyEndIso}`,
+      actorUserId,
+      orgId,
+    });
+    totalDr += closesAsDebit ? amt : 0;
+    totalCr += closesAsDebit ? 0 : amt;
+  }
+  if (accounts.length && netSen !== 0) {
+    legs.push({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: "year_close",
+      sourceId,
+      legNo: legNo++,
+      accountCode: RETAINED_EARNINGS_ACCT,
+      debitSen: netSen < 0 ? Math.abs(netSen) : 0,
+      creditSen: netSen > 0 ? netSen : 0,
+      description: `Year-end close · FY ended ${fyEndIso} · net ${netSen > 0 ? "profit" : "loss"}`,
+      actorUserId,
+      orgId,
+    });
+    totalDr += netSen < 0 ? Math.abs(netSen) : 0;
+    totalCr += netSen > 0 ? netSen : 0;
+  }
+  if (totalDr !== totalCr) return { ok: false, error: `Close legs do not balance (DR ${totalDr} vs CR ${totalCr}) — aborted, nothing posted.`, status: 500 };
+  return { ok: true, legs, netSen, accountCount: accounts.length };
+}
+
+// Lock / unlock a financial year by its last month (kv fy_locked_ends).
+async function setFyLocked(db: Env["Variables"]["DB"], endYm: string, locked: boolean): Promise<string[]> {
+  const cur = await getFyLockedEnds(db);
+  if (locked) cur.add(endYm);
+  else cur.delete(endYm);
+  const list = [...cur].sort();
+  await db.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(FY_LOCKED_KV_KEY, JSON.stringify(list), new Date().toISOString()).run();
+  return list;
+}
+
+const lastDayOfYm = (ym: string) => `${ym}-${String(new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0)).getUTCDate()).padStart(2, "0")}`;
+
 // POST /api/accounting/year-close  { fyEnd?: "YYYY-MM-DD" }
+// (The Balance Sheet's Year-End Close. Since item 9 part B the year is also
+// locked once its close is posted — the same as Close Year in Settings.)
 app.post("/year-close", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
@@ -5937,8 +6540,7 @@ app.post("/year-close", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as {
       fyEnd?: string;
     };
-    const fyeMonth = await getFyeMonth(c.var.DB);
-    const fyEndIso = body.fyEnd || lastEndedFyeIso(new Date(), fyeMonth);
+    const fyEndIso = body.fyEnd || lastEndedFyeIso(new Date(), await getFySchedule(c.var.DB));
     const today = new Date().toISOString().slice(0, 10);
     if (fyEndIso >= today) {
       return c.json(
@@ -5960,96 +6562,33 @@ app.post("/year-close", async (c) => {
         400,
       );
     }
-    const re = await c.var.DB.prepare(
-      "SELECT code FROM chart_of_accounts WHERE code = ?",
-    )
-      .bind(RETAINED_EARNINGS_ACCT)
-      .first<{ code: string }>();
-    if (!re) {
-      return c.json(
-        {
-          success: false,
-          error: `Retained-earnings account ${RETAINED_EARNINGS_ACCT} not found in the chart of accounts.`,
-        },
-        500,
-      );
-    }
-    const { accounts, netSen } = await computeUnclosedAsOf(
-      c.var.DB,
-      fyEndIso,
-    );
-    if (accounts.length === 0) {
+    const actorUserId =
+      (c as unknown as { get: (k: string) => string | undefined }).get(
+        "userId",
+      ) ?? null;
+    const built = await yearCloseLegs(c.var.DB, orgId, fyEndIso, sourceId, actorUserId);
+    if (!built.ok) return c.json({ success: false, error: built.error }, built.status);
+    if (built.legs.length === 0) {
       return c.json(
         { success: false, error: "Nothing to close — all P&L accounts are at zero as of that date." },
         400,
       );
     }
-    const actorUserId =
-      (c as unknown as { get: (k: string) => string | undefined }).get(
-        "userId",
-      ) ?? null;
-    const legs: LedgerEntryInput[] = [];
-    let legNo = 1;
-    let totalDr = 0;
-    let totalCr = 0;
-    for (const a of accounts) {
-      // Flip the residual: a credit-normal residual is DEBITED away and
-      // vice versa. Negative residuals flip the flip.
-      const closesAsDebit =
-        a.type === "REVENUE" ? a.residualSen > 0 : a.residualSen < 0;
-      const amt = Math.abs(a.residualSen);
-      legs.push({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "year_close",
-        sourceId,
-        legNo: legNo++,
-        accountCode: a.code,
-        debitSen: closesAsDebit ? amt : 0,
-        creditSen: closesAsDebit ? 0 : amt,
-        description: `Year-end close · FY ended ${fyEndIso}`,
-        actorUserId,
-        orgId,
-      });
-      totalDr += closesAsDebit ? amt : 0;
-      totalCr += closesAsDebit ? 0 : amt;
-    }
-    if (netSen !== 0) {
-      legs.push({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "year_close",
-        sourceId,
-        legNo: legNo++,
-        accountCode: RETAINED_EARNINGS_ACCT,
-        debitSen: netSen < 0 ? Math.abs(netSen) : 0,
-        creditSen: netSen > 0 ? netSen : 0,
-        description: `Year-end close · FY ended ${fyEndIso} · net ${netSen > 0 ? "profit" : "loss"}`,
-        actorUserId,
-        orgId,
-      });
-      totalDr += netSen < 0 ? Math.abs(netSen) : 0;
-      totalCr += netSen > 0 ? netSen : 0;
-    }
-    if (totalDr !== totalCr) {
-      return c.json(
-        {
-          success: false,
-          error: `Close legs do not balance (DR ${totalDr} vs CR ${totalCr}) — aborted, nothing posted.`,
-        },
-        500,
-      );
-    }
     const { statements } = await buildJournalEntryStatements(
       c.var.DB,
       orgId,
-      legs,
+      built.legs,
+      { docDate: null },
     );
     await c.var.DB.batch(statements);
+    await setFyLocked(c.var.DB, fyEndIso.slice(0, 7), true);
+    await emitAudit(c, { resource: "finance-settings", resourceId: FY_LOCKED_KV_KEY, action: "close-year", after: { yearEnd: fyEndIso } });
     return c.json({
       success: true,
       data: {
         fyEnd: fyEndIso,
-        netSen,
-        legCount: legs.length,
+        netSen: built.netSen,
+        legCount: built.legs.length,
         retainedAccount: RETAINED_EARNINGS_ACCT,
       },
     });
@@ -6060,6 +6599,63 @@ app.post("/year-close", async (c) => {
       500,
     );
   }
+});
+
+// POST /fiscal-years/close { endYm } — Close Year (item 9 part B; the design's
+// "The P&L moves into Retained Earnings and the year is locked"): posts the
+// year-end close (after a reopen, only what was added since — the first
+// close is `fyclose-<end>`, later ones `fyclose-<end>-r<n>`), then locks the
+// year: nothing dated in it can be posted, edited, voided or restored.
+app.post("/fiscal-years/close", async (c) => {
+  const denied = await requirePermission(c, "accounting", "create");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const body = (await c.req.json().catch(() => ({}))) as { endYm?: unknown };
+  const endYm = String(body.endYm ?? "");
+  const sched = await getFySchedule(db);
+  const fy = isYm(endYm) ? fyPeriods(sched, endYm, endYm).find((y) => y.endYm === endYm) : undefined;
+  if (!fy) return c.json({ success: false, error: "Pick the financial year to close." }, 400);
+  if (fy.endYm >= runningMonthYm()) return c.json({ success: false, error: `${fy.name} has not ended yet.` }, 400);
+  if ((await getFyLockedEnds(db)).has(fy.endYm)) return c.json({ success: false, error: `${fy.name} is already closed.` }, 400);
+  const fyEndIso = lastDayOfYm(fy.endYm);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  try {
+    const prior = await db.prepare(
+      "SELECT COUNT(DISTINCT sourceId) AS n FROM ledger_journal_entries WHERE orgId = ? AND sourceType = 'year_close' AND (sourceId = ? OR sourceId LIKE ?)",
+    ).bind(orgId, `fyclose-${fyEndIso}`, `fyclose-${fyEndIso}-r%`).first<Record<string, unknown>>();
+    const n = Number(prior?.n) || 0;
+    const sourceId = n === 0 ? `fyclose-${fyEndIso}` : `fyclose-${fyEndIso}-r${n + 1}`;
+    const built = await yearCloseLegs(db, orgId, fyEndIso, sourceId, actorUserId);
+    if (!built.ok) return c.json({ success: false, error: built.error }, built.status);
+    if (built.legs.length) {
+      const { statements } = await buildJournalEntryStatements(db, orgId, built.legs, { docDate: null });
+      await db.batch(statements);
+    }
+    const locked = await setFyLocked(db, fy.endYm, true);
+    await emitAudit(c, { resource: "finance-settings", resourceId: FY_LOCKED_KV_KEY, action: "close-year", after: { year: fy.name, yearEnd: fyEndIso, closeEntry: built.legs.length ? sourceId : null } });
+    return c.json({ success: true, data: { name: fy.name, netSen: built.netSen, posted: built.legs.length, locked } });
+  } catch (e) {
+    console.error("[fiscal-years/close] failed:", e);
+    return c.json({ success: false, error: "Close Year failed — nothing was posted or locked." }, 500);
+  }
+});
+
+// POST /fiscal-years/reopen { endYm } — Super Admin: takes the lock off; the
+// close entry stays (a later Close Year posts only what was added since).
+app.post("/fiscal-years/reopen", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const role = (c as unknown as { get: (k: string) => string | undefined }).get("userRole")?.toUpperCase();
+  if (role !== "SUPER_ADMIN") return c.json({ success: false, error: "Only a Super Admin can reopen a closed year." }, 403);
+  const db = c.var.DB;
+  const body = (await c.req.json().catch(() => ({}))) as { endYm?: unknown };
+  const endYm = String(body.endYm ?? "");
+  if (!(await getFyLockedEnds(db)).has(endYm)) return c.json({ success: false, error: "That year is not closed." }, 400);
+  const fy = fyPeriods(await getFySchedule(db), endYm, endYm).find((y) => y.endYm === endYm);
+  const locked = await setFyLocked(db, endYm, false);
+  await emitAudit(c, { resource: "finance-settings", resourceId: FY_LOCKED_KV_KEY, action: "reopen-year", after: { year: fy?.name ?? endYm } });
+  return c.json({ success: true, data: { locked } });
 });
 
 // ---------------------------------------------------------------------------
@@ -6083,6 +6679,8 @@ function ymInPeriod(ym: string, period?: string): boolean {
 // Last YYYY-MM covered by the period (for as-of balance-sheet cutoff).
 function periodEndYm(period?: string): string | null {
   if (!period || period === "all") return null;
+  const fk = parseFyKey(period); // "fy:2025-09..2026-08" / "fyq:…:Q1" (item 9)
+  if (fk) return fk.endYm;
   if (period.includes("Q")) {
     const [year, q] = period.split("-Q");
     const end = (parseInt(q, 10) - 1) * 3 + 3;
@@ -6094,6 +6692,8 @@ function periodEndYm(period?: string): string | null {
 // First YYYY-MM of the period (null = since the beginning of time).
 function periodStartYm(period?: string): string | null {
   if (!period || period === "all") return null;
+  const fk = parseFyKey(period);
+  if (fk) return fk.startYm;
   if (period.includes("Q")) {
     const [year, q] = period.split("-Q");
     const start = (parseInt(q, 10) - 1) * 3 + 1;
@@ -6515,7 +7115,7 @@ app.post("/stock/close-post", async (c) => {
       return c.json({ success: false, error: `No stock movements for ${month} — nothing to post.` }, 400);
     }
     legs.push(...freshLegs);
-    const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: month });
     await db.batch(statements);
     await emitAudit(c, {
       resource: "accounting",
@@ -6524,7 +7124,8 @@ app.post("/stock/close-post", async (c) => {
       after: { month, closingTotalSen },
     });
     return c.json({ success: true, data: { month, closingTotalSen } });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -6673,60 +7274,56 @@ app.get("/cost-by-line", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// WIP DETAIL (Phase 4.3, 2026-06) — WIP is already valued as issued
-// materials + posted labour − completed (RM_ISSUE fires at FAB_CUT, not
-// at PO completion, so an in-progress order already carries its material
-// part). This surfaces that valuation per open production order so it's
-// auditable: materialSen + labourSen − completedSen = wipSen, listed for
-// every order still carrying WIP.
+// WIP BY PRODUCTION ORDER (finance backlog item 12, the design's "WIP total =
+// sum of WIP by PO, and it feeds the Balance Sheet WIP line"). The orders that
+// make up Stock Summary's WORK IN PROGRESS line for month `asOf` (YYYY-MM;
+// default the running month) — the line the Balance Sheet's WIP account
+// carries (src/lib/bs-stock.ts). One valuation, liveStockFor:
+//   · basis "production-orders" — the Stock Take has no WIP for the month: the
+//     line IS the orders' total (`lineSen` = `totalSen` = Σ rows.wipSen);
+//   · basis "stock-take" — WIP keyed for the month: the line is the keyed
+//     figure; the orders are listed for comparison;
+//   · basis "none" — a month the orders don't value (before the books, the
+//     opening seed month, ahead of today): the line, no orders.
+// (Replaces the 2026-06 cost-ledger list — issued materials + posted labour −
+// completed — which no longer fed anything: since #829 an unkeyed month's WIP
+// is the production-order valuation.)
 // ---------------------------------------------------------------------------
 app.get("/wip-detail", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const asOf = c.req.query("asOf") || ""; // YYYY-MM cutoff, optional
-  const [clRes, poRes] = await Promise.all([
-    c.var.DB
-      .prepare(
-        `SELECT type, itemId, refType, refId, totalCostSen, date
-           FROM cost_ledger WHERE type IN ('RM_ISSUE','LABOR_POSTED','FG_COMPLETED')`,
-      )
-      .all<{ type: string; itemId: string; refType: string | null; refId: string | null; totalCostSen: number; date: string }>(),
-    // `poNo`, not `poNumber`: production_orders stores it as po_no. The
-    // rename map DOES carry poNumber → po_number, but that column lives on
-    // grns / goods_in_transit / three_way_matches — so this SELECT rewrote
-    // cleanly and then 500'd on a column production_orders never had.
-    c.var.DB.prepare("SELECT id, poNo, itemCategory, status FROM production_orders").all<{ id: string; poNo: string | null; itemCategory: string | null; status: string | null }>(),
-  ]);
-  const po = new Map<string, { poNumber: string; category: string; status: string }>();
-  for (const p of poRes.results ?? []) po.set(p.id, { poNumber: p.poNo ?? p.id, category: String(p.itemCategory ?? "").toUpperCase(), status: p.status ?? "" });
-  type Wip = { poId: string; poNumber: string; category: string; status: string; materialSen: number; labourSen: number; completedSen: number };
-  const byPo = new Map<string, Wip>();
-  const ensure = (poId: string): Wip => {
-    let w = byPo.get(poId);
-    if (!w) {
-      const meta = po.get(poId);
-      w = { poId, poNumber: meta?.poNumber ?? poId, category: meta?.category ?? "", status: meta?.status ?? "", materialSen: 0, labourSen: 0, completedSen: 0 };
-      byPo.set(poId, w);
-    }
-    return w;
-  };
-  for (const l of clRes.results ?? []) {
-    if (asOf && String(l.date ?? "").slice(0, 7) > asOf) continue;
-    const v = Number(l.totalCostSen) || 0;
-    // RM_ISSUE → refId is the PO; LABOR_POSTED → itemId is PO; FG_COMPLETED → refId is PO.
-    const poId = l.type === "LABOR_POSTED" ? l.itemId : l.refId;
-    if (!poId) continue;
-    const w = ensure(poId);
-    if (l.type === "RM_ISSUE") w.materialSen += v;
-    else if (l.type === "LABOR_POSTED") w.labourSen += v;
-    else w.completedSen += v;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const q = c.req.query("asOf") || "";
+  const ym = /^\d{4}-\d{2}$/.test(q) ? q : runningMonthYm();
+  const data = await loadMaterialCostData(db, orgId, ym);
+  const openingDate = await getOpeningDate(db);
+  // The line as the Stock Summary would show it without the orders: the
+  // keyed figure, else the material window's own.
+  const windowSen = materialWindow(data, ym, ym).wipCloseSen;
+  const keyed = !!data.stockTakeByGroupYm.get("WIP")?.has(ym);
+  const none = { asOf: ym, basis: keyed ? "stock-take" : "none", asOfDate: null, ratio: null, lineSen: windowSen, rows: [], totalSen: 0 };
+  if (!productionValuedMonth(ym, data, openingDate)) return c.json({ success: true, data: none });
+  let live: LiveStock;
+  try {
+    const [dc, override] = await Promise.all([loadDocDateResolver(db), getPnlSectionMap(db)]);
+    live = await liveStockFor(db, orgId, ym, data, dc, override);
+  } catch {
+    return c.json({ success: true, data: none }); // unreadable → the line as the Stock Summary falls back to
   }
-  const rows = [...byPo.values()]
-    .map((w) => ({ ...w, wipSen: w.materialSen + w.labourSen - w.completedSen }))
-    .filter((w) => Math.round(w.wipSen) !== 0)
-    .sort((a, b) => b.wipSen - a.wipSen);
-  const totalSen = rows.reduce((s, w) => s + w.wipSen, 0);
-  return c.json({ success: true, data: { asOf: asOf || null, rows, totalSen } });
+  const rows = [...live.wipRows].sort((x, y) => String(x.poNo ?? x.orderId).localeCompare(String(y.poNo ?? y.orderId)));
+  return c.json({
+    success: true,
+    data: {
+      asOf: ym,
+      basis: keyed ? "stock-take" : "production-orders",
+      asOfDate: live.asOf,
+      ratio: live.ratio,
+      lineSen: keyed ? windowSen : live.wipSen,
+      rows,
+      totalSen: live.wipSen,
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -6821,7 +7418,7 @@ interface DocDateCtx {
   // Per-request memo for the production-order FG / WIP valuation (2026-10-13):
   // the loaded production data once, each month's figures once (key = ym).
   prodStock?: Promise<PreparedProduction>;
-  liveStockMemo?: Map<string, Promise<{ fgSen: number; wipSen: number; ratio: number }>>;
+  liveStockMemo?: Map<string, Promise<LiveStock>>;
   // Per-request memo for the running month's recurring-cost estimates
   // (2026-10-13, runningMonthEstimates; key = the running month).
   estimateMemo?: Map<string, Promise<Map<string, { sen: number; fromYm: string }>>>;
@@ -8000,6 +8597,11 @@ const lastDayIso = (ym: string): string => {
 // Cost ratio = last month's materials ÷ last month's completed goods at selling
 // price + this month's direct labour ÷ this month's completed goods (owner:
 // 「人工用这个月的」), no factory overhead (「先不加工厂费用」).
+// The production-order valuation of month `ym`: FG and WIP at cost, the cost
+// ratio, the day it is valued as of, and WIP's orders (finance backlog item
+// 12) — their `wipSen` add up to `wipSen` to the sen.
+type LiveStock = { fgSen: number; wipSen: number; ratio: number; asOf: string; wipRows: (PsWipRow & { wipSen: number })[] };
+
 async function liveStockFor(
   db: Env["Variables"]["DB"],
   orgId: string,
@@ -8007,7 +8609,7 @@ async function liveStockFor(
   matData: MaterialCostData,
   dc: DocDateCtx,
   override: Record<string, string>,
-): Promise<{ fgSen: number; wipSen: number; ratio: number }> {
+): Promise<LiveStock> {
   dc.liveStockMemo ??= new Map();
   const hit = dc.liveStockMemo.get(ym);
   if (hit) return hit;
@@ -8042,8 +8644,9 @@ async function liveStockFor(
       labourSen: labourOf(glThis),
       completedSen: completedPriceSen(prepared, `${ym}-01`, asOf),
     });
-    const at = productionStockAt(prepared, asOf);
-    return { fgSen: Math.round(at.fgPriceSen * ratio), wipSen: Math.round(at.wipPriceSen * ratio), ratio };
+    const { at, wipRows } = productionStockDetailAt(prepared, asOf);
+    const wip = costedWipRows(wipRows, ratio, splitByLargestRemainder);
+    return { fgSen: Math.round(at.fgPriceSen * ratio), wipSen: wip.totalSen, ratio, asOf, wipRows: wip.rows };
   })();
   dc.liveStockMemo.set(ym, run);
   return run;
@@ -8059,13 +8662,23 @@ function blankStockParts(
   matData: MaterialCostData,
   openingDate: string | null,
 ): { wipBlank: boolean; fgBlank: boolean } | null {
-  if (!ym) return null;
-  const openingYm = openingDate ? openingDate.slice(0, 7) : null;
-  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return null;
-  if (matData.fgSeedYm && ym <= matData.fgSeedYm) return null;
+  if (!productionValuedMonth(ym, matData, openingDate)) return null;
   const wipBlank = !matData.stockTakeByGroupYm.get("WIP")?.has(ym);
   const fgBlank = matData.fgValuationMode === "stock_take_only" && !matData.stockTakeByGroupYm.get("FG")?.has(ym);
   return wipBlank || fgBlank ? { wipBlank, fgBlank } : null;
+}
+
+// Whether month-end `ym` can be valued from the production orders at all:
+// the opening month up to the running month, after the opening seed.
+function productionValuedMonth(
+  ym: string | null,
+  matData: MaterialCostData,
+  openingDate: string | null,
+): ym is string {
+  if (!ym) return false;
+  const openingYm = openingDate ? openingDate.slice(0, 7) : null;
+  if (!openingYm || ym < openingYm || ym > runningMonthYm()) return false;
+  return !(matData.fgSeedYm && ym <= matData.fgSeedYm);
 }
 
 // The month-end FG / WIP to use at `ym` where the Stock Take is blank — the
@@ -8529,15 +9142,15 @@ app.get("/cost-structure", async (c) => {
   if (denied) return denied;
   const db = c.var.DB;
   const fyParam = c.req.query("fy");
-  const fyeMonth = await getFyeMonth(db);
-  const anchorDate = fyParam ? new Date(Date.UTC(parseInt(fyParam, 10), fyeMonth % 12, 15)) : new Date();
-  const fyWin = fyWindowFor(anchorDate, fyeMonth);
+  const fySched = await getFySchedule(db);
+  // ?fy=YYYY = the financial year starting in that year (the first, if two).
+  const fyStartPick = fyParam && /^\d{4}$/.test(fyParam)
+    ? fyPeriods(fySched, `${fyParam}-01`, `${fyParam}-12`).find((f) => f.startYm.startsWith(fyParam))?.startYm ?? null
+    : null;
+  const fyWin = fyWindowAt(fyStartPick ?? new Date(), fySched);
   const startYm = fyWin.startIso.slice(0, 7);
   const cols: string[] = [];
-  {
-    let [y, m] = startYm.split("-").map((n) => parseInt(n, 10));
-    for (let i = 0; i < 12; i++) { cols.push(`${y}-${String(m).padStart(2, "0")}`); m += 1; if (m > 12) { m = 1; y += 1; } }
-  }
+  for (let ym = startYm; ym <= fyWin.endIso.slice(0, 7); ym = addFyMonths(ym, 1)) cols.push(ym);
   // Owner rule 2026-07-28 (「cost structure 其实就和 P&L 一样拿数据」): this
   // report now takes every month's numbers from THE SAME per-month window the
   // P&L uses — GL purchases by purchase account, engine/stock-take inventory,
@@ -8565,10 +9178,10 @@ app.get("/cost-structure", async (c) => {
     if (!g) { g = { description: desc, months: cols.map(() => ({ opening: 0, purchase: 0, closing: 0, spend: 0 })) }; groups.set(code, g); }
     return g;
   };
-  const salesSofa = new Array(12).fill(0);
-  const salesBed = new Array(12).fill(0);
+  const salesSofa = new Array(cols.length).fill(0);
+  const salesBed = new Array(cols.length).fill(0);
   const CS_BEDFRAME_SALES_CODE = "500-0000";
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < cols.length; i++) {
     const ym = cols[i];
     if (ym > nowYm) continue; // future months stay blank
     const hist = selectHistoricalWindow(historicalCs, openingMonthCs, ym, "all");
@@ -8608,21 +9221,16 @@ app.get("/cost-expense-classes", async (c) => {
   if (denied) return denied;
   const db = c.var.DB;
   const fyParam = c.req.query("fy"); // YYYY (FY start year) optional
-  const fyeMonth = await getFyeMonth(db);
-  const anchorDate = fyParam
-    ? new Date(Date.UTC(parseInt(fyParam, 10), fyeMonth % 12, 15))
-    : new Date();
-  const fyWin = fyWindowFor(anchorDate, fyeMonth);
+  const fySched = await getFySchedule(db);
+  // ?fy=YYYY = the financial year starting in that year (the first, if two).
+  const fyStartPick = fyParam && /^\d{4}$/.test(fyParam)
+    ? fyPeriods(fySched, `${fyParam}-01`, `${fyParam}-12`).find((f) => f.startYm.startsWith(fyParam))?.startYm ?? null
+    : null;
+  const fyWin = fyWindowAt(fyStartPick ?? new Date(), fySched);
   const startYm = fyWin.startIso.slice(0, 7);
   const endYm = fyWin.endIso.slice(0, 7);
   const cols: string[] = [];
-  {
-    let [y, m] = startYm.split("-").map((n) => parseInt(n, 10));
-    for (let i = 0; i < 12; i++) {
-      cols.push(`${y}-${String(m).padStart(2, "0")}`);
-      m += 1; if (m > 12) { m = 1; y += 1; }
-    }
-  }
+  for (let ym = startYm; ym <= endYm; ym = addFyMonths(ym, 1)) cols.push(ym);
   const [legRes, coaRes] = await Promise.all([
     db.prepare("SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0").all<{ accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string }>(),
     db.prepare("SELECT code, name, type, pnlCategory FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"]; pnlCategory: string | null }>(),
@@ -8652,7 +9260,7 @@ app.get("/cost-expense-classes", async (c) => {
     const idx = cols.indexOf(ym);
     if (idx < 0) continue;
     let arr = byAcct.get(code);
-    if (!arr) { arr = new Array(12).fill(0); byAcct.set(code, arr); }
+    if (!arr) { arr = new Array(cols.length).fill(0); byAcct.set(code, arr); }
     arr[idx] += (Number(l.debitSen) || 0) - (Number(l.creditSen) || 0);
   }
   // Report-layer labour — same rule as glWindowSigned (owner 2026-08-31):
@@ -8673,7 +9281,7 @@ app.get("/cost-expense-classes", async (c) => {
       for (const { account, sen } of await labourInjectionLines(db, getOrgId(c), ym, injMemo)) {
         if (recorded?.has(account)) continue;
         let arr = byAcct.get(account);
-        if (!arr) { arr = new Array(12).fill(0); byAcct.set(account, arr); }
+        if (!arr) { arr = new Array(cols.length).fill(0); byAcct.set(account, arr); }
         arr[idx] += sen;
       }
     }
@@ -8691,7 +9299,7 @@ app.get("/cost-expense-classes", async (c) => {
     });
     for (const [code, v] of sliceNet) {
       let arr = byAcct.get(code);
-      if (!arr) { arr = new Array(12).fill(0); byAcct.set(code, arr); }
+      if (!arr) { arr = new Array(cols.length).fill(0); byAcct.set(code, arr); }
       arr[obIdxCec] += v;
     }
   }
@@ -8771,9 +9379,8 @@ app.get("/pl-statement", async (c) => {
   const startYm = periodStartYm(period);
   const endYm = periodEndYm(period);
   // FY-YTD window = FY start (per fye_month) → period end.
-  const fyeMonth = await getFyeMonth(c.var.DB);
   const endForFy = new Date(`${endYm ?? new Date().toISOString().slice(0, 7)}-15T00:00:00Z`);
-  const fyWin = fyWindowFor(endForFy, fyeMonth);
+  const fyWin = fyWindowAt(endForFy, await getFySchedule(c.var.DB));
   const fyStartYm = fyWin.startIso.slice(0, 7);
   const orgId = getOrgId(c);
   // FIFO checkpoints once — period end is the latest month either window needs.
@@ -8819,6 +9426,9 @@ app.get("/pl-statement", async (c) => {
       periodLabel: period,
       fyLabel: fyWin.label,
       netSalesSen: p.netSalesSen,
+      // The FY-to-date column's own net sales — its % divides by this, not by
+      // the period's (BUG-2026-10-16-305).
+      ytdNetSalesSen: y.netSalesSen,
       rows: buildPnlRows(p, y, editable),
       materialWarnings,
     },
@@ -9299,10 +9909,9 @@ app.get("/pl-monthly", async (c) => {
   const line: "all" | "sofa" | "bedframe" = lineParam === "sofa" || lineParam === "bedframe" ? lineParam : "all";
   const anchor = c.req.query("anchor");
 
-  const fyeMonth = await getFyeMonth(c.var.DB);
   const anchorYm = /^\d{4}-\d{2}$/.test(anchor ?? "") ? (anchor as string) : new Date().toISOString().slice(0, 7);
   const anchorDate = new Date(`${anchorYm}-01T00:00:00Z`);
-  const fy = fyWindowFor(anchorDate, fyeMonth);
+  const fy = fyWindowAt(anchorDate, await getFySchedule(c.var.DB));
   const fyStartYm = fy.startIso.slice(0, 7);
   const fyEndYm = fy.endIso.slice(0, 7);
   const lastYm = anchorYm < fyEndYm ? anchorYm : fyEndYm;
@@ -9610,7 +10219,9 @@ async function computeCashflowStatement(
   // Local alias so the extracted body reads exactly as it did in the route.
   const c: { var: { DB: Env["Variables"]["DB"] } } = { var: { DB: db } };
   const resolveAcct = await loadAccountResolver(c.var.DB);
-  const fyeMonth = await getFyeMonth(c.var.DB);
+  const cfFy = /^\d{4}-\d{2}$/.test(period) ? fyWindowAt(period, await getFySchedule(c.var.DB)) : null;
+  const fyeMonth = cfFy ? Number(cfFy.endIso.slice(5, 7)) : 12;
+  const fyStartYm = cfFy ? cfFy.startIso.slice(0, 7) : undefined;
   const { docDate, openingDate: obDate } = await loadDocDateResolver(c.var.DB);
 
   const coaRes = await c.var.DB.prepare(
@@ -10027,7 +10638,7 @@ async function computeCashflowStatement(
   }
   const statement = buildStatement({
     classified, bankLegs, coa, map, rmSplit, deptSplit, stockGroupOverride: sgOverride,
-    supplierCategory, fyeMonth, period, editable, trace: !!opts?.traceKey,
+    supplierCategory, fyeMonth, fyStartYm, period, editable, trace: !!opts?.traceKey,
   });
   let drill: CfDrill | undefined;
   if (opts?.traceKey) {
@@ -10747,6 +11358,8 @@ const PV_DRAFT_PREFIX = "DRAFT-";
 
 type PvHeaderForPost = {
   id: string; pvNo: string; payee: string | null; description: string | null;
+  /** The voucher's date — a closed financial year takes no posting (item 9). */
+  date: string | null;
   accrued: number; accrualAccount: string | null; payFrom: string | null; totalSen: number;
 };
 // The ONE place a voucher's ledger legs are built — used by the legacy
@@ -10783,7 +11396,7 @@ async function pvPostingStatements(
     actorUserId,
     orgId,
   });
-  const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+  const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: pv.date });
   return statements;
 }
 
@@ -10833,7 +11446,10 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
     _pendingPvApCols = (async () => {
       // notes / bill_no / bill_date (owner 2026-10-01, the voucher form):
       // internal notes, the supplier's own bill number and date.
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT"]) {
+      // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
+      // finance carries the drawdown's due date and the interest recorded at
+      // drawdown (finance backlog item 17, owner 「提款时就记」).
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -10867,7 +11483,9 @@ function pvExtraFields(body: Record<string, unknown>): { notes: string | null; b
   return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null };
 }
 type PvPartyKind = "SUPPLIER" | "OTHER";
-type PvAllocDocKind = "PI" | "AP";
+// TF = a trade-finance drawdown, repaid by an AP Payment to the lender
+// (finance backlog item 17); docId = the drawdown's payment no.
+type PvAllocDocKind = "PI" | "AP" | "TF";
 type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number };
 
 async function loadPvAllocs(db: Env["Variables"]["DB"], voucherId: string): Promise<PvAlloc[]> {
@@ -10911,7 +11529,11 @@ type PvOpenBill = {
   docKind: PvAllocDocKind; id: string; no: string; ref: string; date: string; dueDate: string | null;
   totalSen: number; paidSen: number; outstandingSen: number; reservedSen: number; reservedBy: string[]; availableSen: number;
   currency: string; foreign: boolean; opening: boolean;
+  /** A drawdown (docKind TF): the interest in its balance (recorded at drawdown). */
+  interestSen?: number;
 };
+// The lender of a trade-finance line, when the supplier picked is one.
+type PvTfLender = { accountCode: string; lenderName: string };
 
 // The creditor's payable documents as the voucher form lists them.
 async function pvOpenBillsFor(
@@ -10920,12 +11542,46 @@ async function pvOpenBillsFor(
   partyKind: PvPartyKind,
   partyId: string,
   exclude: string | null,
-): Promise<{ partyName: string; bills: PvOpenBill[]; advanceOpenSen: number } | null> {
+): Promise<{ partyName: string; bills: PvOpenBill[]; advanceOpenSen: number; tfLender?: PvTfLender } | null> {
   const reserved = await pvReservedByDoc(db, exclude);
   if (partyKind === "SUPPLIER") {
     const sup = await db.prepare("SELECT id, name FROM suppliers WHERE id = ?").bind(partyId)
       .first<{ id: string; name: string }>();
     if (!sup) return null;
+    // The trade-finance lender: what is payable is its open DRAWDOWNS
+    // (finance backlog item 17, owner 2026-10-17) — each with its balance
+    // (interest recorded at drawdown included), minus what other unposted
+    // vouchers already promise it.
+    const tfSources = await getTfSources(db).catch(() => [] as TfSource[]);
+    const lender = tfSources.find((x) => x.lenderSupplierId === partyId);
+    if (lender) {
+      await ensureTfTables(db);
+      const { draws } = await loadTfDraws(db, lender);
+      const open = draws.filter((d) => d.outstandingSen > 0);
+      const forBy = new Map<string, string>();
+      if (open.length > 0) {
+        const nos = open.map((d) => d.drawSourceId);
+        const rs = await db.prepare(
+          `SELECT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN (${nos.map(() => "?").join(", ")})`,
+        ).bind(...nos).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+        for (const r of rs.results ?? []) {
+          const no = String(r.paymentNo ?? r.payment_no ?? "");
+          const nm = String(r.supplierName ?? r.supplier_name ?? "").trim();
+          if (no && nm && !(forBy.get(no) ?? "").split(", ").includes(nm)) forBy.set(no, forBy.get(no) ? `${forBy.get(no)}, ${nm}` : nm);
+        }
+      }
+      const bills: PvOpenBill[] = open.map((d) => {
+        const rsv = reserved.get(`TF|${d.drawSourceId}`);
+        return {
+          docKind: "TF", id: d.drawSourceId, no: d.drawSourceId, ref: forBy.get(d.drawSourceId) ?? "",
+          date: d.drawDate, dueDate: d.dueDate || null,
+          totalSen: d.amountSen, paidSen: d.repaidSen, outstandingSen: d.outstandingSen,
+          reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen: Math.max(0, d.outstandingSen - (rsv?.sen ?? 0)),
+          currency: "MYR", foreign: false, opening: false, interestSen: d.interestSen,
+        };
+      });
+      return { partyName: sup.name, bills, advanceOpenSen: 0, tfLender: { accountCode: lender.accountCode, lenderName: lender.lenderName } };
+    }
     const res = await db.prepare(
       `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening
          FROM purchase_invoices
@@ -10994,11 +11650,14 @@ async function pvOpenBillsFor(
 type PvApValidated = {
   partyKind: PvPartyKind; partyId: string; partyName: string; payFrom: string;
   allocs: PvAlloc[]; advanceSen: number; totalSen: number;
+  /** Paid from a trade-finance line = a drawdown: its due date and the
+      interest recorded at drawdown (null for a bank / cash payment). */
+  tf: { dueDate: string; interestSen: number } | null;
 };
 // Create/edit validation for an AP voucher: party exists, Pay From is bank/
 // cash, every ticked bill is the party's, open, and within (outstanding −
 // reserved elsewhere); a supplier may add an unallocated advance.
-async function validatePvAp(
+export async function validatePvAp(
   db: Env["Variables"]["DB"],
   orgId: string,
   coa: Map<string, { type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>,
@@ -11010,9 +11669,31 @@ async function validatePvAp(
   const partyId = String(body.partyId ?? "");
   if (!partyId) return { ok: false, error: "Pick the creditor to pay" };
   if (body.accrued === true || body.accrued === 1) return { ok: false, error: "An AP payment cannot be accrued — the bill already carries the liability" };
-  const h = validatePvHeader(coa, { payFrom: body.payFrom });
-  if (!h.ok) return h;
-  const payFrom = h.payFrom!;
+  // Paid from a trade-finance line = the lender pays the supplier for us (a
+  // drawdown, finance backlog item 17): a supplier that is not the lender;
+  // the due date defaults to the payment date + the line's tenor; interest
+  // is recorded at drawdown (owner 「提款时就记」).
+  const tfSourcesV = await getTfSources(db).catch(() => [] as TfSource[]);
+  const tfSrc = tfSourcesV.find((x) => x.accountCode === String(body.payFrom ?? ""));
+  let payFrom: string;
+  let tf: { dueDate: string; interestSen: number } | null = null;
+  if (tfSrc) {
+    if (partyKind !== "SUPPLIER") return { ok: false, error: "Only a supplier can be paid through trade finance" };
+    if (tfSourcesV.some((x) => x.lenderSupplierId === partyId)) return { ok: false, error: "The lender is repaid from a bank account — it cannot be paid by drawing on its own line" };
+    const date = String(body.date ?? "").slice(0, 10);
+    const dueIn = String(body.tfDueDate ?? "").slice(0, 10);
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueIn) ? dueIn : /^\d{4}-\d{2}-\d{2}$/.test(date) ? addDays(date, tfSrc.tenorDays) : "";
+    if (!dueDate) return { ok: false, error: "The drawdown needs a due date" };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && dueDate < date) return { ok: false, error: "The drawdown's due date is before the payment date" };
+    const interestSen = Math.round(Number(body.tfInterestSen) || 0);
+    if (interestSen < 0) return { ok: false, error: "Interest cannot be negative" };
+    payFrom = tfSrc.accountCode;
+    tf = { dueDate, interestSen };
+  } else {
+    const h = validatePvHeader(coa, { payFrom: body.payFrom });
+    if (!h.ok) return h;
+    payFrom = h.payFrom!;
+  }
   const open = await pvOpenBillsFor(db, orgId, partyKind, partyId, exclude);
   if (!open) return { ok: false, error: partyKind === "SUPPLIER" ? "Supplier not found" : "Other creditor not found" };
   const rawAllocs = Array.isArray(body.allocations) ? (body.allocations as Record<string, unknown>[]) : [];
@@ -11037,19 +11718,26 @@ async function validatePvAp(
   }
   const advanceSen = Math.max(0, Math.round(Number(body.advanceSen) || 0));
   if (advanceSen > 0 && partyKind !== "SUPPLIER") return { ok: false, error: "An advance is only for suppliers — other creditors are paid against their bills" };
+  if (open.tfLender) {
+    // A repayment of trade finance: drawdowns only, no advance.
+    if (advanceSen > 0) return { ok: false, error: "A trade-finance repayment has no advance — tick the drawdowns it repays" };
+    if (allocs.length === 0) return { ok: false, error: "Tick at least one drawdown to repay" };
+  }
   if (allocs.length === 0 && advanceSen <= 0) return { ok: false, error: "Tick at least one bill (or enter an advance)" };
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
-  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen } };
+  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen, tf } };
 }
 
 type PvApHeader = {
   id: string; pvNo: string; date: string; payFrom: string; partyKind: PvPartyKind; partyId: string;
   reference: string | null; advanceSen: number;
+  /** A drawdown (Paid from a trade-finance line): due date + interest at drawdown. */
+  tfDueDate?: string | null; tfInterestSen?: number;
 };
 // The posting moment of an AP voucher — the settlement document is built by the
 // page-native builders under paymentNo = pvNo. Returns the statements to batch;
 // the caller adds the voucher's own state flip.
-async function pvApSettlementStatements(
+export async function pvApSettlementStatements(
   db: Env["Variables"]["DB"],
   orgId: string,
   actorUserId: string | null,
@@ -11058,15 +11746,49 @@ async function pvApSettlementStatements(
 ): Promise<{ ok: true; statements: D1PreparedStatement[]; totalSen: number } | { ok: false; error: string }> {
   if (pv.partyKind === "SUPPLIER") {
     const tfSources = await getTfSources(db).catch(() => [] as TfSource[]);
-    if (tfSources.some((s) => s.lenderSupplierId === pv.partyId)) {
-      return { ok: false, error: "This supplier is a trade-finance lender — record the repayment on the Supplier Payment page" };
+    const lender = tfSources.find((s) => s.lenderSupplierId === pv.partyId);
+    if (lender) {
+      // A trade-finance REPAYMENT (finance backlog item 17): the ticked
+      // drawdowns, re-checked against today's balances, posted by the same
+      // builder the Supplier Payment page uses (DR <TF account> / CR bank).
+      if (tfSources.some((s) => s.accountCode === pv.payFrom)) {
+        return { ok: false, error: "A trade-finance repayment cannot be paid FROM the trade-finance account" };
+      }
+      const chk = await validateTfRepayment(db, lender, allocs.filter((a) => a.docKind === "TF").map((a) => ({ drawSourceId: a.docId, paySen: a.amountSen })));
+      if (!chk.ok) return chk;
+      const statements = await tfRepaymentStatements(db, {
+        orgId, actorUserId, lender, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
+        allocations: chk.allocations, totalSen: chk.totalSen, paymentNo: pv.pvNo,
+      });
+      return { ok: true, statements, totalSen: chk.totalSen };
+    }
+    // Paid from a trade-finance line = a DRAWDOWN (finance backlog item 17):
+    // the same supplier payment (DR creditors · CR the TF line), its due date
+    // in trade_finance_draws, and the interest recorded at drawdown
+    // (DR 900-I004 · CR the TF line, dated the payment day) in the same entry
+    // chain — exactly what the Creditor Aging interest box would post.
+    const drawSrc = tfSources.find((s) => s.accountCode === pv.payFrom);
+    let extraLegs: LedgerEntryInput[] = [];
+    if (drawSrc && (pv.tfInterestSen ?? 0) > 0) {
+      const acctErr = await ensureTfInterestAccount(db);
+      if (acctErr) return { ok: false, error: acctErr };
+      extraLegs = tfInterestLegs({ drawSourceId: pv.pvNo, accountCode: drawSrc.accountCode, chargeDate: pv.date, deltaSen: pv.tfInterestSen ?? 0, legNoBase: 1, actorUserId, orgId });
     }
     const built = await buildSupplierPaymentCreate(db, {
       orgId, actorUserId, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
       allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ({ piId: a.docId, payMyrSen: a.amountSen })),
-      advanceSen: pv.advanceSen, paymentNo: pv.pvNo,
+      advanceSen: pv.advanceSen, paymentNo: pv.pvNo, extraLegs,
     });
     if (!built.ok) return built;
+    if (drawSrc) {
+      await ensureTfTables(db);
+      built.statements.push(
+        db.prepare(
+          `INSERT INTO trade_finance_draws (draw_source_id, account_code, draw_date, due_date, org_id)
+           VALUES (?, ?, ?, ?, ?) ON CONFLICT (draw_source_id) DO NOTHING`,
+        ).bind(pv.pvNo, drawSrc.accountCode, pv.date, pv.tfDueDate || addDays(pv.date, drawSrc.tenorDays), orgId),
+      );
+    }
     return { ok: true, statements: built.statements, totalSen: built.totalBank };
   }
   const party = await db.prepare("SELECT * FROM other_parties WHERE id = ? AND orgId = ?").bind(pv.partyId, orgId)
@@ -11103,6 +11825,203 @@ app.get("/payment-vouchers/open-bills", async (c) => {
   if (!open) return c.json({ success: false, error: "Creditor not found" }, 404);
   return c.json({ success: true, data: { partyKind, partyId, ...open } });
 });
+
+// ---------------------------------------------------------------------------
+// GET /ap-payment-print?paymentNo= — what a printed AP payment shows beyond its
+// own row (owner 2026-10-17, print design 1a): per bill paid, the supplier's
+// invoice no., bill date, due date, the bill's balance just BEFORE this payment
+// and what this payment put on it; the advance; and the party's balance before.
+// One read for all three doors that pay creditors' bills: an AP Payment voucher
+// (by its PV number — allocations, posted or not), a Supplier Payment and an
+// Other Creditor Payment (by payment number). Read-only.
+//
+// "Before" is anchored on today's paid amount: a bill's balance before = what
+// it owes now + what this payment put on it + what payments dated AFTER this
+// one put on it (void / deleted payments excluded — their amounts were already
+// given back). A same-day payment counts as before. The supplier's balance is
+// the supplier statement's balance at the payment date with this payment's own
+// rows added back; an other creditor's is the sum of its bills' balances before.
+// ---------------------------------------------------------------------------
+app.get("/ap-payment-print", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const paymentNo = String(c.req.query("paymentNo") ?? "").trim();
+  if (!paymentNo) return c.json({ success: false, error: "paymentNo required" }, 400);
+  const data = await loadApPaymentPrint(c.var.DB, getOrgId(c), paymentNo);
+  if (!data) return c.json({ success: false, error: "No creditor payment with that number" }, 404);
+  return c.json({ success: true, data });
+});
+
+type ApPrintSource = {
+  partyKind: PvPartyKind;
+  partyId: string;
+  date: string;
+  allocs: { docKind: PvAllocDocKind; docId: string; paidSen: number }[];
+  advanceSen: number;
+  tfRepaySen: number;
+};
+
+async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentNo: string): Promise<ApPrintSource | null> {
+  await ensurePvApColumns(db).catch(() => {});
+  const pv = await db.prepare(
+    "SELECT id, date, pv_kind, party_kind, party_id, advance_sen FROM payment_vouchers WHERE pvNo = ?",
+  ).bind(paymentNo).first<Record<string, unknown>>().catch(() => null);
+  if (pv && String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
+    const allocs = await loadPvAllocs(db, String(pv.id));
+    return {
+      partyKind: String(pv.partyKind ?? pv.party_kind ?? "") === "OTHER" ? "OTHER" : "SUPPLIER",
+      partyId: String(pv.partyId ?? pv.party_id ?? ""),
+      date: String(pv.date ?? "").slice(0, 10),
+      // A repayment of trade finance prints as its total (like the Supplier
+      // Payment page's TF_REPAYMENT), not as bill rows.
+      allocs: allocs.filter((a) => a.docKind !== "TF").map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen })),
+      advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
+      tfRepaySen: allocs.filter((a) => a.docKind === "TF").reduce((s, a) => s + a.amountSen, 0),
+    };
+  }
+  const sp = await db.prepare(
+    `SELECT supplier_id, purchase_invoice_id, date, amount_sen, method FROM supplier_payments
+      WHERE payment_no = ? AND org_id = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'`,
+  ).bind(paymentNo, orgId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const spRows = sp.results ?? [];
+  if (spRows.length) {
+    const out: ApPrintSource = {
+      partyKind: "SUPPLIER", partyId: String(spRows[0].supplierId ?? spRows[0].supplier_id ?? ""),
+      date: String(spRows[0].date ?? "").slice(0, 10), allocs: [], advanceSen: 0, tfRepaySen: 0,
+    };
+    for (const r of spRows) {
+      const sen = Math.round(Number(r.amountSen ?? r.amount_sen) || 0);
+      const pi = (r.purchaseInvoiceId ?? r.purchase_invoice_id) as string | null;
+      if (pi) out.allocs.push({ docKind: "PI", docId: String(pi), paidSen: sen });
+      else if (String(r.method ?? "") === "TF_REPAYMENT") out.tfRepaySen += sen;
+      else out.advanceSen += sen;
+    }
+    return out;
+  }
+  const op = await db.prepare(
+    `SELECT partyId, partyType, billId, date, amountSen FROM other_party_payments WHERE paymentNo = ? AND orgId = ?`,
+  ).bind(paymentNo, orgId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const opRows = (op.results ?? []).filter((r) => String(r.partyType ?? r.party_type ?? "") === "CREDITOR");
+  if (!opRows.length) return null;
+  return {
+    partyKind: "OTHER", partyId: String(opRows[0].partyId ?? opRows[0].party_id ?? ""),
+    date: String(opRows[0].date ?? "").slice(0, 10),
+    allocs: opRows.map((r) => ({ docKind: "AP" as const, docId: String(r.billId ?? r.bill_id ?? ""), paidSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0) })),
+    advanceSen: 0, tfRepaySen: 0,
+  };
+}
+
+async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, paymentNo: string) {
+  const src = await apPrintSource(db, orgId, paymentNo);
+  if (!src) return null;
+  const inList = (n: number) => Array.from({ length: n }, () => "?").join(",");
+  const bills: ApPrintBillOut[] = [];
+  let balanceBeforeSen: number | null = null;
+
+  if (src.partyKind === "SUPPLIER") {
+    const piIds = [...new Set(src.allocs.map((a) => a.docId))];
+    const [piRes, setRes] = piIds.length
+      ? await Promise.all([
+          db.prepare(
+            `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen
+               FROM purchase_invoices WHERE id IN (${inList(piIds.length)})`,
+          ).bind(...piIds).all<Record<string, unknown>>(),
+          db.prepare(
+            `SELECT payment_no, purchase_invoice_id, date, COALESCE(booked_sen, amount_sen) AS sen FROM supplier_payments
+              WHERE purchase_invoice_id IN (${inList(piIds.length)}) AND org_id = ?
+                AND payment_no NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'supplier_payment' AND state IN ('VOID','DELETED'))`,
+          ).bind(...piIds, orgId).all<Record<string, unknown>>(),
+        ])
+      : [{ results: [] as Record<string, unknown>[] }, { results: [] as Record<string, unknown>[] }];
+    const piById = new Map((piRes.results ?? []).map((p) => [String(p.id), p]));
+    const setsByPi = new Map<string, BillSettlement[]>();
+    for (const r of setRes.results ?? []) {
+      const k = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? "");
+      const list = setsByPi.get(k) ?? [];
+      list.push({ paymentNo: String(r.paymentNo ?? r.payment_no ?? ""), date: String(r.date ?? "").slice(0, 10), sen: Math.round(Number(r.sen) || 0) });
+      setsByPi.set(k, list);
+    }
+    for (const a of src.allocs) {
+      const p = piById.get(a.docId);
+      if (!p) { bills.push({ docNo: "", supplierInvNo: "", billDate: "", dueDate: "", outstandingBeforeSen: null, paidSen: a.paidSen }); continue; }
+      bills.push({
+        docNo: String(p.piNo ?? p.pi_no ?? ""),
+        supplierInvNo: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""),
+        billDate: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
+        dueDate: String(p.dueDate ?? p.due_date ?? "").slice(0, 10),
+        outstandingBeforeSen: billOutstandingBefore(
+          { totalSen: Math.round(Number(p.amountSen ?? p.amount_sen) || 0), paidSen: Math.round(Number(p.paidAmountSen ?? p.paid_amount_sen) || 0) },
+          setsByPi.get(a.docId) ?? [], paymentNo, src.date,
+        ),
+        paidSen: a.paidSen,
+      });
+    }
+    if (src.partyId) {
+      const { sup, lines } = await supplierStatementLines(db, src.partyId);
+      if (sup) {
+        const obDate = await getOpeningDate(db);
+        balanceBeforeSen = statementBalanceBefore(
+          lines.filter((l) => !rowBeforeOpening(l.date, obDate, l.isOpening)),
+          paymentNo, src.date,
+        );
+      }
+    }
+  } else {
+    // An other creditor: every live bill of the party, so the balance covers
+    // the bills this payment did not touch too.
+    const billRes = await db.prepare(
+      `SELECT b.id, b.billNo, b.billDate, b.referenceNo, b.totalSen, b.paidAmountSen
+         FROM other_party_bills b
+         LEFT JOIN document_lifecycle dl ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
+        WHERE b.orgId = ? AND b.partyId = ? AND b.partyType = 'CREDITOR' AND (dl.state IS NULL OR dl.state = 'ACTIVE')`,
+    ).bind(orgId, src.partyId).all<Record<string, unknown>>();
+    const setRes = await db.prepare(
+      `SELECT p.paymentNo, p.billId, p.date, p.amountSen FROM other_party_payments p
+         LEFT JOIN document_lifecycle dl ON dl.orgId = p.orgId AND dl.sourceType = 'other_party_payment' AND dl.sourceId = p.paymentNo
+        WHERE p.orgId = ? AND p.partyId = ? AND (dl.state IS NULL OR dl.state = 'ACTIVE')`,
+    ).bind(orgId, src.partyId).all<Record<string, unknown>>();
+    const setsByBill = new Map<string, BillSettlement[]>();
+    for (const r of setRes.results ?? []) {
+      const k = String(r.billId ?? r.bill_id ?? "");
+      const list = setsByBill.get(k) ?? [];
+      list.push({ paymentNo: String(r.paymentNo ?? r.payment_no ?? ""), date: String(r.date ?? "").slice(0, 10), sen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0) });
+      setsByBill.set(k, list);
+    }
+    const beforeOf = (b: Record<string, unknown>) => billOutstandingBefore(
+      { totalSen: Math.round(Number(b.totalSen ?? b.total_sen) || 0), paidSen: Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0) },
+      setsByBill.get(String(b.id)) ?? [], paymentNo, src.date,
+    );
+    const billById = new Map((billRes.results ?? []).map((b) => [String(b.id), b]));
+    for (const a of src.allocs) {
+      const b = billById.get(a.docId);
+      if (!b) { bills.push({ docNo: "", supplierInvNo: "", billDate: "", dueDate: "", outstandingBeforeSen: null, paidSen: a.paidSen }); continue; }
+      bills.push({
+        docNo: String(b.billNo ?? b.bill_no ?? ""),
+        supplierInvNo: String(b.referenceNo ?? b.reference_no ?? ""),
+        billDate: String(b.billDate ?? b.bill_date ?? "").slice(0, 10),
+        dueDate: "",
+        outstandingBeforeSen: beforeOf(b),
+        paidSen: a.paidSen,
+      });
+    }
+    balanceBeforeSen = (billRes.results ?? [])
+      .filter((b) => String(b.billDate ?? b.bill_date ?? "").slice(0, 10) <= src.date)
+      .reduce((t, b) => t + beforeOf(b), 0);
+  }
+  // The payee's bank from its master (Finance v2 party fields). SELECT * so a
+  // party table that has not grown the column yet still answers.
+  let payeeBank = "";
+  if (src.partyId) {
+    const party = await db.prepare(
+      src.partyKind === "SUPPLIER" ? "SELECT * FROM suppliers WHERE id = ?" : "SELECT * FROM other_parties WHERE id = ?",
+    ).bind(src.partyId).first<Record<string, unknown>>().catch(() => null);
+    payeeBank = String((party?.bankAccount ?? party?.bank_account) ?? "").trim();
+  }
+  return {
+    paymentNo, partyKind: src.partyKind, partyId: src.partyId, date: src.date,
+    bills, advanceSen: src.advanceSen, tfRepaySen: src.tfRepaySen, balanceBeforeSen, payeeBank,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // PV attachments (owner 2026-09-22, Houzs: 「附件：Cancelled 的不收；Checked 之后
@@ -11162,6 +12081,7 @@ app.post("/payment-vouchers/:id/attachments", async (c) => {
   if (!(file instanceof File)) return c.json({ success: false, error: "file field required" }, 400);
   const stored = await storeUploadedFile(c, { file, resourceType: PV_ATTACH_RESOURCE, resourceId: id });
   if (!stored.ok) return c.json({ success: false, error: stored.error }, stored.status);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "attach", after: stored.data });
   return c.json({ success: true, data: stored.data }, 201);
 });
 
@@ -11186,6 +12106,7 @@ app.delete("/payment-vouchers/:id/attachments/:fileId", async (c) => {
   if (!own) return c.json({ success: false, error: "Attachment not found on this voucher" }, 404);
   const removed = await removeStoredFile(c, fileId);
   if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "detach", before: { fileId } });
   return c.json({ success: true });
 });
 
@@ -11234,7 +12155,8 @@ app.get("/payment-vouchers", async (c) => {
       const list = allocsByVoucher.get(vid) ?? [];
       list.push({
         docKind: kind, docId: String(a.docId ?? a.doc_id ?? ""),
-        docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : (a.billNo ?? a.bill_no)) ?? ""),
+        // A trade-finance drawdown line (docKind TF) is named by its own payment no.
+        docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : kind === "TF" ? (a.docId ?? a.doc_id) : (a.billNo ?? a.bill_no)) ?? ""),
         docRef: String((kind === "PI" ? (a.piRef ?? a.pi_ref) : (a.billRef ?? a.bill_ref)) ?? ""),
         amountSen: Math.round(Number(a.amountSen ?? a.amount_sen) || 0),
       });
@@ -11282,6 +12204,9 @@ app.get("/payment-vouchers", async (c) => {
       for (const u of uRes.results ?? []) nameById.set(String(u.id), String(u.displayName ?? u.display_name ?? ""));
     }
     const nm = (r: Record<string, unknown>, a: string, b: string) => { const id = (r[a] ?? r[b]); return typeof id === "string" ? (nameById.get(id) ?? null) : null; };
+    // Today's code for a renamed account (class C32), as the receipts read.
+    const resolveCode = await loadAccountResolver(c.var.DB);
+    const rc = (v: unknown) => (typeof v === "string" && v ? resolveCode(v) : v);
     const data = (pvRes.results ?? []).map((v) => {
       const r = v as Record<string, unknown>;
       const id = String(r.id);
@@ -11295,14 +12220,18 @@ app.get("/payment-vouchers", async (c) => {
         ...(v as object),
         status: apVoided ? "VOID" : r.status,
         lifecycleState: isAp ? (String(r.approvalState ?? r.approval_state ?? "APPROVED") === "APPROVED" ? (settlementState ?? "ACTIVE") : (r.status === "VOID" ? "VOID" : "ACTIVE")) : (r.lifecycleState ?? r.lifecycle_state ?? null),
-        pvKind: isAp ? PV_KIND_AP : "EXPENSE",
+        // A transfer keeps its kind (BUG-2026-10-17-309: it was read back as
+        // EXPENSE, so a transfer printed, listed and edited as a payment).
+        pvKind: isAp ? PV_KIND_AP : String(r.pvKind ?? r.pv_kind ?? "") === PV_KIND_TRANSFER ? PV_KIND_TRANSFER : "EXPENSE",
         partyKind: (r.partyKind ?? r.party_kind ?? null) as string | null,
         partyId: (r.partyId ?? r.party_id ?? null) as string | null,
         advanceSen: Math.round(Number(r.advanceSen ?? r.advance_sen) || 0),
         advanceOpenSen: isAp && !apVoided ? (advanceOpenByNo.get(pvNo) ?? 0) : 0,
         allocs: allocsByVoucher.get(id) ?? [],
         attachmentCount: attachCountById.get(id) ?? 0,
-        lines: lines.filter((l) => l.voucherId === id),
+        payFrom: rc(r.payFrom ?? r.pay_from),
+        accrualAccount: rc(r.accrualAccount ?? r.accrual_account),
+        lines: lines.filter((l) => l.voucherId === id).map((l) => ({ ...l, accountCode: rc((l as { accountCode?: string }).accountCode) })),
         preparedByName: nm(r, "preparedBy", "prepared_by"),
         checkedByName: nm(r, "checkedBy", "checked_by"),
         approvedByName: nm(r, "approvedBy", "approved_by"),
@@ -11358,8 +12287,8 @@ app.post("/payment-vouchers", async (c) => {
              accrualAccount, settledAt, productLine, totalSen, status,
              approval_state, approved_at, approved_by,
              createdBy, created_at, updated_at,
-             pv_kind, party_kind, party_id, advance_sen
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id, pvNo, date, ap.v.partyName, reference, ap.v.payFrom,
           ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
@@ -11367,6 +12296,7 @@ app.post("/payment-vouchers", async (c) => {
           asDraft ? null : now, asDraft ? null : actorUserId,
           actorUserId, now, now,
           PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
+          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
         ),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ];
@@ -11376,11 +12306,13 @@ app.post("/payment-vouchers", async (c) => {
         const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
           id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
           reference: reference || null, advanceSen: ap.v.advanceSen,
+          tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0,
         }, ap.v.allocs);
         if (!built.ok) return c.json({ success: false, error: built.error }, 400);
         statements.push(...built.statements);
       }
       await c.var.DB.batch(statements);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "create", after: { pvNo, ...(await pvAuditSnapshot(c.var.DB, id)) } });
       return c.json({ success: true, data: { id, pvNo } }, 201);
     }
 
@@ -11441,11 +12373,12 @@ app.post("/payment-vouchers", async (c) => {
     ];
     if (!asDraft) {
       statements.push(...await pvPostingStatements(c.var.DB, orgId, actorUserId, {
-        id, pvNo, payee: isTransfer ? "" : String(body.payee ?? ""), description: String(body.description ?? ""),
+        id, pvNo, date, payee: isTransfer ? "" : String(body.payee ?? ""), description: String(body.description ?? ""),
         accrued: accrued ? 1 : 0, accrualAccount, payFrom, totalSen: v.totalSen,
       }, v.lines));
     }
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "create", after: { pvNo, ...(await pvAuditSnapshot(c.var.DB, id)) } });
     return c.json({ success: true, data: { id, pvNo } }, 201);
   } catch (e) {
     console.error("[pv] create failed:", e);
@@ -11479,6 +12412,7 @@ app.put("/payment-vouchers/:id", async (c) => {
     if (state !== "DRAFT" && state !== "PREPARED") {
       return c.json({ success: false, error: state === "CHECKED" ? "Checked vouchers are locked — Reject it back to draft to change anything." : "Already posted — use Edit (restate) on the posted voucher instead." }, 400);
     }
+    const pvBefore = await pvAuditSnapshot(c.var.DB, id);
     const date = String(body.date || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
     const coaRes = await c.var.DB.prepare(
@@ -11494,12 +12428,13 @@ app.put("/payment-vouchers/:id", async (c) => {
       await c.var.DB.batch([
         c.var.DB.prepare(
           `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
-                  party_kind = ?, party_id = ?, advance_sen = ?, updated_at = ? WHERE id = ?`,
+                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, updated_at = ? WHERE id = ?`,
         ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
-          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, now, id),
+          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, now, id),
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "update", before: pvBefore, after: await pvAuditSnapshot(c.var.DB, id) });
       return c.json({ success: true });
     }
     // The kind is fixed at birth — a transfer stays a transfer.
@@ -11533,6 +12468,7 @@ app.put("/payment-vouchers/:id", async (c) => {
         ).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx),
       ),
     ]);
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "update", before: pvBefore, after: await pvAuditSnapshot(c.var.DB, id) });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -11623,6 +12559,8 @@ async function pvApprovalCore(
       partyId: String(pv.partyId ?? pv.party_id ?? ""),
       reference: String(pv.description ?? "") || null,
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
+      tfDueDate: (pv.tfDueDate ?? pv.tf_due_date ?? null) as string | null,
+      tfInterestSen: Math.round(Number(pv.tfInterestSen ?? pv.tf_interest_sen) || 0),
     }, allocs);
     if (!built.ok) return fail(built.error);
     await db.batch([
@@ -11642,7 +12580,7 @@ async function pvApprovalCore(
   if (!lines.length) return fail("This voucher has no lines");
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
   const posting = await pvPostingStatements(db, orgId, actorUserId, {
-    id, pvNo, payee: String(pv.payee ?? ""), description: String(pv.description ?? ""),
+    id, pvNo, date: String(pv.date ?? "").slice(0, 10) || null, payee: String(pv.payee ?? ""), description: String(pv.description ?? ""),
     accrued: Number(pv.accrued) === 1 ? 1 : 0,
     accrualAccount: (pv.accrualAccount ?? pv.accrual_account) as string | null,
     payFrom: (pv.payFrom ?? pv.pay_from) as string | null,
@@ -11673,6 +12611,7 @@ app.post("/payment-vouchers/:id/approval", async (c) => {
   const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   const r = await pvApprovalCore(c.var.DB, getOrgId(c), actorUserId, c.req.param("id"), action, reason);
   if (!r.ok) return c.json({ success: false, error: r.error }, 400);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: c.req.param("id"), action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   return c.json({ success: true, data: { pvNo: r.pvNo, state: r.state } });
 });
 
@@ -11706,6 +12645,7 @@ app.post("/payment-vouchers/approval-batch", async (c) => {
   for (const id of ordered) {
     const r = await pvApprovalCore(c.var.DB, orgId, actorUserId, id, action, reason);
     results.push(r.ok ? { id, ok: true, pvNo: r.pvNo } : { id, ok: false, error: r.error });
+    if (r.ok) await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   }
   return c.json({ success: true, data: { results, done: results.filter((r) => r.ok).length } });
 });
@@ -11774,6 +12714,7 @@ app.post("/payment-vouchers/:id/settle", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }, // settled today
     );
     await c.var.DB.batch([
       c.var.DB.prepare(
@@ -11781,8 +12722,10 @@ app.post("/payment-vouchers/:id/settle", async (c) => {
       ).bind(payFrom, new Date().toISOString(), new Date().toISOString(), id),
       ...ledgerStmts,
     ]);
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "settle" });
     return c.json({ success: true });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -11798,7 +12741,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
 
   await ensurePvApprovalCols(c.var.DB);
   await ensurePvApColumns(c.var.DB);
-  const pv = await c.var.DB.prepare("SELECT id, pvNo, status, approval_state, pv_kind, party_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; status: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null; party_kind?: string | null; partyKind?: string | null }>();
+  const pv = await c.var.DB.prepare("SELECT id, pvNo, date, status, approval_state, pv_kind, party_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; date?: string | null; status: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null; party_kind?: string | null; partyKind?: string | null }>();
   if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
 
   // A draft-road voucher that never reached APPROVE has no ledger legs —
@@ -11824,6 +12767,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
         c.var.DB.prepare("UPDATE payment_vouchers SET status = 'DRAFT', updated_at = ? WHERE id = ?").bind(now, id),
         lifecycleRow("ACTIVE"),
       ]);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: "ACTIVE" } });
       return c.json({ success: true, data: { state: "ACTIVE" } });
     }
     if (action === "delete") {
@@ -11831,10 +12775,12 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
         c.var.DB.prepare("UPDATE payment_vouchers SET status = 'VOID', updated_at = ? WHERE id = ?").bind(now, id),
         lifecycleRow("DELETED"),
       ]);
+      await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: "DELETED" } });
       return c.json({ success: true, data: { state: "DELETED" } });
     }
     if (pv.status === "VOID") return c.json({ success: false, error: "Already cancelled" }, 400);
     await c.var.DB.prepare("UPDATE payment_vouchers SET status = 'VOID', updated_at = ? WHERE id = ?").bind(now, id).run();
+    await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: "VOID" } });
     return c.json({ success: true, data: { state: "VOID" } });
   }
 
@@ -11873,7 +12819,7 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
 
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["payment_voucher", "payment_voucher_settle"], voidSourceType: "payment_voucher_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${pv.pvNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: pv.date ?? null, baseSourceTypes: ["payment_voucher", "payment_voucher_settle"], voidSourceType: "payment_voucher_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${pv.pvNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // doc-specific side effect: sync status column (lifecycle state is source of truth; this is for UI)
@@ -11883,13 +12829,17 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
     c.var.DB.prepare("UPDATE payment_vouchers SET status = ? WHERE id = ?").bind(docStatus, id),
   ];
   // Cover restate legs (payment_voucher_restate_post:*) on void/delete so an
-  // edited-then-voided voucher still nets to zero in the GL.
+  // edited-then-voided voucher still nets to zero in the GL; an unvoid brings
+  // back the EDITED legs, not the pre-edit ones (class C5).
   if (lc.newState !== "ACTIVE") {
     statements.push(
       c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%'`).bind(id, orgId),
     );
+  } else {
+    statements.push(...(await restoreEditedFamilyStatements(c.var.DB, orgId, "payment_voucher", id)));
   }
   await c.var.DB.batch(statements);
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -11905,8 +12855,13 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
   try {
     await ensurePvApprovalCols(c.var.DB);
     await ensurePvApColumns(c.var.DB);
-    const pv = await c.var.DB.prepare("SELECT id, pvNo, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
+    const pv = await c.var.DB.prepare("SELECT id, pvNo, date, status, approval_state, pv_kind FROM payment_vouchers WHERE id = ?").bind(id).first<{ id: string; pvNo: string; date?: string | null; status: string | null; approval_state?: string | null; approvalState?: string | null; pv_kind?: string | null; pvKind?: string | null }>();
     if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+    // A cancelled voucher's legs are hidden; editing it would post live ones
+    // under a VOID voucher (the screen never offers it — the server refuses too).
+    if (String(pv.status ?? "") === "VOID" || (await getDocState(c.var.DB, orgId, "payment_voucher", id)) !== "ACTIVE") {
+      return c.json({ success: false, error: "This voucher is cancelled — restore it before editing." }, 400);
+    }
     if (String((pv.approvalState ?? pv.approval_state) ?? "APPROVED") !== "APPROVED") {
       return c.json({ success: false, error: "Not posted yet — edit the draft directly, no restate needed." }, 400);
     }
@@ -11954,14 +12909,17 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
 
     const statements: D1PreparedStatement[] = [];
     // 1. Reverse the live voucher legs (incl. any settle legs).
-    const cur = (await c.var.DB.prepare(`SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'payment_voucher%'`).bind(id, orgId).all<{ accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
+    const cur = (await c.var.DB.prepare(`SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'payment_voucher%'`).bind(id, orgId).all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
     const revLegs = cur.map((l, i) => ({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: `payment_voucher_restate_rev:${stamp}`, sourceId: id, legNo: i + 1, accountCode: l.accountCode, debitSen: l.creditSen, creditSen: l.debitSen, description: `Restate rev · ${pv.pvNo}`, actorUserId, orgId }));
     // 2. Corrected legs (DR expense lines, CR pay-from / accrual).
     const postSource = `payment_voucher_restate_post:${stamp}`;
     const newLegs: LedgerEntryInput[] = v.lines.map((l, idx) => ({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: id, legNo: idx + 1, accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0, description: `${pv.pvNo} · ${l.description || body.description || "Payment"}${accrued ? " (accrued)" : ""}`, actorUserId, orgId }));
     newLegs.push({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: id, legNo: newLegs.length + 1, accountCode: creditAccount, debitSen: 0, creditSen: v.totalSen, description: `${pv.pvNo} · ${body.payee ? `to ${body.payee}` : "Payment"}${accrued ? " (accrued)" : ""}`, actorUserId, orgId });
-    const { statements: jeStmts } = await buildJournalEntryStatements(c.var.DB, orgId, [...revLegs, ...newLegs]);
-    statements.push(...jeStmts);
+    // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+    const carry = await planEditBankCarry(c.var.DB, cur, newLegs, "voucher");
+    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
+    const { statements: jeStmts } = await buildJournalEntryStatements(c.var.DB, orgId, [...revLegs, ...newLegs], { docDate: [pv.date ?? null, date] });
+    statements.push(...jeStmts, ...carry.statements);
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
     const extra = pvExtraFields(body as Record<string, unknown>);
@@ -11973,6 +12931,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     await c.var.DB.batch(statements);
     return c.json({ success: true, data: { id, pvNo: pv.pvNo } });
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[pv] restate failed:", e);
     return c.json({ success: false, error: "Failed to update the payment voucher" }, 400);
   }
@@ -12079,80 +13038,115 @@ app.get("/official-receipts", async (c) => {
         `SELECT * FROM official_receipt_lines ORDER BY lineOrder`,
       ).all(),
     ]);
-    const lines = (lineRes.results ?? []) as { receiptId: string }[];
-    const data = (orRes.results ?? []).map((r) => ({
-      ...(r as object),
-      lines: lines.filter((l) => l.receiptId === (r as { id: string }).id),
-    }));
+    // A receipt keeps the account code it was posted with; when the chart
+    // later RENAMED that code, the edit form, popup and print must see
+    // today's code (class C32 — HOR-2610-002's line said 407-0000, renamed
+    // 440-0040, and the form showed an empty account).
+    const resolve = await loadAccountResolver(c.var.DB);
+    const lines = (lineRes.results ?? []) as { receiptId: string; accountCode: string }[];
+    const data = (orRes.results ?? []).map((r) => {
+      const row = r as { id: string; payTo?: string | null };
+      return {
+        ...(r as object),
+        payTo: row.payTo ? resolve(row.payTo) : row.payTo,
+        lines: lines.filter((l) => l.receiptId === row.id).map((l) => ({ ...l, accountCode: resolve(l.accountCode) })),
+      };
+    });
     return c.json({ success: true, data });
   } catch {
     return c.json({ success: true, data: [], migrationMissing: true });
   }
 });
 
+// One validation for posting AND editing an official receipt: the date, the
+// income lines, and the bank / cash account the money went into.
+type OfficialReceiptInput = {
+  date: string; payTo: string; receivedFrom: string; description: string;
+  lines: { accountCode: string; description: string; amountSen: number }[]; totalSen: number;
+};
+async function validateOfficialReceipt(
+  db: Env["Variables"]["DB"],
+  body: Record<string, unknown>,
+): Promise<{ ok: true; v: OfficialReceiptInput } | { ok: false; error: string }> {
+  const date = String(body.date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "date must be YYYY-MM-DD" };
+  const coaRes = await db.prepare(
+    `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
+  ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
+  const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
+  const lv = validateDocLines(coa, body.lines);
+  if (!lv.ok) return { ok: false, error: lv.error };
+  const payTo = String(body.payTo || "");
+  const payToAcct = coa.get(payTo);
+  if (!payToAcct || (payToAcct.specialAccountType !== "SBK" && payToAcct.specialAccountType !== "SCH")) {
+    return { ok: false, error: "Deposit To must be a bank (SBK) or cash (SCH) account" };
+  }
+  return {
+    ok: true,
+    v: { date, payTo, receivedFrom: String(body.receivedFrom ?? ""), description: String(body.description ?? ""), lines: lv.lines, totalSen: lv.totalSen },
+  };
+}
+
+// A receipt's legs: DR the bank / cash account (leg 1, its id chosen by the
+// caller so an edit can move a bank match onto it), CR each line.
+function officialReceiptLegs(
+  v: OfficialReceiptInput,
+  doc: { id: string; orNo: string; sourceType: string; bankLegId: string },
+  actorUserId: string | null,
+  orgId: string,
+): LedgerEntryInput[] {
+  return [
+    {
+      id: doc.bankLegId,
+      sourceType: doc.sourceType,
+      sourceId: doc.id,
+      legNo: 1,
+      accountCode: v.payTo,
+      debitSen: v.totalSen,
+      creditSen: 0,
+      description: `${doc.orNo} · ${v.receivedFrom ? `from ${v.receivedFrom}` : "Receipt"}`,
+      actorUserId,
+      orgId,
+    },
+    ...v.lines.map((l, idx) => ({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: doc.sourceType,
+      sourceId: doc.id,
+      legNo: idx + 2,
+      accountCode: l.accountCode,
+      debitSen: 0,
+      creditSen: l.amountSen,
+      description: `${doc.orNo} · ${l.description || v.description || "Receipt"}`,
+      actorUserId,
+      orgId,
+    })),
+  ];
+}
+
 app.post("/official-receipts", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
   try {
     const body = await c.req.json();
-    const date = String(body.date || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
-    }
-    const coaRes = await c.var.DB.prepare(
-      `SELECT code, type, specialAccountType, ${EFFECTIVE_POSTABLE_SQL} FROM chart_of_accounts`,
-    ).all<{ code: string; type: CoaRow["type"]; specialAccountType: string | null; isPostable: number | null }>();
-    const coa = new Map((coaRes.results ?? []).map((a) => [a.code, a] as const));
-    const v = validateDocLines(coa, body.lines);
-    if (!v.ok) return c.json({ success: false, error: v.error }, 400);
-    const payTo = String(body.payTo || "");
-    const payToAcct = coa.get(payTo);
-    if (!payToAcct || (payToAcct.specialAccountType !== "SBK" && payToAcct.specialAccountType !== "SCH")) {
-      return c.json(
-        { success: false, error: "Deposit To must be a bank (SBK) or cash (SCH) account" },
-        400,
-      );
-    }
+    const ok = await validateOfficialReceipt(c.var.DB, body as Record<string, unknown>);
+    if (!ok.ok) return c.json({ success: false, error: ok.error }, 400);
+    const v = ok.v;
     const id = `or-${crypto.randomUUID().slice(0, 8)}`;
     const orNo = await issueDocNumber(c.var.DB, {
-      bankAccountCode: payTo,
+      bankAccountCode: v.payTo,
       direction: "in",
-      dateIso: date,
+      dateIso: v.date,
     });
     const now = new Date().toISOString();
     const orgId = getOrgId(c);
     const actorUserId =
       (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
-    const legs: LedgerEntryInput[] = [
-      {
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "official_receipt",
-        sourceId: id,
-        legNo: 1,
-        accountCode: payTo,
-        debitSen: v.totalSen,
-        creditSen: 0,
-        description: `${orNo} · ${body.receivedFrom ? `from ${body.receivedFrom}` : "Receipt"}`,
-        actorUserId,
-        orgId,
-      },
-      ...v.lines.map((l, idx) => ({
-        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-        sourceType: "official_receipt",
-        sourceId: id,
-        legNo: idx + 2,
-        accountCode: l.accountCode,
-        debitSen: 0,
-        creditSen: l.amountSen,
-        description: `${orNo} · ${l.description || body.description || "Receipt"}`,
-        actorUserId,
-        orgId,
-      })),
-    ];
+    const legs = officialReceiptLegs(v, { id, orNo, sourceType: "official_receipt", bankLegId: `lje-${crypto.randomUUID().slice(0, 12)}` }, actorUserId, orgId);
     const { statements: ledgerStmts } = await buildJournalEntryStatements(
       c.var.DB,
       orgId,
       legs,
+      { docDate: v.date },
     );
     await c.var.DB.batch([
       c.var.DB.prepare(
@@ -12161,9 +13155,9 @@ app.post("/official-receipts", async (c) => {
            status, createdBy, created_at, updated_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?)`,
       ).bind(
-        id, orNo, date,
-        String(body.receivedFrom ?? ""), String(body.description ?? ""),
-        payTo, v.totalSen, actorUserId, now, now,
+        id, orNo, v.date,
+        v.receivedFrom, v.description,
+        v.payTo, v.totalSen, actorUserId, now, now,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12175,11 +13169,89 @@ app.post("/official-receipts", async (c) => {
     ]);
     return c.json({ success: true, data: { id, orNo } }, 201);
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[or] create failed:", e);
     return c.json(
       { success: false, error: "Failed to save the receipt — is migration 0159 applied?" },
       400,
     );
+  }
+});
+
+// Edit a POSTED official receipt IN PLACE (owner 2026-10-17 「可以」) — same
+// OR number. Reverses the live legs, re-posts the edited ones
+// (official_receipt_restate_rev/post:<stamp>) and hides every older family —
+// the payment-voucher restate. A bank match (or the cash board's daily tick)
+// on the old bank leg moves to the new one when the bank account and amount
+// are unchanged; a matched receipt cannot change them (planEditBankCarry,
+// class C31).
+app.post("/official-receipts/:id/restate", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const id = c.req.param("id");
+  try {
+    const db = c.var.DB;
+    const or = await db.prepare("SELECT * FROM official_receipts WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    if (!or) return c.json({ success: false, error: "Receipt not found" }, 404);
+    const orNo = String(or.orNo ?? or.or_no ?? "");
+    const state = await getDocState(db, orgId, "official_receipt", id);
+    if (state !== "ACTIVE" || String(or.status ?? "") === "VOID") {
+      return c.json({ success: false, error: "This receipt is cancelled — restore it before editing." }, 400);
+    }
+    const body = await c.req.json();
+    const ok = await validateOfficialReceipt(db, body as Record<string, unknown>);
+    if (!ok.ok) return c.json({ success: false, error: ok.error }, 400);
+    const v = ok.v;
+
+    // The live set: the original legs, or the newest restate.
+    const cur = (await db.prepare(
+      `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
+        WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'official_receipt%'`,
+    ).bind(id, orgId).all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()).results ?? [];
+    const now = new Date().toISOString();
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const stamp = Date.now();
+    const postSource = `official_receipt_restate_post:${stamp}`;
+    const bankLegId = `lje-${crypto.randomUUID().slice(0, 12)}`;
+    const revLegs: LedgerEntryInput[] = cur.map((l, i) => ({
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: `official_receipt_restate_rev:${stamp}`, sourceId: id, legNo: i + 1,
+      accountCode: l.accountCode, debitSen: Number(l.creditSen) || 0, creditSen: Number(l.debitSen) || 0, description: `Restate rev · ${orNo}`, actorUserId, orgId,
+    }));
+    const newLegs = officialReceiptLegs(v, { id, orNo, sourceType: postSource, bankLegId }, actorUserId, orgId);
+    // The bank side follows the re-posted bank leg, or the edit is refused.
+    const carry = await planEditBankCarry(db, cur, newLegs, "receipt");
+    if (!carry.ok) return c.json({ success: false, error: carry.error }, 409);
+    const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs], { docDate: [String(or.date ?? "").slice(0, 10) || null, v.date] });
+    const statements: D1PreparedStatement[] = [...jeStmts];
+    statements.push(db.prepare(
+      `UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%' AND sourceType <> ?`,
+    ).bind(id, orgId, postSource));
+    statements.push(...carry.statements);
+    statements.push(db.prepare(
+      "UPDATE official_receipts SET date = ?, receivedFrom = ?, description = ?, payTo = ?, totalSen = ?, updated_at = ? WHERE id = ?",
+    ).bind(v.date, v.receivedFrom, v.description, v.payTo, v.totalSen, now, id));
+    statements.push(db.prepare("DELETE FROM official_receipt_lines WHERE receiptId = ?").bind(id));
+    v.lines.forEach((l, idx) => {
+      statements.push(db.prepare(
+        `INSERT INTO official_receipt_lines (id, receiptId, accountCode, description, amountSen, lineOrder)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(`orl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));
+    });
+    const beforeLines = (await db.prepare("SELECT accountCode, description, amountSen FROM official_receipt_lines WHERE receiptId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>()).results ?? [];
+    await db.batch(statements);
+    await emitAudit(c, {
+      resource: "accounting",
+      resourceId: orNo,
+      action: "update",
+      before: { date: or.date, payTo: or.payTo ?? or.pay_to, receivedFrom: or.receivedFrom ?? or.received_from, description: or.description, totalSen: or.totalSen ?? or.total_sen, lines: beforeLines },
+      after: { date: v.date, payTo: v.payTo, receivedFrom: v.receivedFrom, description: v.description, totalSen: v.totalSen, lines: v.lines },
+    });
+    return c.json({ success: true, data: { id, orNo, bankMatchMoved: carry.moved > 0 } });
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
+    console.error("[or] restate failed:", e);
+    return c.json({ success: false, error: "Failed to update the receipt" }, 400);
   }
 });
 
@@ -12192,14 +13264,14 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
   try { action = ((await c.req.json()) as { action: string }).action as typeof action; } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
   if (!["void", "delete", "unvoid"].includes(action)) return c.json({ success: false, error: "action must be void|delete|unvoid" }, 400);
 
-  const orRow = await c.var.DB.prepare("SELECT id, orNo, status FROM official_receipts WHERE id = ?").bind(id).first<{ id: string; orNo: string; status: string }>();
+  const orRow = await c.var.DB.prepare("SELECT id, orNo, date, status FROM official_receipts WHERE id = ?").bind(id).first<{ id: string; orNo: string; date: string | null; status: string }>();
   if (!orRow) return c.json({ success: false, error: "Receipt not found" }, 404);
 
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["official_receipt"], voidSourceType: "official_receipt_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${orRow.orNo}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: orRow.date, baseSourceTypes: ["official_receipt"], voidSourceType: "official_receipt_void", sourceId: id, action, actorUserId, descriptionTag: `${action.toUpperCase()} · ${orRow.orNo}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // doc-specific side effect: sync status column (lifecycle state is source of truth; this is for UI)
@@ -12208,7 +13280,19 @@ app.post("/official-receipts/:id/lifecycle", async (c) => {
     ...lc.statements,
     c.var.DB.prepare("UPDATE official_receipts SET status = ?, updated_at = ? WHERE id = ?").bind(docStatus, new Date().toISOString(), id),
   ];
+  // An EDITED receipt's live legs are its newest official_receipt_restate_post
+  // family, which applyLifecycle's exact match on "official_receipt" misses
+  // (class C5). Void / delete hide the whole family so the GL nets to zero;
+  // unvoid then restores THAT family, not the pre-edit original.
+  if (lc.newState !== "ACTIVE") {
+    statements.push(
+      c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'official_receipt%'`).bind(id, orgId),
+    );
+  } else {
+    statements.push(...(await restoreEditedFamilyStatements(c.var.DB, orgId, "official_receipt", id)));
+  }
   await c.var.DB.batch(statements);
+  await emitAudit(c, { resource: "official-receipts", resourceId: id, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -12298,9 +13382,10 @@ app.post("/fund-transfers", async (c) => {
   ];
 
   try {
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: date });
     await c.var.DB.batch(statements);
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[fund-transfer] GL post failed:", e);
     return c.json({ success: false, error: "Failed to post fund transfer to ledger" }, 500);
   }
@@ -12442,13 +13527,16 @@ app.post("/fund-transfers/:no/lifecycle", async (c) => {
 
   const actorUserId =
     (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  // The transfer's own date (fund_transfers; a transfer from before that table has none).
+  const ftDate = await c.var.DB.prepare("SELECT date FROM fund_transfers WHERE transfer_no = ?").bind(no).first<{ date: string | null }>().catch(() => null);
   let lc: { statements: D1PreparedStatement[]; newState: string };
   try {
-    lc = await applyLifecycle(c.var.DB, { orgId, baseSourceTypes: ["fund_transfer"], voidSourceType: "fund_transfer_void", sourceId: no, action, actorUserId, descriptionTag: `${action.toUpperCase()} · FT ${no}` });
+    lc = await applyLifecycle(c.var.DB, { orgId, docDate: ftDate?.date ?? null, baseSourceTypes: ["fund_transfer"], voidSourceType: "fund_transfer_void", sourceId: no, action, actorUserId, descriptionTag: `${action.toUpperCase()} · FT ${no}` });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, 400); }
 
   // No status column to sync (ledger-only document): just run the lifecycle statements.
   await c.var.DB.batch(lc.statements);
+  await emitAudit(c, { resource: "fund-transfers", resourceId: no, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
@@ -12478,6 +13566,7 @@ app.put("/fund-transfers/:no/description", async (c) => {
   await c.var.DB.prepare(
     "UPDATE ledger_journal_entries SET description = ? WHERE sourceType = 'fund_transfer' AND sourceId = ? AND orgId = ? AND hidden = 0",
   ).bind(description, no, orgId).run();
+  await emitAudit(c, { resource: "fund-transfers", resourceId: no, action: "describe", after: { description } });
   return c.json({ success: true, data: { no, description } });
 });
 
@@ -12715,7 +13804,7 @@ app.post("/contra", async (c) => {
         orgId,
       },
     ];
-    const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements: ledgerStmts } = await buildJournalEntryStatements(db, orgId, legs, { docDate: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) }); // a contra is dated the day it is made
     statements.push(...ledgerStmts);
     await db.batch(statements);
     await emitAudit(c, {
@@ -12725,7 +13814,8 @@ app.post("/contra", async (c) => {
       after: { contraSen: totalSen, customerId, piIds },
     });
     return c.json({ success: true, data: { totalSen, pis: pis.length } });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -13221,7 +14311,7 @@ app.post("/labor/post", async (c) => {
         orgId,
       });
     }
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: month });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "accounting",
@@ -13231,6 +14321,7 @@ app.post("/labor/post", async (c) => {
     });
     return c.json({ success: true, data: { month, totalSen, accounts: legs.length - 1} });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     // NOT "Invalid request body". That blanket message wrapped the whole
     // handler, so a UNIQUE(orgId, sourceType, sourceId, legNo) violation on a
     // re-post read as a malformed request and cost an hour to find. Say what
@@ -13288,7 +14379,7 @@ app.post("/labor/unpost", async (c) => {
         orgId,
       });
     }
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: month });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "accounting",
@@ -13299,6 +14390,7 @@ app.post("/labor/unpost", async (c) => {
     });
     return c.json({ success: true, data: { month, reversedLegs: legs.length } });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[POST /labor/unpost] failed:", msg);
     return c.json({ success: false, error: `Labour unpost failed: ${msg}` }, 400);
@@ -13315,6 +14407,7 @@ app.get("/labor/map", async (c) => {
 app.put("/labor/map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["labor_account_map"]);
   try {
     const body = await c.req.json();
     const fallback = String(body.fallback || DEFAULT_LABOUR_MAP.fallback);
@@ -13351,6 +14444,7 @@ app.put("/labor/map", async (c) => {
     )
       .bind(JSON.stringify({ fallback, byDept, ...statutory }), new Date().toISOString())
       .run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "labor_account_map", action: "update", before: kvBefore["labor_account_map"] ?? null, after: { fallback, byDept, ...statutory } });
     return c.json({ success: true, data: { fallback, byDept, ...statutory } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -13370,6 +14464,7 @@ app.get("/cashflow/map", async (c) => {
 app.put("/cashflow/map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["cashflow_account_map", "cashflow_stockgroup_map", "cashflow_supplier_category_map"]);
   try {
     const body = (await c.req.json()) as {
       map?: Record<string, { section?: string; order?: number }>;
@@ -13420,6 +14515,7 @@ app.put("/cashflow/map", async (c) => {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       ).bind(JSON.stringify(supCat), now).run();
     }
+    await emitAudit(c, { resource: "finance-settings", resourceId: "cashflow_account_map", action: "update", before: kvBefore, after: { cashflow_account_map: map, cashflow_stockgroup_map: sg, cashflow_supplier_category_map: supCat } });
     return c.json({ success: true, data: { map, stockGroupMap: sg, supplierCategoryMap: supCat } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -13436,6 +14532,7 @@ app.get("/doc-number-prefixes", async (c) => {
 app.put("/doc-number-prefixes", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["doc_number_prefixes"]);
   try {
     const body = (await c.req.json()) as { map?: Record<string, { out?: string; in?: string }> };
     if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
@@ -13450,6 +14547,7 @@ app.put("/doc-number-prefixes", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('doc_number_prefixes', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(JSON.stringify(map), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "doc_number_prefixes", action: "update", before: kvBefore["doc_number_prefixes"] ?? null, after: map });
     return c.json({ success: true, data: { map } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -13466,6 +14564,7 @@ app.get("/pnl/section-map", async (c) => {
 app.put("/pnl/section-map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["pnl_section_map"]);
   try {
     const body = (await c.req.json()) as { map?: Record<string, string> };
     if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
@@ -13476,6 +14575,7 @@ app.put("/pnl/section-map", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('pnl_section_map', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(JSON.stringify(map), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "pnl_section_map", action: "update", before: kvBefore["pnl_section_map"] ?? null, after: map });
     return c.json({ success: true, data: { map } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -13492,6 +14592,7 @@ app.get("/bs/section-map", async (c) => {
 app.put("/bs/section-map", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
+  const kvBefore = await kvSnapshot(c.var.DB, ["bs_section_map"]);
   try {
     const body = (await c.req.json()) as { map?: Record<string, string> };
     if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
@@ -13502,6 +14603,7 @@ app.put("/bs/section-map", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('bs_section_map', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(JSON.stringify(map), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "bs_section_map", action: "update", before: kvBefore["bs_section_map"] ?? null, after: map });
     return c.json({ success: true, data: { map } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -13590,12 +14692,16 @@ app.get("/trade-finance", async (c) => {
   if (denied) return denied;
   try {
     const sources = await getTfSources(c.var.DB);
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // As at a past date (owner 2026-10-17, Creditor Aging as at a month-end):
+    // each draw as it stood then; absent = today, unchanged.
+    const asOfQ = c.req.query("asOf") ?? "";
+    const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+    const todayIso = asOf ?? new Date().toISOString().slice(0, 10);
     const out = [];
     for (const s of sources) {
       const acct = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
         .bind(s.accountCode).first<{ name: string }>();
-      const derived = await loadTfDraws(c.var.DB, s);
+      const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
       const draws = [];
       for (const d of derived.draws) {
         // Which supplier(s) the lender paid for us on this draw — the payment's
@@ -13649,6 +14755,25 @@ app.get("/trade-finance", async (c) => {
 // the post instead of absorbing it), and POST /trade-finance/
 // interest-account-repoint to move the legs already posted to the old code.
 const TF_INTEREST_ACCT = { code: "900-I004", name: "INTEREST ON TRADE FINANCE", parentCode: "902-0000" };
+
+// The interest legs on a drawdown: DR 900-I004 · CR the TF line for an
+// increase (the reverse for a decrease), under `tfint-<charge date>-<draw>`
+// so the leg self-dates and folds into its draw. One builder for the
+// Creditor Aging interest box and an AP Payment that records the interest at
+// drawdown (finance backlog item 17).
+function tfInterestLegs(o: {
+  drawSourceId: string; accountCode: string; chargeDate: string; deltaSen: number; legNoBase: number;
+  actorUserId: string | null; orgId: string;
+}): LedgerEntryInput[] {
+  const sourceId = `tfint-${o.chargeDate}-${o.drawSourceId}`;
+  const abs = Math.abs(o.deltaSen);
+  const up = o.deltaSen > 0;
+  const desc = `TF interest${up ? "" : " adjust"} · ${o.drawSourceId}`;
+  return [
+    { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId, legNo: o.legNoBase, accountCode: up ? TF_INTEREST_ACCT.code : o.accountCode, debitSen: abs, creditSen: 0, description: desc, actorUserId: o.actorUserId, orgId: o.orgId },
+    { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId, legNo: o.legNoBase + 1, accountCode: up ? o.accountCode : TF_INTEREST_ACCT.code, debitSen: 0, creditSen: abs, description: desc, actorUserId: o.actorUserId, orgId: o.orgId },
+  ];
+}
 const TF_INTEREST_LEGACY_ACCT = "900-I001";
 
 // Creates the dedicated account once (quietly) and proves the code is ours:
@@ -13764,17 +14889,8 @@ app.put("/trade-finance/draw-interest", async (c) => {
     // deriveDraws strips the `tfint-<date>-` prefix to fold it into the draw.
     const interestSourceId = `tfint-${chargeDate}-${drawSourceId}`;
     const legNoBase = await nextLegNo(c.var.DB, orgId, "tf_interest", interestSourceId);
-    const abs = Math.abs(deltaSen);
-    const legs: LedgerEntryInput[] = deltaSen > 0
-      ? [
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase, accountCode: TF_INTEREST_ACCT.code, debitSen: abs, creditSen: 0, description: `TF interest · ${drawSourceId}`, actorUserId, orgId },
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase + 1, accountCode: accountCode, debitSen: 0, creditSen: abs, description: `TF interest · ${drawSourceId}`, actorUserId, orgId },
-        ]
-      : [
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase, accountCode: accountCode, debitSen: abs, creditSen: 0, description: `TF interest adjust · ${drawSourceId}`, actorUserId, orgId },
-          { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_interest", sourceId: interestSourceId, legNo: legNoBase + 1, accountCode: TF_INTEREST_ACCT.code, debitSen: 0, creditSen: abs, description: `TF interest adjust · ${drawSourceId}`, actorUserId, orgId },
-        ];
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const legs = tfInterestLegs({ drawSourceId, accountCode, chargeDate, deltaSen, legNoBase, actorUserId, orgId });
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: chargeDate });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "trade-finance",
@@ -13785,6 +14901,7 @@ app.put("/trade-finance/draw-interest", async (c) => {
     });
     return c.json({ success: true, data: { drawSourceId, interestSen: targetSen } });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     console.error("[PUT /trade-finance/draw-interest] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Interest update failed" }, 400);
   }
@@ -13842,7 +14959,7 @@ app.put("/trade-finance/draw-bank-charge", async (c) => {
           { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase, accountCode: accountCode, debitSen: abs, creditSen: 0, description: `TF bank charges adjust · ${drawSourceId}`, actorUserId, orgId },
           { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "tf_bank_charge", sourceId: chargeSourceId, legNo: legNoBase + 1, accountCode: TF_BANK_CHARGE_ACCT.code, debitSen: 0, creditSen: abs, description: `TF bank charges adjust · ${drawSourceId}`, actorUserId, orgId },
         ];
-    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: chargeDate });
     await c.var.DB.batch(statements);
     await emitAudit(c, {
       resource: "trade-finance",
@@ -13853,6 +14970,7 @@ app.put("/trade-finance/draw-bank-charge", async (c) => {
     });
     return c.json({ success: true, data: { drawSourceId, bankChargeSen: targetSen } });
   } catch (err) {
+    if (err instanceof ClosedYearError) return c.json({ success: false, error: err.message }, 400);
     console.error("[PUT /trade-finance/draw-bank-charge] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Bank charge update failed" }, 400);
   }
@@ -14412,10 +15530,10 @@ app.get("/dashboard", async (c) => {
   >();
   {
     const fyKeys = new Map<string, string>(); // fy label → an anchor month
-    const fyeM = await getFyeMonth(db);
+    const fySchedD = await getFySchedule(db);
     for (const ym of allMonths) {
       if (ym > nowYm) continue;
-      const w = fyWindowFor(new Date(`${ym}-15T00:00:00Z`), fyeM);
+      const w = fyWindowAt(ym, fySchedD);
       fyKeys.set(w.startIso, ym);
     }
     const rowVal = (
@@ -15196,6 +16314,7 @@ app.post("/fixed-assets", async (c) => {
     )
       .bind(id, name, b.assetAccount, b.accumAccount, b.expenseAccount, b.purchaseDate, costSen, residualSen, life, openingAccumSen, String(b.remarks ?? ""), now, now)
       .run();
+    await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "create", after: { name, assetAccount: b.assetAccount, purchaseDate: b.purchaseDate, costSen, residualSen, usefulLifeMonths: life, openingAccumSen } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json({ success: false, error: "Failed — is migration 0161 applied?" }, 400);
@@ -15218,6 +16337,7 @@ app.put("/fixed-assets/:id", async (c) => {
       )
         .bind(new Date().toISOString(), new Date().toISOString(), id)
         .run();
+      await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "dispose", before: row });
       return c.json({ success: true });
     }
     const name = b.name === undefined ? row.name : String(b.name).trim();
@@ -15231,6 +16351,7 @@ app.put("/fixed-assets/:id", async (c) => {
     )
       .bind(name, life, residualSen, b.remarks === undefined ? row.remarks : String(b.remarks ?? ""), new Date().toISOString(), id)
       .run();
+    await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "update", before: row, after: { name, usefulLifeMonths: life, residualSen, remarks: b.remarks === undefined ? row.remarks : String(b.remarks ?? "") } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -15252,7 +16373,9 @@ app.delete("/fixed-assets/:id", async (c) => {
       400,
     );
   }
+  const goneAsset = await c.var.DB.prepare("SELECT * FROM fixed_assets WHERE id = ?").bind(id).first<FixedAssetRow>().catch(() => null);
   await c.var.DB.prepare("DELETE FROM fixed_assets WHERE id = ?").bind(id).run();
+  await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "delete", before: goneAsset });
   return c.json({ success: true });
 });
 
@@ -15373,6 +16496,7 @@ app.post("/fixed-assets/depreciation-run", async (c) => {
       c.var.DB,
       orgId,
       legs,
+      { docDate: month },
     );
     const now = new Date().toISOString();
     await c.var.DB.batch([
@@ -15392,7 +16516,8 @@ app.post("/fixed-assets/depreciation-run", async (c) => {
         totalSen: rows.reduce((s, r) => s + r.amountSen, 0),
       },
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Run failed — is migration 0161 applied?" }, 400);
   }
 });
@@ -15581,6 +16706,7 @@ app.post("/bank-reco/import", async (c) => {
       );
     }
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "bank-reco", resourceId: account, action: "import", after: { lines: statements.length } });
     return c.json({ success: true, data: { imported: statements.length } }, 201);
   } catch {
     return c.json(
@@ -15652,6 +16778,7 @@ app.post("/bank-reco/match", async (c) => {
     )
       .bind(legId, new Date().toISOString(), lineId)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "match", after: { amountSen: line.amountSen, legId } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -15678,6 +16805,7 @@ app.post("/bank-reco/unmatch", async (c) => {
         c.var.DB.prepare("DELETE FROM bank_line_leg_splits WHERE line_id = ?").bind(lineId),
         c.var.DB.prepare("UPDATE bank_statement_lines SET matchedLegId = NULL, matchedAt = NULL WHERE id = ?").bind(lineId),
       ]);
+      await emitAudit(c, { resource: "bank-reco", resourceId: `${umLine.accountCode} ${umLine.txnDate}`, action: "unmatch" });
       return c.json({ success: true, data: { released: "split" } });
     }
     // Unmatching one piece of a combo group dissolves the WHOLE group — a
@@ -15695,6 +16823,7 @@ app.post("/bank-reco/unmatch", async (c) => {
       await c.var.DB.prepare(
         "UPDATE bank_statement_lines SET matchedLegId = NULL, matchedAt = NULL WHERE accountCode = ? AND matchedLegId = ?",
       ).bind(umLine.accountCode, umLine.matchedLegId).run();
+      await emitAudit(c, { resource: "bank-reco", resourceId: `${umLine.accountCode} ${umLine.txnDate}`, action: "unmatch", before: { legId: umLine.matchedLegId } });
       return c.json({ success: true, data: { released: (siblings.results ?? []).length } });
     }
     await c.var.DB.prepare(
@@ -15702,6 +16831,7 @@ app.post("/bank-reco/unmatch", async (c) => {
     )
       .bind(lineId)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${umLine.accountCode} ${umLine.txnDate}`, action: "unmatch", before: { legId: umLine.matchedLegId } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -15773,6 +16903,7 @@ app.post("/bank-reco/match-group", async (c) => {
     await c.var.DB.prepare(
       `UPDATE bank_statement_lines SET matchedLegId = ?, matchedAt = ? WHERE id IN (${marks})`,
     ).bind(legId, nowG, ...lineIds).run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${lines[0].txnDate}`, action: "match-group", after: { lines: lineIds.length, amountSen: lines.reduce((sum, l) => sum + (Number(l.amountSen) || 0), 0), legId } });
     return c.json({ success: true, data: { matched: lineIds.length } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -15865,6 +16996,7 @@ app.post("/bank-reco/match-split", async (c) => {
           .bind(lineId, g.id, (Number(g.debitSen) || 0) - (Number(g.creditSen) || 0), now),
       ),
     ]);
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "match-split", after: { amountSen: line.amountSen, legIds } });
     return c.json({ success: true, data: { legs: legs.length } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16003,6 +17135,7 @@ app.post("/bank-reco/automatch", async (c) => {
       if (candidates.length === 1) take(line.id, candidates[0].id);
     }
     if (updates.length > 0) await c.var.DB.batch(updates);
+    if (matched > 0) await emitAudit(c, { resource: "bank-reco", resourceId: account, action: "automatch", after: { matched, from, to } });
     return c.json({ success: true, data: { matched } });
   } catch {
     return c.json({ success: false, error: "Auto-match failed — is migration 0160 applied?" }, 400);
@@ -16026,6 +17159,7 @@ app.delete("/bank-reco/line/:id", async (c) => {
     return c.json({ success: false, error: BANK_RECO_FINALIZED_ERR }, 400);
   }
   await c.var.DB.prepare("DELETE FROM bank_statement_lines WHERE id = ?").bind(id).run();
+  await emitAudit(c, { resource: "bank-reco", resourceId: `${row.accountCode} ${row.txnDate}`, action: "line-delete" });
   return c.json({ success: true });
 });
 
@@ -16116,6 +17250,7 @@ app.post("/bank-reco/import-session", async (c) => {
     )
       .bind(`bank_reco_meta:${account}:${month}`, JSON.stringify({ ...meta, importedAt: now }), now)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${month}`, action: "import", after: { lines: inserts.length, keptMatched: keptKeys.size, skippedDupes } });
     return c.json({ success: true, data: { imported: inserts.length, keptMatched: keptKeys.size, skippedDupes } }, 201);
   } catch {
     return c.json({ success: false, error: "Import failed — is migration 0160 applied?" }, 400);
@@ -16142,6 +17277,7 @@ app.post("/bank-reco/ignore", async (c) => {
     await c.var.DB.prepare("UPDATE bank_statement_lines SET ignored_at = ? WHERE id = ?")
       .bind(body.ignored === false ? null : new Date().toISOString(), id)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${row.accountCode} ${row.txnDate}`, action: body.ignored === false ? "restore-line" : "ignore" });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16216,7 +17352,7 @@ app.post("/bank-reco/book-line", async (c) => {
         { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "payment_voucher", sourceId: docId, legNo: 1, accountCode: v.lines[0].accountCode, debitSen: v.totalSen, creditSen: 0, description: `${docNo} · ${desc || "Payment"}`, actorUserId, orgId },
         { id: bankLegId, sourceType: "payment_voucher", sourceId: docId, legNo: 2, accountCode: line.accountCode, debitSen: 0, creditSen: v.totalSen, description: `${docNo} · ${party ? `to ${party}` : "Payment"} · booked from bank line`, actorUserId, orgId },
       ];
-      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: line.txnDate });
       statements.push(...ledger);
     } else {
       statements.push(
@@ -16233,7 +17369,7 @@ app.post("/bank-reco/book-line", async (c) => {
         { id: bankLegId, sourceType: "official_receipt", sourceId: docId, legNo: 1, accountCode: line.accountCode, debitSen: v.totalSen, creditSen: 0, description: `${docNo} · ${party ? `from ${party}` : "Receipt"} · booked from bank line`, actorUserId, orgId },
         { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: "official_receipt", sourceId: docId, legNo: 2, accountCode: v.lines[0].accountCode, debitSen: 0, creditSen: v.totalSen, description: `${docNo} · ${desc || "Receipt"}`, actorUserId, orgId },
       ];
-      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs);
+      const { statements: ledger } = await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: line.txnDate });
       statements.push(...ledger);
     }
     // Match the new bank leg to the line in the same batch.
@@ -16242,8 +17378,10 @@ app.post("/bank-reco/book-line", async (c) => {
         .bind(bankLegId, now, id),
     );
     await c.var.DB.batch(statements);
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${line.accountCode} ${line.txnDate}`, action: "book-line", after: { amountSen: line.amountSen, docNo } });
     return c.json({ success: true, data: { docId, docNo, kind: isOut ? "PV" : "OR" } }, 201);
   } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     console.error("[bank-reco] book-line failed:", e);
     return c.json({ success: false, error: "Could not book this line" }, 400);
   }
@@ -16630,6 +17768,7 @@ app.post("/cash-position/tick", async (c) => {
     if (!legId) return c.json({ success: false, error: "legId required" }, 400);
     if (body.cleared === false) {
       await c.var.DB.prepare("DELETE FROM bank_board_cleared WHERE leg_id = ?").bind(legId).run();
+      await emitAudit(c, { resource: "cash-position", resourceId: String(body.accountCode || ""), action: "untick", before: { legId } });
       return c.json({ success: true });
     }
     const clearedOn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "")) ? String(body.date) : new Date().toISOString().slice(0, 10);
@@ -16637,6 +17776,7 @@ app.post("/cash-position/tick", async (c) => {
       `INSERT INTO bank_board_cleared (leg_id, account_code, cleared_on, created_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(leg_id) DO UPDATE SET cleared_on = excluded.cleared_on`,
     ).bind(legId, String(body.accountCode || ""), clearedOn, new Date().toISOString()).run();
+    await emitAudit(c, { resource: "cash-position", resourceId: String(body.accountCode || ""), action: "tick", after: { legId, clearedOn } });
     return c.json({ success: true });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16660,6 +17800,7 @@ app.post("/cash-position/planned", async (c) => {
     await c.var.DB.prepare(
       "INSERT INTO planned_payments (id, party_name, ref, expected_date, amount_sen, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     ).bind(id, party, String(body.ref || "") || null, dateS, amt, new Date().toISOString()).run();
+    await emitAudit(c, { resource: "cash-position", resourceId: party, action: "planned-add", after: { partyName: party, ref: String(body.ref || "") || null, expectedDate: dateS, amountSen: amt } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -16670,7 +17811,9 @@ app.delete("/cash-position/planned/:id", async (c) => {
   const denied = await requirePermission(c, "accounting", "delete");
   if (denied) return denied;
   await ensureCashBoardTables(c.var.DB);
+  const plan = await c.var.DB.prepare("SELECT party_name, ref, expected_date, amount_sen FROM planned_payments WHERE id = ?").bind(c.req.param("id")).first<Record<string, unknown>>().catch(() => null);
   await c.var.DB.prepare("DELETE FROM planned_payments WHERE id = ?").bind(c.req.param("id")).run();
+  if (plan) await emitAudit(c, { resource: "cash-position", resourceId: String(plan.partyName ?? plan.party_name ?? ""), action: "planned-delete", before: { partyName: plan.partyName ?? plan.party_name, ref: plan.ref, expectedDate: plan.expectedDate ?? plan.expected_date, amountSen: plan.amountSen ?? plan.amount_sen } });
   return c.json({ success: true });
 });
 
@@ -16931,9 +18074,31 @@ app.get("/cash-position", async (c) => {
     state: String(v.approvalState ?? v.approval_state ?? "DRAFT") as "DRAFT" | "PREPARED" | "CHECKED",
   }));
   const awaitingCheckedSen = awaitingApproval.filter((v) => v.state === "CHECKED").reduce((s, v) => s + v.amountSen, 0);
+  // Trade finance to repay, by due date (owner 2026-10-17, Finance v2): every
+  // draw still owed — the same draws Creditor Aging's Trade Finance section
+  // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
+  const tradeFinance: { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number }[] = [];
+  try {
+    for (const s of await getTfSources(c.var.DB)) {
+      const derived = await loadTfDraws(c.var.DB, s);
+      for (const d of derived.draws) {
+        if (d.outstandingSen <= 0) continue;
+        let paidFor = "";
+        try {
+          const rs = await c.var.DB.prepare("SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?")
+            .bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
+          paidFor = [...new Set((rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean))].join(", ");
+        } catch { /* leave blank */ }
+        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender: s.lenderName, ref: d.drawSourceId, paidFor, outstandingSen: d.outstandingSen });
+      }
+    }
+  } catch {
+    /* trade finance not set up → nothing to repay there */
+  }
+  tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, tradeFinance },
   });
 });
 
@@ -16975,6 +18140,7 @@ app.post("/bank-reco/finalize", async (c) => {
            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         ).bind(`bank_reco_reopen:${account}:${month}:${now}`, JSON.stringify({ actorUserId, reason, priorSnapshot: prior?.value ? JSON.parse(prior.value) : null }), now),
       ]);
+      await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${month}`, action: "reopen", after: reason ? { reason } : null });
       return c.json({ success: true, data: { reopened: true } });
     }
     const snap = await computeBankRecoReport(c.var.DB, account, month);
@@ -16997,6 +18163,7 @@ app.post("/bank-reco/finalize", async (c) => {
     )
       .bind(key, JSON.stringify({ v: 1, finalizedAt: now, actorUserId, ...snapStored }), now)
       .run();
+    await emitAudit(c, { resource: "bank-reco", resourceId: `${account} ${month}`, action: "finalize", after: { balanced: snap.balanced } });
     return c.json({ success: true, data: { finalizedAt: now, balanced: snap.balanced } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -17020,6 +18187,7 @@ app.put("/bank-reco/strict-lock", async (c) => {
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('bank_reco_strict_lock', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     ).bind(body.strict ? "1" : "0", new Date().toISOString()).run();
+    await emitAudit(c, { resource: "finance-settings", resourceId: "bank_reco_strict_lock", action: "update", after: { strict: !!body.strict } });
     return c.json({ success: true, data: { strict: !!body.strict } });
   } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
 });
@@ -17725,6 +18893,7 @@ app.post("/opening-balance/ar", async (c) => {
         "UPDATE customers SET outstandingSen = outstandingSen + ? WHERE id = ?",
       ).bind(amountSen, cust.id),
     ]);
+    await emitAudit(c, { resource: "opening-balance", resourceId: String(invoiceNo), action: "create", after: { customerId, invoiceNo, invoiceDate, amountSen } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json(
@@ -17739,10 +18908,10 @@ app.delete("/opening-balance/ar/:id", async (c) => {
   if (denied) return denied;
   const id = c.req.param("id");
   const row = await c.var.DB.prepare(
-    "SELECT id, customerId, totalSen, paidAmount, isOpening FROM invoices WHERE id = ?",
+    "SELECT id, invoiceNo, customerId, totalSen, paidAmount, isOpening FROM invoices WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; customerId: string; totalSen: number; paidAmount: number; isOpening: number | null }>();
+    .first<{ id: string; invoiceNo?: string | null; customerId: string; totalSen: number; paidAmount: number; isOpening: number | null }>();
   if (!row || (row.isOpening ?? 0) !== 1) {
     return c.json({ success: false, error: "Opening invoice not found" }, 404);
   }
@@ -17773,6 +18942,7 @@ app.delete("/opening-balance/ar/:id", async (c) => {
       "UPDATE customers SET outstandingSen = outstandingSen - ? WHERE id = ?",
     ).bind(Number(row.totalSen) || 0, row.customerId),
   ]);
+  await emitAudit(c, { resource: "opening-balance", resourceId: id, action: "delete", before: row });
   return c.json({ success: true });
 });
 
@@ -17820,6 +18990,7 @@ app.post("/opening-balance/ap", async (c) => {
         "UPDATE suppliers SET outstandingSen = outstandingSen + ? WHERE id = ?",
       ).bind(amountSen, sup.id),
     ]);
+    await emitAudit(c, { resource: "opening-balance", resourceId: String(piNo), action: "create", after: { supplierId, piNo, invoiceDate, amountSen } });
     return c.json({ success: true, data: { id } }, 201);
   } catch {
     return c.json(
@@ -17834,10 +19005,10 @@ app.delete("/opening-balance/ap/:id", async (c) => {
   if (denied) return denied;
   const id = c.req.param("id");
   const row = await c.var.DB.prepare(
-    "SELECT id, supplierId, amountSen, status, isOpening FROM purchase_invoices WHERE id = ?",
+    "SELECT id, piNo, supplierId, amountSen, status, isOpening FROM purchase_invoices WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; supplierId: string; amountSen: number; status: string; isOpening: number | null }>();
+    .first<{ id: string; piNo?: string | null; supplierId: string; amountSen: number; status: string; isOpening: number | null }>();
   if (!row || (row.isOpening ?? 0) !== 1) {
     return c.json({ success: false, error: "Opening PI not found" }, 404);
   }
@@ -17853,6 +19024,7 @@ app.delete("/opening-balance/ap/:id", async (c) => {
       "UPDATE suppliers SET outstandingSen = outstandingSen - ? WHERE id = ?",
     ).bind(Number(row.amountSen) || 0, row.supplierId),
   ]);
+  await emitAudit(c, { resource: "opening-balance", resourceId: id, action: "delete", before: row });
   return c.json({ success: true });
 });
 
@@ -17987,7 +19159,7 @@ app.post("/opening-balance/post", async (c) => {
         orgId,
       });
     }
-    const { statements } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements } = await buildJournalEntryStatements(db, orgId, legs, { docDate: openingDate });
     statements.push(
       db
         .prepare(
@@ -18010,7 +19182,8 @@ app.post("/opening-balance/post", async (c) => {
       success: true,
       data: { openingDate, lines: cleaned.length, totalSen: totalDr },
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
@@ -18266,7 +19439,17 @@ app.put("/stock-take", async (c) => {
     const ym = String(body.ym ?? "").slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ success: false, error: "ym must be 'YYYY-MM'" }, 400);
     if (!Array.isArray(body.rows)) return c.json({ success: false, error: "rows[] is required" }, 400);
+    // A closed year's stock take is part of its closed figures (item 9 part B).
+    const lockedYear = await closedYearError(c.var.DB, ym);
+    if (lockedYear) return c.json({ success: false, error: lockedYear }, 400);
     const now = new Date().toISOString();
+    // The month's figures before this save, for the audit trail (item 10).
+    const stBefore: Record<string, string> = {};
+    try {
+      const prev = await c.var.DB.prepare("SELECT item_group, value_sen FROM stock_take WHERE org_id = ? AND ym = ?").bind(orgId, ym).all<Record<string, unknown>>();
+      for (const r of prev.results ?? []) stBefore[String(r.itemGroup ?? r.item_group)] = ((Number(r.valueSen ?? r.value_sen) || 0) / 100).toFixed(2);
+    } catch { /* no before */ }
+    const stAfter: Record<string, string> = { ...stBefore };
     const seen = new Set<string>();
     const stmts: D1PreparedStatement[] = [];
     let cleared = 0;
@@ -18275,6 +19458,8 @@ app.put("/stock-take", async (c) => {
       if (!g || seen.has(g)) continue;
       seen.add(g);
       const sen = Math.max(0, Math.round(Number(raw?.valueSen) || 0));
+      if (sen === 0) delete stAfter[g];
+      else stAfter[g] = (sen / 100).toFixed(2);
       if (sen === 0) {
         cleared++;
         stmts.push(
@@ -18335,6 +19520,7 @@ app.put("/stock-take", async (c) => {
       linesSaved = lines.length;
     }
     if (stmts.length) await c.var.DB.batch(stmts);
+    await emitAudit(c, { resource: "stock-take", resourceId: ym, action: "update", before: stBefore, after: { ...stAfter, ...(linesSaved ? { countedLines: linesSaved } : {}), ...(aliasesSaved ? { newItemMappings: aliasesSaved } : {}) } });
     return c.json({ success: true, saved: groupsSaved, cleared, aliasesSaved, linesSaved, ym });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -18387,6 +19573,7 @@ app.post("/stock-take-item-alias-seed", async (c) => {
     );
   }
   if (!dry && stmts.length) await db.batch(stmts);
+  if (!dry && stmts.length) await emitAudit(c, { resource: "stock-take", resourceId: "item-mappings", action: "alias-seed", after: { mappings: stmts.length, overwrite } });
   return c.json({
     success: true,
     dry,
@@ -18609,6 +19796,7 @@ app.put("/material-opening-stock", async (c) => {
     )
       .bind(orgId)
       .all<MaterialOpeningStockRow>();
+    await emitAudit(c, { resource: "material-opening-stock", resourceId: "opening-stock", action: "update", after: { rows: Array.isArray(body.rows) ? body.rows.length : 0 } });
     return c.json({
       success: true,
       data: { saved: cleaned.length },

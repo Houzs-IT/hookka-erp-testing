@@ -116,9 +116,17 @@ test("the dashboard says how much of a period is estimate", () => {
 });
 
 test("the pages colour an estimate: amber text on a pale amber row, an est. tag and the month it came from", () => {
-  assert.match(UI, /const EST_ROW = "bg-\[#FAEFCB\] text-\[#9C6F1E\] italic";/);
+  // Finance v2: the amber is the finance sheet's (a row, or one month's cell).
+  const sheet = readFileSync("src/styles/finance-v2.css", "utf8").replace(/\r\n/g, "\n");
+  assert.match(sheet, /> tbody > tr > td\[data-cell~="est"\],\n\[data-fin-ui\] table\[data-fin-report\] > tbody > tr\[data-est\] > td \{\n  background-color: #FAEFCB;\n  color: #9C6F1E;/);
   const st = slice(UI, "function PLStatementTab(", "\nfunction ");
-  assert.match(st, /\$\{row\.estSen \? EST_ROW : "hover:bg-\[#F7F4EF\]"\}/);
+  // Finance v2: the statement's row is marked data-est and the finance sheet
+  // paints it (pale amber, amber text) — a Tailwind class on the row would sit
+  // under the cells' white.
+  assert.match(st, /<tr data-row="line" data-est=\{row\.estSen \? "" : undefined\}/);
+  assert.match(st, /\{row\.estSen \? <span className="ml-1\.5 text-\[10px\] font-semibold">· est\.<\/span> : null\}/);
+  const css = readFileSync("src/styles/finance-v2.css", "utf8").replace(/\r\n/g, "\n");
+  assert.match(css, /> tbody > tr\[data-est\] > td \{\n  background-color: #FAEFCB;\n  color: #9C6F1E;/);
   assert.match(st, /title=\{row\.estSen \? estTitle\(row\.estFrom\) : undefined\}/);
   assert.match(st, /Amber rows are estimates/);
   const mo = slice(UI, "function MonthlyPlTab(", "\nfunction ");

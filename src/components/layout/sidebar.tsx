@@ -53,7 +53,6 @@ import {
   Box,
   Receipt,
   List,
-  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -79,8 +78,11 @@ const navigationGroups: NavGroup[] = [
   {
     label: "OVERVIEW",
     items: [
-      { name: "Dashboard Experimental", href: "/dashboard-experimental", icon: FlaskConical },
-      { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      // One dashboard (owner 2026-10-17): the merged page, under the name and
+      // icon of the old one. Every role that could read /dashboard also holds
+      // dashboard-experimental:read (role-policy withDashboardAccess), so no
+      // viewer loses it; /dashboard now redirects here.
+      { name: "Dashboard", href: "/dashboard-experimental", icon: LayoutDashboard },
       { name: "Hookka Report", href: "/daily-report", icon: ClipboardCheck },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "Announcements", href: "/announcements", icon: Megaphone },
@@ -249,6 +251,7 @@ const navigationGroups: NavGroup[] = [
       {
         name: "Debtors", href: "/accounting?tab=ar", icon: Users, children: [
           { name: "Debtor Aging", href: "/accounting?tab=ar", icon: Users },
+          { name: "Debtor List", href: "/accounting?tab=debtors", icon: List },
           { name: "Other Debtor Bills", href: "/accounting?tab=odebtorbills", icon: BookOpen },
           { name: "Credit Notes", href: "/invoices/credit-notes", icon: FileX },
           { name: "Debit Notes", href: "/invoices/debit-notes", icon: FilePlus },
@@ -257,6 +260,7 @@ const navigationGroups: NavGroup[] = [
       {
         name: "Creditors", href: "/accounting?tab=ap", icon: Building2, children: [
           { name: "Creditor Aging", href: "/accounting?tab=ap", icon: Building2 },
+          { name: "Creditor List", href: "/accounting?tab=creditors", icon: List },
           { name: "AP Invoices", href: "/accounting?tab=apinvoices", icon: BookOpen },
           // Back in the menu (owner 2026-09-29 「other creditor maintenance 放 sidebar
           // 旁边」): the creditor register, no longer folded under AP Invoices.

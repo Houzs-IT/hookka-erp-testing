@@ -72,6 +72,10 @@ export interface InvoicePrintExtras {
     { baseSen: number; divanSen: number; legSen: number; specialSen: number; totalHeightSen: number; unitSen: number }
   >;
   items: Record<string, InvoiceLineExtra>;
+  /** Σ issued credit notes − Σ posted debit notes on the invoice: the note
+   *  cascade moved the stored totals by this much, so the printed invoice
+   *  adds it back and shows what it was issued at (BUG-2026-10-17-315). */
+  noteAdjustSen: number;
 }
 
 /**
@@ -445,5 +449,20 @@ export async function computeInvoicePrintExtras(
     }
   }
 
-  return { customerSO, customerRef, priceByCode, items };
+  let noteAdjustSen = 0;
+  try {
+    const n = await db
+      .prepare(
+        `SELECT
+           (SELECT COALESCE(SUM(totalAmount), 0) FROM credit_notes WHERE invoiceId = ? AND status IN ('APPROVED','POSTED')) AS cn_sen,
+           (SELECT COALESCE(SUM(totalAmount), 0) FROM debit_notes WHERE invoiceId = ? AND status = 'POSTED') AS dn_sen`,
+      )
+      .bind(invoiceId, invoiceId)
+      .first<Record<string, unknown>>();
+    noteAdjustSen = (Number(n?.cnSen ?? n?.cn_sen) || 0) - (Number(n?.dnSen ?? n?.dn_sen) || 0);
+  } catch {
+    /* notes unreadable → the stored totals print, as before */
+  }
+
+  return { customerSO, customerRef, priceByCode, items, noteAdjustSen };
 }

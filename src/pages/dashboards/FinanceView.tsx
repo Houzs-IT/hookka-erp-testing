@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSeriesToggle } from "./use-series-toggle";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Cell, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -6,8 +7,7 @@ import { formatCurrency } from "@/lib/utils";
 import type { FinancePayload, Yoy, PeVariant } from "@/api/lib/dashboard-finance";
 import {
   AMBER, BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, RED, TEAL,
-  fmtRMAxis, monthLabel, periodLabel, type FinSub, type Period,
-} from "./dashboard-shared-lib";
+  fmtRMAxis, monthLabel, periodLabel, type FinSub, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import { AgingRatiosCard } from "./DashboardWidgets";
 
@@ -108,6 +108,7 @@ export function FinanceView({
 // ---------------------------------------------------------------------------
 function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; kind: "money" | "ratio"; higherBetter: boolean | null }[]; chart: boolean }) {
   const noPrior = !d.coverage.priorHasData;
+  const tYoy = useSeriesToggle();
   const money = (n: number) => formatCurrency(n);
   const ratioFmt = (n: number) => `${(n * 100).toFixed(1)}%`;
   const chartData = d.yoyChart.map((r) => ({ name: r.name, "This period": Math.round(r.current / 100), "Same period last year": r.prior === null ? null : Math.round(r.prior / 100) }));
@@ -167,12 +168,12 @@ function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; k
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                <XAxis dataKey="name" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                 <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="This period" fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
-                <Bar dataKey="Same period last year" fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                <Legend {...tYoy.legend} />
+                <Bar dataKey="This period" hide={tYoy.hide("This period")} fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                <Bar dataKey="Same period last year" hide={tYoy.hide("Same period last year")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -185,12 +186,19 @@ function YoyCard({ d, rows, chart }: { d: Resp; rows: { label: string; y: Yoy; k
 // ---------------------------------------------------------------------------
 function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
   const p = d.perHead;
-  const data = p.trend.map((t) => ({
+  const tHead = useSeriesToggle();
+  const all = p.trend.map((t) => ({
     ym: t.ym,
     label: monthLabel(t.ym),
     "Labour cost / head": t.labourPerHeadSen === null ? null : Math.round(t.labourPerHeadSen / 100),
     "Revenue / head": t.revenuePerHeadSen === null ? null : Math.round(t.revenuePerHeadSen / 100),
+    "Labour % of revenue":
+      t.labourPerHeadSen != null && t.revenuePerHeadSen ? Math.round((t.labourPerHeadSen / t.revenuePerHeadSen) * 1000) / 10 : null,
   }));
+  // Months before the ledger starts are blank bars — start the axis at the
+  // first month with figures (owner 2026-10-18 polish).
+  const first = all.findIndex((r) => r["Revenue / head"] || r["Labour cost / head"]);
+  const data = first > 0 ? all.slice(first) : all;
   const anyData = data.some((r) => r["Revenue / head"] !== null || r["Labour cost / head"] !== null);
   return (
     <>
@@ -202,8 +210,8 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
       </div>
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle>Per head, last 12 months</CardTitle>
-          <p className="text-xs text-[#6B7280]">Click a month to open it.</p>
+          <CardTitle>Per head, by month</CardTitle>
+          <p className="text-xs text-[#6B7280]">Revenue and labour cost per head · line = labour as a % of revenue · click a month to open it.</p>
         </CardHeader>
         <CardContent>
           <div className={CHART_WRAP} style={{ width: "100%", height: 240 }}>
@@ -211,7 +219,7 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
               <div className="flex h-full items-center justify-center text-xs text-[#6B7280]">No ledger data in the last 12 months.</div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
+                <ComposedChart
                   data={data}
                   margin={{ top: 6, right: 6, bottom: 0, left: 0 }}
                   style={{ cursor: "pointer" }}
@@ -221,13 +229,15 @@ function PerHead({ d, onMonth }: { d: Resp; onMonth: (ym: string) => void }) {
                   }}
                 >
                   <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="Revenue / head" fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
-                  <Bar dataKey="Labour cost / head" fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
-                </BarChart>
+                  <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis yAxisId="rm" tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                  <YAxis yAxisId="pct" orientation="right" tick={CC_TICK} axisLine={false} tickLine={false} width={40} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, n) => (n === "Labour % of revenue" ? [`${v}%`, n] : [formatCurrency(Number(v) * 100), n])} />
+                  <Legend {...tHead.legend} />
+                  <Bar yAxisId="rm" dataKey="Revenue / head" hide={tHead.hide("Revenue / head")} fill={CHART_INK} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                  <Bar yAxisId="rm" dataKey="Labour cost / head" hide={tHead.hide("Labour cost / head")} fill={CHART_GOLD} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                  <Line yAxisId="pct" type="monotone" dataKey="Labour % of revenue" hide={tHead.hide("Labour % of revenue")} stroke={TEAL} strokeWidth={2.5} dot={{ r: 3 }} connectNulls isAnimationActive={false} />
+                </ComposedChart>
               </ResponsiveContainer>
             )}
           </div>
@@ -330,6 +340,7 @@ function PeCell({ v }: { v: PeVariant }) {
 
 function Outlook({ d, onSaved }: { d: Resp; onSaved: () => void }) {
   const f = d.forecast;
+  const tOut = useSeriesToggle();
   const chartData = f.points.map((p) => ({
     label: monthLabel(p.ym),
     projected: p.projected,
@@ -382,14 +393,14 @@ function Outlook({ d, onSaved }: { d: Resp; onSaved: () => void }) {
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke={CHART_AXIS} strokeOpacity={0.25} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={{ stroke: CARD_BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: CHART_AXIS }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
+                  <XAxis dataKey="label" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => fmtRMAxis(Number(v))} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(Number(v) * 100)} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="Revenue" radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} fill={CHART_INK}>
+                  <Legend {...tOut.legend} />
+                  <Bar dataKey="Revenue" hide={tOut.hide("Revenue")} radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} fill={CHART_INK}>
                     {chartData.map((r) => <Cell key={r.label} fill={r.projected ? "#E3DED5" : CHART_INK} />)}
                   </Bar>
-                  <Line type="monotone" dataKey="Net profit" stroke={TEAL} strokeWidth={2} strokeDasharray="5 4" connectNulls isAnimationActive={false} dot={{ r: 2.5, fill: "#FFFFFF", stroke: TEAL, strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="Net profit" hide={tOut.hide("Net profit")} stroke={TEAL} strokeWidth={2} strokeDasharray="5 4" connectNulls isAnimationActive={false} dot={{ r: 2.5, fill: "#FFFFFF", stroke: TEAL, strokeWidth: 2 }} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}

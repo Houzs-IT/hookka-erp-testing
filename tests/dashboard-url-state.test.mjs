@@ -4,21 +4,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseDashboardUrl, serializeDashboardUrl, TAB_SUBS } from "../src/pages/dashboards/dashboard-url-state-lib.ts";
 
-const TABS = ["overview", "sales", "operations", "people", "service", "finance"];
+// Merged dashboard (2026-10-17): no Overview tab; Sales is the landing tab.
+const TABS = ["sales", "operations", "people", "service", "finance"];
 const parse = (q) => parseDashboardUrl(new URLSearchParams(q), TABS);
 const ser = (s, base) => serializeDashboardUrl(s, base ? new URLSearchParams(base) : undefined).toString();
 
 test("empty URL = defaults, and defaults serialize to an empty URL", () => {
   const s = parse("");
-  assert.deepEqual(s, { tab: "overview", sub: "", period: { mode: "monthly", month: "" } });
+  assert.deepEqual(s, { tab: "sales", sub: "", period: { mode: "monthly", month: "" } });
   assert.equal(ser(s), "");
 });
 
-test("operations / plan / monthly / day round-trips", () => {
-  const q = "tab=operations&sub=plan&month=2026-09&day=2026-09-12";
+test("operations / production / monthly / day round-trips", () => {
+  const q = "tab=operations&sub=production&month=2026-09&day=2026-09-12";
   const s = parse(q);
   assert.equal(s.tab, "operations");
-  assert.equal(s.sub, "plan");
+  assert.equal(s.sub, "production");
   assert.deepEqual(s.period, { mode: "monthly", month: "2026-09", day: "2026-09-12" });
   assert.deepEqual(parse(ser(s)), s);
 });
@@ -27,12 +28,12 @@ test("first sub-tab is omitted; range and ytd round-trip", () => {
   assert.equal(ser({ tab: "people", sub: TAB_SUBS.people[0].key, period: { mode: "monthly", month: "" } }), "tab=people");
   const r = { tab: "sales", sub: "", period: { mode: "range", month: "2026-09", from: "2026-09-01", to: "2026-09-07", label: "Last 7 Days" } };
   assert.deepEqual(parse(ser(r)), r);
-  const y = { tab: "overview", sub: "", period: { mode: "ytd", month: "2026-05" } };
+  const y = { tab: "finance", sub: "perhead", period: { mode: "ytd", month: "2026-05" } };
   assert.deepEqual(parse(ser(y)), y);
 });
 
 test("invalid tab/sub/month/day/range fall back silently", () => {
-  assert.equal(parse("tab=nope").tab, "overview");
+  assert.equal(parse("tab=nope").tab, "sales");
   assert.equal(parse("tab=people&sub=nope").sub, TAB_SUBS.people[0].key);
   assert.equal(parse("tab=sales&sub=plan").sub, "");
   assert.equal(parse("month=2026-13").period.month, "");
@@ -61,15 +62,15 @@ test("every registered sub-tab list is non-empty with unique keys", () => {
 test("links from the person-named tabs resolve to the functional tab that owns the chart", () => {
   const at = (q) => { const s = parse(q); return `${s.tab}/${s.sub}`; };
   assert.equal(at("tab=siti"), "operations/overview");
-  assert.equal(at("tab=siti&sub=cost"), "operations/cost");
+  assert.equal(at("tab=siti&sub=cost"), "operations/production");
   assert.equal(at("tab=employee&sub=time"), "people/time");
   assert.equal(at("tab=department"), "people/efficiency");
   assert.equal(at("tab=lim"), "people/efficiency");
-  assert.equal(at("tab=lim&sub=plan"), "operations/plan");
-  assert.equal(at("tab=lim&sub=revenue"), "operations/cost");
+  assert.equal(at("tab=lim&sub=plan"), "operations/production");
+  assert.equal(at("tab=lim&sub=revenue"), "operations/production");
   assert.equal(at("tab=lim&sub=overdue"), "operations/overview");
   assert.equal(at("tab=lim&sub=attendance"), "people/time");
-  assert.equal(at("tab=lim&sub=service"), "service/performance");
+  assert.equal(at("tab=lim&sub=service"), "service/overview");
   assert.equal(parse("tab=lim&sub=plan&day=2026-09-12").period.day, "2026-09-12");
 });
 
@@ -78,11 +79,24 @@ test("the retired people/departments sub-tab lands on Efficiency", () => {
   assert.ok(!TAB_SUBS.people.some((s) => s.key === "departments"));
   const s = parse("tab=people&sub=departments&month=2026-09");
   assert.deepEqual([s.tab, s.sub, s.period.month], ["people", "efficiency", "2026-09"]);
-  assert.equal(ser(s), "tab=people&sub=efficiency&month=2026-09");
-  assert.equal(ser(parse("tab=department&day=2026-09-12")), "tab=people&sub=efficiency&day=2026-09-12");
+  // Efficiency is now the first (default) Employees sub-tab, so it is omitted.
+  assert.equal(ser(s), "tab=people&month=2026-09");
+  assert.equal(ser(parse("tab=department&day=2026-09-12")), "tab=people&day=2026-09-12");
 });
 
 test("no tab or sub-tab is named after a person", () => {
   const labels = Object.values(TAB_SUBS).flat().map((s) => `${s.key} ${s.label}`).join(" ");
   assert.doesNotMatch(`${Object.keys(TAB_SUBS).join(" ")} ${labels}`, /siti|zamri|lim/i);
+});
+
+test("merged dashboard: folded tabs and sub-tabs keep their old links working", () => {
+  const at = (q) => { const x = parse(q); return `${x.tab}/${x.sub}`; };
+  assert.equal(at("tab=overview"), "sales/");
+  assert.equal(at("tab=operations&sub=plan"), "operations/production");
+  assert.equal(at("tab=operations&sub=materials"), "operations/production");
+  assert.equal(at("tab=operations&sub=cost"), "operations/production");
+  assert.equal(at("tab=people&sub=overview"), "people/efficiency");
+  assert.equal(at("tab=service&sub=performance"), "service/overview");
+  assert.equal(at("tab=service&sub=issues"), "service/overview");
+  assert.equal(at("tab=service&sub=approvals"), "service/overdue");
 });

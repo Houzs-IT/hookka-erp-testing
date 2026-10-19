@@ -100,7 +100,10 @@ test("the P&L: name opens the lines under the row (not in edit mode); the panel 
   assert.match(tab, /const drillCode = row\.drillCode \?\? row\.accountCode;/);
   assert.match(tab, /const canDrill = !edit && !!drillCode;/, "edit mode keeps the row for dragging");
   assert.match(tab, /const drillKey = drillCode \? `\$\{period\}\|\$\{drillCode\}` : "";/, "a new period starts closed");
-  assert.match(tab, /<tr><td colSpan=\{5\} className="p-0"><PlDrillPanel period=\{period\} account=\{drillCode\} line=\{line\} \/><\/td><\/tr>/);
+  // Finance v2: the report table's cells carry padding, so the drill's cell
+  // drops it inline (a utility class would lose to the finance sheet).
+  assert.match(tab, /<tr><td colSpan=\{cols\} style=\{\{ padding: 0 \}\}><PlDrillPanel period=\{period\} account=\{drillCode\} line=\{line\} \/><\/td><\/tr>/);
+  assert.match(tab, /const cols = 5;/);
   const panel = slice(ui, "function PlDrillPanel(", "function PLStatementTab(");
   assert.match(panel, /fetch\(`\/api\/accounting\/pl-drill\?period=\$\{encodeURIComponent\(period\)\}&account=\$\{encodeURIComponent\(account\)\}`\)/);
   for (const h of ["Date", "Description", "Other side", "Ref. 1", "Ref. 2", "Amount"]) assert.ok(panel.includes(`>${h}</th>`), `column ${h}`);

@@ -9,7 +9,7 @@
 // tests/db-schema.json), so "overdue" = age > SERVICE_OVERDUE_DAYS.
 // ---------------------------------------------------------------------------
 import { ensureApprovalColumns } from "./service-approval";
-import { parseProductLabels, parseRootCauses, type RootCauseEntry } from "./service-issue-stats";
+import { parseProductLabels, parseRootCauses, productCategoriesOf, type RootCauseEntry } from "./service-issue-stats";
 
 /** Open/in-progress cases older than this many days are flagged overdue. */
 export const SERVICE_OVERDUE_DAYS = 3;
@@ -34,11 +34,14 @@ export type ServiceCaseLite = {
   preventionOwner: string | null; // prevention_owner
   preventionAction: string; // prevention_action, first 160 chars ('' = none)
   products: string[]; // affected product labels (max 10)
+  productCategories: string[]; // BEDFRAME / SOFA / ACCESSORY of those products ([] = none recorded)
   ageDays: number | null; // only for OPEN / IN_PROGRESS
   daysOverdue: number; // 0 unless open past the threshold
 };
 
-export type ServiceSlice = { overdueAfterDays: number; cases: ServiceCaseLite[] };
+/** Units delivered per month and product category — the defect-rate denominator. */
+export type ShippedRow = { ym: string; category: string; units: number };
+export type ServiceSlice = { overdueAfterDays: number; cases: ServiceCaseLite[]; shipped?: ShippedRow[] };
 
 /** Pure: whole days a still-open case has been open, and how far past the threshold. */
 export function caseAging(
@@ -98,6 +101,40 @@ export async function buildServiceSlice(
         LIMIT 3000`,
     )
     .all<Row>();
+  // Product id / code → category, for each case's affected products.
+  const byId = new Map<string, string>();
+  const byCode = new Map<string, string>();
+  try {
+    const pr = await db.prepare(`SELECT id AS "id", code AS "code", category AS "category" FROM products`).all<{ id: string; code: string; category: string }>();
+    for (const p of pr.results ?? []) {
+      const cat = String(p.category ?? "").toUpperCase();
+      if (!cat) continue;
+      byId.set(String(p.id), cat);
+      if (p.code) byCode.set(String(p.code).trim().toUpperCase(), cat);
+    }
+  } catch { /* no categories: defect rate shows cases as unspecified */ }
+  // Units delivered per month and category (owner 2026-10-17: defect rate
+  // "根据出货的数量, 根据不一样 category"). Read from the finished-goods units
+  // scanned DELIVERED — most deliveries are scanned, not on a DO. Bedframe /
+  // accessory = distinct units (PO × unit no., pieces of one unit count once);
+  // sofa = distinct sales orders (one SO = one set, as the Completed tile).
+  let shipped: ShippedRow[] = [];
+  try {
+    const sh = await db.prepare(
+      `SELECT substr(fg.delivered_at::text, 1, 7) AS "ym",
+              UPPER(COALESCE(po.item_category, '')) AS "category",
+              COUNT(DISTINCT CASE WHEN UPPER(COALESCE(po.item_category, '')) = 'SOFA'
+                                  THEN fg.so_id
+                                  ELSE fg.po_id || ':' || COALESCE(fg.unit_no::text, '') END) AS "units"
+         FROM fg_units fg
+         LEFT JOIN production_orders po ON po.id = fg.po_id
+        WHERE fg.status = 'DELIVERED' AND fg.delivered_at IS NOT NULL
+        GROUP BY 1, 2`,
+    ).all<{ ym: string; category: string; units: number | string }>();
+    shipped = (sh.results ?? [])
+      .filter((r) => r.ym && r.category)
+      .map((r) => ({ ym: String(r.ym), category: String(r.category), units: Number(r.units) || 0 }));
+  } catch { /* no denominator: the card says so */ }
   const cases = (res.results ?? []).flatMap((r): ServiceCaseLite[] => {
     const createdDate = dateOf(r.created_at ?? r.createdAt);
     if (!createdDate) return [];
@@ -126,8 +163,9 @@ export async function buildServiceSlice(
       preventionOwner: str(r, "prevention_owner", "preventionOwner"),
       preventionAction: (str(r, "prevention_action", "preventionAction") ?? "").slice(0, 160),
       products: parseProductLabels(r.affected_product_ids ?? r.affectedProductIds),
+      productCategories: productCategoriesOf(r.affected_product_ids ?? r.affectedProductIds, byId, byCode),
       ...caseAging(status, createdRaw, now),
     }];
   });
-  return { overdueAfterDays: SERVICE_OVERDUE_DAYS, cases };
+  return { overdueAfterDays: SERVICE_OVERDUE_DAYS, cases, shipped };
 }

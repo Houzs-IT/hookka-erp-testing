@@ -22,7 +22,8 @@ export const DASHBOARD_NAV_HREF = "/dashboard-experimental";
 
 /** Tab strip order. Keys are the URL segment: /m/dashboard/<key>. */
 export const MOBILE_TABS = [
-  { key: "overview", label: "Overview" },
+  // No Overview (owner 2026-10-17, as on the desktop): its cards moved into
+  // Sales / Operations / Employees; /m/dashboard/overview lands on Sales.
   { key: "sales", label: "Sales" },
   { key: "operations", label: "Operations" },
   { key: "people", label: "Employees" },

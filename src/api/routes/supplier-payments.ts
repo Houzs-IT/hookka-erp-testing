@@ -36,7 +36,10 @@ import { looksTechnical } from "../../lib/humanize-error";
 import { issueDocNumber } from "../lib/doc-number-service";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { applyLifecycle, getDocState } from "../lib/document-lifecycle";
+import { planEditBankCarry } from "../lib/bank-leg-carry";
+import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
 import { ensureTfTables, getTfSources, loadTfDraws } from "../lib/trade-finance";
+import type { TfSource } from "../lib/trade-finance";
 import { clampRepayAlloc, addDays } from "../../lib/trade-finance";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
 import { emitAudit } from "../lib/audit";
@@ -226,94 +229,26 @@ app.post("/", async (c) => {
       // method 'TF_REPAYMENT' keeps it out of the advance machinery.
       const lenderCfg = tfSources.find((s) => s.lenderSupplierId === supplierId);
       if (lenderCfg) {
-        await ensureTfTables(c.var.DB);
         if (isTfSource) {
           return c.json(
             { success: false, error: "A trade-finance repayment cannot be paid FROM the trade-finance account" },
             400,
           );
         }
-        if (tfAllocations.length === 0) {
-          return c.json({ success: false, error: "Pick at least one draw to repay" }, 400);
-        }
-        const { draws } = await loadTfDraws(c.var.DB, lenderCfg);
-        const byId = new Map(draws.map((d) => [d.drawSourceId, d] as const));
-        let totalTf = 0;
-        const cleanAllocs: { drawSourceId: string; paySen: number }[] = [];
-        for (const a of tfAllocations) {
-          const drawSourceId = String(a.drawSourceId ?? "").trim();
-          const paySen = Math.round(Number(a.paySen) || 0);
-          if (!drawSourceId || paySen === 0) continue;
-          const d = byId.get(drawSourceId);
-          if (!d) return c.json({ success: false, error: `Unknown draw ${drawSourceId}` }, 400);
-          const chk = clampRepayAlloc(d.outstandingSen, paySen);
-          if (!chk.ok) return c.json({ success: false, error: `${drawSourceId}: ${chk.error}` }, 400);
-          cleanAllocs.push({ drawSourceId, paySen });
-          totalTf += paySen;
-        }
-        if (totalTf <= 0) return c.json({ success: false, error: "Pick at least one draw to repay" }, 400);
+        // One validator + one statement builder for both doors (this page and
+        // an AP Payment voucher to the lender — finance backlog item 17).
+        const chk = await validateTfRepayment(c.var.DB, lenderCfg, tfAllocations);
+        if (!chk.ok) return c.json({ success: false, error: chk.error }, 400);
+        const cleanAllocs = chk.allocations;
+        const totalTf = chk.totalSen;
         const tfPayNo = await issueDocNumber(c.var.DB, {
           bankAccountCode: payFrom,
           direction: "out",
           dateIso: date,
         });
-        const tfStatements: D1PreparedStatement[] = [];
-        tfStatements.push(
-          c.var.DB.prepare(
-            `INSERT INTO supplier_payments (
-               id, paymentNo, supplierId, supplierName, purchaseInvoiceId,
-               date, amountSen, bookedSen, foreignSen, payFxRate,
-               method, reference, notes, orgId
-             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, 'TF_REPAYMENT', ?, ?, ?)`,
-          ).bind(
-            `sp-${crypto.randomUUID().slice(0, 8)}`,
-            tfPayNo,
-            supplierId,
-            lenderCfg.lenderName,
-            date,
-            totalTf,
-            totalTf,
-            reference ?? "",
-            `Trade finance repayment ${tfPayNo}`,
-            orgId,
-          ),
-        );
-        for (const a of cleanAllocs) {
-          tfStatements.push(
-            c.var.DB.prepare(
-              `INSERT INTO trade_finance_repay_allocs (id, repay_payment_no, draw_source_id, amount_sen, org_id)
-               VALUES (?, ?, ?, ?, ?)`,
-            ).bind(`tfa-${crypto.randomUUID().slice(0, 8)}`, tfPayNo, a.drawSourceId, a.paySen, orgId),
-          );
-        }
-        const { statements: tfLegs } = await buildJournalEntryStatements(c.var.DB, orgId, [
-          {
-            id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-            sourceType: "supplier_payment",
-            sourceId: tfPayNo,
-            legNo: 1,
-            accountCode: lenderCfg.accountCode,
-            debitSen: totalTf,
-            creditSen: 0,
-            description: `TF repayment ${tfPayNo} — ${lenderCfg.lenderName}`,
-            actorUserId,
-            orgId,
-          },
-          {
-            id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-            sourceType: "supplier_payment",
-            sourceId: tfPayNo,
-            legNo: 2,
-            accountCode: payFrom,
-            debitSen: 0,
-            creditSen: totalTf,
-            description: `TF repayment ${tfPayNo}`,
-            actorUserId,
-            orgId,
-          },
-        ]);
-        tfStatements.push(...tfLegs);
-        tfStatements.push(bumpSupplierPaymentsRev(c.var.DB));
+        const tfStatements = await tfRepaymentStatements(c.var.DB, {
+          orgId, actorUserId, lender: lenderCfg, supplierId, payFrom, date, reference, allocations: cleanAllocs, totalSen: totalTf, paymentNo: tfPayNo,
+        });
         await c.var.DB.batch(tfStatements);
         await emitAudit(c, {
           resource: "supplier-payments",
@@ -424,10 +359,116 @@ export type SupplierPaymentCreateInput = {
   allocations: CreateAllocation[];
   advanceSen: number;
   paymentNo: string;
+  /** Legs posted in the same entry chain as the payment — the interest an
+      AP Payment drawing on trade finance records at drawdown (item 17). */
+  extraLegs?: Parameters<typeof buildJournalEntryStatements>[2];
 };
 export type SupplierPaymentCreateResult =
   | { ok: true; statements: D1PreparedStatement[]; totalBooked: number; totalBank: number; totalFx: number }
   | { ok: false; error: string };
+
+// ---------------------------------------------------------------------------
+// The trade-finance REPAYMENT (owner 2026-08-11), one definition for both
+// doors: POST /supplier-payments with the lender picked, and an AP Payment
+// voucher to the lender at approve / Post now (paymentNo = the voucher's
+// number; finance backlog item 17, owner 2026-10-17 「这个可以做」).
+//   validateTfRepayment  — each picked draw is open, each amount positive and
+//                          within the draw's outstanding (clampRepayAlloc);
+//   tfRepaymentStatements — one TF_REPAYMENT supplier_payments row, its draw
+//                          allocations, DR <TF account> / CR the bank.
+// ---------------------------------------------------------------------------
+export async function validateTfRepayment(
+  db: Env["Variables"]["DB"],
+  lender: TfSource,
+  tfAllocations: { drawSourceId?: string; paySen?: number }[],
+): Promise<{ ok: true; allocations: { drawSourceId: string; paySen: number }[]; totalSen: number } | { ok: false; error: string }> {
+  await ensureTfTables(db);
+  if (tfAllocations.length === 0) return { ok: false, error: "Pick at least one draw to repay" };
+  const { draws } = await loadTfDraws(db, lender);
+  const byId = new Map(draws.map((d) => [d.drawSourceId, d] as const));
+  let totalSen = 0;
+  const allocations: { drawSourceId: string; paySen: number }[] = [];
+  for (const a of tfAllocations) {
+    const drawSourceId = String(a.drawSourceId ?? "").trim();
+    const paySen = Math.round(Number(a.paySen) || 0);
+    if (!drawSourceId || paySen === 0) continue;
+    const d = byId.get(drawSourceId);
+    if (!d) return { ok: false, error: `Unknown draw ${drawSourceId}` };
+    const chk = clampRepayAlloc(d.outstandingSen, paySen);
+    if (!chk.ok) return { ok: false, error: `${drawSourceId}: ${chk.error}` };
+    allocations.push({ drawSourceId, paySen });
+    totalSen += paySen;
+  }
+  if (totalSen <= 0) return { ok: false, error: "Pick at least one draw to repay" };
+  return { ok: true, allocations, totalSen };
+}
+
+export async function tfRepaymentStatements(
+  db: Env["Variables"]["DB"],
+  o: {
+    orgId: string; actorUserId: string | null; lender: TfSource; supplierId: string; payFrom: string; date: string;
+    reference?: string | null; allocations: { drawSourceId: string; paySen: number }[]; totalSen: number; paymentNo: string;
+  },
+): Promise<D1PreparedStatement[]> {
+  const out: D1PreparedStatement[] = [];
+  out.push(
+    db.prepare(
+      `INSERT INTO supplier_payments (
+         id, paymentNo, supplierId, supplierName, purchaseInvoiceId,
+         date, amountSen, bookedSen, foreignSen, payFxRate,
+         method, reference, notes, orgId
+       ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, 'TF_REPAYMENT', ?, ?, ?)`,
+    ).bind(
+      `sp-${crypto.randomUUID().slice(0, 8)}`,
+      o.paymentNo,
+      o.supplierId,
+      o.lender.lenderName,
+      o.date,
+      o.totalSen,
+      o.totalSen,
+      o.reference ?? "",
+      `Trade finance repayment ${o.paymentNo}`,
+      o.orgId,
+    ),
+  );
+  for (const a of o.allocations) {
+    out.push(
+      db.prepare(
+        `INSERT INTO trade_finance_repay_allocs (id, repay_payment_no, draw_source_id, amount_sen, org_id)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(`tfa-${crypto.randomUUID().slice(0, 8)}`, o.paymentNo, a.drawSourceId, a.paySen, o.orgId),
+    );
+  }
+  const { statements: legs } = await buildJournalEntryStatements(db, o.orgId, [
+    {
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: "supplier_payment",
+      sourceId: o.paymentNo,
+      legNo: 1,
+      accountCode: o.lender.accountCode,
+      debitSen: o.totalSen,
+      creditSen: 0,
+      description: `TF repayment ${o.paymentNo} — ${o.lender.lenderName}`,
+      actorUserId: o.actorUserId,
+      orgId: o.orgId,
+    },
+    {
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: "supplier_payment",
+      sourceId: o.paymentNo,
+      legNo: 2,
+      accountCode: o.payFrom,
+      debitSen: 0,
+      creditSen: o.totalSen,
+      description: `TF repayment ${o.paymentNo}`,
+      actorUserId: o.actorUserId,
+      orgId: o.orgId,
+    },
+  ], { docDate: o.date });
+  out.push(...legs);
+  out.push(bumpSupplierPaymentsRev(db));
+  return out;
+}
 
 export async function buildSupplierPaymentCreate(
   db: Env["Variables"]["DB"],
@@ -617,7 +658,8 @@ export async function buildSupplierPaymentCreate(
       orgId,
     });
   }
-  const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
+  legs.push(...(input.extraLegs ?? []));
+  const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs, { docDate: date });
   statements.push(...ls);
   statements.push(bumpSupplierPaymentsRev(db));
   return { ok: true, statements, totalBooked, totalBank, totalFx };
@@ -953,8 +995,11 @@ async function buildSupplierPaymentLifecycle(
     .first());
   if (isTfRepayment && action === "unvoid") throw new Error("TF_REPAYMENT_NO_UNVOID");
 
+  // The payment's own date — a closed financial year takes no void / restore (item 9).
+  const spDate = await db.prepare("SELECT date FROM supplier_payments WHERE payment_no = ? LIMIT 1").bind(paymentNo).first<{ date: string | null }>().catch(() => null);
   const lc = await applyLifecycle(db, {
     orgId,
+    docDate: spDate?.date ?? null,
     baseSourceTypes: ["supplier_payment"],
     voidSourceType: "supplier_payment_void",
     sourceId: paymentNo,
@@ -1108,9 +1153,9 @@ async function buildSupplierPaymentRestate(
       await db
         // Exclude #6 supplier-discount markers (method='CREDIT_NOTE') from the
         // rollback set — defensive against a future payment_no collision.
-        .prepare("SELECT purchaseInvoiceId, booked_sen, amount_sen, supplierId, supplierName FROM supplier_payments WHERE payment_no = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'")
+        .prepare("SELECT purchaseInvoiceId, booked_sen, amount_sen, supplierId, supplierName, date FROM supplier_payments WHERE payment_no = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'")
         .bind(paymentNo)
-        .all<{ purchaseInvoiceId: string | null; bookedSen: number | null; booked_sen: number | null; amountSen?: number | null; amount_sen?: number | null; supplierId?: string | null; supplier_id?: string | null; supplierName?: string | null; supplier_name?: string | null }>()
+        .all<{ date?: string | null; purchaseInvoiceId: string | null; bookedSen: number | null; booked_sen: number | null; amountSen?: number | null; amount_sen?: number | null; supplierId?: string | null; supplier_id?: string | null; supplierName?: string | null; supplier_name?: string | null }>()
     ).results ?? [];
   if (oldRows.length === 0) throw new Error("PAYMENT_NOT_FOUND");
 
@@ -1268,11 +1313,11 @@ async function buildSupplierPaymentRestate(
     (
       await db
         .prepare(
-          `SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
             WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'supplier_payment%'`,
         )
         .bind(paymentNo, orgId)
-        .all<{ accountCode: string; debitSen: number; creditSen: number }>()
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
     ).results ?? [];
   const revLegs = cur.map((l, i) => ({
     id: `lje-${crypto.randomUUID().slice(0, 12)}`,
@@ -1294,7 +1339,10 @@ async function buildSupplierPaymentRestate(
   if (totalFx !== 0) {
     newLegs.push({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: paymentNo, legNo: 3, accountCode: FX_GAIN_ACCT, debitSen: totalFx < 0 ? -totalFx : 0, creditSen: totalFx > 0 ? totalFx : 0, description: `Realised FX · ${paymentNo}`, actorUserId, orgId });
   }
-  const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs]);
+  // The bank side follows the re-posted bank leg, or the edit is refused (C31).
+  const carry = await planEditBankCarry(db, cur, newLegs, "payment");
+  if (!carry.ok) throw new BankMatchedEditRefused(carry.error);
+  const { statements: jeStmts } = await buildJournalEntryStatements(db, orgId, [...revLegs, ...newLegs], { docDate: [oldRows[0]?.date ?? null, date] });
   statements.push(...jeStmts);
   statements.push(
     db
@@ -1303,6 +1351,7 @@ async function buildSupplierPaymentRestate(
       )
       .bind(paymentNo, orgId, postSource),
   );
+  statements.push(...carry.statements);
 
   // 5. TRUTH GUARD (owner rule 2026-07-08 「确保以后没有这问题」/
   //    BUG-2026-07-08-002: PI-2606-041 showed paid 836 on a 418 bill with
@@ -1671,6 +1720,7 @@ app.post("/:paymentNo/restate", async (c) => {
         404,
       );
     }
+    if (err instanceof BankMatchedEditRefused) return c.json({ success: false, error: msg }, 409);
     if (looksTechnical(msg)) {
       // The operator toast deliberately hides technical text (owner directive
       // 2026-06-08), which made the 2026-07-24 PV-2607-001 edit failure

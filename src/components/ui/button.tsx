@@ -40,6 +40,10 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         className={cn(buttonVariants({ variant, size, className }))}
+        // Hooks for scoped page styles (finance v2: src/styles/finance-v2.css);
+        // they change nothing on their own.
+        data-variant={variant ?? "default"}
+        data-size={size ?? "default"}
         ref={ref}
         {...props}
       />

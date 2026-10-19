@@ -11,6 +11,7 @@
 // Mounted at /api/dashboard/overview. Auth-gated globally; tenant-scoped.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import { parseDashPeriod } from "../lib/dash-period";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
@@ -30,6 +31,7 @@ import {
 import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
 import {
   allocateDocsByCategory,
+  DEPT_REVENUE_ORDER,
   loadDeptRevenue,
   loadInvoiceLines,
   loadSoLines,
@@ -64,7 +66,9 @@ app.get("/", async (c) => {
   // Top Sellers): "all" or a specific "YYYY-MM". Everything else in
   // the payload is period-independent. Cached per period.
   const periodRaw = c.req.query("period") ?? "all";
-  const period = /^\d{4}-\d{2}$/.test(periodRaw) ? periodRaw : "all";
+  // all | YYYY-MM | YYYY-Qn | YYYY (quarter / year added 2026-10-17).
+  const dp = parseDashPeriod(periodRaw);
+  const period = dp.key;
 
   // Command Center month-awareness (2026-06-02). The state-snapshot widgets
   // — Backlog, Active Jobs, Workforce — are point-in-time counts, not sums
@@ -77,7 +81,7 @@ app.get("/", async (c) => {
   // is lexically < the current month prefix (ISO YYYY-MM sorts chronologically).
   const todayISOTop = fmtISO(new Date());
   const currentMonthPrefix = todayISOTop.slice(0, 7);
-  const isPastMonth = period !== "all" && period < currentMonthPrefix;
+  const isPastMonth = dp.kind !== "all" && dp.lastYm < currentMonthPrefix;
 
   // Extract the live STATE metrics from a computed overview payload and
   // upsert today's daily snapshot (idempotent on (org_id, snap_date)).
@@ -149,10 +153,11 @@ app.get("/", async (c) => {
     }
   }
 
+  // v24 (2026-10-17): customer Total / concentration = whole SO value (accessories included).
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const data = await cached(c, `dashboard:overview:${orgId}:v23:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:overview:${orgId}:v27:${period}`, 60, async () => {
     const db = c.var.DB;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -168,12 +173,7 @@ app.get("/", async (c) => {
     // The month before the selected one, for the Purchasing side-by-side. On
     // all-time there is no "previous", so it points at nothing and the card
     // renders only the total.
-    const prevPeriod = (() => {
-      if (kpiAllTime) return "";
-      const [y, m] = period.split("-").map(Number);
-      const d = new Date(Date.UTC(y, m - 2, 1));
-      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-    })();
+    const prevPeriod = dp.prevKey;
     const yesterdayISO = (() => {
       const y = new Date(today);
       y.setDate(y.getDate() - 1);
@@ -205,11 +205,11 @@ app.get("/", async (c) => {
     //                           Today's point simply grows as the day fills.
     //   - Past month          → [1st .. last calendar day of that month].
     const monthScope = (() => {
-      if (period === "all") return null;
-      const yr = Number(period.slice(0, 4));
-      const mo = Number(period.slice(5, 7)); // 1-12
-      const first = fmtISO(new Date(yr, mo - 1, 1));
-      const lastDay = fmtISO(new Date(yr, mo, 0)); // day 0 of next month
+      if (dp.kind === "all") return null;
+      // A quarter / year spans several months: first day of the first month
+      // to the last day of the last one.
+      const first = dp.startISO;
+      const lastDay = dp.lastDayISO;
       const todayISO = fmtISO(new Date(today));
       const end = isPastMonth
         ? lastDay
@@ -352,7 +352,7 @@ app.get("/", async (c) => {
           // Owner 2026-06-27: scope spend to the SELECTED period (was hardcoded
           // to the current calendar month via monthStart, so it ignored the
           // dashboard period selector — June's spend showed even on 2026-04/05).
-          `SELECT COALESCE(SUM(totalSen),0) AS v FROM purchase_orders WHERE orgId = ? AND status != 'CANCELLED'${kpiAllTime ? "" : ` AND substr(orderDate::text, 1, 7) = '${period}'`}`,
+          `SELECT COALESCE(SUM(totalSen),0) AS v FROM purchase_orders WHERE orgId = ? AND status != 'CANCELLED'${kpiAllTime ? "" : ` AND substr(orderDate::text, 1, 7) IN (${dp.monthsSql})`}`,
         )
         .bind(orgId)
         .first<{ v: number }>(),
@@ -391,7 +391,7 @@ app.get("/", async (c) => {
           // Top Sellers). Double quotes make Postgres keep the exact name.
           `SELECT supplierName AS name, COALESCE(SUM(totalSen),0) AS "spendSen"
              FROM purchase_orders
-            WHERE orgId = ? AND status != 'CANCELLED'${kpiAllTime ? "" : ` AND substr(orderDate::text, 1, 7) = '${period}'`}
+            WHERE orgId = ? AND status != 'CANCELLED'${kpiAllTime ? "" : ` AND substr(orderDate::text, 1, 7) IN (${dp.monthsSql})`}
             GROUP BY supplierName
             ORDER BY COALESCE(SUM(totalSen),0) DESC
             LIMIT 5`,
@@ -418,10 +418,10 @@ app.get("/", async (c) => {
                   COALESCE(SUM(amountSen),0) AS "spendSen"
              FROM purchase_invoices
             WHERE orgId = ? AND status != 'CANCELLED'
-              AND substr(invoiceDate::text, 1, 7) IN (?, ?)
+              AND substr(invoiceDate::text, 1, 7) IN (${[...dp.months, ...dp.prevMonths].map((m) => `'${m}'`).join(",") || "''"})
             GROUP BY substr(invoiceDate::text, 1, 7)`,
         )
-        .bind(orgId, period, prevPeriod)
+        .bind(orgId)
         .all<{ ym: string; spendSen: number }>(),
       db
         .prepare(
@@ -430,12 +430,12 @@ app.get("/", async (c) => {
                   COUNT(*) AS "invoices"
              FROM purchase_invoices
             WHERE orgId = ? AND status != 'CANCELLED'
-              ${kpiAllTime ? "" : "AND substr(invoiceDate::text, 1, 7) = ?"}
+              ${kpiAllTime ? "" : `AND substr(invoiceDate::text, 1, 7) IN (${dp.monthsSql})`}
             GROUP BY supplierName
             ORDER BY COALESCE(SUM(amountSen),0) DESC
             LIMIT 5`,
         )
-        .bind(...(kpiAllTime ? [orgId] : [orgId, period]))
+        .bind(orgId)
         .all<{ name: string; spendSen: number; invoices: number }>(),
       db
         .prepare(
@@ -443,7 +443,7 @@ app.get("/", async (c) => {
              FROM cost_ledger cl
              JOIN raw_materials rm ON rm.id = cl.itemId
             WHERE rm.orgId = ? AND cl.type = 'RM_ISSUE'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')${kpiAllTime ? "" : ` AND substr(cl.date::text, 1, 7) = '${period}'`}`,
+              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')${kpiAllTime ? "" : ` AND substr(cl.date::text, 1, 7) IN (${dp.monthsSql})`}`,
         )
         .bind(orgId)
         .first<{ sen: number; qty: number }>(),
@@ -455,7 +455,7 @@ app.get("/", async (c) => {
              JOIN production_orders po ON po.id = cl.refId
             WHERE po.orgId = ? AND cl.type = 'RM_ISSUE' AND cl.refType = 'PRODUCTION_ORDER'
               AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')
-              AND po.itemCategory NOT IN ('BEDFRAME','SOFA')${kpiAllTime ? "" : ` AND substr(cl.date::text, 1, 7) = '${period}'`}`,
+              AND po.itemCategory NOT IN ('BEDFRAME','SOFA')${kpiAllTime ? "" : ` AND substr(cl.date::text, 1, 7) IN (${dp.monthsSql})`}`,
         )
         .bind(orgId)
         .first<{ sen: number; qty: number }>(),
@@ -597,7 +597,8 @@ app.get("/", async (c) => {
                   COALESCE(SUM(cl.qty),0) AS "meters",
                   COALESCE(SUM(CASE
                     WHEN substr(po.created_at::text, 1, 7) < substr(cl.date::text, 1, 7)
-                    THEN cl.qty ELSE 0 END), 0) AS "lateMeters"
+                    THEN cl.qty ELSE 0 END), 0) AS "lateMeters",
+                  COALESCE(SUM(cl.totalCostSen),0) AS "costSen"
              FROM cost_ledger cl
              JOIN raw_materials rm ON rm.id = cl.itemId
              JOIN production_orders po ON po.id = cl.refId
@@ -608,7 +609,7 @@ app.get("/", async (c) => {
             GROUP BY po.itemCategory, substr(cl.date::text, 1, 7)`,
         )
         .bind(orgId)
-        .all<{ cat: string; ym: string | null; meters: number; lateMeters: number }>(),
+        .all<{ cat: string; ym: string | null; meters: number; lateMeters: number; costSen: number }>(),
       // Invoiced per month — by invoiceDate, every invoice except
       // CANCELLED (incl. DRAFT, per Wei Siang: all current invoices are
       // still DRAFT, so excluding them would leave the line empty).
@@ -995,16 +996,9 @@ app.get("/", async (c) => {
       }));
 
     // ---- Backlog per department (mirror of Planning capacityData) ----
-    const DEPARTMENTS: { code: string; name: string }[] = [
-      { code: "FAB_CUT", name: "Fabric Cutting" },
-      { code: "FAB_SEW", name: "Fabric Sewing" },
-      { code: "WOOD_CUT", name: "Wood Cutting" },
-      { code: "FOAM", name: "Foam Bonding" },
-      { code: "FRAMING", name: "Framing" },
-      { code: "WEBBING", name: "Webbing" },
-      { code: "UPHOLSTERY", name: "Upholstery" },
-      { code: "PACKING", name: "Packing" },
-    ];
+    // Same list + flow order as the progressive-revenue table (dept-revenue.ts),
+    // so departments added later (Foam Cutting, Fibre) appear here too.
+    const DEPARTMENTS = DEPT_REVENUE_ORDER.map(({ code, label }) => ({ code, name: label }));
     const backlogRows = backlogJcRes.results ?? [];
     const backlogByDept = DEPARTMENTS.map(({ code, name }) => {
       let windowTotal = 0;
@@ -1175,7 +1169,7 @@ app.get("/", async (c) => {
     if (monthScope) {
       const cur = new Date(`${monthScope.start}T00:00:00`);
       let guard = 0;
-      while (fmtISO(cur) <= monthScope.end && guard < 40) {
+      while (fmtISO(cur) <= monthScope.end && guard < 400) {
         guard++;
         const iso = fmtISO(cur);
         const v = compByDay.get(iso) ?? { bf: 0, sofa: 0 };
@@ -1244,7 +1238,7 @@ app.get("/", async (c) => {
           di.productCode,
         ) * (di.quantity || 0);
       // "Delivered this month" = shipped BY dispatch month (the KPI tile).
-      if (kpiAllTime || info.ym === period) thisMonthDeliveredSen += val;
+      if (dp.inYm(info.ym)) thisMonthDeliveredSen += val;
       // "Delivered of this month's orders" = the cohort funnel: shipped value
       // whose SO was CONFIRMED in the selected month, regardless of ship date.
       // Cohort key resolves PER ITEM: a CONSOLIDATED DO (header salesOrderId
@@ -1255,7 +1249,7 @@ app.get("/", async (c) => {
         (di.productionOrderId
           ? soPriceIdx.poById.get(di.productionOrderId)?.salesOrderId
           : "") || info.soId;
-      if (!kpiAllTime && soConfirmYm.get(itemSoId) === period) {
+      if (!kpiAllTime && dp.inYm(soConfirmYm.get(itemSoId))) {
         deliveredOfMonthOrdersSen += val;
       }
     }
@@ -1273,12 +1267,13 @@ app.get("/", async (c) => {
       bfQty: number;
       soVal: number;
       soSets: number;
+      /** Every confirmed SO's whole total (all lines, accessories included). */
+      all: number;
     };
     // Period gate: AOV table / Monthly bedframe-sofa / Top Sellers
     // honour the selected period. Monthly Revenue + This-Month KPIs
     // stay period-independent (computed from the full set).
-    const inPeriod = (ym: string | null | undefined) =>
-      period === "all" || ym === period;
+    const inPeriod = (ym: string | null | undefined) => dp.inYm(ym);
     const salesMonthsSet = new Set<string>();
     const aovMap = new Map<string, AovAcc>();
     // Per-customer → per-month AOV accumulator (drill-through: a
@@ -1308,8 +1303,9 @@ app.get("/", async (c) => {
           aovCustMonth.set(name, cm);
         }
         const me =
-          cm.get(r.ym) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0 };
+          cm.get(r.ym) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0, all: 0 };
         me.bfVal += bfVal;
+        me.all += Number(r.soTotalSen) || 0;
         me.bfQty += bfQty;
         if (isSofa) {
           me.soVal += Number(r.soTotalSen) || 0;
@@ -1319,8 +1315,9 @@ app.get("/", async (c) => {
       }
       if (!inPeriod(r.ym)) continue;
       const e =
-        aovMap.get(name) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0 };
+        aovMap.get(name) ?? { bfVal: 0, bfQty: 0, soVal: 0, soSets: 0, all: 0 };
       e.bfVal += bfVal;
+      e.all += Number(r.soTotalSen) || 0;
       e.bfQty += bfQty;
       if (isSofa) {
         e.soVal += Number(r.soTotalSen) || 0;
@@ -1343,7 +1340,7 @@ app.get("/", async (c) => {
     // months, so summing its values gives the lifetime confirmed-SO revenue.
     const thisMonthSalesSen = kpiAllTime
       ? [...soRevMap.values()].reduce((a, b) => a + b, 0)
-      : (soRevMap.get(period) ?? 0);
+      : dp.months.reduce((a, m) => a + (soRevMap.get(m) ?? 0), 0);
     const aovByCustomer = [...aovMap.entries()]
       .map(([customerName, e]) => ({
         customerName,
@@ -1351,7 +1348,11 @@ app.get("/", async (c) => {
         bedframeUnits: e.bfQty,
         sofaAvgSen: e.soSets > 0 ? Math.round(e.soVal / e.soSets) : 0,
         sofaSets: e.soSets,
-        totalSen: e.bfVal + e.soVal,
+        // The customer's whole confirmed-SO value (every line, accessories
+        // included), so "All customers" equals the Sales KPI. The AOV columns
+        // stay bedframe-per-unit / sofa-per-set. (Was bfVal + soVal, which
+        // dropped accessory lines: RM 2,230 short of the KPI in Oct 2026.)
+        totalSen: e.all,
       }))
       .sort((a, b) => b.totalSen - a.totalSen)
       .slice(0, 12);
@@ -1360,8 +1361,10 @@ app.get("/", async (c) => {
       let bfVal = 0,
         bfQty = 0,
         soVal = 0,
-        soSets = 0;
+        soSets = 0,
+        all = 0;
       for (const e of aovMap.values()) {
+        all += e.all;
         bfVal += e.bfVal;
         bfQty += e.bfQty;
         soVal += e.soVal;
@@ -1372,7 +1375,7 @@ app.get("/", async (c) => {
         bedframeUnits: bfQty,
         sofaAvgSen: soSets > 0 ? Math.round(soVal / soSets) : 0,
         sofaSets: soSets,
-        totalSen: bfVal + soVal,
+        totalSen: all,
       };
     })();
 
@@ -1394,7 +1397,7 @@ app.get("/", async (c) => {
     // population the percentage was taken over; a share of total is only
     // meaningful next to how many parties that total was split between.
     const concentrationFor = (
-      revOf: (e: { bfVal: number; soVal: number }) => number,
+      revOf: (e: { bfVal: number; soVal: number; all: number }) => number,
     ) => {
       const revs: { name: string; sen: number }[] = [];
       let totalSen = 0;
@@ -1432,7 +1435,7 @@ app.get("/", async (c) => {
       };
     };
     const customerConcentration = {
-      all: concentrationFor((e) => e.bfVal + e.soVal),
+      all: concentrationFor((e) => e.all),
       bedframe: concentrationFor((e) => e.bfVal),
       sofa: concentrationFor((e) => e.soVal),
       /** How many of `all.customerCount` the table below actually lists. */
@@ -1487,7 +1490,7 @@ app.get("/", async (c) => {
     // Mirrors thisMonthSalesSen (built from soRevMap) above.
     const invoicesThisMonthSen = kpiAllTime
       ? [...invRevMap.values()].reduce((a, b) => a + b, 0)
-      : (invRevMap.get(period) ?? 0);
+      : dp.months.reduce((a, m) => a + (invRevMap.get(m) ?? 0), 0);
     const prodRevMap = new Map<string, number>();
     for (const r of prodRevRes.results ?? []) {
       if (r.ym) prodRevMap.set(r.ym, Number(r.revenueSen) || 0);
@@ -1537,8 +1540,11 @@ app.get("/", async (c) => {
     //   - All-time → UNCHANGED: bucket by ISO week-Monday.
     // Only the GROUP-BY date key changes here; the SUM/monetary expressions
     // and the (already month-scoped) `weekDateClause` WHERE filter are kept.
+    // A quarter / year keeps week buckets inside its range (a point a day
+    // over 90-365 days is unreadable); one month stays daily.
+    const dailyBuckets = dp.kind === "month";
     const bucketExpr = (col: string) =>
-      monthScope
+      dailyBuckets
         ? `to_char(${col}::date, 'YYYY-MM-DD')`
         : `to_char(date_trunc('week', ${col}::date), 'YYYY-MM-DD')`;
     const [soWeekRes, invWeekRes, prodWeekRes] = await Promise.all([
@@ -1621,6 +1627,19 @@ app.get("/", async (c) => {
     //   - A month   → EVERY calendar day in [monthScope.start .. monthScope.end]
     //     (the SQL now buckets per day), so each day of the month is a point.
     const weekStarts: string[] = (() => {
+      if (monthScope && !dailyBuckets) {
+        // Monday-anchored weeks covering [start .. end] (matches date_trunc('week')).
+        const out: string[] = [];
+        const cur = new Date(`${monthScope.start}T00:00:00Z`);
+        const dow = cur.getUTCDay();
+        cur.setUTCDate(cur.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
+        const endUTC = new Date(`${monthScope.end}T00:00:00Z`);
+        for (let g = 0; cur <= endUTC && g < 60; g++) {
+          out.push(cur.toISOString().slice(0, 10));
+          cur.setUTCDate(cur.getUTCDate() + 7);
+        }
+        return out;
+      }
       if (monthScope) {
         // One entry per day from start..end inclusive. `guard` (>31) caps the
         // walk so a malformed bound can never spin.
@@ -1743,7 +1762,8 @@ app.get("/", async (c) => {
       cm.set(cust, ce);
     }
     const topSellers = {
-      BEDFRAME: bfList.sort(byQty).slice(0, 5),
+      // Top 10 (owner 2026-10-17: "放 10 个出来, 要看占 sales 的多少 %").
+      BEDFRAME: bfList.sort(byQty).slice(0, 10),
       SOFA: [...sofaModelMap.entries()]
         .map(([model, e]) => ({
           model,
@@ -1751,7 +1771,7 @@ app.get("/", async (c) => {
           valueSen: e.valueSen,
         }))
         .sort((a, b) => b.setsSold - a.setsSold)
-        .slice(0, 5),
+        .slice(0, 10),
     };
     // Customer breakdown for the Top-Seller click-through (shown keys
     // only — keeps the payload small).
@@ -1867,7 +1887,7 @@ app.get("/", async (c) => {
       const cat = (r.cat ?? "").toUpperCase();
       if (cat !== "BEDFRAME" && cat !== "SOFA") continue;
       // Honour the selected month for the headline; All-time keeps every row.
-      if (!kpiAllTime && r.ym !== period) continue;
+      if (!dp.inYm(r.ym)) continue;
       let m = fabUsedByCat.get(cat);
       if (!m) {
         m = new Map();
@@ -1936,6 +1956,8 @@ app.get("/", async (c) => {
           meters: Number(r.meters) || 0,
           /** Of those meters, how many belong to an EARLIER month's orders. */
           lateMeters: Number(r.lateMeters) || 0,
+          /** Issue cost that month ÷ meters = the month's average cost / m (owner 2026-10-17). */
+          costSen: Number(r.costSen) || 0,
         }))
         .sort((a, b) => a.month.localeCompare(b.month))
         .slice(-12);
@@ -1998,7 +2020,7 @@ app.get("/", async (c) => {
       asOf: string | null;
     } = { source: "live", isHistorical: false, asOf: null };
     if (isPastMonth) {
-      const snapRow = await readStateSnapshotForMonth(db, orgId, period);
+      const snapRow = await readStateSnapshotForMonth(db, orgId, dp.lastYm);
       if (snapRow) {
         // Truthful history available → override the state widgets from the
         // snapshot and drop the "live" tag. Flow/sum sections (revenue,
@@ -2250,8 +2272,8 @@ app.get("/", async (c) => {
         // neither labelled — owner 2026-08-05: "你这个最新数据到底是几月份的？"
         period,
         prevPeriod,
-        piSpendThisMonthSen: piByMonth.get(period) ?? 0,
-        piSpendPrevMonthSen: piByMonth.get(prevPeriod) ?? 0,
+        piSpendThisMonthSen: dp.months.reduce((a, m) => a + (piByMonth.get(m) ?? 0), 0),
+        piSpendPrevMonthSen: dp.prevMonths.reduce((a, m) => a + (piByMonth.get(m) ?? 0), 0),
         topSuppliersByPi: (topSupPiRes.results ?? []).map((s) => ({
           name: s.name || "—",
           spendSen: Number(s.spendSen) || 0,
@@ -2331,9 +2353,8 @@ app.get("/", async (c) => {
 app.get("/revenue-split", async (c) => {
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
-  const periodRaw = c.req.query("period") ?? "all";
-  const period = /^\d{4}-\d{2}$/.test(periodRaw) ? periodRaw : "all";
-  const data = await cached(c, `dashboard:revenue-split:${orgId}:v1:${period}`, 60, async () => {
+  const period = parseDashPeriod(c.req.query("period") ?? "all").key;
+  const data = await cached(c, `dashboard:revenue-split:${orgId}:v2:${period}`, 60, async () => {
     const db = c.var.DB;
     // Same "today" as the main overview (server clock, UTC on Workers).
     const todayISO = fmtISO(new Date());
@@ -2350,7 +2371,7 @@ app.get("/revenue-split", async (c) => {
       period,
       from,
       to,
-      granularity: period === "all" ? "week" : "day",
+      granularity: /^\d{4}-\d{2}$/.test(period) ? "day" : /^\d{4}$/.test(period) ? "month" : "week",
       revenue: buckets.map((bucket, i) => ({
         bucket,
         salesOrder: so[i],

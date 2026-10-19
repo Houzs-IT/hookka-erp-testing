@@ -113,7 +113,7 @@ export function useVirtualRows({
 
 function spacerRow(key: string, height: number, colSpan: number): React.ReactNode {
   return (
-    <tr key={key} aria-hidden="true">
+    <tr key={key} aria-hidden="true" data-fin-nolift="">
       <td colSpan={colSpan} style={{ height: `${height}px`, padding: 0, border: 0 }} />
     </tr>
   );

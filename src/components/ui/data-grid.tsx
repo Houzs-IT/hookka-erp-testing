@@ -22,8 +22,11 @@ import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { useToast } from "@/components/ui/toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-export";
-import { exportReportCsv, exportReportXlsx, type Aoa } from "@/lib/export-report";
+import { exportReportCsv, exportReportPdf, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
+import {
+  columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
+} from "@/lib/grid-layout";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -60,7 +63,12 @@ type ServerLayoutPreset = {
 
 async function fetchOrgLayouts(
   gridId: string,
-): Promise<{ orgDefault: ServerLayoutPreset | null; print: ServerLayoutPreset | null } | null> {
+): Promise<{
+  orgDefault: ServerLayoutPreset | null;
+  print: ServerLayoutPreset | null;
+  // The caller's own "Save Layout" default (finance v2), with when it was saved.
+  mine?: (ServerLayoutPreset & { updatedAt: string | null }) | null;
+} | null> {
   try {
     const res = (await fetchJson(
       `/api/datagrid-layouts?gridId=${encodeURIComponent(gridId)}`,
@@ -69,10 +77,12 @@ async function fetchOrgLayouts(
       success?: boolean;
       orgDefault?: ServerLayoutPreset | null;
       print?: ServerLayoutPreset | null;
+      mine?: (ServerLayoutPreset & { updatedAt: string | null }) | null;
     };
     return {
       orgDefault: res?.orgDefault ?? null,
       print: res?.print ?? null,
+      mine: res?.mine ?? null,
     };
   } catch {
     return null;
@@ -81,7 +91,7 @@ async function fetchOrgLayouts(
 
 async function putOrgLayout(
   gridId: string,
-  kind: "org-default" | "print",
+  kind: "org-default" | "print" | "user",
   visibleCols: string[],
   colOrder: string[],
   colWidths?: Record<string, string> | null,
@@ -99,7 +109,7 @@ async function putOrgLayout(
 
 async function deleteOrgLayout(
   gridId: string,
-  kind: "org-default" | "print",
+  kind: "org-default" | "print" | "user",
 ): Promise<boolean> {
   try {
     await fetchJson(
@@ -176,6 +186,13 @@ export type Column<T> = {
   // Set this for columns whose real value is computed in `render` and has no
   // usable raw/filter value.
   exportValue?: (row: T) => string | number | null;
+  // Sticky total row (finance v2 "PV table" rule). "sum" adds this column's
+  // values over every row the filter shows; a function computes the total from
+  // those rows (e.g. a sum over line items). Any visible column with `total`
+  // turns the footer on; a grid without one renders exactly as before.
+  total?: "sum" | ((rows: T[]) => number);
+  // How the total is shown. Default: formatRM for currency (sen), else formatNumber.
+  totalFormat?: (n: number) => React.ReactNode;
 };
 
 export type ContextMenuItem = {
@@ -314,6 +331,25 @@ export type DataGridProps<T> = {
   // cap is purely a rendering optimisation to keep DOM node count bounded on
   // grids with thousands of rows. Omit to disable (no cap, render everything).
   defaultRowCap?: number;
+  // The total row's first cell (shown only when a column has `total`).
+  // Default: "Total · <shown> shown of <all>".
+  footerLabel?: (shown: number, all: number) => React.ReactNode;
+  // Header right-click menu (finance v2 "PV table" rule, AutoCount style):
+  // sort, filter, hide / choose columns, best fit, save / reset layout, and
+  // Export to Excel / PDF / Print of the current view. Off by default, so other
+  // grids keep the browser's own menu on their headers.
+  headerMenu?: boolean;
+  // Drag a header onto another to move the column there (finance v2). The new
+  // order saves like a Columns-popover reorder. Off by default.
+  reorderableHeaders?: boolean;
+  // Ticks change only through the checkbox column (finance lists, owner
+  // 2026-10-01 「我不要点一次打开」): a row click, a right-click and the ⋮
+  // leave the selection alone, Shift + right-click keeps the browser's menu,
+  // and a double-click on the tick or ⋮ cell does not open the record. Off by
+  // default (other grids select on click as before).
+  checkboxSelectOnly?: boolean;
+  // The search box's hint (default "Search...").
+  searchPlaceholder?: string;
 };
 
 type SavedView = {
@@ -364,6 +400,10 @@ function compareValues(a: any, b: any): number {
 
 function matchesFilter(value: any, filter: string): boolean {
   if (!filter) return true;
+  // An amount column's "Number Filters" range (finance v2): "range:<lo>..<hi>"
+  // in the column's raw units, compared as numbers.
+  const range = decodeRange(filter);
+  if (range) return inRange(value, range);
   const s = String(value ?? "").toLowerCase();
 
   // Check for mode prefix (e.g. "equals:hello")
@@ -396,11 +436,14 @@ export function ContextMenu({
   y,
   items,
   onClose,
+  heading,
 }: {
   x: number;
   y: number;
   items: ContextMenuItem[];
   onClose: () => void;
+  // Optional non-clickable title strip (the header menu names its column).
+  heading?: { title: string; sub?: string };
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(-1);
@@ -458,9 +501,16 @@ export function ContextMenu({
   return (
     <div
       ref={menuRef}
+      data-dg="menu"
       className="fixed z-[100] min-w-[220px] rounded border border-[#D0D0D0] bg-white py-1 shadow-md"
       style={{ left: pos.x, top: pos.y }}
     >
+      {heading && (
+        <div className="mb-0.5 border-b border-[#E5E5E5] px-3 pb-1 pt-1">
+          <div className="text-[12px] font-semibold text-[#1F1D1B]">{heading.title}</div>
+          {heading.sub && <div className="text-[10px] text-[#9CA3AF]">{heading.sub}</div>}
+        </div>
+      )}
       {items.map((item, i) => (
         <React.Fragment key={i}>
           {item.separator && i > 0 && <div className="my-0.5 border-t border-[#E5E5E5]" />}
@@ -530,6 +580,32 @@ function ColumnFilterDropdown<T>({
     const m = textFilter.match(/^([a-z_]+):/);
     return m ? m[1] : "contains";
   });
+  // Amount columns: the second tab is a From / To range (finance v2 "PV
+  // table" rule). Typed in RM; a currency column is stored in sen, so the
+  // range is kept in sen too (×100) and shown back in RM.
+  const isNumCol = columnType === "currency" || columnType === "number";
+  const numScale = columnType === "currency" ? 100 : 1;
+  const [numLo, setNumLo] = useState(() => {
+    const r = decodeRange(textFilter);
+    return r && r.lo != null ? String(r.lo / numScale) : "";
+  });
+  const [numHi, setNumHi] = useState(() => {
+    const r = decodeRange(textFilter);
+    return r && r.hi != null ? String(r.hi / numScale) : "";
+  });
+  const [numErr, setNumErr] = useState(false);
+  const applyNumRange = () => {
+    const lo = parseAmount(numLo);
+    const hi = parseAmount(numHi);
+    if ((numLo.trim() !== "" && lo == null) || (numHi.trim() !== "" && hi == null)) {
+      setNumErr(true);
+      return;
+    }
+    if (lo == null && hi == null) { onApplyText("", "contains"); onClose(); return; }
+    const toRaw = (x: number | null) => (x == null ? null : Math.round(x * numScale));
+    onApplyText(rangeTerm(toRaw(lo), toRaw(hi)), RANGE_MODE);
+    onClose();
+  };
 
   // Compute unique values for this column. When the column defines a
   // filterAccessor, route through it so the dropdown shows human labels
@@ -938,7 +1014,7 @@ function ColumnFilterDropdown<T>({
           )}
           onClick={() => setTab("text")}
         >
-          {isDateCol ? "Date Filters" : "Text Filters"}
+          {isDateCol ? "Date Filters" : isNumCol ? "Number Filters" : "Text Filters"}
         </button>
       </div>
 
@@ -1200,6 +1276,40 @@ function ColumnFilterDropdown<T>({
                 Apply
               </button>
             </div>
+          </div>
+        </div>
+      ) : isNumCol ? (
+        <div className="p-2 space-y-2">
+          {/* From / To range, either side optional; brackets or a minus for
+              negatives, commas allowed (parseAmount). */}
+          {([["From", numLo, setNumLo], ["To", numHi, setNumHi]] as const).map(([label, val, set]) => (
+            <label key={label} className="flex items-center gap-2 text-[11px] text-[#555]">
+              <span className="w-9 shrink-0">{label}</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="Any"
+                value={val}
+                onChange={e => { set(e.target.value); setNumErr(false); }}
+                onKeyDown={e => { if (e.key === "Enter") applyNumRange(); }}
+                className="w-full rounded border border-[#D0D0D0] bg-white py-1.5 px-2 text-right text-[11px] tabular-nums text-[#333] placeholder-[#AAA] focus:border-[#6B5C32] focus:outline-none"
+              />
+            </label>
+          ))}
+          {numErr && <p className="text-[10px] text-[#9A3A2D]">Enter a number, e.g. 1,234.50</p>}
+          <div className="flex items-center justify-between pt-1">
+            <button
+              className="rounded border border-[#D0D0D0] px-3 py-1 text-[11px] text-[#555] hover:bg-[#F0ECE9]"
+              onClick={() => { onApplyText("", "contains"); onClose(); }}
+            >
+              Clear
+            </button>
+            <button
+              className="rounded border border-[#6B5C32] bg-[#6B5C32] px-3 py-1 text-[11px] text-white hover:bg-[#4D4224]"
+              onClick={applyNumRange}
+            >
+              Apply
+            </button>
           </div>
         </div>
       ) : (
@@ -1663,6 +1773,11 @@ export function DataGrid<T extends Record<string, any>>({
   ensureColumns,
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
+  footerLabel,
+  headerMenu,
+  reorderableHeaders,
+  checkboxSelectOnly,
+  searchPlaceholder,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -1750,9 +1865,17 @@ export function DataGrid<T extends Record<string, any>>({
     }
     return {};
   });
+  // When the user last changed this grid's layout by hand in this browser
+  // (finance v2): their server-saved default ("Save Layout") only replaces the
+  // browser's layout on load when it is newer than this stamp.
+  const markLocalLayout = useCallback(() => {
+    if (!gridId) return;
+    try { localStorage.setItem(`datagrid-layout-ts-${gridId}-${userKey()}`, new Date().toISOString()); } catch { /* ignore */ }
+  }, [gridId]);
   const persistColWidths = useCallback((w: Record<string, string>) => {
     try { localStorage.setItem(`datagrid-colw-${widthStoreId}-${userKey()}`, JSON.stringify(w)); } catch { /* ignore */ }
-  }, [widthStoreId]);
+    markLocalLayout();
+  }, [widthStoreId, markLocalLayout]);
   // Double-click the handle → drop the override (back to the column's default).
   const resetColumnWidth = useCallback((key: string) => {
     setColWidths(prev => {
@@ -1800,14 +1923,16 @@ export function DataGrid<T extends Record<string, any>>({
       }
       return next;
     });
-  }, [gridId]);
+    markLocalLayout();
+  }, [gridId, markLocalLayout]);
 
   const reorderColumns = useCallback((order: string[]) => {
     setColumnOrder(order);
+    markLocalLayout();
     if (gridId) {
       try { localStorage.setItem(`datagrid-colorder-${gridId}-${userKey()}`, JSON.stringify(order)); } catch { /* ignore */ }
     }
-  }, [gridId]);
+  }, [gridId, markLocalLayout]);
 
   // Admin-only: snapshot the current Personal layout (visible columns + order +
   // widths) as the ORG-WIDE default. Persisted to the backend so EVERY user on
@@ -1973,6 +2098,26 @@ export function DataGrid<T extends Record<string, any>>({
           setVisibleKeys(new Set(remote.orgDefault.visibleCols));
           setColumnOrder(remote.orgDefault.colOrder);
           if (remote.orgDefault.colWidths) setColWidths(remote.orgDefault.colWidths);
+        }
+      }
+
+      // The user's own "Save Layout" default (finance v2) follows them to any
+      // PC: it replaces this browser's layout only when it was saved after the
+      // browser's last hand-made change (pickLayoutSource), and is then cached
+      // here as the personal layout so the next load compares equal.
+      if (remote.mine) {
+        let localTs: string | null = null;
+        try { localTs = localStorage.getItem(`datagrid-layout-ts-${gridId}-${userKeyForHydrate}`); } catch { /* ignore */ }
+        if (pickLayoutSource(localTs, remote.mine.updatedAt) === "server") {
+          setVisibleKeys(new Set(remote.mine.visibleCols));
+          setColumnOrder(remote.mine.colOrder);
+          setColWidths(remote.mine.colWidths ?? {});
+          try {
+            localStorage.setItem(`datagrid-cols-${gridId}-${userKeyForHydrate}`, JSON.stringify(remote.mine.visibleCols));
+            localStorage.setItem(`datagrid-colorder-${gridId}-${userKeyForHydrate}`, JSON.stringify(remote.mine.colOrder));
+            localStorage.setItem(`datagrid-colw-${widthStoreId}-${userKeyForHydrate}`, JSON.stringify(remote.mine.colWidths ?? {}));
+            if (remote.mine.updatedAt) localStorage.setItem(`datagrid-layout-ts-${gridId}-${userKeyForHydrate}`, remote.mine.updatedAt);
+          } catch { /* ignore */ }
         }
       }
 
@@ -2620,6 +2765,11 @@ export function DataGrid<T extends Record<string, any>>({
   }, [sortKey, sortDir]);
 
   const handleRowClick = useCallback((e: React.MouseEvent, row: T, index: number) => {
+    if (checkboxSelectOnly) {
+      lastClickedIndex.current = index;
+      onRowClick?.(row);
+      return;
+    }
     const key = String(getNestedValue(row, keyField));
     setSelectedKeys(prev => {
       const next = new Set(prev);
@@ -2640,7 +2790,7 @@ export function DataGrid<T extends Record<string, any>>({
     });
     lastClickedIndex.current = index;
     onRowClick?.(row);
-  }, [keyField, sortedData, onRowClick]);
+  }, [keyField, sortedData, onRowClick, checkboxSelectOnly]);
 
   // The rows last handed to onSelectionChange — see the identity guard below.
   const lastEmittedSelection = useRef<T[] | null>(null);
@@ -2705,11 +2855,12 @@ export function DataGrid<T extends Record<string, any>>({
 
   const handleContextMenu = useCallback((e: React.MouseEvent, row: T) => {
     if (!contextMenuItems) return;
+    if (checkboxSelectOnly && e.shiftKey) return; // keep the browser's own menu
     e.preventDefault();
     const key = String(getNestedValue(row, keyField));
-    setSelectedKeys(new Set([key]));
+    if (!checkboxSelectOnly) setSelectedKeys(new Set([key]));
     setCtxMenu({ x: e.clientX, y: e.clientY, row });
-  }, [contextMenuItems, keyField]);
+  }, [contextMenuItems, keyField, checkboxSelectOnly]);
 
   // Tablet UX: open the same context menu via a tap on the row's kebab
   // button. Anchors the menu to the kebab's bottom-right so it appears
@@ -2720,9 +2871,9 @@ export function DataGrid<T extends Record<string, any>>({
     e.preventDefault();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const key = String(getNestedValue(row, keyField));
-    setSelectedKeys(new Set([key]));
+    if (!checkboxSelectOnly) setSelectedKeys(new Set([key]));
     setCtxMenu({ x: rect.right, y: rect.bottom, row });
-  }, [contextMenuItems, keyField]);
+  }, [contextMenuItems, keyField, checkboxSelectOnly]);
 
   const resolvedCtxItems = useMemo(() => {
     if (!ctxMenu || !contextMenuItems) return [];
@@ -2751,6 +2902,122 @@ export function DataGrid<T extends Record<string, any>>({
   // tap to open the same menu that desktop right-click reveals.
   const hasContextMenu = !!contextMenuItems;
 
+  // Sticky total row (finance v2): totals over every row the filter shows —
+  // sortedData, not the render-capped displayedData.
+  const showFooter = visibleColumns.some((c) => c.total);
+  const totals = useMemo(
+    () => (showFooter ? columnTotals(sortedData, visibleColumns, (row, key) => getNestedValue(row, key)) : {}),
+    [showFooter, sortedData, visibleColumns],
+  );
+
+  // ── Header right-click menu (finance v2; opt-in via `headerMenu`) ──
+  const { toast } = useToast();
+  const [hdrMenu, setHdrMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  const closeHdrMenu = useCallback(() => setHdrMenu(null), []);
+  const openHeaderMenu = (e: React.MouseEvent, key: string) => {
+    if (e.shiftKey) return; // Shift + right-click keeps the browser's own menu
+    e.preventDefault();
+    setHdrMenu({ x: Math.min(e.clientX, window.innerWidth - 248), y: e.clientY, key });
+  };
+  // The current view as a sheet: visible columns over every filtered row,
+  // plus the total row when the grid shows one (currency in RM).
+  const exportAoa = (): Aoa => {
+    const aoa = buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
+    if (showFooter) aoa.push(visibleColumns.map((c, i) => {
+      const t = totals[c.key];
+      if (t !== undefined) return c.type === "currency" ? Math.round(t) / 100 : t;
+      return i === 0 ? "Total" : "";
+    }));
+    return aoa;
+  };
+  const exportBase = exportName || gridId || "export";
+  const exportTitle = exportSheetLabel || exportName || gridId || "Listing";
+  const runExport = (kind: "xlsx" | "pdf" | "print") => {
+    const today = new Date().toISOString().slice(0, 10);
+    const aoa = exportAoa();
+    if (kind === "xlsx") {
+      void exportReportXlsx(exportFilename(exportBase, "listing", "xlsx", today), exportTitle, aoa);
+      return;
+    }
+    const lastBody = aoa.length - 2;
+    void exportReportPdf(exportFilename(exportBase, "listing", "pdf", today), exportTitle, `As at ${formatDateDMY(today)}`, aoa, {
+      leftCols: visibleColumns.flatMap((c, i) => (i > 0 && c.type !== "currency" && c.type !== "number" ? [i] : [])),
+      rowKind: showFooter ? (_row, idx) => (idx === lastBody ? "grand" : undefined) : undefined,
+      print: kind === "print",
+    });
+  };
+  // "Save Layout": the user's own default on the server, so it follows them to
+  // any PC (finance v2). This browser keeps saving its own copy as before.
+  const saveUserDefault = async () => {
+    if (!gridId) { toast.info("This table cannot save a layout"); return; }
+    const ok = await putOrgLayout(gridId, "user", [...visibleKeys], columnOrder, colWidths);
+    if (!ok) { toast.error("Could not save the layout"); return; }
+    markLocalLayout();
+    toast.success("Layout saved as your default");
+  };
+  // ── Drag a header onto another (finance v2; opt-in via `reorderableHeaders`) ──
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const startHeaderDrag = (e: React.DragEvent, key: string) => {
+    setDragKey(key);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", key);
+  };
+  const dropHeader = (key: string) => {
+    if (dragKey && dragKey !== key) {
+      // The order as shown: the saved order, then any column it does not list yet.
+      const effective = [...columnOrder, ...columns.map((c) => c.key).filter((k) => !columnOrder.includes(k))];
+      reorderColumns(moveColumn(effective, dragKey, key));
+    }
+    setDragKey(null);
+    setDropKey(null);
+  };
+  const hdrMenuActions = (key: string, at: { x: number; y: number }): Record<string, () => void> => ({
+    "Sort Ascending": () => { setSortKey(key); setSortDir("asc"); },
+    "Sort Descending": () => { setSortKey(key); setSortDir("desc"); },
+    "Clear Sorting": () => { setSortKey(null); setSortDir("asc"); },
+    "Filter This Column…": () => setFilterDropdown({ key, rect: { left: at.x, top: at.y } }),
+    "Clear All Filters": () => { setValueFilterTouched(true); setColumnFilters({}); setColumnValueFilters({}); },
+    "Hide This Column": () => {
+      if (visibleColumns.length <= 1) { toast.info("Keep at least one column"); return; }
+      toggleColumn(key);
+    },
+    "Column Chooser…": () => setShowCustomizer(true),
+    "Best Fit": () => resetColumnWidth(key),
+    "Best Fit (All Columns)": () => { setColWidths({}); persistColWidths({}); },
+    "Save Layout": () => { void saveUserDefault(); },
+    "Reset Layout": () => {
+      setSortKey(null);
+      setSortDir("asc");
+      if (gridId) {
+        void deleteOrgLayout(gridId, "user");
+        try { localStorage.removeItem(`datagrid-layout-ts-${gridId}-${userKey()}`); } catch { /* ignore */ }
+      }
+      void resetToOrgDefault();
+    },
+    "Export to Excel": () => runExport("xlsx"),
+    "Export to PDF": () => runExport("pdf"),
+    "Print": () => runExport("print"),
+  });
+  const hdrMenuEntries: ContextMenuItem[] = (() => {
+    if (!hdrMenu) return [];
+    const col = visibleColumns.find((c) => c.key === hdrMenu.key);
+    const actions = hdrMenuActions(hdrMenu.key, hdrMenu);
+    const labels = headerMenuItems({
+      sorted: sortKey === hdrMenu.key ? sortDir : null,
+      filterable: !!col && !col.noFilter,
+      anyFilter: Object.values(columnFilters).some(Boolean) || Object.keys(columnValueFilters).length > 0,
+    });
+    const out: ContextMenuItem[] = [];
+    let sep = false;
+    for (const label of labels) {
+      if (label === "-") { sep = true; continue; }
+      out.push({ label, action: () => actions[label]?.(), separator: sep });
+      sep = false;
+    }
+    return out;
+  })();
+
   return (
     <div className={cn("flex flex-col", className)}>
       {/* Toolbar */}
@@ -2766,7 +3033,7 @@ export function DataGrid<T extends Record<string, any>>({
           </svg>
           <input
             type="text"
-            placeholder="Search..."
+            placeholder={searchPlaceholder ?? "Search..."}
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
             className="w-full rounded border border-[#DDD] bg-white h-9 pl-8 pr-7 text-sm text-[#333] placeholder-[#AAA] focus:border-[#6B5C32] focus:outline-none"
@@ -2962,8 +3229,10 @@ export function DataGrid<T extends Record<string, any>>({
         )}
 
         {/* Export — WYSIWYG: the CURRENT visible columns over the CURRENT
-            filtered+sorted rows. Opt-in per page via the `exportName` prop. */}
-        {exportName && (
+            filtered+sorted rows. Opt-in per page via the `exportName` prop.
+            A grid with the finance v2 header menu exports from there instead
+            (Export to Excel / PDF / Print), so its toolbar stays uncluttered. */}
+        {exportName && !headerMenu && (
           <div className="relative">
             <button
               className={cn(
@@ -3086,6 +3355,7 @@ export function DataGrid<T extends Record<string, any>>({
         style={{ maxHeight: maxHeight || "calc(100vh - 240px)" }}
       >
         <table
+          data-dg="table"
           className="w-full border-collapse text-[12px]"
           // table-layout:auto lets the browser redistribute width when a
           // column is hidden via the Columns picker. The previous default
@@ -3164,6 +3434,7 @@ export function DataGrid<T extends Record<string, any>>({
                 return (
                   <th
                     key={col.key}
+                    data-dg="th"
                     className={cn(
                       "whitespace-nowrap px-2 py-1.5 text-[11px] font-semibold text-[#333] relative",
                       alignClass(col),
@@ -3175,8 +3446,17 @@ export function DataGrid<T extends Record<string, any>>({
                       // above stickyHeader's z-10, keeping the corner cell on
                       // top during simultaneous H+V scroll.
                       isSticky && "sticky bg-[#F0ECE9] z-20",
+                      // Where a dragged header will land (finance v2 reorder).
+                      dropKey === col.key && "shadow-[inset_2px_0_0_#6B5C32]",
                     )}
                     style={isSticky ? { left: `${stickyLeft}px` } : undefined}
+                    onContextMenu={headerMenu ? (e) => openHeaderMenu(e, col.key) : undefined}
+                    draggable={reorderableHeaders || undefined}
+                    onDragStart={reorderableHeaders ? (e) => startHeaderDrag(e, col.key) : undefined}
+                    onDragOver={reorderableHeaders ? (e) => { if (dragKey && dragKey !== col.key) { e.preventDefault(); setDropKey(col.key); } } : undefined}
+                    onDragLeave={reorderableHeaders ? () => setDropKey((k) => (k === col.key ? null : k)) : undefined}
+                    onDrop={reorderableHeaders ? (e) => { e.preventDefault(); dropHeader(col.key); } : undefined}
+                    onDragEnd={reorderableHeaders ? () => { setDragKey(null); setDropKey(null); } : undefined}
                   >
                     <span
                       className={cn(
@@ -3290,6 +3570,7 @@ export function DataGrid<T extends Record<string, any>>({
                   return (
                     <tr
                       key={key}
+                      data-dg="row"
                       className={cn(
                         // Tablet: min-h-[40px] for finger-friendly row height
                         // when selectable=true; otherwise keep the dense default
@@ -3300,6 +3581,9 @@ export function DataGrid<T extends Record<string, any>>({
                         rowClassName?.(row),
                         isSelected && "!bg-[#CCE0FF] border-l-2 border-l-[#3366CC]",
                         !isSelected && "hover:bg-[#F0ECE9]",
+                        // The row whose menu is open, when a right-click no
+                        // longer selects it (checkboxSelectOnly).
+                        checkboxSelectOnly && ctxMenu?.row === row && "bg-[#F0ECE9]",
                         (onDoubleClick || onRowClick) && "cursor-pointer"
                       )}
                       onClick={e => handleRowClick(e, row, index)}
@@ -3321,6 +3605,7 @@ export function DataGrid<T extends Record<string, any>>({
                             isSelected && "!bg-[#CCE0FF]",
                           )}
                           style={{ minHeight: "40px", width: "32px", minWidth: "32px", maxWidth: "32px" }}
+                          onDoubleClick={checkboxSelectOnly ? (e) => e.stopPropagation() : undefined}
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedKeys(prev => {
@@ -3419,6 +3704,7 @@ export function DataGrid<T extends Record<string, any>>({
                         <td
                           className="px-1 text-center"
                           onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={checkboxSelectOnly ? (e) => e.stopPropagation() : undefined}
                         >
                           <button
                             type="button"
@@ -3583,6 +3869,36 @@ export function DataGrid<T extends Record<string, any>>({
               })()
             )}
           </tbody>
+          {showFooter && !loading && (
+            <tfoot data-dg="foot" className="sticky bottom-0 z-30">
+              <tr className="border-t border-[#D0D0D0] bg-[#F0ECE9] text-[12px] font-semibold text-[#111]">
+                {selectable && (
+                  <td className="sticky left-0 z-20 bg-[#F0ECE9]" style={{ width: "32px", minWidth: "32px", maxWidth: "32px" }} />
+                )}
+                {visibleColumns.map((col, i) => {
+                  const stickyLeft = stickyOffsets.get(col.key);
+                  const isSticky = stickyLeft !== undefined;
+                  const t = totals[col.key];
+                  return (
+                    <td
+                      key={col.key}
+                      className={cn("whitespace-nowrap px-2 py-1.5 bg-[#F0ECE9]", alignClass(col), isSticky && "sticky z-20")}
+                      style={isSticky ? { left: `${stickyLeft}px` } : undefined}
+                    >
+                      {t !== undefined
+                        ? (col.totalFormat ? col.totalFormat(t) : col.type === "currency" ? formatRM(t) : formatNumber(t))
+                        : i === 0
+                          ? (footerLabel
+                            ? footerLabel(sortedData.length, data.length)
+                            : `Total · ${sortedData.length.toLocaleString()} shown of ${data.length.toLocaleString()}`)
+                          : null}
+                    </td>
+                  );
+                })}
+                {hasContextMenu && <td className="bg-[#F0ECE9]" />}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
@@ -3699,6 +4015,20 @@ export function DataGrid<T extends Record<string, any>>({
       {/* Context Menu */}
       {ctxMenu && resolvedCtxItems.length > 0 && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={resolvedCtxItems} onClose={() => setCtxMenu(null)} />
+      )}
+
+      {/* Header right-click menu (finance v2) */}
+      {hdrMenu && (
+        <ContextMenu
+          x={hdrMenu.x}
+          y={hdrMenu.y}
+          items={hdrMenuEntries}
+          onClose={closeHdrMenu}
+          heading={{
+            title: visibleColumns.find((c) => c.key === hdrMenu.key)?.label || "Column",
+            sub: sortKey === hdrMenu.key ? (sortDir === "desc" ? "sorted Z → A" : "sorted A → Z") : "column",
+          }}
+        />
       )}
     </div>
   );
