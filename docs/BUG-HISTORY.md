@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
@@ -153,6 +154,12 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-19-344 — The Financial Dashboard's equity read 0 every month, so ROE never showed `finance` `dashboard` 🟡
+
+Found 2026-10-19 while checking the phone dashboard's new Balance Sheet card (owner 「要」 — the five sections): its Equity line read 0.00 for October, though total assets were well above total liabilities. `GET /api/accounting/dashboard` added up only the accounts whose balance-sheet section is EQUITY. The un-closed current-year earnings sit in the P&L accounts until a year close, and those have no balance-sheet section, so they were left out. On these books the equity side of the Balance Sheet tab is exactly that one line ("Current Year Earnings (unclosed)"), so the dashboard's equity was 0 in every month, and ROE (`net ÷ equity`, only when equity > 0) read "-" on the desktop dashboard all along. The desktop card never printed equity itself, which is why nobody saw it.
+
+Fix = equity is net assets (total assets − total liabilities): the equity accounts plus the un-closed earnings, the sum the Balance Sheet tab's equity side adds up to. Payload version v20 retires the stored copies. Regression: `tests/dashboard-equity-net-assets.test.mjs`.
 
 ## BUG-2026-10-19-342 — Today's efficiency read 4,000% on the dashboard: working hours only land at punch-out `dashboard` `workforce` ✅
 

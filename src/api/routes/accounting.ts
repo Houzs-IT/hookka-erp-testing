@@ -15331,7 +15331,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v19"; // v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v20"; // v20: equity = net assets, the un-closed current-year earnings included (BUG-2026-10-19-344); v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -15757,6 +15757,13 @@ app.get("/dashboard", async (c) => {
           if (sec === "CURRENT_LIABILITY") curL += -net;
         }
       }
+      // Equity as the Balance Sheet tab adds it up (BUG-2026-10-19-344): the
+      // equity accounts PLUS the un-closed current-year earnings — i.e. net
+      // assets. The P&L accounts carry those earnings until a year close, and
+      // they have no balance-sheet section, so the sum above left them out: on a
+      // book whose equity is all this year's earnings it read 0 every month and
+      // ROE (which divides by it) never showed.
+      equity = assets - liabilities;
       bsByBucket.set(b.key, { assets, liabilities, equity, currentAssets: curA, currentLiabilities: curL, inventory: inv });
     }
   }
