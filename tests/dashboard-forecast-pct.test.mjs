@@ -24,10 +24,13 @@ const SRC = readFileSync(
   resolve(process.cwd(), "src/pages/finance-dashboard.tsx"),
   "utf8",
 ).replace(/\r\n/g, "\n");
+// The cost-structure rules live in one module since 2026-10-19, shared with the
+// phone's dashboard (tests/m-dashboard-sections.test.mjs); the page calls it.
+const LIB = readFileSync(resolve(process.cwd(), "src/lib/finance-dashboard-calc.ts"), "utf8").replace(/\r\n/g, "\n");
 
 test("there is a forecast-revenue base, distinct from the actual one", () => {
   assert.match(SRC, /const csForecastSales = \(r: Row\): number \| null =>/);
-  assert.match(SRC, /const fs = r\.forecast\?\.sales \?\? null;/);
+  assert.match(LIB, /const fs = r\.forecast\?\.sales \?\? null;/);
 });
 
 test("the cost-structure target share divides by it", () => {
@@ -46,8 +49,9 @@ test("the actual share still divides by the ACTUAL sales", () => {
 });
 
 test("a line view pro-rates the forecast revenue the same way the target is", () => {
-  const fn = SRC.slice(SRC.indexOf("const csForecastSales"));
-  assert.match(fn.slice(0, 700), /csLine === "bedframe" \? s\.bedframe : s\.sofa/);
+  assert.match(SRC, /const csForecastSales = \(r: Row\): number \| null => csForecastSalesOf\(r, csLine\);/);
+  const fn = LIB.slice(LIB.indexOf("export function csForecastSales("));
+  assert.match(fn.slice(0, 700), /line === "bedframe" \? s\.bedframe : s\.sofa/);
 });
 
 test("the Income Statement card — already correct — still uses forecast sales", () => {

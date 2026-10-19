@@ -30,6 +30,18 @@ import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { SegmentedSwitch } from "@/components/finance/report-shell";
 import { chartTipRows } from "@/lib/finance-reports";
+// The salary and cost-structure figures — shared with the phone's dashboard
+// (owner 2026-10-19 「要」), so both show the same numbers.
+import {
+  pctOf,
+  csCategories,
+  csAmount as csAmountOf,
+  csLineProdRev as csLineProdRevOf,
+  csLineSales as csLineSalesOf,
+  csForecastSales as csForecastSalesOf,
+  csForecastAmt as csForecastAmtOf,
+  salaryDeptSplit,
+} from "@/lib/finance-dashboard-calc";
 import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
 
 type Slice = {
@@ -107,9 +119,6 @@ const CS_COLOURS = [
 ];
 const TEAL = "#3E6570";
 
-// v as a percentage of base, 2 dp; null when either side is missing or the base is 0.
-const pctOf = (v: number | null, base: number | null) =>
-  v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
 
 // "share of sales / share of production revenue" (owner 2026-10-12: 「每个 cost
 // 也要除 production revenue，可以用 "/" 分辨」). The first keeps the card's colour
@@ -639,13 +648,7 @@ export default function FinanceDashboardPage() {
   // cost structure 这样」; owner 2026-08-31: 「dashboard 多一个non production
   // 的」). One shared data array carries every department's keys; each card
   // draws only ITS list, split by the master's nonProd flag.
-  const salDeptSplit = useMemo(() => {
-    const flags = new Map<string, boolean>();
-    for (const r of rows ?? [])
-      for (const d of r.salaryByDept ?? []) flags.set(d.dept, (flags.get(d.dept) ?? false) || !!d.nonProd);
-    const all = [...flags.keys()].sort();
-    return { prod: all.filter((d) => !flags.get(d)), non: all.filter((d) => flags.get(d)) };
-  }, [rows]);
+  const salDeptSplit = useMemo(() => salaryDeptSplit(rows ?? []), [rows]);
   const salData = useMemo(
     () =>
       (rows ?? []).map((r, i) => {
@@ -741,11 +744,7 @@ export default function FinanceDashboardPage() {
   // ---- Cost structure (owner 2026-07-29) --------------------------------
   // Shared materials are apportioned to a line by that period's share of
   // sales — the same rule the Sofa/Bedframe P&L uses.
-  const csCats = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of rows ?? []) for (const cc of r.costStructure?.categories ?? []) set.add(cc.name);
-    return [...set].sort();
-  }, [rows]);
+  const csCats = useMemo(() => csCategories(rows ?? []), [rows]);
   // How many bands the chart is drawing right now — the bar label only appears
   // at exactly one, where there is room for it.
   const csShownCount = useMemo(
@@ -754,33 +753,12 @@ export default function FinanceDashboardPage() {
   );
   // A category can exist on more than one line (B.M FABRIC and S FABRIC are
   // both FABRIC) — sum every matching entry under the current line filter.
-  const csAmount = (r: Row, cat: string): number => {
-    const s = r.costStructure?.salesSplit;
-    const tot = (s?.bedframe ?? 0) + (s?.sofa ?? 0);
-    let out = 0;
-    for (const cc of r.costStructure?.categories ?? []) {
-      if (cc.name !== cat) continue;
-      const raw = cc[csMeasure];
-      if (csLine === "all" || cc.line === csLine) out += raw;
-      else if (cc.line === "shared" && tot > 0) {
-        out += Math.round(raw * ((csLine === "bedframe" ? s!.bedframe : s!.sofa) / tot));
-      }
-    }
-    return out;
-  };
+  const csAmount = (r: Row, cat: string): number => csAmountOf(r, cat, csMeasure, csLine);
   // Production revenue for the current line view (owner 2026-10-12). Sofa takes
   // the accessories too — the same split as the sales side, where only bedframe
   // sales have an account of their own.
-  const csLineProdRev = (r: Row): number | null => {
-    const p = r.productionRevenue;
-    if (!p) return null;
-    return csLine === "all" ? p.total : csLine === "bedframe" ? p.bedframe : p.sofa + p.accessory;
-  };
-  const csLineSales = (r: Row): number => {
-    const s = r.costStructure?.salesSplit;
-    if (!s) return r.actual?.sales ?? 0;
-    return csLine === "all" ? s.bedframe + s.sofa : csLine === "bedframe" ? s.bedframe : s.sofa;
-  };
+  const csLineProdRev = (r: Row): number | null => csLineProdRevOf(r, csLine);
+  const csLineSales = (r: Row): number => csLineSalesOf(r, csLine);
   // The base a FORECAST percentage divides by is the FORECAST revenue, not the
   // actual (owner 2026-08-06: 「他应该是我 forecast 的 percentage, 而不是出
   // actual 的percentage」). Dividing a plan by an actual mixes two worlds: in a
@@ -792,29 +770,13 @@ export default function FinanceDashboardPage() {
   // pro-rates the target itself — the plan is keyed whole-company, so that
   // split is the only one there is, and using it on both sides keeps the
   // percentage internally consistent.
-  const csForecastSales = (r: Row): number | null => {
-    const fs = r.forecast?.sales ?? null;
-    if (fs === null) return null;
-    if (csLine === "all") return fs;
-    const s = r.costStructure?.salesSplit;
-    const tot = s ? s.bedframe + s.sofa : 0;
-    if (!s || tot <= 0) return null;
-    return Math.round(fs * ((csLine === "bedframe" ? s.bedframe : s.sofa) / tot));
-  };
+  const csForecastSales = (r: Row): number | null => csForecastSalesOf(r, csLine);
   // Chart plots the amounts; the table under it carries the amount AND its
   // share of sales side by side (owner 2026-07-29: 「把 percentage 和 RM 做在
   // 一起…% 在 spend 旁边」), so the toggle is gone.
   // Forecast for a category in the current line view — the target is keyed
   // whole-company, so a line view pro-rates it by that line's sales share.
-  const csForecastAmt = (r: Row, cat: string): number | null => {
-    const f = r.costStructure?.forecast?.[cat];
-    if (f === undefined) return null;
-    if (csLine === "all") return f;
-    const s = r.costStructure!.salesSplit;
-    const tot = s.bedframe + s.sofa;
-    if (tot <= 0) return null;
-    return Math.round(f * ((csLine === "bedframe" ? s.bedframe : s.sofa) / tot));
-  };
+  const csForecastAmt = (r: Row, cat: string): number | null => csForecastAmtOf(r, cat, csLine);
   const csData = useMemo(
     () =>
       (rows ?? []).map((r) => {
