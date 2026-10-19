@@ -1,6 +1,7 @@
 # Bug History
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -194,6 +195,20 @@ Entries themselves stay newest-first.
 **Fix.** The ref now sets `scrollLeft` on the pill row itself, and does nothing when the row does not overflow (desktop). The page's vertical scroll is never touched. One shared component, so all 13 `scrollable` callers are covered. `main` carries the same code.
 
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
+
+---
+
+## BUG-2026-10-19-340 — Editing a GRN or PI dropped each line's own PO link `procurement` `grn` `purchase-invoice` 🟡
+
+🟡 **On branch** (`fix/hk0107-line-po-keep` → `main`), HK-0107. Preventive: prod has 0 DRAFT GRNs and 0 PIs whose line PO differs from the header, so no backfill.
+
+**Symptom.** A GRN or PI covering lines from several POs lost each line's PO on edit: every line fell back to the header PO, so the PO received / invoiced counters and the over-invoicing guard would act on the wrong PO.
+
+**Cause.** GRN `PUT /:id` (DRAFT) deleted and re-inserted `grn_items` without `po_id` / `po_item_id`, so `resolveGrnLineTargets` fell back to header PO + positional `poItemIndex`. PI `PUT /:id` wrote `po_id = body poId ?? header PO`, and the PI editor never sent `poId` (GET did not return it).
+
+**Fix.** GRN DRAFT replace writes `po_id` / `po_item_id` from the body line, else from the old line matched by line id, then by position in GET order; the GRN editor sends line ids. PI PUT keeps the old line's `po_id` (matched by line id, then `grn_item_id`) when the body omits `poId`, before falling back to the header; PI GET returns `poId` per line and the editor sends it back. DRAFT GRN lines still get new ids on edit: the UI only invoices POSTED GRNs, so no PI line points at a DRAFT GRN line.
+
+**Regression.** `tests/grn-pi-edit-keeps-line-po.test.mjs`.
 
 ---
 
