@@ -10,6 +10,7 @@
 // data come in as props so the parent keeps owning the numbers.
 // ===========================================================================
 import type React from "react";
+import { useState } from "react";
 import {
   AreaChart,
   Area,
@@ -21,6 +22,7 @@ import {
   Pie,
   Cell,
   LineChart,
+  ReferenceLine,
   Line,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
@@ -241,46 +243,98 @@ export function CustomerPieChart({
   );
 }
 
-// Department Revenue (owner 2026-10-15): one line per production department,
-// RM per bucket. Every department books the full order value, so on a
-// balanced day the lines sit on top of each other; a line below the pack is
-// a department falling behind. Rows: { m, <dept label>: RM, … }.
+// Department Revenue (owner 2026-10-15; small multiples 2026-10-19): one small
+// line chart per production department, RM per bucket. All charts share one
+// date axis and one y scale, so heights compare directly; hovering any chart
+// marks the same day on every chart. Rows: { m, d, <dept label>: RM, … }.
 export function DeptRevenueChart({
   data,
   series,
+  markDay,
+  onPickDay,
 }: {
   data: Record<string, number | string>[];
   series: { key: string; color: string }[];
+  markDay?: string;
+  onPickDay?: (day: string) => void;
 }) {
+  const [hover, setHover] = useState<string>();
+  const max = Math.max(1, ...data.flatMap((r) => series.map((s) => Number(r[s.key]) || 0)));
+  const first = data[0]?.m;
+  const last = data[data.length - 1]?.m;
+  if (series.length === 0)
+    return <div className="flex items-center justify-center h-40 text-xs text-[#9CA3AF]">Every department is hidden.</div>;
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
-        <XAxis
-          dataKey="m"
-          tick={{ fill: "#9CA3AF", fontSize: 11 }}
-          axisLine={{ stroke: "#F0ECE6" }}
-          tickLine={false}
-        />
-        <YAxis
-          tickFormatter={(v) => `${Math.round(v / 1000)}k`}
-          tick={{ fill: "#9CA3AF", fontSize: 11 }}
-          axisLine={false}
-          tickLine={false}
-          width={38}
-        />
-        <Tooltip content={<RevTooltip />} cursor={{ stroke: "#E2DDD8" }} />
-        {series.map((s) => (
-          <Line
-            key={s.key}
-            type="monotone"
-            dataKey={s.key}
-            stroke={s.color}
-            strokeWidth={1.75}
-            isAnimationActive={false}
-            dot={false}
-          />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
+    <div>
+      <p className="text-[11px] text-[#9CA3AF] mb-1">Same scale on every chart: 0 to {rm(max * 100)}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+        {series.map((s) => {
+          const peak = data.reduce<Record<string, number | string> | undefined>(
+            (p, r) => ((Number(r[s.key]) || 0) > (Number(p?.[s.key]) || 0) ? r : p),
+            undefined,
+          );
+          // Hover wins, then the picked day, so the header matches the table on a day view.
+          const at = hover ?? markDay ? data.find((r) => r.m === (hover ?? markDay)) : undefined;
+          return (
+            <div key={s.key} className="min-w-0">
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="flex items-center gap-1.5 truncate text-[#1F1D1B]">
+                  <span style={{ color: s.color }}>●</span>
+                  {s.key}
+                </span>
+                <span className="shrink-0 tabular-nums text-[#5A5550]">
+                  {at
+                    ? `${at.m} · ${rm(Math.round((Number(at[s.key]) || 0) * 100))}`
+                    : peak
+                      ? `peak ${peak.m} · ${rm(Math.round((Number(peak[s.key]) || 0) * 100))}`
+                      : "no output"}
+                </span>
+              </div>
+              <div style={{ height: 64 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={data}
+                    margin={{ top: 4, right: 6, bottom: 0, left: 6 }}
+                    onMouseMove={(e) => setHover(e?.activeLabel != null ? String(e.activeLabel) : undefined)}
+                    onMouseLeave={() => setHover(undefined)}
+                    onClick={onPickDay ? (e) => {
+                      const hit = data.find((r) => r.m === e?.activeLabel);
+                      if (hit) onPickDay(String(hit.d));
+                    } : undefined}
+                    style={onPickDay ? { cursor: "pointer" } : undefined}
+                  >
+                    {markDay && <ReferenceLine x={markDay} stroke="#6B5C32" strokeDasharray="3 3" />}
+                    {hover && <ReferenceLine x={hover} stroke="#C9C2B8" />}
+                    <XAxis
+                      dataKey="m"
+                      ticks={first && last ? [first, last] : undefined}
+                      interval={0}
+                      tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
+                        <text x={x} y={y} dy="0.71em" textAnchor={payload.value === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
+                          {payload.value}
+                        </text>
+                      )}
+                      axisLine={{ stroke: "#F0ECE6" }}
+                      tickLine={false}
+                      height={20}
+                    />
+                    <YAxis hide domain={[0, max]} />
+                    <Tooltip content={() => null} cursor={false} />
+                    <Line
+                      type="monotone"
+                      dataKey={s.key}
+                      stroke={peak ? s.color : "#E2DDD8"}
+                      strokeWidth={1.75}
+                      isAnimationActive={false}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

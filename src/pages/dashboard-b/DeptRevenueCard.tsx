@@ -86,7 +86,7 @@ export function DeptRevenueCard({
         (x) => depts.map((d) => pickCat(d.byBucket[x.i], cat)),
       ).map(({ b, i }) => {
         const row: Record<string, number | string> = { m: b.slice(5) };
-        for (const d of depts) row[d.label] = Math.round(pickCat(d.byBucket[i], cat) / 100);
+        for (const d of depts) row[d.label] = pickCat(d.byBucket[i], cat) / 100;
         return row;
       }),
     [buckets, depts, cat],
@@ -111,7 +111,7 @@ export function DeptRevenueCard({
             <h3 className="text-sm font-bold text-[#1F1D1B] tracking-[-0.2px]">Department Revenue — {periodLabel}</h3>
             <p className="text-xs text-[#9CA3AF] mt-0.5">
               Each department books an order's full value when its last card for that order completes (same rule as
-              Production) · equal rows = balanced output · click a department to hide its line
+              Production) · equal rows = balanced output · click a department to hide its chart
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -150,7 +150,7 @@ export function DeptRevenueCard({
                         onClick={() => toggle(d.code)}
                         className="border-b border-[#F7F4EF] cursor-pointer hover:bg-[#FAF8F4]"
                         style={{ opacity: off ? 0.45 : 1 }}
-                        title={off ? "Show this department's line" : "Hide this department's line"}
+                        title={off ? "Show this department's chart" : "Hide this department's chart"}
                       >
                         <td className="py-1.5 pr-2">
                           <div className="flex items-center gap-1.5 whitespace-nowrap">
@@ -182,10 +182,10 @@ export function DeptRevenueCard({
                 </tbody>
               </table>
             </div>
-            <div className="lg:col-span-3 min-w-0" style={{ height: 280 }}>
+            <div className="lg:col-span-3 min-w-0">
               <Suspense
                 fallback={
-                  <div className="flex items-center justify-center h-full text-xs text-[#9CA3AF]">Loading chart…</div>
+                  <div className="flex items-center justify-center h-40 text-xs text-[#9CA3AF]">Loading chart…</div>
                 }
               >
                 <DeptRevenueChart data={chartRows} series={series} />
