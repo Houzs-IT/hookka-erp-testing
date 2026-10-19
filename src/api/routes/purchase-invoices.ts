@@ -287,6 +287,8 @@ export type PurchaseInvoiceItem = {
   lineType: PurchaseInvoiceItemLineType;
   notes: string | null;
   grnItemId: string | null;
+  /** The PO this line bills (HK-0107: the editor sends it back on save). */
+  poId: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -315,6 +317,8 @@ type PurchaseInvoiceItemRow = {
   notes: string | null;
   grn_item_id?: string | null;
   grnItemId?: string | null;
+  po_id?: string | null;
+  poId?: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -425,6 +429,7 @@ function rowToItem(r: PurchaseInvoiceItemRow): PurchaseInvoiceItem {
     lineType: VALID_LINE_TYPES.includes(lineType) ? lineType : "OTHER",
     notes: r.notes ?? null,
     grnItemId: r.grnItemId ?? r.grn_item_id ?? null,
+    poId: r.poId ?? r.po_id ?? null,
     created_at: r.created_at ?? null,
     updated_at: r.updated_at ?? null,
   };
@@ -2037,6 +2042,24 @@ app.put("/:id", async (c) => {
     if (!normalizedItems.ok) {
       return c.json({ success: false, error: normalizedItems.error }, 400);
     }
+    // HK-0107: a line whose body omits poId keeps its OLD line's PO (matched
+    // by line id, then grn_item_id) — only then the header PO below. Without
+    // this a multi-PO invoice collapsed every line onto the header PO on edit.
+    const oldPiLines = (
+      await db
+        .prepare("SELECT * FROM purchase_invoice_items WHERE pi_id = ?")
+        .bind(id)
+        .all<PurchaseInvoiceItemRow>()
+    ).results ?? [];
+    normalizedItems.rows.forEach((r, i) => {
+      if (r.poId) return;
+      const bodyId = (body.items?.[i] as { id?: unknown } | undefined)?.id;
+      const old =
+        (bodyId != null && oldPiLines.find((l) => String(l.id) === String(bodyId))) ||
+        (r.grnItemId && oldPiLines.find((l) => String(l.grnItemId ?? l.grn_item_id ?? "") === r.grnItemId)) ||
+        null;
+      r.poId = old ? (old.poId ?? old.po_id ?? null) : null;
+    });
     // GRN-sourced lines drive grn_items.invoiced_qty. When this PI is being
     // re-lined, the OLD consumption is decremented (buildGrnRestoreStatements)
     // and the NEW lines re-increment. Before we commit, verify the NEW qty per
