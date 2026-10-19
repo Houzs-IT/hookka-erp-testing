@@ -317,7 +317,7 @@ export type CfStatement = { columns: CfColumn[]; rows: CfRow[]; sources?: Record
 
 // Months of the current FY from period back to FY start (inclusive),
 // newest first, e.g. fye=8, period=2026-03 → [2026-03,...,2025-09,2025-08].
-export function fyMonths(period: string, fyeMonth: number): string[] {
+export function fyMonths(period: string, fyeMonth: number, fyStartYm?: string): string[] {
   // BUG-2026-08-13-092. `period` MUST be `YYYY-MM`. Anything else (the
   // Cash Flow tab used to offer "2026-Q1" and "2026") made `pm` NaN, so every
   // column key became "2026-NaN": no leg matched a column, `inFy` was false for
@@ -329,6 +329,19 @@ export function fyMonths(period: string, fyeMonth: number): string[] {
     throw new Error(`fyMonths: period must be YYYY-MM, got "${period}"`);
   }
   const [py, pm] = period.split("-").map((n) => parseInt(n, 10));
+  // A financial year from the schedule (item 9 — a transition year can run
+  // up to eighteen months): back to its first month.
+  if (fyStartYm && /^\d{4}-(0[1-9]|1[0-2])$/.test(fyStartYm) && fyStartYm <= period) {
+    const out: string[] = [];
+    let y = py, m = pm;
+    for (let i = 0; i < 24; i++) {
+      const ym = `${y}-${String(m).padStart(2, "0")}`;
+      out.push(ym);
+      if (ym <= fyStartYm) break;
+      m -= 1; if (m === 0) { m = 12; y -= 1; }
+    }
+    return out;
+  }
   const startMonth = (fyeMonth % 12) + 1; // month after FYE
   const out: string[] = [];
   let y = py, m = pm;
@@ -364,13 +377,15 @@ export function buildStatement(opts: {
   // merges the auto-guess with the kv override before passing it in.
   supplierCategory?: Record<string, string>;
   fyeMonth: number;
+  /** The financial year's first month (the schedule's; else from fyeMonth). */
+  fyStartYm?: string;
   period: string;
   editable?: boolean;
   // Record every line's sources (CfSource) for the inline drill.
   trace?: boolean;
 }): CfStatement {
-  const { classified, bankLegs, coa, map, rmSplit, deptSplit = {}, stockGroupOverride, supplierCategory = {}, fyeMonth, period, editable, trace } = opts;
-  const months = fyMonths(period, fyeMonth);        // newest first
+  const { classified, bankLegs, coa, map, rmSplit, deptSplit = {}, stockGroupOverride, supplierCategory = {}, fyeMonth, fyStartYm, period, editable, trace } = opts;
+  const months = fyMonths(period, fyeMonth, fyStartYm);        // newest first
   const fyStart = months[months.length - 1];        // FY start ym
   const columns: CfColumn[] = [
     { key: "__accum__", label: `Accumulated`, accum: true },

@@ -93,3 +93,30 @@ test("buildPnlMatrix — empty-coded lines resolve month values by name", async 
   assert.deepEqual(bank.values, [5150, 50], "bank row picks the BANK line per month, not the first empty-coded line");
   assert.deepEqual(rent.values, [2500000, 1250000]);
 });
+
+test("every group carries the statement's total label (finance v2: an open group's total line)", async () => {
+  const w = W({
+    rmGroups: [{ group: "B.FAB", description: "B.M FABRIC", openingSen: 1, purchasesSen: 2, closingSen: 1 }],
+    otherIncomeLines: [{ code: "530-0010", name: "Discount", amountSen: 5 }], otherIncomeSen: 5,
+    expenseLines: [{ code: "900-S001", name: "Salary", amountSen: 9, salary: true }], expenseSen: 9,
+  });
+  const m = buildPnlMatrix([{ key: "2026-09", label: "Sep", accum: false, window: w }]);
+  const labels = Object.fromEntries(m.rows.filter((r) => r.kind === "group").map((r) => [r.label, r.totalLabel]));
+  assert.deepEqual(labels, {
+    "SALES": "NET SALES",
+    "COST OF GOODS SOLD": "TOTAL COST OF GOODS SOLD",
+    "RAW MATERIALS": "TOTAL RAW MATERIALS",
+    "B.M FABRIC": "TOTAL B.M FABRIC",
+    "DIRECT LABOUR": "TOTAL DIRECT LABOUR",
+    "FACTORY OVERHEAD": "TOTAL FACTORY OVERHEAD",
+    "WORK IN PROGRESS": "WIP MOVEMENT (net)",
+    "OTHER INCOME": "TOTAL OTHER INCOME",
+    "OPERATING EXPENSES": "TOTAL EXPENSES",
+    "SALARIES & CONTRIBUTION": "TOTAL SALARIES & CONTRIBUTION",
+  });
+  // Same words as the statement's own builder.
+  const api = (await import("node:fs")).readFileSync("src/api/routes/accounting.ts", "utf8");
+  for (const l of ["NET SALES", "TOTAL COST OF GOODS SOLD", "TOTAL RAW MATERIALS", "TOTAL DIRECT LABOUR", "TOTAL FACTORY OVERHEAD", "WIP MOVEMENT (net)", "TOTAL OTHER INCOME", "TOTAL EXPENSES", "TOTAL SALARIES & CONTRIBUTION"]) {
+    assert.ok(api.includes(`"${l}"`), l);
+  }
+});

@@ -204,7 +204,45 @@ export async function checkInvoiceLocked(
   if (inv.status === "PAID" || (inv.paidAmount ?? 0) > 0) {
     return `Cannot edit Invoice ${inv.invoiceNo} — a payment has been recorded. Issue a credit note instead.`;
   }
+  const notes = await issuedNotesOnInvoice(db, invoiceId);
+  if (notes.length) return issuedNotesLockMessage("edit", inv.invoiceNo, notes);
   return null;
+}
+
+/**
+ * The credit notes (APPROVED / POSTED) and debit notes (POSTED) issued
+ * against an invoice, by number (owner 2026-10-17: notes can be posted). An
+ * issued note has already moved the invoice's total, so editing, re-pricing
+ * or cancelling the invoice under it would post the invoice again at the
+ * moved total and the note would count twice. Back to Draft the note first.
+ */
+export async function issuedNotesOnInvoice(
+  db: D1Database,
+  invoiceId: string,
+): Promise<string[]> {
+  type R = { noteNumber?: string | null; note_number?: string | null };
+  const [cn, dn] = await Promise.all([
+    db
+      .prepare("SELECT noteNumber FROM credit_notes WHERE invoiceId = ? AND status IN ('APPROVED','POSTED')")
+      .bind(invoiceId)
+      .all<R>(),
+    db
+      .prepare("SELECT noteNumber FROM debit_notes WHERE invoiceId = ? AND status = 'POSTED'")
+      .bind(invoiceId)
+      .all<R>(),
+  ]);
+  return [...(cn.results ?? []), ...(dn.results ?? [])]
+    .map((r) => String(r.noteNumber ?? r.note_number ?? ""))
+    .filter(Boolean);
+}
+
+export function issuedNotesLockMessage(
+  verb: "edit" | "cancel",
+  invoiceNo: string,
+  notes: string[],
+): string {
+  const one = notes.length === 1;
+  return `Cannot ${verb} Invoice ${invoiceNo} — ${notes.join(", ")} ${one ? "has" : "have"} been issued against it. Put ${one ? "the note" : "the notes"} back to draft first.`;
 }
 
 /**

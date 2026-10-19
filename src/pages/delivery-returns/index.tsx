@@ -13,6 +13,7 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { useToast } from "@/components/ui/toast";
 import { Undo2, Plus, X, Loader2 } from "lucide-react";
+import { deliveryReturnStatus } from "@/lib/delivery-return-status";
 
 interface ReturnItem {
   problem: string;
@@ -30,19 +31,12 @@ interface DeliveryReturn {
   customerPOId: string;
   returnType: string;
   status: string;
+  creditNoteId?: string;
+  creditNoteStatus?: string;
   items: ReturnItem[];
 }
 type Resp = { success?: boolean; data?: DeliveryReturn[] };
 
-const STATUS_LABEL: Record<string, string> = {
-  OPEN: "Open",
-  RETURNED_TO_STOCK: "Returned to stock",
-  SERVICE_SPAWNED: "Service in progress",
-  CN_ISSUED: "CN issued",
-  REDELIVERED: "Re-delivered",
-  CLOSED: "Closed",
-  CANCELLED: "Cancelled",
-};
 const TYPE_LABEL: Record<string, string> = {
   PURE_RETURN: "Pure return",
   REPAIR_REDELIVER: "Repair & re-deliver",
@@ -68,7 +62,9 @@ export default function DeliveryReturnsPage() {
   const counts = useMemo(() => {
     const c = { open: 0, inService: 0, closed: 0 };
     for (const r of rows) {
-      if (r.status === "CLOSED" || r.status === "REDELIVERED" || r.status === "CN_ISSUED") c.closed += 1;
+      // A return still waiting for its credit note is not done yet.
+      if (deliveryReturnStatus(r).awaitingCreditNote) c.open += 1;
+      else if (r.status === "CLOSED" || r.status === "REDELIVERED" || r.status === "CN_ISSUED") c.closed += 1;
       else if (r.status === "SERVICE_SPAWNED") c.inService += 1;
       else if (r.status !== "CANCELLED") c.open += 1;
     }
@@ -117,12 +113,15 @@ export default function DeliveryReturnsPage() {
       label: "Status",
       width: "150px",
       sortable: true,
-      exportValue: (row) => STATUS_LABEL[row.status] ?? row.status,
-      render: (_v, row) => (
-        <Badge variant="status" status={row.status}>
-          {STATUS_LABEL[row.status] ?? row.status}
-        </Badge>
-      ),
+      exportValue: (row) => deliveryReturnStatus(row).label,
+      render: (_v, row) => {
+        const v = deliveryReturnStatus(row);
+        return (
+          <Badge variant="status" status={v.chip}>
+            {v.label}
+          </Badge>
+        );
+      },
     },
   ];
 

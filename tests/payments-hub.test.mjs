@@ -51,23 +51,32 @@ test("foreign rows carry their door badge and read as Approved / Cancelled on th
 });
 
 test("a foreign row prints, opens and voids through ITS OWN document — never the voucher endpoints", () => {
-  assert.match(tab, /: row\.sp \? buildSupplierPaymentVoucher\(row\.sp\)\s*\n\s*: row\.ft \? buildFundTransferVoucher\(row\.ft, accounts\)\s*\n\s*: buildOtherPartyPaymentVoucher\(row\.ocp!, accounts\);/);
+  // Each door its own builder; the doors that pay bills load the print detail
+  // first (print design 1a, owner 2026-10-17).
+  assert.match(tab, /: row\.sp \? buildSupplierPaymentVoucher\(\{ \.\.\.row\.sp, bankLabel: [^\n]+\}, \(await fetchApPrintDetail\(row\.sp\.paymentNo\)\) \?\? undefined\)\s*\n\s*: row\.ft \? buildFundTransferVoucher\(row\.ft, accounts\)\s*\n\s*: buildOtherPartyPaymentVoucher\(row\.ocp!, accounts, \(await fetchApPrintDetail\(row\.ocp!\.paymentNo\)\) \?\? undefined\);/);
   assert.match(tab, /\? `\/api\/supplier-payments\/\$\{encodeURIComponent\(row\.no\)\}\/lifecycle`\s*\n\s*: row\.ft\s*\n\s*\? `\/api\/accounting\/fund-transfers\/\$\{encodeURIComponent\(row\.no\)\}\/lifecycle`\s*\n\s*: `\/api\/accounting\/other-party-payments\/\$\{encodeURIComponent\(row\.no\)\}\/lifecycle`;/);
   assert.match(tab, /const foreignHref = \(row: PayRow\) => row\.sp \? "\/invoices\/supplier-payments" : row\.ft \? "\/accounting\?tab=transfer" : "\/accounting\?tab=ocreditorpay";/);
   // Double-click opens the shared shell; single click does nothing (owner 2026-10-01).
   // Right-click (2026-10-02) opens the row's menu: print / its page / void.
-  assert.match(tab, /onDoubleClick=\{\(\) => setDetailPayKey\(g\.key\)\}\s*\n\s*onContextMenu=\{rowMenu\.onContextMenu\(g\.key, \(\) => payRowMenu\(g\)\)\}\s*\n\s*title="Double-click to open · right-click for actions"/);
+  // Since finance v2 the list is a DataGrid (checkboxSelectOnly = no click select).
+  assert.match(tab, /onDoubleClick=\{\(r\) => \(r\.pv \? setDetailPvId\(r\.pv\.id\) : setDetailPayKey\(r\.key\)\)\}/);
+  assert.match(tab, /contextMenuItems=\{\(r\) => rowMenuItems\(r\.pv \? pvRowMenu\(r\.pv\) : payRowMenu\(r\)\)\}/);
+  assert.match(tab, /\n\s+checkboxSelectOnly\n/);
   assert.match(tab, /title=\{`\$\{PAY_DOOR_LABEL\[g\.door\]\} \$\{g\.no\}`\}/);
 });
 
 test("the ladder, edit and attachments stay voucher-only; batch print / export cover every door", () => {
-  // A ticked foreign row never reaches the approval batch.
-  assert.match(tab, /const ids = pvSel\.selectedRows\.map\(\(r\) => r\.pv\?\.id\)\.filter\(\(id\): id is string => !!id\);/);
-  assert.match(tab, /const sel = pvSel\.selectedRows\.map\(\(x\) => x\.pv\)\.filter\(\(x\): x is PvRow => !!x\);/);
-  assert.match(tab, /onPrint=\{\(\) => printVouchers\(pvSel\.selectedRows\.map\(payVoucherOf\)\)\}/);
+  // A ticked foreign row never reaches the approval batch. The ticks are the
+  // grid's (finance v2), mirrored into `picked`.
+  assert.match(tab, /const ids = picked\.map\(\(r\) => r\.pv\?\.id\)\.filter\(\(id\): id is string => !!id\);/);
+  assert.match(tab, /const sel = picked\.map\(\(x\) => x\.pv\)\.filter\(\(x\): x is PvRow => !!x\);/);
+  // Batch print loads every row's detail too (BUG-2026-10-17-311).
+  assert.match(tab, /const printPayRows = async \(list: PayRow\[\]\) => \{ printVouchers\(await Promise\.all\(list\.map\(payVoucherOf\)\)\); \};/);
+  assert.match(tab, /onPrint=\{\(\) => void printPayRows\(picked\)\}/);
   assert.match(tab, /\["Door", "PV No", "Date", "Pay To", "Paid From", "Status", "Remarks", "Product Line", "Voucher Total \(RM\)"/);
   // Selection is keyed by the hub row, so a voucher and a foreign row never collide.
-  assert.match(tab, /const pvSel = useRowSelection\(visibleRows, \(r\) => r\.key\);/);
+  assert.match(tab, /data=\{gridRows\}\s*\n\s*keyField="key"/);
+  assert.match(tab, /onSelectionChange=\{setPicked\}/);
 });
 
 // Owner 2026-09-28 「supplier payment 也没记银行户口?那怎么对账」: the table
@@ -83,13 +92,15 @@ test("a supplier payment's bank is read from its ledger CR leg — newest, never
   assert.match(get, /if \(no && !bankByNo\.has\(no\)\) bankByNo\.set\(no, String\(l\.accountCode \?\? l\.account_code \?\? ""\)\);/);
   assert.match(get, /for \(const g of groups\) g\.bankAccount = bankByNo\.get\(g\.paymentNo\) \?\? null;/);
   assert.match(merge, /via: g\.bankAccount \?\? ""/);
-  // A payment with no bank leg (contra) is the only one a bank pick hides — and it says so.
-  assert.match(tab, /const bankHiddenSp = bankFilter \? payRows\.filter\(\(r\) => r\.door === "SP" && !r\.via\)\.length : 0;/);
-  assert.match(tab, /supplier payment\{bankHiddenSp === 1 \? "" : "s"\} hidden — no bank leg on their ledger posting/);
+  // A payment with no bank leg (contra) is never hidden without a word: the
+  // Paid From funnel lists it as "(no bank leg)" and the cell explains the dash
+  // (finance v2: the bank filter is that column's funnel).
+  assert.match(tab, /filterAccessor: \(r\) => r\.viaLabel \|\| \(r\.door === "SP" \? "\(no bank leg\)" : "—"\)/);
+  assert.match(tab, /title="No bank leg on this payment's ledger posting \(contra settlement\)"/);
 });
 
 test("one supplier-payment voucher builder, in a lib, used by both pages", () => {
-  assert.match(lib, /export function buildSupplierPaymentVoucher\(p: SupplierPaymentVoucherInput\): VoucherSpec/);
+  assert.match(lib, /export function buildSupplierPaymentVoucher\(p: SupplierPaymentVoucherInput, detail\?: ApPrintDetail\): VoucherSpec/);
   assert.match(lib, /"SUPPLIER PAYMENT VOUCHER — VOID"/);
   // An advance line has no PI — it prints as such, never as a blank cell.
   assert.match(lib, /l\.piNo \|\| "Advance \/ unallocated"/);

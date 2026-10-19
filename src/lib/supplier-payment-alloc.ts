@@ -2,6 +2,8 @@
 // the PI's BOOKED MYR; the bank pays the ACTUAL MYR; the difference is realised
 // FX (530-0000). MYR PIs have no FX. All amounts in sen (integer).
 
+import { liveRestatePostType } from "./lifecycle-machine";
+
 export type AllocInput = {
   outstandingBookedSen: number; // PI remaining booked MYR (amountSen − paidAmountSen)
   isForeign: boolean;
@@ -99,17 +101,7 @@ export function restateHeadroom(
 // (BUG-2026-07-24-002) is unit-testable.
 // ---------------------------------------------------------------------------
 export function latestRestatePostType(sourceTypes: string[]): string | null {
-  let best: string | null = null;
-  let bestStamp = -1;
-  for (const t of sourceTypes) {
-    if (!t.startsWith("supplier_payment_restate_post:")) continue;
-    const stamp = Number(t.split(":")[1]) || 0;
-    if (stamp > bestStamp) {
-      bestStamp = stamp;
-      best = t;
-    }
-  }
-  return best;
+  return liveRestatePostType(sourceTypes, "supplier_payment");
 }
 
 // ---------------------------------------------------------------------------

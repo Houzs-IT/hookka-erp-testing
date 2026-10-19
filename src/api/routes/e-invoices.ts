@@ -19,6 +19,16 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 
+
+// A customer's TIN from its Onboarding / KYC block (customer_onboarding,
+// created by the CRM routes). "" when none is on file or the table is not
+// there yet — the XML then carries the general-public TIN as before.
+async function customerKycTin(db: Env["Variables"]["DB"], customerId: string | null): Promise<string> {
+  if (!customerId) return "";
+  const row = await db.prepare("SELECT * FROM customer_onboarding WHERE customer_id = ?")
+    .bind(customerId).first<Record<string, unknown>>().catch(() => null);
+  return String((row?.tinNumber ?? row?.tin_number) ?? "").trim();
+}
 const app = new Hono<Env>();
 
 type EInvoiceRow = {
@@ -146,7 +156,7 @@ app.post("/", async (c) => {
     }
 
     const invoice = await c.var.DB.prepare(
-      "SELECT id, invoiceNo, invoiceDate, customerName, totalSen FROM invoices WHERE id = ?",
+      "SELECT id, invoiceNo, invoiceDate, customerName, customerId, totalSen FROM invoices WHERE id = ?",
     )
       .bind(invoiceId)
       .first<{
@@ -154,6 +164,7 @@ app.post("/", async (c) => {
         invoiceNo: string;
         invoiceDate: string;
         customerName: string;
+        customerId: string | null;
         totalSen: number;
       }>();
     if (!invoice) {
@@ -177,11 +188,15 @@ app.post("/", async (c) => {
     const taxAmount = 0;
     const now = new Date().toISOString();
 
+    // The buyer's TIN: the request's, else the one on the customer's KYC block
+    // (Finance v2 party fields, owner 2026-10-17 — "TIN · e-Invoice"); the
+    // general-public TIN only when neither is on file.
+    const customerTIN = String(body.customerTIN ?? "").trim() || (await customerKycTin(c.var.DB, invoice.customerId));
     const xmlContent = generateEInvoiceXml(
       invoice.invoiceNo,
       invoice.invoiceDate,
       invoice.customerName,
-      body.customerTIN,
+      customerTIN,
       totalExcludingTax,
       taxAmount,
       totalIncludingTax,
@@ -199,7 +214,7 @@ app.post("/", async (c) => {
         invoice.id,
         invoice.invoiceNo,
         invoice.customerName,
-        body.customerTIN || null,
+        customerTIN || null,
         null,
         null,
         "PENDING",

@@ -33,6 +33,7 @@
     "*.{ts,tsx}": "eslint"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "5.3.0",
     "@hono/node-server": "^1.19.14",
     "@hookform/resolvers": "^5.2.2",
     "@sentry/react": "^10.50.0",

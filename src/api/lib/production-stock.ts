@@ -28,7 +28,7 @@ export async function loadPreparedProduction(
 ): Promise<PreparedProduction> {
   const [poRes, jcRes, soRes, coRes, doRes, cnRes] = await Promise.all([
     db.prepare(
-      `SELECT id, status, completedDate, quantity, itemCategory, productCode, productName,
+      `SELECT id, poNo, status, completedDate, quantity, itemCategory, productCode, productName,
               salesOrderId, consignmentOrderId, lineNo
          FROM production_orders`,
     ).all<Record<string, unknown>>(),
@@ -57,6 +57,7 @@ export async function loadPreparedProduction(
 
   const orders: PsOrder[] = (poRes.results ?? []).map((r) => ({
     id: String(r.id ?? ""),
+    poNo: str(pick(r, "poNo", "po_no")),
     status: String(r.status ?? ""),
     completedDate: str(pick(r, "completedDate", "completed_date")),
     qty: num(r.quantity),

@@ -33,12 +33,18 @@ export function fmtN(n: number): string {
 // Compact money for chart axes: "RM 15k", "RM 1.2m". A full "RM 15,000" is
 // wide enough that Recharts wraps the tick onto two lines and drops the space
 // between them ("RM" / "15,000"), which reads as broken.
+// Merged dashboard (owner 2026-10-17): every chart follows the Command Center
+// (/dashboard) standard — money axis in plain "25k" / "1.2m" (the card title
+// already says RM), 11px warm-grey ticks, a faint x baseline, legend top-right.
 export function fmtRMAxis(n: number): string {
   const v = Math.abs(n);
-  if (v >= 1_000_000) return `RM ${(n / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1)}m`;
-  if (v >= 1_000) return `RM ${Math.round(n / 1_000)}k`;
-  return `RM ${n}`;
+  if (v >= 1_000_000) return `${(n / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1)}m`;
+  if (v >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return `${n}`;
 }
+export const CC_TICK = { fontSize: 11, fill: "#9CA3AF" } as const;
+export const CC_AXIS_LINE = { stroke: "#F0ECE6" } as const;
+export const CC_LEGEND = { verticalAlign: "top", align: "right", iconType: "circle", iconSize: 7, wrapperStyle: { fontSize: 12, paddingBottom: 8 } } as const;
 
 // ---------------------------------------------------------------------------
 // DashboardWidgets.tsx formatters — owner rule 2026-09-23: no
@@ -64,12 +70,54 @@ export function fmtHM(min: number | null | undefined): string {
   const m = Math.max(0, Math.trunc(min ?? 0));
   return `${Math.floor(m / 60).toLocaleString("en-MY")}h ${m % 60}m`;
 }
-/** /dashboard's `period` query value: YTD reads all-time, else the month. */
+// ---- Quarter (owner 2026-10-17: 季度与年) -----------------------------------
+// A quarter is a range Period spanning the quarter's calendar days, labelled
+// "Q4 2026". It needs no new mode: inPeriod already handles ranges, and the
+// URL already carries from/to/lbl.
+export function quarterKeyOf(month: string): string {
+  return `${month.slice(0, 4)}-Q${Math.floor((Number(month.slice(5, 7)) - 1) / 3) + 1}`;
+}
+export function quarterPeriod(key: string, today: string): Period {
+  const y = Number(key.slice(0, 4));
+  const q = Number(key.slice(6));
+  const m1 = (q - 1) * 3 + 1;
+  const from = ymd(new Date(y, m1 - 1, 1));
+  const to = ymd(new Date(y, m1 + 2, 0));
+  const lastYm = to.slice(0, 7);
+  const month = lastYm < today.slice(0, 7) ? lastYm : today.slice(0, 7) < from.slice(0, 7) ? from.slice(0, 7) : today.slice(0, 7);
+  return { mode: "range", month, from, to, label: `Q${q} ${y}` };
+}
+/** The quarter key ("2026-Q4") when the period is exactly a calendar quarter, else null. */
+export function quarterOfPeriod(p: Period): string | null {
+  if (p.mode !== "range" || !p.from || !p.to || p.day) return null;
+  const key = quarterKeyOf(p.from.slice(0, 7));
+  const q = quarterPeriod(key, "9999-12-31");
+  return q.from === p.from && q.to === p.to ? key : null;
+}
+export function stepQuarter(key: string, dir: -1 | 1, today: string): string | null {
+  let y = Number(key.slice(0, 4));
+  let q = Number(key.slice(6)) + dir;
+  if (q === 0) { q = 4; y -= 1; }
+  if (q === 5) { q = 1; y += 1; }
+  const next = `${y}-Q${q}`;
+  return next > quarterKeyOf(today.slice(0, 7)) ? null : next;
+}
+
+/**
+ * /dashboard's `period` query value: the month, the quarter ("2026-Q4") or
+ * the year ("2026"). YTD used to read ALL-TIME here, so the Command Center
+ * cards showed every month ever under a year label (fixed 2026-10-17).
+ */
 export function widgetPeriod(p: Period): string {
-  return p.mode === "ytd" ? "all" : p.month;
+  if (p.mode === "ytd") return p.month.slice(0, 4);
+  return quarterOfPeriod(p) ?? p.month;
 }
 export function widgetPeriodLabel(p: Period): string {
-  return widgetPeriod(p) === "all" ? "All-time" : monthLabel(p.month);
+  const w = widgetPeriod(p);
+  if (w === "all") return "All-time";
+  if (/^\d{4}$/.test(w)) return w;
+  if (/Q/.test(w)) return `Q${w.slice(6)} ${w.slice(0, 4)}`;
+  return monthLabel(p.month);
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +270,10 @@ export function resolvePeriod(period: Period, months: string[], today: string, o
 }
 
 /** Tabs whose bare URL opens on the MONTH, not on today. Same keys on desktop and /m. */
-const MONTHLY_TABS = new Set(["overview", "sales", "ocr"]);
+// Merged dashboard (owner 2026-10-17): every tab opens on the month to date —
+// a tab opening on "today" read like a whole-month figure (RM 1,741.69 of
+// production cost was one day).
+const MONTHLY_TABS = new Set(["overview", "sales", "ocr", "operations", "people", "service", "finance"]);
 
 export function opensOnToday(tab: string | undefined): boolean {
   return !MONTHLY_TABS.has(tab ?? "");
@@ -461,26 +512,23 @@ export function workerDays(
 // the keys are shared between the shell and the views.
 // Tabs and sub-tabs are named after the FUNCTION, never the person who reads
 // them: a chart has one home, and whoever holds the role opens that home.
+// Merged dashboard (owner 2026-10-16): sub-tabs that read the same data were
+// folded together — Employees Overview into Efficiency, Output + Plan vs Actual
+// into Output, Service Performance + Top issues into Report, Overdue +
+// Approvals into To do. Old links resolve through LEGACY.
 export const PEOPLE_SUBS = [
-  { key: "overview", label: "Overview" },
-  { key: "time", label: "Time & attendance" },
-  { key: "efficiency", label: "Efficiency" }, // also holds the department ledger (was its own "departments" sub)
+  { key: "efficiency", label: "Efficiency" }, // headcount, hours, efficiency, department ledger
+  { key: "time", label: "Attendance" },
 ] as const;
 export const OPS_SUBS = [
   { key: "overview", label: "Overview" },
-  { key: "production", label: "Output" },
-  { key: "plan", label: "Plan vs Actual" },
-  { key: "cost", label: "Revenue & Cost" },
-  { key: "materials", label: "Materials" },
+  { key: "production", label: "Output & Cost" }, // completed, plan vs actual, cost, materials (owner 2026-10-17)
 ] as const;
 export type PeopleSub = (typeof PEOPLE_SUBS)[number]["key"];
 export type OpsSub = (typeof OPS_SUBS)[number]["key"];
 export const SERVICE_SUBS = [
-  { key: "overview", label: "Report" },
-  { key: "performance", label: "Performance" },
-  { key: "overdue", label: "Overdue" },
-  { key: "approvals", label: "Approvals" },
-  { key: "issues", label: "Top issues" },
+  { key: "overview", label: "Report" }, // cases, closing time, root causes
+  { key: "overdue", label: "To do" }, // overdue cases + pending approvals
 ] as const;
 export type ServiceSub = (typeof SERVICE_SUBS)[number]["key"];
 export const FIN_SUBS = [
@@ -502,4 +550,14 @@ export function auditTier(effPct: number, low = 90): AuditTier | null {
   const over = OVER_TIERS.find((t) => effPct > t);
   if (over) return over;
   return effPct < low ? "low" : null;
+}
+
+/**
+ * Outsourced labour (owner 2026-10-17: "outsourced 不应该算是一个工作的人"):
+ * employee no. OSC-… or a name starting "OUTSOURCE". Their hours and cost stay
+ * in the totals; they are not counted as people (headcount, present / not in,
+ * per-person averages, the ranking).
+ */
+export function isOutsourced(w: { empNo?: string | null; name?: string | null } | null | undefined): boolean {
+  return !!w && (/^OSC/i.test(w.empNo ?? "") || /^OUTSOURCE/i.test((w.name ?? "").trim()));
 }

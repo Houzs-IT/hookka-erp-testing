@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { Search } from "lucide-react";
 import { RED, AMBER, BORDER, fmtN } from "./dashboard-shared-lib";
-import { deptName } from "./ops-floor-lib";
+import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 
 // Due-soon worklist (Operations > Overview). Reads production.dueSoon3Days
 // from the shared feed. The per-department overdue counts moved into the
@@ -45,14 +45,14 @@ export function DueSoonWorklist({ orders }: { orders: ProdOrderSummary[] }) {
   const [search, setSearch] = useState("");
   const [lane, setLane] = useState<number | null>(null);
 
-  const dueSoonDepts = useMemo(
-    () => [...new Set(orders.map((o) => o.currentDept || "(no dept)"))].sort(),
-    [orders],
-  );
-  const worklistTabs: TabItem<string>[] = useMemo(
-    () => [...DEPT_ALL_TAB, ...dueSoonDepts.map((d) => ({ key: d, label: deptName(d) }))],
-    [dueSoonDepts],
-  );
+  // Every production department, even at zero (owner 2026-10-17: "部门并没有
+  // 全部搜出来"), in floor order with its count; anything else after.
+  const worklistTabs: TabItem<string>[] = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const o of orders) counts.set(o.currentDept || "(no dept)", (counts.get(o.currentDept || "(no dept)") ?? 0) + 1);
+    const codes = [...DEPT_FLOOR.map(([c]) => c as string), ...[...counts.keys()].filter((c) => !DEPT_FLOOR.some(([k]) => k === c))];
+    return [{ ...DEPT_ALL_TAB[0], label: `All · ${fmtN(orders.length)}` }, ...codes.map((d) => ({ key: d, label: `${deptName(d)} · ${fmtN(counts.get(d) ?? 0)}` }))];
+  }, [orders]);
   // Dept + search narrow everything; the lane tiles count that slice, and
   // a selected lane narrows only the table.
   const baseRows = useMemo(() => {

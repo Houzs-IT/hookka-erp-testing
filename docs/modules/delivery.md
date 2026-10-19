@@ -1,5 +1,6 @@
 # Delivery & Consignment — Module Guide
 
+> **Last verified: 2026-10-17** (branch `feat/finance-notes-post`): `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2104` (the void-and-reissue backfill above it now skips invoices with an issued credit / debit note). Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/dashboard-month-static-kpis`): the `app.post("/packing-list-first")` anchor re-derived after `/stats` and `/pending-value` gained the dashboard's daily save. Nothing else re-checked.
 > **Last verified: 2026-09-30** (branch `test/bug06-do-guard-behavioural`, BUG-2026-09-30-223): `createDeliveryOrderForPOs` `_helpers.ts:2242` and `validateDoComposition` `:2113` re-derived; create now guards every production order named in `items` as well as `productionOrderIds`. Nothing else re-checked.
 > **Last verified: 2026-10-12** (branch `fix/credit-no-dispatch-check`, BUG-2026-10-12-282): the two credit gate rows; dispatch no longer runs the gate. Nothing else re-checked.
@@ -123,7 +124,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | `applyDeliveryOrderUpdate` | `delivery-orders/_helpers.ts:4194` | DO edit + transition apply |
 | `buildDoDeliveredSoAndInvoice` / `computeDoInvoiceLines` | `delivery-orders/_helpers.ts:1558 / 1342` | DELIVERED→INVOICED SO + invoice build |
 | `queueDoCustomerNotice` | `delivery-orders/_helpers.ts:3637` | Recipient chain + idempotent email claim |
-| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2130` | PL-first auto-split create |
+| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2104` | PL-first auto-split create |
 | `createPackingListCore` | `src/api/routes/packing-lists.ts:628` | Truck-run packing-list build |
 | `collectDeliveryBrief` / `generateDeliveryProposals` | `src/api/lib/delivery-agent.ts:633 / 868` | Agent brief + proposals |
 | `cheapestForState` / `loadStateRateCard` | `src/api/lib/delivery-agent.ts` | Cheapest-3PL routing |

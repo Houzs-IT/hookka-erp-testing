@@ -8,7 +8,26 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDailySlice } from "../src/api/lib/dashboard-daily-slice.ts";
 
-const po = (id, status, qty) => ({ id, status, quantity: qty });
+const po = (id, status, qty, target = null, done = null) => ({ id, status, quantity: qty, targetEndDate: target, completedDate: done });
+
+test("orders: plan by target day, actual by completion day, cancelled excluded", () => {
+  const s = buildDailySlice(
+    [
+      po("a", "COMPLETED", "3", "2026-09-01", "2026-09-02T08:00:00Z"),
+      po("b", "PENDING", 2, "2026-09-01", null),
+      po("c", "CANCELLED", 9, "2026-09-01", null),
+      po("d", "COMPLETED", 1, null, "2026-09-02"),
+    ],
+    [],
+    [],
+  );
+  const d1 = s.orders.byDay.find((d) => d.date === "2026-09-01");
+  const d2 = s.orders.byDay.find((d) => d.date === "2026-09-02");
+  assert.deepEqual([d1.planOrders, d1.planUnits, d1.actualOrders], [2, 5, 0]);
+  assert.deepEqual([d2.planOrders, d2.actualOrders, d2.actualUnits], [0, 2, 4]);
+  assert.equal(s.orders.withoutTarget, 1);
+  assert.equal(s.orders.completedTotal, 2);
+});
 
 test("stages: job cards, units and planned time, plan by due day vs actual by completion day", () => {
   const jc = (po, dept, status, due, done, est, wip, act = null) => ({
@@ -40,7 +59,6 @@ test("stages: job cards, units and planned time, plan by due day vs actual by co
   assert.deepEqual([row("FAB_CUT", "2026-09-01").planMin, row("FAB_CUT", "2026-09-01").planUnits], [30, 3]);
   assert.equal(row("UPH", "2026-09-02").actualMin, 7);
   assert.equal(s.stages.cardsWithoutDue, 1);
-  assert.equal("orders" in s, false);
 });
 
 test("revenue: per-day SQL rows normalised + sorted, unpriced summed, null on error", () => {

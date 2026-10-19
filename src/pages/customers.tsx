@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KycPanel } from "@/components/customer/KycPanel";
 import { PhoneInput } from "@/components/ui/phone-input";
@@ -74,6 +74,7 @@ import {
   type SofaComboHistoryRule,
 } from "./maintenance/SofaComboHistoryDialog";
 import { moneyFieldToSen } from "@/lib/money-field";
+import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
 
@@ -3467,13 +3468,14 @@ export default function CustomersPage() {
   const [stageFilter, setStageFilter] = useState<"CONFIRMED" | "POTENTIAL" | "ALL">("CONFIRMED");
 
   // add-form state
-  const [showAdd, setShowAdd] = useState(false);
+  // Finance › Debtor List (2026-10-17): ?new=1 opens the Add form.
+  const [showAdd, setShowAdd] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
   const [addForm, setAddForm] = useState({ code: "", name: "", contactName: "", phone: "", email: "", creditTerms: "NET30", creditLimitSen: 0 });
   const [addSaving, setAddSaving] = useState(false);
 
   // edit customer dialog state
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
-  const [editCustForm, setEditCustForm] = useState({ code: "", name: "", ssmNo: "", companyAddress: "", contactName: "", phone: "", email: "", creditTerms: "", creditLimitSen: 0, defaultCompanyCode: "", salespersonUserId: "", oemMarking: { bedframe: "NONE", sofa: "NONE", accessory: "NONE" } });
+  const [editCustForm, setEditCustForm] = useState({ code: "", name: "", ssmNo: "", companyAddress: "", contactName: "", phone: "", email: "", creditTerms: "", creditLimitSen: 0, defaultCompanyCode: "", salespersonUserId: "", currency: "MYR", bankAccount: "", oemMarking: { bedframe: "NONE", sofa: "NONE", accessory: "NONE" } });
   // Guards the Save Changes button so a double-tap on tablet doesn't fire two
   // PUTs. persistCustomer already does the optimistic-update + rollback dance,
   // but without this guard the operator can still hammer the network.
@@ -3633,6 +3635,10 @@ export default function CustomersPage() {
   };
 
   // ---------- Edit Customer ----------
+  // Finance › Debtor List (2026-10-17): ?edit=<id> opens that customer's
+  // edit form once the list has loaded. Once.
+  const [editParam] = useState(() => new URLSearchParams(window.location.search).get("edit") || "");
+  const editParamDone = useRef(false);
   const openEditCustomer = (cust: Customer) => {
     setEditCustomer(cust);
     setEditCustForm({
@@ -3647,6 +3653,8 @@ export default function CustomersPage() {
       creditLimitSen: cust.creditLimitSen,
       defaultCompanyCode: cust.defaultCompanyCode || "",
       salespersonUserId: cust.salespersonUserId || "",
+      currency: cust.currency || "MYR",
+      bankAccount: cust.bankAccount || "",
       oemMarking: (() => {
         const cm = (cust as { oemMarking?: { bedframe?: string; sofa?: string; accessory?: string } }).oemMarking;
         const norm = (v: string | undefined) => (v === "TAG" || v === "LABEL" ? v : "NONE");
@@ -3654,6 +3662,13 @@ export default function CustomersPage() {
       })(),
     });
   };
+  useEffect(() => {
+    if (!editParam || editParamDone.current || !data.length) return;
+    editParamDone.current = true;
+    const cust = data.find((c) => c.id === editParam);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot deep link, ref-guarded
+    if (cust) openEditCustomer(cust);
+  }, [editParam, data]);
 
   const saveEditCustomer = async () => {
     if (!editCustomer || savingEdit) return;
@@ -4375,6 +4390,13 @@ export default function CustomersPage() {
                     <label className="block text-xs text-[#6B7280] mb-1">Company Address</label>
                     <Input value={editCustForm.companyAddress} onChange={(e) => setEditCustForm(f => ({ ...f, companyAddress: e.target.value }))} placeholder="Registered company address" />
                   </div>
+                  {/* Finance v2 party fields (owner 2026-10-17). The customer's TIN and
+                      SST Reg. No. are kept in its Onboarding / KYC block. */}
+                  <PartyFinanceFields
+                    taxIds={false}
+                    value={{ tin: "", sstRegNo: "", currency: editCustForm.currency, bankAccount: editCustForm.bankAccount }}
+                    onChange={(v) => setEditCustForm(f => ({ ...f, currency: v.currency, bankAccount: v.bankAccount }))}
+                  />
                   {/* PIC : Phone — Phone gets the wider share (1.4fr) and its own
                       min-width so the +60 dial select doesn't squeeze the number
                       field to a few visible digits ("11-6151 1…" cut off). Stacks

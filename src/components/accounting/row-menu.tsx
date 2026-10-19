@@ -15,7 +15,9 @@ import { ContextMenu, type ContextMenuItem } from "@/components/ui/data-grid";
 /** Menu items in groups; a divider goes between non-empty groups. */
 export type RowMenuGroups = ContextMenuItem[][];
 
-function flatten(groups: RowMenuGroups): ContextMenuItem[] {
+/** Groups → one item list with a divider before each later group (also used
+ *  by DataGrid lists, whose contextMenuItems take a flat list). */
+export function rowMenuItems(groups: RowMenuGroups): ContextMenuItem[] {
   return groups
     .filter((g) => g.length > 0)
     .flatMap((g, gi) => g.map((item, i) => (gi > 0 && i === 0 ? { ...item, separator: true } : item)));
@@ -25,7 +27,7 @@ export function useRowMenu() {
   const [menu, setMenu] = useState<{ key: string; x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const close = useCallback(() => setMenu(null), []);
   const open = (key: string, x: number, y: number, groups: RowMenuGroups) => {
-    const items = flatten(groups);
+    const items = rowMenuItems(groups);
     if (items.length) setMenu({ key, x, y, items });
   };
   return {

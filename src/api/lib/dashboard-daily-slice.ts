@@ -5,6 +5,11 @@
 //
 // DEFINITIONS (the UI repeats these in its subtitles — keep them in sync):
 //
+//  ORDER PLAN vs ACTUAL, per day (the dashboard's Operations chart)
+//    plan   = production orders (not CANCELLED) whose target_end_date is that
+//             day. actual = COMPLETED orders by completed_date day. Counted in
+//             orders and units; two independent tallies by date.
+//
 //  PLAN vs ACTUAL, per day per department — job-card based, the same three
 //  measures as the Schedule email (schedule-overdue-report.ts): job cards,
 //  units, planned time.
@@ -34,6 +39,8 @@ export type DailyPo = {
   id: string;
   status: string | null;
   quantity: number | string | null;
+  targetEndDate?: string | null;
+  completedDate?: string | null;
 };
 export type DailyJc = {
   productionOrderId?: string | null;
@@ -61,6 +68,12 @@ export type StageDay = {
 };
 
 export type DailySlice = {
+  orders: {
+    byDay: { date: string; planOrders: number; planUnits: number; actualOrders: number; actualUnits: number }[];
+    // Non-cancelled orders with no target_end_date cannot be planned on any day.
+    withoutTarget: number;
+    completedTotal: number;
+  };
   stages: {
     byDay: StageDay[];
     cardsWithoutDue: number;
@@ -89,6 +102,32 @@ export function buildDailySlice(
   revenueByDay: DailyRevenueRow[] | null,
   revenueError?: string,
 ): DailySlice {
+  const ord = new Map<string, { date: string; planOrders: number; planUnits: number; actualOrders: number; actualUnits: number }>();
+  const o = (d: string) => {
+    let e = ord.get(d);
+    if (!e) ord.set(d, (e = { date: d, planOrders: 0, planUnits: 0, actualOrders: 0, actualUnits: 0 }));
+    return e;
+  };
+  let withoutTarget = 0;
+  let completedTotal = 0;
+  for (const p of pos) {
+    const st = up(p.status);
+    if (st === "CANCELLED") continue;
+    const qty = num(p.quantity);
+    const t = day(p.targetEndDate);
+    if (t) {
+      const e = o(t);
+      e.planOrders++;
+      e.planUnits += qty;
+    } else withoutTarget++;
+    if (st !== "COMPLETED") continue;
+    completedTotal++;
+    const c = day(p.completedDate);
+    if (!c) continue;
+    const e = o(c);
+    e.actualOrders++;
+    e.actualUnits += qty;
+  }
   const poById = new Map(pos.map((p) => [p.id, p]));
 
   const rev = (revenueByDay ?? []).flatMap((r) => {
@@ -133,6 +172,7 @@ export function buildDailySlice(
 
   const byDate = <T extends { date: string }>(a: T, b: T) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   return {
+    orders: { byDay: [...ord.values()].sort(byDate), withoutTarget, completedTotal },
     stages: { byDay: [...stg.values()].sort(byDate), cardsWithoutDue },
     revenue: revenueByDay ? { byDay: rev.sort(byDate), unpricedOrders: rev.reduce((a, r) => a + r.unpricedOrders, 0) } : null,
     ...(revenueError ? { revenueError } : {}),

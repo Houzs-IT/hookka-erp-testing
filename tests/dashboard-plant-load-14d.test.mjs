@@ -28,7 +28,9 @@ test("capacity window is 14 working days on the dashboard and Planning", () => {
 });
 
 test("dashboard backlog lists every Planning department", () => {
-  const block = OVERVIEW.match(/const DEPARTMENTS: \{ code: string; name: string \}\[\] = \[([\s\S]*?)\];/)[1];
+  // The backlog list is built from dept-revenue.ts's DEPT_REVENUE_ORDER.
+  assert.match(OVERVIEW, /const DEPARTMENTS = DEPT_REVENUE_ORDER\.map\(/);
+  const block = read("src/api/lib/dept-revenue.ts").match(/export const DEPT_REVENUE_ORDER[^=]*= \[([\s\S]*?)\];/)[1];
   const dash = [...block.matchAll(/code: "([A-Z_]+)"/g)].map((m) => m[1]);
   const planBlock = PLANNING.match(/const DEPARTMENTS = \[([\s\S]*?)\];/)[1];
   const plan = [...planBlock.matchAll(/code: "([A-Z_]+)"/g)].map((m) => m[1]);
@@ -81,8 +83,8 @@ test("a past month is frozen on first write and never overwritten", async () => 
 });
 
 test("route reads the frozen copy only for past months and freezes after compute", () => {
-  assert.match(OVERVIEW, /if \(isPastMonth && !windowOverride\) \{\n\s+const frozen = await readFrozenMonth\(/);
-  assert.match(OVERVIEW, /\} else \{\n\s+try \{\n\s+await freezeMonth\(c\.var\.DB, orgId, period,/);
+  assert.match(OVERVIEW, /if \(isPastMonth && dp\.kind === "month" && !windowOverride\) \{\n\s+const frozen = await readFrozenMonth\(/);
+  assert.match(OVERVIEW, /\} else if \(dp\.kind === "month"\) \{\n\s+try \{\n\s+await freezeMonth\(c\.var\.DB, orgId, period,/);
 });
 
 // Staging Dashboard Compare: capacityWindow=7 must never read or write a

@@ -12,6 +12,7 @@ import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { printVouchers } from "@/lib/print-voucher";
 import { buildSupplierPaymentVoucher } from "@/lib/supplier-payment-voucher";
+import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { CreditCard } from "lucide-react";
@@ -85,6 +86,9 @@ type PaymentGroup = {
   totalBookedSen: number;
   lifecycleState?: string;
   lines: PaymentLine[];
+  // The bank it was paid from — GET /api/supplier-payments reads it off the
+  // ledger's credit leg (null for a contra).
+  bankAccount?: string | null;
 };
 
 // An advance/prepayment line has no PI attached. Once fully knocked off (via
@@ -611,10 +615,22 @@ export default function SupplierPaymentsPage() {
   // Row actions on right-click or the row's ⋮ (owner 2026-10-02 「这个显示太多了，
   // 能不能 right click 才选我的东西」) — no action links in the rows.
   const rowMenu = useRowMenu();
+  // Print with each payment's bill detail (dates, balances before — print
+  // design 1a), loaded first; a payment whose detail cannot load prints its
+  // plain lines.
+  const printPayments = async (list: PaymentGroup[]) => {
+    const details = await Promise.all(list.map((p) => fetchApPrintDetail(p.paymentNo)));
+    const bankLabel = (code?: string | null) => {
+      if (!code) return null;
+      const nm = bankOptions.find((o) => o.code === code)?.name;
+      return nm ? `${code} · ${nm}` : code;
+    };
+    printVouchers(list.map((p, i) => buildSupplierPaymentVoucher({ ...p, bankLabel: bankLabel(p.bankAccount) }, details[i] ?? undefined)));
+  };
   const payRowMenu = (p: PaymentGroup): RowMenuGroups => [
     [{ label: "Open", action: () => setDetail(p) }],
     [
-      { label: "Print", action: () => printVouchers([buildSupplierPaymentVoucher(p)]) },
+      { label: "Print", action: () => void printPayments([p]) },
       // A trade-finance repayment has no in-place edit (its draw allocations
       // live outside the rows) — void it and record it again. Backend enforces
       // the same.
@@ -1083,7 +1099,7 @@ export default function SupplierPaymentsPage() {
           <BatchActionsBar
             count={sel.count}
             onClear={sel.clear}
-            onPrint={() => printVouchers(sel.selectedRows.map(buildSupplierPaymentVoucher))}
+            onPrint={() => void printPayments(sel.selectedRows)}
             exportName="supplier-payments"
             exportAoa={() => [
               ["Payment #", "Date", "Supplier", "Status", "Voucher Total (RM)", "PI No", "Supplier Inv No", "Amount (RM)"],

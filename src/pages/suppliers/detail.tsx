@@ -690,6 +690,23 @@ export default function SupplierDetailPage() {
               <p className="text-xs text-[#9CA3AF] mb-0.5">Payment terms</p>
               <p className="text-[#374151]">{supplier.paymentTerms || "-"}</p>
             </div>
+            {/* Finance v2 party fields (owner 2026-10-17). */}
+            <div>
+              <p className="text-xs text-[#9CA3AF] mb-0.5">TIN</p>
+              <p className="text-[#374151]">{supplier.taxEntityTin || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-[#9CA3AF] mb-0.5">SST Reg. No.</p>
+              <p className="text-[#374151]">{supplier.sstRegNo || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-[#9CA3AF] mb-0.5">Currency</p>
+              <p className="text-[#374151]">{supplier.currency || "MYR"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-[#9CA3AF] mb-0.5">Bank &amp; account no.</p>
+              <p className="text-[#374151]">{supplier.bankAccount || "-"}</p>
+            </div>
             {supplier.address && (
               <div className="col-span-2 md:col-span-4">
                 <p className="text-xs text-[#9CA3AF] mb-0.5">Address</p>
@@ -1124,6 +1141,12 @@ export default function SupplierDetailPage() {
             status: supplier.status as SupplierStatus,
             rating: supplier.rating,
             purchaseOrgCode: supplier.purchaseOrgCode || "HOOKKA",
+            // The dialog sends these back on save — open it with what is stored.
+            registrationNo: supplier.registrationNo ?? "",
+            taxEntityTin: supplier.taxEntityTin ?? "",
+            sstRegNo: supplier.sstRegNo ?? "",
+            currency: supplier.currency || "MYR",
+            bankAccount: supplier.bankAccount ?? "",
           }}
           orgOptions={orgOptions}
           onSave={handleSaveSupplier}

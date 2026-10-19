@@ -1928,6 +1928,7 @@ export async function buildDoDeliveredSoAndInvoice(
       db,
       orgId,
       autoLegs,
+      { docDate: invoiceDate },
     );
     statements.push(...ledgerStmts);
     // SOs were advanced to DELIVERED above; now that they're billed, bump to
@@ -4971,9 +4972,9 @@ export async function applyDeliveryOrderUpdate(
     // is no longer Outstanding (operator's definition: dispatched =
     // sent out). Flip every READY_TO_SHIP SO this DO touches →
     // SHIPPED. Multi-SO DOs handled via resolveDoSalesOrderIds.
-    // Guard: only READY_TO_SHIP advances (matches sales-orders.ts
-    // VALID_TRANSITIONS READY_TO_SHIP → SHIPPED); SOs already
-    // DELIVERED/INVOICED/CLOSED or still IN_PRODUCTION are left alone.
+    // Guard: READY_TO_SHIP / IN_PRODUCTION / CONFIRMED advance (2026-10-17 —
+    // dispatch can come before the last job card scan); SOs already
+    // DELIVERED/INVOICED/CLOSED or ON_HOLD are left alone.
     // -------------------------------------------------------------------
     if (stampedOnDispatch) {
       const soIds = await resolveDoSalesOrderIds(
@@ -4987,7 +4988,11 @@ export async function applyDeliveryOrderUpdate(
         )
           .bind(soId)
           .first<{ id: string; status: string }>();
-        if (soRow && soRow.status === "READY_TO_SHIP") {
+        // BUG-2026-10-17: goods often leave before the last job card is
+        // scanned, so an SO still IN_PRODUCTION (or CONFIRMED) at dispatch is
+        // shipped too. It used to stay behind and production finishing later
+        // parked it at READY_TO_SHIP for good.
+        if (soRow && ["READY_TO_SHIP", "IN_PRODUCTION", "CONFIRMED"].includes(soRow.status)) {
           statements.push(
             c.var.DB.prepare(
               "UPDATE sales_orders SET status = 'SHIPPED', updated_at = ? WHERE id = ?",

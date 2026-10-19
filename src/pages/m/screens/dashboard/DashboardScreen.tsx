@@ -18,6 +18,8 @@ import { useDashboardFeed, useDashboardPeriod } from "./hooks";
 import { PeriodChip } from "./PeriodChip";
 import { MState } from "./primitives";
 import { TAB_REGISTRY } from "./registry";
+import { TONE, useProblemTiles } from "../../../dashboards/use-problem-tiles";
+import { quarterOfPeriod, type Period } from "../../../dashboards/dashboard-shared-lib";
 
 export function DashboardScreen() {
   const { tab } = useParams();
@@ -28,12 +30,22 @@ export function DashboardScreen() {
   // are offered, a bare /m/dashboard lands on the first, and any other tab
   // reached by URL shows "Under maintenance". Same rule as the desktop page.
   const tabs = dashboardTabs ? MOBILE_TABS.filter((t) => dashboardTabs.includes(t.key)) : MOBILE_TABS;
-  const landing = tabs[0]?.key ?? "overview";
+  const landing = tabs[0]?.key ?? "sales";
   const { feed, months } = useDashboardFeed();
   // Newest day that carries data: the period sheet anchors its presets to it.
   const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
-  const { period, setPeriod } = useDashboardPeriod(months, tab);
+  const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, tab);
   const stickyTop = useStickyBelowHeader();
+  // Only Employees has a Day view (same rule as the desktop page): elsewhere a
+  // picked day, or a range that is not a calendar quarter, reads as its month.
+  const dayTab = tab === "people";
+  const period: Period = dayTab
+    ? rawPeriod
+    : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
+      ? { mode: "monthly", month: rawPeriod.month }
+      : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
+  // "Today's problems" — the same four tiles as the desktop strip.
+  const problems = useProblemTiles(tabs.map((t) => t.key));
 
   const openTab = useCallback(
     (key: MobileTabKey) => navigate(`/m/dashboard/${key}${search}`),
@@ -62,7 +74,7 @@ export function DashboardScreen() {
         title="Dashboard"
         onBack={() => navigate("/m/more")}
         menu
-        trailing={<PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} />}
+        trailing={<PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} allowDay={dayTab} />}
       />
       {/* Sticky under the MobileHeader, like SubTabs. */}
       <div style={{ position: "sticky", top: stickyTop, zIndex: 30, padding: "8px 12px", backgroundColor: M.paper, borderBottom: `1px solid ${M.border}` }}>
@@ -80,6 +92,27 @@ export function DashboardScreen() {
           {tabs.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
         </select>
       </div>
+      {problems.length > 0 && (
+        <div role="list" aria-label="Today's problems" style={{ display: "flex", gap: 8, overflowX: "auto", padding: "10px 12px 2px", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
+          {problems.map((p) => (
+            <button
+              key={p.key}
+              role="listitem"
+              type="button"
+              onClick={() => openTab(p.tab as MobileTabKey)}
+              style={{
+                flex: "0 0 auto", minWidth: 132, maxWidth: 170, textAlign: "left", padding: "9px 11px", borderRadius: 13,
+                border: `1px solid ${M.hairline}`, borderTop: `3px solid ${TONE[p.tone].bar}`, backgroundColor: M.card, cursor: "pointer",
+                WebkitTapHighlightColor: "transparent",
+              }}
+            >
+              <div style={{ fontSize: 19, fontWeight: 800, color: TONE[p.tone].value, fontVariantNumeric: "tabular-nums", lineHeight: 1.15 }}>{p.value}</div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: M.raisin, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}</div>
+              {p.hint && <div style={{ fontSize: 10.5, color: M.muted, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.hint}</div>}
+            </button>
+          ))}
+        </div>
+      )}
       {blocked ? (
         <MState kind="empty" text="Under maintenance" />
       ) : (

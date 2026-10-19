@@ -1,7 +1,8 @@
 import type { Env } from "../worker";
 import { reverseLegs } from "../../lib/other-party-bill";
 import { buildJournalEntryStatements, ledgerHasSource, type LedgerEntryInput } from "./journal-hash";
-import { nextState, hiddenTargets, needsReversal, type DocState, type LifecycleAction } from "../../lib/lifecycle-machine";
+import { assertYearOpen } from "./fiscal";
+import { nextState, hiddenTargets, needsReversal, liveFamiliesAfterEdit, type DocState, type LifecycleAction } from "../../lib/lifecycle-machine";
 
 export async function getDocState(
   db: Env["Variables"]["DB"],
@@ -43,9 +44,13 @@ export async function applyLifecycle(
     action: LifecycleAction;
     actorUserId: string | null;
     descriptionTag: string;
+    /** The document's date: a void, restore or delete of a document dated
+     *  in a closed financial year is refused (item 9 part B). */
+    docDate: string | null;
   },
 ): Promise<{ statements: D1PreparedStatement[]; newState: DocState; prevState: DocState }> {
-  const { orgId, baseSourceTypes, voidSourceType, sourceId, action, actorUserId, descriptionTag } = opts;
+  const { orgId, baseSourceTypes, voidSourceType, sourceId, action, actorUserId, descriptionTag, docDate } = opts;
+  await assertYearOpen(db, docDate);
   const primarySourceType = baseSourceTypes[0];
   const cur = await getDocState(db, orgId, primarySourceType, sourceId);
   const target = nextState(cur, action);
@@ -88,7 +93,7 @@ export async function applyLifecycle(
       actorUserId,
       orgId,
     }));
-    const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs);
+    const { statements: ls } = await buildJournalEntryStatements(db, orgId, legs, { docDate });
     statements.push(...ls);
   }
 
@@ -130,4 +135,41 @@ export async function applyLifecycle(
   // No separate wipe needed here (an in-builder wipe would also mis-order,
   // running before the caller commits these statements).
   return { statements, newState: target, prevState: cur };
+}
+
+// After an UNVOID of an edited document (class C5). applyLifecycle toggles
+// `hidden` by exact sourceType, so it just un-hid the PRE-EDIT base legs
+// while the edit's `<base>_restate_post:<stamp>` family stayed hidden — the
+// books came back with the old numbers. These statements, appended after
+// applyLifecycle's, re-hide the whole family and un-hide what was live before
+// the void (liveFamiliesAfterEdit). None for a never-edited document.
+export async function restoreEditedFamilyStatements(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  base: string,
+  sourceId: string,
+): Promise<D1PreparedStatement[]> {
+  const res = await db
+    .prepare(
+      `SELECT sourceType, MIN(postedAt) AS first_at FROM ledger_journal_entries
+        WHERE sourceId = ? AND orgId = ? AND sourceType LIKE ? GROUP BY sourceType`,
+    )
+    .bind(sourceId, orgId, `${base}%`)
+    .all<Record<string, unknown>>();
+  const at = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v ?? ""));
+  const live = liveFamiliesAfterEdit(
+    (res.results ?? []).map((r) => ({ sourceType: String(r.sourceType ?? r.source_type ?? ""), firstAt: at(r.firstAt ?? r.first_at) })),
+    base,
+  );
+  if (!live) return [];
+  return [
+    db
+      .prepare("UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE ?")
+      .bind(sourceId, orgId, `${base}%`),
+    ...live.map((t) =>
+      db
+        .prepare("UPDATE ledger_journal_entries SET hidden = 0 WHERE sourceId = ? AND orgId = ? AND sourceType = ?")
+        .bind(sourceId, orgId, t),
+    ),
+  ];
 }

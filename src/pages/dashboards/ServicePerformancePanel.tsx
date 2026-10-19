@@ -1,17 +1,17 @@
-import { useMemo } from "react";
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { useMemo, useState, type ReactNode } from "react";
+import { useSeriesToggle } from "./use-series-toggle";
+import { BarChart, Bar, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
-  KPI_ROW,
-  TAUPE, TEAL, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN,
-  inPeriod, inFocus, periodLabel, previousPeriod, type Period,
-} from "./dashboard-shared-lib";
+  TAUPE, TEAL, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN,
+  inPeriod, inFocus, monthLabel, periodLabel, previousPeriod, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
-import { ServiceIssuesPanel, TallyList } from "./ServiceIssuesPanel";
+import { TallyList } from "./ServiceIssuesPanel";
+import { DashModal } from "./DashModal";
 import { ServiceCaseNo } from "./ServiceCaseLink";
 import { useServiceCaseLinks } from "./use-service-case-links";
 import {
-  byPrevention, avgClose, closeTrend, openedVsClosed, agingSplit, preventionNotDone, causeLabel,
+  byPrevention, avgClose, daysToClose, openedVsClosed, agingSplit, preventionNotDone, causeLabel,
   type IssueCase,
 } from "../../api/lib/service-issue-stats";
 
@@ -43,13 +43,17 @@ function delta(cur: number | null, prev: number | null, lowerIsBetter: boolean) 
 }
 
 export function ServicePerformancePanel({
-  slice, period, onPeriodChange,
-}: { slice: ServicePerformanceSlice | null | undefined; period: Period; onPeriodChange: (p: Period) => void }) {
+  slice, period, onPeriodChange, afterKpis,
+}: { slice: ServicePerformanceSlice | null | undefined; period: Period; onPeriodChange: (p: Period) => void; afterKpis?: ReactNode }) {
   const cases = useMemo(() => slice?.cases ?? [], [slice]);
   const threshold = slice?.overdueAfterDays ?? 0;
   const ytd = period.mode === "ytd";
   const bucketOf = (d: string) => (ytd ? d.slice(0, 7) : d);
   const { canOpen, rowProps } = useServiceCaseLinks();
+  // Layer 2 behind each number in the KPI row.
+  const [drill, setDrill] = useState<"opened" | "closed" | "open" | "overdue" | null>(null);
+  const tClose = useSeriesToggle();
+  const tFlow = useSeriesToggle();
 
   // Closed inside the focused window, and inside the previous comparable period.
   const closedNow = useMemo(() => cases.filter((c) => c.status === "CLOSED" && inFocus(period, c.closedDate)), [cases, period]);
@@ -66,10 +70,43 @@ export function ServicePerformancePanel({
   const closeNow = avgClose(closedNow);
   const closePrev = avgClose(closedPrev);
   const dl = delta(closeNow.avg, closePrev.n ? closePrev.avg : null, true);
-  const trend = useMemo(
-    () => closeTrend(cases.filter((c) => c.status === "CLOSED" && inPeriod(period, c.closedDate)), bucketOf),
-    [cases, period], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  // Average case closing, presented two ways (owner 2026-10-17: "average case
+  // closing 怎么去计算 … 怎么呈现会比较好"). Days = whole days from logged to
+  // closed, over cases CLOSED in the period (any logged date):
+  //   • how long they took — closed cases split into day bands, so one very
+  //     old case shows as one bar instead of dragging an average line;
+  //   • the monthly average over the last 6 months, to see the trend.
+  const closeBands = useMemo(() => {
+    const bands = [
+      { label: "Same / next day", lo: 0, hi: 1 },
+      { label: "2–3 days", lo: 2, hi: 3 },
+      { label: "4–7 days", lo: 4, hi: 7 },
+      { label: "8–14 days", lo: 8, hi: 14 },
+      { label: "15+ days", lo: 15, hi: Infinity },
+    ].map((b) => ({ ...b, count: 0 }));
+    const ds: number[] = [];
+    for (const c of closedNow) {
+      const d = daysToClose(c);
+      if (d == null) continue;
+      ds.push(d);
+      const band = bands.find((b) => d >= b.lo && d <= b.hi);
+      if (band) band.count += 1;
+    }
+    ds.sort((x, y) => x - y);
+    const median = ds.length ? (ds.length % 2 ? ds[(ds.length - 1) / 2] : (ds[ds.length / 2 - 1] + ds[ds.length / 2]) / 2) : null;
+    return { bands, median, max: Math.max(1, ...bands.map((b) => b.count)) };
+  }, [closedNow]);
+  const closeMonthly = useMemo(() => {
+    const end = (period.mode === "range" ? (period.to ?? "") : period.month).slice(0, 7) || ymd(new Date()).slice(0, 7);
+    const out: { m: string; ym: string; "Avg days": number | null; Closed: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(Number(end.slice(0, 4)), Number(end.slice(5, 7)) - 1 - i, 1);
+      const ym = ymd(d).slice(0, 7);
+      const cs = cases.filter((c) => c.status === "CLOSED" && (c.closedDate ?? "").startsWith(ym));
+      out.push({ m: monthLabel(ym).slice(0, 3), ym, "Avg days": avgClose(cs).avg, Closed: cs.length });
+    }
+    return out;
+  }, [cases, period]);
 
   const open = useMemo(() => cases.filter((c) => OPEN.has(c.status)), [cases]);
   const openedInFocus = useMemo(() => cases.filter((c) => inFocus(period, c.createdDate)), [cases, period]);
@@ -103,38 +140,122 @@ export function ServicePerformancePanel({
 
   return (
     <>
-      <div className={KPI_ROW}>
-        <Kpi label="Avg case closing" value={closeNow.avg === null ? "—" : `${closeNow.avg} d`} sub={`${fmtN(closeNow.n)} closed · ${dl ? dl.text : "no previous-period comparison"}`} valueColorClass={dl?.good == null ? undefined : dl.good ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
-        <Kpi label="Open cases now" value={fmtN(open.length)} sub={`${fmtN(open.filter((c) => c.daysOverdue > 0).length)} overdue (> ${threshold} d)`} valueColorClass="text-[#9C6F1E]" />
-        <Kpi label="Opened in period" value={fmtN(openedInFocus.length)} sub={win} />
-        <Kpi label="Closed in period" value={fmtN(closedNow.length)} sub={win} valueColorClass="text-[#4F7C3A]" />
+      {/* One row, each number with its own scope stated (owner 2026-10-17):
+          opened / closed = in the period (closed counts cases logged earlier
+          too); open / overdue = right now, whenever they were logged.
+          "Not started" is the OPEN status (logged, nobody on it yet). */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
+        <Kpi label="Opened" onClick={() => setDrill("opened")} value={fmtN(openedInFocus.length)} sub={`new cases logged · ${win}`} />
+        <Kpi label="Closed" onClick={() => setDrill("closed")} value={fmtN(closedNow.length)} sub={`closed · ${win} (any logged date)`} valueColorClass="text-[#4F7C3A]" />
+        <Kpi label="Still open now" onClick={() => setDrill("open")} value={fmtN(open.length)} sub={`${fmtN(open.filter((c) => c.status === "OPEN").length)} not started · ${fmtN(open.filter((c) => c.status === "IN_PROGRESS").length)} in progress`} valueColorClass="text-[#9C6F1E]" />
+        <Kpi label="Overdue now" onClick={() => setDrill("overdue")} value={fmtN(open.filter((c) => c.daysOverdue > 0).length)} sub={`open more than ${threshold} days`} valueColorClass="text-[#9A3A2D]" />
+        <Kpi label="Avg case closing" onClick={() => setDrill("closed")} value={closeNow.avg === null ? "—" : `${closeNow.avg} d`} sub={`${fmtN(closeNow.n)} closed · ${dl ? dl.text : "no previous-period comparison"}`} valueColorClass={dl?.good == null ? undefined : dl.good ? "text-[#4F7C3A]" : "text-[#9A3A2D]"} />
       </div>
 
+      {drill && (() => {
+        const list = drill === "opened" ? openedInFocus : drill === "closed" ? closedNow : drill === "open" ? open : open.filter((c) => c.daysOverdue > 0);
+        const title = drill === "opened" ? `Cases opened · ${win}` : drill === "closed" ? `Cases closed · ${win}` : drill === "open" ? "Cases still open" : "Cases overdue";
+        return (
+          <DashModal wide title={`${title} · ${fmtN(list.length)}`} subtitle={drill === "closed" ? "Days = whole days from logged to closed" : drill === "opened" ? "Logged in the period" : "Days = open since logged"} onClose={() => setDrill(null)}>
+            <div className="max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-[12.5px]">
+                <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
+                  <th className="py-1.5">Case</th><th className="py-1.5">Customer</th><th className="py-1.5">Issue</th><th className="py-1.5">Logged</th><th className="py-1.5">Closed</th><th className="py-1.5">Status</th><th className="py-1.5 text-right">Days</th>
+                </tr></thead>
+                <tbody>
+                  {[...list].sort((a, b) => b.createdDate.localeCompare(a.createdDate)).map((c) => {
+                    const days = c.status === "CLOSED" && c.closedDate ? daysToClose(c) : c.ageDays;
+                    return (
+                      <tr key={c.id} {...rowProps(c.id, "border-b border-[#F0ECE6]")}>
+                        <td className="py-1.5 font-mono whitespace-nowrap"><ServiceCaseNo id={c.id} caseNo={c.caseNo} canOpen={canOpen} /></td>
+                        <td className="py-1.5">{c.customer ?? "—"}</td>
+                        <td className="py-1.5 max-w-[280px] truncate text-[#6B7280]">{(c as { issue?: string }).issue || "—"}</td>
+                        <td className="py-1.5 whitespace-nowrap text-[#6B7280]">{c.createdDate}</td>
+                        <td className="py-1.5 whitespace-nowrap text-[#6B7280]">{c.closedDate ?? "—"}</td>
+                        <td className="py-1.5 text-[#6B7280]">{c.status}</td>
+                        <td className={`py-1.5 text-right tabular-nums ${c.daysOverdue > 0 ? "font-semibold text-[#9A3A2D]" : ""}`}>{days == null ? "—" : `${days} d`}</td>
+                      </tr>
+                    );
+                  })}
+                  {list.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-[#9CA3AF]">None.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </DashModal>
+        );
+      })()}
+
+      {/* Issues by category sits right under the numbers (owner 2026-10-17). */}
+      {afterKpis}
+
+      {/* The two charts share a row (less scrolling on layer 1). */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>Average case closing</CardTitle>
           <p className="text-xs text-[#6B7280] max-w-3xl">
             Average whole days from the case being logged to it being closed, over cases <b>closed</b> in {win}
-            {period.day ? " (no previous-period comparison for a single day)" : ""}. The trend groups by closing {ytd ? "month" : "day"}.
+            {period.day ? " (no previous-period comparison for a single day)" : ""}. Left: the closed cases by how many days they took. Right: the monthly average, to see the trend.
           </p>
         </CardHeader>
         <CardContent>
-          <div className={CHART_WRAP} style={{ width: "100%", height: 220 }}>
-            {trend.length === 0 ? (
+          <div className={CHART_WRAP} style={{ width: "100%", height: 240 }}>
+            {closedNow.length === 0 ? (
               <div className="flex items-center justify-center h-full text-xs text-[#6B7280]">No cases closed in this period.</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trend.map((t) => ({ date: ytd ? t.bucket : t.bucket.slice(5), "Avg days": t.avg, Closed: t.closed }))} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={TOOLTIP} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="Avg days" stroke={TAUPE} strokeWidth={2} dot={{ r: 2 }} />
-                  <Line type="monotone" dataKey="Closed" stroke={CHART_GOLD} strokeWidth={2} dot={{ r: 2 }} />
-                </LineChart>
-              </ResponsiveContainer>
+              <div className="grid h-full grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col justify-center">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">How long they took · {fmtN(closedNow.length)} closed</p>
+                  {closeBands.bands.map((b, i) => (
+                    <div key={b.label} className="grid grid-cols-[96px_1fr_28px_44px] items-center gap-2 border-t border-[#F0ECE6] py-1.5 text-[12.5px]">
+                      <span className="text-[#1F1D1B]">{b.label}</span>
+                      <span className="h-3 rounded-sm bg-[#F0ECE6]">
+                        <span className="block h-3 rounded-sm" style={{ width: `${(b.count / closeBands.max) * 100}%`, background: i <= 1 ? GREEN : i === 2 ? CHART_GOLD : i === 3 ? AMBER : RED }} />
+                      </span>
+                      <span className="text-right font-semibold tabular-nums">{b.count}</span>
+                      <span className="text-right text-[11.5px] tabular-nums text-[#6B7280]">{closedNow.length ? `${Math.round((b.count / closedNow.length) * 100)}%` : "—"}</span>
+                    </div>
+                  ))}
+                  <p className="mt-1 text-[11px] text-[#6B7280]">
+                    Average <b>{closeNow.avg ?? "—"} d</b> · median <b>{closeBands.median ?? "—"} d</b> — the median is the typical case; a few very old cases pull the average up.
+                  </p>
+                </div>
+                <div className="min-h-[180px]">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">Average days to close · last 6 months</p>
+                  <ResponsiveContainer width="100%" height="88%">
+                    <ComposedChart data={closeMonthly} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="#F0ECE6" />
+                      <XAxis dataKey="m" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                      <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={32} tickFormatter={(v) => `${v}d`} />
+                      <Tooltip contentStyle={TOOLTIP} formatter={(v, n) => (n === "Avg days" ? [`${v} d`, n] : [v, n])} />
+                      <Legend {...tClose.legend} />
+                      <Bar dataKey="Avg days" hide={tClose.hide("Avg days")} fill={TAUPE} radius={[4, 4, 0, 0]} maxBarSize={26} isAnimationActive={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             )}
           </div>
+          {closedNow.length > 0 && (() => {
+            const within = (days: number) => closeBands.bands.filter((b) => b.hi <= days).reduce((a, b) => a + b.count, 0);
+            const share = (n: number) => `${Math.round((n / closedNow.length) * 100)}%`;
+            const over14 = closeBands.bands[closeBands.bands.length - 1].count;
+            return (
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {[
+                  { label: "Closed within 3 days", n: within(3), tone: "text-[#4F7C3A]" },
+                  { label: "Closed within 7 days", n: within(7), tone: "text-[#1F1D1B]" },
+                  { label: "Took 15+ days", n: over14, tone: over14 > 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]" },
+                ].map((k) => (
+                  <div key={k.label} className="rounded-lg bg-[#F7F4EF] px-3 py-2">
+                    <p className="truncate text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">{k.label}</p>
+                    <p className={`text-lg font-bold tabular-nums ${k.tone}`}>{share(k.n)}</p>
+                    <p className="text-[11px] text-[#6B7280]">{fmtN(k.n)} of {fmtN(closedNow.length)} cases</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
@@ -153,13 +274,13 @@ export function ServicePerformancePanel({
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={flow} margin={{ top: 6, right: 6, bottom: 0, left: 0 }} style={{ cursor: "pointer" }} onClick={pick}>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
+                  <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
                   <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={TOOLTIP} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...tFlow.legend} />
                   {dayLine && <ReferenceLine x={dayLine} stroke={AMBER} strokeWidth={2} />}
-                  <Bar dataKey="Opened" fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="Closed" fill={TAUPE} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Opened" hide={tFlow.hide("Opened")} fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Closed" hide={tFlow.hide("Closed")} fill={TAUPE} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -180,9 +301,9 @@ export function ServicePerformancePanel({
         </CardContent>
       </Card>
 
-      <div>
-        <h3 className="text-sm font-semibold text-[#1F1D1B] mb-2">Category and root cause</h3>
-        <ServiceIssuesPanel cases={openedInFocus} period={period} onPickCause={() => {}} causeOnly />
+      {/* Category / root cause render once, below the case list (the full
+          ServiceIssuesPanel in ServiceView) — this copy duplicated it. */}
+
       </div>
 
       <Card>

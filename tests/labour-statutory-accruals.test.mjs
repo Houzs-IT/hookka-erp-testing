@@ -166,7 +166,10 @@ test("system postings: the families and the tab that made each", () => {
 test("Journal Entries lists them beside the manual journals, read-only", () => {
   const tab = slice(ui, "function JournalsTab(", "\nfunction JournalEntryForm(");
   assert.match(tab, /useCachedJson<\{ success\?: boolean; data\?: JournalRow\[\] \}>\("\/api\/accounting\/system-journals"\)/);
-  assert.match(tab, /data=\{rows\}/);
+  // The grid shows `rows` (manual + system), each with its debit / credit
+  // totals added for the finance v2 total row.
+  assert.match(tab, /data=\{gridRows\}/);
+  assert.match(tab, /const gridRows = useMemo\(\s*\(\) => rows\.map\(/);
   assert.match(tab, /const je = rows\.find\(\(j\) => j\.id === detailJv\.id\) \?\? detailJv;/);
   // The menu for a system row: view, print, open its tab — nothing that edits.
   const menu = slice(tab, "if (row.system) {", "    }\n");

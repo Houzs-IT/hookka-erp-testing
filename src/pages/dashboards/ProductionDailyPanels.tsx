@@ -1,13 +1,14 @@
+import { deptName } from "./ops-floor-lib";
+import { useSeriesToggle } from "./use-series-toggle";
 import { useMemo, useState } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { Area, BarChart, Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import {
   TAUPE, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN, fmtRMAxis, inPeriod, inFocus,
-  dayLabel, periodLabel, type Period,
-} from "./dashboard-shared-lib";
+  dayLabel, periodLabel, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
@@ -20,12 +21,13 @@ import type { EmployeeSlice } from "./EmployeesInsights";
 // slice is optional: a 60s-cached payload from before it existed has no such
 // key and must render an explanation, not crash. `lim` is the feed's key for
 // the daily slice (backend name, not shown anywhere).
-type StageDay = {
-  date: string; dept: string;
-  plan: number; actual: number; planUnits: number; actualUnits: number; planMin: number; actualMin: number;
-};
 type DailySlice = {
-  stages: { byDay: StageDay[]; cardsWithoutDue: number };
+  orders: {
+    byDay: { date: string; planOrders: number; planUnits: number; actualOrders: number; actualUnits: number }[];
+    withoutTarget: number;
+    completedTotal: number;
+  };
+  stages: { byDay: { date: string; dept: string; plan: number; actual: number }[]; cardsWithoutDue: number };
   revenue: {
     byDay: { date: string; orders: number; unpricedOrders: number; revenueSen: number }[];
     unpricedOrders: number;
@@ -41,12 +43,6 @@ type Feed = {
 const TOOLTIP = { background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 };
 const hrs = (min: number) => `${(min / 60).toLocaleString("en-MY", { maximumFractionDigits: 1 })}h`;
 const CHART_WRAP = "select-none [&_*]:outline-none [&_.recharts-wrapper]:outline-none";
-
-const addStage = (a: StageDay, b: StageDay): StageDay => ({
-  ...a, plan: a.plan + b.plan, actual: a.actual + b.actual,
-  planUnits: a.planUnits + b.planUnits, actualUnits: a.actualUnits + b.actualUnits,
-  planMin: a.planMin + b.planMin, actualMin: a.actualMin + b.actualMin,
-});
 
 // Monthly/range -> one bar per day; YTD -> one bar per month (OperationsView's rule).
 function bucket<T extends { date: string }>(rows: T[], p: Period, add: (a: T, b: T) => T) {
@@ -117,7 +113,7 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
             <tbody>
               {rows.map((r) => (
                 <tr key={r.dept} className="border-b border-[#E2DDD8]">
-                  <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{r.dept}</td>
+                  <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{deptName(r.dept)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.people.size)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(r.working)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(r.prod)}</td>
@@ -150,7 +146,9 @@ export function ProductionDailyPanels({
   period, sub, onPeriodChange,
 }: { period: Period; sub: "plan" | "revenue"; onPeriodChange: (p: Period) => void }) {
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
-  const [metric, setMetric] = useState<"cards" | "units" | "minutes">("cards");
+  const [metric, setMetric] = useState<"units" | "orders">("units");
+  const tPlan = useSeriesToggle();
+  const tCum = useSeriesToggle();
 
   const lim = data?.lim ?? null;
 
@@ -165,33 +163,57 @@ export function ProductionDailyPanels({
   const dayLine = period.day && period.mode !== "ytd" ? period.day.slice(5) : null;
 
   // ---- Plan vs Actual -------------------------------------------------------
-  // Job cards, units and planned time: the Schedule email's three measures.
-  const planChart = useMemo(() => {
-    const perDay = new Map<string, StageDay>();
-    for (const r of lim?.stages.byDay ?? []) {
-      if (!inPeriod(period, r.date)) continue;
-      const cur = perDay.get(r.date);
-      perDay.set(r.date, cur ? addStage(cur, r) : r);
+  const planChart = useMemo(
+    () =>
+      bucket((lim?.orders.byDay ?? []).filter((d) => inPeriod(period, d.date)), period, (a, b) => ({
+        ...a, planOrders: a.planOrders + b.planOrders, planUnits: a.planUnits + b.planUnits,
+        actualOrders: a.actualOrders + b.actualOrders, actualUnits: a.actualUnits + b.actualUnits,
+      })).map((d) => ({
+        iso: d.iso, date: d.key,
+        Plan: metric === "units" ? d.planUnits : d.planOrders,
+        Actual: metric === "units" ? d.actualUnits : d.actualOrders,
+      })),
+    [lim, period, metric],
+  );
+  // Cumulative (owner 2026-10-17: the daily bars were hard to read): how many
+  // orders were due BY each day vs how many were finished by then. The gap
+  // between the two lines is how far behind plan the floor is.
+  const [todayIso] = useState(() => ymd(new Date()));
+  const planCum = useMemo(() => {
+    const out: { iso: string; date: string; "Due (cumulative)": number; "Completed (cumulative)": number | null }[] = [];
+    let p = 0;
+    let a = 0;
+    for (const d of planChart) {
+      p += d.Plan;
+      a += d.Actual;
+      out.push({ iso: d.iso, date: d.date, "Due (cumulative)": p, "Completed (cumulative)": d.iso > todayIso ? null : a });
     }
-    return bucket([...perDay.values()], period, addStage).map((d) => ({
-      iso: d.iso, date: d.key,
-      Plan: metric === "units" ? d.planUnits : metric === "minutes" ? Math.round(d.planMin) : d.plan,
-      Actual: metric === "units" ? d.actualUnits : metric === "minutes" ? Math.round(d.actualMin) : d.actual,
-    }));
-  }, [lim, period, metric]);
+    return out;
+  }, [planChart, todayIso]);
+  const dueToDate = [...planCum].reverse().find((r) => r.iso <= todayIso)?.["Due (cumulative)"] ?? 0;
+  const doneToDate = [...planCum].reverse().find((r) => r["Completed (cumulative)"] != null)?.["Completed (cumulative)"] ?? 0;
+  const dueTotal = planCum[planCum.length - 1]?.["Due (cumulative)"] ?? 0;
+  const [planView, setPlanView] = useState<"cumulative" | "daily">("cumulative");
+  const planTotals = useMemo(() => {
+    const rows = (lim?.orders.byDay ?? []).filter((d) => inFocus(period, d.date));
+    return rows.reduce(
+      (a, d) => ({ po: a.po + d.planOrders, pu: a.pu + d.planUnits, ao: a.ao + d.actualOrders, au: a.au + d.actualUnits }),
+      { po: 0, pu: 0, ao: 0, au: 0 },
+    );
+  }, [lim, period]);
   const stageRows = useMemo(() => {
-    const m = new Map<string, StageDay>();
+    const m = new Map<string, { dept: string; plan: number; actual: number }>();
     for (const r of lim?.stages.byDay ?? []) {
       if (!inFocus(period, r.date)) continue;
-      const cur = m.get(r.dept);
-      m.set(r.dept, cur ? addStage(cur, r) : r);
+      const e = m.get(r.dept) ?? { dept: r.dept, plan: 0, actual: 0 };
+      // Plan counts only cards due BY TODAY — a card due next week is not
+      // late yet (it made every department look behind).
+      if (r.date <= todayIso) e.plan += r.plan;
+      e.actual += r.actual;
+      m.set(r.dept, e);
     }
     return [...m.values()].sort((a, b) => a.dept.localeCompare(b.dept));
-  }, [lim, period]);
-  const planTotals = useMemo(
-    () => stageRows.reduce(addStage, { date: "", dept: "", plan: 0, actual: 0, planUnits: 0, actualUnits: 0, planMin: 0, actualMin: 0 }),
-    [stageRows],
-  );
+  }, [lim, period, todayIso]);
 
   // ---- Production revenue ---------------------------------------------------
   const revChart = useMemo(
@@ -226,25 +248,17 @@ export function ProductionDailyPanels({
     </Card>
   );
 
-  const signed = (v: number, fmt: (n: number) => string = fmtN) => (v > 0 ? `+${fmt(v)}` : v < 0 ? `−${fmt(-v)}` : fmt(0));
-  const variance = (plan: number, actual: number, fmt?: (n: number) => string) => {
+  const variance = (plan: number, actual: number) => {
     const v = actual - plan;
-    return <span className="font-semibold" style={{ color: v >= 0 ? GREEN : RED }}>{signed(v, fmt)}</span>;
+    return (
+      <span className="font-semibold" style={{ color: v >= 0 ? GREEN : RED }}>{v > 0 ? `+${fmtN(v)}` : fmtN(v)}</span>
+    );
   };
-  const planKpi = (label: string, plan: number, actual: number, fmt: (n: number) => string = fmtN) => (
-    <Kpi
-      label={label}
-      value={`${fmt(actual)} / ${fmt(plan)}`}
-      sub={`actual / plan · ${signed(actual - plan, fmt)}`}
-      valueColorClass={actual >= plan ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}
-    />
-  );
   const barChart = (
     rows: { iso: string; date: string }[],
     body: React.ReactNode,
     yWidth = 36,
     fmt?: (v: number) => string,
-    tip?: (v: number) => string,
   ) => (
     <div className={CHART_WRAP} style={{ width: "100%", height: 260 }}>
       {rows.length === 0 ? (
@@ -252,9 +266,9 @@ export function ProductionDailyPanels({
       ) : (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 6, right: 6, bottom: 0, left: 0 }} style={{ cursor: "pointer" }} onClick={pick(rows)}>
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-            <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={yWidth} allowDecimals={false} tickFormatter={fmt} />
-            <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={TOOLTIP} formatter={tip ? (v) => tip(Number(v)) : undefined} />
+            <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+            <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={yWidth} allowDecimals={false} tickFormatter={fmt} />
+            <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={TOOLTIP} />
             {dayLine && <ReferenceLine x={dayLine} stroke={AMBER} strokeWidth={2} />}
             {body}
           </BarChart>
@@ -263,84 +277,104 @@ export function ProductionDailyPanels({
     </div>
   );
   const unit = period.mode === "ytd" ? "month" : "day";
+  const sameUnits = planTotals.pu === planTotals.po && planTotals.au === planTotals.ao;
 
   return (
     <>
       {sub === "plan" && (!lim ? missingSlice("Plan vs Actual") : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {planKpi("Job cards", planTotals.plan, planTotals.actual)}
-            {planKpi("Units", planTotals.planUnits, planTotals.actualUnits)}
-            {planKpi("Planned time", planTotals.planMin, planTotals.actualMin, hrs)}
-          </div>
 
-          <Card>
-            <CardHeader className="pb-3 flex flex-row items-start justify-between gap-3 flex-wrap">
+          {/* One row (owner 2026-10-17: "combine 成一排, 占用空间太大"): the
+              chart and the per-department table side by side. */}
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-5 items-stretch">
+          <Card className="xl:col-span-3">
+            <CardHeader className="pb-2 flex flex-row items-start justify-between gap-3 flex-wrap">
               <div>
-                <CardTitle>Production plan vs actual · by {unit}</CardTitle>
-                <p className="text-xs text-[#6B7280] mt-1 max-w-3xl">
-                  {periodLabel(period)}. Same measures as the Schedule email. <b>Plan</b> = job cards due on the {unit};{" "}
-                  <b>Actual</b> = job cards completed or transferred on the {unit}. Units = each card's order quantity;
-                  planned time = each card's estimated minutes (so actual is the planned time of the work that finished).
-                  Two separate tallies by date — a card finished late counts as actual on the day it finished and as plan on
-                  the day it was due. Cancelled cards and orders excluded.
+                <CardTitle>Are we keeping up with the plan? · {periodLabel(period)}</CardTitle>
+                <p className="mt-0.5 text-xs text-[#9CA3AF]">
+                  {planView === "cumulative"
+                    ? "Running totals: orders due by each day (target date) vs orders finished by then — the gap is how far behind plan we are"
+                    : `Orders due each ${unit} vs finished that ${unit}`}
+                  {sameUnits ? " · one production order = one piece" : metric === "units" ? " · units = pieces" : " · orders = production orders"}
                 </p>
               </div>
-              <Tabs tabs={[{ key: "cards", label: "Job cards" }, { key: "units", label: "Units" }, { key: "minutes", label: "Planned time" }]} value={metric} onChange={setMetric} variant="pill" scrollable />
+              <div className="flex items-center gap-4 text-right">
+                {(planView === "cumulative" && unit === "day"
+                  ? [
+                      ["Due by today", fmtN(dueToDate), "#1F1D1B"],
+                      ["Finished", fmtN(doneToDate), "#4F7C3A"],
+                      [doneToDate >= dueToDate ? "Ahead" : "Behind", fmtN(Math.abs(doneToDate - dueToDate)), doneToDate >= dueToDate ? "#4F7C3A" : "#9A3A2D"],
+                      ["Still due this month", fmtN(Math.max(0, dueTotal - dueToDate)), "#6B7280"],
+                    ]
+                  : [
+                      ["Planned", fmtN(metric === "units" ? planTotals.pu : planTotals.po), "#1F1D1B"],
+                      ["Completed", fmtN(metric === "units" ? planTotals.au : planTotals.ao), "#4F7C3A"],
+                      ["Variance", (() => { const v = metric === "units" ? planTotals.au - planTotals.pu : planTotals.ao - planTotals.po; return `${v > 0 ? "+" : ""}${fmtN(v)}`; })(), (metric === "units" ? planTotals.au >= planTotals.pu : planTotals.ao >= planTotals.po) ? "#4F7C3A" : "#9A3A2D"],
+                    ]
+                ).map(([l, v, c]) => (
+                  <div key={l}>
+                    <p className="text-[10.5px] uppercase tracking-wide text-[#9CA3AF]">{l}</p>
+                    <p className="text-lg font-bold tabular-nums" style={{ color: c }}>{v}</p>
+                  </div>
+                ))}
+                <Tabs tabs={[{ key: "cumulative", label: "Running total" }, { key: "daily", label: "Per day" }]} value={planView} onChange={setPlanView} variant="pill" scrollable />
+                {!sameUnits && <Tabs tabs={[{ key: "units", label: "Units" }, { key: "orders", label: "Orders" }]} value={metric} onChange={setMetric} variant="pill" scrollable />}
+              </div>
             </CardHeader>
             <CardContent>
-              {barChart(planChart, (
+              {planView === "daily" ? barChart(planChart, (
                 <>
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="Plan" fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="Actual" fill={TAUPE} radius={[3, 3, 0, 0]} />
+                  <Legend {...tPlan.legend} />
+                  <Bar dataKey="Plan" hide={tPlan.hide("Plan")} fill={CHART_GOLD} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Actual" hide={tPlan.hide("Actual")} fill={TAUPE} radius={[3, 3, 0, 0]} />
                 </>
-              ), metric === "minutes" ? 44 : 36, metric === "minutes" ? hrs : undefined, metric === "minutes" ? hrs : undefined)}
-              <p className="mt-2 text-[11px] text-[#6B7280]">
-                Click a bar to focus that {unit === "month" ? "month" : "day"}. {fmtN(lim.stages.cardsWithoutDue)} non-cancelled
-                job cards have no due date and cannot appear in Plan.
+              )) : (
+                <div className={CHART_WRAP} style={{ width: "100%", height: 260 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={planCum} margin={{ top: 6, right: 6, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="#F0ECE6" />
+                      <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                      <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP} />
+                      <Legend {...tCum.legend} />
+                      <Area type="monotone" dataKey="Due (cumulative)" hide={tCum.hide("Due (cumulative)")} stroke={CHART_GOLD} strokeWidth={2} fill={CHART_GOLD} fillOpacity={0.15} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="Completed (cumulative)" hide={tCum.hide("Completed (cumulative)")} stroke={TAUPE} strokeWidth={2.5} dot={false} connectNulls={false} isAnimationActive={false} />
+                      {unit === "day" && <ReferenceLine x={todayIso.slice(5)} stroke="#9CA3AF" strokeDasharray="3 3" label={{ value: "today", position: "insideTopLeft", fill: "#9CA3AF", fontSize: 10 }} />}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-[#9CA3AF]">
+                Click a bar to focus that {unit === "month" ? "month" : "day"} · cancelled orders excluded · {fmtN(lim.orders.withoutTarget)} orders have no target date.
               </p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>By department (stage) · {period.day ? dayLabel(period.day) : periodLabel(period)}</CardTitle>
-              <p className="text-xs text-[#6B7280] max-w-3xl">
-                One card = one department stage of one order. <b>Plan</b> = cards due in the window, <b>Actual</b> = cards
-                completed/transferred in the window. A day with 0 actual can mean nothing was recorded rather than nothing was done.
-              </p>
+          <Card className="xl:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle>By department · {period.day ? dayLabel(period.day) : periodLabel(period)}</CardTitle>
+              <p className="mt-0.5 text-xs text-[#9CA3AF]">Job cards (one card = one stage of one order) · Plan = due by today · Actual = done</p>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-[12.5px]">
-                  <thead><tr className="border-t border-b border-[#E2DDD8]">
-                    {th("Department", false)}
-                    {th("Job cards plan", true)}{th("Actual", true)}{th("Var", true)}
-                    {th("Units plan", true)}{th("Actual", true)}{th("Var", true)}
-                    {th("Planned time plan", true)}{th("Actual", true)}{th("Var", true)}
-                  </tr></thead>
+                  <thead><tr className="border-t border-b border-[#E2DDD8]">{th("Department", false)}{th("Plan", true)}{th("Actual", true)}{th("Variance", true)}</tr></thead>
                   <tbody>
                     {stageRows.map((r) => (
-                      <tr key={r.dept} className="border-b border-[#E2DDD8]">
-                        <td className="px-4 py-2.5 font-medium text-[#1F1D1B]">{r.dept}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.plan)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.actual)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{variance(r.plan, r.actual)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.planUnits)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.actualUnits)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{variance(r.planUnits, r.actualUnits)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{hrs(r.planMin)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{hrs(r.actualMin)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono">{variance(r.planMin, r.actualMin, hrs)}</td>
+                      <tr key={r.dept} className="border-b border-[#F0ECE6]">
+                        <td className="px-4 py-2 font-medium text-[#1F1D1B]">{deptName(r.dept)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{fmtN(r.plan)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{fmtN(r.actual)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{variance(r.plan, r.actual)}</td>
                       </tr>
                     ))}
-                    {stageRows.length === 0 && <tr><td colSpan={10} className="px-4 py-6 text-center text-[#6B7280]">No stage plan or completion in this window.</td></tr>}
+                    {stageRows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-[#6B7280]">No stage plan or completion in this window.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </CardContent>
           </Card>
+          </div>
         </>
       ))}
 
@@ -351,7 +385,7 @@ export function ProductionDailyPanels({
       ) : (
         <>
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
-            <Kpi label="Production revenue" value={formatCurrency(revTotals.sen)} sub={period.day ? dayLabel(period.day) : periodLabel(period)} valueColorClass="text-[#3E6570]" />
+            <Kpi label="Production revenue" value={formatCurrency(revTotals.sen)} sub={period.day ? dayLabel(period.day) : periodLabel(period)} valueColorClass="text-[#3E6570]" valueSizeClass="text-xl" />
             <Kpi label="Orders upholstered" value={fmtN(revTotals.orders)} />
             <Kpi label="Completed with no price" value={fmtN(revTotals.unpriced)} sub="value could not be resolved (counted as RM 0)" valueColorClass={revTotals.unpriced ? "text-[#9C6F1E]" : undefined} />
           </div>

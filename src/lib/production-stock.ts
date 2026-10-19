@@ -27,6 +27,8 @@
 
 export type PsOrder = {
   id: string;
+  /** The production order's number (PO no.), for the per-order WIP list. */
+  poNo?: string | null;
   status: string;
   /** The day the order was closed (YYYY-MM-DD); null while open. */
   completedDate: string | null;
@@ -61,6 +63,22 @@ export type StockAt = {
   wipUnits: number;
   /** WIP in whole-unit equivalents (Σ qty × completion). */
   wipEquivalentUnits: number;
+};
+
+/** One order in work in progress at a date (finance backlog item 12, the
+    design's "WIP by production order"): its value at selling price × the
+    completion of its job cards, before the cost ratio. */
+export type PsWipRow = {
+  orderId: string;
+  poNo: string | null;
+  productCode: string | null;
+  productName: string | null;
+  itemCategory: string | null;
+  qty: number;
+  /** Share of the order's standard minutes done (card count when unset), 0–1. */
+  completion: number;
+  unitPriceSen: number;
+  valueAtPriceSen: number;
 };
 
 const day = (v: string | null | undefined) => String(v ?? "").slice(0, 10);
@@ -146,7 +164,14 @@ const isDone = (c: PsJobCard, asOf: string) => {
 };
 
 export function productionStockAt(p: PreparedProduction, asOfIso: string): StockAt {
+  return productionStockDetailAt(p, asOfIso).at;
+}
+
+// The same pass, keeping each WIP order: the per-order list and the WIP total
+// come from ONE loop, so the list always adds up to the line (item 12).
+export function productionStockDetailAt(p: PreparedProduction, asOfIso: string): { at: StockAt; wipRows: PsWipRow[] } {
   const asOf = day(asOfIso);
+  const wipRows: PsWipRow[] = [];
   let fgPriceSen = 0, wipPriceSen = 0, fgUnits = 0, wipUnits = 0, wipEquivalentUnits = 0;
   for (const o of p.orders) {
     if (isServiceCharge(o)) continue;
@@ -174,8 +199,21 @@ export function productionStockAt(p: PreparedProduction, asOfIso: string): Stock
     wipPriceSen += price * qty * completion;
     wipUnits += qty;
     wipEquivalentUnits += qty * completion;
+    wipRows.push({
+      orderId: o.id, poNo: o.poNo ?? null, productCode: o.productCode, productName: o.productName, itemCategory: o.itemCategory,
+      qty, completion, unitPriceSen: price, valueAtPriceSen: price * qty * completion,
+    });
   }
-  return { fgPriceSen, wipPriceSen, fgUnits, wipUnits, wipEquivalentUnits };
+  return { at: { fgPriceSen, wipPriceSen, fgUnits, wipUnits, wipEquivalentUnits }, wipRows };
+}
+
+// The per-order WIP at cost: the line's own total (round(at selling price ×
+// ratio), exactly as the WIP line is valued) spread over the orders by their
+// share, largest remainder — so the list adds up to the line to the sen.
+export function costedWipRows(rows: PsWipRow[], ratio: number, split: (totalSen: number, buckets: { key: string; weight: number }[]) => Record<string, number>): { rows: (PsWipRow & { wipSen: number })[]; totalSen: number } {
+  const totalSen = Math.round(rows.reduce((s, r) => s + r.valueAtPriceSen, 0) * ratio);
+  const by = split(totalSen, rows.map((r) => ({ key: r.orderId, weight: r.valueAtPriceSen })));
+  return { rows: rows.map((r) => ({ ...r, wipSen: by[r.orderId] ?? 0 })), totalSen };
 }
 
 // Goods completed (orders closed) in [fromIso, toIso], at selling price.

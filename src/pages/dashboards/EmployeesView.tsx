@@ -8,8 +8,9 @@ import { DeptEfficiencyCard } from "./ProductionDailyPanels";
 import { DepartmentsView } from "./DepartmentsView";
 import { AttendanceLogCard } from "./AttendanceLogCard";
 import { filterSlice } from "./employee-filter";
-import { KPI_ROW, TAUPE, TEAL, MUTED, BORDER, fmtN, inPeriod, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub } from "./dashboard-shared-lib";
+import { TAUPE, TEAL, BORDER, fmtN, inPeriod, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge, MissingNote } from "./dashboard-shared";
+import { CommandCenterSections } from "./CommandCenterSections";
 
 // Real data from GET /api/dashboard/prototype — the `employee` +
 // `availability.employee` slices (workers + working_hour_entries +
@@ -175,8 +176,12 @@ export function EmployeesView({
       </div>
       <MissingNote fields={missing} />
 
-      {sub === "overview" && (
+      {/* Merged dashboard: the old Overview (headcount, working vs production
+          hours, workers) leads the Efficiency sub-tab — same data. */}
+      {sub === "efficiency" && (
         <>
+      {/* Worker Efficiency, the Command Center card (top / bottom 5). */}
+      <CommandCenterSections period={period} sections={["efficiency"]} />
 
       {/* Two real metrics; the config constants (target, working day) ride
           along as a baseline line and a subtitle instead of their own tiles. */}
@@ -236,11 +241,11 @@ export function EmployeesView({
                       <stop offset="100%" stopColor={TAUPE} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} width={32} />
+                  <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
+                  <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={32} />
                   <Tooltip cursor={{ stroke: BORDER }} contentStyle={{ background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }} />
                   {period.day && <ReferenceLine x={period.day.slice(5)} stroke={TAUPE} strokeDasharray="3 3" />}
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Legend {...CC_LEGEND} />
                   <Area type="monotone" dataKey="Working Hours" stroke={TAUPE} fill="url(#empWorkGrad)" strokeWidth={2} />
                   <Line type="monotone" dataKey="Production Hours" stroke={TEAL} strokeWidth={1.5} dot={false} />
                 </ComposedChart>

@@ -5,6 +5,7 @@
 // handlers remain in production-orders.ts, which imports/re-exports from here.
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
+import { canAdvanceToReadyToShip, READY_TO_SHIP_FROM_SQL } from "../../lib/ready-to-ship-guard";
 import { runSelfApply } from "../../lib/self-apply";
 import {
   sequenceBlockers,
@@ -3728,10 +3729,12 @@ export async function cascadeUpholsteryToSO(
           .run();
       }
     }
-    if (so.status !== "READY_TO_SHIP") {
+    // Forward only (BUG-2026-10-17): never pull a shipped / delivered /
+    // invoiced / closed / held order back to READY_TO_SHIP.
+    if (canAdvanceToReadyToShip(so.status)) {
       await db
         .prepare(
-          "UPDATE sales_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ?",
+          `UPDATE sales_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ? AND ${READY_TO_SHIP_FROM_SQL}`,
         )
         .bind(now, so.id)
         .run();
@@ -3827,11 +3830,11 @@ export async function cascadeUpholsteryToCO(
           .run();
       }
     }
-    if (co.status !== "READY_TO_SHIP") {
+    if (canAdvanceToReadyToShip(co.status)) {
       await db.batch([
         db
           .prepare(
-            "UPDATE consignment_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ?",
+            `UPDATE consignment_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ? AND ${READY_TO_SHIP_FROM_SQL}`,
           )
           .bind(now, co.id),
         db
@@ -4045,10 +4048,10 @@ export async function cascadePoCompletionToSO(
     .all<{ status: string }>();
   const sibList = siblings.results ?? [];
   const allDone = sibList.length > 0 && sibList.every((p) => p.status === "COMPLETED");
-  if (allDone && so.status !== "READY_TO_SHIP") {
+  if (allDone && canAdvanceToReadyToShip(so.status)) {
     await db
       .prepare(
-        "UPDATE sales_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ?",
+        `UPDATE sales_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ? AND ${READY_TO_SHIP_FROM_SQL}`,
       )
       .bind(new Date().toISOString(), salesOrderId)
       .run();
@@ -4078,12 +4081,12 @@ export async function cascadePoCompletionToCO(
     .all<{ status: string }>();
   const sibList = siblings.results ?? [];
   const allDone = sibList.length > 0 && sibList.every((p) => p.status === "COMPLETED");
-  if (allDone && co.status !== "READY_TO_SHIP") {
+  if (allDone && canAdvanceToReadyToShip(co.status)) {
     const now = new Date().toISOString();
     await db.batch([
       db
         .prepare(
-          "UPDATE consignment_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ?",
+          `UPDATE consignment_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ? AND ${READY_TO_SHIP_FROM_SQL}`,
         )
         .bind(now, consignmentOrderId),
       db

@@ -23,6 +23,7 @@ import {
 } from "../lib/party-name-propagate";
 import { parseDebtorCode } from "../../lib/debtor";
 import { resolveCompanyCode } from "../../lib/company-dimension";
+import { normalisePartyCurrency, partyText } from "../../lib/party-finance";
 
 const app = new Hono<Env>();
 
@@ -52,6 +53,22 @@ async function ensureCustomerCompanyColumn(db: D1Database): Promise<void> {
       "[customers] ensureCustomerCompanyColumn:",
       err instanceof Error ? err.message : err,
     );
+  }
+}
+
+// Finance v2 party fields (owner 2026-10-17): the customer's currency and its
+// bank & account no. (Its TIN and SST Reg. No. live in the KYC block,
+// customer_onboarding.) snake_case, runtime self-applied before the first
+// write; reads dual-key. The flag is set only after both columns exist (C9).
+let customerFinanceColsEnsured = false;
+async function ensureCustomerFinanceColumns(db: D1Database): Promise<void> {
+  if (customerFinanceColsEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE customers ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'MYR'").run();
+    await db.prepare("ALTER TABLE customers ADD COLUMN IF NOT EXISTS bank_account TEXT NOT NULL DEFAULT ''").run();
+    customerFinanceColsEnsured = true;
+  } catch (err) {
+    console.warn("[customers] ensureCustomerFinanceColumns:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -117,7 +134,13 @@ type CustomerRow = {
   phone: string | null;
   email: string | null;
   // Multi-Company Phase 4 — optional default company for NEW SOs. '' = none.
+  // Dual-keyed: the driver returns it as defaultCompanyCode (BUG-2026-10-17-312).
+  defaultCompanyCode?: string | null;
   default_company_code?: string | null;
+  // Finance v2 party fields (2026-10-17). Dual-keyed read.
+  currency?: string | null;
+  bankAccount?: string | null;
+  bank_account?: string | null;
   // Multi-Company Phase 3 — dual-identity link (mirror of suppliers.group_org_code).
   // '' / null = a normal external customer (default). A group org code (e.g.
   // "HOUZS") marks this customer as one of our group companies. Dual-keyed read.
@@ -284,7 +307,13 @@ function rowToCustomer(row: CustomerRow, hubs: HubRow[] = []) {
     email: row.email ?? "",
     // Multi-Company Phase 4 — surfaced so the SO create form can pre-fill the
     // company selector. Empty string when unmapped (→ HOOKKA fallback).
-    defaultCompanyCode: (row.default_company_code ?? "").trim().toUpperCase(),
+    // Read camelCase first — the driver camelCases every column, so reading
+    // only default_company_code returned '' for every customer and a later
+    // edit saved that '' back (BUG-2026-10-17-312).
+    defaultCompanyCode: (row.defaultCompanyCode ?? row.default_company_code ?? "").trim().toUpperCase(),
+    // Finance v2 party fields — recorded only; nothing converts with currency.
+    currency: normalisePartyCurrency(row.currency),
+    bankAccount: (row.bankAccount ?? row.bank_account ?? "").trim(),
     groupOrgCode: readCustomerGroupOrgCode(row),
     oemMarking: parseOemMarking(row.oemMarking ?? row.oem_marking),
     // POTENTIAL = created from the Sales Pipeline, not yet billable.
@@ -352,6 +381,7 @@ app.post("/", async (c) => {
   if (denied) return denied;
   await ensureCustomerCompanyColumn(c.var.DB);
   await ensureCustomerStageColumns(c.var.DB);
+  await ensureCustomerFinanceColumns(c.var.DB);
   try {
     const body = await c.req.json();
     const { code, name } = body;
@@ -406,8 +436,8 @@ app.post("/", async (c) => {
       `INSERT INTO customers (id, code, name, ssmNo, companyAddress, creditTerms,
          creditLimitSen, outstandingSen, isActive, contactName, phone, email,
          default_company_code, group_org_code, oem_marking,
-         customer_stage, salesperson_user_id, orgId)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         customer_stage, salesperson_user_id, orgId, currency, bank_account)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -433,6 +463,8 @@ app.post("/", async (c) => {
         forcedSalespersonOnCreate(c) ??
           (String(body.salespersonUserId ?? body.salesperson_user_id ?? "").trim() || null),
         getOrgId(c),
+        normalisePartyCurrency(body.currency),
+        partyText(body.bankAccount),
       )
       .run();
 
@@ -510,6 +542,7 @@ app.put("/:id", async (c) => {
   if (denied) return denied;
   await ensureCustomerCompanyColumn(c.var.DB);
   await ensureCustomerStageColumns(c.var.DB);
+  await ensureCustomerFinanceColumns(c.var.DB);
   const id = c.req.param("id");
   try {
     await ensureCustomerGroupColumn(c.var.DB);
@@ -599,7 +632,10 @@ app.put("/:id", async (c) => {
       default_company_code:
         body.defaultCompanyCode !== undefined
           ? normalizeDefaultCompany(body.defaultCompanyCode)
-          : (existing.default_company_code ?? ""),
+          : (existing.defaultCompanyCode ?? existing.default_company_code ?? ""),
+      // Finance v2 party fields — only change when the body sends them.
+      currency: body.currency !== undefined ? normalisePartyCurrency(body.currency) : normalisePartyCurrency(existing.currency),
+      bank_account: body.bankAccount !== undefined ? partyText(body.bankAccount) : (existing.bankAccount ?? existing.bank_account ?? ""),
       // Multi-Company Phase 3 — dual-identity. Only changes when the body sends
       // it; otherwise the existing flag is preserved (additive, opt-in).
       groupOrgCode:
@@ -629,7 +665,7 @@ app.put("/:id", async (c) => {
          code = ?, name = ?, ssmNo = ?, companyAddress = ?, creditTerms = ?,
          creditLimitSen = ?, outstandingSen = ?, isActive = ?,
          contactName = ?, phone = ?, email = ?, default_company_code = ?, group_org_code = ?,
-         oem_marking = ?, customer_stage = ?, salesperson_user_id = ?
+         oem_marking = ?, customer_stage = ?, salesperson_user_id = ?, currency = ?, bank_account = ?
        WHERE id = ?`,
     )
       .bind(
@@ -649,6 +685,8 @@ app.put("/:id", async (c) => {
         merged.oem_marking,
         merged.customer_stage,
         merged.salesperson_user_id,
+        merged.currency,
+        merged.bank_account,
         id,
       )
       .run();
