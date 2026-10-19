@@ -1,5 +1,6 @@
 # Bug History
 > **Last verified: 2026-10-18**: BUG-2026-10-18-325 (#980) and -326 (#982) flipped to 🟢 after their prod checks.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-328 (branch `fix/raw-materials-org-scope`, to main; 327 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-326 (branch `feat/finance-change-log-2`, to main); BUG-2026-10-18-325 stays 🟡 until its prod check.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-325 (branch `fix/wip-card-no-ratio`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-322 and -323 flipped to 🟢 after the #970 prod check; -320 / -321 stay 🟡 (deployed, nothing on production to exercise without a write).
@@ -146,6 +147,18 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-19-328 — Raw-material by-id routes ignored the caller's org `raw-materials` `auth-rbac` 🟡
+
+🟡 **Fixed on branch** (`fix/raw-materials-org-scope` → `main`). Not a live leak: prod has one org, `hookka`.
+
+**Symptom.** `GET /api/raw-materials/:id`, `GET /:id/used-in`, `PUT /:id` and `DELETE /:id` returned, edited or deleted a raw material of any org given its id, while the list beside them filtered by org.
+
+**Root cause.** The four lookups ran `SELECT ... FROM raw_materials WHERE id = ?` with no org predicate.
+
+**Fix.** `WHERE id = ? AND orgId = ?` bound to `getOrgId(c)`; another org's id is a 404, so the PUT/DELETE writes behind the lookup never run. Bulk import's prefetch is still unscoped (and `item_code` is globally unique); left for when a second org exists.
+
+**Regression.** `tests/raw-materials-tenant-scope.test.mjs`.
 
 ## BUG-2026-10-18-326 — Audit Log "What changed" doubled every account of an edit `finance` 🟢
 
