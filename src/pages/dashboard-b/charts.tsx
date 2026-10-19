@@ -10,6 +10,7 @@
 // data come in as props so the parent keeps owning the numbers.
 // ===========================================================================
 import type React from "react";
+import { useState } from "react";
 import {
   AreaChart,
   Area,
@@ -242,10 +243,10 @@ export function CustomerPieChart({
   );
 }
 
-// Department Revenue (owner 2026-10-15): one line per production department,
-// RM per bucket. Every department books the full order value, so on a
-// balanced day the lines sit on top of each other; a line below the pack is
-// a department falling behind. Rows: { m, <dept label>: RM, … }.
+// Department Revenue (owner 2026-10-15; small multiples 2026-10-19): one small
+// line chart per production department, RM per bucket. All charts share one
+// date axis and one y scale, so heights compare directly; hovering any chart
+// marks the same day on every chart. Rows: { m, d, <dept label>: RM, … }.
 export function DeptRevenueChart({
   data,
   series,
@@ -257,44 +258,78 @@ export function DeptRevenueChart({
   markDay?: string;
   onPickDay?: (day: string) => void;
 }) {
+  const [hover, setHover] = useState<string>();
+  const max = Math.max(1, ...data.flatMap((r) => series.map((s) => Number(r[s.key]) || 0)));
+  const first = data[0]?.m;
+  const last = data[data.length - 1]?.m;
+  if (series.length === 0)
+    return <div className="flex items-center justify-center h-40 text-xs text-[#9CA3AF]">Every department is hidden.</div>;
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart
-        data={data}
-        margin={{ top: 6, right: 6, bottom: 0, left: 0 }}
-        onClick={onPickDay ? (e) => {
-          const hit = data.find((r) => r.m === e?.activeLabel);
-          if (hit) onPickDay(String(hit.d));
-        } : undefined}
-        style={onPickDay ? { cursor: "pointer" } : undefined}
-      >
-        {markDay && <ReferenceLine x={markDay} stroke="#6B5C32" strokeDasharray="3 3" />}
-        <XAxis
-          dataKey="m"
-          tick={{ fill: "#9CA3AF", fontSize: 11 }}
-          axisLine={{ stroke: "#F0ECE6" }}
-          tickLine={false}
-        />
-        <YAxis
-          tickFormatter={(v) => `${Math.round(v / 1000)}k`}
-          tick={{ fill: "#9CA3AF", fontSize: 11 }}
-          axisLine={false}
-          tickLine={false}
-          width={38}
-        />
-        <Tooltip content={<RevTooltip />} cursor={{ stroke: "#E2DDD8" }} />
-        {series.map((s) => (
-          <Line
-            key={s.key}
-            type="monotone"
-            dataKey={s.key}
-            stroke={s.color}
-            strokeWidth={1.75}
-            isAnimationActive={false}
-            dot={false}
-          />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
+    <div>
+      <p className="text-[11px] text-[#9CA3AF] mb-1">Same scale on every chart: 0 to {rm(max * 100)}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+        {series.map((s) => {
+          const peak = data.reduce<Record<string, number | string> | undefined>(
+            (p, r) => ((Number(r[s.key]) || 0) > (Number(p?.[s.key]) || 0) ? r : p),
+            undefined,
+          );
+          const at = hover ? data.find((r) => r.m === hover) : undefined;
+          return (
+            <div key={s.key} className="min-w-0">
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="flex items-center gap-1.5 truncate text-[#1F1D1B]">
+                  <span style={{ color: s.color }}>●</span>
+                  {s.key}
+                </span>
+                <span className="shrink-0 tabular-nums text-[#9CA3AF]">
+                  {at
+                    ? `${at.m} · ${rm((Number(at[s.key]) || 0) * 100)}`
+                    : peak
+                      ? `peak ${peak.m} · ${rm((Number(peak[s.key]) || 0) * 100)}`
+                      : "no output"}
+                </span>
+              </div>
+              <div style={{ height: 58 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={data}
+                    margin={{ top: 4, right: 6, bottom: 0, left: 6 }}
+                    onMouseMove={(e) => setHover(e?.activeLabel != null ? String(e.activeLabel) : undefined)}
+                    onMouseLeave={() => setHover(undefined)}
+                    onClick={onPickDay ? (e) => {
+                      const hit = data.find((r) => r.m === e?.activeLabel);
+                      if (hit) onPickDay(String(hit.d));
+                    } : undefined}
+                    style={onPickDay ? { cursor: "pointer" } : undefined}
+                  >
+                    {markDay && <ReferenceLine x={markDay} stroke="#6B5C32" strokeDasharray="3 3" />}
+                    {hover && <ReferenceLine x={hover} stroke="#C9C2B8" />}
+                    <XAxis
+                      dataKey="m"
+                      ticks={first && last ? [first, last] : undefined}
+                      interval={0}
+                      tick={{ fill: "#9CA3AF", fontSize: 10 }}
+                      axisLine={{ stroke: "#F0ECE6" }}
+                      tickLine={false}
+                      height={14}
+                    />
+                    <YAxis hide domain={[0, max]} />
+                    <Tooltip content={() => null} cursor={false} />
+                    <Line
+                      type="monotone"
+                      dataKey={s.key}
+                      stroke={s.color}
+                      strokeWidth={1.75}
+                      isAnimationActive={false}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
