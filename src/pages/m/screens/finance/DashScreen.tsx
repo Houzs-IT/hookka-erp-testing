@@ -6,6 +6,9 @@
 // the latest month's figure, its forecast and the gap, its % of revenue, and
 // the last four months as bars with the forecast as a dashed line. A cash
 // card follows with the month's operating / investing / financing flows.
+// Since 2026-10-19 (owner 「要」) the desktop's other sections follow in its
+// order — Production / Non-Production Salary and Cost Structure before the
+// cash card, Balance Sheet and Financial Ratios after it (DashSections.tsx).
 // ---------------------------------------------------------------------------
 import { useState } from "react";
 import { Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, XAxis, YAxis } from "recharts";
@@ -14,15 +17,13 @@ import { MobileCard } from "../../components";
 import { M } from "../../theme";
 import { FinanceHeader, FinanceNote } from "./finance-shell";
 import { FIN_DASH_LINES, dashAnchorIndex, dashGap, dashMonthLabel, type DashLine, fmtMoney } from "./m-finance-lib";
+import { csCategories, salaryDeptSplit } from "@/lib/finance-dashboard-calc";
+import { BalanceSheetCard, CostStructureCard, RatiosCard, SalaryCard, type DashFullRow } from "./DashSections";
 
 type Slice = Record<DashLine, number>;
-type DashRow = {
-  key: string;
-  label: string;
-  partial: boolean;
+type DashRow = DashFullRow & {
   actual: Slice | null;
   forecast: Slice | null;
-  productionRevenue?: { total: number } | null;
   cashFlow: { operating: number; investing: number; financing: number; net: number; freeCashFlow: number };
 };
 
@@ -50,6 +51,10 @@ export function DashScreen() {
   const gap = dashGap(line, actual, forecast);
   const sales = last?.actual?.sales ?? null;
   const pctOfRevenue = actual !== null && sales ? (actual / sales) * 100 : null;
+  // Which of the desktop's other sections have anything to show — its own rules.
+  const split = salaryDeptSplit(rows);
+  const showProdSalary = rows.some((r) => (r.actual?.labour ?? null) !== null);
+  const showCostStructure = csCategories(rows).length > 0;
   const chart = rows.slice(Math.max(0, at - 3), at + 1).map((r) => ({
     label: `${dashMonthLabel(r.key, false)}${r.partial ? "*" : ""}`,
     actual: r.actual ? r.actual[line] / 100 : null,
@@ -118,6 +123,22 @@ export function DashScreen() {
               </div>
             </MobileCard>
 
+            {showProdSalary && (
+              <SalaryCard
+                title="Production Salary"
+                note="750-0010 SALARIES · 750-0020 EPF · 750-0030 SOCSO · 750-0040 EIS"
+                rows={rows} at={at} depts={split.prod} fallbackLabour denominators test="dash-sal-prod"
+              />
+            )}
+            {split.non.length > 0 && (
+              <SalaryCard
+                title="Non-Production Salary"
+                note="Warehouse · Repair · Maintenance · Shortfall · R&D — actual = clocked-hours share of payroll"
+                rows={rows} at={at} depts={split.non} fallbackLabour={false} denominators={false} test="dash-sal-non"
+              />
+            )}
+            {showCostStructure && <CostStructureCard rows={rows} at={at} />}
+
             <MobileCard>
               <div style={{ fontSize: 15, fontWeight: 700, color: M.raisin }}>Cash Flow · {monthName}</div>
               {(
@@ -135,6 +156,9 @@ export function DashScreen() {
                 </div>
               ))}
             </MobileCard>
+
+            <BalanceSheetCard rows={rows} at={at} />
+            <RatiosCard rows={rows} at={at} />
           </>
         )}
       </div>
