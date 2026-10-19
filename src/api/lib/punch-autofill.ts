@@ -368,13 +368,79 @@ export async function computeLiveDeptDay(
     .filter((r) => r.departmentCode && r.hours > 0);
   const nonProdHours = nonProdRows.reduce((s, r) => s + r.hours, 0);
 
-  const outMin = Math.max(inMin, args.nowMin);
-  const day = computeAttendanceDay(inMin, outMin, rules);
-  const total = Math.max(0, round2((day.regularWorkMin + day.otMin) / 60 - nonProdHours));
-  const rows = [...splitDayHours(total, inMin, outMin, home, events), ...nonProdRows];
+  const rows = [...liveSplitRows(inMin, args.nowMin, rules, home, events, nonProdHours), ...nonProdRows];
   return {
     rows,
     hoursSoFar: round2(rows.reduce((s, r) => s + r.hours, 0)),
     current: currentStation(inMin, home, events),
   };
+}
+
+/**
+ * The live split itself, shared by the phone card above and the dashboard
+ * (liveOpenPunchRows below): the rules engine's day total from clock-in to
+ * `nowMin` (lunch deducted, late ceiled, OT floored), less approved
+ * non-production hours, split by department scans. Pure.
+ */
+export function liveSplitRows(
+  inMin: number,
+  nowMin: number,
+  rules: ReturnType<typeof toAttendanceRules>,
+  homeDeptCode: string,
+  events: DeptScanEvent[],
+  nonProdHours: number,
+): DeptDayRow[] {
+  const outMin = Math.max(inMin, nowMin);
+  const day = computeAttendanceDay(inMin, outMin, rules);
+  const total = Math.max(0, round2((day.regularWorkMin + day.otMin) / 60 - nonProdHours));
+  return splitDayHours(total, inMin, outMin, homeDeptCode, events);
+}
+
+/**
+ * Dashboard (owner 2026-10-19: efficiency read 4,000% at 10am because
+ * working_hour_entries are only written at punch-out, while job-card credit
+ * lands all day). For every punch still open on `date`, the hours worked so
+ * far — the same figure the worker's phone shows — as working-hour rows, so
+ * the day's efficiency is "so far" instead of "everything ÷ nothing".
+ * One query for the day's scans, one for the pay rules. Read-only.
+ */
+export async function liveOpenPunchRows(
+  db: D1Database,
+  args: {
+    date: string;
+    nowMin: number;
+    punches: { workerId: string; clockIn: string; homeDeptCode: string | null | undefined }[];
+    /** Approved non-production hours already on file today, per worker. */
+    nonProdHoursByWorker: ReadonlyMap<string, number>;
+  },
+): Promise<{ workerId: string; date: string; departmentCode: string; hours: number }[]> {
+  if (!args.punches.length) return [];
+  let versions: Awaited<ReturnType<typeof loadPayRuleVersions>> = [];
+  try {
+    versions = await loadPayRuleVersions(db);
+  } catch {
+    versions = [];
+  }
+  const rules = toAttendanceRules(resolvePayRulesAsOf(versions, args.date));
+  await ensureDeptScanEvents(db);
+  const ev = await db
+    .prepare("SELECT workerid, departmentcode, category, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin")
+    .bind(args.date)
+    .all<{ workerid: string; departmentcode: string; category: string | null; atmin: number }>();
+  const byWorker = new Map<string, DeptScanEvent[]>();
+  for (const r of ev.results ?? []) {
+    const k = String(r.workerid ?? "");
+    const a = byWorker.get(k) ?? [];
+    a.push({ departmentCode: String(r.departmentcode ?? ""), category: r.category ?? null, atMin: Number(r.atmin) || 0 });
+    byWorker.set(k, a);
+  }
+  const out: { workerId: string; date: string; departmentCode: string; hours: number }[] = [];
+  for (const p of args.punches) {
+    const inMin = hhmmToMinutes(p.clockIn);
+    if (inMin == null) continue;
+    const home = (p.homeDeptCode ?? "").trim().toUpperCase();
+    const rows = liveSplitRows(inMin, args.nowMin, rules, home, byWorker.get(p.workerId) ?? [], args.nonProdHoursByWorker.get(p.workerId) ?? 0);
+    for (const r of rows) if (r.hours > 0) out.push({ workerId: p.workerId, date: args.date, departmentCode: r.departmentCode, hours: r.hours });
+  }
+  return out;
 }

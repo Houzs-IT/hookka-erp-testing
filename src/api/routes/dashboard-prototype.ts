@@ -50,6 +50,7 @@
 // completions before 2026-08-14, so any "units produced" series built from it
 // would read as a factory that made nothing for three months.
 // ---------------------------------------------------------------------------
+import { liveOpenPunchRows } from "../lib/punch-autofill";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
@@ -327,7 +328,7 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v4`, 60, async () => {
+  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v5`, 60, async () => {
   // ---- Sales ------------------------------------------------------------
   // Whole book, not a window: the prototype owns the month picker, so it
   // needs every month that exists. ~1,500 rows of seven columns is small
@@ -572,12 +573,12 @@ app.get("/", async (c) => {
 
   const wheSec = await section("working hours", () =>
     c.var.DB.prepare(
-      `SELECT worker_id, date, department_code, hours
+      `SELECT worker_id, date, department_code, hours, notes
          FROM working_hour_entries
         WHERE org_id = ?`,
     )
       .bind(orgId)
-      .all<{ workerId: string | null; date: string | null; departmentCode: string | null; hours: number | string | null }>()
+      .all<{ workerId: string | null; date: string | null; departmentCode: string | null; hours: number | string | null; notes: string | null }>()
       .then((r) => r.results ?? []),
   );
 
@@ -636,8 +637,32 @@ app.get("/", async (c) => {
 
   // Per-day production vs working minutes, overall and per worker. Lives in
   // lib/workforce-perf.ts so the Department efficiency KPI runs the same code.
+  // Today, live (owner 2026-10-19): working_hour_entries only land at
+  // punch-out, so by 10am the day had all its job-card credit over almost no
+  // working time (efficiency 4,000%+). Every punch still open today gets its
+  // hours so far — clock-in to now, lunch off, split by dept scans, the same
+  // figure as the worker's phone. "Now" steps every 30 minutes (owner: refresh
+  // half-hourly), so the figure is stable inside a half hour.
+  const myNow = new Date(Date.now() + 8 * 3600_000);
+  const todayMY = myNow.toISOString().slice(0, 10);
+  const nowSlotMin = Math.floor((myNow.getUTCHours() * 60 + myNow.getUTCMinutes()) / 30) * 30;
+  const liveWheSec = await section("working hours (live today)", async () => {
+    const isNonProd = (n: string | null) => String(n ?? "").startsWith("Non-production (approved)");
+    const keyedToday = new Set<string>();
+    const nonProdByWorker = new Map<string, number>();
+    for (const r of wheSec.rows) {
+      if (dayKey(r.date) !== todayMY || !r.workerId) continue;
+      if (isNonProd(r.notes)) nonProdByWorker.set(r.workerId, (nonProdByWorker.get(r.workerId) ?? 0) + num(r.hours));
+      else keyedToday.add(r.workerId);
+    }
+    const homeDept = new Map(workersSec.rows.map((w) => [w.id, w.departmentCode]));
+    const punches = attSec.rows
+      .filter((r) => dayKey(r.date) === todayMY && r.employeeId && r.clockIn && !r.clockOut && !keyedToday.has(r.employeeId))
+      .map((r) => ({ workerId: r.employeeId!, clockIn: r.clockIn!, homeDeptCode: homeDept.get(r.employeeId!) ?? r.departmentCode }));
+    return liveOpenPunchRows(c.var.DB, { date: todayMY, nowMin: nowSlotMin, punches, nonProdHoursByWorker: nonProdByWorker });
+  });
   const { perfDays, perfCards, perfMeasuredCards } = buildPerfDays({
-    whe: wheSec.rows,
+    whe: [...wheSec.rows, ...liveWheSec.rows],
     jobCards: jcSec.rows,
     pics: picsSec.rows,
     productionDepts,
