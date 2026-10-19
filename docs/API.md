@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 144 mounts, 142 route files in
-`src/api/routes/`, 1042 top-level handler registrations discovered.
+`src/api/routes/`, 1043 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -84,7 +84,7 @@ offsets pointing past the end of their own file.
 | `/api/purchase-invoices` | `src/api/routes/purchase-invoices.ts` | `GET /` <sub>:801</sub><br>`GET /:id` <sub>:854</sub><br>`POST /` <sub>:1100</sub><br>`POST /repair-gl-visibility` <sub>:1909</sub><br>`POST /backfill-gl-postings` <sub>:1955</sub><br>`PUT /:id` <sub>:1974</sub><br>`DELETE /:id` <sub>:2678</sub><br>`POST /:id/void` <sub>:2826</sub><br>`POST /:id/unvoid` <sub>:2931</sub><br>`POST /:id/resync-gl` <sub>:3038</sub> | gated |
 | `/api/credit-notes` | `src/api/routes/credit-notes.ts` | `GET /` <sub>:203</sub><br>`GET /from-returns` <sub>:227</sub><br>`POST /` <sub>:318</sub><br>`GET /:id` <sub>:591</sub><br>`PUT /:id` <sub>:614</sub><br>`POST /:id/unpost` <sub>:800</sub> | gated |
 | `/api/debit-notes` | `src/api/routes/debit-notes.ts` | `GET /` <sub>:125</sub><br>`POST /` <sub>:140</sub><br>`GET /:id` <sub>:285</sub><br>`PUT /:id` <sub>:305</sub><br>`POST /:id/unpost` <sub>:494</sub> | gated |
-| `/api/e-invoices` | `src/api/routes/e-invoices.ts` | `GET /` <sub>:129</sub><br>`POST /` <sub>:144</sub><br>`GET /:id` <sub>:250</sub><br>`PUT /:id` <sub>:272</sub> | gated |
+| `/api/e-invoices` | `src/api/routes/e-invoices.ts` | `GET /` <sub>:214</sub><br>`GET /candidates` <sub>:232</sub><br>`POST /` <sub>:272</sub><br>`GET /:id` <sub>:357</sub><br>`PUT /:id` <sub>:374</sub> | gated |
 | `/api/three-way-match` | `src/api/routes/three-way-match.ts` | `GET /` <sub>:199</sub><br>`GET /by-po/:poId` <sub>:303</sub><br>`POST /` <sub>:539</sub> | gated |
 | `/api/delivery-orders` | `src/api/routes/delivery-orders.ts` | `GET /` <sub>:122</sub><br>`GET /stats` <sub>:362</sub><br>`GET /po-values` <sub>:464</sub><br>`GET /linked-po-ids` <sub>:516</sub><br>`GET /ready-planning` <sub>:736</sub><br>`GET /pending-value` <sub>:768</sub><br>`GET /pending-sos` <sub>:795</sub><br>`POST /backfill-customer-po` <sub>:854</sub><br>`POST /backfill-customer-so` <sub>:952</sub><br>`POST /backfill-delivered-cascade` <sub>:1098</sub><br>`POST /backfill-fix-underbilled-invoices` <sub>:1225</sub><br>`POST /backfill-void-reissue-underbilled` <sub>:1461</sub><br>`POST /backfill-normalize-invoiced-to-delivered` <sub>:1838</sub><br>`POST /backfill-dedupe-delivered` <sub>:1942</sub><br>`POST /` <sub>:2059</sub><br>`POST /packing-list-first` <sub>:2106</sub><br>`GET /:id/print-extras` <sub>:2601</sub><br>`POST /:id/notify-customer` <sub>:2612</sub><br>`POST /:id/resend-notice` <sub>:2656</sub><br>`POST /:id/resolve-incomplete` <sub>:2774</sub><br>`GET /:id/qr-token` <sub>:2936</sub><br>`GET /:id/billable-lines` <sub>:2974</sub><br>`GET /:id` <sub>:3020</sub><br>`PUT /:id` <sub>:3073</sub><br>`DELETE /:id` <sub>:3092</sub> | gated |
 | `/api/delivery-returns` | `src/api/routes/delivery-returns.ts` | `GET /` <sub>:168</sub><br>`GET /:id` <sub>:195</sub><br>`GET /do-items` <sub>:227</sub><br>`POST /` <sub>:241</sub><br>`POST /:id/return-to-stock` <sub>:354</sub><br>`POST /:id/set-outcome` <sub>:401</sub><br>`POST /:id/mark-redelivered` <sub>:458</sub><br>`POST /:id/cancel` <sub>:474</sub> | gated |

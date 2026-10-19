@@ -893,11 +893,12 @@ export type EInvoice = {
   customerTIN?: string;
   submissionId?: string;
   uuid?: string;
-  status: "PENDING" | "SUBMITTED" | "VALID" | "INVALID" | "CANCELLED";
+  status: "PENDING" | "SUBMITTED" | "VALID" | "INVALID" | "REJECTED" | "CANCELLED";
   submittedAt?: string;
   validatedAt?: string;
   errorMessage?: string;
   xmlContent?: string;
+  // Sen (BUG-2026-10-20-345 — the columns are integer).
   totalExcludingTax: number;
   taxAmount: number;
   totalIncludingTax: number;
