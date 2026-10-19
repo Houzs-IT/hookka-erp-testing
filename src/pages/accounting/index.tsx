@@ -654,6 +654,13 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
 
 // =============== MAIN PAGE ===============
 
+// The tabs handed the chart of accounts — they wait for it; every other tab
+// fetches its own data and opens at once.
+const TABS_WITH_ACCOUNTS = new Set<TabKey>([
+  "coa", "journals", "gl", "odebtorbills", "odebtorpay", "ocreditorbills", "apinvoices", "ocreditorpay",
+  "payments", "receipts", "transfer", "cashbook", "assets", "labor", "opening", "stockmap", "maint",
+]);
+
 export default function AccountingPage() {
   // The sidebar deep-links each report via /accounting?tab=<key>; keep the
   // selected tab in the URL so those links land on the right screen and the
@@ -664,15 +671,26 @@ export default function AccountingPage() {
   // from the sidebar's deep links (/accounting?tab=<key>); the in-page tab bar
   // was removed as a duplicate of the sidebar (owner 2026-06).
   const tab: TabKey = (TABS.some((t) => t.key === urlTab) ? urlTab : "overview") as TabKey;
+  // Each tab waits only for what it is handed (owner 2026-10-19 「优化加载速度
+  // …尤其是overview」): every tab used to sit behind ALL journals with their
+  // lines plus the aging (measured 1.2 s + 0.9 s) before it could even start
+  // its own fetch. The journals load for the Journals tab only, the aging for
+  // Overview / AR / AP only; the chart of accounts (fast, used widely) always.
+  const needsJournals = tab === "journals";
+  const needsAging = tab === "overview" || tab === "ar" || tab === "ap";
   const { data: coaResp, loading: coaLoading, refresh: refreshCoa } = useCachedJson<{ success?: boolean; data?: ChartOfAccount[] }>("/api/accounting/coa");
-  const { data: jeResp, loading: jeLoading, refresh: refreshJe } = useCachedJson<{ success?: boolean; data?: JournalEntry[] }>("/api/accounting/journals");
-  const { data: agingResp, loading: agingLoading, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[] } }>("/api/accounting/aging");
+  const { data: jeResp, loading: jeLoading, error: jeError, refresh: refreshJe } = useCachedJson<{ success?: boolean; data?: JournalEntry[] }>(needsJournals ? "/api/accounting/journals" : null);
+  const { data: agingResp, loading: agingLoading, error: agingError, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[] } }>(needsAging ? "/api/accounting/aging" : null);
 
   const accounts: ChartOfAccount[] = useMemo(() => (coaResp?.success ? coaResp.data ?? [] : []), [coaResp]);
   const journals: JournalEntry[] = useMemo(() => (jeResp?.success ? jeResp.data ?? [] : []), [jeResp]);
   const arData: ARAgingEntry[] = useMemo(() => (agingResp?.success ? agingResp.data?.ar ?? [] : []), [agingResp]);
   const apData: APAgingEntry[] = useMemo(() => (agingResp?.success ? agingResp.data?.ap ?? [] : []), [agingResp]);
-  const loading = coaLoading || jeLoading || agingLoading;
+  // A load just switched on paints one frame before its fetch starts — no
+  // data and no error yet still reads as loading.
+  const jePending = needsJournals && (jeLoading || (!jeResp && !jeError));
+  const agingPending = needsAging && (agingLoading || (!agingResp && !agingError));
+  const loading = (TABS_WITH_ACCOUNTS.has(tab) && coaLoading) || jePending || (agingPending && tab !== "overview");
 
   const fetchAll = useCallback(() => {
     invalidateCachePrefix("/api/accounting");
@@ -714,7 +732,7 @@ export default function AccountingPage() {
       ) : (
         <>
           {tab === "overview" && (
-            <OverviewTab arData={arData} apData={apData} />
+            <OverviewTab arData={arData} apData={apData} agingLoading={agingPending} />
           )}
           {/* One P&L entry, three views (owner 2026-09-22 sidebar slim-down);
               the old deep links still land on their view. */}

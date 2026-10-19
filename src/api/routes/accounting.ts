@@ -9999,6 +9999,52 @@ app.get("/pl-monthly", async (c) => {
 //   • the most-produced models — production orders completed in the month,
 //     quantities per model series, Sofa and Bedframe apart, top 5 each.
 // Read-only.
+// Every table the P&L replay reads — /dashboard and /overview-trend keep a
+// snapshot of replayed P&L figures, and a write to any of these must rebuild
+// it. kv_config carries the opening date and the section map; pnl_historical
+// the owner-keyed months before the books opened.
+const PNL_REPLAY_SOURCE_TABLES: readonly string[] = [
+  "ledger_journal_entries",
+  "invoices",
+  "purchase_invoices",
+  "cost_ledger",
+  "grn_items",
+  "production_orders",
+  "delivery_orders",
+  "kv_config",
+  // Production Salary per head / per unit reads these two — without them
+  // hiring someone or completing a batch would leave the card stale.
+  "workers",
+  "fg_batches",
+  // salaryByDept reads payslips — without it a payroll edit leaves the
+  // department stacks stale.
+  "payslips",
+  // Report-layer labour injection (2026-08-31) dry-runs payroll from
+  // these when a month has no payslips yet — new clock entries, docks
+  // or a raise must refresh the injected P&L figures.
+  "working_hour_entries",
+  "payroll_hour_deductions",
+  "worker_salary_history",
+  // Production Revenue (2026-10-12) books a PO when its last upholstery
+  // card completes, priced from its SO / CO line or the product master.
+  "job_cards",
+  "sales_order_items",
+  "consignment_order_items",
+  "products",
+  // The running month's labour to date (2026-10-12) also reads the
+  // department master (which departments log factory hours) and the
+  // effective-dated pay rules.
+  "departments",
+  "pay_rule_versions",
+  // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
+  // delivery order or consignment note.
+  "delivery_order_items",
+  "consignment_notes",
+  "consignment_items",
+  "stock_take",
+  "pnl_historical",
+];
+
 app.get("/overview-trend", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -10007,6 +10053,52 @@ app.get("/overview-trend", async (c) => {
   const n = asked === 6 || asked === 12 ? asked : 3;
   const runYm = runningMonthYm();
   const months = lastMonths(runYm, n);
+  // Cache-aside + serve-stale-while-revalidate (owner 2026-10-19 「优化加载
+  // 速度…尤其是overview」): the trend replays the P&L month by month and
+  // measured 5.6–7.8 s (84–107 queries) on EVERY call, phone and desktop. The
+  // same pattern as /dashboard: the last computed copy is served at once and
+  // refreshed in the background whenever a source table changes. The key
+  // carries the range and the running month (a new month = a new window).
+  const { withSnapshot } = await import("../lib/snapshot");
+  // The snapshot table must exist before withSnapshot reads it (readSnapshot
+  // is not guarded) — the exact shape of the /dashboard snapshot table.
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS accounting_overview_snapshot (
+       org_id TEXT NOT NULL,
+       cache_key TEXT NOT NULL DEFAULT '',
+       data TEXT NOT NULL,
+       built_from TEXT NOT NULL,
+       built_at TEXT NOT NULL DEFAULT '',
+       refresh_count INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (org_id, cache_key)
+     )`,
+  ).run();
+  const snapOrgId = getOrgId(c);
+  // PAYLOAD VERSION — bump whenever the response SHAPE (or what a month's
+  // figures mean) changes: the freshness probe watches the source TABLES, so a
+  // code change alone never retires a stored copy.
+  const OVERVIEW_PAYLOAD_V = "v1";
+  const payload = await withSnapshot(
+    db,
+    { tableName: "accounting_overview_snapshot", sourceTables: [...PNL_REPLAY_SOURCE_TABLES, "sales_orders"] },
+    snapOrgId,
+    () => computeOverviewTrend(db, snapOrgId, runYm, months),
+    `${OVERVIEW_PAYLOAD_V}:${n}:${runYm}:${snapOrgId}`,
+    c,
+    { staleWhileRevalidate: true },
+  );
+  return c.json({ success: true, data: payload });
+});
+
+// The Overview's figures, month by month (computed fresh; /overview-trend
+// keeps the last copy): sales orders vs invoices, the P&L's own month windows,
+// the most-produced models.
+async function computeOverviewTrend(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  runYm: string,
+  months: string[],
+): Promise<{ months: OverviewMonth[]; runningYm: string }> {
 
   const pick = (r: Record<string, unknown>, ...keys: string[]) => {
     for (const k of keys) if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k];
@@ -10053,7 +10145,6 @@ app.get("/overview-trend", async (c) => {
 
   // The P&L, month by month — /pl-monthly's own loop.
   await ensurePnlHistorical(db);
-  const orgId = getOrgId(c);
   const override = await getPnlSectionMap(db);
   const matData = await loadMaterialCostData(db, orgId, runYm);
   const dc = await loadDocDateResolver(db);
@@ -10073,8 +10164,8 @@ app.get("/overview-trend", async (c) => {
       top: topBy.get(ym) ?? { SOFA: [], BEDFRAME: [] },
     });
   }
-  return c.json({ success: true, data: { months: out, runningYm: runYm } });
-});
+  return { months: out, runningYm: runYm };
+}
 
 // Finance dashboard tab feed (routes/dashboard-finance.ts → lib/dashboard-finance.ts).
 // Per month: the P&L's own figures (same per-month window logic as `/pl-monthly`:
@@ -15086,48 +15177,10 @@ app.get("/dashboard", async (c) => {
     c.var.DB,
     {
       tableName: "accounting_dashboard_snapshot",
-      // Every table the P&L + cost-structure replay reads. kv_config carries
-      // the opening date; a change to any of these must rebuild the snapshot.
-      sourceTables: [
-        "ledger_journal_entries",
-        "invoices",
-        "purchase_invoices",
-        "cost_ledger",
-        "grn_items",
-        "production_orders",
-        "delivery_orders",
-        "kv_config",
-        // Production Salary per head / per unit reads these two — without them
-        // hiring someone or completing a batch would leave the card stale.
-        "workers",
-        "fg_batches",
-        // salaryByDept reads payslips — without it a payroll edit leaves the
-        // department stacks stale.
-        "payslips",
-        // Report-layer labour injection (2026-08-31) dry-runs payroll from
-        // these when a month has no payslips yet — new clock entries, docks
-        // or a raise must refresh the injected P&L figures.
-        "working_hour_entries",
-        "payroll_hour_deductions",
-        "worker_salary_history",
-        // Production Revenue (2026-10-12) books a PO when its last upholstery
-        // card completes, priced from its SO / CO line or the product master.
-        "job_cards",
-        "sales_order_items",
-        "consignment_order_items",
-        "products",
-        // The running month's labour to date (2026-10-12) also reads the
-        // department master (which departments log factory hours) and the
-        // effective-dated pay rules.
-        "departments",
-        "pay_rule_versions",
-        // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
-        // delivery order or consignment note.
-        "delivery_order_items",
-        "consignment_notes",
-        "consignment_items",
-        "stock_take",
-      ],
+      // Every table the P&L + cost-structure replay reads (shared with
+      // /overview-trend). kv_config carries the opening date; a change to any
+      // of these must rebuild the snapshot.
+      sourceTables: PNL_REPLAY_SOURCE_TABLES,
     },
     dashOrgId,
     async () => {
