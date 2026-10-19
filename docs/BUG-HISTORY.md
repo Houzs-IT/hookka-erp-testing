@@ -1,5 +1,6 @@
 # Bug History
 
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-329 (branch `fix/ocr-tab-myt-time`, to `staging`; 328 is taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-327 (branch `fix/staging-duplicate-usepermissions-import`, to `staging`; numbers up to 326 are taken on `main`); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-16**: staging<-main sync (branch `chore/sync-staging-from-main-1016`): both sides kept. Bugs that main logged again under a different number keep staging's number with a "Ported to main" line. Where main reused a number for another entry, main's copy is suffixed `b` (BUG-2026-10-16-293b, BUG-2026-10-14-288b, BUG-2026-09-30-223b).
 > **Last verified: 2026-10-16**: newest entry BUG-2026-10-16-304 (branch `fix/self-apply-skip-existing-column`, to `main`; 302 is taken on `staging`, 303 on `main`); a log, so "verified" means the entry matches the code on that branch.
@@ -178,6 +179,22 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-329 — The OCR tab showed scan times in UTC and filtered by the UTC date `ocr` `dashboard` 🟡
+
+🟡 **Fixed on branch** (`fix/ocr-tab-myt-time` → `staging`). Found 2026-10-19 from the owner's screenshot of "Recent problem scans".
+
+**Symptom.** On the dashboard's OCR tab the When column read `2026-10-19 02:05` for a scan made at 10:05 Malaysia time, eight hours early. The period filter had the same offset: a scan before 08:00 MYT counted on the previous day, so the first eight hours of a selected range were left out and the last eight hours of the day before it were counted.
+
+**Root cause.** `scan_queue.created_at` and the sample tables' `createdAt` are stored in UTC (`new Date().toISOString()`, or the Postgres `NOW()` default). The page sliced the stored string (`p.createdAt.slice(0, 16)`), which prints the UTC clock. The route compared `substr(created_at::text, 1, 10)`, the UTC date, in `GET /models`, the timing block of `GET /`, and `dateWhere` (whose `from` bound compared the raw string). Same shape as BUG-2026-09-24-190.
+
+**Fix.** The When column uses `formatTimestampMY(..., { withYear: true })` from `src/lib/utils.ts`, so it now reads `19/10/2026 10:05` (house format, was `YYYY-MM-DD HH:MM`). All six date bounds in `src/api/routes/ocr-accuracy.ts` use `mytDateSql` from `src/api/lib/on-time-delivery.ts`.
+
+**Unmeasured.** `mytDateSql` casts the text column to `timestamptz`; a value that does not cast would fail the query. `scan_queue.created_at` is already cast on this table by the timing query. `po_scan_samples.created_at` and `supplier_scan_samples.created_at` were not checked; read-only check per table: `SELECT count(*) FROM po_scan_samples WHERE created_at IS NOT NULL AND created_at !~ '^d{4}-d{2}-d{2}[T ]d{2}:d{2}'` (expect 0).
+
+**Regression.** `tests/ocr-tab-myt.test.mjs`: the formatter turns `02:05Z` into `10:05` and `17:30Z` into the next day, and the route has no UTC `substr(created_at::text` bound left. It fails on the old code.
 
 ---
 
