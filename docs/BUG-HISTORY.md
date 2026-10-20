@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-345 (branch `feat/einvoice-myinvois-tracking`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
@@ -200,6 +201,12 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
+
+Found 2026-10-20 reading the form while adding Duplicate (owner 「duplicate 可以做」); not reproduced on prod, which would take a post. `OtherPartyPaymentForm` (the Receipts page's New Other Debtor Receipt, and the old Other Creditor Payments page) keeps the party picked after a post and clears its bills so they reload — but the bills load in an effect keyed on the party, the side and the payment being edited, none of which change on a post. The cleared list is read as "still loading" (it is tagged with no party), so the form said "Loading bills…" until the party was changed; nothing wrong was recorded.
+
+Fix = a counter bumped after each post is part of the effect's key, so the picked party's bills load again at once. Regression: `tests/finance-duplicate.test.mjs`.
 
 ## BUG-2026-10-20-345 — e-Invoice Generate failed for every invoice whose total had cents `finance` `e-invoice` 🟡
 

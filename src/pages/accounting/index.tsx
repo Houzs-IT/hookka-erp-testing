@@ -9365,20 +9365,26 @@ type PaymentGroup = {
 // payment in place (same number) — remount with a key so the state seeds
 // once; the bills it paid come back into the list at their pre-payment
 // outstanding so they stay re-allocatable.
-function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCancelEdit }: {
+function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCancelEdit, copyFrom = null }: {
   parties: OtherParty[]; accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR";
   editing: PaymentGroup | null; onSaved: () => void; onCancelEdit: () => void;
+  /** Duplicate (owner 2026-10-20): a NEW one for the same party and bank —
+   *  never its knock-offs (the bills are ticked again). Saving it closes the form. */
+  copyFrom?: PaymentGroup | null;
 }) {
   const { toast } = useToast();
   const today = new Date().toISOString().slice(0, 10);
   const banks = accounts.filter((a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH");
-  const [partyId, setPartyId] = useState(editing?.partyId ?? "");
-  const [bankAccountSel, setBankAccountSel] = useState(editing?.bankAccount ?? "");
+  const [partyId, setPartyId] = useState(editing?.partyId ?? copyFrom?.partyId ?? "");
+  const [bankAccountSel, setBankAccountSel] = useState(editing?.bankAccount ?? copyFrom?.bankAccount ?? "");
   const bankAccount = bankAccountSel || defaultBankCode(banks);
   const [date, setDate] = useState(editing?.date || today);
   const [reference, setReference] = useState("");
   // openBills carries the party it was loaded for; a mismatch = loading.
   const [openBills, setOpenBills] = useState<{ forParty: string; bills: OpenBill[] }>({ forParty: "", bills: [] });
+  // Bumped after a post: the party stays picked, so its bills reload from
+  // here (BUG-2026-10-20-346 — they used to stay on "Loading bills…").
+  const [billsVer, setBillsVer] = useState(0);
   const [rows, setRows] = useState<Record<string, { amountStr: string; full: boolean }>>(() => {
     const seeded: Record<string, { amountStr: string; full: boolean }> = {};
     for (const l of editing?.lines ?? []) if (l.amountSen > 0) seeded[l.billId] = { amountStr: (l.amountSen / 100).toFixed(2), full: false };
@@ -9417,7 +9423,7 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
       })
       .catch(() => {});
     return () => { dead = true; };
-  }, [partyId, side, editing]);
+  }, [partyId, side, editing, billsVer]);
   const bills = openBills.forParty === partyId ? openBills.bills : [];
   const billsLoading = !!partyId && openBills.forParty !== partyId;
 
@@ -9463,16 +9469,17 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
     // Fresh form for the next one (the party stays picked after a post, as before).
     setReference(""); setRows({});
     setOpenBills({ forParty: "", bills: [] });
-    if (editingNo) onCancelEdit();
+    setBillsVer((v) => v + 1);
+    if (editingNo || copyFrom) onCancelEdit();
     onSaved();
   };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[#3E6570]">{editingNo ? `Edit ${verb.toLowerCase()} ${editingNo}` : side === "CREDITOR" ? "New payment" : "New other debtor receipt"}</h3>
+        <h3 className="text-sm font-semibold text-[#3E6570]">{editingNo ? `Edit ${verb.toLowerCase()} ${editingNo}` : side === "CREDITOR" ? "New payment" : "New other debtor receipt"}{!editingNo && copyFrom && <span className="ml-2 text-[11px] font-normal text-[#9CA3AF]">copy of {copyFrom.paymentNo} — tick the bills again</span>}</h3>
         <div className="flex items-center gap-2">
-          {editingNo && <Button variant="outline" size="sm" onClick={onCancelEdit}>Cancel</Button>}
+          {(editingNo || copyFrom) && <Button variant="outline" size="sm" onClick={onCancelEdit}>Cancel</Button>}
           <Button variant="primary" size="sm" disabled={posting || !partyId || !bankAccount || totalSen <= 0 || !!allocMoneyError} onClick={handleSave}>
             {editingNo ? `Update ${verb.toLowerCase()}` : `Post ${verb.toLowerCase()}`}
           </Button>
@@ -11205,6 +11212,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Ladder actions in flight (single or batch) — buttons disable meanwhile.
   const [ladderBusy, setLadderBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Duplicate (owner 2026-10-20 「duplicate 可以做」): the number of the
+  // document a NEW voucher was copied from (shown in the form's title).
+  const [copyOf, setCopyOf] = useState<string | null>(null);
   // Editing a not-yet-posted voucher goes to PUT (plain replace); editing a
   // posted one goes to /restate (reverse + re-post under the same number).
   const [editingPosted, setEditingPosted] = useState(true);
@@ -11444,6 +11454,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
+    setCopyOf(null);
     setFormKind("EXPENSE");
     setPendingScanFiles([]);
     setForm(blankPvForm());
@@ -11838,6 +11849,65 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setShowForm(true);
   };
 
+  // Duplicate: a NEW voucher seeded from this one, dated today — its lines (or
+  // a transfer's accounts and amount), payee, paid-from and description; never
+  // its reference, bill no., notes or attachments. An AP payment copies the
+  // creditor, paid-from and description only — never its knock-offs (the
+  // design's rule): the bills are ticked again. Nothing is recorded until it
+  // is saved; the copy closes at once on Esc while nothing was changed.
+  const openCopy = (no: string, kind: "EXPENSE" | "AP", seed: { ap?: typeof apForm; form?: PvFormState; lines?: PvLineDraft[] }) => {
+    resetForm();
+    setCopyOf(no.startsWith("DRAFT-") ? "a draft" : no);
+    setFormKind(kind);
+    if (kind === "AP" && seed.ap) {
+      setApForm(seed.ap);
+      editBaseline.current = JSON.stringify([seed.ap, {}]);
+    } else {
+      const f = seed.form ?? blankPvForm();
+      const ls: PvLineDraft[] = seed.lines?.length ? seed.lines : [{ accountCode: "", description: "", amount: "" }];
+      setForm(f);
+      setLines(ls);
+      editBaseline.current = JSON.stringify([f, ls]);
+    }
+    setShowForm(true);
+  };
+  const copyApForm = (party: { kind: "SUPPLIER" | "OTHER"; id: string }, payFrom: string, description: string): typeof apForm => ({
+    date: new Date().toISOString().slice(0, 10), payFrom, partyKind: party.kind, partyId: party.id,
+    reference: "", description, advance: "", tfDue: "", tfInterest: "",
+  });
+  const startDuplicate = (r: PvRow) => {
+    if (r.pvKind === "AP") {
+      openCopy(r.pvNo, "AP", { ap: copyApForm({ kind: r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER", id: r.partyId ?? "" }, r.payFrom ?? "", r.description ?? "") });
+      return;
+    }
+    const isTransfer = r.pvKind === "TRANSFER";
+    openCopy(r.pvNo, "EXPENSE", {
+      form: {
+        ...blankPvForm(),
+        payee: r.payee ?? "", description: r.description ?? "", accrued: r.accrued === 1,
+        payFrom: r.payFrom ?? "", accrualAccount: r.accrualAccount ?? "", productLine: r.productLine ?? "",
+        mode: isTransfer ? "TRANSFER" : "PAYMENT",
+        transferTo: isTransfer ? (r.lines[0]?.accountCode ?? "") : "",
+        transferAmount: isTransfer ? (r.totalSen / 100).toFixed(2) : "",
+      },
+      lines: isTransfer ? [] : r.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) })),
+    });
+  };
+  // A row from another door: a supplier or other-creditor payment becomes a
+  // NEW AP payment to the same creditor from the same bank (bills ticked
+  // again); an old Fund Transfer becomes a NEW transfer voucher.
+  const startDuplicatePay = (g: PayRow) => {
+    if (g.pv) { startDuplicate(g.pv); return; }
+    if (g.sp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "SUPPLIER", id: g.sp.supplierId }, g.sp.bankAccount ?? "", "") }); return; }
+    if (g.ocp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "OTHER", id: g.ocp.partyId }, g.ocp.bankAccount ?? "", "") }); return; }
+    if (g.ft) {
+      openCopy(g.no, "EXPENSE", { form: {
+        ...blankPvForm(), mode: "TRANSFER", payFrom: g.ft.fromAccount, transferTo: g.ft.toAccount,
+        transferAmount: (g.ft.amountSen / 100).toFixed(2), description: g.ft.description ?? "",
+      } });
+    }
+  };
+
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
 
   // OCR → the voucher form (owner 2026-10-01, plan batch 3). Every receipt in
@@ -11932,7 +12002,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // voucher counts as keyed once it holds a payee, text, an account, an amount
   // or a scan; an edited one once it differs from the voucher as it opened.
   const formKeyed = (): boolean => {
-    if (editingId) return JSON.stringify(formKind === "AP" ? [apForm, apAlloc] : [form, lines]) !== editBaseline.current;
+    if (editingId || copyOf) return JSON.stringify(formKind === "AP" ? [apForm, apAlloc] : [form, lines]) !== editBaseline.current;
     if (pendingScanFiles.length > 0) return true;
     if (formKind === "AP") return !!(apForm.partyId || apForm.payFrom || apForm.reference.trim() || apForm.description.trim() || apForm.advance.trim() || Object.values(apAlloc).some((v) => v.trim()));
     return !!(form.payee.trim() || form.description.trim() || form.reference.trim() || form.billNo.trim() || form.notes.trim() || form.payFrom || form.accrualAccount
@@ -11973,6 +12043,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       [
         { label: "Print", action: () => void printPvWithDetail(r) },
         ...((r.attachmentCount ?? 0) > 0 ? [{ label: bundleBusy === r.id ? "Print + files (preparing…)" : "Print + files", disabled: bundleBusy === r.id, action: () => void printPvBundle(r) }] : []),
+        { label: "Duplicate", action: () => startDuplicate(r) },
       ],
       lifecycleMenuItems(r.lifecycleState, {
         void: () => void handleLifecycle(r.id, r.pvNo, "void"),
@@ -11989,6 +12060,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       ...(g.ft && g.state === "ACTIVE" ? [{ label: "Edit description", action: () => setEditFtNo(g.no) }] : []),
       { label: "Print", action: () => void printPayRows([g]) },
       { label: `Open on the ${PAY_DOOR_LABEL[g.door]} page ↗`, action: () => navigate(foreignHref(g)) },
+      { label: g.ft ? "Duplicate as a transfer" : "Duplicate as an AP payment", action: () => startDuplicatePay(g) },
     ],
     lifecycleMenuItems(g.state, {
       void: () => void handleForeignLifecycle(g, "void"),
@@ -12052,7 +12124,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <div className="mx-auto my-4 w-full max-w-5xl rounded-lg bg-[#F7F5F2] shadow-2xl">
               <div className="flex items-center justify-between px-5 py-3 rounded-t-lg bg-white border-b border-[#E2DDD8]">
                 <h3 className="text-base font-semibold text-[#1F1D1B]">
-                  {editingRow ? `Edit AP payment ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : "New AP payment"}
+                  {editingRow ? `Edit AP payment ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : copyOf ? `New AP payment · copy of ${copyOf}` : "New AP payment"}
                   <span className="ml-2 text-[11px] font-normal text-[#9CA3AF]">DR creditor control · CR Paid from — posted when approved</span>
                 </h3>
                 <button onClick={resetForm} title="Close without saving" className="text-[#9CA3AF] hover:text-[#1F1D1B] text-lg leading-none cursor-pointer">✕</button>
@@ -12311,7 +12383,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <div className="mx-auto my-4 w-full max-w-5xl rounded-lg bg-[#F7F5F2] shadow-2xl">
               <div className="flex items-center justify-between px-5 py-3 rounded-t-lg bg-white border-b border-[#E2DDD8]">
                 <h3 className="text-base font-semibold text-[#1F1D1B]">
-                  {editingRow ? `Edit ${isTransfer ? "transfer" : "payment voucher"} ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : isTransfer ? "New transfer" : "New payment voucher"}
+                  {editingRow ? `Edit ${isTransfer ? "transfer" : "payment voucher"} ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : `${isTransfer ? "New transfer" : "New payment voucher"}${copyOf ? ` · copy of ${copyOf}` : ""}`}
                 </h3>
                 <button onClick={resetForm} title="Close without saving" className="text-[#9CA3AF] hover:text-[#1F1D1B] text-lg leading-none cursor-pointer">✕</button>
               </div>
@@ -12619,6 +12691,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             actions={<>
               <Button variant="outline" size="sm" onClick={() => void printPvWithDetail(r)}><Printer className="h-4 w-4" /> Print</Button>
               {(r.attachmentCount ?? 0) > 0 && <Button variant="outline" size="sm" disabled={bundleBusy === r.id} onClick={() => void printPvBundle(r)}><Printer className="h-4 w-4" /> {bundleBusy === r.id ? "Preparing…" : "Print + files"}</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); startDuplicate(r); }}>Duplicate</Button>
               {r.status !== "VOID" && st === "DRAFT" && <>
                 <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => { close(); startEdit(r); }}>Edit</Button>
                 <Button variant="primary" size="sm" disabled={ladderBusy} onClick={() => void handleLadder(r, "prepare")}>Prepare →</Button>
@@ -12727,6 +12800,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             actions={<>
               <Button variant="outline" size="sm" onClick={() => void printPayRows([g])}><Printer className="h-4 w-4" /> Print</Button>
               <Link to={foreignHref(g)}><Button variant="outline" size="sm">Open on its page ↗</Button></Link>
+              <Button variant="outline" size="sm" onClick={() => { close(); startDuplicatePay(g); }}>{g.ft ? "Duplicate as a transfer" : "Duplicate as an AP payment"}</Button>
               {g.ft && g.state === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); setEditFtNo(g.no); }}>Edit description</Button>}
               {g.state === "ACTIVE"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void handleForeignLifecycle(g, "void"); }}>Void</Button>
@@ -12781,18 +12855,21 @@ type OrRow = {
 // With `editing` (owner 2026-10-17 「可以」) the same form edits a posted
 // receipt: same OR number, the server reverses the posted entry and re-posts
 // the edited one (/official-receipts/:id/restate).
-function OfficialReceiptForm({ accounts, editing, onSaved, onCancel }: { accounts: ChartOfAccount[]; editing?: OrRow | null; onSaved: () => void; onCancel: () => void }) {
+// With `copyFrom` (Duplicate, owner 2026-10-20) it is a NEW receipt holding
+// that one's lines, dated today.
+function OfficialReceiptForm({ accounts, editing, onSaved, onCancel, copyFrom = null }: { accounts: ChartOfAccount[]; editing?: OrRow | null; onSaved: () => void; onCancel: () => void; copyFrom?: OrRow | null }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const seed = editing ?? copyFrom;
   const [form, setForm] = useState({
     date: editing ? String(editing.date ?? "").slice(0, 10) : new Date().toISOString().slice(0, 10),
-    receivedFrom: editing?.receivedFrom ?? "",
-    description: editing?.description ?? "",
-    payTo: editing?.payTo ?? "",
+    receivedFrom: seed?.receivedFrom ?? "",
+    description: seed?.description ?? "",
+    payTo: seed?.payTo ?? "",
   });
   const [lines, setLines] = useState<{ accountCode: string; description: string; amount: string }[]>(
-    editing && editing.lines.length > 0
-      ? editing.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) }))
+    seed && seed.lines.length > 0
+      ? seed.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) }))
       : [{ accountCode: "", description: "", amount: "" }],
   );
 
@@ -12865,7 +12942,7 @@ function OfficialReceiptForm({ accounts, editing, onSaved, onCancel }: { account
         {editing ? (
           <div className="text-sm font-semibold text-[#1F1D1B]">Edit Official Receipt {editing.orNo} <span className="text-[11px] font-normal text-[#9CA3AF]">same number — the posted entry is reversed and the edited one posted</span></div>
         ) : (
-          <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">sundry income / recovery — DR bank, CR the income account</span></div>
+          <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">{copyFrom ? `copy of ${copyFrom.orNo} — check the date and the amounts` : "sundry income / recovery — DR bank, CR the income account"}</span></div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -13013,8 +13090,15 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [custEditing, setCustEditing] = useState<PaymentRecord | null>(null);
   const [odEditing, setOdEditing] = useState<PaymentGroup | null>(null);
   const [orEditing, setOrEditing] = useState<OrRow | null>(null);
-  const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setDoor(door === k ? null : k); };
-  const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); setOrEditing(null); };
+  // Duplicate (owner 2026-10-20 「duplicate 可以做」): the same door opened as a
+  // NEW receipt seeded from this one — never its knock-offs; nothing is
+  // recorded until it is saved.
+  const [custCopy, setCustCopy] = useState<PaymentRecord | null>(null);
+  const [odCopy, setOdCopy] = useState<PaymentGroup | null>(null);
+  const [orCopy, setOrCopy] = useState<OrRow | null>(null);
+  const clearForms = () => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setCustCopy(null); setOdCopy(null); setOrCopy(null); };
+  const openDoor = (k: ReceiptKind) => { clearForms(); setDoor(door === k ? null : k); };
+  const closeDoor = () => { setDoor(null); clearForms(); };
 
   const rows = useMemo<ReceiptHubRow[]>(() => [
     ...(cust ?? []).map((p): ReceiptHubRow => ({
@@ -13118,9 +13202,17 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else toast.error(j?.error || `${verb} failed`);
   };
   const startEdit = (r: ReceiptHubRow) => {
+    setCustCopy(null); setOdCopy(null); setOrCopy(null);
     if (r.cust) { setOdEditing(null); setOrEditing(null); setCustEditing(r.cust); setDoor("CUSTOMER"); }
     else if (r.od) { setCustEditing(null); setOrEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
     else if (r.or) { setCustEditing(null); setOdEditing(null); setOrEditing(r.or); setDoor("OFFICIAL"); }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const startDuplicate = (r: ReceiptHubRow) => {
+    clearForms();
+    if (r.cust) { setCustCopy(r.cust); setDoor("CUSTOMER"); }
+    else if (r.od) { setOdCopy(r.od); setDoor("OTHER"); }
+    else if (r.or) { setOrCopy(r.or); setDoor("OFFICIAL"); }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const kindChip = receiptKindChip;
@@ -13156,6 +13248,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     [
       { label: "Print", action: () => printVoucher(voucherOf(r)) },
       ...(r.lifecycleState === "ACTIVE" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
+      { label: "Duplicate", action: () => startDuplicate(r) },
     ],
     lifecycleMenuItems(r.lifecycleState, {
       void: () => void lifecycle(r, "void"),
@@ -13176,13 +13269,13 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       </FinanceTitleActions>
 
       {door === "CUSTOMER" && (
-        <CustomerReceiptForm key={custEditing?.id ?? "new"} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} />
+        <CustomerReceiptForm key={custEditing?.id ?? (custCopy ? `copy:${custCopy.id}` : "new")} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={custCopy} />
       )}
       {door === "OTHER" && (
-        <OtherPartyPaymentForm key={odEditing?.paymentNo ?? "new"} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} />
+        <OtherPartyPaymentForm key={odEditing?.paymentNo ?? (odCopy ? `copy:${odCopy.paymentNo}` : "new")} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={odCopy} />
       )}
       {door === "OFFICIAL" && (
-        <OfficialReceiptForm key={orEditing?.id ?? "new"} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
+        <OfficialReceiptForm key={orEditing?.id ?? (orCopy ? `copy:${orCopy.id}` : "new")} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} copyFrom={orCopy} />
       )}
 
       <BatchActionsBar
@@ -13250,6 +13343,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             actions={<>
               <Button variant="outline" size="sm" onClick={() => printVoucher(voucherOf(r))}><Printer className="h-4 w-4" /> Print</Button>
               {r.lifecycleState === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); startDuplicate(r); }}>Duplicate</Button>
               {r.lifecycleState === "ACTIVE"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void lifecycle(r, "void"); }}>Void</Button>
                 : r.lifecycleState === "VOID"

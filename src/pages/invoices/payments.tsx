@@ -40,10 +40,14 @@ type CustomerOption = {
 // same form + its own list. `editing` = re-state that receipt in place (same
 // number); remount with a key to switch receipts (state seeds once).
 // ---------------------------------------------------------------------------
-export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
+export function CustomerReceiptForm({ editing, onSaved, onCancelEdit, copyFrom = null }: {
   editing: PaymentRecord | null;
   onSaved: () => void;
   onCancelEdit: () => void;
+  /** Duplicate (owner 2026-10-20 「duplicate 可以做」): a NEW receipt seeded
+   *  from this one — customer, method and amount; never its knock-offs, its
+   *  reference or its date. Saving it closes the form. */
+  copyFrom?: PaymentRecord | null;
 }) {
   const { data: custResp } = useCachedJson<{ success?: boolean; data?: { id: string; name: string }[] }>("/api/customers");
   const { data: invResp, refresh: refreshInvoices } = useCachedJson<{ success?: boolean; data?: Invoice[] }>("/api/invoices");
@@ -57,8 +61,8 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
   );
 
   // Create form state — seeded from the receipt being edited, if any.
-  const [selectedCustomerId, setSelectedCustomerId] = useState(editing?.customerId ?? "");
-  const [method, setMethod] = useState<PaymentRecord["method"]>(editing?.method ?? "BANK_TRANSFER");
+  const [selectedCustomerId, setSelectedCustomerId] = useState(editing?.customerId ?? copyFrom?.customerId ?? "");
+  const [method, setMethod] = useState<PaymentRecord["method"]>(editing?.method ?? copyFrom?.method ?? "BANK_TRANSFER");
   const [reference, setReference] = useState(editing?.reference ?? "");
   // Document date (owner 2026-07-07): receipts are often keyed in days after
   // the money landed — the operator picks the real date; defaults to today.
@@ -156,8 +160,9 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
   // That keeps the old behaviour exactly for anyone who just ticks invoices.
   // Editing seeds the receipt's OWN amount, not the allocation sum — editing
   // an advance must not silently shrink it to whatever is knocked off so far.
-  const [amountStr, setAmountStr] = useState(editing ? ((Number(editing.amount) || 0) / 100).toFixed(2) : "");
-  const [amountTouched, setAmountTouched] = useState(!!editing);
+  const amountSeed = editing ?? copyFrom;
+  const [amountStr, setAmountStr] = useState(amountSeed ? ((Number(amountSeed.amount) || 0) / 100).toFixed(2) : "");
+  const [amountTouched, setAmountTouched] = useState(!!amountSeed);
   // BUG-2026-08-13-095 - the Received box is `type="text"`, so a receipt typed
   // "12,000" was recorded as RM 12.00 against the customer. `canSubmit` below
   // now refuses while the box is unreadable, so this 0 is never posted.
@@ -211,6 +216,7 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
         setAmountTouched(false);
         setAmountStr("");
         afterWrite();
+        if (copyFrom) onCancelEdit();
       }
     } catch {
       // ignore
@@ -250,9 +256,9 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>{editingId ? `Edit Receipt ${editing?.receiptNumber ?? ""}` : "Record Payment"}</CardTitle>
+          <CardTitle>{editingId ? `Edit Receipt ${editing?.receiptNumber ?? ""}` : copyFrom ? `Record Payment · copy of ${copyFrom.receiptNumber ?? ""}` : "Record Payment"}</CardTitle>
           <div className="flex items-center gap-2">
-            {editingId && (
+            {(editingId || copyFrom) && (
               <Button variant="outline" size="sm" onClick={cancelEdit}>Cancel</Button>
             )}
             <Button onClick={handleSave} disabled={creating || !canSubmit} size="sm">
