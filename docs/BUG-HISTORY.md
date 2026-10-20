@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: entries BUG-2026-10-20-365 and -366 added (branch `claude/t006-cn-release-main-324fa3`, T-006 R4 port to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -201,6 +202,18 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-366 — Voiding or deleting an invoice made from a consignment note left the note stuck at FULLY_SOLD `consignment` `invoices` 🟡
+
+T-006 R4, ported from staging (plan `docs/T-006-TRANSFER-CONVERT-FIX-PLAN.md` on `staging`). Convert-to-invoice flips the CN to FULLY_SOLD and links it one-way (`consignment_notes.converted_invoice_id`); the invoice's void and DRAFT-delete only released a delivery order, so the CN stayed FULLY_SOLD, linked to a dead invoice, and could never be converted again. Staging's release restored `statusBeforeConversion ?? "PARTIALLY_SOLD"` with an UPDATE that had no status condition, so a CN that had since moved on (CLOSED, RETURNED, edited back) silently reopened, and a CN converted before the column existed got a guessed status.
+
+Fix = convert records the CN's status as read in `status_before_conversion` (migration 0244, self-applied before the convert batch; staging's 0234). Void and delete build the release in the same batch (`buildInvoiceDeathCnReleaseStatements`, `consignment-note-shared.ts`): it refuses with 409 when the CN is no longer FULLY_SOLD, the prior status is missing / not a CN status, or the invoice has no creation time to match the conversion by; a row-locked guard statement aborts the batch (409) if the CN moves on between the read and the write; the UPDATE is `WHERE id = ? AND status = 'FULLY_SOLD' AND convertedInvoiceId = ?`; items and units the conversion stamped are put back; the CO is reopened after the batch. On DELETE the release runs before `DELETE FROM invoices` (the FK is ON DELETE SET NULL). Regression: `tests/cn-invoice-death-release.test.mjs`. Not run against Postgres: the guard SQL is checked through `translateSql` only.
+
+## BUG-2026-10-20-365 — Converting a consignment note to an invoice failed on a column customers does not have `consignment` `invoices` 🟡
+
+HK-0109. `POST /api/consignment-notes/:id/convert-to-invoice` bumped the customer's A/R with `UPDATE customers SET outstandingSen = …, updated_at = ?` (since commit 7701e1aa, 2026-05-04), and `POST /:id/return` did the same on a converted CN. customers has no updated_at: not in 0001_init, not added by any later migration or self-apply, not in `tests/db-schema.json`. The write failed, so the whole convert batch rolled back (staging measured it 2026-09-24: no CN there had ever converted).
+
+Fix = both writes drop `updated_at`. Regression: `tests/cn-invoice-death-release.test.mjs` runs the real convert handler and checks every column it writes on customers, and scans every `UPDATE customers SET` in `src/api` against the schema fixture.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 
