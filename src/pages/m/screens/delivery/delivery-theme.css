@@ -1,0 +1,78 @@
+/* ==========================================================================
+   Delivery screens — the Claude Design `Delivery.dc.html` palette.
+
+   LIGHT values are the prototype's exact hex (the design is the source of
+   truth for colour). The prototype is light-only, so DARK values are the
+   nearest readable equivalents on the /m dark surfaces. Everything is
+   --dl- prefixed and read only by src/pages/m/screens/delivery/*, so no other
+   module changes. Prototype colours that already equal an M.* token in light
+   mode (#1F1D1B raisin, #4D4630 ink, #6B5C32 taupe, #FAF8F4 paper, #FFFFFF
+   card, #9CA3AF faint, #9A9082 muted, #E2DDD8 hairline) use that token.
+   ========================================================================== */
+body[data-theme="light"],
+body:not([data-theme]) {
+  --dl-track: #F0ECE9;          /* segmented track, card dividers, est. cost row */
+  --dl-body: #3A352C;           /* chip text, confirm / banner body text */
+  --dl-icon: #8B7A4E;           /* fact / logistics icons, chevrons */
+  --dl-ring: #C4BDB2;           /* unchecked checkbox + radio ring */
+  --dl-disabled: #A8A196;       /* disabled button text, pending chain dot */
+  --dl-note-bg: #FBF7EA;        /* tab note / info note */
+  --dl-tile: #F4EFE6;           /* menu icon tile, SO chip */
+  --dl-line: #E6E0D9;           /* timeline / chain pending line, bar top line */
+  --dl-dot-ring: #D9D2C6;       /* pending timeline dot ring */
+  --dl-step-num: #6B7280;       /* pending timeline number */
+  --dl-linked: #2F6E62;         /* related-document linked node */
+  --dl-linked-line: #A9CCC3;    /* related-document connector */
+  --dl-items-bg: #E0EDF0;       /* create sheet items box */
+  --dl-items-title: #3E6570;
+  --dl-items-row: #2F5560;
+  --dl-overlay: rgba(31, 29, 27, 0.45);
+
+  --dl-pill-neutral-bg: #EEEBE6; --dl-pill-neutral-fg: #4B5260;
+  --dl-pill-info-bg: #E0EDF0;    --dl-pill-info-fg: #3E6570;
+  --dl-pill-success-bg: #EEF3E4; --dl-pill-success-fg: #4F7C3A;
+  --dl-pill-warning-bg: #FAEFCB; --dl-pill-warning-fg: #85600F;
+  --dl-pill-danger-bg: #F9E1DA;  --dl-pill-danger-fg: #9A3A2D;
+
+  --dl-sem-neutral: #6B7280;
+  --dl-sem-info: #3E6570;
+  --dl-sem-success: #4F7C3A;
+  --dl-sem-warning: #9C6F1E;
+  --dl-sem-danger: #9A3A2D;
+}
+
+body[data-theme="dark"] {
+  --dl-track: #34302A;
+  --dl-body: #D4C9A8;
+  --dl-icon: #B59A5C;
+  --dl-ring: #6B6353;
+  --dl-disabled: #6B6353;
+  --dl-note-bg: rgba(201, 169, 97, 0.14);
+  --dl-tile: #34302A;
+  --dl-line: #3A352C;
+  --dl-dot-ring: #4A443A;
+  --dl-step-num: #8A8170;
+  --dl-linked: #5FA597;
+  --dl-linked-line: #3E6E64;
+  --dl-items-bg: rgba(111, 163, 176, 0.16);
+  --dl-items-title: #6FA3B0;
+  --dl-items-row: #B9CED3;
+  --dl-overlay: rgba(0, 0, 0, 0.55);
+
+  --dl-pill-neutral-bg: rgba(155, 160, 170, 0.18); --dl-pill-neutral-fg: #C9CCD2;
+  --dl-pill-info-bg: rgba(111, 163, 176, 0.18);    --dl-pill-info-fg: #6FA3B0;
+  --dl-pill-success-bg: rgba(143, 190, 120, 0.18); --dl-pill-success-fg: #8FBE78;
+  --dl-pill-warning-bg: rgba(217, 164, 65, 0.18);  --dl-pill-warning-fg: #D9A441;
+  --dl-pill-danger-bg: rgba(214, 123, 107, 0.18);  --dl-pill-danger-fg: #D67B6B;
+
+  --dl-sem-neutral: #8A8170;
+  --dl-sem-info: #6FA3B0;
+  --dl-sem-success: #8FBE78;
+  --dl-sem-warning: #D9A441;
+  --dl-sem-danger: #D67B6B;
+}
+
+/* Placeholder colour (#9CA3AF in the prototype) — inline styles cannot reach it. */
+.dl-input::placeholder {
+  color: var(--m-faint);
+}

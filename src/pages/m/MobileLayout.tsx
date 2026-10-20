@@ -87,6 +87,30 @@ function FinanceRouteShell() {
   );
 }
 
+// The Delivery screens are code-split too (2026-10-20): the phone redesign
+// (lists, create sheets, DO detail) is ~85 kB that only Delivery needs, so the
+// shell chunk stays the size it was.
+const DeliveryScreenLazy = lazy(() =>
+  import("./screens/delivery/DeliveryScreen").then((m) => ({ default: m.DeliveryScreen })),
+);
+const DeliveryDetailLazy = lazy(() =>
+  import("./screens/delivery/DeliveryDetailScreen").then((m) => ({ default: m.DeliveryDetailScreen })),
+);
+function DeliveryRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <DeliveryScreenLazy />
+    </Suspense>
+  );
+}
+function DeliveryDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <DeliveryDetailLazy />
+    </Suspense>
+  );
+}
+
 function DashboardRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -114,6 +138,10 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // Phone: SKU Master | Catalog hub. Tablet: ProductsScreen renders the
   // generic ModuleListScreen itself, so tablet is unchanged.
   products: ProductsScreen,
+  // Claude Design `Delivery.dc.html` on phone AND tablet (tabs, cards, Create
+  // DO / Packing List, bulk moves); the screen adapts to tablet widths and to
+  // the split view's list pane itself.
+  delivery: DeliveryRoute,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -123,6 +151,8 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   sales: SalesDetailScreen,
   production: ProductionDetailScreen,
   "mail-center": MailThreadScreen,
+  // The DO detail with desktop's per-status actions, phone and tablet.
+  delivery: DeliveryDetailRoute,
 };
 
 export default function MobileLayout() {

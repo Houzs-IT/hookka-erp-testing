@@ -486,6 +486,13 @@ const pageSrc = readFileSync(
   new URL("../src/pages/delivery/index.tsx", import.meta.url),
   "utf8",
 );
+// The one-DO sender + the invoice-PDF renderer moved out of the page,
+// unchanged, so the phone Delivery screens share the same code path
+// (2026-10-20).
+const noticeSrc = readFileSync(
+  new URL("../src/lib/delivery-customer-notice.ts", import.meta.url),
+  "utf8",
+);
 
 function count(haystack, regex) {
   return (haystack.match(regex) ?? []).length;
@@ -636,19 +643,23 @@ test("frontend: bulk + single transition paths fire the notify flow", () => {
   // The one-DO sender posts to the endpoint with the PDF + breakdown built
   // from ONE print-extras object.
   assert.match(
-    pageSrc,
-    /async function sendCustomerNotice\(\s*row: DeliveryOrderRow,\s*kind: "DISPATCHED" \| "DELIVERED",/,
+    noticeSrc,
+    /export async function sendCustomerNotice\(\s*row: NoticeRow,\s*kind: "DISPATCHED" \| "DELIVERED",/,
   );
-  assert.match(pageSrc, /\/notify-customer`,/);
-  assert.match(pageSrc, /buildDoComponentBreakdown\(row\.items, extras\)/);
+  assert.match(
+    pageSrc,
+    /import \{ renderDeliveredInvoicePdf, sendCustomerNotice \} from "@\/lib\/delivery-customer-notice";/,
+  );
+  assert.match(noticeSrc, /\/notify-customer`,/);
+  assert.match(noticeSrc, /buildDoComponentBreakdown\(row\.items, extras\)/);
   // The customer email carries the SAME document the operator downloads/prints
   // (owner 2026-07-13: unify on ONE template). The Download/Print button now
   // uses the unified pdf-lib generator (its earlier "歪" alignment + dashed-
   // line issues are fixed), so the email renders via the SAME unified path —
   // renderUnifiedDoBase64 / renderUnifiedInvoiceBase64 — reversing the stale
   // 2026-07-04 "use the jsPDF print generator" note.
-  assert.match(pageSrc, /renderUnifiedDoBase64\(/);
-  assert.match(pageSrc, /renderUnifiedInvoiceBase64\(/);
+  assert.match(noticeSrc, /renderUnifiedDoBase64\(/);
+  assert.match(noticeSrc, /renderUnifiedInvoiceBase64\(/);
   // runBulkDoTransition (bulk buttons + PL-level bulk reuse) notifies every
   // DO that actually transitioned, mapping LOADED→DISPATCHED.
   assert.match(
@@ -927,7 +938,7 @@ test("backend choke-point: double-send is prevented by the SAME idempotency clai
   );
   // The FE trigger is NOT removed (it delivers the nicer branded PDF when it
   // wins the race); the backend call is the catch-all. Both still present.
-  assert.match(pageSrc, /\/notify-customer`,/);
+  assert.match(noticeSrc, /\/notify-customer`,/);
   assert.match(doRouteSrc, /fireCustomerNoticeBestEffort\(c, id, /);
 });
 

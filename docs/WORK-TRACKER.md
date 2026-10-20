@@ -334,6 +334,23 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-20 — 🟡 Mobile Delivery redesign (/m/delivery) from Claude Design `Delivery.dc.html` (branch `design/mobile-delivery-redesign` → `staging`; frontend only) — built locally, uncommitted, awaiting the owner's review
+
+Status 2026-10-20 (fidelity pass, owner-approved): every Section B visual mismatch fixed to `Delivery.dc.html` (chips, Truck / Users switch, card metas, fixed bottom bars, confirm-line icons, pill colours, search, chain connectors, sheet styling); Sales typography kept (selected chip 600); Pending Delivery select → fixed Packing List / Create DO bar; tablet now runs the same Delivery screens (grid + split panes) instead of the broken generic path; Delivery POD sheet in the design layout, shared PodSheet back to its original look with the corrected rules. Rendered in headless Edge against fixture data (real /m shell) side by side with the prototype at 320 / 390 / 414 / 820 / 1180 + dark — no live API / DB touched.
+Earlier status 2026-10-20: phases 1–2 built (rules module + tests, phone list + detail + sheets, tablet config fixes, POD sheet to desktop rules, customer-notice helpers shared). `tsc -p tsconfig.app.json` clean except two pre-existing errors (`dashboard-b/charts.tsx`, `dashboards/EmployeesView.tsx`); full suite 6572 pass / 4 fail — the same 4 fail on clean `upstream/staging`. NOT yet seen in a browser (no browser tool in the session) — owner to click through on the sandbox before commit.
+
+Owner asks (2026-10-20), after the read-only audit of the prototype + `design_handoff_delivery_mobile/README.md` against the desktop + mobile code:
+
+1. 🔵 Convert to Invoice: keep it only where the existing workflow offers it (DELIVERED, not incomplete); the confirm text must say it updates the DO status and does not create an invoice (DELIVERED → INVOICED is a bare flip, `_helpers.ts` ~4388; the invoice is created on delivery).
+2. 🔵 Customer emails: follow the desktop list-page flow (`notify-customer` after a transition); never say an email was sent unless that call actually queued it.
+3. 🔵 Overdue: the desktop rule (`deliveryDate`, `calculateOverdueDays` in `delivery/detail.tsx`), not the prototype's expected-DD rule.
+4. 🔵 Include Bulk Mark Delivered, Create DO and Create Packing List — same validations, API calls and permission gates as desktop; no new business logic.
+5. 🔵 Branch `design/mobile-delivery-redesign` from the latest `upstream/staging`; never touch or merge `main`.
+6. 🔵 Existing /m typography, `M.*` tokens and shared mobile components; `Delivery.dc.html` is the layout reference; apply the audit's adjustments (POD rule = name + signature-or-photo, one customer + one hub per DO, `/ready-planning` POs for Pending Delivery, per-tab server paging, `driverName` = 3PL provider, no invoice link from the DO payload).
+7. 🔵 Desktop behaviour unchanged; no backend / DB / API changes.
+8. 🔵 Phased, with relevant tests run per phase.
+9. 🟡 No commit / push / PR / deploy without the owner's approval.
+
 ## 2026-10-19 — 🔵 Dashboard Operations: a Day view, and click a day on the month chart (branch `feat/dashboard-ops-day-view` → `staging`)
 
 Owner asks (2026-10-19): days should show each day's performance, and on the month view a click on the chart should open that day (as the pre-sync staging dashboard did).
