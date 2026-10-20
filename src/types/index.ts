@@ -999,7 +999,7 @@ export type SupplierMaterialBinding = {
    */
   supplierDescription?: string;
   unitPrice: number;
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   leadTimeDays: number;
   paymentTerms: string;
   moq: number;
@@ -1018,7 +1018,7 @@ export type PriceHistory = {
   materialCode: string;
   oldPrice: number;
   newPrice: number;
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   changedDate: string;
   // The date the price takes effect (effective-dated model). Falls back to
   // changedDate for rows that predate the column.
@@ -1228,7 +1228,7 @@ export type GoodsInTransit = {
   actualArrival: string | null;
   customsClearanceDate: string | null;
   customsStatus: "N/A" | "PENDING" | "CLEARED" | "HELD";
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   productCost: number;
   shippingCost: number;
   customsDuty: number;

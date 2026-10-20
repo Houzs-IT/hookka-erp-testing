@@ -1264,7 +1264,7 @@ export default function GRNDetailPage() {
                         className="flex h-10 w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/20 focus:border-[#6B5C32]"
                       >
                         <option value="">MYR (default)</option>
-                        <option value="RMB">RMB</option>
+                        <option value="CNY">CNY</option>
                         <option value="USD">USD</option>
                         <option value="EUR">EUR</option>
                       </select>
