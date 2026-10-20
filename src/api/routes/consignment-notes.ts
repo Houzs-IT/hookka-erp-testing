@@ -44,6 +44,7 @@ import { getOrgId, withOrgScope } from "../lib/tenant";
 import { loadCnValueMap, loadCnCustomerRefMap } from "../lib/cn-value";
 import { emitAudit } from "../lib/audit";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { customerScopeSql } from "../lib/customer-scope";
 import { enqueueEmail } from "../lib/email-outbox";
 import {
@@ -1441,7 +1442,7 @@ app.post("/:id/return", async (c) => {
 //      yet set. Writes converted_invoice_id pointing at the new invoice.
 //   7. Marks every consignment_items row status='SOLD' + soldDate=now.
 // ---------------------------------------------------------------------------
-app.post("/:id/convert-to-invoice", async (c) => {
+app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
   const denied = await requirePermission(c, "consignment-notes", "create");
   if (denied) return denied;
   try {
