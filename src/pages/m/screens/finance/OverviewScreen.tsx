@@ -6,7 +6,8 @@
 // raw material and direct labour as a % of sales (shareOfSales, as the
 // desktop). A month before the books opened shows "—", never 0. Each month's
 // point on a percentage chart carries its figure (owner 2026-10-20 「手机版的
-// overview 每个月份的点没有percentage」) — a phone has no hover.
+// overview 每个月份的点没有percentage」) — a phone has no hover. Past six months
+// every other label sits under its point, a size smaller, so twelve fit.
 // ---------------------------------------------------------------------------
 import { useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
@@ -16,7 +17,7 @@ import { fmtPct } from "@/lib/finance-money";
 import { MobileCard } from "../../components";
 import { M } from "../../theme";
 import { FinanceHeader, FinanceNote, FinanceSwitch } from "./finance-shell";
-import { fmtMoney, pctPointLabel } from "./m-finance-lib";
+import { fmtMoney, pctLabelBelow, pctPointLabel, PCT_LABELS_ONE_ROW } from "./m-finance-lib";
 
 type Range = "3" | "6" | "12";
 const RANGES: { key: Range; label: string }[] = [
@@ -90,14 +91,26 @@ export function OverviewScreen() {
       </BarChart>
     </ResponsiveContainer>
   );
+  const crowded = data.length > PCT_LABELS_ONE_ROW;
+  const pctLabel = (color: string) => (p: { x?: unknown; y?: unknown; value?: unknown; index?: number }) => {
+    const text = pctPointLabel(p.value);
+    const x = Number(p.x), y = Number(p.y);
+    if (!text || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const below = pctLabelBelow(p.index ?? 0, data.length);
+    return (
+      <text x={x} y={below ? y + 15 : y - 8} textAnchor="middle" fontSize={crowded ? 10 : 11} fontWeight={600} fill={color}>
+        {text}
+      </text>
+    );
+  };
   const pctLine = (key: "rmPct" | "dlPct", color: string) => (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 20, right: 12, left: 0, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 20, right: 12, left: 0, bottom: crowded ? 6 : 0 }}>
         <CartesianGrid vertical={false} stroke="#EEF1F5" />
         <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} padding={{ left: 22, right: 22 }} />
         <YAxis tick={tick} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={38} />
         <Line type="monotone" dataKey={key} stroke={color} strokeWidth={2} dot={{ r: 3 }} connectNulls isAnimationActive={false}>
-          <LabelList dataKey={key} position="top" offset={8} formatter={pctPointLabel} style={{ fontSize: 11, fontWeight: 600, fill: color }} />
+          <LabelList dataKey={key} content={pctLabel(color)} />
         </Line>
       </LineChart>
     </ResponsiveContainer>
