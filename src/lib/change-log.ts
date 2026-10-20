@@ -414,6 +414,7 @@ export const ACTION_LABEL: Record<string, string> = {
   detach: "File removed",
   settle: "Settled",
   dispose: "Disposed",
+  restore: "Restored",
   describe: "Description changed",
   match: "Matched",
   "match-group": "Matched",
