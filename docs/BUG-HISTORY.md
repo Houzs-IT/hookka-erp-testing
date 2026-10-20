@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: BUG-2026-10-20-347 gains its PO-side fix (same branch `fix/hk0108-posted-grn-line-pairing`, to main): the correction now moves each line's own PO line.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-347 (branch `fix/hk0108-posted-grn-line-pairing`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
@@ -205,9 +206,9 @@ Entries themselves stay newest-first.
 
 ## BUG-2026-10-20-347 — Editing a received GRN could correct the wrong line `procurement` `grn` 🟡
 
-HK-0108, the POSTED-edit sibling of BUG-2026-10-19-340 (HK-0107). Prod impact unmeasured. On a received (POSTED) GRN whose lines' ids and PO-line order differ (e.g. a multi-PO receipt), correcting one line's accepted qty could land on another line, so its stock, cost and PO received qty moved instead.
+HK-0108, the POSTED-edit sibling of BUG-2026-10-19-340 (HK-0107). Prod impact unmeasured. On a received (POSTED) GRN whose lines' ids and PO-line order differ (e.g. a multi-PO receipt), correcting one line's accepted qty could land on another line, so its stock, cost and PO received qty moved instead. Even on the right line, the PO received qty moved on the header PO's line at the same position, not the line's own PO line, so correcting a PO-2 line moved PO-1.
 
-Cause: GET returns the lines sorted by `poItemIndex` (`rowToGRN`), but `PUT /:id` on a POSTED GRN read the stored lines `ORDER BY id` and paired them with the body lines by position. Fix = pair by line id, else by position in GET order (as the draft path does since HK-0107); the stored lines stay in id order, so `lineIdx` still names the batch `postGRNToStock` wrote. Regression: `tests/grn-posted-edit-line-pairing.test.mjs`.
+Cause: GET returns the lines sorted by `poItemIndex` (`rowToGRN`), but `PUT /:id` on a POSTED GRN read the stored lines `ORDER BY id` and paired them with the body lines by position. Fix = pair by line id, else by position in GET order (as the draft path does since HK-0107); the stored lines stay in id order, so `lineIdx` still names the batch `postGRNToStock` wrote. Second cause: `cascadePOReceivedQtyDelta` looked the PO line up by `poItemIndex` in the header PO only, and the over-receipt check on the edit was fed only `poItemIndex`, so both ignored each line's `po_id` / `po_item_id`. Fix = both now carry the line's own PO link through `resolveGrnLineTargets` (header PO by position only for legacy lines, as the post cascade does), and status is recomputed for every PO touched. Regression: `tests/grn-posted-edit-line-pairing.test.mjs`.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 

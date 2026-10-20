@@ -6,6 +6,9 @@
 // On a multi-PO receipt (ids and poItemIndex in different orders) correcting
 // one line's accepted qty landed on another line. Now paired by line id, else
 // by position in GET order — same as the draft path since HK-0107.
+// The PO receivedQty delta also went to the header PO by poItemIndex, so on a
+// multi-PO receipt a PO-2 line's correction moved PO-1's line; now each line's
+// own PO line (po_item_id) moves.
 // Driven through the real Hono handler against a small stateful mock D1.
 // ---------------------------------------------------------------------------
 import test from "node:test";
@@ -24,8 +27,15 @@ try {
 const grnApp = (await import(pathToFileURL(resolve(process.cwd(), "src/api/routes/grn.ts")).href)).default;
 
 function makeDb() {
-  const t = { grns: [], grn_items: [] };
+  const t = { grns: [], grn_items: [], purchase_order_items: [] };
+  const poItem = (id) => t.purchase_order_items.find((r) => String(r.id) === String(id));
   function exec(sql, b) {
+    const po = sql.match(/^UPDATE purchase_order_items SET receivedQty = receivedQty ([+-]) \? WHERE id = \?/i);
+    if (po) {
+      const row = poItem(b[1]);
+      if (row) row.receivedQty += po[1] === "+" ? b[0] : -b[0];
+      return;
+    }
     const m = sql.match(/^UPDATE grn_items SET acceptedQty = \?, receivedQty = \? WHERE id = \?/i);
     if (m) {
       const row = t.grn_items.find((r) => String(r.id) === String(b[2]));
@@ -35,6 +45,10 @@ function makeDb() {
   function query(sql, b) {
     if (/FROM grns WHERE id = \?/i.test(sql)) return t.grns.filter((r) => r.id === b[0]);
     if (/FROM grn_items WHERE grnId = \?/i.test(sql)) return t.grn_items.filter((r) => r.grnId === b[0]);
+    if (/FROM purchase_order_items WHERE purchaseOrderId = \?/i.test(sql)) {
+      return t.purchase_order_items.filter((r) => r.purchaseOrderId === b[0]);
+    }
+    if (/FROM purchase_order_items WHERE id (= \?|IN)/i.test(sql)) return b.map(poItem).filter(Boolean);
     return [];
   }
   function prepare(raw) {
@@ -111,4 +125,30 @@ test("POSTED GRN edit without line ids pairs by GET order", async () => {
   });
   assert.equal(res.status, 200, await res.clone().text());
   assert.deepEqual(qtys(db), [["A", 5], ["B", 3]]);
+});
+
+test("POSTED GRN edit moves the line's own PO line, not the header PO's", async () => {
+  const db = makeDb();
+  db.t.grns.push({ id: "grn-1", grnNumber: "GRN-1", poId: "po-1", status: "POSTED", qcStatus: "PASSED", totalAmount: 1000, notes: "" });
+  const line = (id, po, poi, code) => ({
+    id, grnId: "grn-1", poItemIndex: 0, po_id: po, po_item_id: poi, materialCode: code, materialName: code,
+    orderedQty: 10, receivedQty: 5, acceptedQty: 5, rejectedQty: 0,
+    rejectionReason: null, unitPrice: 100, invoiced_qty: 0,
+  });
+  db.t.grn_items.push(line(1, "po-1", "poi-1a", "A"), line(2, "po-2", "poi-2a", "B"));
+  const poLine = (id, po) => ({ id, purchaseOrderId: po, materialName: id, quantity: 10, receivedQty: 5 });
+  db.t.purchase_order_items.push(poLine("poi-1a", "po-1"), poLine("poi-2a", "po-2"));
+  const root = mount(db);
+  // Correct the PO-2 line (B) from 5 to 7.
+  const res = await put(root, {
+    items: [
+      { id: 1, materialCode: "A", acceptedQty: 5 },
+      { id: 2, materialCode: "B", acceptedQty: 7 },
+    ],
+  });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual(
+    db.t.purchase_order_items.map((r) => [r.id, r.receivedQty]),
+    [["poi-1a", 5], ["poi-2a", 7]],
+  );
 });
