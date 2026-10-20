@@ -22,6 +22,9 @@ export type ApPrintBill = {
   paidSen: number;
   /** A foreign-currency bill (Currency & FX step 3): what this payment paid in its currency. */
   foreignPaidSen?: number;
+  /** ... and the RM the bank paid for it, once the payment is posted (after
+   *  Confirm bank amount, the actual RM — step 4); absent = foreign × rate. */
+  bankPaidSen?: number;
 };
 
 export type ApPrintDetail = {
@@ -122,7 +125,7 @@ export function apBillsBlock(
           dmy(b.dueDate),
           b.outstandingBeforeSen == null ? "—" : money(b.outstandingBeforeSen),
           fm(b.foreignPaidSen ?? 0, fx.currency),
-          money(Math.round((b.foreignPaidSen ?? 0) * fx.rate)),
+          money(b.bankPaidSen ?? Math.round((b.foreignPaidSen ?? 0) * fx.rate)),
         ],
       })),
       totalCells: ["", "", "", "", "Total", fm(foreignTotal, fx.currency), money(opts.totalSen)],

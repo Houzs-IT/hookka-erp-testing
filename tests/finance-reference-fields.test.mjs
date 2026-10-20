@@ -44,7 +44,7 @@ test("an AP Payment hands its settlement the Reference; an older voucher settles
 });
 
 test("the voucher stores its Reference on every write path", () => {
-  assert.match(api, /"tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION"\]\) \{/, "self-applied before the first write");
+  assert.match(api, /"tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"\]\) \{/, "self-applied before the first write");
   assert.match(api, /reference: normaliseReference\(body\.reference\) \};\n\}/, "the form's fields include it");
   const post = slice(api, 'app.post("/payment-vouchers", async (c) => {', 'app.put("/payment-vouchers/:id"');
   // AP Payment: two fields; a client that sends only the description (the

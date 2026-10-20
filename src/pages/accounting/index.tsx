@@ -33,7 +33,7 @@ import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFro
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
-import { apForeignPay } from "@/lib/ap-fx";
+import { apForeignPay, confirmBankPlan } from "@/lib/ap-fx";
 import { fmtFxRate, fxMonthLabel, fxMonthOf, fxRateFor, parseFxRate, type FxSettings } from "@/lib/fx";
 import { loadPiForPrint, type PiPrintSupplier } from "@/lib/pi-print-load";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
@@ -10780,6 +10780,10 @@ type PvRow = {
   // rate (RM per 1 unit); totalSen is then what the bank pays (foreign × rate).
   fxCurrency?: string | null;
   fxRate?: number | null;
+  // Confirm bank amount (Currency & FX step 4): when Finance keyed the RM the
+  // bank actually debited, and who — the rate and total are then the actual ones.
+  fxBankConfirmedAt?: string | null;
+  fxBankConfirmedByName?: string | null;
   // Evidence on file (Houzs adoption 2026-09-22): count on the row, the list
   // loads on expand; print bundle = voucher + every attachment.
   attachmentCount?: number;
@@ -10996,6 +11000,14 @@ function buildPayRows(pv: PvRow[] | null, sp: SupplierPaymentGroup[] | null, ocp
 // with the text its columns show, so the grid sorts, filters, searches and
 // exports what the eye reads. Built once per load (stable rows — BUG-CLASSES
 // C24: an unstable list re-emits the selection forever).
+// A posted, live foreign-currency AP payment: its bank amount can be keyed
+// (Currency & FX step 4) — and keyed again to correct it.
+function pvCanConfirmBank(r: PvRow): boolean {
+  return r.pvKind === "AP" && !!r.fxCurrency && r.partyKind !== "OTHER" && r.status !== "VOID"
+    && ((r.approvalState ?? r.approval_state) ?? "APPROVED") === "APPROVED" && (r.lifecycleState ?? "ACTIVE") === "ACTIVE";
+}
+// ... still at the estimated rate: the bank amount is not confirmed yet.
+const pvFxPending = (r: PvRow): boolean => pvCanConfirmBank(r) && !r.fxBankConfirmedAt;
 type PayGridRow = PayRow & {
   payeeText: string; descText: string; refText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
   statusLabel: string; status: FinStatus;
@@ -11038,6 +11050,7 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     status = pvStatus({
       status: r.status, approvalState: r.approvalState ?? r.approval_state, advanceOpenSen: r.advanceOpenSen,
       accrued: r.accrued, settledAt: r.settledAt, rejectReason: r.rejectReason ?? r.reject_reason, pvNo: r.pvNo,
+      fxPending: pvFxPending(r),
     });
   } else if (row.sp) {
     const invoices = row.sp.lines.filter((l) => l.purchaseInvoiceId).length;
@@ -11203,6 +11216,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [detailPvId, setDetailPvId] = useState<string | null>(null);
   // Same for a row from another door (keyed by PayRow.key).
   const [detailPayKey, setDetailPayKey] = useState<string | null>(null);
+  // The foreign-currency payment whose bank amount is being keyed (step 4).
+  const [confirmBankId, setConfirmBankId] = useState<string | null>(null);
   // A fund transfer's description being edited here (by transfer no).
   const [editFtNo, setEditFtNo] = useState<string | null>(null);
   // A deep-link opens New AP Payment straight away (state seeded, no effect).
@@ -12103,6 +12118,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         ] : []),
         ...(isPosted(r) && r.pvKind !== "AP" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
         ...(isPosted(r) && r.accrued === 1 && !r.settledAt ? [{ label: "Settle", action: () => void handleSettle(r) }] : []),
+        ...(pvCanConfirmBank(r) ? [{ label: r.fxBankConfirmedAt ? "Change bank amount" : "Confirm bank amount", action: () => setConfirmBankId(r.id) }] : []),
       ],
       [
         { label: "Print", action: () => void printPvWithDetail(r) },
@@ -12779,6 +12795,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           : st === "DRAFT" ? chip("Draft", "bg-[#F0ECE9] text-[#6B7280]")
           : st === "PREPARED" ? chip("Prepared", "bg-[#EEF2FB] text-[#2C4170]")
           : st === "CHECKED" ? chip("Checked · awaiting approval", "bg-[#FBF3E4] text-[#7A5B12]")
+          : pvFxPending(r) ? chip("Approved · bank amount pending", "bg-[#FBF3E4] text-[#7A5B12]")
           : r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", "bg-[#F7E5E1] text-[#9A3A2D]") : chip("Approved · paid", "bg-[#EAF3DE] text-[#27500A]");
         return (
           <DocDetailModal
@@ -12806,6 +12823,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               </>}
               {isPosted(r) && r.pvKind !== "AP" && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
               {isPosted(r) && r.accrued === 1 && !r.settledAt && <Button variant="outline" size="sm" onClick={() => { close(); void handleSettle(r); }}>Settle</Button>}
+              {pvCanConfirmBank(r) && <Button variant={r.fxBankConfirmedAt ? "outline" : "primary"} size="sm" onClick={() => setConfirmBankId(r.id)}>{r.fxBankConfirmedAt ? "Change bank amount" : "Confirm bank amount"}</Button>}
               {(r.lifecycleState ?? "ACTIVE") === "ACTIVE" && r.status !== "VOID"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void handleLifecycle(r.id, r.pvNo, "void"); }}>Void</Button>
                 : r.status === "VOID" && (r.lifecycleState ?? "VOID") !== "DELETED"
@@ -12825,7 +12843,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <DetailField label="Voucher date">{fmtDocDate(r.date)}</DetailField>
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
                 <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
-                <DetailField label="Kind">{r.pvKind === "AP" ? (r.fxCurrency && r.fxRate ? `AP payment · ${r.fxCurrency} @ ${fmtFxRate(r.fxRate)}` : "AP payment") : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
+                <DetailField label="Kind">{r.pvKind === "AP" ? (r.fxCurrency && r.fxRate ? `AP payment · ${r.fxCurrency} @ ${fmtFxRate(r.fxRate)}${pvCanConfirmBank(r) ? (r.fxBankConfirmedAt ? " (bank)" : " (estimate)") : ""}` : "AP payment") : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
                 <DetailField label="Reference">{r.reference || "—"}</DetailField>
                 <DetailField label="Description (printed)" span={3}>{r.description || "—"}</DetailField>
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
@@ -12873,12 +12891,27 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <div><span className="text-[#9CA3AF]">Prepared</span><br />{rx.preparedByName ?? rx.createdByName ?? "—"} · {dmy(r.preparedAt ?? r.prepared_at)}</div>
               <div><span className="text-[#9CA3AF]">Checked</span><br />{rx.checkedByName ?? "—"} · {dmy(r.checkedAt ?? r.checked_at)}</div>
               <div><span className="text-[#9CA3AF]">Approved</span><br />{rx.approvedByName ?? "—"} · {dmy(r.approvedAt ?? r.approved_at)}</div>
-              <div><span className="text-[#9CA3AF]">Settled</span><br />{r.accrued === 1 ? dmy(r.settledAt) : "n/a"}</div>
+              {r.pvKind === "AP" && r.fxCurrency
+                ? <div><span className="text-[#9CA3AF]">Bank amount</span><br />{r.fxBankConfirmedAt ? `${rx.fxBankConfirmedByName ?? "—"} · ${dmy(r.fxBankConfirmedAt)}` : isPosted(r) ? "pending" : "—"}</div>
+                : <div><span className="text-[#9CA3AF]">Settled</span><br />{r.accrued === 1 ? dmy(r.settledAt) : "n/a"}</div>}
               {(r.rejectReason ?? r.reject_reason) && st === "DRAFT" && r.status !== "VOID" && <div className="col-span-2 sm:col-span-4 text-[#9A3A2D]">↩ Rejected: {r.rejectReason ?? r.reject_reason}</div>}
             </div>
-            <DocTrailBlock family="payment_voucher" sourceId={r.id} />
+            {/* An AP voucher's entry lives on its settlement document, under the
+                voucher's number (BUG-2026-10-20-350: it read the voucher's own
+                family and showed "Nothing posted yet"). Keyed so it reloads
+                after a bank amount is confirmed. */}
+            <DocTrailBlock
+              key={`${r.id}|${r.totalSen}|${r.fxBankConfirmedAt ?? ""}|${r.status}`}
+              family={r.pvKind === "AP" ? (r.partyKind === "OTHER" ? "other_party_payment" : "supplier_payment") : "payment_voucher"}
+              sourceId={r.pvKind === "AP" ? r.pvNo : r.id}
+            />
           </DocDetailModal>
         );
+      })()}
+
+      {confirmBankId && (() => {
+        const r = (rows ?? []).find((x) => x.id === confirmBankId);
+        return r ? <PvConfirmBankModal pv={r} onClose={() => setConfirmBankId(null)} onDone={() => { setConfirmBankId(null); load(); }} /> : null;
       })()}
 
       {detailPayKey && (() => {
@@ -13492,6 +13525,99 @@ const ftReferenceOf = (t: FtRow): string => {
   const head = `Transfer ${t.no}`;
   return d === head ? "" : d.startsWith(`${head} · `) ? d.slice(head.length + 3) : d;
 };
+// Confirm bank amount (Currency & FX step 4, owner 2026-10-20): the RM the bank
+// actually debited for a foreign-currency AP payment that posted at the
+// payment's rate. The server re-states the settlement under the same number —
+// each bill still clears its booked RM, the bank leg becomes this RM, the
+// difference is the realised FX; this box only shows the sums.
+function PvConfirmBankModal({ pv, onClose, onDone }: { pv: PvRow; onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  const ccy = pv.fxCurrency ?? "";
+  const fxAllocs = (pv.allocs ?? []).filter((a) => (a.foreignSen ?? 0) > 0);
+  const foreignSen = fxAllocs.reduce((s, a) => s + (a.foreignSen ?? 0), 0);
+  const bookedSen = fxAllocs.reduce((s, a) => s + a.amountSen, 0);
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const moneyErr = amount.trim() ? firstMoneyFieldError([{ label: "Bank amount", value: amount }]) : null;
+  const bankSen = moneyErr ? null : moneyFieldToSen(amount);
+  const plan = bankSen && bankSen > 0 ? confirmBankPlan({ bankSen, foreignSens: [foreignSen] }) : null;
+  const fxSen = plan?.ok ? bookedSen - plan.foreignBankSen : null;
+  // A figure far from the posted one is most likely a typo (a digit too many).
+  const offPct = bankSen && pv.totalSen > 0 ? Math.abs(bankSen - pv.totalSen) / pv.totalSen : 0;
+  const requestClose = async () => {
+    if (saving) return;
+    if (amount.trim() && !(await confirm({ title: "Close without confirming?", message: "The bank amount you keyed will be lost.", confirmLabel: "Discard", cancelLabel: "Keep editing", danger: true }))) return;
+    onClose();
+  };
+  useEscapeClose(() => void requestClose());
+  const save = async () => {
+    if (saving || !bankSen || !plan?.ok) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounting/payment-vouchers/${encodeURIComponent(pv.id)}/confirm-bank`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bankSen }),
+      });
+      const j = asMutationResponse(await res.json());
+      if (j?.success) { toast.success(`${pv.pvNo}: bank amount ${formatCurrency(bankSen)} confirmed`); onDone(); }
+      else toast.error(j?.error || "Could not confirm the bank amount");
+    } catch {
+      toast.error("Could not confirm the bank amount");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => void requestClose()}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg" role="dialog" aria-modal="true" data-confirm-bank onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
+          <h2 className="text-base font-semibold text-[#1F1D1B]">{pv.fxBankConfirmedAt ? "Change bank amount" : "Confirm bank amount"} — AP Payment {pv.pvNo}</h2>
+          <button onClick={() => void requestClose()} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none" title="Close (Esc)">✕</button>
+        </div>
+        <div className="p-5 space-y-4 text-sm">
+          <div className="grid grid-cols-2 gap-3">
+            <DetailField label="Supplier" span={2}>{pv.payee || "—"}</DetailField>
+            <DetailField label={`Paid (${ccy})`}><span className="tabular-nums">{formatCurrency(foreignSen, ccy)}</span></DetailField>
+            <DetailField label="Invoices cleared (booked RM)"><span className="tabular-nums">{formatCurrency(bookedSen)}</span></DetailField>
+            <DetailField label={pv.fxBankConfirmedAt ? "Bank amount now" : "Posted at (estimate)"} span={2}>
+              <span className="tabular-nums">{formatCurrency(pv.totalSen)}</span> <span className="text-xs text-[#6B7280]">@ {fmtFxRate(pv.fxRate ?? 0)}</span>
+            </DetailField>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">RM the bank debited for {formatCurrency(foreignSen, ccy)} *</label>
+            <input
+              autoFocus value={amount} onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+              inputMode="decimal" placeholder="0.00"
+              className="w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm text-right tabular-nums"
+            />
+            <p className="mt-1 text-[11px] text-[#9CA3AF]">As the bank statement shows it, without bank charges (those go on their own voucher).</p>
+          </div>
+          {moneyErr && <p className="text-xs text-[#9A3A2D]">{moneyErr}</p>}
+          {plan && !plan.ok && <p className="text-xs text-[#9A3A2D]">{plan.error}</p>}
+          {plan?.ok && fxSen !== null && (
+            <div className="rounded-md bg-[#FAF8F5] border border-[#F0ECE9] px-3 py-2 text-xs space-y-1">
+              <div className="flex justify-between gap-3"><span className="text-[#6B7280]">Actual rate</span><span className="tabular-nums">1 {ccy} = RM {fmtFxRate(plan.rate)}</span></div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[#6B7280]">{fxSen >= 0 ? "Realised FX gain" : "Realised FX loss"} against the invoices</span>
+                <span className={`tabular-nums ${fxSen < 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>{formatCurrency(Math.abs(fxSen))}</span>
+              </div>
+              {offPct > 0.1 && <div className="text-[#9A3A2D]">That is {Math.round(offPct * 100)}% away from the {formatCurrency(pv.totalSen)} posted — check the figure.</div>}
+            </div>
+          )}
+          <p className="text-[11px] text-[#6B7280]">Re-posts {pv.pvNo} under the same number: the invoices stay cleared at their booked RM, the bank leg becomes this amount and the difference goes to FX gain / loss. A payment already matched in Cash Book has to be unmatched there first.</p>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E2DDD8]">
+          <Button variant="outline" size="sm" onClick={() => void requestClose()} disabled={saving}>Cancel</Button>
+          <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving || !plan?.ok}>{saving ? "Posting…" : "Confirm"}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FtDescriptionEditor({ ft, onClose, onSaved }: { ft: FtRow; onClose: () => void; onSaved: () => void }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
@@ -15093,6 +15219,9 @@ type CashPosData = {
   // Vouchers on the approval ladder, not posted yet (2026-09-22).
   awaitingApproval?: { id: string; pvNo: string; date: string; payee: string; description: string; payFrom: string; amountSen: number; state: "DRAFT" | "PREPARED" | "CHECKED" }[];
   awaitingCheckedSen?: number;
+  // Foreign-currency AP payments posted at the estimated rate, bank amount
+  // not confirmed yet (Currency & FX step 4).
+  fxBankPending?: { id: string; pvNo: string; date: string; payee: string; payFrom: string; currency: string; foreignSen: number; rate: number; amountSen: number }[];
   // Trade-finance draws still owed, by due date (2026-10-17).
   tradeFinance?: CashPosTfRow[];
 };
@@ -15619,6 +15748,36 @@ function DailyCashTab() {
               </Card>
             );
           })()}
+          {(cur.fxBankPending?.length ?? 0) > 0 && (
+            // Foreign-currency payments posted at the estimated rate (Currency
+            // & FX step 4): their bank legs above carry the estimate until the
+            // RM the bank debited is keyed on the Payment Vouchers page.
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+                  <div>
+                    <span className="text-sm font-semibold text-[#1F1D1B]">BANK AMOUNT PENDING — foreign-currency payments at the estimated rate</span>
+                    <span className="ml-2 text-[11px] text-[#9CA3AF]">Key the RM the bank debited on Payment Vouchers (right-click → Confirm bank amount).</span>
+                  </div>
+                  <Link to="/accounting?tab=payments" className="text-xs text-[#6B5C32] underline whitespace-nowrap">Open Payment Vouchers →</Link>
+                </div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {(cur.fxBankPending ?? []).map((v) => (
+                      <tr key={v.id} className="border-t border-[#F0ECE9]">
+                        <td className="py-1 pr-3 text-[#6B7280] whitespace-nowrap">{fmtDocDate(v.date)}</td>
+                        <td className="py-1 pr-3 tabular-nums whitespace-nowrap">{v.pvNo}</td>
+                        <td className="py-1 pr-3 w-full max-w-0"><div className="truncate">{v.payee}</div></td>
+                        <td className="py-1 pr-3 text-[#6B7280] whitespace-nowrap">{v.payFrom}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{formatCurrency(v.foreignSen, v.currency)} @ {fmtFxRate(v.rate)}</td>
+                        <td className="py-1 text-right tabular-nums whitespace-nowrap">{formatCurrency(v.amountSen)} <span className="text-[10px] text-[#9CA3AF]">est.</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
             <div className="space-y-4">
               <CashPosPartyPanel

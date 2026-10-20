@@ -2041,6 +2041,8 @@
     "created_by",
     "date",
     "description",
+    "fx_bank_confirmed_at",
+    "fx_bank_confirmed_by",
     "fx_currency",
     "fx_rate",
     "id",
