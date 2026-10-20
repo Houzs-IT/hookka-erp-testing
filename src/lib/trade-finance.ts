@@ -119,6 +119,25 @@ export function tfTotals(draws: TfDraw[], todayIso: string) {
   return t;
 }
 
+// A line's limit (owner 2026-10-20 「暂时rm300,000」, Settings › Trade Finance
+// Lines): what is drawn and not repaid — the line's account balance — against
+// the limit the owner keys. No limit set → no figure, no warning.
+export function tfLineRoom(limitSen: number | null | undefined, usedSen: number): { limitSen: number; usedSen: number; availableSen: number } | null {
+  if (limitSen == null || !Number.isFinite(limitSen)) return null;
+  return { limitSen, usedSen, availableSen: limitSen - usedSen };
+}
+
+/** The warning a drawdown gets when it takes the line over its limit — null
+ *  when it fits, or when the line has no limit. A warning, never a block: the
+ *  bank decides what it lends. */
+export function tfOverLimitWarning(o: {
+  limitSen: number | null | undefined; usedSen: number; drawSen: number; lenderName: string; fmt: (sen: number) => string;
+}): string | null {
+  const room = tfLineRoom(o.limitSen, o.usedSen);
+  if (!room || !(o.drawSen > 0) || o.usedSen + o.drawSen <= room.limitSen) return null;
+  return `Over the ${o.lenderName} limit of ${o.fmt(room.limitSen)}: ${o.fmt(Math.max(0, room.availableSen))} is left and this drawdown is ${o.fmt(o.drawSen)}.`;
+}
+
 export function clampRepayAlloc(outstandingSen: number, paySen: number): { ok: boolean; error?: string } {
   if (!(paySen > 0)) return { ok: false, error: "allocation must be positive" };
   if (paySen > outstandingSen) return { ok: false, error: "allocation exceeds the draw's outstanding balance" };

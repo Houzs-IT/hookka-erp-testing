@@ -64,9 +64,9 @@ import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDri
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
-import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt } from "../lib/trade-finance";
+import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt, parseTfLimitSen } from "../lib/trade-finance";
 import type { TfSource } from "../lib/trade-finance";
-import { addDays, tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
+import { addDays, tfChargeKind, tfInterestDrawId, tfLineRoom, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
@@ -14980,7 +14980,7 @@ app.post("/trade-finance/setup", async (c) => {
     const sources = await getTfSources(c.var.DB);
     const next: TfSource[] = [
       ...sources.filter((s) => s.accountCode !== accountCode),
-      { accountCode, lenderSupplierId, lenderName: sup.name, tenorDays },
+      { accountCode, lenderSupplierId, lenderName: sup.name, tenorDays, limitSen: sources.find((s) => s.accountCode === accountCode)?.limitSen ?? null },
     ];
     await saveTfSources(c.var.DB, next);
     await emitAudit(c, {
@@ -14994,6 +14994,38 @@ app.post("/trade-finance/setup", async (c) => {
   } catch (err) {
     console.error("[POST /trade-finance/setup] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Setup failed" }, 400);
+  }
+});
+
+// PUT /trade-finance/line { accountCode, tenorDays, limitSen } — Settings ›
+// Trade Finance Lines (owner 2026-10-20 「暂时rm300,000」): a line's default
+// tenor and its limit, keyed by the owner (limitSen null = no limit). Nothing
+// posts; Creditor Aging and the AP Payment form read it (available = limit −
+// what is drawn and not repaid; a drawdown past it gets a warning).
+app.put("/trade-finance/line", async (c) => {
+  const denied = requireFinance(c);
+  if (denied) return denied;
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as { accountCode?: unknown; tenorDays?: unknown; limitSen?: unknown };
+    const accountCode = String(body.accountCode ?? "").trim();
+    const tenorDays = Math.round(Number(body.tenorDays) || 0);
+    if (tenorDays < 1 || tenorDays > 365) {
+      return c.json({ success: false, error: "tenorDays must be between 1 and 365" }, 400);
+    }
+    const limitSen = parseTfLimitSen(body.limitSen);
+    if (body.limitSen !== null && body.limitSen !== undefined && body.limitSen !== "" && limitSen === null) {
+      return c.json({ success: false, error: "limitSen must be a whole, non-negative number of sen (or null for no limit)" }, 400);
+    }
+    const sources = await getTfSources(c.var.DB);
+    const before = sources.find((s) => s.accountCode === accountCode);
+    if (!before) return c.json({ success: false, error: `${accountCode || "That account"} is not a trade-finance line` }, 404);
+    const after: TfSource = { ...before, tenorDays, limitSen };
+    await saveTfSources(c.var.DB, sources.map((s) => (s.accountCode === accountCode ? after : s)));
+    await emitAudit(c, { resource: "trade-finance", resourceId: accountCode, action: "update", before, after });
+    return c.json({ success: true, data: { source: after } });
+  } catch (err) {
+    console.error("[PUT /trade-finance/line] failed:", err instanceof Error ? err.message : err);
+    return c.json({ success: false, error: "Save failed" }, 400);
   }
 });
 
@@ -15030,6 +15062,8 @@ app.get("/trade-finance", async (c) => {
         accountName: acct?.name ?? "",
         accountNetSen: derived.accountNetSen,
         unallocatedSen: derived.unallocatedSen,
+        // Used = drawn and not repaid (the line's balance); available = limit − used.
+        availableSen: tfLineRoom(s.limitSen, derived.accountNetSen)?.availableSen ?? null,
         totals: tfTotals(derived.draws, todayIso),
         draws,
       });
