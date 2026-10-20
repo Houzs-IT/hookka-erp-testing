@@ -2392,6 +2392,35 @@ app.get("/:id", async (c) => {
 const CN_MOVED_ON_MSG =
   "The source consignment note changed while this invoice was being voided/deleted — nothing was saved. Reload and try again.";
 
+// T-006 R4 — the CN release's statements, plus the consignment note's History
+// row (audit_events, resource consignment-notes) when it could only be
+// unlinked, not restored (owner YH, 2026-10-20: void anyway, unlink, record why).
+type CnRelease = Awaited<
+  ReturnType<typeof import("../lib/consignment-note-shared").buildInvoiceDeathCnReleaseStatements>
+>;
+async function cnReleaseStatements(
+  c: Parameters<typeof buildAuditStatement>[0],
+  release: CnRelease,
+  invoiceId: string,
+  invoiceNo: string,
+  how: "voided" | "deleted",
+): Promise<D1PreparedStatement[]> {
+  const u = release.unlinked;
+  if (!u) return release.statements;
+  const audit = await buildAuditStatement(c, {
+    resource: "consignment-notes",
+    resourceId: u.cnId,
+    action: "unlink-invoice",
+    before: { status: u.status, convertedInvoiceId: invoiceId },
+    after: {
+      status: u.status,
+      convertedInvoiceId: null,
+      note: `Invoice ${invoiceNo} ${how}: consignment note ${u.noteNo} unlinked, status left as ${u.status ?? "none"} — not restored because ${u.reason}.`,
+    },
+  });
+  return audit ? [...release.statements, audit] : release.statements;
+}
+
 app.put("/:id", async (c) => {
   // RBAC gate (P3.3-followup) — base permission is invoices:update.
   // Sensitive transitions get additional row-level checks below:
@@ -2432,7 +2461,7 @@ app.put("/:id", async (c) => {
     // --- validate status transition (same rules as mock-data) ---
     let nextStatus: string = existing.status;
     // T-006 R4 — set on a void when this invoice came from a consignment note.
-    let cnRelease: { statements: D1PreparedStatement[]; consignmentOrderId: string | null } | null = null;
+    let cnRelease: CnRelease | null = null;
     if (body.status && body.status !== existing.status) {
       const allowed = INV_VALID_TRANSITIONS[existing.status] || [];
       if (!allowed.includes(body.status)) {
@@ -2462,14 +2491,9 @@ app.put("/:id", async (c) => {
           return c.json({ success: false, error: issuedNotesLockMessage("cancel", existing.invoiceNo, notes) }, 409);
         }
         // T-006 R4 — a CN-sourced invoice hands its consignment note back in
-        // the void's own batch. Built here, before anything is written, so a
-        // CN that cannot be released safely refuses the void outright.
+        // the void's own batch (restored, or only unlinked when it cannot be).
         const { buildInvoiceDeathCnReleaseStatements } = await import("../lib/consignment-note-shared");
-        const release = await buildInvoiceDeathCnReleaseStatements(c.var.DB, id);
-        if (release.conflict !== null) {
-          return c.json({ success: false, error: release.conflict }, 409);
-        }
-        cnRelease = release;
+        cnRelease = await buildInvoiceDeathCnReleaseStatements(c.var.DB, id);
       }
     }
 
@@ -3294,7 +3318,11 @@ app.put("/:id", async (c) => {
         );
       }
       // …and a CN-sourced invoice's consignment note (T-006 R4), built above.
-      if (cnRelease) statements.push(...cnRelease.statements);
+      if (cnRelease) {
+        statements.push(
+          ...(await cnReleaseStatements(c, cnRelease, id, existing.invoiceNo, "voided")),
+        );
+      }
 
       // Hide the cancelled invoice's GL legs (original + reversal) so the void
       // doesn't show in the GL — the same effect applyLifecycle gives the
@@ -3360,11 +3388,12 @@ app.delete("/:id", async (c) => {
   // also hand its source DO back for re-invoicing, so we need to know what it
   // was billing. See buildInvoiceDeathReleaseStatements below.
   const existing = await c.var.DB.prepare(
-    "SELECT id, status, customerId, totalSen, paidAmount, deliveryOrderId, salesOrderId FROM invoices WHERE id = ?",
+    "SELECT id, invoiceNo, status, customerId, totalSen, paidAmount, deliveryOrderId, salesOrderId FROM invoices WHERE id = ?",
   )
     .bind(id)
     .first<{
       id: string;
+      invoiceNo: string | null;
       status: string;
       customerId: string;
       totalSen: number;
@@ -3392,11 +3421,8 @@ app.delete("/:id", async (c) => {
   const { buildInvoiceDeathCnReleaseStatements, reopenConsignmentOrderAfterRelease } =
     await import("../lib/consignment-note-shared");
   const cnRelease = await buildInvoiceDeathCnReleaseStatements(c.var.DB, id);
-  if (cnRelease.conflict !== null) {
-    return c.json({ success: false, error: cnRelease.conflict }, 409);
-  }
   const stmts: D1PreparedStatement[] = [
-    ...cnRelease.statements,
+    ...(await cnReleaseStatements(c, cnRelease, id, existing.invoiceNo ?? id, "deleted")),
     c.var.DB.prepare("DELETE FROM invoices WHERE id = ?").bind(id),
   ];
   if (unpaidSen > 0 && existing.customerId) {

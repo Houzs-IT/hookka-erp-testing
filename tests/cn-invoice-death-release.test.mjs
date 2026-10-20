@@ -125,8 +125,9 @@ function makeDb(state) {
         if (state.moveOnBeforeBatch) Object.assign(state.cn, state.moveOnBeforeBatch);
         for (const s of stmts) {
           if (/CN_RELEASE_CONFLICT/.test(s.sql)) {
-            const [invoiceId, cnId] = s.args;
-            const ok = state.cn.id === cnId && state.cn.status === "FULLY_SOLD" && state.cn.convertedInvoiceId === invoiceId;
+            // status IS NOT DISTINCT FROM ? AND convertedInvoiceId = ? … WHERE id = ?
+            const [status, invoiceId, cnId] = s.args;
+            const ok = state.cn.id === cnId && (state.cn.status ?? null) === status && state.cn.convertedInvoiceId === invoiceId;
             if (!ok) throw new Error(`invalid input syntax for type integer: "CN_RELEASE_CONFLICT ${cnId}"`);
           }
         }
@@ -158,13 +159,25 @@ const voidInv = (db) =>
     body: JSON.stringify({ status: "CANCELLED" }),
   });
 const cnUpdate = (batch) => batch.find((s) => /^UPDATE consignment_notes/.test(s.sql));
+const historyRow = (batch) =>
+  batch.find((s) => /^INSERT INTO audit_events/.test(s.sql) && s.args.includes("consignment-notes"));
+const historyNote = (row) => row.args.find((a) => typeof a === "string" && a.includes('"note"'));
+
+/** The unlink-only shape: link cleared, status untouched, nothing else undone. */
+function assertUnlinkOnly(statements) {
+  const upd = cnUpdate(statements);
+  assert.match(upd.sql, /SET convertedInvoiceId = NULL, status_before_conversion = NULL WHERE id = \? AND convertedInvoiceId = \?$/);
+  assert.doesNotMatch(upd.sql, /status = \?/, "the CN's status must not be touched");
+  assert.deepEqual(upd.args, ["cn-1", "inv-1"]);
+  assert.ok(!statements.some((s) => /^UPDATE (consignment_items|fg_units)/.test(s.sql)), "items and units stay as they are");
+}
 
 // ── the release builder ─────────────────────────────────────────────────────
 
 test("R4: release restores the recorded prior status, guarded on FULLY_SOLD + this invoice", async () => {
   const { db } = makeDb(makeState());
   const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
-  assert.equal(r.conflict, null);
+  assert.equal(r.unlinked, null);
   const upd = r.statements.find((s) => /^UPDATE consignment_notes/.test(s.sql));
   assert.match(upd.sql, /WHERE id = \? AND status = 'FULLY_SOLD' AND convertedInvoiceId = \?$/);
   assert.deepEqual(upd.args, ["IN_TRANSIT", CONVERTED_AT, "cn-1", "inv-1"]);
@@ -172,6 +185,7 @@ test("R4: release restores the recorded prior status, guarded on FULLY_SOLD + th
   // the guard runs first, so the batch aborts before anything is undone
   assert.match(r.statements[0].sql, /CN_RELEASE_CONFLICT/);
   assert.match(r.statements[0].sql, /FOR UPDATE$/);
+  assert.deepEqual(r.statements[0].args, ["FULLY_SOLD", "inv-1", "cn-1"]);
   assert.equal(r.consignmentOrderId, "co-1");
 });
 
@@ -204,33 +218,43 @@ test("R4: release undoes only the items and units stamped by the conversion", as
 test("R4: a non-CN invoice gets no release statements", async () => {
   const { db } = makeDb(makeState({ cn: { convertedInvoiceId: "other" } }));
   const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
-  assert.deepEqual(r, { conflict: null, statements: [], consignmentOrderId: null });
+  assert.deepEqual(r, { statements: [], consignmentOrderId: null, unlinked: null });
 });
 
 for (const status of ["CLOSED", "RETURNED", "PARTIALLY_SOLD"]) {
-  test(`R4: a CN that moved on to ${status} is a conflict, not a silent reopen`, async () => {
+  test(`R4: a CN that moved on to ${status} is only unlinked, never reopened`, async () => {
     const { db } = makeDb(makeState({ cn: { status } }));
     const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
-    assert.match(r.conflict, new RegExp(`CN-0001 is ${status}`));
+    assertUnlinkOnly(r.statements);
+    assert.deepEqual(r.statements[0].args, [status, "inv-1", "cn-1"], "the guard pins the status read");
+    assert.match(r.unlinked.reason, new RegExp(`is ${status}, no longer FULLY_SOLD`));
+    assert.equal(r.consignmentOrderId, null, "status unchanged, so no CO reopen");
   });
 }
 
-test("R4: an unrecorded prior status (converted before 0244) is a conflict, never PARTIALLY_SOLD", async () => {
-  for (const prior of [null, undefined, "", "BOGUS"]) {
+test("R4: an unrecorded prior status (converted before 0244) is unlinked, never set to PARTIALLY_SOLD", async () => {
+  for (const prior of [null, undefined, "", "BOGUS", "constructor"]) {
     const { db } = makeDb(makeState({ cn: { statusBeforeConversion: prior } }));
     const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
-    assert.match(r.conflict ?? "", /no recorded status/, `prior=${String(prior)}`);
+    assertUnlinkOnly(r.statements);
+    assert.match(r.unlinked?.reason ?? "", /never recorded/, `prior=${String(prior)}`);
   }
 });
 
-test("R4: the in-batch guard's SQL survives the Postgres translation", () => {
+test("R4: no convert timestamp is unlinked, never a header-only undo", async () => {
+  const { db } = makeDb(makeState({ invoice: { created_at: null } }));
+  const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
+  assertUnlinkOnly(r.statements);
+  assert.match(r.unlinked.reason, /no creation time/);
+});
+
+test("R4: the in-batch guard's SQL survives the Postgres translation", async () => {
   const { db } = makeDb(makeState());
-  return buildInvoiceDeathCnReleaseStatements(db, "inv-1").then((r) => {
-    const pg = translateSql(r.statements[0].sql);
-    assert.match(pg, /converted_invoice_id = \$1/);
-    assert.match(pg, /CAST\('CN_RELEASE_CONFLICT ' \|\| id AS INTEGER\)/);
-    assert.match(pg, /WHERE id = \$2 FOR UPDATE/);
-  });
+  const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
+  const pg = translateSql(r.statements[0].sql);
+  assert.match(pg, /status IS NOT DISTINCT FROM \$1 AND converted_invoice_id = \$2/);
+  assert.match(pg, /CAST\('CN_RELEASE_CONFLICT ' \|\| id AS INTEGER\)/);
+  assert.match(pg, /WHERE id = \$3 FOR UPDATE/);
 });
 
 // ── DELETE /api/invoices/:id ────────────────────────────────────────────────
@@ -245,13 +269,22 @@ test("R4: deleting a CN-sourced DRAFT releases the CN in the same batch, before 
   const iDel = b.findIndex((s) => /^DELETE FROM invoices/.test(s.sql));
   assert.ok(iUpd > -1 && iDel > -1);
   assert.ok(iUpd < iDel, "FK is ON DELETE SET NULL — the release must run before the DELETE");
+  assert.equal(historyRow(b), undefined, "a normal release writes no unlink row");
 });
 
-test("R4: deleting when the CN moved on refuses with 409 and writes nothing", async () => {
+test("R4: deleting when the CN moved on still deletes, unlinks the CN and writes its history row", async () => {
   const { db, batches } = makeDb(makeState({ cn: { status: "CLOSED" } }));
   const res = await del(db);
-  assert.equal(res.status, 409);
-  assert.equal(batches.length, 0);
+  assert.equal(res.status, 200, await res.text());
+  assert.equal(batches.length, 1);
+  const b = batches[0];
+  assertUnlinkOnly(b);
+  const iUpd = b.findIndex((s) => /^UPDATE consignment_notes/.test(s.sql));
+  assert.ok(iUpd < b.findIndex((s) => /^DELETE FROM invoices/.test(s.sql)));
+  const h = historyRow(b);
+  assert.ok(h, "the CN gets an audit_events row in the same batch");
+  assert.ok(h.args.includes("cn-1") && h.args.includes("unlink-invoice"));
+  assert.match(historyNote(h), /INV-0001 deleted: consignment note CN-0001 unlinked, status left as CLOSED — not restored because/);
 });
 
 test("R4: a CN that moves on between read and batch rolls the delete back with 409", async () => {
@@ -263,12 +296,25 @@ test("R4: a CN that moves on between read and batch rolls the delete back with 4
 
 // ── PUT /api/invoices/:id → CANCELLED (void) ────────────────────────────────
 
-test("R4: voiding when the prior status is unknown refuses with 409 before writing", async () => {
+test("R4: voiding when the prior status is unknown still voids, unlinks the CN and writes its history row", async () => {
   const { db, batches } = makeDb(makeState({ cn: { statusBeforeConversion: null }, invoice: { status: "SENT" } }));
   const res = await voidInv(db);
-  assert.equal(res.status, 409);
-  assert.match((await res.json()).error, /no recorded status/);
-  assert.equal(batches.length, 0);
+  assert.equal(res.status, 200, await res.text());
+  assert.equal(batches.length, 1);
+  const b = batches[0];
+  assert.ok(b.some((s) => /^UPDATE invoices/.test(s.sql)), "the void itself");
+  assertUnlinkOnly(b);
+  const h = historyRow(b);
+  assert.ok(h && h.args.includes("unlink-invoice"));
+  assert.match(historyNote(h), /INV-0001 voided: .*never recorded/);
+});
+
+test("R4: voiding a fully returned CN's invoice still voids and leaves the CN RETURNED", async () => {
+  const { db, batches } = makeDb(makeState({ cn: { status: "RETURNED" }, invoice: { status: "SENT" } }));
+  const res = await voidInv(db);
+  assert.equal(res.status, 200, await res.text());
+  assertUnlinkOnly(batches[0]);
+  assert.ok(historyRow(batches[0]));
 });
 
 test("R4: voiding a CN-sourced invoice releases the CN in the void's own batch", async () => {
@@ -279,6 +325,7 @@ test("R4: voiding a CN-sourced invoice releases the CN in the void's own batch",
   const b = batches[0];
   assert.ok(b.some((s) => /^UPDATE invoices/.test(s.sql)), "the void itself");
   assert.deepEqual(cnUpdate(b).args.slice(0, 1), ["IN_TRANSIT"]);
+  assert.equal(historyRow(b), undefined);
 });
 
 test("R4: a CN that moves on mid-void rolls the void back with 409", async () => {
@@ -355,16 +402,4 @@ test("HK-0109: no route updates a customers column that does not exist", async (
     }
   }
   assert.deepEqual(bad, []);
-});
-
-test("R4: no convert timestamp is a conflict, never a header-only undo", async () => {
-  const { db } = makeDb(makeState({ invoice: { created_at: null } }));
-  const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
-  assert.match(r.conflict ?? "", /no creation time/);
-});
-
-test("R4: an inherited object key is not accepted as a prior status", async () => {
-  const { db } = makeDb(makeState({ cn: { statusBeforeConversion: "constructor" } }));
-  const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
-  assert.match(r.conflict ?? "", /no recorded status/);
 });

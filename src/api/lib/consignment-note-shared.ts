@@ -465,16 +465,25 @@ export function ensureCnStatusBeforeConversionColumn(db: D1Database): Promise<vo
 // and the write. The route maps it to a 409; the transaction has rolled back.
 export const CN_RELEASE_CONFLICT = "CN_RELEASE_CONFLICT";
 
-export type CnReleaseResult =
-  | { conflict: string }
-  | { conflict: null; statements: D1PreparedStatement[]; consignmentOrderId: string | null };
+export type CnReleaseResult = {
+  statements: D1PreparedStatement[];
+  consignmentOrderId: string | null;
+  // Set when the CN could only be unlinked, not restored. The caller writes it
+  // as an audit_events row (resource consignment-notes) in the same batch.
+  unlinked: { cnId: string; noteNo: string; status: string | null; reason: string } | null;
+};
 
 // Statements to undo convert-to-invoice for `invoiceId`, for the caller to put
 // in the SAME batch as the void/delete — and BEFORE a `DELETE FROM invoices`,
 // whose FK (ON DELETE SET NULL) would otherwise clear convertedInvoiceId first.
-// Not a CN-sourced invoice → no statements. Never guesses: a CN that is no
-// longer FULLY_SOLD (CLOSED, RETURNED, edited back) or whose prior status was
-// never recorded (converted before 0244) is a conflict the caller refuses.
+// Not a CN-sourced invoice → no statements.
+//
+// Never guesses a status. When the CN is still FULLY_SOLD from this invoice
+// with its prior status recorded, it is restored. Otherwise (converted before
+// 0244, returned / closed / edited since, or no convert stamp to match by) the
+// void still goes ahead, the CN keeps its status and is only unlinked, and the
+// reason is recorded (owner YH, 2026-10-20). Either way a row-locked guard
+// re-checks the CN inside the batch and aborts it (→ 409) if it changed.
 export async function buildInvoiceDeathCnReleaseStatements(
   db: D1Database,
   invoiceId: string,
@@ -483,20 +492,12 @@ export async function buildInvoiceDeathCnReleaseStatements(
     .prepare("SELECT * FROM consignment_notes WHERE convertedInvoiceId = ?")
     .bind(invoiceId)
     .first<Record<string, unknown>>();
-  if (!cn) return { conflict: null, statements: [], consignmentOrderId: null };
+  if (!cn) return { statements: [], consignmentOrderId: null, unlinked: null };
   const cnId = String(cn.id);
   const noteNo = String(cn.noteNumber ?? cn.note_number ?? cnId);
+  const status = (cn.status ?? null) as string | null;
   const prior = (cn.statusBeforeConversion ?? cn.status_before_conversion ?? null) as string | null;
-  if (cn.status !== "FULLY_SOLD") {
-    return {
-      conflict: `Consignment note ${noteNo} is ${cn.status}, no longer FULLY_SOLD from this invoice, so it cannot be handed back automatically and nothing was saved. Move it back to FULLY_SOLD first, or ask IT for a data fix.`,
-    };
-  }
-  if (!prior || !Object.hasOwn(CN_VALID_TRANSITIONS, prior)) {
-    return {
-      conflict: `Consignment note ${noteNo} has no recorded status from before it was converted, so it cannot be handed back automatically and nothing was saved. Ask IT for a data fix.`,
-    };
-  }
+  const coId = (cn.consignmentOrderId ?? cn.consignment_order_id ?? null) as string | null;
 
   // convert-to-invoice stamps ONE `now` on the invoice's created_at, each item
   // it sold (soldDate), each unit it delivered (deliveredAt) and, if unset, the
@@ -506,25 +507,48 @@ export async function buildInvoiceDeathCnReleaseStatements(
     .bind(invoiceId)
     .first<{ createdAt?: string | null; created_at?: string | null }>();
   const convertedAt = inv?.createdAt ?? inv?.created_at ?? null;
-  // Without the stamp the items and units cannot be told apart from ones sold
-  // or delivered another way — refuse rather than undo only the header.
-  if (!convertedAt) {
+
+  const reason =
+    status !== "FULLY_SOLD"
+      ? `the consignment note is ${status ?? "without a status"}, no longer FULLY_SOLD from this invoice`
+      : !prior || !Object.hasOwn(CN_VALID_TRANSITIONS, prior)
+        ? "its status from before the conversion was never recorded (converted before migration 0244)"
+        : !convertedAt
+          ? "the invoice has no creation time to match the conversion's items and units by"
+          : null;
+
+  // Row-locked re-check inside the transaction: the CN must still be in the
+  // state read above. CAST of non-numeric text fails, which aborts the whole
+  // batch (void/delete included). It refers to a column so the planner cannot
+  // fold the ELSE branch away early.
+  const guard = db
+    .prepare(
+      `SELECT CASE WHEN status IS NOT DISTINCT FROM ? AND convertedInvoiceId = ? THEN 1
+                   ELSE CAST('${CN_RELEASE_CONFLICT} ' || id AS INTEGER) END AS ok
+         FROM consignment_notes WHERE id = ? FOR UPDATE`,
+    )
+    .bind(status, invoiceId, cnId);
+
+  if (reason) {
     return {
-      conflict: `Invoice ${invoiceId} has no creation time, so consignment note ${noteNo}'s conversion cannot be undone safely and nothing was saved. Ask IT for a data fix.`,
+      statements: [
+        guard,
+        db
+          .prepare(
+            `UPDATE consignment_notes
+                SET convertedInvoiceId = NULL, status_before_conversion = NULL
+              WHERE id = ? AND convertedInvoiceId = ?`,
+          )
+          .bind(cnId, invoiceId),
+      ],
+      // The CN's status did not change, so its order has nothing to reopen.
+      consignmentOrderId: null,
+      unlinked: { cnId, noteNo, status, reason },
     };
   }
 
   const statements: D1PreparedStatement[] = [
-    // Row-locked re-check inside the transaction. CAST of non-numeric text
-    // fails, which aborts the whole batch (void/delete included). It refers to
-    // a column so the planner cannot fold the ELSE branch away early.
-    db
-      .prepare(
-        `SELECT CASE WHEN status = 'FULLY_SOLD' AND convertedInvoiceId = ? THEN 1
-                     ELSE CAST('${CN_RELEASE_CONFLICT} ' || id AS INTEGER) END AS ok
-           FROM consignment_notes WHERE id = ? FOR UPDATE`,
-      )
-      .bind(invoiceId, cnId),
+    guard,
     db
       .prepare(
         `UPDATE consignment_notes
@@ -562,8 +586,7 @@ export async function buildInvoiceDeathCnReleaseStatements(
       }),
     );
   }
-  const coId = (cn.consignmentOrderId ?? cn.consignment_order_id ?? null) as string | null;
-  return { conflict: null, statements, consignmentOrderId: coId };
+  return { statements, consignmentOrderId: coId, unlinked: null };
 }
 
 // After the batch lands: a CO that convert marked complete is no longer fully
