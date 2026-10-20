@@ -48,7 +48,7 @@ test("all three write paths know a transfer; the voucher keeps notes, bill no. a
   // (+ tf_due_date / tf_interest_sen since 2026-10-17 — an AP Payment that
   // draws on trade finance, tests/tf-draw-from-ap-payment.test.mjs.)
   // (+ reference since 2026-10-19 — the TT / cheque no., tests/finance-reference-fields.test.mjs.)
-  assert.match(api, /for \(const col of \["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT"\]\)/);
+  assert.match(api, /for \(const col of \["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION"\]\)/);
   const post = slice(api, 'app.post("/payment-vouchers", async (c) => {', 'app.put("/payment-vouchers/:id"');
   assert.match(post, /const isTransfer = body\.kind === PV_KIND_TRANSFER;/);
   assert.match(post, /const t = validatePvTransfer\(coa, body\);/);

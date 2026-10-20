@@ -25,7 +25,7 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   stock: { title: "Stock Summary", explain: "Opening, purchases, consumption and closing stock by material group, plus work in progress and finished goods." },
   payments: {
     title: "Payment Vouchers",
-    explain: "Every payment out, in one list. AP Payment pays a creditor's bills (purchase invoices or other creditor bills); Payment Voucher pays an expense. A voucher goes Draft → Prepared → Checked → Approved, and only Approved posts to the books (or Post now). Foreign-currency invoices, advance knock-off and trade-finance repayment are done on the Supplier Payment page. Payments recorded there and on Other Creditor Payments are listed here too (SP / OCP), in the same HPV number series.",
+    explain: "Every payment out, in one list. AP Payment pays a creditor's bills (purchase invoices or other creditor bills); Payment Voucher pays an expense. A voucher goes Draft → Prepared → Checked → Approved, and only Approved posts to the books (or Post now). A foreign-currency bill is paid in its own currency at the payment month's rate from Setup › Currency & FX (it can be changed). Advance knock-off is done on the Supplier Payment page. Payments recorded there and on Other Creditor Payments are listed here too (SP / OCP), in the same HPV number series.",
     links: [
       { label: "Supplier Payment page", to: "/invoices/supplier-payments" },
       { label: "Other Creditor Payments", to: "/accounting?tab=ocreditorpay" },

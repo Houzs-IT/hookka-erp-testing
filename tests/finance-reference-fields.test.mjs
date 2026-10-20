@@ -44,20 +44,20 @@ test("an AP Payment hands its settlement the Reference; an older voucher settles
 });
 
 test("the voucher stores its Reference on every write path", () => {
-  assert.match(api, /"tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT"\]\) \{/, "self-applied before the first write");
+  assert.match(api, /"tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION"\]\) \{/, "self-applied before the first write");
   assert.match(api, /reference: normaliseReference\(body\.reference\) \};\n\}/, "the form's fields include it");
   const post = slice(api, 'app.post("/payment-vouchers", async (c) => {', 'app.put("/payment-vouchers/:id"');
   // AP Payment: two fields; a client that sends only the description (the
   // form before 2026-10-19) still lands its text where it always did.
   assert.match(post, /const description = String\(body\.description \?\? body\.reference \?\? ""\);\n\s+const \{ reference \} = pvExtraFields\(body as Record<string, unknown>\);/);
-  assert.match(post, /pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference\n/);
-  assert.match(post, /ap\.v\.tf\?\.dueDate \?\? null, ap\.v\.tf \? ap\.v\.tf\.interestSen : null, reference,\n/);
+  assert.match(post, /pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference, fx_currency, fx_rate\n/);
+  assert.match(post, /ap\.v\.tf\?\.dueDate \?\? null, ap\.v\.tf \? ap\.v\.tf\.interestSen : null, reference, ap\.v\.fxCurrency, ap\.v\.fxRate,\n/);
   assert.match(post, /reference: settlementReference\(reference, description\), advanceSen: ap\.v\.advanceSen,/, "Post now");
   // Payment / Transfer.
   assert.match(post, /pv_kind, notes, bill_no, bill_date, reference\n\s+\) VALUES/);
   const put = slice(api, 'app.put("/payment-vouchers/:id"', "// The four-tier ladder.");
-  assert.match(put, /tf_interest_sen = \?, reference = \?, updated_at = \? WHERE id = \?/);
-  assert.match(put, /pvExtraFields\(body as Record<string, unknown>\)\.reference, now, id\),/);
+  assert.match(put, /tf_interest_sen = \?, reference = \?, fx_currency = \?, fx_rate = \?, updated_at = \? WHERE id = \?/);
+  assert.match(put, /pvExtraFields\(body as Record<string, unknown>\)\.reference, ap\.v\.fxCurrency, ap\.v\.fxRate, now, id\),/);
   assert.match(put, /bill_date = \?, reference = \?, updated_at = \? WHERE id = \?`,\n\s+\)\.bind\([^\n]*extra\.billDate, extra\.reference, now, id\),/);
   const restate = slice(api, 'app.post("/payment-vouchers/:id/restate"', 'app.get("/doc-trail"');
   assert.match(restate, /bill_date = \?, reference = \?, status = 'POSTED'[^\n]*extra\.billDate, extra\.reference, now, id\)\);/);

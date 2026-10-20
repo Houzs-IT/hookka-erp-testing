@@ -33,6 +33,8 @@ import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFro
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
+import { apForeignPay } from "@/lib/ap-fx";
+import { fmtFxRate, fxMonthLabel, fxMonthOf, fxRateFor, parseFxRate, type FxSettings } from "@/lib/fx";
 import { loadPiForPrint, type PiPrintSupplier } from "@/lib/pi-print-load";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party-aging-rows";
@@ -240,7 +242,7 @@ function buildPvVoucher(
   const supplierAp = isAp && pv.partyKind === "SUPPLIER";
   const bills = isAp && apDetail
     ? apBillsBlock(apDetail, {
-        totalSen: pv.totalSen, money: formatCurrency,
+        totalSen: pv.totalSen, money: formatCurrency, fxMoney: (sen: number, ccy: string) => formatCurrency(sen, ccy),
         docLabel: supplierAp ? "Purchase invoice" : "Bill", refLabel: supplierAp ? "Supplier inv no." : "Reference",
         partyWord: supplierAp ? "Supplier" : "Creditor",
       })
@@ -10774,12 +10776,17 @@ type PvRow = {
   tfInterestSen?: number | null; tf_interest_sen?: number | null;
   advanceOpenSen?: number;
   allocs?: PvAllocOut[];
+  // An AP Payment of foreign-currency bills: their currency and the payment's
+  // rate (RM per 1 unit); totalSen is then what the bank pays (foreign × rate).
+  fxCurrency?: string | null;
+  fxRate?: number | null;
   // Evidence on file (Houzs adoption 2026-09-22): count on the row, the list
   // loads on expand; print bundle = voucher + every attachment.
   attachmentCount?: number;
 };
 // TF = a trade-finance drawdown repaid by an AP Payment to the lender (item 17).
-type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; docRef: string; amountSen: number };
+// foreignSen: a foreign-currency bill's payment in its own currency (Currency & FX step 3); amountSen = the booked RM it cleared.
+type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; docRef: string; amountSen: number; foreignSen?: number };
 // The voucher form (owner 2026-10-01, the layout he showed): Payment = expense
 // lines; Transfer = money between our own bank / cash accounts.
 type PvFormState = {
@@ -10876,6 +10883,9 @@ type PvOpenBill = {
   currency: string; foreign: boolean; opening: boolean;
   /** A drawdown (docKind TF): the interest in its balance. */
   interestSen?: number;
+  /** A foreign-currency bill: its booking rate and what is still payable in its own currency. */
+  fxRate?: number | null;
+  foreignAvailableSen?: number | null;
 };
 // The supplier picked on an AP Payment is a trade-finance lender: its lines are
 // drawdowns and the voucher repays them (finance backlog item 17).
@@ -11255,6 +11265,17 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // The trade-finance lines (GET /trade-finance): Paid from may draw on one.
   const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number; limitSen: number | null; accountNetSen: number }[]>([]);
   const [apAlloc, setApAlloc] = useState<Record<string, string>>({});
+  // Currency & FX step 3 (owner 2026-10-20): an AP payment of foreign-currency
+  // bills pays in their currency at this rate (RM per 1 unit). The month's
+  // rate from Setup fills it in when the first one is ticked; it can be changed.
+  const [apFxRate, setApFxRate] = useState("");
+  const { data: fxResp } = useCachedJson<{ success?: boolean; data?: FxSettings }>("/api/fx");
+  const fxSettings = fxResp?.success ? fxResp.data ?? null : null;
+  const fillFxRate = (ccy: string) => {
+    if (apFxRate.trim() || !fxSettings) return;
+    const r = fxRateFor(fxSettings, ccy, apForm.date);
+    if (r !== null) setApFxRate(fmtFxRate(r));
+  };
   // apBills carries the key it was loaded for; a key mismatch = loading.
   const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } | null>(null);
   const [suppliers, setSuppliers] = useState<{ id: string; code?: string | null; name: string; isActive?: boolean }[]>([]);
@@ -11467,6 +11488,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setLines([{ accountCode: "", description: "", amount: "" }]);
     setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", description: "", advance: "", tfDue: "", tfInterest: "" });
     setApAlloc({});
+    setApFxRate("");
     setApBills(null);
   };
   const openNew = (kind: "EXPENSE" | "AP") => {
@@ -11491,13 +11513,38 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // One parser for the AP form's money cells (display + payload); an
   // unreadable cell is refused by handleSaveAp before any figure is sent.
   const apSen = (v: string) => moneyFieldToSen(v) ?? 0;
-  const apAllocSen = apTicked.reduce((s, b) => s + apSen(apAlloc[b.id] ?? ""), 0);
-  const apAdvanceSen = apTfLender ? 0 : apSen(apForm.advance);
+  // Foreign-currency bills (Currency & FX step 3): typed in the bill's
+  // currency and priced at the payment's rate — AP cleared at the booked RM,
+  // the bank pays foreign × rate (apForeignPay, the server's own check).
+  // One currency per payment; no advance and no drawdown on one.
+  const apFxCcy = apTicked.find((b) => b.foreign)?.currency ?? null;
+  const apMixed = !!apFxCcy && apTicked.some((b) => b.currency !== apFxCcy);
+  const apPayRate = parseFxRate(apFxRate);
+  const apSetupRate = apFxCcy && fxSettings ? fxRateFor(fxSettings, apFxCcy, apForm.date) : null;
+  const apFxLines = apTicked.filter((b) => b.foreign).map((b) => ({
+    b,
+    r: apForeignPay({ availableSen: b.availableSen, reservedSen: b.reservedSen, bookingRate: b.fxRate ?? 0, foreignSen: apSen(apAlloc[b.id] ?? ""), payRate: apPayRate ?? 0 }),
+  }));
+  const apFxBankSen = apFxLines.reduce((s, x) => s + (x.r.ok ? x.r.bankSen : 0), 0);
+  const apFxBookedSen = apFxLines.reduce((s, x) => s + (x.r.ok ? x.r.bookedSen : 0), 0);
+  const apFxForeignSen = apFxLines.reduce((s, x) => s + apSen(apAlloc[x.b.id] ?? ""), 0);
+  const apFxSen = apFxBookedSen - apFxBankSen;
+  const apAllocSen = apTicked.reduce((s, b) => s + (b.foreign ? 0 : apSen(apAlloc[b.id] ?? "")), 0) + apFxBankSen;
+  const apAdvanceSen = apTfLender || apFxCcy ? 0 : apSen(apForm.advance);
   const apTotalSen = apAllocSen + apAdvanceSen;
-  const apOverAlloc = apTicked.find((b) => apSen(apAlloc[b.id] ?? "") > b.availableSen);
+  const apOverAlloc = apTicked.find((b) => !b.foreign && apSen(apAlloc[b.id] ?? "") > b.availableSen);
+  const apFxBad = apFxLines.find((x) => !x.r.ok);
+  // Why a foreign-currency payment cannot be saved yet ("" when it can).
+  const apFxError = !apFxCcy ? ""
+    : apMixed ? "One currency per payment — untick the bills in another currency"
+    : apPayRate === null ? `Enter this payment's ${apFxCcy} rate (RM per 1 ${apFxCcy})`
+    : apTfDraw ? "A trade-finance drawdown is in RM — pay foreign-currency bills from a bank account"
+    : apFxBad && !apFxBad.r.ok ? `${apFxBad.b.no}: ${apFxBad.r.error}`
+    : "";
   const handleSaveAp = async (mode: "draft" | "post") => {
     if (apMoneyError) { toast.error(apMoneyError); return; }
     if (apOverAlloc) { toast.error(`${apOverAlloc.no}: more than the ${formatCurrency(apOverAlloc.availableSen)} still payable`); return; }
+    if (apFxError) { toast.error(apFxError); return; }
     if (apTotalSen <= 0) { toast.error(apTfLender ? "Tick at least one drawdown to repay" : "Tick at least one bill (or enter an advance)"); return; }
     const body = {
       kind: "AP",
@@ -11508,7 +11555,13 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       description: apForm.description,
       reference: apForm.reference,
       advanceSen: apForm.partyKind === "SUPPLIER" ? apAdvanceSen : 0,
-      allocations: apTicked.map((b) => ({ docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") })).filter((a) => a.amountSen > 0),
+      // A foreign-currency bill sends what is paid in its currency; the rate rides on the voucher.
+      allocations: apTicked
+        .map((b) => (b.foreign
+          ? { docKind: b.docKind, docId: b.id, foreignSen: apSen(apAlloc[b.id] ?? "") }
+          : { docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") }))
+        .filter((a) => (a.foreignSen ?? a.amountSen ?? 0) > 0),
+      ...(apFxCcy ? { fxRate: apPayRate } : {}),
       ...(apTfDraw ? { tfDueDate: apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays), tfInterestSen: apSen(apForm.tfInterest) } : {}),
       saveAs: mode === "draft" && !editingId ? "draft" : undefined,
     };
@@ -11829,10 +11882,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         tfDue: String(r.tfDueDate ?? r.tf_due_date ?? "").slice(0, 10),
         tfInterest: (Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) > 0 ? ((Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) / 100).toFixed(2) : "",
       };
-      const alloc: Record<string, string> = Object.fromEntries((r.allocs ?? []).map((a) => [a.docId, (a.amountSen / 100).toFixed(2)]));
+      // A foreign-currency bill is edited in its own currency (Currency & FX step 3).
+      const alloc: Record<string, string> = Object.fromEntries((r.allocs ?? []).map((a) => [a.docId, (((a.foreignSen ?? 0) > 0 ? a.foreignSen ?? 0 : a.amountSen) / 100).toFixed(2)]));
       setFormKind("AP");
       setApForm(af);
       setApAlloc(alloc);
+      setApFxRate(r.fxCurrency && r.fxRate ? fmtFxRate(r.fxRate) : "");
       editBaseline.current = JSON.stringify([af, alloc]);
       setShowForm(true);
       return;
@@ -12121,7 +12176,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           ? suppliers.map((s) => ({ value: s.id, label: s.code ? `${s.code} ${s.name}` : s.name }))
           : otherCreditors.map((p) => ({ value: p.id, label: p.name }));
         const setAmt = (id: string, v: string) => setApAlloc((m) => { const n = { ...m }; if (v === "") delete n[id]; else n[id] = v; return n; });
-        const cannot = saving || apTotalSen <= 0 || !!apMoneyError || !!apOverAlloc || !apForm.partyId || !(apForm.payFrom || defaultBankCode(bankCash));
+        const cannot = saving || apTotalSen <= 0 || !!apMoneyError || !!apOverAlloc || !!apFxError || !apForm.partyId || !(apForm.payFrom || defaultBankCode(bankCash));
         // The same popup as the voucher form (owner 2026-10-01 「new ap payment
         // 的页面还是这样」): HEADER, then the bills to pay; fields and rules unchanged.
         const editingRow = editingId ? (rows ?? []).find((x) => x.id === editingId) : undefined;
@@ -12300,23 +12355,27 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <th className="px-2.5 py-1.5 text-left">Due</th>
                           <th className="px-2.5 py-1.5 text-right">Total</th>
                           <th className="px-2.5 py-1.5 text-right">Outstanding</th>
-                          <th className="px-2.5 py-1.5 text-right">Pay (RM)</th>
+                          <th className="px-2.5 py-1.5 text-right">Pay ({apFxCcy ?? "RM"})</th>
                         </tr>
                       </thead>
                       <tbody>
                         {apBills.bills.map((b) => {
                           const ticked = (apAlloc[b.id] ?? "") !== "";
-                          const over = ticked && apSen(apAlloc[b.id] ?? "") > b.availableSen;
+                          // A foreign bill is paid in its own currency (Currency & FX step 3).
+                          const payable = b.foreign ? (b.foreignAvailableSen ?? 0) : b.availableSen;
+                          const over = ticked && apSen(apAlloc[b.id] ?? "") > payable;
+                          // One currency per payment: once a bill is ticked, bills in another currency wait.
+                          const otherCcy = !ticked && apTicked.length > 0 && (apTicked[0].currency !== b.currency);
                           return (
-                            <tr key={b.id} className={`border-t border-[#F0ECE9] ${b.foreign ? "opacity-60" : ""}`}>
+                            <tr key={b.id} className={`border-t border-[#F0ECE9] ${otherCcy ? "opacity-60" : ""}`}>
                               <td className="px-2.5 py-1">
-                                <input type="checkbox" checked={ticked} disabled={b.foreign || b.availableSen <= 0}
-                                  onChange={(e) => setAmt(b.id, e.target.checked ? (b.availableSen / 100).toFixed(2) : "")}
-                                  className="h-3.5 w-3.5 accent-[#6B5C32]" title={b.foreign ? `${b.currency} invoice — pay on the Supplier Payment page` : "Tick = pay in full; edit the amount for a part payment"} />
+                                <input type="checkbox" checked={ticked} disabled={payable <= 0 || otherCcy}
+                                  onChange={(e) => { setAmt(b.id, e.target.checked ? (payable / 100).toFixed(2) : ""); if (e.target.checked && b.foreign) fillFxRate(b.currency); }}
+                                  className="h-3.5 w-3.5 accent-[#6B5C32]" title={otherCcy ? `One currency per payment — this bill is in ${b.currency}` : "Tick = pay in full; edit the amount for a part payment"} />
                               </td>
                               <td className="px-2.5 py-1 whitespace-nowrap tabular-nums">
                                 {b.no}{b.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}
-                                {b.foreign && <span className="ml-1 rounded bg-[#F0ECE9] px-1 text-[10px] text-[#6B7280]">{b.currency} — Supplier Payment page</span>}
+                                {b.foreign && <span className="ml-1 rounded bg-[#EEF2FB] px-1 text-[10px] text-[#2C4170]" title={`Booked at ${fmtFxRate(b.fxRate ?? 0)} RM per 1 ${b.currency}`}>{b.currency} @{fmtFxRate(b.fxRate ?? 0)}</span>}
                               </td>
                               <td className="px-2.5 py-1 text-[#6B7280]">{b.ref}</td>
                               <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.date}</td>
@@ -12325,10 +12384,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               <td className="px-2.5 py-1 text-right tabular-nums">
                                 {formatCurrency(b.outstandingSen)}
                                 {b.reservedSen > 0 && <div className="text-[10px] text-[#9A3A2D]" title={`Already ticked on ${b.reservedBy.join(", ")}`}>−{formatCurrency(b.reservedSen)} on {b.reservedBy.join(", ")}</div>}
+                                {b.foreign && <div className="text-[10px] text-[#6B7280]">{formatCurrency(b.foreignAvailableSen ?? 0, b.currency)} payable</div>}
                               </td>
                               <td className="px-2.5 py-1 text-right">
-                                <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={b.foreign || b.availableSen <= 0}
-                                  onChange={(e) => setAmt(b.id, e.target.value)}
+                                {b.foreign && <span className="mr-1 text-[10px] text-[#6B7280]">{b.currency}</span>}
+                                <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={payable <= 0 || otherCcy}
+                                  onChange={(e) => { setAmt(b.id, e.target.value); if (b.foreign && e.target.value.trim()) fillFxRate(b.currency); }}
                                   className={`w-28 rounded border border-[#E2DDD8] bg-white px-2 py-1 text-right tabular-nums text-xs ${over || isUnreadableMoney(apAlloc[b.id] ?? "") ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
                               </td>
                             </tr>
@@ -12340,10 +12401,38 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 )}
                 {apOverAlloc && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apOverAlloc.no}: more than the {formatCurrency(apOverAlloc.availableSen)} still payable.</div>}
                 {apMoneyError && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apMoneyError}</div>}
+                {apFxCcy && (
+                  <div className="mt-2 rounded-md border border-[#D6DDEB] bg-[#F6F8FC] px-3 py-2 text-xs" data-ap-fx="">
+                    <div className="flex flex-wrap items-end gap-4">
+                      <label className="font-medium text-[#6B7280]">
+                        Rate · {fxMonthLabel(fxMonthOf(apForm.date))} · {apSetupRate === null ? "not in Setup" : apPayRate === apSetupRate ? "from Setup" : "edited"}
+                        <input
+                          aria-label={`${apFxCcy} rate (RM per 1 ${apFxCcy})`}
+                          type="text" inputMode="decimal" value={apFxRate}
+                          placeholder={apSetupRate !== null ? fmtFxRate(apSetupRate) : `RM per 1 ${apFxCcy}`}
+                          onChange={(e) => setApFxRate(e.target.value)}
+                          className={`${selCls} mt-1 block w-32 text-right tabular-nums ${apFxRate.trim() && apPayRate === null ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`}
+                        />
+                      </label>
+                      <div className="pb-1.5 text-[#374151] tabular-nums">
+                        {formatCurrency(apFxForeignSen, apFxCcy)} × {apPayRate !== null ? fmtFxRate(apPayRate) : "—"} = <b>{formatCurrency(apFxBankSen)}</b>
+                      </div>
+                      {apPayRate !== null && apFxSen !== 0 && (
+                        <div className={`pb-1.5 tabular-nums ${apFxSen > 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>
+                          FX {apFxSen > 0 ? "gain" : "loss"} {formatCurrency(Math.abs(apFxSen))} vs the invoice rate
+                        </div>
+                      )}
+                    </div>
+                    {apSetupRate === null && (
+                      <div className="mt-1 text-[#7A5B12]">No {fxMonthLabel(fxMonthOf(apForm.date))} {apFxCcy} rate in Setup — type it here, or <Link to="/accounting?tab=fx" className="underline decoration-dotted">key it in Setup › Currency &amp; FX</Link>.</div>
+                    )}
+                    {apFxError && apPayRate !== null && <div className="mt-1 text-[#9A3A2D]">{apFxError}</div>}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-end justify-between gap-3">
-                {apForm.partyKind === "SUPPLIER" && !apTfLender ? (
+                {apForm.partyKind === "SUPPLIER" && !apTfLender && !apFxCcy ? (
                   <div>
                     <label className="text-xs font-medium text-[#6B7280] mb-1 block">Advance / unallocated (RM) <span className="ml-1 text-[#B4B2A9] cursor-help" title="Paid on top of the bills — sits as a prepayment on this supplier's ledger; knock it off later on the Supplier Payment page">ⓘ</span></label>
                     <input type="text" placeholder="0.00" value={apForm.advance} onChange={(e) => setApForm({ ...apForm, advance: e.target.value })} className={`${selCls} w-40 text-right tabular-nums ${isUnreadableMoney(apForm.advance) ? "text-[#9A3A2D]" : ""}`} />
@@ -12736,7 +12825,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <DetailField label="Voucher date">{fmtDocDate(r.date)}</DetailField>
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
                 <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
-                <DetailField label="Kind">{r.pvKind === "AP" ? "AP payment" : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
+                <DetailField label="Kind">{r.pvKind === "AP" ? (r.fxCurrency && r.fxRate ? `AP payment · ${r.fxCurrency} @ ${fmtFxRate(r.fxRate)}` : "AP payment") : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
                 <DetailField label="Reference">{r.reference || "—"}</DetailField>
                 <DetailField label="Description (printed)" span={3}>{r.description || "—"}</DetailField>
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
@@ -12757,7 +12846,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Bill</th><th className="text-left px-3 py-1.5 font-medium">Ref</th><th className="text-right px-3 py-1.5 font-medium">Paid</th></tr></thead>
                       <tbody>
                         {(r.allocs ?? []).map((a, i) => (
-                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : a.docKind === "TF" ? "trade-finance drawdown" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
+                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : a.docKind === "TF" ? "trade-finance drawdown" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{(a.foreignSen ?? 0) > 0 && r.fxCurrency ? <>{formatCurrency(a.foreignSen ?? 0, r.fxCurrency)}<div className="text-[10px] text-[#9CA3AF]">cleared {formatCurrency(a.amountSen)}</div></> : formatCurrency(a.amountSen)}</td></tr>
                         ))}
                         {(r.advanceSen ?? 0) > 0 && <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5">Advance / unallocated{(r.advanceOpenSen ?? 0) > 0 && isPosted(r) ? <span className="ml-1 text-[10px] text-[#7A5B12]">· {formatCurrency(r.advanceOpenSen ?? 0)} still unapplied</span> : null}</td><td /><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.advanceSen ?? 0)}</td></tr>}
                         <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>
