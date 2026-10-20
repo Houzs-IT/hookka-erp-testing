@@ -30,6 +30,7 @@ import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearE
 import { emitAudit } from "../lib/audit";
 import { requestMemo, timed, timedFn } from "../lib/step-timing";
 import { parseDebtorCode } from "../../lib/debtor";
+import { depreciationUndoBlock, depreciationUndoLegs } from "../../lib/fixed-asset-undo";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
 import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
@@ -16618,6 +16619,19 @@ app.put("/fixed-assets/:id", async (c) => {
       await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "dispose", before: row });
       return c.json({ success: true });
     }
+    // Restore a disposed asset (owner 2026-10-20, design list 「这个要做」): it
+    // is in use again and depreciation picks up from where it stopped. A
+    // dispose posts nothing, so neither does its undo.
+    if (b.restore === true) {
+      if (!row.disposedAt) return c.json({ success: false, error: `${row.name} is not disposed.` }, 409);
+      await c.var.DB.prepare(
+        "UPDATE fixed_assets SET disposedAt = NULL, updated_at = ? WHERE id = ?",
+      )
+        .bind(new Date().toISOString(), id)
+        .run();
+      await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "restore", before: row });
+      return c.json({ success: true });
+    }
     const name = b.name === undefined ? row.name : String(b.name).trim();
     const life = b.usefulLifeMonths === undefined ? row.usefulLifeMonths : Math.round(Number(b.usefulLifeMonths) || 0);
     const residualSen = b.residualSen === undefined ? row.residualSen : Math.round(Number(b.residualSen) || 0);
@@ -16689,6 +16703,27 @@ app.get("/fixed-assets/depreciation-preview", async (c) => {
         amountSen: monthlyDepSen(a, a.accumSen),
       }))
       .filter((r) => r.amountSen > 0);
+    // What is already posted for the month (the list the owner exports, and
+    // what Undo would take back) and the latest month with any posting.
+    const [postedRes, latestRow] = await Promise.all([
+      c.var.DB.prepare("SELECT assetId, amountSen, postedAt FROM fixed_asset_depreciation WHERE month = ?")
+        .bind(month)
+        .all<{ assetId: string; amountSen: number; postedAt: string | null }>(),
+      c.var.DB.prepare("SELECT MAX(month) AS m FROM fixed_asset_depreciation").first<{ m: string | null }>(),
+    ]);
+    const byId = new Map(assets.map((a) => [a.id, a] as const));
+    const posted = (postedRes.results ?? []).map((p) => {
+      const a = byId.get(p.assetId);
+      return {
+        assetId: p.assetId,
+        name: a?.name ?? p.assetId,
+        assetAccount: a?.assetAccount ?? "",
+        expenseAccount: a?.expenseAccount ?? "",
+        accumAccount: a?.accumAccount ?? "",
+        amountSen: Number(p.amountSen) || 0,
+        postedAt: p.postedAt,
+      };
+    });
     return c.json({
       success: true,
       data: {
@@ -16696,10 +16731,99 @@ app.get("/fixed-assets/depreciation-preview", async (c) => {
         rows,
         totalSen: rows.reduce((s, r) => s + r.amountSen, 0),
         alreadyRun: done.size > 0,
+        posted,
+        postedTotalSen: posted.reduce((s, r) => s + r.amountSen, 0),
+        latestPostedMonth: latestRow?.m ?? null,
       },
     });
   } catch {
     return c.json({ success: false, error: "Preview failed — is migration 0161 applied?" }, 400);
+  }
+});
+
+// POST /api/accounting/fixed-assets/depreciation-undo { month } — undo a
+// month's depreciation (owner 2026-10-20, design list 「这个要做」). The
+// latest posted month only. Each of its runs is reversed leg by leg under
+// depreciation_reversal (the labour undo's shape — the Journal list folds the
+// pair into one REVERSED · UNDONE row) and the month's register rows go, so
+// the assets' accumulated depreciation steps back and the month can be run
+// again. The trail stays in the ledger and the audit log.
+app.post("/fixed-assets/depreciation-undo", async (c) => {
+  const denied = await requirePermission(c, "accounting", "create");
+  if (denied) return denied;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const month = String((body as { month?: unknown }).month || "");
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return c.json({ success: false, error: "month must be YYYY-MM" }, 400);
+    }
+    const db = c.var.DB;
+    const orgId = getOrgId(c);
+    const [rowsRes, latestRow] = await Promise.all([
+      db.prepare("SELECT id, assetId, amountSen FROM fixed_asset_depreciation WHERE month = ?").bind(month)
+        .all<{ id: string; assetId: string; amountSen: number }>(),
+      db.prepare("SELECT MAX(month) AS m FROM fixed_asset_depreciation").first<{ m: string | null }>(),
+    ]);
+    const monthRows = rowsRes.results ?? [];
+    const block = depreciationUndoBlock(month, latestRow?.m ?? null, monthRows.length > 0);
+    if (block) return c.json({ success: false, error: block }, 409);
+    const legRes = await db
+      .prepare(
+        `SELECT sourceType, sourceId, accountCode, debitSen, creditSen, description FROM ledger_journal_entries
+          WHERE orgId = ? AND sourceType IN ('depreciation', 'depreciation_reversal') AND sourceId LIKE ? AND hidden = 0`,
+      )
+      .bind(orgId, `dep-${month}-%`)
+      .all<Record<string, unknown>>();
+    const undo = depreciationUndoLegs(
+      (legRes.results ?? []).map((l) => ({
+        sourceType: String(l.sourceType ?? l.source_type ?? ""),
+        sourceId: String(l.sourceId ?? l.source_id ?? ""),
+        accountCode: String(l.accountCode ?? l.account_code ?? ""),
+        debitSen: Number(l.debitSen ?? l.debit_sen) || 0,
+        creditSen: Number(l.creditSen ?? l.credit_sen) || 0,
+        description: (l.description as string | null) ?? null,
+      })),
+      month,
+    );
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const legs: LedgerEntryInput[] = [];
+    const nextNo = new Map<string, number>();
+    for (const u of undo) {
+      let n = nextNo.get(u.sourceId);
+      if (n === undefined) n = await nextLegNo(db, orgId, "depreciation_reversal", u.sourceId);
+      nextNo.set(u.sourceId, n + 1);
+      legs.push({
+        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+        sourceType: "depreciation_reversal",
+        sourceId: u.sourceId,
+        legNo: n,
+        accountCode: u.accountCode,
+        debitSen: u.debitSen,
+        creditSen: u.creditSen,
+        description: u.description,
+        actorUserId,
+        orgId,
+      });
+    }
+    const { statements } = legs.length
+      ? await buildJournalEntryStatements(db, orgId, legs, { docDate: month })
+      : { statements: [] as D1PreparedStatement[] };
+    await db.batch([
+      ...statements,
+      db.prepare("DELETE FROM fixed_asset_depreciation WHERE month = ?").bind(month),
+    ]);
+    const totalSen = monthRows.reduce((s, r) => s + (Number(r.amountSen) || 0), 0);
+    await emitAudit(c, {
+      resource: "fixed-assets",
+      resourceId: `dep-${month}`,
+      action: "unpost",
+      before: { month, assets: monthRows.length, totalSen, rows: monthRows },
+      after: { month, reversedLegs: legs.length },
+    });
+    return c.json({ success: true, data: { month, assets: monthRows.length, totalSen, reversedLegs: legs.length } });
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
+    return c.json({ success: false, error: "Undo failed — nothing was changed. Retry, and report if it persists." }, 400);
   }
 });
 

@@ -14302,7 +14302,15 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Re-read the month's preview after a run (finance v2: the preview loads
   // with the month — a read; Post stays the owner's click).
   const [previewKey, setPreviewKey] = useState(0);
-  const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
+  const [preview, setPreview] = useState<{
+    rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[];
+    totalSen: number;
+    // What is already posted for the month, and the latest month with any
+    // posting (only that one can be undone) — 2026-10-20.
+    posted?: { assetId: string; name: string; assetAccount: string; expenseAccount: string; accumAccount: string; amountSen: number }[];
+    postedTotalSen?: number;
+    latestPostedMonth?: string | null;
+  } | null>(null);
   const [posting, setPosting] = useState(false);
   // Add New Asset from a saved voucher / AP bill (backlog item 11): the lines
   // the saving page left waiting, opened one at a time (each a fresh form,
@@ -14348,6 +14356,52 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const j = asMutationResponse(await res.json());
     if (j?.success) load();
     else toast.error(j?.error || "Delete failed");
+  };
+
+  // Restore a disposed asset (owner 2026-10-20, design list 「这个要做」): in
+  // use again; depreciation picks up from where it stopped. Nothing posts.
+  const handleRestore = async (row: FaRow) => {
+    if (!(await confirm({ title: "Restore asset?", message: `Put ${row.name} back in use? Its depreciation picks up from where it stopped; nothing is posted now.` }))) return;
+    const res = await fetch(`/api/accounting/fixed-assets/${row.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ restore: true }),
+    });
+    const j = asMutationResponse(await res.json());
+    if (j?.success) { toast.success(`${row.name} restored`); load(); setPreviewKey((k) => k + 1); }
+    else toast.error(j?.error || "Restore failed");
+  };
+
+  // Undo the month's depreciation (owner 2026-10-20 「这个要做」) — the latest
+  // posted month only. Its entries are reversed (the pair shows as one undone
+  // row on Journal Entries) and the assets' accumulated depreciation steps
+  // back; the month can then be run again.
+  const [undoing, setUndoing] = useState(false);
+  const handleUndo = async () => {
+    if (!preview?.posted?.length) return;
+    if (!(await confirm({
+      title: `Undo ${periodLabel(runMonth, "")}'s depreciation?`,
+      message: `${formatCurrency(preview.postedTotalSen ?? 0)} on ${preview.posted.length} asset${preview.posted.length === 1 ? "" : "s"} comes out of the books (the entries are reversed, not erased) and their accumulated depreciation goes back. You can post the month again.`,
+      confirmLabel: "Undo",
+      danger: true,
+    }))) return;
+    setUndoing(true);
+    try {
+      const res = await fetch("/api/accounting/fixed-assets/depreciation-undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: runMonth }),
+      });
+      const j = await res.json() as { success?: boolean; error?: string };
+      if (j?.success) {
+        toast.success(`Depreciation ${runMonth} undone`);
+        setPreview(null);
+        load();
+        setPreviewKey((k) => k + 1);
+      } else toast.error(j?.error || "Undo failed");
+    } finally {
+      setUndoing(false);
+    }
   };
 
   useEffect(() => {
@@ -14413,8 +14467,18 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     aoa.push(["TOTAL (in use)", "", "", sumOf(rows ?? [], (r) => r.costSen) / 100, sumOf(rows ?? [], (r) => r.accumSen) / 100, sumOf(rows ?? [], nbv) / 100, ""]); kinds.push("grand");
     return { aoa, kinds };
   };
+  // The month's depreciation list (owner 2026-10-20 「这个要做」): what is
+  // posted and what is still to run, asset by asset.
+  const buildMonthExport = (): Aoa => {
+    const aoa: Aoa = [["Month", "Asset", "Asset account", "DR expense", "CR accum. depn", "Amount (RM)", "Status"]];
+    for (const p of preview?.posted ?? []) aoa.push([runMonth, p.name, p.assetAccount, p.expenseAccount, p.accumAccount, p.amountSen / 100, "Posted"]);
+    for (const p of preview?.rows ?? []) aoa.push([runMonth, p.name, assetOf.get(p.assetId)?.assetAccount ?? "", p.expenseAccount, p.accumAccount, p.amountSen / 100, "Not posted"]);
+    aoa.push(["", "TOTAL", "", "", "", ((preview?.postedTotalSen ?? 0) + (preview?.totalSen ?? 0)) / 100, ""]);
+    return aoa;
+  };
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx("fixed-assets.xlsx", "Fixed Assets", buildExport().aoa, { moneyFormat: true }); } },
+    { label: `${mLabel} depreciation (Excel)`, onSelect: () => { void exportReportXlsx(`depreciation-${runMonth}.xlsx`, `Depreciation ${runMonth}`, buildMonthExport(), { moneyFormat: true }); } },
     {
       label: "Print / PDF",
       onSelect: () => {
@@ -14529,6 +14593,49 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         </div>
       )}
 
+      {/* What is posted for the month — the latest posted month can be undone. */}
+      {preview?.posted && preview.posted.length > 0 && (
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white" data-fa-posted="">
+          <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+            <span className="text-[15px] font-bold text-[#1F1D1B]">Posted depreciation</span>
+            <span className="text-[12px] text-[#9CA3AF]">{mLabel} · {preview.posted.length} asset{preview.posted.length === 1 ? "" : "s"}</span>
+            <span className="ml-auto">
+              {preview.latestPostedMonth === runMonth ? (
+                <Button variant="outline" size="sm" disabled={undoing} onClick={handleUndo}>{undoing ? "Undoing…" : `Undo ${mLabel}`}</Button>
+              ) : (
+                <span className="text-[12px] text-[#9CA3AF]">Undo {preview.latestPostedMonth} first to undo this month</span>
+              )}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table data-fin-report className="min-w-[640px]">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>DR expense</th>
+                  <th>CR accum. depn</th>
+                  <th data-cell="num split" className="w-[160px]">This month</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.posted.map((p) => (
+                  <tr key={p.assetId} data-row="line">
+                    <td style={{ paddingLeft: 28 }}>{p.name}</td>
+                    <td><span data-cell="code" className="mr-1.5">{p.expenseAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.expenseAccount)}</span></td>
+                    <td><span data-cell="code" className="mr-1.5">{p.accumAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.accumAccount)}</span></td>
+                    <td data-cell="num split">{formatCurrency(p.amountSen)}</td>
+                  </tr>
+                ))}
+                <tr data-row="fin">
+                  <td colSpan={3}>TOTAL</td>
+                  <td data-cell="num split">{formatCurrency(preview.postedTotalSen ?? 0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Register */}
       <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
         <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
@@ -14568,8 +14675,10 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <td data-cell="num">{formatCurrency(nbv(r))}</td>
                           <td className="text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
                           <td className="text-right">
-                            {!r.disposedAt && (
+                            {!r.disposedAt ? (
                               <button onClick={() => handleDispose(r)} className="text-[#6B7280] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer mr-3">dispose</button>
+                            ) : (
+                              <button onClick={() => handleRestore(r)} className="text-[#6B7280] hover:text-[#27500A] text-xs underline decoration-dotted cursor-pointer mr-3">restore</button>
                             )}
                             <button onClick={() => handleDelete(r)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer">del</button>
                           </td>
