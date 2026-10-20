@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import {
   MOBILE_DASH_LINES, FIN_DASH_LINES, rmWhole, vsForecast, phoneDashMonths, smoothPath, cfSectionTotals, shareWidths,
   monthName, shortName, SWIPE_EDGE_PX, swipeGoesBack,
+  pctPointLabel,
 } from "../src/pages/m/screens/finance/m-finance-lib.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
@@ -105,4 +106,12 @@ test("swipe back: from the left edge, past 30% of the width, in the iPhone home-
   assert.match(shell, /if \(e\.clientX - box\.left > SWIPE_EDGE_PX\) return;/);
   assert.match(shell, /transition: dragging \? "none" : "transform \.22s cubic-bezier\(\.2,\.8,\.2,1\)"/);
   assert.match(read(dir + "FinanceRoute.tsx"), /return <SwipeBack onBack=\{\(\) => navigate\("\/m\/finance"\)\}>\{render\(\)\}<\/SwipeBack>;/);
+});
+
+test("a percentage chart's point carries its figure on the phone (owner 2026-10-20)", () => {
+  assert.equal(pctPointLabel(46.84), "46.8%");
+  assert.equal(pctPointLabel(0), "0.0%");
+  assert.equal(pctPointLabel(-2.5), "(2.5%)");
+  assert.equal(pctPointLabel(null), "", "a month without sales has no point, so no label");
+  assert.equal(pctPointLabel(Number.NaN), "");
 });

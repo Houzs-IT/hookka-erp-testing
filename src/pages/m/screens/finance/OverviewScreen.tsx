@@ -4,17 +4,19 @@
 // draws the same five figures, one card each, with the latest month on top:
 // sales orders vs invoices, gross and net profit with their % of sales, and
 // raw material and direct labour as a % of sales (shareOfSales, as the
-// desktop). A month before the books opened shows "—", never 0.
+// desktop). A month before the books opened shows "—", never 0. Each month's
+// point on a percentage chart carries its figure (owner 2026-10-20 「手机版的
+// overview 每个月份的点没有percentage」) — a phone has no hover.
 // ---------------------------------------------------------------------------
 import { useState, type ReactNode } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { shareOfSales, type OverviewMonth } from "@/lib/overview-trend";
 import { fmtPct } from "@/lib/finance-money";
 import { MobileCard } from "../../components";
 import { M } from "../../theme";
 import { FinanceHeader, FinanceNote, FinanceSwitch } from "./finance-shell";
-import { fmtMoney } from "./m-finance-lib";
+import { fmtMoney, pctPointLabel } from "./m-finance-lib";
 
 type Range = "3" | "6" | "12";
 const RANGES: { key: Range; label: string }[] = [
@@ -90,11 +92,13 @@ export function OverviewScreen() {
   );
   const pctLine = (key: "rmPct" | "dlPct", color: string) => (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 20, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="#EEF1F5" />
-        <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} padding={{ left: 16, right: 16 }} />
+        <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} padding={{ left: 22, right: 22 }} />
         <YAxis tick={tick} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={38} />
-        <Line type="monotone" dataKey={key} stroke={color} strokeWidth={2} dot={{ r: 3 }} connectNulls isAnimationActive={false} />
+        <Line type="monotone" dataKey={key} stroke={color} strokeWidth={2} dot={{ r: 3 }} connectNulls isAnimationActive={false}>
+          <LabelList dataKey={key} position="top" offset={8} formatter={pctPointLabel} style={{ fontSize: 11, fontWeight: 600, fill: color }} />
+        </Line>
       </LineChart>
     </ResponsiveContainer>
   );
