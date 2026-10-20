@@ -263,8 +263,8 @@ app.post("/", async (c) => {
       reason: String(body.reason ?? ""),
       notes: String(body.notes ?? ""),
     });
-    if (!created.ok) {
-      return c.json({ success: false, error: created.error }, created.status);
+    if (!created) {
+      return c.json({ success: false, error: "Failed to create delivery return" }, 400);
     }
 
     const header = await c.var.DB
@@ -481,17 +481,9 @@ app.post("/:id/cancel", async (c) => {
     .bind(id)
     .first<{ status: string }>();
   if (!h) return c.json({ success: false, error: "Not found" }, 404);
-  // T-006 R7 — RETURNED_TO_STOCK is refused too: buildReturnToStockStatements
-  // already credited fg_batches / cost_ledger / fg_units, and no reversal
-  // exists, so a cancel from there left stock overstated. Refusing is a dead
-  // end on purpose (owner decision pending on a reversal path).
-  if (["CLOSED", "REDELIVERED", "CN_ISSUED", "RETURNED_TO_STOCK"].includes(h.status)) {
-    const recovery =
-      h.status === "RETURNED_TO_STOCK"
-        ? " The goods were already put back into stock, so cancelling would leave stock overstated. If this return was raised in error, correct the stock with a stock adjustment and tell the office."
-        : "";
+  if (h.status === "CLOSED" || h.status === "REDELIVERED" || h.status === "CN_ISSUED") {
     return c.json(
-      { success: false, error: `Cannot cancel a ${h.status} return.${recovery}` },
+      { success: false, error: `Cannot cancel a ${h.status} return` },
       409,
     );
   }

@@ -1,14 +1,11 @@
 // ---------------------------------------------------------------------------
-// T-006 R6 + R7 on main (BUG-2026-10-20-360..364). Runs the real create /
+// T-006 R6 on main (BUG-2026-10-20-360, -361). Runs the real create /
 // delete / guard functions against a small in-memory book, not regexes.
 //
 // R6: a purchase return gives the PO line back its receivedQty (PO 100,
 //     receive 100, return 20 → 80 → 30 more may come in, 31 may not), the PO
 //     status is recomputed, deleting the return restores it, and a GRN with a
 //     live return on its lines cannot be cancelled / deleted / un-posted.
-// R7 / HK-0110: a DO line can only be returned up to what it delivered,
-//     summed across every DO line of a production order, and the cap is
-//     re-checked under a lock in the insert's own transaction.
 // ---------------------------------------------------------------------------
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,8 +16,6 @@ import { pathToFileURL } from "node:url";
 const load = (p) => import(pathToFileURL(resolve(process.cwd(), p)).href);
 const { createPurchaseReturn, purchaseReturnRestoreStatements } = await load("src/api/lib/purchase-return-create.ts");
 const { recomputePoStatusFromReceipts, findOverReceipt, findLivePurchaseReturnOnGrn } = await load("src/api/routes/grn.ts");
-const { createDeliveryReturnRecord, findDeliveryReturnOverCap } = await load("src/api/lib/delivery-return-create.ts");
-const { applyDeliveryReturnsToDoLines } = await load("src/api/routes/delivery-orders/_helpers.ts");
 
 const norm = (s) => s.replace(/\s+/g, " ").trim();
 
@@ -183,119 +178,4 @@ test("R6: GRN cancel, delete and un-post all ask the guard before restoring the 
     const restore = body.indexOf("restorePOReceivedQtyForGRN(");
     assert.ok(guard > 0 && guard < restore, `${route}: guard must run before the PO restore`);
   }
-});
-
-// ── R7: delivery side ──────────────────────────────────────────────────────
-test("R7: the 20 Oct case — a qty-1 DO line already returned cannot be returned again", () => {
-  const err = findDeliveryReturnOverCap(
-    [{ poId: "po-095-01", quantity: 1 }],
-    [{ poId: "po-095-01", qty: 1 }],
-    [{ productionOrderId: "po-095-01", quantity: 1 }],
-  );
-  assert.match(err, /already returned 1 \+ this return 1 > delivered 1/);
-});
-
-test("R7: delivered qty is summed across every DO line of one production order", () => {
-  // Two DO lines of 1 each for the same production order — a Map built from
-  // the rows kept only the last line and capped this at 1.
-  const lines = [{ poId: "po-1", quantity: 1 }, { poId: "po-1", quantity: 1 }];
-  assert.equal(findDeliveryReturnOverCap(lines, [], [{ productionOrderId: "po-1", quantity: 2 }]), null);
-  assert.match(findDeliveryReturnOverCap(lines, [], [{ productionOrderId: "po-1", quantity: 3 }]), /> delivered 2/);
-  // Two lines of one return against the same production order count together.
-  assert.match(
-    findDeliveryReturnOverCap([{ poId: "po-1", quantity: 2 }], [{ poId: "po-1", qty: 1 }],
-      [{ productionOrderId: "po-1", quantity: 1 }, { productionOrderId: "po-1", quantity: 1 }]),
-    /already returned 1 \+ this return 2/,
-  );
-});
-
-function drDb({ doLines, prior = [], headerChanges = 1 }) {
-  const calls = { batches: [] };
-  const db = {
-    prepare(sql) {
-      const q = norm(sql);
-      const stmt = (a) => ({
-        q, a,
-        run: async () => ({ success: true }),
-        first: async () => (/FROM delivery_orders WHERE id = \?/.test(q) ? { doNo: "DO-2610-071", customerName: "C" } : null),
-        all: async () => {
-          if (/FROM delivery_order_items WHERE deliveryOrderId = \?/.test(q)) return { results: doLines };
-          if (/FROM delivery_return_items dri/.test(q)) return { results: prior };
-          return { results: [] };
-        },
-      });
-      return { ...stmt([]), bind: (...a) => stmt(a) };
-    },
-    batch: async (stmts) => {
-      calls.batches.push(stmts);
-      return stmts.map((s, i) => ({ success: true, meta: { changes: i === 1 ? headerChanges : 1 } }));
-    },
-  };
-  return { db, calls };
-}
-
-const line = (quantity, productionOrderId = "po-095-01") => ({ productionOrderId, productCode: "BED", quantity });
-
-test("R7: a duplicate return is refused with 409 before anything is written", async () => {
-  const { db, calls } = drDb({ doLines: [{ poId: "po-095-01", quantity: 1 }], prior: [{ poId: "po-095-01", qty: 1 }] });
-  const r = await createDeliveryReturnRecord(db, "hookka", { doId: "do-071", items: [line(1)] });
-  assert.equal(r.ok, false);
-  assert.equal(r.status, 409);
-  assert.equal(calls.batches.length, 0);
-});
-
-test("R7: zero, negative or missing quantity is a 400, never stored as 1", async () => {
-  for (const quantity of [0, -1, undefined, "abc"]) {
-    const { db, calls } = drDb({ doLines: [{ poId: "po-095-01", quantity: 1 }] });
-    const r = await createDeliveryReturnRecord(db, "hookka", { doId: "do-071", items: [line(quantity)] });
-    assert.equal(r.status, 400, `quantity ${quantity}`);
-    assert.equal(calls.batches.length, 0);
-  }
-});
-
-test("R7: a line with no production order is refused when the DO's lines have one", async () => {
-  const { db } = drDb({ doLines: [{ poId: "po-095-01", quantity: 1 }] });
-  const r = await createDeliveryReturnRecord(db, "hookka", { doId: "do-071", items: [line(1, "")] });
-  assert.equal(r.status, 400);
-});
-
-test("R7: the insert takes a per-DO lock, then re-checks the cap inside the same batch", async () => {
-  const { db, calls } = drDb({ doLines: [{ poId: "po-095-01", quantity: 1 }] });
-  const r = await createDeliveryReturnRecord(db, "hookka", { doId: "do-071", items: [line(1)] });
-  assert.equal(r.ok, true);
-  const [lock, header, item] = calls.batches[0];
-  assert.match(lock.q, /pg_advisory_xact_lock\(hashtext\('delivery_return:' \|\| \?\)::bigint\)/);
-  assert.deepEqual(lock.a, ["do-071"]);
-  assert.match(header.q, /^INSERT INTO delivery_returns .* SELECT .* WHERE \(SELECT COALESCE\(SUM\(dri\.quantity\), 0\)/);
-  assert.deepEqual(header.a.slice(-5), ["do-071", "po-095-01", 1, "do-071", "po-095-01"]);
-  // Items go in only if their header did.
-  assert.match(item.q, /FROM delivery_returns WHERE id = \?$/);
-  assert.equal(item.a[item.a.length - 1], header.a[0]);
-});
-
-test("R7: two returns at once — the one whose guarded header loses gets a 409", async () => {
-  // Both passed the pre-check; under the lock the second sees the first.
-  const { db } = drDb({ doLines: [{ poId: "po-095-01", quantity: 1 }], headerChanges: 0 });
-  const r = await createDeliveryReturnRecord(db, "hookka", { doId: "do-071", items: [line(1)] });
-  assert.equal(r.ok, false);
-  assert.equal(r.status, 409);
-  assert.match(r.error, /at the same time/);
-});
-
-test("R7: billing nets returned qty per line, used up once across lines of one production order", () => {
-  const lines = [
-    { id: "a", productionOrderId: "po-1", quantity: 3 },
-    { id: "b", productionOrderId: "po-1", quantity: 2 },
-    { id: "c", productionOrderId: "po-2", quantity: 1 },
-  ];
-  const out = applyDeliveryReturnsToDoLines(lines, new Map([["po-1", 4], ["po-2", 0]]));
-  // 4 returned against po-1: line a 3 → 0 (dropped), line b 2 → 1.
-  assert.deepEqual(out.map((l) => [l.id, l.quantity]), [["b", 1], ["c", 1]]);
-  assert.deepEqual(applyDeliveryReturnsToDoLines([{ id: "a", productionOrderId: "po-1", quantity: 3 }], new Map([["po-1", 1]])).map((l) => l.quantity), [2]);
-});
-
-test("R7: a RETURNED_TO_STOCK return cannot be cancelled", () => {
-  const src = readFileSync(resolve(process.cwd(), "src/api/routes/delivery-returns.ts"), "utf8");
-  const cancel = src.slice(src.indexOf('app.post("/:id/cancel"'));
-  assert.match(cancel, /\["CLOSED", "REDELIVERED", "CN_ISSUED", "RETURNED_TO_STOCK"\]\.includes\(h\.status\)/);
 });

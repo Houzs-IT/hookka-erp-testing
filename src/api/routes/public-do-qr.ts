@@ -924,13 +924,11 @@ app.post("/:token/advance", async (c) => {
             returnedIds,
           );
           if (drItems.length > 0) {
-            const dr = await createDeliveryReturnRecord(c.var.DB, orgId, {
+            await createDeliveryReturnRecord(c.var.DB, orgId, {
               doId: d.id,
               items: drItems,
               reason: "Returned at delivery — driver flagged",
             });
-            // Refused (e.g. these lines were already returned) — the scan goes on.
-            if (!dr.ok) console.warn(`[public-do-qr] ${d.doNo}: delivery return refused: ${dr.error}`);
           }
         } catch (drErr) {
           console.warn(

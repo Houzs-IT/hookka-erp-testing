@@ -1376,28 +1376,6 @@ export type InvItem = {
 // disagree about what a "line + quantity" is.
 export type DoLineSelection = DoDraw;
 
-/**
- * T-006 R7 — net each DO line's delivered quantity of what came back on
- * Delivery Returns (production order → returned qty). A production order on
- * several lines has its returned qty used up line by line, so it is never
- * taken off twice. Lines a return emptied drop out.
- */
-export function applyDeliveryReturnsToDoLines<T extends { productionOrderId: string | null; quantity: number }>(
-  lines: T[],
-  returnedByPo: Map<string, number>,
-): T[] {
-  const left = new Map(returnedByPo);
-  const out: T[] = [];
-  for (const l of lines) {
-    const delivered = Number(l.quantity) || 0;
-    const ret = l.productionOrderId ? Math.min(left.get(l.productionOrderId) ?? 0, delivered) : 0;
-    if (ret > 0) left.set(l.productionOrderId as string, (left.get(l.productionOrderId as string) ?? 0) - ret);
-    if (ret === 0) out.push(l);
-    else if (delivered - ret > 0) out.push({ ...l, quantity: delivered - ret });
-  }
-  return out;
-}
-
 export async function computeDoInvoiceLines(
   db: D1Database,
   doId: string,
@@ -1464,29 +1442,34 @@ export async function computeDoInvoiceLines(
   ]);
   const doItems = doItemsRes.results ?? [];
 
-  // Partial-delivery (T-006 R7): what came back on a Delivery Return is not
-  // billable — but only that quantity. Return 1 of 3 leaves 2 to bill; this
-  // used to drop the whole line on any return against it. Best-effort — if the
-  // delivery_return tables don't exist yet, the query throws and we bill all.
-  const returnedByPo = new Map<string, number>();
+  // Partial-delivery: a line that went into a Delivery Return is NOT delivered,
+  // so it's excluded from the invoice (the good lines are billed; the returned
+  // ones drop out). Best-effort — if the delivery_return tables don't exist yet
+  // (no returns raised on this deployment), the query throws and we bill all.
+  let returnedPoIds = new Set<string>();
   try {
     const retRes = await db
       .prepare(
-        `SELECT dri.production_order_id AS "poId", COALESCE(SUM(dri.quantity), 0) AS qty
+        `SELECT dri.production_order_id AS "poId"
            FROM delivery_return_items dri
            JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
-          WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'
-          GROUP BY dri.production_order_id`,
+          WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'`,
       )
       .bind(doId)
-      .all<{ poId: string | null; qty: number }>();
-    for (const r of retRes.results ?? []) {
-      if (r.poId) returnedByPo.set(r.poId, Number(r.qty) || 0);
-    }
+      .all<{ poId: string | null }>();
+    returnedPoIds = new Set(
+      (retRes.results ?? [])
+        .map((r) => r.poId)
+        .filter((x): x is string => !!x),
+    );
   } catch {
     /* delivery_return tables not present — nothing to exclude */
   }
-  const activeDoItems = applyDeliveryReturnsToDoLines(doItems, returnedByPo);
+  const activeDoItems = returnedPoIds.size
+    ? doItems.filter(
+        (di) => !di.productionOrderId || !returnedPoIds.has(di.productionOrderId),
+      )
+    : doItems;
 
   // How much of each line this invoice is allowed to take. Default: everything
   // still un-invoiced. With a `select`, only what was ticked — clamped to the
@@ -1554,14 +1537,8 @@ export async function computeDoInvoiceLines(
   // invoice would bill the whole sales order again on top of what the first
   // invoice already charged. Restrict them to what they were always for — the
   // FIRST, whole-document bill of a delivery nothing has drawn on yet.
-  //
-  // And never for a DO whose lines all came back on Delivery Returns: its
-  // empty invItems is correct (nothing is left to bill), not a pricing miss.
-  const fullyReturned = doItems.length > 0 && activeDoItems.length === 0;
   const freshWholeDo =
-    !fullyReturned &&
-    !select &&
-    activeDoItems.every((di) => (Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0) === 0);
+    !select && activeDoItems.every((di) => (Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0) === 0);
 
   // Fallback 1: nothing priced at all → bill the linked SO lines directly.
   if (computedTotal === 0 && freshWholeDo) {

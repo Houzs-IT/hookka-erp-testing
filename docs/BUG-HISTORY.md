@@ -1,5 +1,5 @@
 # Bug History
-> **Last verified: 2026-10-20**: entries BUG-2026-10-20-360 to -364 added (branch `claude/t006-returns-main-15961f`, T-006 R6 + R7 to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: entries BUG-2026-10-20-360 and -361 added (branch `claude/t006-returns-main-15961f`, T-006 R6 to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -186,48 +186,6 @@ Entries themselves stay newest-first.
 **Fix.** `grn.ts` refuses all three (409, "Cancel the purchase returns on this GRN first") while any non-CANCELLED purchase return references the GRN's lines (`grn_item_id` TEXT joined on `grn_items.id::text`).
 
 **Regression.** `tests/t006-returns-main.test.mjs` ("a live return blocks the GRN", "GRN cancel, delete and un-post all ask the guard").
-
----
-
-## BUG-2026-10-20-362 — The same delivery order line could be returned twice (HK-0110) `delivery` `returns` 🟡
-
-🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`; T-006 R7). Real case on prod, 2026-10-20: SO-2610-095-01 (qty 1, DO-2610-071) was returned on DR-2610-001 and DR-2610-002.
-
-**Symptom.** A DO line could be returned more times, or in more units, than it was delivered. A missing quantity was stored as 1, a negative one was stored as is.
-
-**Cause.** `createDeliveryReturnRecord` took `Number(it.quantity ?? 1)` with no cap and no lookup of earlier returns. Staging's cap built `new Map(rows.map(...))` from the DO lines, keeping only the last line of a production order, and read the cap and wrote the return in separate round-trips, so two returns at once both passed.
-
-**Fix.** Quantity must be > 0 (400). Per production order, non-cancelled returned + this return must fit in the SUM of the DO's delivered lines (409). The write batch takes `pg_advisory_xact_lock` on the DO, inserts the header only if the cap still holds (re-measured under the lock), and inserts items only if their header went in; a header that did not go in returns 409. Billing (`computeDoInvoiceLines`) now nets the returned quantity per line instead of dropping any line with a return on it (return 1 of 4 bills 3, not 0).
-
-**Regression.** `tests/t006-returns-main.test.mjs` (R7 tests), `tests/do-partial-invoice.test.mjs` ("returning 1 of 4 chairs bills the other 3").
-
----
-
-## BUG-2026-10-20-363 — Cancelling a delivery return after it was put back into stock left stock overstated `delivery` `returns` `inventory` 🟡
-
-🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`; T-006 R7).
-
-**Symptom.** A return at RETURNED_TO_STOCK could be cancelled; the stock it had credited stayed.
-
-**Cause.** `POST /api/delivery-returns/:id/cancel` refused only CLOSED / REDELIVERED / CN_ISSUED.
-
-**Fix.** RETURNED_TO_STOCK is refused too, with a message naming the way out (a stock adjustment). No reversal exists; whether to build one is an open owner decision.
-
-**Regression.** `tests/t006-returns-main.test.mjs` ("a RETURNED_TO_STOCK return cannot be cancelled").
-
----
-
-## BUG-2026-10-20-364 — A fully returned delivery order billed the whole sales order `delivery` `invoicing` 🟡
-
-🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`; staging fixed the same as BUG-2026-09-24-203).
-
-**Symptom.** When every line of a DO came back on delivery returns, its invoice billed every line of the linked sales order.
-
-**Cause.** With no lines left, `computedTotal` was 0 and the "nothing priced → bill the SO lines" fallback fired, because it could not tell "nothing left" from "nothing priced".
-
-**Fix.** The fallback is skipped when the DO has lines and returns emptied all of them.
-
-**Regression.** `tests/do-partial-invoice.test.mjs` ("a fully returned DO bills nothing").
 
 ---
 
