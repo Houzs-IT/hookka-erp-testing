@@ -155,7 +155,7 @@ function CompanySelect({
 
 // =============== TYPES ===============
 
-type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
+type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "contra" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
 
 // =============== VOUCHER PRINTING (PV / OR / JV) ===============
 //
@@ -627,6 +627,8 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "selfcheck", label: "Self-check", icon: <Calculator className="h-4 w-4" />, group: "Monthly" },
   { key: "corrections", label: "Corrections", icon: <BookOpen className="h-4 w-4" />, group: "Monthly" },
   { key: "assets", label: "Fixed Assets", icon: <Building2 className="h-4 w-4" />, group: "Monthly" },
+  // Contra left Creditor Aging for Monthly (owner 2026-10-20 「这个放去side bar 那边的monthly」).
+  { key: "contra", label: "Contra", icon: <Scale className="h-4 w-4" />, group: "Monthly" },
   // Debtor / Creditor
   { key: "ar", label: "Debtor Aging", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "ap", label: "Creditor Aging", icon: <Building2 className="h-4 w-4" />, group: "Debtor / Creditor" },
@@ -757,11 +759,23 @@ export default function AccountingPage() {
           {tab === "debtors" && <PartyListTab side="DEBTOR" />}
           {tab === "creditors" && <PartyListTab side="CREDITOR" />}
           {tab === "odebtor" && <OtherPartiesTab side="DEBTOR" />}
-          {tab === "odebtorbills" && <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />}
+          {/* The customer statement moved here from Debtor Aging (owner 2026-10-20 「customer 放去ar other debtor bill」). */}
+          {tab === "odebtorbills" && (
+            <div className="space-y-4">
+              <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />
+              <CustomerStatementCard />
+            </div>
+          )}
           {tab === "odebtorpay" && <OtherPartyPaymentsTab accounts={accounts} side="DEBTOR" />}
           {tab === "ocreditor" && <OtherPartiesTab side="CREDITOR" />}
           {tab === "ocreditorbills" && <OtherPartyBillsTab accounts={accounts} side="CREDITOR" />}
-          {tab === "apinvoices" && <ApInvoicesTab accounts={accounts} />}
+          {/* The supplier statement moved here from Creditor Aging (owner 2026-10-20 「supplier statement 放去ap invoice」). */}
+          {tab === "apinvoices" && (
+            <div className="space-y-4">
+              <ApInvoicesTab accounts={accounts} />
+              <SupplierStatementCard />
+            </div>
+          )}
           {tab === "selfcheck" && <SelfCheckTab />}
           {tab === "corrections" && <CorrectionsTab />}
           {tab === "ocreditorpay" && <OtherPartyPaymentsTab accounts={accounts} side="CREDITOR" />}
@@ -771,6 +785,7 @@ export default function AccountingPage() {
           {tab === "dailycash" && <DailyCashTab />}
           {tab === "cashbook" && <CashBookTab accounts={accounts} />}
           {tab === "assets" && <FixedAssetsTab accounts={accounts} />}
+          {tab === "contra" && <ContraCard />}
           {tab === "labor" && <LaborTab accounts={accounts} />}
           {tab === "stock" && <StockSummaryTab />}
           {tab === "opening" && <OpeningBalanceTab accounts={accounts} onRefresh={fetchAll} />}
@@ -4618,7 +4633,6 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
           </div>
         </CardContent>
       </Card>
-      <CustomerStatementCard />
     </div>
   );
 }
@@ -5531,7 +5545,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           />
         </div>
       </div>
-      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Pay a bill from <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>; repay trade finance on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>. Next Due is amber within 7 days and red once overdue.</p>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Pay a bill or repay trade finance with an AP Payment on <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>. Next Due is amber within 7 days and red once overdue.</p>
 
       <Card>
         <CardContent className="p-0">
@@ -5549,8 +5563,6 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
         </CardContent>
       </Card>
       <TradeFinanceBlock />
-      <ContraCard />
-      <SupplierStatementCard />
     </div>
   );
 }

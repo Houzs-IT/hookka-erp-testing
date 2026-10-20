@@ -244,6 +244,7 @@ const navigationGroups: NavGroup[] = [
           { name: "Stock Take", href: "/accounting?tab=stocktake", icon: Scale },
           { name: "Labour", href: "/accounting?tab=labor", icon: Users },
           { name: "Fixed Assets", href: "/accounting?tab=assets", icon: Building2 },
+          { name: "Contra", href: "/accounting?tab=contra", icon: Scale },
           { name: "Self-check", href: "/accounting?tab=selfcheck", icon: Calculator },
           { name: "Corrections", href: "/accounting?tab=corrections", icon: BookOpen },
         ],
