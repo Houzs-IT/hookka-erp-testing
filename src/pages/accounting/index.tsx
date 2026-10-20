@@ -41,7 +41,7 @@ import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
-import { lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
+import { lifecycleMenuItems, rowMenuItems, useRowMenu, type RowMenuGroups } from "@/components/accounting/row-menu";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { amountInWords } from "@/lib/amount-in-words";
 import { COMPANY } from "@/lib/constants";
@@ -99,6 +99,8 @@ import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
 import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
 import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
+import { CoaEditModal, CoaListView } from "./tabs/CoaListView";
+import { coaInactiveBlock, coaListRows } from "@/lib/coa-list";
 import { PartyListTab } from "./tabs/PartyListTab";
 import { bestMatch } from "@/lib/party-fuzzy-match";
 import {
@@ -2822,7 +2824,69 @@ const COA_ROW_PX = 37;
 function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh: () => void }) {
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showForm, setShowForm] = useState(false);
+  // The design's list (owner 2026-10-20 「运用设计稿那样，单拖动的树状图也需要」)
+  // — every account, inactive ones too — and the drag tree as the second view;
+  // the choice is remembered on this browser.
+  const [view, setView] = useState<"list" | "tree">(() => {
+    try { return localStorage.getItem("hookka.coa.view") === "tree" ? "tree" : "list"; } catch { return "list"; }
+  });
+  const pickView = (v: "list" | "tree") => {
+    setView(v);
+    try { localStorage.setItem("hookka.coa.view", v); } catch { /* private mode — the choice just isn't kept */ }
+  };
+  const [allAccounts, setAllAccounts] = useState<ChartOfAccount[] | null>(null);
+  const [allVer, setAllVer] = useState(0);
+  useEffect(() => {
+    let dead = false;
+    fetch("/api/accounting/coa?includeInactive=1", { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ChartOfAccount[] }>)
+      .then((j) => { if (!dead && j?.success) setAllAccounts(j.data ?? []); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [allVer, accounts]);
+  const listRows = useMemo(() => coaListRows(allAccounts ?? accounts), [allAccounts, accounts]);
+  const [editing, setEditing] = useState<ChartOfAccount | null>(null);
+  const afterChange = () => { setAllVer((v) => v + 1); onRefresh(); };
+  // ?edit=<code> (Trial Balance's "Edit Account") opens that account's form once.
+  useEffect(() => {
+    const code = searchParams.get("edit");
+    if (!code || !allAccounts) return;
+    const a = allAccounts.find((x) => x.code === code);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot deep link: the param is dropped below, so it never fires twice
+    if (a) setEditing(a);
+    const next = new URLSearchParams(searchParams);
+    next.delete("edit");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, allAccounts, setSearchParams]);
+  const viewLedger = (code: string) => {
+    const today = todayYmdMY();
+    navigate(glLink({ account: code, fromYm: today.slice(0, 7), toDate: today }));
+  };
+  // Set Inactive / Active (the design's rule: an account with a balance is cleared first).
+  const toggleActive = async (row: (typeof listRows)[number]) => {
+    const a = row.account;
+    if (a.isActive) {
+      const block = coaInactiveBlock(row);
+      if (block) { toast.error(block); return; }
+    }
+    if (!(await confirm({
+      title: a.isActive ? `Set ${a.code} inactive?` : `Set ${a.code} active?`,
+      message: a.isActive ? `${a.name} leaves the account pickers. Its history stays.` : `${a.name} comes back into the account pickers.`,
+      confirmLabel: a.isActive ? "Set Inactive" : "Set Active",
+      danger: a.isActive,
+    }))) return;
+    const res = await fetch("/api/accounting/coa", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: a.code, isActive: !a.isActive }),
+    });
+    const data = asMutationResponse(await res.json());
+    if (data?.success) { toast.success(`${a.code} ${a.isActive ? "set inactive" : "active again"}`); afterChange(); }
+    else toast.error(data?.error || "Failed to update the account");
+  };
   // The New Account form (backlog item 15, owner 2026-10-17 「可以，但前提不要
   // 碰现在的」): section chips, the parent first (only existing groups — a new
   // account never turns an existing posting account into a group), a
@@ -2842,6 +2906,20 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   });
   const [formData, setFormData] = useState(() => blankForm());
   const openNewForm = () => { if (showForm) { setShowForm(false); return; } setFormData(blankForm()); setShowForm(true); };
+  // Add Sub-account (the list's row menu): the New Account form, opened under
+  // that group with its reporting carried over.
+  const openSubForm = (parent: ChartOfAccount) => {
+    const section = coaSectionOf(parent.code, parent.type);
+    setFormData({
+      ...blankForm(section),
+      parentCode: parent.code,
+      cashFlowCategory: (parent.cashFlowCategory ?? defaultCashFlowFor(section)) as "" | "O" | "I" | "F",
+      pnlCategory: (parent.pnlCategory ?? "") as "" | "FIXED" | "VARIABLE" | "OTHERS",
+      code: nextFreeCode(accounts, section, parent.code),
+    });
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   const setSection = (section: string) => setFormData((f) => ({
     ...f, section, parentCode: "",
     cashFlowCategory: defaultCashFlowFor(section),
@@ -3052,11 +3130,28 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
       {confirmDialog}
       <FinanceTitleActions>
         <ReportToolbar>
+          <SegmentedSwitch label="Chart of accounts view" options={[{ key: "list", label: "List" }, { key: "tree", label: "Tree" }]} value={view} onChange={pickView} />
           <Button variant="primary" size="sm" onClick={openNewForm}>
             <Plus className="h-4 w-4" /> Add Account
           </Button>
         </ReportToolbar>
       </FinanceTitleActions>
+      <KpiCards
+        items={[
+          { label: "Accounts", value: String(listRows.length), note: `${listRows.filter((r) => !r.account.isActive).length} inactive` },
+          { label: "Control accounts", value: String(listRows.filter((r) => r.account.specialAccountType).length), note: "debtor · creditor · bank · cash · stock" },
+        ]}
+      />
+      {editing && (
+        <CoaEditModal
+          account={editing}
+          accounts={allAccounts ?? accounts}
+          balanceSen={listRows.find((r) => r.account.code === editing.code)?.balanceSen ?? editing.balance}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); afterChange(); }}
+          onRenameCode={(a) => { setEditing(null); void handleRenameCode(a); }}
+        />
+      )}
 
       {showForm && (() => {
         const sec = SECTIONS.find((x) => x.key === formData.section) ?? SECTIONS[SECTIONS.length - 1];
@@ -3154,7 +3249,17 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
         );
       })()}
 
-      {SECTIONS.map((section) => {
+      {view === "list" && (
+        <CoaListView
+          rows={listRows}
+          onEdit={setEditing}
+          onAddSub={openSubForm}
+          onViewLedger={viewLedger}
+          onToggleActive={(r) => void toggleActive(r)}
+        />
+      )}
+
+      {view === "tree" && SECTIONS.map((section) => {
         const type = section.type;
         const typeAccounts = accounts.filter((a) => sectionOf(a) === section.key);
         // Owner (round 3) — the COA is a REAL multi-level tree, e.g.
@@ -9727,6 +9832,12 @@ function TrialBalanceTab() {
   // Same balance both sides: the ledger runs to the same as-at date, by
   // document date, with everything before the month as Balance B/F.
   const openLedger = (code: string) => navigate(glLink({ account: code, fromYm: ym, toDate: asOf }));
+  // The row menu (owner 2026-10-20 「要」): View Ledger, or Edit Account on the chart.
+  const rowMenu = useRowMenu();
+  const tbRowMenu = (code: string): RowMenuGroups => [[
+    { label: "View Ledger", action: () => openLedger(code) },
+    { label: "Edit Account", action: () => navigate(`/accounting?tab=coa&edit=${encodeURIComponent(code)}`) },
+  ]];
 
   // The download carries what is on screen (folded sections as one line).
   const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
@@ -9783,7 +9894,7 @@ function TrialBalanceTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={`Trial Balance As At ${fmtDocDate(asOf)}`}
-        note="All figures RM · double-click an account to open its ledger"
+        note="All figures RM · double-click an account to open its ledger · right-click to edit it"
       >
         {loadingTb || !tb ? (
           <div className="py-12 text-center text-[#6B7280] text-sm">Loading trial balance…</div>
@@ -9818,8 +9929,9 @@ function TrialBalanceTab() {
                         key={r.accountCode}
                         data-row="line"
                         onDoubleClick={() => openLedger(r.accountCode)}
-                        title="Double-click to open the ledger"
-                        className="cursor-pointer"
+                        onContextMenu={rowMenu.onContextMenu(r.accountCode, () => tbRowMenu(r.accountCode))}
+                        title="Double-click to open the ledger · right-click for more"
+                        className={`cursor-pointer ${rowMenu.openKey === r.accountCode ? "bg-[#F6F1E7]" : ""}`}
                       >
                         <td data-cell="code">{r.accountCode}</td>
                         <td style={{ paddingLeft: 28 }}>{r.accountName}</td>
@@ -9848,6 +9960,7 @@ function TrialBalanceTab() {
           </table>
         )}
       </ReportFrame>
+      {rowMenu.element}
     </div>
   );
 }
