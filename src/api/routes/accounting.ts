@@ -65,7 +65,7 @@ import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK }
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt, parseTfLimitSen } from "../lib/trade-finance";
-import { apForeignPay, foreignAvailableSen } from "../../lib/ap-fx";
+import { apForeignPay, confirmBankPlan, foreignAvailableSen } from "../../lib/ap-fx";
 import { parseFxRate } from "../../lib/fx";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
 import type { TfSource } from "../lib/trade-finance";
@@ -120,7 +120,7 @@ import {
 // The Payment Vouchers "AP Payment" road posts a supplier payment at APPROVE
 // through the SAME builders the Supplier Payment page uses (owner 2026-09-22,
 // Houzs adoption: 「ap payment 和 payment voucher 一起」).
-import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, tfRepaymentStatements, validateTfRepayment } from "./supplier-payments";
+import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, buildSupplierPaymentRestate, supplierPaymentBankAccount, tfRepaymentStatements, validateTfRepayment, type CreateAllocation } from "./supplier-payments";
 // PV attachments ride the generic file store (Supabase Storage + file_assets)
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
@@ -11816,8 +11816,10 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
       // its own field — the description stays the printed text.
       // fx_currency / fx_rate: an AP Payment of foreign-currency bills pays in
-      // that currency at this rate (Currency & FX step 3, owner 2026-10-20).
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION"]) {
+      // that currency at this rate (Currency & FX step 3, owner 2026-10-20);
+      // fx_bank_confirmed_at / _by: when Finance keyed the RM the bank actually
+      // debited, and who (step 4 — the rate is then the actual one).
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -12237,6 +12239,114 @@ function pvAllocStatements(db: Env["Variables"]["DB"], voucherId: string, allocs
   );
 }
 
+// ---------------------------------------------------------------------------
+// Confirm bank amount (Currency & FX step 4, owner 2026-10-20 「三步都做」;
+// plan docs/superpowers/plans/2026-10-20-currency-fx.md). A foreign-currency
+// AP payment posts at approval at the payment's rate — an estimate until the
+// bank statement shows the RM actually debited. Keying that RM re-states the
+// settlement under the same number with the Supplier Payment page's own edit
+// (buildSupplierPaymentRestate): each bill still clears the booked RM it
+// cleared, the bank leg becomes exactly the bank's RM (shared over the bills by
+// what each paid in the currency — confirmBankPlan), and the difference is the
+// realised FX on the Setup accounts. The voucher keeps the actual rate and RM
+// and who confirmed it. A bank leg already matched in Cash Book refuses
+// (unmatch it first — class C31); the RM the estimate already had re-posts
+// nothing. Keying it again later corrects it the same way.
+// ---------------------------------------------------------------------------
+type PvConfirmBank =
+  | { ok: true; pvNo: string; statements: D1PreparedStatement[]; bankSen: number; rate: number; fxSen: number; reposted: boolean; before: Record<string, unknown> }
+  | { ok: false; status: 400 | 404 | 409; error: string };
+
+export async function pvConfirmBankStatements(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  actorUserId: string | null,
+  id: string,
+  bankSenIn: unknown,
+  stamp: number,
+): Promise<PvConfirmBank> {
+  await ensurePvApColumns(db);
+  const pv = await db.prepare("SELECT * FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  if (!pv) return { ok: false, status: 404, error: "Voucher not found" };
+  const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
+  const currency = String(pv.fxCurrency ?? pv.fx_currency ?? "").trim();
+  if (String(pv.pvKind ?? pv.pv_kind ?? "") !== PV_KIND_AP || String(pv.partyKind ?? pv.party_kind ?? "") !== "SUPPLIER" || !currency) {
+    return { ok: false, status: 400, error: "Only a foreign-currency AP payment has a bank amount to confirm" };
+  }
+  if (String(pv.status ?? "") === "VOID") return { ok: false, status: 400, error: "This payment is cancelled" };
+  if (String((pv.approvalState ?? pv.approval_state) ?? "APPROVED") !== "APPROVED") {
+    return { ok: false, status: 400, error: "Not posted yet — confirm the bank amount once the payment is approved" };
+  }
+  if ((await getDocState(db, orgId, "supplier_payment", pvNo)) !== "ACTIVE") {
+    return { ok: false, status: 400, error: `${pvNo} is voided — restore it first` };
+  }
+  const bankSen = Number(bankSenIn);
+  if (!Number.isInteger(bankSen) || bankSen <= 0) return { ok: false, status: 400, error: "Enter the RM the bank debited" };
+  // The settlement as it stands (the Supplier Payment page may have edited it
+  // since approval): each bill, what it cleared and what the bank paid for it,
+  // in RM and in the currency. An RM bill or an advance is not re-priced.
+  const rows = ((await db.prepare(
+    "SELECT purchaseInvoiceId, booked_sen, amount_sen, foreign_sen, date, reference FROM supplier_payments WHERE payment_no = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'",
+  ).bind(pvNo).all<Record<string, unknown>>()).results ?? []).map((r) => ({
+    piId: (r.purchaseInvoiceId ?? r.purchase_invoice_id ?? null) as string | null,
+    bookedSen: Math.round(Number(r.bookedSen ?? r.booked_sen) || 0),
+    bankSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
+    foreignSen: Math.round(Number(r.foreignSen ?? r.foreign_sen) || 0),
+    date: String(r.date ?? "").slice(0, 10),
+    reference: String(r.reference ?? ""),
+  }));
+  if (rows.length === 0) return { ok: false, status: 400, error: `No settlement found under ${pvNo} — it was never posted` };
+  const isForeignRow = (r: (typeof rows)[number]) => !!r.piId && r.foreignSen > 0;
+  const foreignRows = rows.filter(isForeignRow);
+  const fixedSen = rows.filter((r) => !isForeignRow(r)).reduce((s, r) => s + r.bankSen, 0);
+  const plan = confirmBankPlan({ bankSen, fixedSen, foreignSens: foreignRows.map((r) => r.foreignSen) });
+  if (!plan.ok) return { ok: false, status: 400, error: plan.error };
+  const fxSen = foreignRows.reduce((s, r) => s + r.bookedSen, 0) - plan.foreignBankSen;
+  const estRate = Number(pv.fxRate ?? pv.fx_rate) || null;
+  const before = { totalSen: Math.round(Number(pv.totalSen ?? pv.total_sen) || 0), fxRate: estRate, rows };
+  const now = new Date().toISOString();
+  // The estimate was right to the sen: nothing to re-post, only the stamp.
+  if (bankSen === rows.reduce((s, r) => s + r.bankSen, 0)) {
+    return {
+      ok: true, pvNo, bankSen, rate: estRate ?? plan.rate, fxSen, reposted: false, before,
+      statements: [db.prepare("UPDATE payment_vouchers SET fx_bank_confirmed_at = ?, fx_bank_confirmed_by = ?, updated_at = ? WHERE id = ?").bind(now, actorUserId, now, id)],
+    };
+  }
+  const allocations: CreateAllocation[] = [];
+  let k = 0;
+  for (const r of rows) {
+    if (!r.piId) continue; // an advance stays as it is (the restate keeps it)
+    if (isForeignRow(r)) {
+      allocations.push({ piId: r.piId, foreignSen: r.foreignSen, payRate: plan.rate, bankSen: plan.parts[k], bookedSen: r.bookedSen });
+      k += 1;
+    } else {
+      allocations.push({ piId: r.piId, payMyrSen: r.bookedSen });
+    }
+  }
+  // The bank it left from, as the ledger has it now (the voucher's own Pay
+  // From is the fallback).
+  const payFrom = (await supplierPaymentBankAccount(db, orgId, pvNo)) ?? String(pv.payFrom ?? pv.pay_from ?? "");
+  let statements: D1PreparedStatement[];
+  try {
+    statements = await buildSupplierPaymentRestate(db, orgId, pvNo, {
+      supplierId: String(pv.partyId ?? pv.party_id ?? ""),
+      payFrom,
+      date: rows[0].date || String(pv.date ?? "").slice(0, 10),
+      reference: rows.find((r) => r.reference.trim())?.reference ?? "",
+      allocations,
+    }, actorUserId, stamp);
+  } catch (e) {
+    if (e instanceof BankMatchedEditRefused) return { ok: false, status: 409, error: e.message };
+    return { ok: false, status: 400, error: (e as Error).message || "Could not re-post the payment" };
+  }
+  statements.push(
+    db.prepare(
+      "UPDATE payment_vouchers SET fx_rate = ?, totalSen = ?, fx_bank_confirmed_at = ?, fx_bank_confirmed_by = ?, updated_at = ? WHERE id = ?",
+    ).bind(plan.rate, bankSen, now, actorUserId, now, id),
+  );
+  return { ok: true, pvNo, statements, bankSen, rate: plan.rate, fxSen, reposted: true, before };
+}
+
 // What the "New AP Payment" form lists once a creditor is picked.
 app.get("/payment-vouchers/open-bills", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
@@ -12359,7 +12469,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
                FROM purchase_invoices WHERE id IN (${inList(piIds.length)})`,
           ).bind(...piIds).all<Record<string, unknown>>(),
           db.prepare(
-            `SELECT payment_no, purchase_invoice_id, date, COALESCE(booked_sen, amount_sen) AS sen FROM supplier_payments
+            `SELECT payment_no, purchase_invoice_id, date, COALESCE(booked_sen, amount_sen) AS sen, amount_sen AS bank_sen FROM supplier_payments
               WHERE purchase_invoice_id IN (${inList(piIds.length)}) AND org_id = ?
                 AND payment_no NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'supplier_payment' AND state IN ('VOID','DELETED'))`,
           ).bind(...piIds, orgId).all<Record<string, unknown>>(),
@@ -12367,11 +12477,15 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
       : [{ results: [] as Record<string, unknown>[] }, { results: [] as Record<string, unknown>[] }];
     const piById = new Map((piRes.results ?? []).map((p) => [String(p.id), p]));
     const setsByPi = new Map<string, BillSettlement[]>();
+    // What the bank paid on each bill for THIS payment — a foreign bill prints
+    // the RM it actually cost (after Confirm bank amount, the bank's own RM).
+    const bankByPi = new Map<string, number>();
     for (const r of setRes.results ?? []) {
       const k = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? "");
       const list = setsByPi.get(k) ?? [];
       list.push({ paymentNo: String(r.paymentNo ?? r.payment_no ?? ""), date: String(r.date ?? "").slice(0, 10), sen: Math.round(Number(r.sen) || 0) });
       setsByPi.set(k, list);
+      if (String(r.paymentNo ?? r.payment_no ?? "") === paymentNo) bankByPi.set(k, (bankByPi.get(k) ?? 0) + Math.round(Number(r.bankSen ?? r.bank_sen) || 0));
     }
     for (const a of src.allocs) {
       const p = piById.get(a.docId);
@@ -12386,7 +12500,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
           setsByPi.get(a.docId) ?? [], paymentNo, src.date,
         ),
         paidSen: a.paidSen,
-        ...((a.foreignSen ?? 0) > 0 ? { foreignPaidSen: a.foreignSen } : {}),
+        ...((a.foreignSen ?? 0) > 0 ? { foreignPaidSen: a.foreignSen, ...(bankByPi.has(a.docId) ? { bankPaidSen: bankByPi.get(a.docId) } : {}) } : {}),
       });
     }
     if (src.partyId) {
@@ -12627,7 +12741,7 @@ app.get("/payment-vouchers", async (c) => {
     const actorIds = new Set<string>();
     for (const v of pvRes.results ?? []) {
       const r = v as Record<string, unknown>;
-      for (const k of ["preparedBy", "prepared_by", "checkedBy", "checked_by", "approvedBy", "approved_by", "createdBy", "created_by"]) {
+      for (const k of ["preparedBy", "prepared_by", "checkedBy", "checked_by", "approvedBy", "approved_by", "createdBy", "created_by", "fxBankConfirmedBy", "fx_bank_confirmed_by"]) {
         const id = r[k]; if (typeof id === "string" && id) actorIds.add(id);
       }
     }
@@ -12671,6 +12785,7 @@ app.get("/payment-vouchers", async (c) => {
         checkedByName: nm(r, "checkedBy", "checked_by"),
         approvedByName: nm(r, "approvedBy", "approved_by"),
         createdByName: nm(r, "createdBy", "created_by"),
+        fxBankConfirmedByName: nm(r, "fxBankConfirmedBy", "fx_bank_confirmed_by"),
       };
     });
     return c.json({ success: true, data });
@@ -13279,6 +13394,26 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
   await c.var.DB.batch(statements);
   await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { state: lc.newState } });
   return c.json({ success: true, data: { state: lc.newState } });
+});
+
+// Confirm bank amount (Currency & FX step 4): the RM the bank actually debited
+// for a foreign-currency AP payment — see pvConfirmBankStatements.
+app.post("/payment-vouchers/:id/confirm-bank", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  let bankSen: unknown;
+  try { bankSen = ((await c.req.json()) as { bankSen?: unknown }).bankSen; } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
+  const id = c.req.param("id");
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  const r = await pvConfirmBankStatements(c.var.DB, getOrgId(c), actorUserId, id, bankSen, Date.now());
+  if (!r.ok) return c.json({ success: false, error: r.error }, r.status);
+  await c.var.DB.batch(r.statements);
+  await emitAudit(c, {
+    resource: "payment-vouchers", resourceId: id, action: "confirm-bank",
+    before: r.before,
+    after: { pvNo: r.pvNo, totalSen: r.bankSen, fxRate: r.rate, fxSen: r.fxSen, reposted: r.reposted },
+  });
+  return c.json({ success: true, data: { pvNo: r.pvNo, bankSen: r.bankSen, rate: r.rate, fxSen: r.fxSen, reposted: r.reposted } });
 });
 
 // Edit a payment voucher IN PLACE — same PV number; reverses the live legs and
@@ -18693,6 +18828,31 @@ app.get("/cash-position", async (c) => {
     state: String(v.approvalState ?? v.approval_state ?? "DRAFT") as "DRAFT" | "PREPARED" | "CHECKED",
   }));
   const awaitingCheckedSen = awaitingApproval.filter((v) => v.state === "CHECKED").reduce((s, v) => s + v.amountSen, 0);
+  // Foreign-currency AP payments posted at the payment's estimated rate whose
+  // bank amount is not confirmed yet (Currency & FX step 4): their bank leg in
+  // the pending list above is the estimate until Finance keys what the bank
+  // debited (Payment Vouchers → Confirm bank amount).
+  await ensurePvApColumns(c.var.DB).catch(() => {});
+  const fxPendRes = await c.var.DB.prepare(
+    `SELECT v.id, v.pv_no, v.date, v.payee, v.pay_from, v.total_sen, v.fx_currency, v.fx_rate,
+            (SELECT COALESCE(SUM(a.foreign_sen), 0) FROM payment_voucher_allocs a WHERE a.voucher_id = v.id) AS foreign_total_sen
+       FROM payment_vouchers v
+      WHERE v.pv_kind = 'AP' AND v.fx_currency IS NOT NULL AND v.fx_bank_confirmed_at IS NULL
+        AND v.status <> 'VOID' AND COALESCE(v.approval_state, 'APPROVED') = 'APPROVED'
+        AND NOT EXISTS (SELECT 1 FROM document_lifecycle dl WHERE dl.source_type = 'supplier_payment' AND dl.source_id = v.pv_no AND dl.state <> 'ACTIVE')
+      ORDER BY v.date ASC, v.pv_no ASC`,
+  ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const fxBankPending = (fxPendRes.results ?? []).map((v) => ({
+    id: String(v.id),
+    pvNo: String(v.pvNo ?? v.pv_no ?? ""),
+    date: String(v.date ?? "").slice(0, 10),
+    payee: String(v.payee ?? ""),
+    payFrom: String(v.payFrom ?? v.pay_from ?? ""),
+    currency: String(v.fxCurrency ?? v.fx_currency ?? ""),
+    foreignSen: Math.round(Number(v.foreignTotalSen ?? v.foreign_total_sen) || 0),
+    rate: Number(v.fxRate ?? v.fx_rate) || 0,
+    amountSen: Math.round(Number(v.totalSen ?? v.total_sen) || 0),
+  }));
   // Trade finance to repay, by due date (owner 2026-10-17, Finance v2): every
   // draw still owed — the same draws Creditor Aging's Trade Finance section
   // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
@@ -18733,7 +18893,7 @@ app.get("/cash-position", async (c) => {
   tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, tradeFinance },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, fxBankPending, tradeFinance },
   });
 });
 

@@ -127,12 +127,17 @@ app.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // POST / — create a supplier payment (partial + multi-PI + FX).
 // ---------------------------------------------------------------------------
-type CreateAllocation = {
+export type CreateAllocation = {
   piId: string;
   payMyrSen?: number;
   foreignSen?: number;
   payRate?: number;
   full?: boolean;
+  // Set only by Confirm bank amount (accounting.ts, Currency & FX step 4) on
+  // a restate: the RM the bank actually debited for the line, and the booked
+  // RM it keeps. The HTTP routes drop them — an edit keeps the posting's maths.
+  bankSen?: number;
+  bookedSen?: number;
 };
 
 type PiRow = {
@@ -1117,12 +1122,35 @@ async function buildSupplierPaymentLifecycle(
   return { statements, newState: lc.newState };
 }
 
+// The bank / cash account a supplier payment's live legs credit — the ledger
+// is its only record (supplier_payments keeps no bank column): the CR leg that
+// is neither the AP control nor an FX account. null when there is none.
+export async function supplierPaymentBankAccount(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  paymentNo: string,
+): Promise<string | null> {
+  const skip = new Set([AP_CONTROL, ...fxLegAccounts(await getFxSettings(db))]);
+  const legs =
+    (
+      await db
+        .prepare(
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
+            WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'supplier_payment%'`,
+        )
+        .bind(paymentNo, orgId)
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
+    ).results ?? [];
+  const bank = legs.find((l) => (Number(l.creditSen) || 0) > 0 && !skip.has(String(l.accountCode)));
+  return bank ? String(bank.accountCode) : null;
+}
+
 // buildSupplierPaymentRestate — in-place EDIT (same voucher number). Rolls the
 // old PI paid amounts back, drops the old sub-ledger rows, re-runs the per-PI FX
 // allocation (same logic as POST) for the new data, and on the GL reverses the
 // live legs + posts the corrected ones (supplier_payment_restate_rev/post:<stamp>),
 // then collapses to the newest post. Throws "PAYMENT_NOT_FOUND" / a validation msg.
-async function buildSupplierPaymentRestate(
+export async function buildSupplierPaymentRestate(
   db: Env["Variables"]["DB"],
   orgId: string,
   paymentNo: string,
@@ -1280,6 +1308,7 @@ async function buildSupplierPaymentRestate(
     const r = computeAlloc({
       outstandingBookedSen, isForeign, fxRate,
       payMyrSen: a.payMyrSen, foreignSen: a.foreignSen, payRate: a.payRate, full: !!a.full,
+      bankSen: a.bankSen, bookedSen: a.bookedSen,
     });
     if (!r.ok) throw new Error(r.error);
     if (r.bookedSen <= 0) continue;
@@ -1670,6 +1699,9 @@ app.post("/:paymentNo/restate", async (c) => {
   const advanceEditSen =
     body.advanceSen === undefined ? undefined : Math.max(0, Math.round(Number(body.advanceSen) || 0));
   if (!Array.isArray(body.allocations)) body.allocations = [];
+  // bankSen / bookedSen belong to Confirm bank amount alone (see
+  // CreateAllocation): an edit from the page keeps the posting's own maths.
+  body.allocations = body.allocations.map(({ piId, payMyrSen, foreignSen, payRate, full }) => ({ piId, payMyrSen, foreignSen, payRate, full }));
   if (body.allocations.length === 0 && !(advanceEditSen !== undefined && advanceEditSen > 0)) {
     return c.json({ success: false, error: "at least one allocation (or an advance amount) is required" }, 400);
   }

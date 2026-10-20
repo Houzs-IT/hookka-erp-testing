@@ -102,13 +102,46 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
       return null;
     }
     if (/^INSERT INTO supplier_payments \( id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference, notes, orgId \) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\)$/.test(sql)) {
-      const [id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, , , method, reference] = a;
-      st.supplierPayments.push({ id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, method, reference });
+      const [id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference] = a;
+      st.supplierPayments.push({ id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference });
       return null;
     }
     if (/^INSERT INTO supplier_payments \( id, paymentNo, supplierId, supplierName, purchaseInvoiceId, date, amountSen, bookedSen, foreignSen, payFxRate, method, reference, notes, orgId \) VALUES \(\?, \?, \?, \?, NULL, \?, \?, \?, NULL, NULL, \?, \?, \?, \?\)$/.test(sql)) {
       const [id, paymentNo, supplierId, supplierName, date, amountSen, bookedSen, method, reference] = a;
       st.supplierPayments.push({ id, paymentNo, supplierId, supplierName, purchaseInvoiceId: null, date, amountSen, bookedSen, method, reference });
+      return null;
+    }
+    // ── a supplier payment edited in place (restate) — Confirm bank amount
+    // (tests/fx-confirm-bank.test.mjs) runs the real builder.
+    if (/^SELECT 1 AS x FROM supplier_payments WHERE payment_no = \? AND method = 'TF_REPAYMENT' LIMIT 1$/.test(sql)) {
+      return st.supplierPayments.some((p) => p.paymentNo === a[0] && p.method === "TF_REPAYMENT") ? { x: 1 } : null;
+    }
+    if (/^SELECT purchaseInvoiceId, booked_sen, amount_sen, supplierId, supplierName, date FROM supplier_payments WHERE payment_no = \? AND COALESCE\(method,''\) <> 'CREDIT_NOTE'$/.test(sql)) {
+      return st.supplierPayments.filter((p) => p.paymentNo === a[0] && p.method !== "CREDIT_NOTE")
+        .map((p) => ({ purchaseInvoiceId: p.purchaseInvoiceId, bookedSen: p.bookedSen, amountSen: p.amountSen, supplierId: p.supplierId, supplierName: p.supplierName, date: p.date }));
+    }
+    if (/^SELECT purchaseInvoiceId, booked_sen, amount_sen, foreign_sen, date, reference FROM supplier_payments WHERE payment_no = \? AND COALESCE\(method,''\) <> 'CREDIT_NOTE'$/.test(sql)) {
+      return st.supplierPayments.filter((p) => p.paymentNo === a[0] && p.method !== "CREDIT_NOTE")
+        .map((p) => ({ purchaseInvoiceId: p.purchaseInvoiceId, bookedSen: p.bookedSen, amountSen: p.amountSen, foreignSen: p.foreignSen ?? null, date: p.date, reference: p.reference }));
+    }
+    if (/^UPDATE purchase_invoices SET paid_amount_sen = GREATEST\(0, paid_amount_sen - \?\), status = CASE/.test(sql)) {
+      const p = st.pis.find((x) => x.id === a[3]);
+      const after = p.paid_amount_sen - a[0];
+      p.status = after <= 0 ? "CONFIRMED" : after < p.amount_sen ? "PARTIAL_PAID" : "PAID";
+      p.paid_amount_sen = Math.max(0, after);
+      return null;
+    }
+    if (/^DELETE FROM supplier_payments WHERE payment_no = \? AND COALESCE\(method,''\) <> 'CREDIT_NOTE' AND purchaseInvoiceId IS NOT NULL$/.test(sql)) {
+      st.supplierPayments = st.supplierPayments.filter((p) => !(p.paymentNo === a[0] && p.method !== "CREDIT_NOTE" && p.purchaseInvoiceId));
+      return null;
+    }
+    if (/^UPDATE purchase_invoices SET paid_amount_sen = \( SELECT COALESCE\(SUM\(sp\.booked_sen\), 0\) FROM supplier_payments sp/.test(sql)) {
+      // The truth guard: paid = what the live payments booked on it.
+      const p = st.pis.find((x) => x.id === a[0]);
+      const live = (no) => (st.lifecycle.find((l) => l.sourceType === "supplier_payment" && l.sourceId === no)?.state ?? "ACTIVE") === "ACTIVE";
+      const paid = st.supplierPayments.filter((s) => s.purchaseInvoiceId === p.id && live(s.paymentNo)).reduce((s, x) => s + x.bookedSen, 0);
+      p.status = paid >= p.amount_sen ? "PAID" : paid > 0 ? "PARTIAL_PAID" : ["PAID", "PARTIAL_PAID"].includes(p.status) ? "CONFIRMED" : p.status;
+      p.paid_amount_sen = paid;
       return null;
     }
     // ── chart of accounts (an account created on first use)
@@ -218,6 +251,15 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
       return null;
     }
     if (/^UPDATE payment_vouchers SET status = \? WHERE id = \?$/.test(sql)) { st.vouchers.find((x) => x.id === a[1]).status = a[0]; return null; }
+    if (/^SELECT \* FROM payment_vouchers WHERE id = \?$/.test(sql)) return st.vouchers.find((x) => x.id === a[0]) ?? null;
+    if (/^UPDATE payment_vouchers SET fx_rate = \?, totalSen = \?, fx_bank_confirmed_at = \?, fx_bank_confirmed_by = \?, updated_at = \? WHERE id = \?$/.test(sql)) {
+      Object.assign(st.vouchers.find((x) => x.id === a[5]), { fxRate: a[0], totalSen: a[1], fxBankConfirmedAt: a[2], fxBankConfirmedBy: a[3] });
+      return null;
+    }
+    if (/^UPDATE payment_vouchers SET fx_bank_confirmed_at = \?, fx_bank_confirmed_by = \?, updated_at = \? WHERE id = \?$/.test(sql)) {
+      Object.assign(st.vouchers.find((x) => x.id === a[3]), { fxBankConfirmedAt: a[0], fxBankConfirmedBy: a[1] });
+      return null;
+    }
     if (/^DELETE FROM payment_voucher_lines WHERE voucherId = \?$/.test(sql)) { st.pvLines = st.pvLines.filter((l) => l.voucherId !== a[0]); return null; }
     if (/^INSERT INTO payment_voucher_lines \(id, voucherId, accountCode, description, amountSen, lineOrder\) VALUES/.test(sql)) {
       const [id, voucherId, accountCode, description, amountSen, lineOrder] = a;

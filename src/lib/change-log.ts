@@ -414,6 +414,7 @@ export const ACTION_LABEL: Record<string, string> = {
   attach: "File attached",
   detach: "File removed",
   settle: "Settled",
+  "confirm-bank": "Bank amount confirmed",
   dispose: "Disposed",
   restore: "Restored",
   describe: "Description changed",

@@ -30,7 +30,7 @@ test("Payment Vouchers: double-click opens the popup; single click does nothing 
   // The popup carries the ladder trail, the lines / bills and the attachments block.
   assert.match(pv, /Ladder trail — who did what, when\./);
   assert.match(pv, /<PvAttachmentsBlock pv=\{r\} onChanged=\{load\} \/>/);
-  assert.match(pv, /<DocTrailBlock family="payment_voucher" sourceId=\{r\.id\} \/>\s*\n\s*<\/DocDetailModal>/, "ledger entry + bank state close the popup");
+  assert.match(pv, /sourceId=\{r\.pvKind === "AP" \? r\.pvNo : r\.id\}\s*\n\s*\/>\s*\n\s*<\/DocDetailModal>/, "ledger entry + bank state close the popup");
   // Actions inside mirror the row: same handlers, same gates.
   for (const rung of ['"prepare"', '"withdraw"', '"reject"', '"check"', '"approve"']) assert.match(pv, new RegExp(`onClick=\\{\\(\\) => void handleLadder\\(r, ${rung}\\)\\}>`));
   assert.match(pv, /onClick=\{\(\) => \{ close\(\); void handleLifecycle\(r\.id, r\.pvNo, "void"\); \}\}/);
