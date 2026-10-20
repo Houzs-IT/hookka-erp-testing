@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-355 to -357 (branch `claude/t006-pi-caps-main-096a64`, to main, ported from staging T-006 R5 / R8 / R9; 355 to 359 are assigned to this branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -159,6 +160,24 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-20-355 — Two purchase invoices saved at once could bill the same goods-receipt line twice `procurement` `purchase-invoice` 🟡
+
+Ported from staging (T-006 R5); not reproduced on prod, which would take two concurrent writes. Each invoice checks a GRN line's remaining quantity and then raises `grn_items.invoiced_qty`, in separate statements, so two saves in the same moment both pass the check and the line ends up billed past what was received. Nothing in the database refused it.
+
+Fix = migration `0243` (and the PI route's self-apply) adds `chk_grn_items_invoiced_qty` (`invoiced_qty` between 0 and `accepted_qty`) as NOT VALID, so old rows are not checked but every new write is. The PI create, edit and unvoid map that one constraint's error to a 409 that says to refresh; the batch is one transaction, so nothing is written. Count of old rows that break it, read-only: `SELECT COUNT(*) FROM grn_items WHERE invoiced_qty < 0 OR invoiced_qty > accepted_qty;` (UNMEASURED on prod). Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R5" tests) and `tests/convert-chain.test.mjs` (the matcher).
+
+## BUG-2026-10-20-356 — A PO line with no material code could be billed past the PO without limit `procurement` `purchase-invoice` 🟡
+
+Ported from staging (T-006 R8, with staging f740d53c). The PO ceiling on a purchase invoice grouped lines by material code only, so a PO line with a blank code matched nothing and was skipped: billing it, straight off the PO or through its GRN, was never capped. The invoiced-so-far query also joined `grn_items.id` (a number) to `pii.grn_item_id` (text) without a cast.
+
+Fix = invoice lines store `po_item_id` (migration `0245` plus self-apply), filled from the PO picker, the scan flow and the GRN line's own `po_item_id`. The ceiling buckets by PO line first and code second, so a material ordered on two lines is billable for both; a stocked line billed straight off a PO that matches neither key is refused with a 409 naming the PO, while fee lines, hand-added lines and GRN-sourced lines (capped by the receipt) stay allowed; the code is tried before the PO line, so a line re-coded after picking counts under its new code. The join casts `gi.id::text`. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R8" tests).
+
+## BUG-2026-10-20-357 — A purchase invoice line's own PO was not capped when the header named no PO `procurement` `purchase-invoice` 🟡
+
+Ported from staging (T-006 R9). On create, the PO ceiling ran only when the invoice header carried a `purchaseOrderId`, so lines that each named their PO (several POs on one invoice, the header left blank) were never checked against their PO. The edit side was already fixed on main.
+
+Fix = the create guard runs for every line that names a PO, using the line's own `poId` before the header's. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R9: a line's own poId is capped even when the header names no PO and no GRN").
 
 ## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
 
