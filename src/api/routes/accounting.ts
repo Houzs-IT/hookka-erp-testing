@@ -2878,31 +2878,34 @@ app.post("/purchase-credit-notes/:id/void", async (c) => {
       "UPDATE suppliers SET outstandingSen = outstandingSen + ? WHERE id = ?",
     ).bind(gross, existing.supplierId),
   ];
-  // Reverse the GL once: read whichever legs are CURRENTLY visible (the
-  // original post, or — if this note was edited via /restate first — the
-  // latest restate; `hidden = 0` always names exactly one live set) and post
-  // their mirror, then hide the lot (both cancel, so nothing of this note's
-  // GL impact stays visible — matches the void/delete convention used
-  // elsewhere, e.g. lifecycle-machine.ts's `hiddenTargets`).
-  if (
-    (await ledgerHasSource(c.var.DB, orgId, "purchase_credit_note", id)) &&
-    !(await ledgerHasSource(c.var.DB, orgId, "purchase_credit_note_void", id))
-  ) {
-    const orig =
-      (
-        await c.var.DB.prepare(
-          "SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE hidden = 0 AND sourceType LIKE 'purchase_credit_note%' AND sourceId = ? AND orgId = ?",
-        )
-          .bind(id, orgId)
-          .all<Record<string, unknown>>()
-      ).results ?? [];
+  // Reverse the GL: read whichever legs are CURRENTLY visible (the original
+  // post, or — if this note was edited via /restate, or brought back via
+  // /restore — the latest one; `hidden = 0` always names exactly one live
+  // set) and post their mirror, then hide the lot (both cancel, so nothing of
+  // this note's GL impact stays visible — matches the void/delete convention
+  // used elsewhere, e.g. lifecycle-machine.ts's `hiddenTargets`). The first
+  // cancel's mirror is purchase_credit_note_void; a later one (a note restored
+  // and cancelled again, 2026-10-20) takes a stamped restate reversal, since a
+  // source's leg numbers are unique. Nothing live → nothing to reverse.
+  const orig =
+    (
+      await c.var.DB.prepare(
+        "SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE hidden = 0 AND sourceType LIKE 'purchase_credit_note%' AND sourceId = ? AND orgId = ?",
+      )
+        .bind(id, orgId)
+        .all<Record<string, unknown>>()
+    ).results ?? [];
+  if (orig.length) {
+    const revType = (await ledgerHasSource(c.var.DB, orgId, "purchase_credit_note_void", id))
+      ? `purchase_credit_note_restate_rev:${Date.now()}`
+      : "purchase_credit_note_void";
     const actorUserId =
       (c as unknown as { get: (k: string) => string | undefined }).get(
         "userId",
       ) ?? null;
     const revLegs: LedgerEntryInput[] = orig.map((l, i) => ({
       id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "purchase_credit_note_void",
+      sourceType: revType,
       sourceId: id,
       legNo: i + 1,
       accountCode: String(l.accountCode ?? l.account_code ?? ""),
@@ -2964,6 +2967,100 @@ app.post("/purchase-credit-notes/:id/void", async (c) => {
     .bind(id)
     .first<PcnRow>();
   return c.json({ success: true, data: rowToPcn(updated!) });
+});
+
+// POST /purchase-credit-notes/:id/restore — bring a CANCELLED supplier
+// discount back (owner 2026-10-20, from the design list 「要」). It is posted
+// again as it stood: the supplier owes its amount less again and its legs are
+// posted afresh under a stamped restate source (DR 400-0000 / CR the purchase
+// accounts its lines map to — the same as when it was first posted); the
+// cancelled set stays hidden. Its earlier knock-offs against bills are NOT put
+// back — the cancel re-opened those bills and they may have been paid since.
+// Cancel it again and it reverses as usual.
+app.post("/purchase-credit-notes/:id/restore", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  await ensurePcnCancellable(c.var.DB);
+  const id = c.req.param("id");
+  const existing = await c.var.DB.prepare(
+    "SELECT * FROM purchase_credit_notes WHERE id = ?",
+  )
+    .bind(id)
+    .first<PcnRow>();
+  if (!existing) {
+    return c.json({ success: false, error: "Purchase CN not found" }, 404);
+  }
+  if (existing.status !== "CANCELLED") {
+    return c.json({ success: false, error: `Only a cancelled supplier discount can be restored (${existing.noteNumber} is ${existing.status}).` }, 409);
+  }
+  const orgId = getOrgId(c);
+  const gross = Number(existing.totalAmount) || 0;
+  try {
+    let items: PcnItem[] = [];
+    try {
+      items = JSON.parse(existing.items ?? "[]") as PcnItem[];
+    } catch {
+      items = [];
+    }
+    const { mapPurchaseLinesToAccounts } = await import("./purchase-invoices");
+    const { bucket, pdefault } = await mapPurchaseLinesToAccounts(
+      c.var.DB,
+      items.map((it) => ({ mc: it.materialCode ?? null, amt: Math.round(it.quantity * it.unitPriceSen), lt: it.lineType })),
+    );
+    const sumLines = Object.values(bucket).reduce((s, v) => s + v, 0);
+    if (sumLines !== gross) bucket[pdefault] = (bucket[pdefault] ?? 0) + (gross - sumLines);
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const postSource = `purchase_credit_note_restate_post:${Date.now()}`;
+    let legNo = 1;
+    const legs: LedgerEntryInput[] = [{
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: postSource,
+      sourceId: id,
+      legNo: legNo++,
+      accountCode: "400-0000",
+      debitSen: gross,
+      creditSen: 0,
+      description: `Purchase CN ${existing.noteNumber} · ${existing.supplierName} (restored)`,
+      actorUserId,
+      orgId,
+    }];
+    for (const [acct, amt] of Object.entries(bucket)) {
+      if (amt === 0) continue;
+      legs.push({
+        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+        sourceType: postSource,
+        sourceId: id,
+        legNo: legNo++,
+        accountCode: acct,
+        debitSen: 0,
+        creditSen: amt,
+        description: `Purchase CN ${existing.noteNumber} · return/credit (restored)`,
+        actorUserId,
+        orgId,
+      });
+    }
+    const { statements: ledgerStmts } = gross > 0
+      ? await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: existing.date ?? null })
+      : { statements: [] as D1PreparedStatement[] };
+    await c.var.DB.batch([
+      c.var.DB.prepare("UPDATE purchase_credit_notes SET status = 'POSTED', updatedAt = ? WHERE id = ?")
+        .bind(new Date().toISOString(), id),
+      c.var.DB.prepare("UPDATE suppliers SET outstandingSen = GREATEST(0, outstandingSen - ?) WHERE id = ?")
+        .bind(gross, existing.supplierId),
+      ...ledgerStmts,
+      c.var.DB.prepare(
+        `UPDATE ledger_journal_entries SET hidden = 1
+          WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'purchase_credit_note%' AND sourceType <> ?`,
+      ).bind(id, orgId, postSource),
+    ]);
+    const updated = await c.var.DB.prepare("SELECT * FROM purchase_credit_notes WHERE id = ?").bind(id).first<PcnRow>();
+    await emitAudit(c, { resource: "accounting", resourceId: id, action: "restore", before: rowToPcn(existing), after: updated ? rowToPcn(updated) : null });
+    return c.json({ success: true, data: rowToPcn(updated!) });
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
+    console.error(`[ledger] PCN ${id} restore failed:`, e);
+    return c.json({ success: false, error: "Failed to restore the supplier discount — nothing was changed. Retry, and report if it persists." }, 500);
+  }
 });
 
 // ---------------------------------------------------------------------------

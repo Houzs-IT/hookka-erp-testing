@@ -5072,6 +5072,31 @@ function SupplierDiscountTab() {
     }
   };
 
+  // Restore a cancelled note (owner 2026-10-20, design list 「要」): posted
+  // again as it stood; its old knock-offs against bills are not put back.
+  const restoreNote = async (row: SDHistoryRow) => {
+    if (!(await confirm({
+      title: "Restore supplier discount?",
+      message: `Restore ${row.noteNumber} (${formatCurrency(row.totalAmount)})? It is posted again: the supplier is owed that much less and the books take it back. The bills it was once knocked off stay as they are now.`,
+      confirmLabel: "Restore",
+    }))) return;
+    try {
+      const res = await fetch(`/api/accounting/purchase-credit-notes/${encodeURIComponent(row.id)}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const j = asMutationResponse(await res.json());
+      if (res.ok && j?.success) {
+        toast.success(`${row.noteNumber} restored`);
+        loadHistory();
+      } else {
+        toast.error(j?.error || "Failed to restore supplier discount");
+      }
+    } catch {
+      toast.error("Failed to restore supplier discount");
+    }
+  };
+
   const supplierOptions = useMemo(
     () => suppliers.map((s) => ({ value: s.id, label: s.code ? `${s.code} — ${s.name}` : s.name })),
     [suppliers],
@@ -5315,6 +5340,9 @@ function SupplierDiscountTab() {
                             <button onClick={() => cancelNote(n)} className="text-xs text-[#9A3A2D] hover:text-[#7A2E24] underline decoration-dotted cursor-pointer">Cancel</button>
                           </>
                         ))}
+                        {n.status === "CANCELLED" && (
+                          <button onClick={() => restoreNote(n)} className="text-xs text-[#27500A] hover:text-[#1F1D1B] underline decoration-dotted cursor-pointer">Restore</button>
+                        )}
                       </td>
                     </tr>
                     {editing && (
