@@ -124,9 +124,172 @@ test("a return that loses the race comes back as an over-return refusal, not a g
   assert.match(out.error, /Return exceeds what was delivered/);
 });
 
-test("the office route passes the refusal through; cancel refuses a RETURNED_TO_STOCK return", () => {
+test("the office route passes the refusal through", () => {
   const api = read("src/api/routes/delivery-returns.ts");
   assert.match(api, /if \(!created\.ok\) \{\n\s*return c\.json\(\{ success: false, error: created\.error \}, created\.status \?\? 409\);/);
+});
+
+// ===========================================================================
+// Undo a return-to-stock (cancel of a RETURNED_TO_STOCK return). The route
+// module is loaded per test so a missing export fails each test on its own.
+// ===========================================================================
+
+const undoBuilder = async () =>
+  (await import("../src/api/routes/delivery-returns.ts")).buildUndoReturnToStockStatements;
+
+// dr-1 put 1 unit (u-1) back on batch b-1 at 5000 sen.
+function undoDb({ undone = 0, batchLeft = 1, unitStatus = "RETURNED" } = {}) {
+  const stmt = (sql, args = []) => ({
+    sql,
+    args,
+    bind: (...a) => stmt(sql, a),
+    async run() { return { success: true }; },
+    async first() {
+      if (/refType = 'DELIVERY_RETURN_UNDO'/.test(sql)) return { n: undone };
+      return null;
+    },
+    async all() {
+      if (/FROM cost_ledger WHERE refType = 'DELIVERY_RETURN' AND refId = \?/.test(sql)) {
+        return { results: [{ itemId: "prod-1", batchId: "b-1", qty: 1, unitCostSen: 5000 }] };
+      }
+      if (/FROM fg_batches WHERE id IN/.test(sql)) return { results: [{ id: "b-1", remainingQty: batchLeft }] };
+      if (/FROM fg_units WHERE id IN/.test(sql)) {
+        return { results: [{ id: "u-1", status: unitStatus, productCode: "BED", batchId: "b-1", poId: "po-1", poNo: "", doId: "do-1", cnId: null }] };
+      }
+      return { results: [] };
+    },
+  });
+  return { prepare: (sql) => stmt(sql.replace(/\s+/g, " ").trim()) };
+}
+const drItems = [{ id: "dri-1", productCode: "BED", quantity: 1, fgUnitId: "u-1" }];
+const NOW = "2026-10-20T00:00:00Z";
+
+test("undo reverses exactly what return-to-stock did, in one batch", async () => {
+  const out = await (await undoBuilder())(undoDb(), "dr-1", drItems, NOW);
+  assert.equal(out.ok, true);
+  const sql = out.statements.map((x) => x.sql);
+  assert.match(sql[0], /^SELECT pg_advisory_xact_lock\(hashtext\('delivery_return_undo:' \|\| \?\)::bigint\)$/);
+  assert.match(sql[1], /status = 'RETURNED_TO_STOCK' \) THEN 1 ELSE 0 END/);
+  const batch = out.statements.find((x) => /^UPDATE fg_batches SET remainingQty = remainingQty - \?/.test(x.sql));
+  assert.deepEqual(batch.args, [1, "b-1"]);
+  const ledger = out.statements.find((x) => /INSERT INTO cost_ledger/.test(x.sql));
+  assert.match(ledger.sql, /'ADJUSTMENT', 'FG', \?, \?, \?, 'OUT', \?, \?, 'DELIVERY_RETURN_UNDO'/);
+  assert.deepEqual(ledger.args.slice(2, 8), ["prod-1", "b-1", 1, 5000, 5000, "dr-1"]);
+  const units = out.statements.find((x) => /^UPDATE fg_units/.test(x.sql));
+  assert.match(units.sql, /SET status='DELIVERED', returnedAt=NULL WHERE id IN \(\?\) AND status='RETURNED'/);
+  assert.ok(out.statements.some((x) => /INSERT INTO fg_stock_events/.test(x.sql) && x.args.includes("DELIVERED")));
+  const dr = out.statements.find((x) => /^UPDATE delivery_returns/.test(x.sql));
+  assert.match(dr.sql, /SET status='CANCELLED'.*WHERE id=\? AND status='RETURNED_TO_STOCK'/);
+  assert.match(sql.at(-1), /FROM fg_batches WHERE id IN \(\?\) AND remainingQty < 0 \) THEN 0 ELSE 1 END/);
+  assert.equal(out.undoneCogsSen, 5000);
+});
+
+test("undo cannot run twice", async () => {
+  const out = await (await undoBuilder())(undoDb({ undone: 1 }), "dr-1", drItems, NOW);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /already been undone/);
+});
+
+test("undo is refused when the batch no longer holds the returned qty (sold or used since)", async () => {
+  const out = await (await undoBuilder())(undoDb({ batchLeft: 0 }), "dr-1", drItems, NOW);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /holds 0 but this return put 1 on it/);
+});
+
+test("undo is refused when a returned unit was re-used", async () => {
+  const out = await (await undoBuilder())(undoDb({ unitStatus: "LOADED" }), "dr-1", drItems, NOW);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /is now LOADED, not RETURNED/);
+});
+
+test("cancel of a RETURNED_TO_STOCK return runs the undo and maps a lost race to 409; the page offers it", () => {
+  const api = read("src/api/routes/delivery-returns.ts");
   const cancel = api.slice(api.indexOf('app.post("/:id/cancel"'));
-  assert.match(cancel, /h\.status === "RETURNED_TO_STOCK"\n\s*\) \{\n\s*return c\.json\(\n\s*\{ success: false, error: `Cannot cancel a \$\{h\.status\} return` \},\n\s*409,/);
+  assert.match(cancel, /if \(h\.status === "RETURNED_TO_STOCK"\) \{[\s\S]*?buildUndoReturnToStockStatements\([\s\S]*?if \(!undo\.ok\) return c\.json\(\{ success: false, error: undo\.error \}, 409\);[\s\S]*?division by zero/);
+  const detail = read("src/pages/delivery-returns/detail.tsx");
+  assert.match(detail, /\{dr\.status === "RETURNED_TO_STOCK" && \([\s\S]*?call\("\/cancel"\);[\s\S]*?Undo return to stock/);
+});
+
+// ===========================================================================
+// Partial returns: a qty per line in the picker, and billing net of returns.
+// ===========================================================================
+
+test("returnable per line: already-returned qty is split across lines of the same production order", async () => {
+  const { returnableByLine } = await import("../src/lib/delivery-return-qty.ts");
+  assert.deepEqual(returnableByLine([{ productionOrderId: "po-1", quantity: 3 }], new Map([["po-1", 1]])), [2]);
+  assert.deepEqual(
+    returnableByLine(
+      [{ productionOrderId: "po-1", quantity: 1 }, { productionOrderId: "po-1", quantity: 1 }, { productionOrderId: "", quantity: 4 }],
+      new Map([["po-1", 1]]),
+    ),
+    [0, 1, 4],
+  );
+});
+
+function invoiceDb(returnedQty) {
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  return {
+    prepare(sql) {
+      const s = norm(sql);
+      return {
+        async run() { return { success: true }; },
+        bind() {
+          return {
+            async first() {
+              if (/FROM delivery_orders WHERE id = \?/.test(s)) return { orgId: "hookka", salesOrderId: "so-1" };
+              return null;
+            },
+            async all() {
+              if (/FROM delivery_order_items WHERE deliveryOrderId = \?/.test(s)) {
+                return { results: [{ id: "di-1", deliveryOrderId: "do-1", productionOrderId: "po-1", productCode: "CHAIR", productName: "Chair", sizeLabel: "", fabricCode: "", quantity: 3, invoicedQty: 0 }] };
+              }
+              if (/FROM delivery_return_items dri/.test(s)) return { results: returnedQty ? [{ poId: "po-1", qty: returnedQty }] : [] };
+              if (/FROM production_orders WHERE orgId = \?/.test(s)) {
+                return { results: [{ id: "po-1", salesOrderId: "so-1", productCode: "CHAIR", sizeCode: "", fabricCode: "" }] };
+              }
+              if (/FROM sales_order_items/.test(s)) {
+                return { results: [{ id: "si-1", salesOrderId: "so-1", productCode: "CHAIR", sizeCode: "", fabricCode: "", unitPriceSen: 10000, quantity: 3, lineTotalSen: 30000 }] };
+              }
+              return { results: [] };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("a partial return bills the rest of the line: delivered 3, returned 1, invoice qty 2", async () => {
+  const { computeDoInvoiceLines } = await import("../src/api/routes/delivery-orders/_helpers.ts");
+  const none = await computeDoInvoiceLines(invoiceDb(0), "do-1", ["so-1"], null);
+  assert.equal(none.invItems[0]?.quantity, 3, "fake DB sanity: no return bills all 3");
+  const { invItems } = await computeDoInvoiceLines(invoiceDb(1), "do-1", ["so-1"], null);
+  assert.equal(invItems.length, 1, "the line must stay on the invoice");
+  assert.equal(invItems[0].quantity, 2);
+});
+
+test("the picker gets each line's returnable qty and sends the qty the user entered", () => {
+  const api = read("src/api/routes/delivery-returns.ts");
+  assert.match(api, /data: items\.map\(\(it, i\) => \(\{ \.\.\.it, returnableQty: returnable\[i\] \}\)\)/);
+  const page = read("src/pages/delivery-returns/index.tsx");
+  assert.match(page, /quantity: qtyOf\(it\),/);
+  assert.doesNotMatch(page, /quantity: it\.quantity,/);
+  assert.match(page, /type="number"\n\s*min=\{1\}\n\s*max=\{returnableOf\(it\)\}/);
+  assert.match(page, /q > 0 && q <= returnableOf\(it\)/);
+});
+
+// ===========================================================================
+// Review follow-ups: a DB failure is a 500, and the driver flow logs a refusal.
+// ===========================================================================
+
+test("a database failure on create comes back as 500, not 400", async () => {
+  const db = fakeDb({ batchError: "connection reset" });
+  const out = await create(db, [line({ quantity: 1 })]);
+  assert.equal(out?.ok, false);
+  assert.equal(out.status, 500);
+});
+
+test("the driver QR flow does not drop a refused delivery return silently", () => {
+  const qr = read("src/api/routes/public-do-qr.ts");
+  assert.match(qr, /const dr = await createDeliveryReturnRecord\(c\.var\.DB, orgId, \{[\s\S]*?\}\);\n\s*if \(!dr\.ok\) throw new Error\(dr\.error\);[^\n]*\n\s*\}\n\s*\} catch \(drErr\) \{\n\s*console\.warn\(/);
 });

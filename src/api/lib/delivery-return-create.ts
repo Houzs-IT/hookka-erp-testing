@@ -14,6 +14,8 @@
 // ---------------------------------------------------------------------------
 
 export type DRCreateItem = {
+  /** The source delivery_order_items.id (picker only; not stored). */
+  doItemId?: string;
   productionOrderId?: string;
   poNo?: string;
   productCode?: string;
@@ -148,7 +150,7 @@ export async function loadDoItemsForReturn(
 ): Promise<DRCreateItem[]> {
   const res = await db
     .prepare(
-      `SELECT productionOrderId AS "productionOrderId", poNo AS "poNo",
+      `SELECT id AS "doItemId", productionOrderId AS "productionOrderId", poNo AS "poNo",
               productCode AS "productCode", productName AS "productName",
               sizeLabel AS "sizeLabel", fabricCode AS "fabricCode",
               specialOrder AS "specialOrder", salesOrderNo AS "salesOrderNo",
@@ -157,6 +159,7 @@ export async function loadDoItemsForReturn(
     )
     .bind(doId)
     .all<{
+      doItemId: string;
       productionOrderId: string | null;
       poNo: string | null;
       productCode: string | null;
@@ -175,6 +178,7 @@ export async function loadDoItemsForReturn(
           onlyProductionOrderIds.has(r.productionOrderId)),
     )
     .map((r) => ({
+      doItemId: r.doItemId,
       productionOrderId: r.productionOrderId ?? "",
       poNo: r.poNo ?? "",
       productCode: r.productCode ?? "",
@@ -247,6 +251,30 @@ export async function enrichItemsWithRefs(db: D1Database, items: DRCreateItem[])
   }
 }
 
+// Quantity already returned per production order on a DO, across every
+// non-cancelled return. The one query the cap, the "New return" picker and the
+// invoice all read (HK-0110).
+export async function loadReturnedQtyByPo(
+  db: D1Database,
+  doId: string,
+): Promise<Map<string, number>> {
+  const res = await db
+    .prepare(
+      `SELECT dri.production_order_id AS "poId", COALESCE(SUM(dri.quantity),0) AS qty
+         FROM delivery_return_items dri
+         JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
+        WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'
+        GROUP BY dri.production_order_id`,
+    )
+    .bind(doId)
+    .all<{ poId: string | null; qty: number }>();
+  const m = new Map<string, number>();
+  for (const r of res.results ?? []) {
+    if (r.poId) m.set(r.poId, (m.get(r.poId) ?? 0) + (Number(r.qty) || 0));
+  }
+  return m;
+}
+
 // Create a Delivery Return document from a DO + a set of returned lines.
 // Header (SO / customer) is snapshotted from the source DO. BOTH lookups are
 // best-effort (a missing/renamed column or an un-rewritten JOIN alias must NOT
@@ -254,7 +282,7 @@ export async function enrichItemsWithRefs(db: D1Database, items: DRCreateItem[])
 // DR id + number, or an error on hard failure / bad quantity / over-return.
 export type CreateDeliveryReturnResult =
   | { ok: true; id: string; returnNo: string }
-  | { ok: false; error: string; status?: 400 };
+  | { ok: false; error: string; status?: 400 | 500 };
 
 const OVER_RETURN_ERROR = "Return exceeds what was delivered on this line";
 
@@ -326,7 +354,7 @@ export async function createDeliveryReturnRecord(
   ];
   const ph = poIds.map(() => "?").join(",");
   if (poIds.length) {
-    const [doLinesRes, priorReturnsRes] = await Promise.all([
+    const [doLinesRes, prior] = await Promise.all([
       db
         .prepare(
           `SELECT productionOrderId AS "poId", quantity
@@ -335,26 +363,12 @@ export async function createDeliveryReturnRecord(
         )
         .bind(doId, ...poIds)
         .all<{ poId: string; quantity: number }>(),
-      db
-        .prepare(
-          `SELECT dri.production_order_id AS "poId", COALESCE(SUM(dri.quantity),0) AS qty
-             FROM delivery_return_items dri
-             JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
-            WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'
-              AND dri.production_order_id IN (${ph})
-            GROUP BY dri.production_order_id`,
-        )
-        .bind(doId, ...poIds)
-        .all<{ poId: string; qty: number }>(),
+      loadReturnedQtyByPo(db, doId),
     ]);
     // Summed, not last-wins: a DO can carry the same production order on two lines.
     const delivered = new Map<string, number>();
     for (const r of doLinesRes.results ?? []) {
       delivered.set(r.poId, (delivered.get(r.poId) ?? 0) + (Number(r.quantity) || 0));
-    }
-    const prior = new Map<string, number>();
-    for (const r of priorReturnsRes.results ?? []) {
-      prior.set(r.poId, (prior.get(r.poId) ?? 0) + (Number(r.qty) || 0));
     }
     for (const poId of poIds) {
       const doLineQty = delivered.get(poId) ?? 0;
@@ -529,6 +543,6 @@ export async function createDeliveryReturnRecord(
     if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
       return { ok: false, error: `${OVER_RETURN_ERROR} (another return was raised at the same time).` };
     }
-    return { ok: false, status: 400, error: "Failed to create delivery return" };
+    return { ok: false, status: 500, error: "Failed to create delivery return" };
   }
 }
