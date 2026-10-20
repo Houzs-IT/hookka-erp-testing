@@ -91,7 +91,7 @@ export function makeLedgerDb({ coa = DEFAULT_COA, aliases = [], kv = {} } = {}) 
     if (/^SELECT id, pi_no, amount_sen, paid_amount_sen, status, currency, fx_rate, supplier_id, supplier_name FROM purchase_invoices WHERE id = \?$/.test(sql)) {
       return st.pis.find((p) => p.id === a[0]) ?? null;
     }
-    if (/^SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening FROM purchase_invoices WHERE supplier_id = \? AND status IN \('CONFIRMED','APPROVED','PARTIAL_PAID'\) ORDER BY invoice_date ASC, pi_no ASC$/.test(sql)) {
+    if (/^SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening, fx_rate FROM purchase_invoices WHERE supplier_id = \? AND status IN \('CONFIRMED','APPROVED','PARTIAL_PAID'\) ORDER BY invoice_date ASC, pi_no ASC$/.test(sql)) {
       return st.pis.filter((p) => p.supplier_id === a[0] && ["CONFIRMED", "APPROVED", "PARTIAL_PAID"].includes(p.status));
     }
     if (/^SELECT COALESCE\(SUM\(sp\.amount_sen\), 0\) AS adv_sen FROM supplier_payments sp/.test(sql)) return { adv_sen: 0 };

@@ -65,6 +65,9 @@ import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK }
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt, parseTfLimitSen } from "../lib/trade-finance";
+import { apForeignPay, foreignAvailableSen } from "../../lib/ap-fx";
+import { parseFxRate } from "../../lib/fx";
+import { normaliseCurrencyCode } from "../../lib/currency-code";
 import type { TfSource } from "../lib/trade-finance";
 import { addDays, tfChargeKind, tfInterestDrawId, tfLineRoom, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
@@ -11812,7 +11815,9 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       // drawdown (finance backlog item 17, owner 「提款时就记」).
       // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
       // its own field — the description stays the printed text.
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT"]) {
+      // fx_currency / fx_rate: an AP Payment of foreign-currency bills pays in
+      // that currency at this rate (Currency & FX step 3, owner 2026-10-20).
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -11827,6 +11832,11 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       ).run();
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)").run().catch(() => {});
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)").run().catch(() => {});
+      // A foreign-currency bill: the amount paid in its own currency and
+      // whether it settles all that is left (amount_sen = the booked RM).
+      for (const col of ["foreign_sen INTEGER", "full_pay INTEGER"]) {
+        await db.prepare(`ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
+      }
     })().catch((e) => {
       _pendingPvApCols = null;
       throw e;
@@ -11850,17 +11860,24 @@ type PvPartyKind = "SUPPLIER" | "OTHER";
 // TF = a trade-finance drawdown, repaid by an AP Payment to the lender
 // (finance backlog item 17); docId = the drawdown's payment no.
 type PvAllocDocKind = "PI" | "AP" | "TF";
-type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number };
+// amountSen = the RM the bill is cleared by (its booked RM for a foreign
+// bill); foreignSen = what was paid in the bill's own currency (Currency & FX
+// step 3); full = it settles all that is left of the bill.
+type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number; foreignSen?: number | null; full?: boolean };
 
 async function loadPvAllocs(db: Env["Variables"]["DB"], voucherId: string): Promise<PvAlloc[]> {
   const res = await db.prepare(
-    "SELECT doc_kind, doc_id, amount_sen FROM payment_voucher_allocs WHERE voucher_id = ? ORDER BY line_order",
+    "SELECT doc_kind, doc_id, amount_sen, foreign_sen, full_pay FROM payment_voucher_allocs WHERE voucher_id = ? ORDER BY line_order",
   ).bind(voucherId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
-  return (res.results ?? []).map((r) => ({
-    docKind: String(r.docKind ?? r.doc_kind) as PvAllocDocKind,
-    docId: String(r.docId ?? r.doc_id),
-    amountSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
-  }));
+  return (res.results ?? []).map((r) => {
+    const foreignSen = Math.round(Number(r.foreignSen ?? r.foreign_sen) || 0);
+    return {
+      docKind: String(r.docKind ?? r.doc_kind) as PvAllocDocKind,
+      docId: String(r.docId ?? r.doc_id),
+      amountSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
+      ...(foreignSen > 0 ? { foreignSen, full: Number(r.fullPay ?? r.full_pay) === 1 } : {}),
+    };
+  });
 }
 
 // Amounts already ticked on OTHER unposted, live AP vouchers (Houzs: 「已被别
@@ -11895,6 +11912,9 @@ type PvOpenBill = {
   currency: string; foreign: boolean; opening: boolean;
   /** A drawdown (docKind TF): the interest in its balance (recorded at drawdown). */
   interestSen?: number;
+  /** A foreign-currency bill: its booking rate and what is still payable in its own currency. */
+  fxRate?: number | null;
+  foreignAvailableSen?: number | null;
 };
 // The lender of a trade-finance line, when the supplier picked is one.
 type PvTfLender = { accountCode: string; lenderName: string };
@@ -11947,7 +11967,7 @@ async function pvOpenBillsFor(
       return { partyName: sup.name, bills, advanceOpenSen: 0, tfLender: { accountCode: lender.accountCode, lenderName: lender.lenderName } };
     }
     const res = await db.prepare(
-      `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening
+      `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening, fx_rate
          FROM purchase_invoices
         WHERE supplier_id = ? AND status IN ('CONFIRMED','APPROVED','PARTIAL_PAID')
         ORDER BY invoice_date ASC, pi_no ASC`,
@@ -11960,14 +11980,18 @@ async function pvOpenBillsFor(
       if (outstanding <= 0) continue;
       const id = String(p.id);
       const rsv = reserved.get(`PI|${id}`);
-      const currency = String(p.currency ?? "MYR") || "MYR";
+      const currency = normaliseCurrencyCode(p.currency);
+      const foreign = currency !== "MYR";
+      const availableSen = Math.max(0, outstanding - (rsv?.sen ?? 0));
+      const fxRate = foreign ? Number(p.fxRate ?? p.fx_rate) || null : null;
       bills.push({
         docKind: "PI", id, no: String(p.piNo ?? p.pi_no ?? ""), ref: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""),
         date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
         dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
         totalSen: total, paidSen: paid, outstandingSen: outstanding,
-        reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen: Math.max(0, outstanding - (rsv?.sen ?? 0)),
-        currency, foreign: currency.toUpperCase() !== "MYR", opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
+        reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen,
+        currency, foreign, opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
+        ...(foreign ? { fxRate, foreignAvailableSen: fxRate ? foreignAvailableSen(availableSen, fxRate) : null } : {}),
       });
     }
     // Unapplied advance this supplier already holds (knock-off lives on the
@@ -12014,6 +12038,8 @@ async function pvOpenBillsFor(
 type PvApValidated = {
   partyKind: PvPartyKind; partyId: string; partyName: string; payFrom: string;
   allocs: PvAlloc[]; advanceSen: number; totalSen: number;
+  /** Foreign-currency bills: their currency and the payment's rate (RM per 1 unit); null for RM. */
+  fxCurrency: string | null; fxRate: number | null;
   /** Paid from a trade-finance line = a drawdown: its due date and the
       interest recorded at drawdown (null for a bank / cash payment). */
   tf: { dueDate: string; interestSen: number } | null;
@@ -12064,23 +12090,50 @@ export async function validatePvAp(
   const byId = new Map(open.bills.map((b) => [b.id, b] as const));
   const allocs: PvAlloc[] = [];
   const seen = new Set<string>();
+  // Foreign-currency bills (Currency & FX step 3, owner 2026-10-20): one
+  // currency per payment, typed in that currency, priced at the payment's
+  // rate (the form fills in the month's rate from Setup); AP is cleared at
+  // the booked RM, the bank pays foreign × rate (apForeignPay).
+  const payRate = body.fxRate === undefined || body.fxRate === null || body.fxRate === "" ? null : parseFxRate(body.fxRate);
+  let fxCurrency: string | null = null;
+  let anyRm = false;
+  let foreignBankSen = 0;
   for (const a of rawAllocs) {
     const docId = String(a.docId ?? "");
-    const amountSen = Math.round(Number(a.amountSen) || 0);
-    if (!docId || amountSen === 0) continue;
-    if (amountSen < 0) return { ok: false, error: "Allocation amounts must be positive" };
+    const bill = docId ? byId.get(docId) : undefined;
+    const typed = Math.round(Number(bill?.foreign ? a.foreignSen : a.amountSen) || 0);
+    if (!docId || typed === 0) continue;
+    if (typed < 0) return { ok: false, error: "Allocation amounts must be positive" };
     if (seen.has(docId)) return { ok: false, error: "The same bill is listed twice" };
     seen.add(docId);
-    const bill = byId.get(docId);
     if (!bill) return { ok: false, error: `Bill ${docId} is not an open bill of this creditor` };
-    if (bill.foreign) return { ok: false, error: `${bill.no} is in ${bill.currency} — pay foreign-currency invoices on the Supplier Payment page (payment-day rate needed)` };
+    if (bill.foreign) {
+      if (anyRm || (fxCurrency && fxCurrency !== bill.currency)) {
+        return { ok: false, error: `One currency per payment — ${bill.no} is in ${bill.currency}; pay it on its own AP payment` };
+      }
+      fxCurrency = bill.currency;
+      if (payRate === null) return { ok: false, error: `Enter this payment's ${bill.currency} rate (RM per 1 ${bill.currency})` };
+      const r = apForeignPay({ availableSen: bill.availableSen, reservedSen: bill.reservedSen, bookingRate: bill.fxRate ?? 0, foreignSen: typed, payRate });
+      if (!r.ok) {
+        const why = bill.reservedSen > 0 ? ` (RM ${(bill.reservedSen / 100).toFixed(2)} already ticked on ${bill.reservedBy.join(", ")})` : "";
+        return { ok: false, error: `${bill.no}: ${r.error}${r.error === "more than is still payable" ? ` — ${bill.currency} ${((bill.foreignAvailableSen ?? 0) / 100).toFixed(2)}${why}` : ""}` };
+      }
+      allocs.push({ docKind: bill.docKind, docId, amountSen: r.bookedSen, foreignSen: typed, full: r.full });
+      foreignBankSen += r.bankSen;
+      continue;
+    }
+    if (fxCurrency) return { ok: false, error: `One currency per payment — ${bill.no} is in RM; pay it on its own AP payment` };
+    anyRm = true;
+    const amountSen = typed;
     if (amountSen > bill.availableSen) {
       const why = bill.reservedSen > 0 ? ` (RM ${(bill.reservedSen / 100).toFixed(2)} already ticked on ${bill.reservedBy.join(", ")})` : "";
       return { ok: false, error: `${bill.no}: RM ${(amountSen / 100).toFixed(2)} exceeds the RM ${(bill.availableSen / 100).toFixed(2)} still payable${why}` };
     }
     allocs.push({ docKind: bill.docKind, docId, amountSen });
   }
+  if (fxCurrency && tf) return { ok: false, error: "A trade-finance drawdown is in RM — pay foreign-currency bills from a bank account" };
   const advanceSen = Math.max(0, Math.round(Number(body.advanceSen) || 0));
+  if (fxCurrency && advanceSen > 0) return { ok: false, error: "A foreign-currency payment has no advance — pay the bills (an RM advance goes on its own payment)" };
   if (advanceSen > 0 && partyKind !== "SUPPLIER") return { ok: false, error: "An advance is only for suppliers — other creditors are paid against their bills" };
   if (open.tfLender) {
     // A repayment of trade finance: drawdowns only, no advance.
@@ -12088,8 +12141,9 @@ export async function validatePvAp(
     if (allocs.length === 0) return { ok: false, error: "Tick at least one drawdown to repay" };
   }
   if (allocs.length === 0 && advanceSen <= 0) return { ok: false, error: "Tick at least one bill (or enter an advance)" };
-  const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
-  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen, tf } };
+  // The money out: RM as typed, or — foreign — what the bank pays (foreign × rate).
+  const totalSen = fxCurrency ? foreignBankSen : allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
+  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen, tf, fxCurrency, fxRate: fxCurrency ? payRate : null } };
 }
 
 type PvApHeader = {
@@ -12097,6 +12151,8 @@ type PvApHeader = {
   reference: string | null; advanceSen: number;
   /** A drawdown (Paid from a trade-finance line): due date + interest at drawdown. */
   tfDueDate?: string | null; tfInterestSen?: number;
+  /** Foreign-currency bills: the payment's rate (RM per 1 unit). */
+  fxRate?: number | null;
 };
 // The posting moment of an AP voucher — the settlement document is built by the
 // page-native builders under paymentNo = pvNo. Returns the statements to batch;
@@ -12138,9 +12194,14 @@ export async function pvApSettlementStatements(
       if (acctErr) return { ok: false, error: acctErr };
       extraLegs = tfInterestLegs({ drawSourceId: pv.pvNo, accountCode: drawSrc.accountCode, chargeDate: pv.date, deltaSen: pv.tfInterestSen ?? 0, legNoBase: 1, actorUserId, orgId });
     }
+    // A foreign bill is paid in its currency at the voucher's rate; the
+    // builder clears AP at the booked RM and posts the FX difference.
+    if (allocs.some((a) => (a.foreignSen ?? 0) > 0) && !((pv.fxRate ?? 0) > 0)) return { ok: false, error: "This payment has foreign-currency bills but no rate" };
     const built = await buildSupplierPaymentCreate(db, {
       orgId, actorUserId, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
-      allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ({ piId: a.docId, payMyrSen: a.amountSen })),
+      allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ((a.foreignSen ?? 0) > 0
+        ? { piId: a.docId, foreignSen: a.foreignSen ?? 0, payRate: pv.fxRate ?? 0, full: !!a.full }
+        : { piId: a.docId, payMyrSen: a.amountSen })),
       advanceSen: pv.advanceSen, paymentNo: pv.pvNo, extraLegs,
     });
     if (!built.ok) return built;
@@ -12171,8 +12232,8 @@ export async function pvApSettlementStatements(
 function pvAllocStatements(db: Env["Variables"]["DB"], voucherId: string, allocs: PvAlloc[]): D1PreparedStatement[] {
   return allocs.map((a, idx) =>
     db.prepare(
-      "INSERT INTO payment_voucher_allocs (id, voucher_id, doc_kind, doc_id, amount_sen, line_order) VALUES (?, ?, ?, ?, ?, ?)",
-    ).bind(`pva-${crypto.randomUUID().slice(0, 8)}`, voucherId, a.docKind, a.docId, a.amountSen, idx),
+      "INSERT INTO payment_voucher_allocs (id, voucher_id, doc_kind, doc_id, amount_sen, line_order, foreign_sen, full_pay) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(`pva-${crypto.randomUUID().slice(0, 8)}`, voucherId, a.docKind, a.docId, a.amountSen, idx, (a.foreignSen ?? 0) > 0 ? a.foreignSen : null, (a.foreignSen ?? 0) > 0 ? (a.full ? 1 : 0) : null),
   );
 }
 
@@ -12220,15 +12281,17 @@ type ApPrintSource = {
   partyKind: PvPartyKind;
   partyId: string;
   date: string;
-  allocs: { docKind: PvAllocDocKind; docId: string; paidSen: number }[];
+  allocs: { docKind: PvAllocDocKind; docId: string; paidSen: number; foreignSen?: number }[];
   advanceSen: number;
   tfRepaySen: number;
+  /** An AP voucher of foreign-currency bills (Currency & FX step 3). */
+  fx?: { currency: string; rate: number } | null;
 };
 
 async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentNo: string): Promise<ApPrintSource | null> {
   await ensurePvApColumns(db).catch(() => {});
   const pv = await db.prepare(
-    "SELECT id, date, pv_kind, party_kind, party_id, advance_sen FROM payment_vouchers WHERE pvNo = ?",
+    "SELECT id, date, pv_kind, party_kind, party_id, advance_sen, fx_currency, fx_rate FROM payment_vouchers WHERE pvNo = ?",
   ).bind(paymentNo).first<Record<string, unknown>>().catch(() => null);
   if (pv && String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
     const allocs = await loadPvAllocs(db, String(pv.id));
@@ -12238,9 +12301,14 @@ async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentN
       date: String(pv.date ?? "").slice(0, 10),
       // A repayment of trade finance prints as its total (like the Supplier
       // Payment page's TF_REPAYMENT), not as bill rows.
-      allocs: allocs.filter((a) => a.docKind !== "TF").map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen })),
+      allocs: allocs.filter((a) => a.docKind !== "TF").map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen, ...((a.foreignSen ?? 0) > 0 ? { foreignSen: a.foreignSen ?? 0 } : {}) })),
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
       tfRepaySen: allocs.filter((a) => a.docKind === "TF").reduce((s, a) => s + a.amountSen, 0),
+      fx: (() => {
+        const currency = String(pv.fxCurrency ?? pv.fx_currency ?? "");
+        const rate = Number(pv.fxRate ?? pv.fx_rate) || 0;
+        return currency && rate > 0 ? { currency, rate } : null;
+      })(),
     };
   }
   const sp = await db.prepare(
@@ -12318,6 +12386,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
           setsByPi.get(a.docId) ?? [], paymentNo, src.date,
         ),
         paidSen: a.paidSen,
+        ...((a.foreignSen ?? 0) > 0 ? { foreignPaidSen: a.foreignSen } : {}),
       });
     }
     if (src.partyId) {
@@ -12384,6 +12453,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
   return {
     paymentNo, partyKind: src.partyKind, partyId: src.partyId, date: src.date,
     bills, advanceSen: src.advanceSen, tfRepaySen: src.tfRepaySen, balanceBeforeSen, payeeBank,
+    fx: src.fx ?? null,
   };
 }
 
@@ -12502,7 +12572,7 @@ app.get("/payment-vouchers", async (c) => {
         `SELECT * FROM payment_voucher_lines ORDER BY lineOrder`,
       ).all(),
       c.var.DB.prepare(
-        `SELECT a.voucher_id, a.doc_kind, a.doc_id, a.amount_sen, a.line_order,
+        `SELECT a.voucher_id, a.doc_kind, a.doc_id, a.amount_sen, a.line_order, a.foreign_sen,
                 pi.pi_no AS pi_no, pi.supplier_invoice_no AS pi_ref, b.billNo AS bill_no, b.referenceNo AS bill_ref
            FROM payment_voucher_allocs a
            LEFT JOIN purchase_invoices pi ON a.doc_kind = 'PI' AND pi.id = a.doc_id
@@ -12511,7 +12581,7 @@ app.get("/payment-vouchers", async (c) => {
       ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
     ]);
     const lines = (lineRes.results ?? []) as { voucherId: string }[];
-    type AllocOut = { docKind: string; docId: string; docNo: string; docRef: string; amountSen: number };
+    type AllocOut = { docKind: string; docId: string; docNo: string; docRef: string; amountSen: number; foreignSen?: number };
     const allocsByVoucher = new Map<string, AllocOut[]>();
     for (const a of allocRes.results ?? []) {
       const vid = String(a.voucherId ?? a.voucher_id ?? "");
@@ -12523,6 +12593,7 @@ app.get("/payment-vouchers", async (c) => {
         docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : kind === "TF" ? (a.docId ?? a.doc_id) : (a.billNo ?? a.bill_no)) ?? ""),
         docRef: String((kind === "PI" ? (a.piRef ?? a.pi_ref) : (a.billRef ?? a.bill_ref)) ?? ""),
         amountSen: Math.round(Number(a.amountSen ?? a.amount_sen) || 0),
+        ...(Number(a.foreignSen ?? a.foreign_sen) > 0 ? { foreignSen: Math.round(Number(a.foreignSen ?? a.foreign_sen)) } : {}),
       });
       allocsByVoucher.set(vid, list);
     }
@@ -12652,8 +12723,8 @@ app.post("/payment-vouchers", async (c) => {
              accrualAccount, settledAt, productLine, totalSen, status,
              approval_state, approved_at, approved_by,
              createdBy, created_at, updated_at,
-             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference, fx_currency, fx_rate
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id, pvNo, date, ap.v.partyName, description, ap.v.payFrom,
           ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
@@ -12661,7 +12732,7 @@ app.post("/payment-vouchers", async (c) => {
           asDraft ? null : now, asDraft ? null : actorUserId,
           actorUserId, now, now,
           PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
-          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, reference,
+          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, reference, ap.v.fxCurrency, ap.v.fxRate,
         ),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ];
@@ -12671,7 +12742,7 @@ app.post("/payment-vouchers", async (c) => {
         const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
           id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
           reference: settlementReference(reference, description), advanceSen: ap.v.advanceSen,
-          tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0,
+          tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0, fxRate: ap.v.fxRate,
         }, ap.v.allocs);
         if (!built.ok) return c.json({ success: false, error: built.error }, 400);
         statements.push(...built.statements);
@@ -12793,10 +12864,10 @@ app.put("/payment-vouchers/:id", async (c) => {
       await c.var.DB.batch([
         c.var.DB.prepare(
           `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
-                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, reference = ?, updated_at = ? WHERE id = ?`,
+                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, reference = ?, fx_currency = ?, fx_rate = ?, updated_at = ? WHERE id = ?`,
         ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
           ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
-          pvExtraFields(body as Record<string, unknown>).reference, now, id),
+          pvExtraFields(body as Record<string, unknown>).reference, ap.v.fxCurrency, ap.v.fxRate, now, id),
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
@@ -12927,6 +12998,7 @@ async function pvApprovalCore(
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
       tfDueDate: (pv.tfDueDate ?? pv.tf_due_date ?? null) as string | null,
       tfInterestSen: Math.round(Number(pv.tfInterestSen ?? pv.tf_interest_sen) || 0),
+      fxRate: Number(pv.fxRate ?? pv.fx_rate) || null,
     }, allocs);
     if (!built.ok) return fail(built.error);
     await db.batch([

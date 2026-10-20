@@ -2041,6 +2041,8 @@
     "created_by",
     "date",
     "description",
+    "fx_currency",
+    "fx_rate",
     "id",
     "party_id",
     "party_kind",
@@ -3857,6 +3859,8 @@
     "amount_sen",
     "doc_id",
     "doc_kind",
+    "foreign_sen",
+    "full_pay",
     "id",
     "line_order",
     "voucher_id"
