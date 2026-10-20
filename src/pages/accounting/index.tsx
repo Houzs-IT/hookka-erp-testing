@@ -21,7 +21,7 @@ import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } fr
 import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
 import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
 import { clearFaQueue, faRemarkFor, fixedAssetPrefills, putFaQueue, readFaQueue, withoutRegistered, type FaPrefill } from "@/lib/fixed-asset-prompt";
-import { addDays as tfAddDays } from "@/lib/trade-finance";
+import { addDays as tfAddDays, tfLineRoom, tfOverLimitWarning } from "@/lib/trade-finance";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
@@ -98,6 +98,7 @@ import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
 import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
 import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
+import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
 import { PartyListTab } from "./tabs/PartyListTab";
 import { bestMatch } from "@/lib/party-fuzzy-match";
 import {
@@ -804,6 +805,7 @@ export default function AccountingPage() {
               <CleanupReportCard />
               <LandedCostCard />
               <DocNumberingCard accounts={accounts} />
+              <TradeFinanceLinesCard />
             </div>
           )}
         </>
@@ -11097,7 +11099,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     tfInterest: "",
   });
   // The trade-finance lines (GET /trade-finance): Paid from may draw on one.
-  const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[]>([]);
+  const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number; limitSen: number | null; accountNetSen: number }[]>([]);
   const [apAlloc, setApAlloc] = useState<Record<string, string>>({});
   // apBills carries the key it was loaded for; a key mismatch = loading.
   const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } | null>(null);
@@ -11113,8 +11115,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     fetch("/api/accounting/other-parties").then((r) => r.json() as Promise<{ success?: boolean; data?: typeof otherCreditors }>)
       .then((j) => { if (!dead && j?.success) setOtherCreditors((j.data ?? []).filter((p) => p.type === "CREDITOR" && p.isActive !== false)); })
       .catch(() => {});
-    fetch("/api/accounting/trade-finance").then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: { accountCode: string; accountName?: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[] } }>)
-      .then((j) => { if (!dead && j?.success) setTfLines((j.data?.sources ?? []).map((t) => ({ accountCode: t.accountCode, accountName: t.accountName ?? "", lenderName: t.lenderName, lenderSupplierId: t.lenderSupplierId, tenorDays: Number(t.tenorDays) || 90 }))); })
+    fetch("/api/accounting/trade-finance").then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: { accountCode: string; accountName?: string; lenderName: string; lenderSupplierId: string; tenorDays: number; limitSen?: number | null; accountNetSen?: number }[] } }>)
+      .then((j) => { if (!dead && j?.success) setTfLines((j.data?.sources ?? []).map((t) => ({ accountCode: t.accountCode, accountName: t.accountName ?? "", lenderName: t.lenderName, lenderSupplierId: t.lenderSupplierId, tenorDays: Number(t.tenorDays) || 90, limitSen: t.limitSen ?? null, accountNetSen: Number(t.accountNetSen) || 0 }))); })
       .catch(() => {});
     return () => { dead = true; };
   }, []);
@@ -11972,6 +11974,20 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               <input type="text" placeholder="0.00" value={apForm.tfInterest} onChange={(e) => setApForm({ ...apForm, tfInterest: e.target.value })} className={`${selCls} w-full text-right tabular-nums ${isUnreadableMoney(apForm.tfInterest) ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
                             </div>
                           </div>
+                          {(() => {
+                            // The line's limit (Settings › Trade Finance Lines, owner 2026-10-20):
+                            // what is left, and a warning — never a block — when this drawdown
+                            // goes past it. Not on an edit: the line already counts that draw.
+                            const room = tfLineRoom(apTfDraw.limitSen, apTfDraw.accountNetSen);
+                            if (!room) return null;
+                            const warn = editingId ? null : tfOverLimitWarning({ limitSen: apTfDraw.limitSen, usedSen: apTfDraw.accountNetSen, drawSen: apTotalSen + (apSen(apForm.tfInterest) || 0), lenderName: apTfDraw.lenderName, fmt: formatCurrency });
+                            return (
+                              <div className="text-[11px]" data-tf-room="">
+                                <span className="text-[#2C4170]">Limit {formatCurrency(room.limitSen)} · drawn {formatCurrency(room.usedSen)} · available {formatCurrency(room.availableSen)}</span>
+                                {warn && <div className="mt-1 rounded border border-[#E8B4A8] bg-[#FBEDEA] px-2 py-1 font-semibold text-[#9A3A2D]">{warn}</div>}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                       <div>

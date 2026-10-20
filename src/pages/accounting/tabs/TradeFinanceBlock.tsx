@@ -39,6 +39,8 @@ type TfSourceRow = {
   tenorDays: number;
   accountName: string;
   accountNetSen: number;
+  limitSen?: number | null;
+  availableSen?: number | null;
   unallocatedSen: number;
   totals: { notDue: number; d1_30: number; d31_60: number; d61_90: number; over90: number; total: number };
   draws: TfDrawRow[];
@@ -124,6 +126,12 @@ export function TradeFinanceBlock() {
               <span className="text-[11px] text-[#9CA3AF]">
                 {s.accountCode} {s.accountName} · default tenor {s.tenorDays} days · buckets by DUE date
               </span>
+              {s.limitSen != null && s.availableSen != null && (
+                // The line's limit (Settings › Trade Finance Lines, owner 2026-10-20).
+                <span className={`text-[11px] ${s.availableSen < 0 ? "font-semibold text-[#9A3A2D]" : "text-[#6B7280]"}`} data-tf-limit="">
+                  limit {rm(s.limitSen)} · available {rm(s.availableSen)}
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={() => setShowSetup((v) => !v)}>
                   <Settings2 className="h-4 w-4 mr-1" /> Settings
