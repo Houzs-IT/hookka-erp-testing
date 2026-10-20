@@ -397,6 +397,7 @@ const SETTING_LABEL: Record<string, string> = {
   labor_account_map: "Labour account map",
   cashflow_account_map: "Cash flow mapping",
   doc_number_prefixes: "Document numbering",
+  doc_type_prefixes: "Document numbering (documents)",
   pnl_section_map: "P&L sections",
   bs_section_map: "Balance sheet sections",
   bank_reco_strict_lock: "Bank month lock",

@@ -15,6 +15,7 @@ import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { buildJournalEntryStatements } from "../lib/journal-hash";
 import { ClosedYearError } from "../lib/fiscal";
+import { nextSelfNumber } from "../lib/doc-number-service";
 import {
   buildDebitNoteLedgerLegs,
   buildNoteUnpostStatements,
@@ -102,23 +103,9 @@ function genId(): string {
 async function nextDNNo(db: D1Database): Promise<string> {
   // DN-YYMM-NNN sequential. Bug fix 2026-04-28: previous Math.random
   // sequence was collision-prone and not monotonic. Same pattern as
-  // SO/PO/DO/GRN/PI/CN.
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(
-    now.getMonth() + 1,
-  ).padStart(2, "0")}`;
-  const prefix = `DN-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT noteNumber FROM debit_notes WHERE noteNumber LIKE ? ORDER BY noteNumber DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ noteNumber: string }>();
-  if (!res) return `${prefix}001`;
-  const tail = res.noteNumber.replace(prefix, "");
-  const seq = parseInt(tail, 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  // SO/PO/DO/GRN/PI/CN. The prefix is Settings' (Document Numbering,
+  // 2026-10-20) — nextSelfNumber.
+  return nextSelfNumber(db, "DN");
 }
 
 // GET /api/debit-notes — list all

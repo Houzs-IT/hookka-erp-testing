@@ -15,6 +15,7 @@ import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { buildJournalEntryStatements } from "../lib/journal-hash";
 import { ClosedYearError } from "../lib/fiscal";
+import { nextSelfNumber } from "../lib/doc-number-service";
 import {
   buildCreditNoteLedgerLegs,
   buildNoteUnpostStatements,
@@ -180,23 +181,9 @@ async function buildInvoiceCascadeForCN(
 async function nextCNNo(db: D1Database): Promise<string> {
   // CN-YYMM-NNN sequential. Bug fix 2026-04-28: previous Math.random()*900+100
   // collision-prone and not monotonic. Pulls max-existing-suffix+1 in the
-  // (year, month) bucket so new credit notes always increment.
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(
-    now.getMonth() + 1,
-  ).padStart(2, "0")}`;
-  const prefix = `CN-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT noteNumber FROM credit_notes WHERE noteNumber LIKE ? ORDER BY noteNumber DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ noteNumber: string }>();
-  if (!res) return `${prefix}001`;
-  const tail = res.noteNumber.replace(prefix, "");
-  const seq = parseInt(tail, 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  // (year, month) bucket so new credit notes always increment. The prefix is
+  // Settings' (Document Numbering, 2026-10-20) — nextSelfNumber.
+  return nextSelfNumber(db, "CN");
 }
 
 // GET /api/credit-notes — list all
