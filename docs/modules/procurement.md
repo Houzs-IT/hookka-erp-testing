@@ -1,5 +1,6 @@
 # Procurement — Module Guide
 
+> **Last verified: 2026-10-20** (`claude/t006-returns-main-15961f`, main): the eight `grn.ts` anchors in the function table re-derived after T-006 R6 added `findLivePurchaseReturnOnGrn` and the GRN return guards. Nothing else re-checked.
 > **Last verified: 2026-10-20** (`feat/doc-numbering-settings`, main): the two `purchase-invoices.ts` handler anchors (PI create / edit) re-derived after `generatePiNo` became one line (Document Numbering).
 > **Last verified: 2026-10-17** (`feat/tf-repay-from-ap-payment`, main): `supplier-payments.ts` anchors re-derived after `validateTfRepayment` / `tfRepaymentStatements` were extracted above `buildSupplierPaymentCreate` (finance backlog item 17): POST `/` :149, `/knock-off` :681, `/un-knock` :842, `buildSupplierPaymentCreate` :473 (it now takes `extraLegs`, posted in the same entry chain), `buildSupplierPaymentLifecycle` :940. Nothing else re-checked.
 
@@ -91,14 +92,14 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:458` | PO create; `body.status` verbatim |
 | `app.put("/:id")` (PO edit) | `src/api/routes/purchase-orders.ts:789` | PO edit + status lifecycle |
 | `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1125` | Runtime column self-apply |
-| `postGRNToStock` | `src/api/routes/grn.ts:527` | Post GRN lines to stock + cost_ledger |
-| `cascadePOStatusAfterGRNPost` | `src/api/routes/grn.ts:817` | Flip parent PO → RECEIVED/PARTIAL_RECEIVED |
-| `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:676` | Compensating DELTA for POSTED-line edit |
-| `cascadePOReceivedQtyDelta` | `src/api/routes/grn.ts:1136` | Move PO line receivedQty by delta |
-| `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1043` | Un-post/cancel/delete: give back PO qty |
-| `resolveRmForGRNItem` | `src/api/routes/grn.ts:479` | Resolve GRN line → raw_material |
-| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1354` | GRN create; status derived from arrival |
-| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2287` | Arrival state transition (gate) |
+| `postGRNToStock` | `src/api/routes/grn.ts:529` | Post GRN lines to stock + cost_ledger |
+| `cascadePOStatusAfterGRNPost` | `src/api/routes/grn.ts:819` | Flip parent PO → RECEIVED/PARTIAL_RECEIVED |
+| `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:678` | Compensating DELTA for POSTED-line edit |
+| `cascadePOReceivedQtyDelta` | `src/api/routes/grn.ts:1181` | Move PO line receivedQty by delta |
+| `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1088` | Un-post/cancel/delete: give back PO qty |
+| `resolveRmForGRNItem` | `src/api/routes/grn.ts:481` | Resolve GRN line → raw_material |
+| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1399` | GRN create; status derived from arrival |
+| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2337` | Arrival state transition (gate) |
 | `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1089` | PI create + convert-chain + GL post |
 | `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:1963` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
 | `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:711` | Ceiling on re-synced invoiced_qty |
@@ -129,7 +130,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 
 ## Common tasks (mini-playbook)
 - **Add a field to a PO/GRN/PI** → snake_case column + runtime `ALTER … ADD COLUMN IF NOT EXISTS` in the route's `ensure*Migrations` before the first write; add a `column-rename-map.json` entry; persist in POST/PUT; surface in the `rowTo*` mapper; render in the page. Read dual-keyed.
-- **Change the receive/stock cascade** → edit `postGRNToStock` (`grn.ts:527`) + `cascadePOStatusAfterGRNPost` (`:811`); keep `restorePOReceivedQtyForGRN` (`:992`) symmetric. Verify `tests/grn-arrival-state.test.mjs` + `tests/purchase-edit-cascade.test.mjs`.
+- **Change the receive/stock cascade** → edit `postGRNToStock` (`grn.ts:529`) + `cascadePOStatusAfterGRNPost` (`:811`); keep `restorePOReceivedQtyForGRN` (`:992`) symmetric. Verify `tests/grn-arrival-state.test.mjs` + `tests/purchase-edit-cascade.test.mjs`.
 - **Adjust a PI GL posting** → change legs in `buildPiApprovalLegs` (`pi-posting.ts:35`) / bucket mapping `mapPurchaseLinesToAccounts` (`purchase-invoices.ts:183`). There are FOUR call sites and they must stay identical: create-as-CONFIRMED (`:1573`), the DRAFT→CONFIRMED PUT transition (`:2246`), the backfill endpoint (`:1781`), and the void/unvoid delta path. Never mutate existing ledger legs.
 - **Touch the convert-chain** → guard in `checkConvertAvailability` (`convert-chain.ts:81`); keep `invoiced_qty`/`receivedQty` increment+restore paired. Verify `tests/convert-chain.test.mjs` + `tests/purchasing-convert-flow.test.mjs`.
 - **Change supplier pricing** → binding CRUD in `supplier-materials.ts`; append audit via `price-history.ts`; render the log in `suppliers/detail.tsx`. Verify `tests/supplier-effective-pricing.test.mjs`.

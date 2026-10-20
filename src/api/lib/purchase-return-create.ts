@@ -90,6 +90,15 @@ export async function ensurePurchaseReturnTables(db: D1Database): Promise<void> 
         /* column already exists */
       }
     }
+    // T-006 R6 reads a GRN line's PO link; grn.ts self-applies these too,
+    // but only when its own routes have run in this isolate.
+    for (const col of ["po_id TEXT", "po_item_id TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE grn_items ADD COLUMN IF NOT EXISTS ${col}`).run();
+      } catch {
+        /* column already exists */
+      }
+    }
     tablesEnsured = true;
   } catch (err) {
     console.warn(
@@ -531,17 +540,70 @@ export async function loadGrnReturnedBeforeBilling(
   return out;
 }
 
-// Write a Purchase Return header + its item snapshot. Returns the new id +
-// return_no. No ledger movement (slice 1).
+// T-006 R6 — the PO line each GRN line received against (explicit po_item_id;
+// a legacy line without one has no PO link to give back to) and whether its
+// GRN is posted (only a posted receipt added to the PO's receivedQty).
+async function loadGrnLinePoLinks(
+  db: D1Database,
+  grnItemIds: string[],
+): Promise<Map<string, { poId: string | null; poItemId: string | null; posted: boolean }>> {
+  const out = new Map<string, { poId: string | null; poItemId: string | null; posted: boolean }>();
+  if (grnItemIds.length === 0) return out;
+  const res = await db
+    .prepare(
+      `SELECT gi.id AS "id", gi.po_id AS "linePoId", gi.po_item_id AS "poItemId",
+              g.poId AS "grnPoId", g.status AS "status"
+         FROM grn_items gi JOIN grns g ON g.id = gi.grnId
+        WHERE gi.id::text IN (${grnItemIds.map(() => "?").join(", ")})`,
+    )
+    .bind(...grnItemIds)
+    .all<{ id: string | number; linePoId?: string | null; poItemId?: string | null; grnPoId?: string | null; status?: string | null }>();
+  for (const r of res.results ?? []) {
+    out.set(String(r.id), {
+      poId: (r.linePoId || r.grnPoId || "").trim() || null,
+      poItemId: (r.poItemId ?? "").trim() || null,
+      posted: ["POSTED", "CONFIRMED"].includes(String(r.status ?? "").toUpperCase()),
+    });
+  }
+  return out;
+}
+
+export type CreatePurchaseReturnResult =
+  | { ok: true; id: string; returnNo: string; poIds: string[] }
+  | { ok: false; error: string };
+
+// Write a Purchase Return header + its item snapshot, and (T-006 R6) give the
+// PO line back what the return sends out, so replacement goods can be
+// received against it (PO 100, receive 100, return 20 → received 80 → 30
+// more may come in under the 110% ceiling). No ledger movement (slice 1).
+// `poIds` are the purchase orders whose status the caller must recompute.
+//
+// grn_items.invoiced_qty is deliberately NOT written back: the invoice still
+// bills these units and the supplier's credit is the debit note, so lowering
+// it let the same goods be billed twice (BUG-2026-09-24-184, staging).
 export async function createPurchaseReturn(
   db: D1Database,
   input: PRCreateInput,
-): Promise<{ id: string; returnNo: string }> {
+): Promise<CreatePurchaseReturnResult> {
   await ensurePurchaseReturnTables(db);
+  const items = input.items.filter((it) => {
+    const q = Number(it.quantity);
+    return Number.isFinite(q) && q > 0; // skip zero/blank lines
+  });
+  const links = await loadGrnLinePoLinks(db, [
+    ...new Set(items.map((it) => String(it.grnItemId ?? "")).filter(Boolean)),
+  ]);
+  // A return off a receipt that never posted would take back a receivedQty
+  // that was never added — and goods that never arrived cannot go back.
+  if ([...links.values()].some((l) => !l.posted)) {
+    return { ok: false, error: "Only a received (POSTED) goods receipt can be returned." };
+  }
   const id = genPurchaseReturnId();
   const returnNo = await nextPurchaseReturnNo(db);
   const now = new Date().toISOString();
-  await db
+  const stmts: D1PreparedStatement[] = [];
+  const poIds = new Set<string>();
+  stmts.push(db
     .prepare(
       `INSERT INTO purchase_returns
          (id, return_no, purchase_invoice_id, pi_no, grn_id, grn_no,
@@ -566,13 +628,11 @@ export async function createPurchaseReturn(
       now,
       now,
       input.orgId ?? null,
-    )
-    .run();
-  for (const it of input.items) {
-    const qty = Number(it.quantity ?? 0);
-    if (!Number.isFinite(qty) || qty <= 0) continue; // skip zero/blank lines
+    ));
+  for (const it of items) {
+    const qty = Number(it.quantity);
     const unit = roundUnitPriceSen(Number(it.unitCostSen ?? 0));
-    await db
+    stmts.push(db
       .prepare(
         `INSERT INTO purchase_return_items
            (id, purchase_return_id, purchase_invoice_item_id, material_code,
@@ -592,8 +652,47 @@ export async function createPurchaseReturn(
         unit,
         Math.round(qty * unit),
         it.problem ?? "",
-      )
-      .run();
+      ));
+    const link = links.get(String(it.grnItemId ?? ""));
+    if (link?.poItemId) {
+      // Clamped so an edge never drives the counter negative.
+      stmts.push(db
+        .prepare("UPDATE purchase_order_items SET receivedQty = GREATEST(0, receivedQty - ?) WHERE id = ?")
+        .bind(qty, link.poItemId));
+      if (link.poId) poIds.add(link.poId);
+    }
   }
-  return { id, returnNo };
+  // One batch: the return and the PO counter it moves land together.
+  await db.batch(stmts);
+  return { ok: true, id, returnNo, poIds: [...poIds] };
+}
+
+/**
+ * The inverse of createPurchaseReturn's give-back, for deleting an OPEN
+ * return: put back the receivedQty each GRN-linked line took off its PO line.
+ * Without it a deleted return left the PO line under-received, so the same
+ * goods could be received (and stocked) again. Append the statements to the
+ * delete's own batch; recompute the status of `poIds` after it.
+ */
+export async function purchaseReturnRestoreStatements(
+  db: D1Database,
+  returnId: string,
+): Promise<{ statements: D1PreparedStatement[]; poIds: string[] }> {
+  const res = await db
+    .prepare("SELECT grn_item_id AS \"grnItemId\", quantity FROM purchase_return_items WHERE purchase_return_id = ?")
+    .bind(returnId)
+    .all<{ grnItemId: string | null; quantity: number }>();
+  const rows = (res.results ?? []).filter((r) => r.grnItemId && Number(r.quantity) > 0);
+  const links = await loadGrnLinePoLinks(db, [...new Set(rows.map((r) => String(r.grnItemId)))]);
+  const statements: D1PreparedStatement[] = [];
+  const poIds = new Set<string>();
+  for (const r of rows) {
+    const link = links.get(String(r.grnItemId));
+    if (!link?.poItemId) continue;
+    statements.push(db
+      .prepare("UPDATE purchase_order_items SET receivedQty = receivedQty + ? WHERE id = ?")
+      .bind(Number(r.quantity), link.poItemId));
+    if (link.poId) poIds.add(link.poId);
+  }
+  return { statements, poIds: [...poIds] };
 }
