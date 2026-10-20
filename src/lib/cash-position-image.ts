@@ -72,7 +72,7 @@ export function drawCashPositionImage(cur: CashImageData, totals: CashImageTotal
   let y = 40;
   ctx.fillStyle = "#1F1D1B";
   ctx.font = "bold 22px Arial";
-  ctx.fillText(`Cash Position — ${cur.date}`, 24, y);
+  ctx.fillText(`Daily Cash Position — ${cur.date}`, 24, y);
   ctx.font = "12px Arial";
   ctx.fillStyle = "#6B7280";
   ctx.fillText("Hookka ERP · estimated from the books ± bank reconciliation", 24, y + 20);

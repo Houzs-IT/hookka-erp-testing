@@ -59,7 +59,7 @@ export function pvStatus(v: {
   }
   if (st === "PREPARED") return { label: "Prepared", tone: "info" };
   if (st === "CHECKED") {
-    return { label: "Checked · awaiting approval", tone: "warn", title: `Formal No. ${v.pvNo ?? ""} — pending in Cash Position` };
+    return { label: "Checked · awaiting approval", tone: "warn", title: `Formal No. ${v.pvNo ?? ""} — pending in Daily Cash Position` };
   }
   if ((v.advanceOpenSen ?? 0) > 0) {
     return { label: `Approved · advance open ${formatCurrency(v.advanceOpenSen ?? 0)}`, tone: "warn" };

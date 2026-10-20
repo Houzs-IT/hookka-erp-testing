@@ -61,7 +61,7 @@ export function CashScreen() {
       const file = new File([blob], `cash-position-${cur.date}.png`, { type: "image/png" });
       const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
       if (nav.share && nav.canShare?.({ files: [file] })) {
-        await nav.share({ files: [file], title: `Cash Position — ${cur.date}` });
+        await nav.share({ files: [file], title: `Daily Cash Position — ${cur.date}` });
       } else {
         // No file sharing here (a desktop browser): save the picture instead.
         const url = URL.createObjectURL(blob);

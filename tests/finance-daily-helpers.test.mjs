@@ -36,7 +36,7 @@ test("voucher status pills: every rung, the advance, the accrual, the void", () 
     { label: "Draft", tone: "neutral", title: "Rejected: wrong account" });
   assert.deepEqual(pvStatus({ approvalState: "PREPARED" }), { label: "Prepared", tone: "info" });
   assert.deepEqual(pvStatus({ approvalState: "CHECKED", pvNo: "HPV-0001" }),
-    { label: "Checked · awaiting approval", tone: "warn", title: "Formal No. HPV-0001 — pending in Cash Position" });
+    { label: "Checked · awaiting approval", tone: "warn", title: "Formal No. HPV-0001 — pending in Daily Cash Position" });
   const adv = pvStatus({ approvalState: "APPROVED", advanceOpenSen: 12000 });
   assert.equal(adv.tone, "warn");
   assert.match(adv.label, /^Approved · advance open RM\s120\.00$/, "the app's RM format (a no-break space)");

@@ -63,6 +63,8 @@ test("the page: one list per side, chips, KPIs, double-click opens the record wh
   assert.match(tab, /navigate\(`\/suppliers\/\$\{encodeURIComponent\(r\.id\)\}`\)/);
   assert.match(tab, /key: "outstandingSen", label: "Outstanding", width: "140px", align: "right", type: "currency", total: "sum"/);
   assert.match(tab, /onDoubleClick=\{open\}/);
+  // Right-click: Edit only, to the same place (owner 2026-10-20 「可以加右键edit 就好」).
+  assert.match(tab, /contextMenuItems=\{\(\) => \[\{ label: "Edit", action: open \}\]\}/);
   const ui = read("src/pages/accounting/index.tsx");
   assert.match(ui, /\{tab === "debtors" && <PartyListTab side="DEBTOR" \/>\}/);
   assert.match(ui, /\{tab === "creditors" && <PartyListTab side="CREDITOR" \/>\}/);
