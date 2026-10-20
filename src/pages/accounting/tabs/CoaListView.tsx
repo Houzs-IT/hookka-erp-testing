@@ -13,7 +13,7 @@ import { useRowMenu } from "@/components/accounting/row-menu";
 import { DocPopup, PopupField } from "@/components/finance/doc-popup";
 import { formatCurrency } from "@/lib/utils";
 import { COA_SECTIONS, coaSectionOf, groupParentsIn, isPnlType, normalBalanceOf } from "@/lib/coa-form";
-import { COA_CASH_FLOW_LABEL, COA_SPECIAL_LABEL, coaBalanceLabel, coaInactiveBlock, type CoaListRow } from "@/lib/coa-list";
+import { COA_CASH_FLOW_LABEL, coaBalanceLabel, coaInactiveBlock, coaSpecialText, type CoaListRow } from "@/lib/coa-list";
 import type { ChartOfAccount } from "@/types";
 
 type Row = CoaListRow<ChartOfAccount>;
@@ -87,6 +87,7 @@ export function CoaListView({ rows, onEdit, onAddSub, onViewLedger, onToggleActi
                       <tr
                         key={a.code}
                         className={`cursor-pointer border-t border-[#F0ECE9] ${a.isActive ? "" : "opacity-55"} ${rowMenu.openKey === a.code ? "bg-[#F6F1E7]" : ""}`}
+                        onMouseDown={(e) => { if (e.detail > 1) e.preventDefault(); }}
                         onDoubleClick={() => onEdit(a)}
                         onContextMenu={rowMenu.onContextMenu(a.code, () => menu(r))}
                         title="Double-click to edit"
@@ -96,7 +97,7 @@ export function CoaListView({ rows, onEdit, onAddSub, onViewLedger, onToggleActi
                           {!q && r.depth > 0 && <span className="mr-1 text-[#C4BDB3]">└</span>}{a.name}
                         </td>
                         <td className="px-3 py-1.5 text-[#374151]">{a.cashFlowCategory ? COA_CASH_FLOW_LABEL[a.cashFlowCategory] : <span className="text-[#C4BDB3]">-</span>}</td>
-                        <td className="px-3 py-1.5">{a.specialAccountType ? tag(`${a.specialAccountType} · ${COA_SPECIAL_LABEL[a.specialAccountType] ?? a.specialAccountType}`, "bg-[#EEF1F4] text-[#4B5563]") : <span className="text-[#C4BDB3]">-</span>}</td>
+                        <td className="px-3 py-1.5">{a.specialAccountType ? tag(coaSpecialText(a.specialAccountType), "bg-[#EEF1F4] text-[#4B5563]") : <span className="text-[#C4BDB3]">-</span>}</td>
                         <td className="px-3 py-1.5 text-[#374151]">{a.pnlCategory ? a.pnlCategory.charAt(0) + a.pnlCategory.slice(1).toLowerCase() : <span className="text-[#C4BDB3]">-</span>}</td>
                         <td className={`px-3 py-1.5 text-right tabular-nums ${r.isGroup ? "font-semibold" : ""} ${r.balanceSen ? "text-[#1F1D1B]" : "text-[#C4BDB3]"}`}>{coaBalanceLabel(r.balanceSen, formatCurrency)}</td>
                         <td className="px-3 py-1.5">{a.isActive ? tag("Active", "bg-[#E7F0E3] text-[#27500A]") : tag("Inactive", "bg-[#F3F4F6] text-[#6B7280]")}</td>
@@ -126,6 +127,10 @@ const SPECIAL_OPTIONS: [string, string][] = [
   ["SCH", "SCH — Cash Account (Payment)"],
   ["SOS", "SOS — Opening Stock (Mfg P&L)"],
   ["SCS", "SCS — Closing Stock (Mfg P&L)"],
+  ["SBS", "SBS — Stock (Balance Sheet)"],
+  ["SFA", "SFA — Fixed Asset"],
+  ["SAD", "SAD — Accum. Depreciation"],
+  ["SRE", "SRE — Retained Earnings"],
 ];
 
 /** Edit an existing account — the New Account form's reporting block, the
@@ -245,6 +250,7 @@ export function CoaEditModal({ account, accounts, balanceSen, onClose, onSaved, 
           <span className="w-24 text-xs text-[#6B7280]">Special type</span>
           <select value={special} onChange={(e) => setSpecial(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm" aria-label="Special type">
             {SPECIAL_OPTIONS.map(([v, l]) => <option key={v || "none"} value={v}>{l}</option>)}
+            {special && !SPECIAL_OPTIONS.some(([v]) => v === special) && <option value={special}>{special}</option>}
           </select>
         </div>
         <div className="flex flex-wrap items-center gap-3">

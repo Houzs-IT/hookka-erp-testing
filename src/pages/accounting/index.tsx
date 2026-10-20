@@ -3139,7 +3139,7 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
       <KpiCards
         items={[
           { label: "Accounts", value: String(listRows.length), note: `${listRows.filter((r) => !r.account.isActive).length} inactive` },
-          { label: "Control accounts", value: String(listRows.filter((r) => r.account.specialAccountType).length), note: "debtor · creditor · bank · cash · stock" },
+          { label: "Control accounts", value: String(listRows.filter((r) => r.account.specialAccountType).length), note: "with a special type — control, bank, cash, stock, fixed asset" },
         ]}
       />
       {editing && (
