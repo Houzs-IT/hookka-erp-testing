@@ -48,7 +48,7 @@ import {
   salaryDeptSplit,
 } from "@/lib/finance-dashboard-calc";
 import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
-import { CH, CS_COLOURS, FORECAST_DASH, dashPeriods, type DashSpan } from "@/lib/finance-chart-look";
+import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, type DashSpan } from "@/lib/finance-chart-look";
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 
 type Slice = {
@@ -529,7 +529,7 @@ function ChartCard({
       <CardContent className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-[#1F1D1B] mr-2">{title}</h3>
-          <SegmentedSwitch label={title} options={tabs} value={active} onChange={onTab} />
+          <SegmentedSwitch tone="pill" label={title} options={tabs} value={active} onChange={onTab} />
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
@@ -638,7 +638,7 @@ export default function FinanceDashboardPage() {
         const share = (v: number | null, base: number | null) =>
           v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
         return {
-          label: r.label + (r.partial ? " *" : ""),
+          label: dashPeriodLabel(r.label, r.partial),
           actual: a,
           forecast: pick(r.forecast),
           pctOfRevenue: share(a, sales),
@@ -666,7 +666,7 @@ export default function FinanceDashboardPage() {
         const share = (v: number | null, base: number | null) =>
           v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
         return {
-          label: r.label + (r.partial ? " *" : ""),
+          label: dashPeriodLabel(r.label, r.partial),
           amount,
           forecast,
           pct: share(amount, sales),
@@ -722,7 +722,7 @@ export default function FinanceDashboardPage() {
   const cfData = useMemo(
     () =>
       shownRows.map((r) => ({
-        label: r.label + (r.partial ? " *" : ""),
+        label: dashPeriodLabel(r.label, r.partial),
         value: r.cashFlow?.[cfTab] ?? null,
         net: r.cashFlow?.net ?? null,
         inflow: r.cashFlow?.inflow ?? null,
@@ -762,7 +762,7 @@ export default function FinanceDashboardPage() {
       shownRows
         .filter((r) => r.balanceSheet)
         .map((r) => ({
-          label: r.label + (r.partial ? " *" : ""),
+          label: dashPeriodLabel(r.label, r.partial),
           assets: r.balanceSheet!.assets,
           liabilities: r.balanceSheet!.liabilities,
           debtPct: r.ratios.debtToAssetPct,
@@ -772,7 +772,7 @@ export default function FinanceDashboardPage() {
 
   const ratioIsMoney = false;
   const ratioData = useMemo(
-    () => shownRows.map((r) => ({ label: r.label + (r.partial ? " *" : ""), value: r.ratios[ratioTab] })),
+    () => shownRows.map((r) => ({ label: dashPeriodLabel(r.label, r.partial), value: r.ratios[ratioTab] })),
     [shownRows, ratioTab],
   );
 
@@ -815,7 +815,7 @@ export default function FinanceDashboardPage() {
   const csData = useMemo(
     () =>
       shownRows.map((r) => {
-        const point: Record<string, number | string | null> = { label: r.label + (r.partial ? " *" : "") };
+        const point: Record<string, number | string | null> = { label: dashPeriodLabel(r.label, r.partial) };
         const sales = csLineSales(r);
         point.__sales__ = sales;
         const prod = csLineProdRev(r);
@@ -897,7 +897,7 @@ export default function FinanceDashboardPage() {
         const fc = csMeasure === "spend" ? csForecastAmt(r, csFocusEff) : null;
         const fcSales = csForecastSales(r);
         return {
-          label: r.label + (r.partial ? " *" : ""),
+          label: dashPeriodLabel(r.label, r.partial),
           amount: amt,
           // The base both percentages divide by (owner 2026-08-06: 「帮我把
           // revenue 显示出来」). Showing it is what let him catch the forecast
@@ -1110,10 +1110,10 @@ export default function FinanceDashboardPage() {
               <CardContent className="p-4 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-semibold text-[#1F1D1B] mr-2">Cost Structure</h3>
-                  <SegmentedSwitch label="Cost measure" value={csMeasure} onChange={setCsMeasure}
+                  <SegmentedSwitch tone="pill" label="Cost measure" value={csMeasure} onChange={setCsMeasure}
                     options={[{ key: "spend", label: "Spend" }, { key: "purchase", label: "Purchase" }, { key: "closing", label: "Closing Stock" }]} />
                   <span className="mx-1 h-5 w-px bg-[#E2DDD8]" />
-                  <SegmentedSwitch label="Product line" value={csLine} onChange={setCsLine}
+                  <SegmentedSwitch tone="pill" label="Product line" value={csLine} onChange={setCsLine}
                     options={[{ key: "all", label: "All" }, { key: "bedframe", label: "Bedframe" }, { key: "sofa", label: "Sofa" }]} />
                   <span className="ml-1 text-[11px] text-[#9CA3AF]">RM · % of sales / % of production</span>
                 </div>
@@ -1338,7 +1338,7 @@ export default function FinanceDashboardPage() {
             footer={
               <>
                 <div className="mb-2 flex items-center gap-2">
-                  <SegmentedSwitch label="Cash flow view" value={cfView} onChange={setCfView}
+                  <SegmentedSwitch tone="pill" label="Cash flow view" value={cfView} onChange={setCfView}
                     options={[{ key: "summary", label: "Summary" }, { key: "detail", label: "Detail" }]} />
                   <span className="text-[11px] text-[#9CA3AF]">Detail lists every account that moved cash.</span>
                 </div>

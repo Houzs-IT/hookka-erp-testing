@@ -168,13 +168,32 @@ export function smoothPath(pts: readonly (readonly [number, number])[]): string 
   return d;
 }
 
+// The cash-flow sections in the statement's order, as the phone design lists
+// them (money in first); any other section follows in the order it came.
+const CF_SECTION_ORDER = [
+  "REVENUE COLLECTION", "RAW MATERIALS", "TRADE FINANCE", "DIRECT LABOUR", "FACTORY OVERHEAD",
+  "GENERAL EXPENSE", "FINANCE COST", "CAPEX", "LOAN & DEPOSIT",
+];
+const sentenceCase = (s: string) => (s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s);
+
 /** A month's cash flow by section, the way the desktop's Detail groups it, in
- *  the order the sections first appear; a section that nets to nothing is
- *  left out. */
+ *  the statement's order and in words ("Revenue collection"); a section that
+ *  nets to nothing is left out. */
 export function cfSectionTotals(lines: readonly { section: string; value: number }[] | undefined): { name: string; value: number }[] {
   const by = new Map<string, number>();
-  for (const l of lines ?? []) by.set(l.section, (by.get(l.section) ?? 0) + l.value);
-  return [...by.entries()].filter(([, v]) => Math.round(v) !== 0).map(([name, value]) => ({ name: name.replace(/_/g, " "), value }));
+  for (const l of lines ?? []) {
+    const key = l.section.replace(/_/g, " ").trim().toUpperCase();
+    by.set(key, (by.get(key) ?? 0) + l.value);
+  }
+  const rank = (k: string) => {
+    const i = CF_SECTION_ORDER.indexOf(k);
+    return i < 0 ? CF_SECTION_ORDER.length : i;
+  };
+  return [...by.entries()]
+    .filter(([, v]) => Math.round(v) !== 0)
+    .map(([k, value], seen) => ({ k, value, seen }))
+    .sort((a, b) => rank(a.k) - rank(b.k) || a.seen - b.seen)
+    .map(({ k, value }) => ({ name: sentenceCase(k), value }));
 }
 
 /** "Oct 2026 *" — a dashboard month in words, starred while it is still running. */

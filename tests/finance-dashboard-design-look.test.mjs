@@ -98,10 +98,22 @@ test("the periods: 6 / 12 months beside the range, every card reads the shown pe
   assert.match(page, /const at = all\.indexOf\(r\);\n\s+const prev = at > 0 \? all\[at - 1\]\.actual : null;/);
 });
 
-test("motion: switches are the v2 switch; revealed rows fade in", () => {
-  assert.match(page, /<SegmentedSwitch label="Cost measure"/);
-  assert.match(page, /<SegmentedSwitch label="Product line"/);
-  assert.match(page, /<SegmentedSwitch label="Cash flow view"/);
+test("months read as the design labels them", () => {
+  assert.equal(look.dashPeriodLabel("2026-07", false), "Jul 2026");
+  assert.equal(look.dashPeriodLabel("2026-09", false), "Sep 2026");
+  assert.equal(look.dashPeriodLabel("2026-10", true), "Oct 2026 *");
+  assert.equal(look.dashPeriodLabel("2026/Q3", true), "2026/Q3 *");
+  assert.doesNotMatch(page, /r\.label \+ \(r\.partial \? " \*" : ""\)/, "every card names its periods the one way");
+  assert.equal((page.match(/dashPeriodLabel\(r\.label, r\.partial\)/g) ?? []).length, 7);
+});
+
+test("motion: the dashboard's switches are the design's pills; revealed rows fade in", () => {
+  assert.match(page, /<SegmentedSwitch tone="pill" label="Cost measure"/);
+  assert.match(page, /<SegmentedSwitch tone="pill" label="Product line"/);
+  assert.match(page, /<SegmentedSwitch tone="pill" label="Cash flow view"/);
+  const shell = read("src/components/finance/report-shell.tsx");
+  assert.match(shell, /rounded-\[9px\] border border-\[#E5E7EB\] bg-\[#F3F4F6\] p-\[3px\]/, "the grey track");
+  assert.match(shell, /bg-white font-semibold text-\[#111827\] shadow-\[0_1px_2px_rgba\(17,24,39,\.10\),0_0_0_1px_rgba\(17,24,39,\.06\)\]/, "the chosen one a white pill");
   assert.equal((page.match(/data-fin-reveal=""/g) ?? []).length, 2);
   assert.match(read("src/styles/finance-v2.css"), /\[data-fin-ui\] \[data-fin-reveal\] \{\n  animation: fin-reveal \.18s ease-out;\n\}/);
   assert.match(read("src/index.css"), /@keyframes fin-reveal \{\n  from \{ opacity: 0; transform: translateY\(-3px\); \}\n  to \{ opacity: 1; transform: none; \}\n\}/);

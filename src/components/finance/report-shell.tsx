@@ -394,12 +394,42 @@ export function SegmentedSwitch<K extends string>({
   value,
   onChange,
   label,
+  tone = "dark",
 }: {
   options: { key: K; label: string; hint?: string }[];
   value: K;
   onChange: (k: K) => void;
   label: string;
+  /** "pill" = the Financial Dashboard's tabs in the owner's design: a grey
+   *  track, the chosen one a white pill (owner 2026-10-20). */
+  tone?: "dark" | "pill";
 }) {
+  if (tone === "pill") {
+    return (
+      <span className="inline-flex gap-0.5 rounded-[9px] border border-[#E5E7EB] bg-[#F3F4F6] p-[3px]" role="tablist" aria-label={label}>
+        {options.map((o) => {
+          const on = value === o.key;
+          return (
+            <button
+              key={o.key}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              title={o.hint}
+              onClick={() => onChange(o.key)}
+              className={`whitespace-nowrap rounded-md px-2.5 py-[5px] text-[12px] transition-[background-color,color,box-shadow] duration-150 ${
+                on
+                  ? "bg-white font-semibold text-[#111827] shadow-[0_1px_2px_rgba(17,24,39,.10),0_0_0_1px_rgba(17,24,39,.06)]"
+                  : "font-medium text-[#6B7280] hover:bg-[#E9EBEF]"
+              }`}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </span>
+    );
+  }
   return (
     <span className={`inline-flex overflow-hidden ${CTRL}`} role="tablist" aria-label={label}>
       {options.map((o, i) => (

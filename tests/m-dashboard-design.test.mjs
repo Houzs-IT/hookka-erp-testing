@@ -46,10 +46,15 @@ test("the months: the last four that happened, from July", () => {
 test("the smooth line, the cash sections, the share bar", () => {
   assert.equal(smoothPath([[0, 10], [25, 0]]), "M0,10 C10,10 15,0 25,0");
   assert.equal(smoothPath([]), "");
+  // In the statement's order and in words, whatever order the lines come in; nothing-net sections out.
   assert.deepEqual(cfSectionTotals([
-    { section: "Revenue_collection", value: 500 }, { section: "Raw_materials", value: -300 },
-    { section: "Revenue_collection", value: 100 }, { section: "Capex", value: 0 },
-  ]), [{ name: "Revenue collection", value: 600 }, { name: "Raw materials", value: -300 }]);
+    { section: "CAPEX", value: -50 }, { section: "RAW MATERIALS", value: -300 },
+    { section: "REVENUE_COLLECTION", value: 500 }, { section: "REVENUE COLLECTION", value: 100 },
+    { section: "OTHER THING", value: 7 }, { section: "TRADE FINANCE", value: 0 },
+  ]), [
+    { name: "Revenue collection", value: 600 }, { name: "Raw materials", value: -300 },
+    { name: "Capex", value: -50 }, { name: "Other thing", value: 7 },
+  ]);
   assert.deepEqual(shareWidths([30, null, 70]), [30, 0, 70]);
   assert.deepEqual(shareWidths([0, -5]), [0, 0]);
 });
@@ -62,6 +67,8 @@ test("one month for every card, chosen by a tap; the latest at first", () => {
   assert.match(scr, /<BalanceSheetCard month=\{last\} \/>/);
   assert.match(scr, /<RatiosCard month=\{last\} \/>/);
   assert.match(scr, /is still running — figures are so far\./);
+  // Money out reads as an amount, as the design: "Out 363,252".
+  assert.match(sec, /Out \$\{rmWhole\(cf\?\.outflow == null \? null : Math\.abs\(cf\.outflow\)\)\}/);
 });
 
 test("the design's look: the mini chart, the pill, the list, the share bar, the tiles", () => {

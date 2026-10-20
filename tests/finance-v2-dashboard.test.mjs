@@ -56,7 +56,8 @@ test("axes: the y-axis line shows; labels 12px", () => {
 });
 
 test("chart tabs are the v2 switch", () => {
-  assert.match(src, /<SegmentedSwitch label=\{title\} options=\{tabs\} value=\{active\} onChange=\{onTab\} \/>/);
+  // The owner's design draws the dashboard's tabs as white pills on a grey track (2026-10-20).
+  assert.match(src, /<SegmentedSwitch tone="pill" label=\{title\} options=\{tabs\} value=\{active\} onChange=\{onTab\} \/>/);
 });
 
 test("the tables: v2 list look, the period header in the head, the first column pinned", () => {
