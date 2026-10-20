@@ -83,8 +83,9 @@ test("salary: departments split by the master's flag; a card sums its own; no fi
 test("the desktop page now reads the same module (its own copies are gone)", () => {
   const ui = read("src/pages/finance-dashboard.tsx");
   assert.match(ui, /from "@\/lib\/finance-dashboard-calc";/);
-  assert.match(ui, /const salDeptSplit = useMemo\(\(\) => salaryDeptSplit\(rows \?\? \[\]\), \[rows\]\);/);
-  assert.match(ui, /const csCats = useMemo\(\(\) => csCategories\(rows \?\? \[\]\), \[rows\]\);/);
+  // Since 2026-10-20 the desktop reads only the periods it shows (dashPeriods).
+  assert.match(ui, /const salDeptSplit = useMemo\(\(\) => salaryDeptSplit\(shownRows\), \[shownRows\]\);/);
+  assert.match(ui, /const csCats = useMemo\(\(\) => csCategories\(shownRows\), \[shownRows\]\);/);
   assert.match(ui, /const csAmount = \(r: Row, cat: string\): number => csAmountOf\(r, cat, csMeasure, csLine\);/);
   assert.match(ui, /const csLineProdRev = \(r: Row\): number \| null => csLineProdRevOf\(r, csLine\);/);
   assert.match(ui, /const csLineSales = \(r: Row\): number => csLineSalesOf\(r, csLine\);/);

@@ -183,3 +183,10 @@ table tbody tr:hover {
 .recharts-wrapper *:focus {
   outline: none;
 }
+
+/* Finance v2 motion (owner 2026-10-20): rows a toggle reveals fade in. The
+   name is global; only [data-fin-ui] [data-fin-reveal] uses it (finance-v2.css). */
+@keyframes fin-reveal {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}

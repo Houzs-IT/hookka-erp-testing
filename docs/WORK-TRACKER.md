@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-20**: the owner's picks from the design list logged (13 to build, 2 not wanted, 3 questions back to him), then his answers to the three and his order — the Financial Dashboard first; its desktop half on branch `feat/finance-dashboard-design-look`.
 > **Last verified: 2026-10-20**: Document Numbering (#1031) prod-verified read-only; the answer to the owner's ask about the Claude Design handoff logged (what is not built, by page).
 > **Last verified: 2026-10-20**: the owner's answers on items 2 and 3 logged (no SST; numbering as proposed, built on branch `feat/doc-numbering-settings`; no landed cost; pre-opening invoices not now) and his next ask (what of the Claude Design handoff is not built).
 > **Last verified: 2026-10-20**: item 1 shipped (#1029) and prod-checked read-only; the Generate list now leaves out only the keyed opening balances (branch `fix/einvoice-candidates-opening`).
@@ -254,6 +255,25 @@ Owner asks (2026-10-19): days should show each day's performance, and on the mon
 6. 🟡 Verify on the staging site after #1001 and this PR merge (user signs in).
 
 
+
+## 2026-10-20 — 🔵 The owner's picks from the design list (his answers item by item, with a screenshot of Creditor Aging's lower half)
+
+1. ⚪ Trade Finance limit — 「这个确定一下，应该是trade finance的银行把」: per trade-finance line (the lender). Measured on prod 2026-10-20: one line, 310-0020, lender Houzs Century, tenor 90 days, 9 draws. Owner: 「暂时rm300,000」 — build Settings › Trade Finance Lines (tenor + limit, used / available, a warning when a payment goes over); he keys the limit himself.
+2. ⚪ Credit / Debit Notes — Edit, Duplicate, Delete (delete hides and keeps the record); **no Approve step** (「approve 不需要」).
+3. ⚪ Fixed Assets — undo a month's depreciation, restore a disposed asset, export the month's depreciation list (「这个要做」).
+4. ✖ Edit Layout "Reset to default" — not needed.
+5. ✖ Clean-Up Check — not now (「可以不需要先」).
+6. ⚪ AP Invoices — tick-box bulk print / export; row menu Print / Edit / Copy / Void (「这个需要」).
+7. ⚪ Creditor List — a row menu with Edit only (「可以加右键edit 就好」).
+8. ⚪ Supplier Discount — restore a cancelled note (「要」).
+9. ⚪ The Payment Vouchers table standard on the remaining finance tables (「这个可以」) — the e-Invoice lists, trade-finance draws, Contra, Supplier Discount, Stock Mapping, Opening Stock, Opening Balance (「可以跟着新的样式」), and the rest of the list. **Debtor / Creditor Aging keep their expand arrows** (「这个箭头展开可以保留」).
+10. 🟡 Financial Dashboard — **first, desktop and phone** (owner: 「先把dashboard 那边做好，就是我设计稿那边的动画，颜色，曲线等等，电脑版和手机版的」). Desktop built on branch `feat/finance-dashboard-design-look`: the design's palette (teal actual, red dashed forecast, its 12 band colours, cash in / out / net, assets / liabilities), its chart (warm-grey axes with ticks, faint grid, bars rounded 3 easing over 0.5 s, the pointed period lifting with a shadow while the others fade, hollow dots on smooth lines), its tooltip card, chips and switches, table colours, rows that fade in, only the periods that have happened, 6 months from July by default or 12. Phone next, against the owner's phone design. 6 months by default as the design (6 / 12 switch); **the colours do not follow the design**, and **the phone version differs from the owner's design** (「颜色那些都没有更新。手机版的和我之前设计的也有不一样」) — compare with the design files and fix.
+11. ⚪ Animations (open / switch ≈150–200 ms) and smooth forecast lines on the phone (「要」).
+12. ⚪ "Cash Position" → "Daily Cash Position" in the sidebar and the tab list (「要」).
+13. ⚪ Chart of Accounts — the design's list (status, row menu Edit / View Ledger / Add Sub-account / Active-Inactive) **and keep the drag tree** (「运用设计稿那样，单拖动的树状图也需要」).
+14. ⚪ Trial Balance — row menu View Ledger / Edit Account (「要」).
+15. ⚪ Phone swipe-back — owner: 「这个应该有了不是？」, then 「做」 (for the app on the iPhone home screen). In a phone browser the edge swipe is the browser's own back (each finance screen is its own address); the app installed on the home screen (manifest `display: standalone`) has none on an iPhone. Asked which way he uses it.
+16. ❓ Creditor Aging's lower half — 「我attach的tf part, contra, statement这些还有需要吗？ supplier statement 可以做在ap invoice 那边」. Measured on prod 2026-10-20: Contra has never been used (no 490-0000 entry, 2025–2026); the trade-finance block is where each draw's due date and interest are set (the draws carry due dates other than the 90-day default), its Repay duplicates AP Payment's repay and its Settings would move to Settings › Trade Finance Lines; the supplier statement can move to AP Invoices (owner's suggestion). Waiting for the owner on Contra / the block. Owner: the block's **Repay is removed** (「拿掉」 — repay through AP Payment); **Contra moves to the sidebar's Monthly** (「这个放去side bar 那边的monthly」); the **supplier statement moves to AP Invoices**, the **customer statement to Other Debtor Bills** — and later Other Debtor Bills becomes **AR Invoices**, taking in every sales invoice to customers (「到时other debtor bill 要改成ar invoice, 把全部开给customer的sales invoice 接进来」, not yet).
 
 ## 2026-10-20 — 🔵 The owner's next ask (「还有什么是claude design 给你了还没有做的？」)
 
