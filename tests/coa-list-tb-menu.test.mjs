@@ -50,6 +50,17 @@ test("a cycle in the data never loops; every account still shows once", () => {
   assert.deepEqual(rows.map((r) => r.account.code).sort(), ["900-0001", "900-0002"]);
 });
 
+test("every special type the chart carries has a name; an unknown one reads as itself", () => {
+  for (const code of ["SDC", "SCC", "SBK", "SCH", "SOS", "SCS", "SBS", "SFA", "SAD", "SRE"]) {
+    assert.ok(L.COA_SPECIAL_LABEL[code], code);
+    assert.equal(L.coaSpecialText(code), `${code} · ${L.COA_SPECIAL_LABEL[code]}`);
+  }
+  assert.equal(L.coaSpecialText("ZZZ"), "ZZZ", "never 'ZZZ · ZZZ'");
+  const view = read("src/pages/accounting/tabs/CoaListView.tsx");
+  assert.match(view, /\{special && !SPECIAL_OPTIONS\.some\(\(\[v\]\) => v === special\) && <option value=\{special\}>\{special\}<\/option>\}/, "the form never shows (None) for a type it does not list");
+  assert.match(view, /onMouseDown=\{\(e\) => \{ if \(e\.detail > 1\) e\.preventDefault\(\); \}\}/, "a double-click selects no text");
+});
+
 test("balances read Dr / Cr; an account with a balance is cleared before it goes inactive", () => {
   const fmt = (sen) => (sen / 100).toFixed(2);
   assert.equal(L.coaBalanceLabel(150000, fmt), "1500.00 Dr");

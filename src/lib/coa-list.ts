@@ -83,6 +83,8 @@ export function coaInactiveBlock(row: Pick<CoaListRow, "balanceSen" | "account">
   return row.balanceSen !== 0 ? `${row.account.code} still has a balance — clear it first` : null;
 }
 
+// Every special type the chart carries (AutoCount's markers; measured on prod
+// 2026-10-20: SDC, SCC, SBK, SCH, SOS, SCS, SBS, SFA, SAD, SRE).
 export const COA_SPECIAL_LABEL: Record<string, string> = {
   SDC: "Debtor Control",
   SCC: "Creditor Control",
@@ -90,6 +92,16 @@ export const COA_SPECIAL_LABEL: Record<string, string> = {
   SCH: "Cash",
   SOS: "Opening Stock",
   SCS: "Closing Stock",
+  SBS: "Stock (Balance Sheet)",
+  SFA: "Fixed Asset",
+  SAD: "Accum. Depreciation",
+  SRE: "Retained Earnings",
 };
+
+/** "SBK · Bank"; an unknown marker reads as itself. */
+export function coaSpecialText(code: string): string {
+  const l = COA_SPECIAL_LABEL[code];
+  return l ? `${code} · ${l}` : code;
+}
 
 export const COA_CASH_FLOW_LABEL: Record<string, string> = { O: "Operating", I: "Investing", F: "Financing" };
