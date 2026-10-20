@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-348 (branch `fix/hk0109-cn-convert-customers-updated-at`, to main; number reserved for HK-0109); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -201,6 +202,12 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-348 — CN → invoice convert never worked: it wrote `customers.updated_at`, which does not exist `consignment` `data-integrity` 🟡
+
+HK-0109 (YH, 2026-10-20). Same bug as staging's BUG-2026-09-24-201, whose fix (T-006 R4, `6f242d90`) never reached `main`. Since `7701e1aa` (2026-05-04) `POST /api/consignment-notes/:id/convert-to-invoice` bumps the customer's A/R with `UPDATE customers SET outstandingSen = …, updated_at = ?`, and the CN `/return` A/R refund does the same. `customers` has no `updated_at`: not in `0001_init.sql`, no later migration adds it, and the prod schema snapshot `tests/db-schema.json` does not list it. Both writes sit in one atomic `DB.batch`, so the whole convert (invoice, CN → FULLY_SOLD, items SOLD, units DELIVERED) rolls back, and so does a return on a converted CN. Prod: 22 CNs, none with `convertedInvoiceId` (per the ticket); whether prod's live `customers` has the column is UNMEASURED.
+
+Fix = drop `updated_at` from both `UPDATE customers` in `consignment-notes.ts`, as staging did. Not brought over: staging's release of the CN when its invoice is voided or deleted (owner question on the PR). Regression: `tests/sql-columns-exist.test.mjs` checks every column an `UPDATE customers` sets against the snapshot.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 
