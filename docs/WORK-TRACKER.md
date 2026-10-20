@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-20**: the owner's answers on what is still not built from the design logged (Duplicate and Group By This Column 「可以」) with his phone Overview ask (the points carry no percentage).
 > **Last verified: 2026-10-20**: the owner's picks from the design list closed out — item 9 done (owner: 「可以，编辑表保持现在这样」), items 2, 11 and the #1046 follow-up checked on prod read-only. Left with the owner: the trade-finance limit to key (item 1), the swipe back to try on the iPhone home-screen app (item 15).
 > **Last verified: 2026-10-20**: a follow-up from the prod check of #1043 on branch `fix/coa-special-labels` (every special type named; the Edit form keeps an unlisted one; a double-click selects no text); item 9 batch 1 shipped in #1045.
 > **Last verified: 2026-10-20**: item 9 started — the e-Invoice lists in the Payment Vouchers table standard (branch `feat/einvoice-pv-tables`); items 13 / 14 checked on prod read-only; item 11 shipped in #1044.
@@ -269,6 +270,15 @@ Owner asks (2026-10-19): days should show each day's performance, and on the mon
 6. 🟡 Verify on the staging site after #1001 and this PR merge (user signs in).
 
 
+
+## 2026-10-20 — 🔵 What is still not built from the design — the owner's answers (with a phone screenshot)
+
+Asked 「还有什么是设计稿没做的？」 after the picks below were done; answered with six. His replies:
+
+1. ⚪ Duplicate on Payment Vouchers, AP Payments (without the knock-offs) and Receipts — 「duplicate 可以做」. (Journals already have it.)
+2. ⚪ "Group By This Column" in the table header's right-click menu — 「可以」.
+3. ⚪ Phone Overview: the month points on the percentage charts (Raw Material · % of sales, Direct Labour · % of sales) carry no percentage — 「手机版的overview 每个月份的点没有percentage」 (screenshot). Each point gets its figure.
+4. ❓ Not answered yet: the Currency & FX page (monthly rates, FX gain / loss account, Confirm bank amount — today each document keeps its own rate, the owner's 2026-06 rule); KPI cards on Stock Take / Opening Stock / Supplier Discount; the phone's Month / Quarter / Financial Year on P&L, Cash Flow, Balance Sheet and aging as at a past month-end; the agings' own company picker (the design switches company in the top bar).
 
 ## 2026-10-20 — 🔵 The owner's picks from the design list (his answers item by item, with a screenshot of Creditor Aging's lower half)
 
