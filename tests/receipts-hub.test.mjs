@@ -46,22 +46,22 @@ test("three doors, one list: the hub is what the Receipts tab renders", () => {
 });
 
 test("one customer-receipt form, rendered by the page AND the hub", () => {
-  assert.match(page, /export function CustomerReceiptForm\(\{ editing, onSaved, onCancelEdit \}/);
+  assert.match(page, /export function CustomerReceiptForm\(\{ editing, onSaved, onCancelEdit, copyFrom = null \}/);
   assert.match(page, /<CustomerReceiptForm\s+key=\{editing\?\.id \?\? "new"\}/);
   const hub = block(ui, "function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER");
-  assert.match(hub, /<CustomerReceiptForm key=\{custEditing\?\.id \?\? "new"\} editing=\{custEditing\} onSaved=\{reload\} onCancelEdit=\{closeDoor\} \/>/);
+  assert.match(hub, /<CustomerReceiptForm key=\{custEditing\?\.id \?\? \(custCopy \? `copy:\$\{custCopy\.id\}` : "new"\)\} editing=\{custEditing\} onSaved=\{reload\} onCancelEdit=\{closeDoor\} copyFrom=\{custCopy\} \/>/);
   // The allocation logic exists once, in the form.
   assert.equal((page.match(/const canSubmit = !!selectedCustomerId && receivedSen > 0 && !overAllocated && !receivedUnreadable;/g) ?? []).length, 1);
   assert.doesNotMatch(hub, /canSubmit|editBaseline/);
 });
 
 test("one other-party settle form, used by the managers and the hub", () => {
-  assert.match(ui, /function OtherPartyPaymentForm\(\{ parties, accounts, side, editing, onSaved, onCancelEdit \}/);
+  assert.match(ui, /function OtherPartyPaymentForm\(\{ parties, accounts, side, editing, onSaved, onCancelEdit, copyFrom = null \}/);
   const mgr = block(ui, "function OtherPartyPaymentsManager(", "// =============== TAB: GENERAL LEDGER");
   assert.match(mgr, /<OtherPartyPaymentForm\s+key=\{editing\?\.paymentNo \?\? "new"\}/);
   assert.doesNotMatch(mgr, /allocMoneyError|loadOpenBills/, "the manager no longer carries its own form logic");
   const hub = block(ui, "function ReceiptsHubTab(", "// =============== TAB: FUND TRANSFER");
-  assert.match(hub, /<OtherPartyPaymentForm key=\{odEditing\?\.paymentNo \?\? "new"\} parties=\{parties\} accounts=\{accounts\} side="DEBTOR"/);
+  assert.match(hub, /<OtherPartyPaymentForm key=\{odEditing\?\.paymentNo \?\? \(odCopy \? `copy:\$\{odCopy\.paymentNo\}` : "new"\)\} parties=\{parties\} accounts=\{accounts\} side="DEBTOR"/);
   assert.equal((ui.match(/if \(allocMoneyError\)/g) ?? []).length, 1, "exactly one allocation refusal gate");
 });
 

@@ -94,7 +94,7 @@ test("a form popup asks before Esc drops what was keyed", () => {
   assert.match(req, /if \(formKeyed\(\) && !\(await confirm\(\{ title: "Close without saving\?"/);
   assert.match(req, /resetForm\(\);/);
   const keyed = slice(tab, "const formKeyed = (): boolean => {", "const requestCloseForm");
-  assert.match(keyed, /if \(editingId\) return JSON\.stringify\(formKind === "AP" \? \[apForm, apAlloc\] : \[form, lines\]\) !== editBaseline\.current;/, "an edit: only a change counts");
+  assert.match(keyed, /if \(editingId \|\| copyOf\) return JSON\.stringify\(formKind === "AP" \? \[apForm, apAlloc\] : \[form, lines\]\) !== editBaseline\.current;/, "an edit or a copy: only a change counts");
   assert.match(keyed, /if \(pendingScanFiles\.length > 0\) return true;/, "scanned receipts are never dropped silently");
   // The edit baseline is the very objects startEdit put in the form.
   const edit = slice(tab, "const startEdit = (r: PvRow) => {", "const selCls =");
