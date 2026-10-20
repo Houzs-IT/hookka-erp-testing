@@ -67,6 +67,9 @@ test("each screen reads its desktop endpoint", () => {
   assert.match(ov, /`\/api\/accounting\/overview-trend\?months=\$\{range\}`/);
   assert.match(ov, /rmPct: p \? shareOfSales\(p\.rm\.usedSen, p\.netSalesSen\) : null/, "the desktop's own share");
   assert.match(ov, /dlPct: p \? shareOfSales\(p\.labourSen, p\.netSalesSen\) : null/);
+  // Each month's point carries its percentage (owner 2026-10-20 「手机版的overview 每个月份的点没有percentage」).
+  assert.match(ov, /<LabelList dataKey=\{key\} position="top" offset=\{8\} formatter=\{pctPointLabel\} style=\{\{ fontSize: 11, fontWeight: 600, fill: color \}\} \/>/);
+  assert.match(ov, /<LineChart data=\{data\} margin=\{\{ top: 20, right: 12, left: 0, bottom: 0 \}\}>/, "room above the highest point for its label");
 });
 
 test("the menu now lists the four reports; failures and empty months are said in words", () => {

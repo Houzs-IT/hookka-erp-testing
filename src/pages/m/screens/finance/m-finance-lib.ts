@@ -6,6 +6,12 @@
 // ---------------------------------------------------------------------------
 // Relative, so the node tests can load this file without the app's @/ alias.
 import { dashPeriods } from "../../../../lib/finance-chart-look";
+import { fmtPct } from "../../../../lib/finance-money";
+
+/** A percentage chart's point label on the phone ("46.8%"; owner 2026-10-20
+ *  「手机版的overview 每个月份的点没有percentage」 — a phone has no hover). A
+ *  month without sales has no point, so no label. */
+export const pctPointLabel = (v: unknown): string => (typeof v === "number" && Number.isFinite(v) ? fmtPct(v) : "");
 
 /** The five aging buckets, in order, as /api/accounting/aging names them. */
 export const AGING_BUCKETS = [
