@@ -97,14 +97,18 @@ export function columnTotals<T>(
   return out;
 }
 
-/** The header right-click menu, in the design's order ("-" = a separator). */
+/** The header right-click menu, in the design's order ("-" = a separator).
+ *  `grouped` (a grid that can group its rows): "this" = grouped by this
+ *  column, "other" = by another one, "none" = not grouped. */
 export function headerMenuItems(o: {
   sorted: "asc" | "desc" | null;
   filterable: boolean;
   anyFilter: boolean;
+  grouped?: "this" | "other" | "none";
 }): string[] {
   const groups: string[][] = [
     ["Sort Ascending", "Sort Descending", ...(o.sorted ? ["Clear Sorting"] : [])],
+    ...(o.grouped ? [["Group By This Column", ...(o.grouped !== "none" ? ["Clear Grouping"] : [])]] : []),
     [...(o.filterable ? ["Filter This Column…"] : []), ...(o.anyFilter ? ["Clear All Filters"] : [])],
     ["Hide This Column", "Column Chooser…", "Best Fit", "Best Fit (All Columns)"],
     ["Save Layout", "Reset Layout"],
