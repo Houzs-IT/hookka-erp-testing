@@ -620,7 +620,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "payments", label: "Payment Vouchers", icon: <BookOpen className="h-4 w-4" />, group: "Daily" },
   { key: "receipts", label: "Receipts", icon: <BookOpen className="h-4 w-4" />, group: "Daily" },
   { key: "transfer", label: "Fund Transfer", icon: <Wallet className="h-4 w-4" />, group: "Daily" },
-  { key: "dailycash", label: "Cash Position", icon: <Wallet className="h-4 w-4" />, group: "Daily" },
+  { key: "dailycash", label: "Daily Cash Position", icon: <Wallet className="h-4 w-4" />, group: "Daily" },
   // Monthly Operation
   { key: "journals", label: "Journal Entries", icon: <BookOpen className="h-4 w-4" />, group: "Monthly" },
   { key: "cashbook", label: "Cash Book", icon: <BookOpen className="h-4 w-4" />, group: "Monthly" },
@@ -7715,7 +7715,7 @@ function SelfCheckTab() {
       ok: cp ? tw.length === 0 : null,
       headline: !cp ? "Could not load" : tw.length === 0 ? "Every tick was confirmed by a statement" : `${tw.length} ticked item${tw.length === 1 ? "" : "s"} missing from the imported statement`,
       items: tw.slice(0, 12).map((w) => ({ label: `${w.account} · ${w.day} · ${w.sourceId}`, amount: w.amountSen })),
-      fixHref: "/accounting?tab=dailycash", fixLabel: "Open Cash Position",
+      fixHref: "/accounting?tab=dailycash", fixLabel: "Open Daily Cash Position",
     });
     for (const b of chains) {
       const ch = b.chain;
@@ -14850,7 +14850,7 @@ function DailyCashTab() {
       <p class="avail">Available (after pending): <b>${formatCurrency(a.availableSen)}</b></p>`;
     const w = window.open("", "_blank", "width=900,height=700");
     if (!w) { toast.error("Pop-up blocked — allow pop-ups to print"); return; }
-    w.document.write(`<!doctype html><html><head><title>Cash Position ${cur.date}</title><style>
+    w.document.write(`<!doctype html><html><head><title>Daily Cash Position ${cur.date}</title><style>
       body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:32px}
       h1{font-size:18px;margin:0 0 12px} h2{font-size:13px;margin:18px 0 6px}
       table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccc;padding:4px 8px;text-align:left}
@@ -14859,7 +14859,7 @@ function DailyCashTab() {
       .total{margin-top:20px;font-size:15px;text-align:right}
       footer{margin-top:24px;color:#777;font-size:10px}
     </style></head><body>
-      <h1>Cash Position — ${cur.date}</h1>
+      <h1>Daily Cash Position — ${cur.date}</h1>
       ${cur.accounts.map(acctBlock).join("")}
       <p class="total">CURRENT CASH AVAILABLE: <b>${formatCurrency(cur.totalAvailableSen)}</b></p>
       <footer>Estimated from the books ± bank reconciliation · Hookka ERP</footer>
@@ -14892,7 +14892,7 @@ function DailyCashTab() {
               <p>📱 Long-press the image → <b>Save</b> or <b>Share</b>.</p>
             </div>
             <div className="overflow-auto px-5 py-3">
-              <img src={imgPopup} alt={`Cash position ${date}`} className="w-full rounded border border-[#E2DDD8]" />
+              <img src={imgPopup} alt={`Daily Cash Position ${date}`} className="w-full rounded border border-[#E2DDD8]" />
             </div>
           </div>
         </div>

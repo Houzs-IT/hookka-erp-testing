@@ -234,7 +234,7 @@ const navigationGroups: NavGroup[] = [
           // Fund Transfer left the menu 2026-10-01: a transfer is now a voucher
           // (Payment Vouchers → New Payment Voucher → Transfer); ?tab=transfer
           // still opens the old page and its entries are listed on the hub.
-          { name: "Cash Position", href: "/accounting?tab=dailycash", icon: Wallet },
+          { name: "Daily Cash Position", href: "/accounting?tab=dailycash", icon: Wallet },
         ],
       },
       {

@@ -133,6 +133,9 @@ export function PartyListTab({ side }: { side: Side }) {
             keyField="key"
             gridId={debtor ? "accounting-debtor-list" : "accounting-creditor-list"}
             onDoubleClick={open}
+            // Right-click: Edit only (owner 2026-10-20 「可以加右键edit 就好」) —
+            // the same place a double-click goes.
+            contextMenuItems={() => [{ label: "Edit", action: open }]}
             rowClassName={(r) => (r.active ? "" : "opacity-60")}
             headerMenu
             reorderableHeaders

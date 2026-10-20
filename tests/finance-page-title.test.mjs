@@ -31,6 +31,16 @@ test("every tab has a Title Case name and an explanation", () => {
     assert.ok(p.explain.length > 10, `${k}: explanation`);
   }
   assert.equal(FINANCE_PAGES.dailycash.title, "Daily Cash Position", "the v2 name");
+  // …and so in the sidebar, the tab list and wherever the name is printed (owner 2026-10-20 「要」).
+  assert.match(read("src/components/layout/sidebar.tsx"), /\{ name: "Daily Cash Position", href: "\/accounting\?tab=dailycash", icon: Wallet \},/);
+  const acc = read("src/pages/accounting/index.tsx");
+  assert.match(acc, /\{ key: "dailycash", label: "Daily Cash Position",/);
+  assert.match(acc, /<h1>Daily Cash Position — \$\{cur\.date\}<\/h1>/);
+  assert.match(read("src/lib/cash-position-image.ts"), /ctx\.fillText\(`Daily Cash Position — \$\{cur\.date\}`, 24, y\);/);
+  for (const f of ["src/components/layout/sidebar.tsx", "src/pages/accounting/index.tsx", "src/lib/cash-position-image.ts", "src/lib/finance-daily.ts", "src/pages/m/screens/finance/CashScreen.tsx"]) {
+    const code = read(f).split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+    assert.doesNotMatch(code, /(?<!Daily |Current )Cash Position/, `${f}: the old name`);
+  }
   assert.deepEqual(Object.keys(financePage("no-such-tab")).sort(), ["explain", "title"], "no stray props to spread");
   assert.equal(financePage("no-such-tab").title, "Overview", "an unknown tab shows the Overview, as the page does");
 });
