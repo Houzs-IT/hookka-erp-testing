@@ -163,7 +163,7 @@ Entries themselves stay newest-first.
 
 ## BUG-2026-10-20-360 — A purchase return never gave the PO line back what it received `purchasing` `returns` 🟡
 
-🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`; T-006 R6 ported from staging). Needs the owner's sign-off on R6 (plan "Before implementing — needs owner input").
+🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`; T-006 R6 ported from staging). R6 signed off by YH, 20 Oct.
 
 **Symptom.** PO 100, received 100, 20 returned: the PO line still showed 100 received, so no replacement could be received against it and the PO stayed RECEIVED (hidden from outstanding-PO lists).
 
@@ -184,6 +184,8 @@ Entries themselves stay newest-first.
 **Cause.** GRN cancel / delete / un-post call `restorePOReceivedQtyForGRN`, which subtracts the GRN's full accepted qty, on top of the 20 the return already subtracted.
 
 **Fix.** `grn.ts` refuses all three (409, "Cancel the purchase returns on this GRN first") while any non-CANCELLED purchase return references the GRN's lines (`grn_item_id` TEXT joined on `grn_items.id::text`).
+
+**Known follow-up (kept as is, YH 20 Oct).** Purchase returns on main have no cancel: only an OPEN return can be deleted. A STOCK_OUT or DN_ISSUED return therefore blocks cancel / delete / un-post of its GRN permanently, and the message's "Cancel the purchase returns" has no button behind it for those.
 
 **Regression.** `tests/t006-returns-main.test.mjs` ("a live return blocks the GRN", "GRN cancel, delete and un-post all ask the guard").
 
