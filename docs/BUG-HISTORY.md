@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-347 (branch `fix/hk0108-posted-grn-line-pairing`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -201,6 +202,12 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-347 — Editing a received GRN could correct the wrong line `procurement` `grn` 🟡
+
+HK-0108, the POSTED-edit sibling of BUG-2026-10-19-340 (HK-0107). Prod impact unmeasured. On a received (POSTED) GRN whose lines' ids and PO-line order differ (e.g. a multi-PO receipt), correcting one line's accepted qty could land on another line, so its stock, cost and PO received qty moved instead.
+
+Cause: GET returns the lines sorted by `poItemIndex` (`rowToGRN`), but `PUT /:id` on a POSTED GRN read the stored lines `ORDER BY id` and paired them with the body lines by position. Fix = pair by line id, else by position in GET order (as the draft path does since HK-0107); the stored lines stay in id order, so `lineIdx` still names the batch `postGRNToStock` wrote. Regression: `tests/grn-posted-edit-line-pairing.test.mjs`.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 

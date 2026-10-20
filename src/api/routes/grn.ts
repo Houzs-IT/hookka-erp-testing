@@ -1953,8 +1953,9 @@ app.put("/:id", async (c) => {
         // A committed GRN already wrote rm_batches + cost_ledger +
         // raw_materials.balanceQty. The owner wants accepted-qty corrections
         // with stock + cost FOLLOWING the change, not a hard lock. We match the
-        // incoming lines to the existing grn_items BY POSITION (the same
-        // line-index key postGRNToStock uses for its batch ids), compute each
+        // incoming lines to the existing grn_items by line id (see HK-0108
+        // below; lineIdx stays the ORDER BY id index postGRNToStock uses for
+        // its batch ids), compute each
         // line's accepted-qty delta, BLOCK any line whose new qty drops below
         // what a PI already invoiced, then post the compensating movement for
         // the delta via the SAME helpers the post path uses. We do NOT touch
@@ -2000,9 +2001,21 @@ app.put("/:id", async (c) => {
           materialName: string;
         }> = [];
         const poLineDeltas: { poItemIndex: number; delta: number }[] = [];
+        // HK-0108: pair each stored line with its incoming line by line id;
+        // else by position in GET order (poItemIndex, id), as the draft path
+        // does since HK-0107. existingItems stays ORDER BY id — lineIdx is the
+        // batch-id key postGRNToStock used.
+        const getOrder = [...existingItems].sort(
+          (a, b) => (a.poItemIndex ?? 0) - (b.poItemIndex ?? 0),
+        );
+        const pairedIncoming = existingItems.map(
+          (ex) =>
+            rawItems.find((r) => r.id != null && String(r.id) === String(ex.id)) ??
+            rawItems[getOrder.indexOf(ex)],
+        );
         for (let i = 0; i < existingItems.length; i++) {
           const ex = existingItems[i];
-          const incoming = rawItems[i];
+          const incoming = pairedIncoming[i];
           const oldAccepted = Number(ex.acceptedQty) || 0;
           const newAccepted = Number(incoming.acceptedQty);
           // One formula for "how much of this line is already billed" — the
@@ -2049,7 +2062,7 @@ app.put("/:id", async (c) => {
 
         // Recompute total from the new accepted qtys.
         totalAmount = existingItems.reduce((sum, ex, i) => {
-          const newAccepted = Number((rawItems[i] as Record<string, unknown>).acceptedQty) || 0;
+          const newAccepted = Number(pairedIncoming[i].acceptedQty) || 0;
           return sum + newAccepted * (Number(ex.unitPrice) || 0);
         }, 0);
 

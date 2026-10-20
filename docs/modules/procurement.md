@@ -98,7 +98,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1043` | Un-post/cancel/delete: give back PO qty |
 | `resolveRmForGRNItem` | `src/api/routes/grn.ts:479` | Resolve GRN line → raw_material |
 | `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1354` | GRN create; status derived from arrival |
-| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2287` | Arrival state transition (gate) |
+| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2300` | Arrival state transition (gate) |
 | `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1089` | PI create + convert-chain + GL post |
 | `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:1963` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
 | `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:711` | Ceiling on re-synced invoiced_qty |
