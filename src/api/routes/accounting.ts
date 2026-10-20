@@ -5442,6 +5442,8 @@ const CHANGE_LOG_RESOURCES = [
   // Recorded since item 10 part 2.
   "chart-of-accounts", "journals", "other-parties", "other-party-bills", "payment-vouchers", "official-receipts", "fund-transfers", "finance-settings",
   "fixed-assets", "bank-reco", "cash-position", "opening-balance", "stock-take", "material-opening-stock",
+  // Setup › Currency & FX (2026-10-20): rates, currencies, the FX accounts.
+  "fx-settings",
 ];
 // An audit resource → the ledger's name for the same document.
 const AUDIT_DOC_TYPE: Record<string, string> = {

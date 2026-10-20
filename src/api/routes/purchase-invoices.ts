@@ -18,6 +18,8 @@ import type { Env } from "../worker";
 import { requirePermission, requireFinance } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
 import { learnSupplierBindings } from "../lib/supplier-binding-learn";
+import { getFxSettings } from "../lib/fx-settings";
+import { fxLegAccount } from "../../lib/fx";
 import { getOrgId } from "../lib/tenant";
 import {
   buildJournalEntryStatements,
@@ -129,7 +131,9 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
 }
 
 const AP_CONTROL = "400-0000"; // Trade Creditors
-const FX_GAIN_ACCT = "530-0000"; // GAIN ON FOREIGN EXCHANGE (realised; debit = loss)
+// Realised FX on Mark Paid posts to the accounts Setup › Currency & FX names
+// (owner 2026-10-20; both 530-0000 GAIN ON FOREIGN EXCHANGE until he splits
+// them): a gain credits the gain account, a loss debits the loss one.
 export const DEFAULT_PURCHASE_ACCT = "704-0010";
 // Fallback raw-material item_group → purchase account. The owner's
 // editable kv_config `coa_stock_map` (rm[<group>].purchase /
@@ -2445,7 +2449,7 @@ app.put("/:id", async (c) => {
               sourceType: "supplier_payment",
               sourceId: id,
               legNo: 3,
-              accountCode: FX_GAIN_ACCT,
+              accountCode: fxLegAccount(fxDiff, await getFxSettings(db)),
               debitSen: fxDiff < 0 ? -fxDiff : 0,
               creditSen: fxDiff > 0 ? fxDiff : 0,
               description: `Realised FX ${fxDiff > 0 ? "gain" : "loss"} · PI ${piNo}`,
