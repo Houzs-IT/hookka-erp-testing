@@ -90,6 +90,15 @@ test("the header menu lists the v2 items in order, dropping what does not apply"
     ["-", "Clear All Filters", "-"], "clearing stays possible on a column that cannot filter");
 });
 
+test("a grid that groups adds Group By This Column after sorting; Clear Grouping while grouped", () => {
+  const head = (grouped) => headerMenuItems({ sorted: null, filterable: true, anyFilter: false, grouped }).slice(0, 7);
+  assert.deepEqual(head("none"), ["Sort Ascending", "Sort Descending", "-", "Group By This Column", "-", "Filter This Column…", "-"]);
+  assert.deepEqual(head("this"), ["Sort Ascending", "Sort Descending", "-", "Group By This Column", "Clear Grouping", "-", "Filter This Column…"]);
+  assert.deepEqual(head("other"), head("this"), "grouped by another column: this one can take over, or clear");
+  assert.equal(headerMenuItems({ sorted: null, filterable: true, anyFilter: false }).includes("Group By This Column"), false,
+    "a grid that does not pass `grouped` keeps the menu it had");
+});
+
 test("a saved layout wins only when it is newer than this browser's own", () => {
   assert.equal(pickLayoutSource(null, "2026-10-16T08:00:00Z"), "server");
   assert.equal(pickLayoutSource("2026-10-16T07:00:00Z", "2026-10-16T08:00:00Z"), "server");
