@@ -24,6 +24,12 @@ test("a row is grouped under what its column shows", () => {
   // The column's own export / filter value wins over the raw field (a computed column).
   assert.equal(columnGroupValue({ key: "kind", label: "Kind", exportValue: (r) => r.k.toUpperCase() }, { k: "ap" }), "AP");
   assert.equal(columnGroupValue({ key: "st", label: "Status", filterAccessor: (r) => (r.st ? "Posted" : "Draft") }, { st: 0 }), "Draft");
+  // A column too fine to group by names its own group (a status with an amount in it).
+  const status = { key: "statusLabel", label: "Status", groupAccessor: (r) => r.group ?? r.statusLabel };
+  assert.equal(columnGroupValue(status, { statusLabel: "Approved · advance open RM 12.00", group: "Approved · advance open" }), "Approved · advance open");
+  assert.equal(columnGroupValue(status, { statusLabel: "Approved · paid" }), "Approved · paid");
+  assert.equal(columnGroupValue({ key: "x", label: "X", groupAccessor: () => null }, {}), BLANK_GROUP);
+  assert.equal(columnGroupValue({ key: "x", label: "X", groupAccessor: () => 7 }, {}), 7);
 });
 
 test("groups read in order: numbers by value, text A → Z with its numbers in order, blank last", () => {

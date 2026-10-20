@@ -11438,6 +11438,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     { key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px", total: (rows) => activeTotalSen(rows),
       render: (v) => <span className="font-semibold tabular-nums">{formatCurrency(Number(v) || 0)}</span> },
     { key: "statusLabel", label: "Status", width: "250px", noClip: true,
+      // Grouped by its kind, not each open advance's amount (owner's Group By
+      // This Column, 2026-10-20 — seen on prod: one group per advance).
+      groupAccessor: (r) => r.status.group ?? r.status.label,
       render: (_v, r) => {
         const reason = r.pv ? (r.pv.rejectReason ?? r.pv.reject_reason) : null;
         return (

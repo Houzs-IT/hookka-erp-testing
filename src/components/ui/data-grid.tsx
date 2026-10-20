@@ -27,7 +27,7 @@ import { bindContextMenuRow } from "@/lib/context-menu-bind";
 import {
   columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
-import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel } from "@/lib/grid-group";
+import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -194,6 +194,10 @@ export type Column<T> = {
   total?: "sum" | ((rows: T[]) => number);
   // How the total is shown. Default: formatRM for currency (sen), else formatNumber.
   totalFormat?: (n: number) => React.ReactNode;
+  // What "Group By This Column" groups this column's rows under, when what it
+  // shows is too fine to group by (a status that carries an amount). Default:
+  // the column's export value (src/lib/grid-group.ts).
+  groupAccessor?: (row: T) => string | number | null;
 };
 
 export type ContextMenuItem = {
@@ -2496,7 +2500,7 @@ export function DataGrid<T extends Record<string, any>>({
   const userGroupCol = userGroupKey ? columns.find((c) => c.key === userGroupKey) ?? null : null;
   const groupOn = !!userGroupCol || (!!groupBy && groupEnabled);
   const userGroupValue = useCallback(
-    (row: T): string | number => (userGroupCol ? columnGroupValue(userGroupCol as unknown as ExportColumn<T>, row) : ""),
+    (row: T): string | number => (userGroupCol ? columnGroupValue(userGroupCol as unknown as GroupColumn<T>, row) : ""),
     [userGroupCol],
   );
 
@@ -3032,7 +3036,7 @@ export function DataGrid<T extends Record<string, any>>({
       // A long list opens with its groups folded (one header + subtotal
       // each) — every row of every group would otherwise be painted at once.
       setUserFolded(sortedData.length > USER_GROUP_OPEN_MAX
-        ? new Set(groupRows(sortedData, (r) => columnGroupValue(col as unknown as ExportColumn<T>, r)).map((g) => g.key))
+        ? new Set(groupRows(sortedData, (r) => columnGroupValue(col as unknown as GroupColumn<T>, r)).map((g) => g.key))
         : new Set());
     },
     "Clear Grouping": () => { setUserGroupKey(null); setUserFolded(new Set()); setGroupEnabled(false); },

@@ -23,8 +23,19 @@ export const BLANK_GROUP = "(blank)";
 // own comparator does the same, tests/data-grid-collator.test.mjs).
 const COLLATOR = new Intl.Collator(undefined, { numeric: true });
 
+/** A column as grouping reads it: its export value, or its own
+ *  `groupAccessor` when what it shows is too fine to group by (a status that
+ *  carries an amount — "Approved · advance open RM 1,234.56" — groups as
+ *  "Approved · advance open"). */
+export type GroupColumn<T> = ExportColumn<T> & { groupAccessor?: (row: T) => string | number | null };
+
 /** What a row is grouped under when the user groups by `col`. */
-export function columnGroupValue<T>(col: ExportColumn<T>, row: T): string | number {
+export function columnGroupValue<T>(col: GroupColumn<T>, row: T): string | number {
+  if (col.groupAccessor) {
+    const g = col.groupAccessor(row);
+    if (typeof g === "number") return Number.isFinite(g) ? g : BLANK_GROUP;
+    return String(g ?? "").trim() || BLANK_GROUP;
+  }
   const v = cellExportValue(col, row);
   if (typeof v === "number") return Number.isFinite(v) ? v : BLANK_GROUP;
   const s = v.trim();
