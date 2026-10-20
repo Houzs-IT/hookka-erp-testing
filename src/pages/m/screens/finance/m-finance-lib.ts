@@ -4,6 +4,8 @@
 // does not send, it is the sum of the rows on the screen — computed here, once,
 // and tested.
 // ---------------------------------------------------------------------------
+// Relative, so the node tests can load this file without the app's @/ alias.
+import { dashPeriods } from "../../../../lib/finance-chart-look";
 
 /** The five aging buckets, in order, as /api/accounting/aging names them. */
 export const AGING_BUCKETS = [
@@ -113,9 +115,81 @@ export function dashAnchorIndex(rows: { actual: unknown }[]): number {
   return -1;
 }
 
-/** A dashboard month key in words: "2026-10" → "Oct" / "Oct 2026"; any other
+/** A dashboard month key in words: "2026-10" → "Oct" / "Oct 2026" (en-US, so
+ *  September reads "Sep" as the design does — en-GB says "Sept"); any other
  *  key (a quarter) is returned as it is. */
 export function dashMonthLabel(key: string, long: boolean): string {
   if (!/^\d{4}-\d{2}$/.test(key)) return key;
-  return new Date(`${key}-01T00:00:00Z`).toLocaleString("en-GB", long ? { month: "short", year: "numeric", timeZone: "UTC" } : { month: "short", timeZone: "UTC" });
+  return new Date(`${key}-01T00:00:00Z`).toLocaleString("en-US", long ? { month: "short", year: "numeric", timeZone: "UTC" } : { month: "short", timeZone: "UTC" });
+}
+
+// ---- The Finance Dashboard on the phone, as the owner's phone design draws it
+// (2026-10-20 「手机版的和我之前设计的也有不一样」) ---------------------------
+
+/** The phone Income Statement's lines: the desktop's, without Stock Movement
+ *  (the phone design leaves it out). */
+export const MOBILE_DASH_LINES = FIN_DASH_LINES.filter((l) => l.key !== "stockMovement");
+
+/** Whole ringgit, as the phone dashboard prints its figures: 612,400 / -887,600. */
+export function rmWhole(sen: number | null | undefined): string {
+  if (sen === null || sen === undefined || !Number.isFinite(sen)) return "-";
+  return Math.round(sen / 100).toLocaleString("en-MY");
+}
+
+/** The pill against the forecast: "+12,000 vs fcst" / "-8,000 vs fcst";
+ *  good = income at or over plan, a cost at or under it. */
+export function vsForecast(
+  actual: number | null,
+  forecast: number | null,
+  lowerBetter: boolean,
+): { text: string; good: boolean; forecast: string } | null {
+  if (actual === null || forecast === null) return null;
+  const gap = actual - forecast;
+  return { text: `${gap > 0 ? "+" : ""}${rmWhole(gap)} vs fcst`, good: lowerBetter ? gap <= 0 : gap >= 0, forecast: rmWhole(forecast) };
+}
+
+/** The months the phone dashboard shows: the last four that have happened,
+ *  from July (the desktop's 6-month rule, the phone design's four). */
+export function phoneDashMonths<T extends { key: string; actual: unknown }>(rows: T[]): T[] {
+  return dashPeriods(rows, { span: 6, granularity: "month", explicit: false }).slice(-4);
+}
+
+/** The phone design's smooth line through points: each gap a cubic whose
+ *  handles reach a 2.5th of the way across. */
+export function smoothPath(pts: readonly (readonly [number, number])[]): string {
+  if (!pts.length) return "";
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let k = 1; k < pts.length; k++) {
+    const [x0, y0] = pts[k - 1];
+    const [x1, y1] = pts[k];
+    const dx = (x1 - x0) / 2.5;
+    d += ` C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}`;
+  }
+  return d;
+}
+
+/** A month's cash flow by section, the way the desktop's Detail groups it, in
+ *  the order the sections first appear; a section that nets to nothing is
+ *  left out. */
+export function cfSectionTotals(lines: readonly { section: string; value: number }[] | undefined): { name: string; value: number }[] {
+  const by = new Map<string, number>();
+  for (const l of lines ?? []) by.set(l.section, (by.get(l.section) ?? 0) + l.value);
+  return [...by.entries()].filter(([, v]) => Math.round(v) !== 0).map(([name, value]) => ({ name: name.replace(/_/g, " "), value }));
+}
+
+/** "Oct 2026 *" — a dashboard month in words, starred while it is still running. */
+export const monthName = (r: { key: string; partial: boolean }) => `${dashMonthLabel(r.key, true)}${r.partial ? " *" : ""}`;
+/** "Oct*" — the same, short, for the chart. */
+export const shortName = (r: { key: string; partial: boolean }) => `${dashMonthLabel(r.key, false)}${r.partial ? "*" : ""}`;
+
+/** The swipe back on the phone's Finance screens: it starts within 28px of
+ *  the left edge and goes back once dragged past 30% of the width. */
+export const SWIPE_EDGE_PX = 28;
+export const swipeGoesBack = (dx: number, width: number) => dx > width * 0.3;
+
+/** A share-of-the-whole bar's parts: each positive part's width in %, in order. */
+export function shareWidths(values: readonly (number | null)[]): number[] {
+  const pos = values.map((v) => Math.max(0, v ?? 0));
+  const sum = pos.reduce((s, v) => s + v, 0);
+  return sum > 0 ? pos.map((v) => (v / sum) * 100) : pos.map(() => 0);
 }

@@ -4,11 +4,69 @@
 // and the loading / error / empty notes. Inline
 // styles from the /m theme, like the rest of the phone app.
 // ---------------------------------------------------------------------------
-import { type CSSProperties, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Lock } from "lucide-react";
 import { MobileHeader } from "../../components";
+import { SWIPE_EDGE_PX, swipeGoesBack } from "./m-finance-lib";
 import { M } from "../../theme";
+
+/** A swipe from the left edge goes back (the owner's phone design; owner
+ *  2026-10-20 「做」): on, only for the app opened from the iPhone home screen
+ *  — in a phone browser that edge swipe is the browser's own back, and
+ *  Android's system gesture is its own back, so neither gets a second one. */
+const iosHomeScreenApp = () =>
+  typeof navigator !== "undefined" && (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+export function SwipeBack({ onBack, children }: { onBack: () => void; children: ReactNode }) {
+  const [dx, setDx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const start = useRef<{ x0: number; width: number; id: number } | null>(null);
+  const [enabled] = useState(iosHomeScreenApp);
+  if (!enabled) return <>{children}</>;
+  const down = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    if (e.clientX - box.left > SWIPE_EDGE_PX) return;
+    start.current = { x0: e.clientX, width: box.width, id: e.pointerId };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    setDragging(true);
+    setDx(0);
+  };
+  const move = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const s = start.current;
+    if (!s || e.pointerId !== s.id) return;
+    setDx(Math.max(0, e.clientX - s.x0));
+  };
+  const up = () => {
+    const s = start.current;
+    if (!s) return;
+    start.current = null;
+    setDragging(false);
+    if (swipeGoesBack(dx, s.width)) {
+      setDx(s.width);
+      // eslint-disable-next-line no-restricted-syntax -- a pointer-up handler: leave once the slide-out has played
+      window.setTimeout(onBack, 200);
+    } else setDx(0);
+  };
+  return (
+    <div
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      style={{
+        minHeight: "100%",
+        background: "var(--m-paper)",
+        touchAction: "pan-y",
+        transform: dx ? `translateX(${dx}px)` : "none",
+        transition: dragging ? "none" : "transform .22s cubic-bezier(.2,.8,.2,1)",
+        boxShadow: dx ? "-8px 0 24px rgba(0,0,0,.18)" : "none",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 /** The header every Finance screen shares: back goes to the Finance menu. */
 export function FinanceHeader({ title, trailing }: { title: string; trailing?: ReactNode }) {
