@@ -13,6 +13,11 @@
 // figure with the SAME engines the reports use, so a card can never disagree
 // with its report. Partial buckets (the running month / a half quarter) are
 // marked so a stub is never read as a trend.
+//
+// The look is the owner's design (2026-10-20 「先把dashboard 那边做好，就是我
+// 设计稿那边的动画，颜色，曲线」): its palette and chart (src/lib/finance-chart-
+// look.ts, src/components/finance/chart-look.tsx), only the periods that have
+// happened, 6 months by default (from July) or 12.
 // ---------------------------------------------------------------------------
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
@@ -43,6 +48,8 @@ import {
   salaryDeptSplit,
 } from "@/lib/finance-dashboard-calc";
 import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
+import { CH, CS_COLOURS, FORECAST_DASH, dashPeriods, type DashSpan } from "@/lib/finance-chart-look";
+import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 
 type Slice = {
   sales: number; cogs: number; gross: number; otherIncome: number; expenses: number; net: number;
@@ -107,17 +114,61 @@ const rm = (sen: number | null | undefined) =>
 const rm2 = (sen: number | null | undefined) =>
   sen === null || sen === undefined ? "-" : (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const GOLD = "#6B5C32";
-const RUST = "#9A3A2D";
-// Stack colours for the cost-structure chart, indexed by the material's
-// position. Lifted out of the JSX so the Show chips can paint themselves the
-// same colour as the band they toggle — a chip whose swatch didn't match its
-// band would be worse than no swatch at all.
-const CS_COLOURS = [
-  "#6B5C32", "#9C6F1E", "#C9B98A", "#3E6570", "#7A9EA7", "#9A3A2D",
-  "#C58B7F", "#4F7C3A", "#8FB07A", "#6B7280", "#A9A29B", "#D8CFC4",
-];
-const TEAL = "#3E6570";
+// Stack colours (CS_COLOURS, the design's categorical palette) are indexed by
+// the department's / material's position, so a Show chip paints itself the
+// colour of the band it toggles — a chip whose swatch didn't match its band
+// would be worse than no swatch at all.
+
+// The Show chips (design): a white pill with its band's colour while drawn, a
+// hollow ring once hidden; Show all / Clear beside them.
+function ShowChips({ names, hidden, onToggle, onShowAll, onClear }: {
+  names: string[];
+  hidden: Set<string>;
+  onToggle: (name: string) => void;
+  onShowAll: () => void;
+  onClear: () => void;
+}) {
+  if (!names.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-[#6B7280] mr-0.5">Show</span>
+      {names.map((name, i) => {
+        const on = !hidden.has(name);
+        return (
+          <button
+            key={name}
+            onClick={() => onToggle(name)}
+            className={`flex items-center gap-1.5 rounded-full border border-[#E5E7EB] px-2.5 py-0.5 text-[11px] cursor-pointer transition-colors duration-200 ${
+              on ? "bg-white text-[#1F1D1B] shadow-[0_1px_2px_rgba(31,42,68,.08)]" : "bg-transparent text-[#9CA3AF]"
+            }`}
+            title={on ? `Hide ${name} from the chart` : `Show ${name} on the chart`}
+          >
+            <span className="h-2 w-2 rounded-sm" style={on ? { backgroundColor: CS_COLOURS[i % CS_COLOURS.length] } : { boxShadow: "inset 0 0 0 1.5px #CBD5E1" }} />
+            {name}
+          </button>
+        );
+      })}
+      {hidden.size > 0 && (
+        <button onClick={onShowAll}
+          className="rounded-full border border-[#E5E7EB] px-2.5 py-0.5 text-[11px] text-[#2F6E7C] cursor-pointer hover:bg-[#F3F4F6]">
+          Show all
+        </button>
+      )}
+      {hidden.size < names.length && (
+        <button onClick={onClear}
+          className="rounded-full border border-[#E5E7EB] px-2.5 py-0.5 text-[11px] text-[#6B7280] cursor-pointer hover:bg-[#F3F4F6]">
+          Clear
+        </button>
+      )}
+    </div>
+  );
+}
+const toggled = (set: Set<string>, name: string) => {
+  const next = new Set(set);
+  if (next.has(name)) next.delete(name);
+  else next.add(name);
+  return next;
+};
 
 
 // "share of sales / share of production revenue" (owner 2026-10-12: 「每个 cost
@@ -151,6 +202,8 @@ function ChartTip(props: {
   lineKeys?: string[];
   /** Stacked bars: list them top band first and add a bold Total of the bars shown. */
   stackTotal?: boolean;
+  /** Dashed series (forecasts): their swatch is a dashed stroke. */
+  dashKeys?: string[];
 }) {
   if (!props.active || !props.payload?.length) return null;
   const point = props.payload[0]?.payload ?? {};
@@ -171,21 +224,29 @@ function ChartTip(props: {
   const showTotal = total !== null;
   const countedShares = counted.map((p) => shareOf(String(p.dataKey)));
   const totalShare = countedShares.every((x) => x !== null) ? countedShares.reduce((sum: number, x) => sum + (x as number), 0) : null;
+  const dashed = new Set(props.dashKeys ?? ["forecast", "__cardfc__", "__fctotal__"]);
+  const swatch = (key: string, color: string | undefined) =>
+    color === undefined ? <span className="w-2" /> : dashed.has(key)
+      ? <span className="w-2.5 shrink-0" style={{ borderTop: `2px dashed ${color}` }} />
+      : <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: color }} />;
   const row = (key: string, name: React.ReactNode, color: string | undefined, value: string, pct: number | null, bold = false) => (
     <Fragment key={key}>
-      <span className={bold ? "font-bold text-[#1F1D1B]" : ""} style={bold ? undefined : { color }}>{name}</span>
-      <span className={`text-right ${bold ? "font-bold text-[#1F1D1B]" : ""}`}>{value}</span>
-      <span className="text-right text-[10px] text-[#9CA3AF]">{pct !== null ? `${pct.toFixed(2)}%` : ""}</span>
+      <span className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[#374151] ${bold ? "font-semibold" : ""}`}>{swatch(key, color)}{name}</span>
+      <span className={`text-right text-[#1F1D1B] ${bold ? "font-semibold" : "font-medium"}`}>{value}</span>
+      <span className="text-right text-[11px] text-[#6B7280]">{pct !== null ? `${pct.toFixed(2)}%` : ""}</span>
     </Fragment>
   );
   return (
-    <div className="rounded-lg border border-[#E2DDD8] bg-white px-3 py-2 shadow-md text-xs">
-      <div className="font-semibold text-[#5A5550] mb-1">{props.label}</div>
-      <div className="grid grid-cols-[auto_auto_auto] gap-x-3 gap-y-0.5 tabular-nums">
+    <div className="rounded-[10px] border border-[#E7E2DC] bg-white/95 px-3 py-2.5 text-xs shadow-[0_10px_24px_-8px_rgba(31,42,68,.25)]">
+      <div className="mb-1.5 flex items-baseline justify-between gap-4 border-b border-[#EEE9E3] pb-1.5">
+        <span className="text-[13px] font-bold text-[#1F1D1B]">{props.label}</span>
+        <span className="text-[10px] text-[#9CA3AF]">{props.shares ? "RM · % sales" : "RM"}</span>
+      </div>
+      <div className="grid grid-cols-[auto_auto_auto] gap-x-3.5 gap-y-[3px] tabular-nums items-center">
         {bars.map((p) => row(String(p.dataKey), p.name, p.color, fmt(String(p.name), p.value), shareOf(String(p.dataKey))))}
-        {showTotal && <span className="col-span-3 my-0.5 border-t border-[#E2DDD8]" />}
+        {showTotal && <span className="col-span-3 my-0.5 border-t border-[#EEE9E3]" />}
         {showTotal && row("__total__", "Total", undefined, fmt("Total", total), totalShare, true)}
-        {lines.length > 0 && bars.length > 0 && <span className="col-span-3 my-0.5 border-t border-dashed border-[#E2DDD8]" />}
+        {lines.length > 0 && bars.length > 0 && <span className="col-span-3 my-0.5 border-t border-dashed border-[#EEE9E3]" />}
         {lines.map((p) => row(String(p.dataKey), p.name, p.color, fmt(String(p.name), p.value), shareOf(String(p.dataKey))))}
       </div>
     </div>
@@ -221,6 +282,7 @@ function SalaryDeptCard({
   showDenominators: boolean;
 }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const { hover, chartProps } = useChartHover();
   const shownCount = depts.filter((d) => !hidden.has(d)).length;
   const tdc = "px-2 py-1 text-right tabular-nums text-[12px] whitespace-nowrap";
   const rowsData = useMemo(
@@ -265,84 +327,44 @@ function SalaryDeptCard({
           <span className="text-[11px] text-[#9CA3AF]">{subtitle}</span>
           <span className="ml-1 text-[11px] text-[#9CA3AF]">RM · % of sales / % of production</span>
         </div>
-        {depts.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] text-[#6B7280] mr-0.5">Show</span>
-            {depts.map((dept, i) => {
-              const colour = CS_COLOURS[i % CS_COLOURS.length];
-              const on = !hidden.has(dept);
-              return (
-                <button
-                  key={dept}
-                  onClick={() =>
-                    setHidden((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(dept)) next.delete(dept);
-                      else next.add(dept);
-                      return next;
-                    })
-                  }
-                  className={`flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] cursor-pointer ${
-                    on ? "border-[#E2DDD8] bg-white text-[#1F1D1B]" : "border-[#E2DDD8] bg-[#F0ECE9] text-[#9CA3AF]"
-                  }`}
-                  title={on ? `Hide ${dept} from the chart` : `Show ${dept} on the chart`}
-                >
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: on ? colour : "#D8D3CE" }} />
-                  {dept}
-                </button>
-              );
-            })}
-            {hidden.size > 0 && (
-              <button onClick={() => setHidden(new Set())}
-                className="rounded-md border border-[#E2DDD8] px-2 py-0.5 text-[11px] text-[#3E6570] cursor-pointer hover:bg-[#F0ECE9]">
-                Show all
-              </button>
-            )}
-            {hidden.size < depts.length && (
-              <button onClick={() => setHidden(new Set(depts))}
-                className="rounded-md border border-[#E2DDD8] px-2 py-0.5 text-[11px] text-[#6B7280] cursor-pointer hover:bg-[#F0ECE9]">
-                Clear
-              </button>
-            )}
-          </div>
-        )}
+        <ShowChips names={depts} hidden={hidden} onToggle={(d) => setHidden((prev) => toggled(prev, d))}
+          onShowAll={() => setHidden(new Set())} onClear={() => setHidden(new Set(depts))} />
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={rowsData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid stroke="#F0ECE9" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={false} tickLine={false} />
-              <YAxis yAxisId="amt" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false}
-                tickFormatter={(v: number) => rm(v)} />
+            <ComposedChart data={rowsData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} {...chartProps}>
+              <CartesianGrid {...gridProps} />
+              <XAxis dataKey="label" {...xAxisProps} />
+              <YAxis yAxisId="amt" {...yAxisProps} tickFormatter={(v: number) => rm(v)} />
               {showDenominators && (
-                <YAxis yAxisId="unit" orientation="right" tick={{ fontSize: 12, fill: "#9A3A2D" }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false}
+                <YAxis yAxisId="unit" orientation="right" {...yAxisProps} tick={{ ...yAxisProps.tick, fill: "#6B7280" }}
                   tickFormatter={(v: number) => rm(v)} />
               )}
-              <Tooltip content={<ChartTip shares stackTotal lineKeys={["__cardfc__", "perHead", "perUnit"]} />} />
+              <Tooltip cursor={false} content={<ChartTip shares stackTotal lineKeys={["__cardfc__", "perHead", "perUnit"]} />} />
               {depts.length === 0 ? (
-                <Bar yAxisId="amt" dataKey="__cardamt__" name={title} fill={GOLD} radius={[3, 3, 0, 0]} maxBarSize={38} />
+                <Bar yAxisId="amt" dataKey="__cardamt__" name={title} fill={CH.actual} maxBarSize={38} shape={liftBar(hover)} {...anim} />
               ) : (
                 depts.map((dept, i) =>
                   hidden.has(dept) ? null : (
                     <Bar key={dept} yAxisId="amt" dataKey={dept} name={dept} stackId="sal" maxBarSize={38}
-                      fill={CS_COLOURS[i % CS_COLOURS.length]}>
+                      fill={CS_COLOURS[i % CS_COLOURS.length]} shape={liftBar(hover, { stacked: true })} {...anim}>
                       {shownCount === 1 && (
                         <LabelList dataKey="__drawnpct__" position="top" offset={6}
                           formatter={(v: unknown) => (typeof v === "number" ? `${v.toFixed(2)}%` : "")}
-                          style={{ fontSize: 10, fill: "#6B5C32" }} />
+                          style={{ fontSize: 10, fill: "#374151" }} />
                       )}
                     </Bar>
                   ),
                 )
               )}
-              <Line yAxisId="amt" type="monotone" dataKey="__cardfc__" name="Forecast" stroke={RUST}
-                strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={false} />
+              <Line yAxisId="amt" type="monotone" dataKey="__cardfc__" name="Forecast" stroke={CH.fc}
+                strokeWidth={2} strokeDasharray={FORECAST_DASH} strokeLinecap="round" dot={dotOf(CH.fc)} activeDot={activeDotOf(CH.fc)} connectNulls={false} {...anim} />
               {showDenominators && (
-                <Line yAxisId="unit" type="monotone" dataKey="perHead" name="RM / head" stroke="#3E6570"
-                  strokeWidth={2} dot={{ r: 2 }} connectNulls={false} />
+                <Line yAxisId="unit" type="monotone" dataKey="perHead" name="RM / head" stroke={CH.teal}
+                  strokeWidth={2} strokeLinecap="round" dot={dotOf(CH.teal)} activeDot={activeDotOf(CH.teal)} connectNulls={false} {...anim} />
               )}
               {showDenominators && (
-                <Line yAxisId="unit" type="monotone" dataKey="perUnit" name="RM / unit" stroke="#4F7C3A"
-                  strokeWidth={2} strokeDasharray="2 3" dot={{ r: 2 }} connectNulls={false} />
+                <Line yAxisId="unit" type="monotone" dataKey="perUnit" name="RM / unit" stroke={CH.green}
+                  strokeWidth={2} strokeLinecap="round" dot={dotOf(CH.green)} activeDot={activeDotOf(CH.green)} connectNulls={false} {...anim} />
               )}
             </ComposedChart>
           </ResponsiveContainer>
@@ -351,7 +373,7 @@ function SalaryDeptCard({
           <table data-fin-list data-fin-stick className="w-full">
             <thead>
               <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF]">
-                <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</th>
+                <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#374151] tracking-wide">PERIOD</th>
                 {rowsData.map((d) => (
                   <th key={String(d.label)} colSpan={2}
                     className="px-2 py-1.5 text-center text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap border-l border-[#E2DDD8]">
@@ -363,30 +385,30 @@ function SalaryDeptCard({
                 <th className="px-2 py-1 text-left text-[10px] text-[#9CA3AF]"></th>
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
-                    <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#6B5C32" }}>Actual</th>
-                    <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#9A3A2D" }}>Forecast</th>
+                    <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#374151" }}>Actual</th>
+                    <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#B4452F" }}>Forecast</th>
                   </Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+              <tr className="border-b border-[#E2DDD8] bg-[#F2F5F9]">
                 <td className={`${tdc} text-left font-semibold`}>SALES REVENUE</td>
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__sales__ as number | null)}</td>
-                    <td className={`${tdc} font-semibold text-[#9A3A2D]`}>{rm(d.__fcsales__ as number | null)}</td>
+                    <td className={`${tdc} font-semibold text-[#B4452F]`}>{rm(d.__fcsales__ as number | null)}</td>
                   </Fragment>
                 ))}
               </tr>
               {/* Owner 2026-10-12: what production finished in the period, at
                   selling price — no plan exists for it, so its Forecast is "-". */}
-              <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+              <tr className="border-b border-[#E2DDD8] bg-[#F2F5F9]">
                 <td className={`${tdc} text-left font-semibold`}>PRODUCTION REVENUE</td>
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__prod__ as number | null)}</td>
-                    <td className={`${tdc} font-semibold text-[#9A3A2D]`}>-</td>
+                    <td className={`${tdc} font-semibold text-[#B4452F]`}>-</td>
                   </Fragment>
                 ))}
               </tr>
@@ -406,11 +428,11 @@ function SalaryDeptCard({
                           {amt === null || amt === 0 ? "-" : (
                             <>
                               {rm(amt)}
-                              <PctPair p={p} pp={pp} className={fp === null ? "text-[#6B5C32]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"} />
+                              <PctPair p={p} pp={pp} className={fp === null ? "text-[#374151]" : over ? "text-[#B4452F]" : "text-[#2F7A3B]"} />
                             </>
                           )}
                         </td>
-                        <td className={`${tdc} text-[#9A3A2D]`}>
+                        <td className={`${tdc} text-[#B4452F]`}>
                           {fc === null ? "-" : (
                             <>
                               {rm(fc)}
@@ -423,15 +445,15 @@ function SalaryDeptCard({
                   })}
                 </tr>
               ))}
-              <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF] font-semibold">
+              <tr className="border-b border-[#E2DDD8] bg-[#E9F2F1] font-semibold">
                 <td className={`${tdc} text-left`}>TOTAL</td>
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} border-l border-[#E2DDD8]`}>
                       {rm(d.__cardamt__ as number | null)}
-                      <PctPair p={d.__cardpct__ as number | null} pp={d.__cardppct__ as number | null} className="text-[#6B5C32]" />
+                      <PctPair p={d.__cardpct__ as number | null} pp={d.__cardppct__ as number | null} className="text-[#374151]" />
                     </td>
-                    <td className={`${tdc} text-[#9A3A2D]`}>
+                    <td className={`${tdc} text-[#B4452F]`}>
                       {rm(d.__cardfc__ as number | null)}
                       {d.__cardfcpct__ !== null && <span className="ml-1.5 text-[10px]">{(d.__cardfcpct__ as number).toFixed(2)}%</span>}
                     </td>
@@ -441,27 +463,27 @@ function SalaryDeptCard({
               {showDenominators && (
                 <>
                   <tr className="border-b border-[#F0ECE9]">
-                    <td className={`${tdc} text-left font-medium text-[#3E6570]`}>Headcount</td>
+                    <td className={`${tdc} text-left font-medium text-[#2F6E7C]`}>Headcount</td>
                     {base.map((d) => (
-                      <td key={d.label} colSpan={2} className={`${tdc} text-[#3E6570] border-l border-[#E2DDD8]`}>{d.headcount ?? "-"}</td>
+                      <td key={d.label} colSpan={2} className={`${tdc} text-[#2F6E7C] border-l border-[#E2DDD8]`}>{d.headcount ?? "-"}</td>
                     ))}
                   </tr>
                   <tr className="border-b border-[#F0ECE9]">
-                    <td className={`${tdc} text-left font-medium text-[#3E6570]`}>RM / head</td>
+                    <td className={`${tdc} text-left font-medium text-[#2F6E7C]`}>RM / head</td>
                     {base.map((d) => (
-                      <td key={d.label} colSpan={2} className={`${tdc} text-[#3E6570] border-l border-[#E2DDD8]`}>{rm(d.perHead)}</td>
+                      <td key={d.label} colSpan={2} className={`${tdc} text-[#2F6E7C] border-l border-[#E2DDD8]`}>{rm(d.perHead)}</td>
                     ))}
                   </tr>
                   <tr className="border-b border-[#F0ECE9]">
-                    <td className={`${tdc} text-left font-medium text-[#4F7C3A]`}>Units completed</td>
+                    <td className={`${tdc} text-left font-medium text-[#2F7A3B]`}>Units completed</td>
                     {base.map((d) => (
-                      <td key={d.label} colSpan={2} className={`${tdc} text-[#4F7C3A] border-l border-[#E2DDD8]`}>{d.units ?? "-"}</td>
+                      <td key={d.label} colSpan={2} className={`${tdc} text-[#2F7A3B] border-l border-[#E2DDD8]`}>{d.units ?? "-"}</td>
                     ))}
                   </tr>
                   <tr>
-                    <td className={`${tdc} text-left font-medium text-[#4F7C3A]`}>RM / unit</td>
+                    <td className={`${tdc} text-left font-medium text-[#2F7A3B]`}>RM / unit</td>
                     {base.map((d) => (
-                      <td key={d.label} colSpan={2} className={`${tdc} text-[#4F7C3A] border-l border-[#E2DDD8]`}>{rm(d.perUnit)}</td>
+                      <td key={d.label} colSpan={2} className={`${tdc} text-[#2F7A3B] border-l border-[#E2DDD8]`}>{rm(d.perUnit)}</td>
                     ))}
                   </tr>
                 </>
@@ -470,7 +492,7 @@ function SalaryDeptCard({
           </table>
         </div>
         {showDenominators && (
-          <p className="text-[11px] text-[#9A3A2D]">
+          <p className="text-[11px] text-[#B4452F]">
             ⚠ RM / unit uses completed-batch quantities, which are known to double-count some
             completions — the unit count runs high, so this cost runs low. RM / head is unaffected.
           </p>
@@ -501,6 +523,7 @@ function ChartCard({
   line?: { key: string; name: string; color: string; dashed?: boolean; axis?: "left" | "right" };
   footer: React.ReactNode;
 }) {
+  const { hover, chartProps } = useChartHover();
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
@@ -510,21 +533,16 @@ function ChartCard({
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid stroke="#F0ECE9" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={false} tickLine={false} />
-              <YAxis
-                tick={{ fontSize: 12, fill: "#4B5563" }}
-                axisLine={{ stroke: "#CBD5E1" }}
-                tickLine={false}
-                tickFormatter={(v: number) => rm(v)}
-              />
+            <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} {...chartProps}>
+              <CartesianGrid {...gridProps} />
+              <XAxis dataKey="label" {...xAxisProps} />
+              <YAxis {...yAxisProps} tickFormatter={(v: number) => rm(v)} />
               {line?.axis === "right" && (
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12, fill: RUST }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} />
+                <YAxis yAxisId="right" orientation="right" {...yAxisProps} tick={{ ...yAxisProps.tick, fill: "#6B7280" }} />
               )}
-              <Tooltip content={<ChartTip lineKeys={line ? [line.key] : []} />} />
+              <Tooltip cursor={false} content={<ChartTip lineKeys={line ? [line.key] : []} dashKeys={line?.dashed ? [line.key] : []} />} />
               {bars.map((b) => (
-                <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} radius={[3, 3, 0, 0]} maxBarSize={38} />
+                <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} maxBarSize={38} shape={liftBar(hover)} {...anim} />
               ))}
               {line && (
                 <Line
@@ -533,10 +551,13 @@ function ChartCard({
                   name={line.name}
                   stroke={line.color}
                   strokeWidth={2}
-                  strokeDasharray={line.dashed ? "5 4" : undefined}
-                  dot={{ r: 3 }}
+                  strokeDasharray={line.dashed ? FORECAST_DASH : undefined}
+                  strokeLinecap="round"
+                  dot={dotOf(line.color)}
+                  activeDot={activeDotOf(line.color)}
                   yAxisId={line.axis === "right" ? "right" : undefined}
                   connectNulls
+                  {...anim}
                 />
               )}
             </ComposedChart>
@@ -551,6 +572,9 @@ function ChartCard({
 export default function FinanceDashboardPage() {
   const [granularity, setGranularity] = useState<"month" | "quarter">("month");
   const [rows, setRows] = useState<Row[] | null>(null);
+  // How many months the rolling view shows (the owner's design: 6 by default,
+  // starting no earlier than July; or 12). An explicit From / To overrides it.
+  const [span, setSpan] = useState<DashSpan>(6);
   const [plTab, setPlTab] = useState<keyof Slice>("sales");
   const [cfTab, setCfTab] = useState<"operating" | "investing" | "financing" | "freeCashFlow">("operating");
   const [cfView, setCfView] = useState<"summary" | "detail">("summary");
@@ -575,6 +599,7 @@ export default function FinanceDashboardPage() {
   // of silently missing from a stack the operator believes is complete.
   // The table below stays complete — it is the record; the chart is the view.
   const [csHidden, setCsHidden] = useState<Set<string>>(new Set());
+  const csHover = useChartHover();
 
   // The loading state is cleared by the toggle handler (a user action), not
   // here — setting state synchronously inside an effect cascades renders.
@@ -588,10 +613,20 @@ export default function FinanceDashboardPage() {
     return () => { stale = true; };
   }, [granularity, fromYm, toYm]);
 
+  // The periods drawn: only those that have happened, the last 6 / 12 (or the
+  // explicit range). Every card reads these; "vs last period" still compares
+  // with the month before, shown or not.
+  const explicitRange = !!(fromYm && toYm && fromYm <= toYm);
+  const shownRows = useMemo(
+    () => dashPeriods(rows ?? [], { span, granularity, explicit: explicitRange }),
+    [rows, span, granularity, explicitRange],
+  );
   const plData = useMemo(
     () =>
-      (rows ?? []).map((r, i, arr) => {
-        const prev = i > 0 ? arr[i - 1].actual : null;
+      shownRows.map((r) => {
+        const all = rows ?? [];
+        const at = all.indexOf(r);
+        const prev = at > 0 ? all[at - 1].actual : null;
         const cur = r.actual;
         const pick = (s: Slice | null) => (s ? s[plTab] : null);
         const a = pick(cur);
@@ -611,7 +646,7 @@ export default function FinanceDashboardPage() {
           mom: a !== null && p !== null && p !== 0 ? Math.round(((a - p) / Math.abs(p)) * 10000) / 100 : null,
         };
       }),
-    [rows, plTab],
+    [rows, shownRows, plTab],
   );
 
   // Production Salary card. The wage bill against its two denominators — the
@@ -619,7 +654,7 @@ export default function FinanceDashboardPage() {
   // its OWN revenue.
   const labourData = useMemo(
     () =>
-      (rows ?? []).map((r) => {
+      shownRows.map((r) => {
         const amount = r.actual?.labour ?? null;
         const forecast = r.forecast?.labour ?? null;
         const sales = r.actual?.sales ?? null;
@@ -642,16 +677,16 @@ export default function FinanceDashboardPage() {
           perUnit: per(amount, units),
         };
       }),
-    [rows],
+    [shownRows],
   );
   // Department stacks for the two salary cards (owner 2026-08-11: 「弄到像
   // cost structure 这样」; owner 2026-08-31: 「dashboard 多一个non production
   // 的」). One shared data array carries every department's keys; each card
   // draws only ITS list, split by the master's nonProd flag.
-  const salDeptSplit = useMemo(() => salaryDeptSplit(rows ?? []), [rows]);
+  const salDeptSplit = useMemo(() => salaryDeptSplit(shownRows), [shownRows]);
   const salData = useMemo(
     () =>
-      (rows ?? []).map((r, i) => {
+      shownRows.map((r, i) => {
         const base = labourData[i];
         const sales = r.actual?.sales ?? null;
         const fcSales = r.forecast?.sales ?? null;
@@ -675,7 +710,7 @@ export default function FinanceDashboardPage() {
         if (base?.forecastPct !== null && base?.forecastPct !== undefined) rec.__pct__forecast = base.forecastPct;
         return rec;
       }),
-    [rows, labourData],
+    [shownRows, labourData],
   );
   // Null totals for the non-production card: where it has no dept data at
   // all it must show "-", never borrow the production labour bucket.
@@ -686,20 +721,20 @@ export default function FinanceDashboardPage() {
 
   const cfData = useMemo(
     () =>
-      (rows ?? []).map((r) => ({
+      shownRows.map((r) => ({
         label: r.label + (r.partial ? " *" : ""),
         value: r.cashFlow?.[cfTab] ?? null,
         net: r.cashFlow?.net ?? null,
         inflow: r.cashFlow?.inflow ?? null,
         outflow: r.cashFlow?.outflow ?? null,
       })),
-    [rows, cfTab],
+    [shownRows, cfTab],
   );
   // Detail view: every account line the Cash Flow statement prints, one row
   // per account across the periods (owner 2026-07-30: 「每个科目一行先」).
   const cfDetailRows = useMemo(() => {
     const keys = new Map<string, { label: string; section: string }>();
-    for (const r of rows ?? []) {
+    for (const r of shownRows) {
       for (const l of r.cashFlow?.lines ?? []) keys.set(`${l.section}||${l.label}`, { label: l.label, section: l.section });
     }
     return [...keys.entries()]
@@ -707,9 +742,9 @@ export default function FinanceDashboardPage() {
       .map(([k, meta]) => ({
         key: k,
         ...meta,
-        values: (rows ?? []).map((r) => (r.cashFlow?.lines ?? []).find((l) => `${l.section}||${l.label}` === k)?.value ?? 0),
+        values: shownRows.map((r) => (r.cashFlow?.lines ?? []).find((l) => `${l.section}||${l.label}` === k)?.value ?? 0),
       }));
-  }, [rows]);
+  }, [shownRows]);
   // …grouped by section, each with its own per-period totals, so Detail opens
   // as a handful of section rows instead of forty account rows at once.
   const cfSections = useMemo(() => {
@@ -718,13 +753,13 @@ export default function FinanceDashboardPage() {
     return [...bySec.entries()].map(([name, secRows]) => ({
       name,
       rows: secRows,
-      totals: (rows ?? []).map((_, i) => secRows.reduce((s, r) => s + (r.values[i] ?? 0), 0)),
+      totals: shownRows.map((_, i) => secRows.reduce((s, r) => s + (r.values[i] ?? 0), 0)),
     }));
-  }, [cfDetailRows, rows]);
+  }, [cfDetailRows, shownRows]);
 
   const bsData = useMemo(
     () =>
-      (rows ?? [])
+      shownRows
         .filter((r) => r.balanceSheet)
         .map((r) => ({
           label: r.label + (r.partial ? " *" : ""),
@@ -732,19 +767,19 @@ export default function FinanceDashboardPage() {
           liabilities: r.balanceSheet!.liabilities,
           debtPct: r.ratios.debtToAssetPct,
         })),
-    [rows],
+    [shownRows],
   );
 
   const ratioIsMoney = false;
   const ratioData = useMemo(
-    () => (rows ?? []).map((r) => ({ label: r.label + (r.partial ? " *" : ""), value: r.ratios[ratioTab] })),
-    [rows, ratioTab],
+    () => shownRows.map((r) => ({ label: r.label + (r.partial ? " *" : ""), value: r.ratios[ratioTab] })),
+    [shownRows, ratioTab],
   );
 
   // ---- Cost structure (owner 2026-07-29) --------------------------------
   // Shared materials are apportioned to a line by that period's share of
   // sales — the same rule the Sofa/Bedframe P&L uses.
-  const csCats = useMemo(() => csCategories(rows ?? []), [rows]);
+  const csCats = useMemo(() => csCategories(shownRows), [shownRows]);
   // How many bands the chart is drawing right now — the bar label only appears
   // at exactly one, where there is room for it.
   const csShownCount = useMemo(
@@ -779,7 +814,7 @@ export default function FinanceDashboardPage() {
   const csForecastAmt = (r: Row, cat: string): number | null => csForecastAmtOf(r, cat, csLine);
   const csData = useMemo(
     () =>
-      (rows ?? []).map((r) => {
+      shownRows.map((r) => {
         const point: Record<string, number | string | null> = { label: r.label + (r.partial ? " *" : "") };
         const sales = csLineSales(r);
         point.__sales__ = sales;
@@ -849,14 +884,14 @@ export default function FinanceDashboardPage() {
         return point;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, csCats, csLine, csMeasure, csHidden],
+    [shownRows, csCats, csLine, csMeasure, csHidden],
   );
   // The focus falls back to the first category until the operator picks one —
   // the trend read a blank key before this and drew a flat zero line.
   const csFocusEff = csFocus || csCats[0] || "";
   const csTrend = useMemo(
     () =>
-      (rows ?? []).map((r) => {
+      shownRows.map((r) => {
         const amt = csAmount(r, csFocusEff);
         const sales = csLineSales(r);
         const fc = csMeasure === "spend" ? csForecastAmt(r, csFocusEff) : null;
@@ -881,7 +916,7 @@ export default function FinanceDashboardPage() {
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, csFocusEff, csLine, csMeasure],
+    [shownRows, csFocusEff, csLine, csMeasure],
   );
 
   const td = "px-2 py-1 text-right tabular-nums text-[12px] whitespace-nowrap";
@@ -889,7 +924,7 @@ export default function FinanceDashboardPage() {
   // months now open every figures table in bold instead of trailing it in grey.
   const periodHead = (labels: string[]) => (
     <tr className="border-b-2 border-[#E2DDD8] bg-[#F7F4EF]">
-      <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</th>
+      <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#374151] tracking-wide">PERIOD</th>
       {labels.map((l) => (
         <th key={l} className="px-2 py-1.5 text-right text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap">{l}</th>
       ))}
@@ -902,7 +937,7 @@ export default function FinanceDashboardPage() {
   const periodHeadSplit = (labels: string[]) => (
     <>
       <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF]">
-        <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#6B5C32] tracking-wide">PERIOD</th>
+        <th className="px-2 py-1.5 text-left text-[11px] font-bold text-[#374151] tracking-wide">PERIOD</th>
         {labels.map((l) => (
           <th key={l} colSpan={2} className="px-2 py-1.5 text-center text-[12px] font-bold text-[#1F1D1B] whitespace-nowrap border-l border-[#E2DDD8]">{l}</th>
         ))}
@@ -911,8 +946,8 @@ export default function FinanceDashboardPage() {
         <th className="px-2 py-1 text-left text-[10px] text-[#9CA3AF]"></th>
         {labels.map((l) => (
           <Fragment key={l}>
-            <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#6B5C32" }}>Actual</th>
-            <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#9A3A2D" }}>Forecast</th>
+            <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#374151" }}>Actual</th>
+            <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#B4452F" }}>Forecast</th>
           </Fragment>
         ))}
       </tr>
@@ -941,6 +976,22 @@ export default function FinanceDashboardPage() {
               Reset
             </button>
           )}
+          <div className="inline-flex overflow-hidden rounded-md border border-[#E2DDD8]" role="group" aria-label="Months shown">
+            {([6, 12] as const).map((n, i) => {
+              const on = span === n && !explicitRange;
+              return (
+                <button
+                  key={n}
+                  onClick={() => { setSpan(n); if (fromYm || toYm) { setRows(null); setFromYm(""); setToYm(""); } }}
+                  className={`px-3 py-1.5 text-sm cursor-pointer transition-colors duration-200 ${i ? "border-l border-[#E2DDD8]" : ""} ${
+                    on ? "bg-[#6B5C32] text-white" : "bg-white text-[#4B5563] hover:bg-[#F0ECE9]"
+                  }`}
+                >
+                  {n} months
+                </button>
+              );
+            })}
+          </div>
           {(["month", "quarter"] as const).map((g) => (
             <button
               key={g}
@@ -959,7 +1010,7 @@ export default function FinanceDashboardPage() {
 
       {rows === null ? (
         <Card><CardContent className="py-16 text-center text-[#6B7280] text-sm">Loading…</CardContent></Card>
-      ) : rows.length === 0 ? (
+      ) : shownRows.length === 0 ? (
         <Card><CardContent className="py-16 text-center text-[#6B7280] text-sm">No data yet.</CardContent></Card>
       ) : (
         <>
@@ -969,8 +1020,8 @@ export default function FinanceDashboardPage() {
             active={String(plTab)}
             onTab={(k) => setPlTab(k as keyof Slice)}
             data={plData}
-            bars={[{ key: "actual", name: "Actual", color: GOLD }]}
-            line={{ key: "forecast", name: "Forecast", color: RUST, dashed: true }}
+            bars={[{ key: "actual", name: "Actual", color: CH.actual }]}
+            line={{ key: "forecast", name: "Forecast", color: CH.fc, dashed: true }}
             footer={
               <table data-fin-list data-fin-stick className="w-full">
                 <thead>{periodHead(plData.map((d) => d.label))}</thead>
@@ -982,40 +1033,40 @@ export default function FinanceDashboardPage() {
                     {plData.map((d) => (
                       <td key={d.label} className={td}>
                         {rm(d.actual as number)}
-                        {d.pctOfRevenue !== null && <span className="ml-1.5 text-[10px] text-[#6B5C32]">{d.pctOfRevenue.toFixed(2)}%</span>}
+                        {d.pctOfRevenue !== null && <span className="ml-1.5 text-[10px] text-[#374151]">{d.pctOfRevenue.toFixed(2)}%</span>}
                       </td>
                     ))}
                   </tr>
                   <tr>
-                    <td className={`${td} text-left font-medium text-[#9A3A2D]`}>Forecast</td>
+                    <td className={`${td} text-left font-medium text-[#B4452F]`}>Forecast</td>
                     {plData.map((d) => (
-                      <td key={d.label} className={`${td} text-[#9A3A2D]`}>
+                      <td key={d.label} className={`${td} text-[#B4452F]`}>
                         {rm(d.forecast as number)}
                         {d.forecastPctOfRevenue !== null && <span className="ml-1.5 text-[10px]">{d.forecastPctOfRevenue.toFixed(2)}%</span>}
                       </td>
                     ))}
                   </tr>
                   {/* Variance row (owner 2026-07-30): money gap + points gap. */}
-                  <tr className="bg-[#F7F4EF]">
+                  <tr className="bg-[#FBF9F6]">
                     <td className={`${td} text-left font-semibold`}>vs Forecast</td>
                     {plData.map((d) => {
                       const gap = d.actual !== null && d.forecast !== null ? (d.actual as number) - (d.forecast as number) : null;
                       const pts = d.pctOfRevenue !== null && d.forecastPctOfRevenue !== null ? d.pctOfRevenue - d.forecastPctOfRevenue : null;
                       return (
-                        <td key={d.label} className={`${td} font-semibold ${(gap ?? 0) < 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
+                        <td key={d.label} className={`${td} font-semibold ${(gap ?? 0) < 0 ? "text-[#B4452F]" : "text-[#2F7A3B]"}`}>
                           {gap === null ? "-" : `${gap > 0 ? "+" : ""}${rm(gap)}`}
                           {pts !== null && <span className="ml-1 text-[10px]">{`${pts > 0 ? "+" : ""}${pts.toFixed(2)}pt`}</span>}
                         </td>
                       );
                     })}
                   </tr>
-                  <tr><td className={`${td} text-left font-medium`}>vs last period</td>{plData.map((d) => <td key={d.label} className={`${td} ${(d.mom ?? 0) < 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>{d.mom === null ? "-" : `${d.mom > 0 ? "+" : ""}${d.mom.toFixed(1)}%`}</td>)}</tr>
+                  <tr><td className={`${td} text-left font-medium`}>vs last period</td>{plData.map((d) => <td key={d.label} className={`${td} ${(d.mom ?? 0) < 0 ? "text-[#B4452F]" : "text-[#2F7A3B]"}`}>{d.mom === null ? "-" : `${d.mom > 0 ? "+" : ""}${d.mom.toFixed(1)}%`}</td>)}</tr>
                   {/* Running-month estimates (owner 2026-10-13): say which
                       periods carry them and how much. */}
-                  {rows.some((r) => estimatedOf(r.actual) > 0) && (
+                  {shownRows.some((r) => estimatedOf(r.actual) > 0) && (
                     <tr>
                       <td className={`${td} text-left font-medium text-[#9C6F1E]`}>incl. estimates</td>
-                      {rows.map((r) => (
+                      {shownRows.map((r) => (
                         <td key={r.label} className={`${td} text-[#9C6F1E] italic`}>{estimatedOf(r.actual) > 0 ? rm(estimatedOf(r.actual)) : "-"}</td>
                       ))}
                     </tr>
@@ -1059,15 +1110,11 @@ export default function FinanceDashboardPage() {
               <CardContent className="p-4 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-semibold text-[#1F1D1B] mr-2">Cost Structure</h3>
-                  {([["spend", "Spend"], ["purchase", "Purchase"], ["closing", "Closing Stock"]] as const).map(([k, l]) => (
-                    <button key={k} onClick={() => setCsMeasure(k)}
-                      className={`rounded-md border px-2.5 py-1 text-xs cursor-pointer ${csMeasure === k ? "bg-[#6B5C32] text-white border-[#6B5C32]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{l}</button>
-                  ))}
-                  <span className="mx-1 text-[#E2DDD8]">|</span>
-                  {([["all", "All"], ["bedframe", "Bedframe"], ["sofa", "Sofa"]] as const).map(([k, l]) => (
-                    <button key={k} onClick={() => setCsLine(k)}
-                      className={`rounded-md border px-2.5 py-1 text-xs cursor-pointer ${csLine === k ? "bg-[#3E6570] text-white border-[#3E6570]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{l}</button>
-                  ))}
+                  <SegmentedSwitch label="Cost measure" value={csMeasure} onChange={setCsMeasure}
+                    options={[{ key: "spend", label: "Spend" }, { key: "purchase", label: "Purchase" }, { key: "closing", label: "Closing Stock" }]} />
+                  <span className="mx-1 h-5 w-px bg-[#E2DDD8]" />
+                  <SegmentedSwitch label="Product line" value={csLine} onChange={setCsLine}
+                    options={[{ key: "all", label: "All" }, { key: "bedframe", label: "Bedframe" }, { key: "sofa", label: "Sofa" }]} />
                   <span className="ml-1 text-[11px] text-[#9CA3AF]">RM · % of sales / % of production</span>
                 </div>
                 {csLine !== "all" && (
@@ -1078,57 +1125,19 @@ export default function FinanceDashboardPage() {
                 )}
                 {/* Which materials the chart draws. Colours match the stack, so
                     a chip reads as its own band. */}
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[#6B7280] mr-0.5">Show</span>
-                  {csCats.map((cat, i) => {
-                    const colour = CS_COLOURS[i % CS_COLOURS.length];
-                    const on = !csHidden.has(cat);
-                    return (
-                      <button
-                        key={cat}
-                        onClick={() =>
-                          setCsHidden((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(cat)) next.delete(cat);
-                            else next.add(cat);
-                            return next;
-                          })
-                        }
-                        className={`flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] cursor-pointer ${
-                          on ? "border-[#E2DDD8] bg-white text-[#1F1D1B]" : "border-[#E2DDD8] bg-[#F0ECE9] text-[#9CA3AF]"
-                        }`}
-                        title={on ? `Hide ${cat} from the chart` : `Show ${cat} on the chart`}
-                      >
-                        <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: on ? colour : "#D8D3CE" }} />
-                        {cat}
-                      </button>
-                    );
-                  })}
-                  {csHidden.size > 0 && (
-                    <button onClick={() => setCsHidden(new Set())}
-                      className="rounded-md border border-[#E2DDD8] px-2 py-0.5 text-[11px] text-[#3E6570] cursor-pointer hover:bg-[#F0ECE9]">
-                      Show all
-                    </button>
-                  )}
-                  {csHidden.size < csCats.length && (
-                    <button onClick={() => setCsHidden(new Set(csCats))}
-                      className="rounded-md border border-[#E2DDD8] px-2 py-0.5 text-[11px] text-[#6B7280] cursor-pointer hover:bg-[#F0ECE9]">
-                      Clear
-                    </button>
-                  )}
-                </div>
+                <ShowChips names={csCats} hidden={csHidden} onToggle={(c) => setCsHidden((prev) => toggled(prev, c))}
+                  onShowAll={() => setCsHidden(new Set())} onClear={() => setCsHidden(new Set(csCats))} />
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={csData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                      <CartesianGrid stroke="#F0ECE9" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 12, fill: "#4B5563" }} axisLine={{ stroke: "#CBD5E1" }} tickLine={false}
-                        tickFormatter={(v: number) => rm(v)} />
-                      <Tooltip content={<ChartTip shares stackTotal lineKeys={["__fctotal__"]} />} />
+                    <ComposedChart data={csData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} {...csHover.chartProps}>
+                      <CartesianGrid {...gridProps} />
+                      <XAxis dataKey="label" {...xAxisProps} />
+                      <YAxis {...yAxisProps} tickFormatter={(v: number) => rm(v)} />
+                      <Tooltip cursor={false} content={<ChartTip shares stackTotal lineKeys={["__fctotal__"]} />} />
                       {csCats.map((cat, i) =>
                         csHidden.has(cat) ? null : (
                           <Bar key={cat} dataKey={cat} name={cat} stackId="cs" maxBarSize={44}
-                            fill={CS_COLOURS[i % CS_COLOURS.length]}>
+                            fill={CS_COLOURS[i % CS_COLOURS.length]} shape={liftBar(csHover.hover, { stacked: true })} {...anim}>
                             {/* The share printed ON the stack, but only while a
                                 single material is drawn — a dozen labels stacked
                                 inside one bar is unreadable, and the tooltip
@@ -1136,7 +1145,7 @@ export default function FinanceDashboardPage() {
                             {csShownCount === 1 && (
                               <LabelList dataKey="__drawnpct__" position="top" offset={6}
                                 formatter={(v: unknown) => (typeof v === "number" ? `${v.toFixed(2)}%` : "")}
-                                style={{ fontSize: 10, fill: "#6B5C32" }} />
+                                style={{ fontSize: 10, fill: "#374151" }} />
                             )}
                           </Bar>
                         ),
@@ -1146,8 +1155,8 @@ export default function FinanceDashboardPage() {
                           against its target at a glance. connectNulls stays OFF:
                           a month with no plan should leave a gap, not a line
                           drawn straight through it. */}
-                      <Line type="monotone" dataKey="__fctotal__" name="Forecast" stroke={RUST}
-                        strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={false} />
+                      <Line type="monotone" dataKey="__fctotal__" name="Forecast" stroke={CH.fc}
+                        strokeWidth={2} strokeDasharray={FORECAST_DASH} strokeLinecap="round" dot={dotOf(CH.fc)} activeDot={activeDotOf(CH.fc)} connectNulls={false} {...anim} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -1156,13 +1165,13 @@ export default function FinanceDashboardPage() {
                     <thead>{periodHeadSplit(csData.map((d) => String(d.label)))}</thead>
                     <tbody>
                       {/* The base every percentage divides by (owner 2026-07-30). */}
-                      <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+                      <tr className="border-b border-[#E2DDD8] bg-[#F2F5F9]">
                         <td className={`${td} text-left font-semibold`}>SALES REVENUE</td>
                         {csData.map((d, i) => (
                           <Fragment key={String(d.label)}>
                             <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__sales__ as number)}</td>
-                            <td className={`${td} font-semibold text-[#9A3A2D]`}>
-                              {(rows ?? [])[i]?.forecast?.sales != null ? rm((rows ?? [])[i]!.forecast!.sales!) : "-"}
+                            <td className={`${td} font-semibold text-[#B4452F]`}>
+                              {shownRows[i]?.forecast?.sales != null ? rm(shownRows[i]!.forecast!.sales!) : "-"}
                             </td>
                           </Fragment>
                         ))}
@@ -1170,12 +1179,12 @@ export default function FinanceDashboardPage() {
                       {/* The second base every figure divides by (owner 2026-10-12):
                           what production finished in the period, at selling price.
                           No plan exists for it, so its Forecast is "-". */}
-                      <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+                      <tr className="border-b border-[#E2DDD8] bg-[#F2F5F9]">
                         <td className={`${td} text-left font-semibold`}>PRODUCTION REVENUE</td>
                         {csData.map((d) => (
                           <Fragment key={String(d.label)}>
                             <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__prod__ as number | null)}</td>
-                            <td className={`${td} font-semibold text-[#9A3A2D]`}>-</td>
+                            <td className={`${td} font-semibold text-[#B4452F]`}>-</td>
                           </Fragment>
                         ))}
                       </tr>
@@ -1200,11 +1209,11 @@ export default function FinanceDashboardPage() {
                                   {amt === null || amt === 0 ? "-" : (
                                     <>
                                       {rm(amt)}
-                                      <PctPair p={p} pp={pp} className={fp === null ? "text-[#9A3A2D]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"} />
+                                      <PctPair p={p} pp={pp} className={fp === null ? "text-[#B4452F]" : over ? "text-[#B4452F]" : "text-[#2F7A3B]"} />
                                     </>
                                   )}
                                 </td>
-                                <td className={`${td} text-[#9A3A2D]`}>
+                                <td className={`${td} text-[#B4452F]`}>
                                   {fc === null ? "-" : (
                                     <>
                                       {rm(fc)}
@@ -1217,7 +1226,7 @@ export default function FinanceDashboardPage() {
                           })}
                         </tr>
                       ))}
-                      <tr className="border-b border-[#E2DDD8] bg-[#F7F4EF] font-semibold">
+                      <tr className="border-b border-[#E2DDD8] bg-[#E9F2F1] font-semibold">
                         <td className={`${td} text-left`}>TOTAL</td>
                         {csData.map((d) => {
                           const sum = d.__sum__ as number;
@@ -1231,11 +1240,11 @@ export default function FinanceDashboardPage() {
                                 {sum === 0 ? "-" : (
                                   <>
                                     {rm(sum)}
-                                    <PctPair p={p} pp={d.__sumppct__ as number | null} className={fp === null ? "text-[#6B5C32]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"} />
+                                    <PctPair p={p} pp={d.__sumppct__ as number | null} className={fp === null ? "text-[#374151]" : over ? "text-[#B4452F]" : "text-[#2F7A3B]"} />
                                   </>
                                 )}
                               </td>
-                              <td className={`${td} text-[#9A3A2D]`}>
+                              <td className={`${td} text-[#B4452F]`}>
                                 {fcSum === null ? "-" : (
                                   <>
                                     {rm(fcSum)}
@@ -1261,8 +1270,8 @@ export default function FinanceDashboardPage() {
               active={csFocusEff}
               onTab={(k) => setCsFocus(k)}
               data={csTrend}
-              bars={[{ key: "amount", name: csMeasure === "spend" ? "Spend" : csMeasure === "purchase" ? "Purchase" : "Closing stock", color: GOLD }]}
-              line={{ key: "forecast", name: "Forecast", color: RUST, dashed: true }}
+              bars={[{ key: "amount", name: csMeasure === "spend" ? "Spend" : csMeasure === "purchase" ? "Purchase" : "Closing stock", color: CH.actual }]}
+              line={{ key: "forecast", name: "Forecast", color: CH.fc, dashed: true }}
               footer={
                 /* Split per month like the Cost Structure table above (owner
                    2026-08-06: 「material trend 也做成分栏」). Two rows instead
@@ -1272,12 +1281,12 @@ export default function FinanceDashboardPage() {
                 <table data-fin-list data-fin-stick className="w-full">
                   <thead>{periodHeadSplit(csTrend.map((d) => d.label))}</thead>
                   <tbody>
-                    <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+                    <tr className="border-b border-[#E2DDD8] bg-[#F2F5F9]">
                       <td className={`${td} text-left font-semibold`}>REVENUE</td>
                       {csTrend.map((d) => (
                         <Fragment key={d.label}>
                           <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.sales)}</td>
-                          <td className={`${td} font-semibold text-[#9A3A2D]`}>{d.forecastSales === null ? "-" : rm(d.forecastSales)}</td>
+                          <td className={`${td} font-semibold text-[#B4452F]`}>{d.forecastSales === null ? "-" : rm(d.forecastSales)}</td>
                         </Fragment>
                       ))}
                     </tr>
@@ -1286,12 +1295,12 @@ export default function FinanceDashboardPage() {
                       {csTrend.map((d) => (
                         <Fragment key={d.label}>
                           <td className={`${td} border-l border-[#E2DDD8]`}>{rm(d.amount)}</td>
-                          <td className={`${td} text-[#9A3A2D]`}>{d.forecast === null ? "-" : rm(d.forecast)}</td>
+                          <td className={`${td} text-[#B4452F]`}>{d.forecast === null ? "-" : rm(d.forecast)}</td>
                         </Fragment>
                       ))}
                     </tr>
                     <tr>
-                      <td className={`${td} text-left font-medium text-[#6B5C32]`}>% of sales</td>
+                      <td className={`${td} text-left font-medium text-[#374151]`}>% of sales</td>
                       {csTrend.map((d) => {
                         // Over target reads rust, at or under reads green — the
                         // same signal the Cost Structure table carries, and it
@@ -1299,10 +1308,10 @@ export default function FinanceDashboardPage() {
                         const over = d.pct !== null && d.forecastPct !== null && d.pct > d.forecastPct;
                         return (
                           <Fragment key={d.label}>
-                            <td className={`${td} border-l border-[#E2DDD8] ${d.forecastPct === null ? "text-[#6B5C32]" : over ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>
+                            <td className={`${td} border-l border-[#E2DDD8] ${d.forecastPct === null ? "text-[#374151]" : over ? "text-[#B4452F]" : "text-[#2F7A3B]"}`}>
                               {d.pct === null ? "-" : `${d.pct.toFixed(2)}%`}
                             </td>
-                            <td className={`${td} text-[#9A3A2D]`}>{d.forecastPct === null ? "-" : `${d.forecastPct.toFixed(2)}%`}</td>
+                            <td className={`${td} text-[#B4452F]`}>{d.forecastPct === null ? "-" : `${d.forecastPct.toFixed(2)}%`}</td>
                           </Fragment>
                         );
                       })}
@@ -1324,30 +1333,28 @@ export default function FinanceDashboardPage() {
             active={cfTab}
             onTab={(k) => setCfTab(k as typeof cfTab)}
             data={cfData}
-            bars={[{ key: "inflow", name: "Money in", color: "#4F7C3A" }, { key: "outflow", name: "Money out", color: RUST }]}
-            line={{ key: "net", name: "Net change", color: TEAL }}
+            bars={[{ key: "inflow", name: "Money in", color: CH.in }, { key: "outflow", name: "Money out", color: CH.out }]}
+            line={{ key: "net", name: "Net change", color: CH.net }}
             footer={
               <>
                 <div className="mb-2 flex items-center gap-2">
-                  {([["summary", "Summary"], ["detail", "Detail"]] as const).map(([k, l]) => (
-                    <button key={k} onClick={() => setCfView(k)}
-                      className={`rounded-md border px-2.5 py-1 text-xs cursor-pointer ${cfView === k ? "bg-[#3E6570] text-white border-[#3E6570]" : "bg-white text-[#4B5563] border-[#E2DDD8] hover:bg-[#F0ECE9]"}`}>{l}</button>
-                  ))}
+                  <SegmentedSwitch label="Cash flow view" value={cfView} onChange={setCfView}
+                    options={[{ key: "summary", label: "Summary" }, { key: "detail", label: "Detail" }]} />
                   <span className="text-[11px] text-[#9CA3AF]">Detail lists every account that moved cash.</span>
                 </div>
                 <table data-fin-list data-fin-stick className="w-full">
                   <thead>{periodHead(cfData.map((d) => d.label))}</thead>
                   <tbody>
-                    <tr><td className={`${td} text-left font-medium text-[#4F7C3A]`}>Money in</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#4F7C3A]`}>{rm(d.inflow as number)}</td>)}</tr>
-                    <tr><td className={`${td} text-left font-medium text-[#9A3A2D]`}>Money out</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#9A3A2D]`}>{rm(d.outflow as number)}</td>)}</tr>
-                    <tr><td className={`${td} text-left font-medium`}>{cfTab === "freeCashFlow" ? "Free cash flow" : cfTab[0].toUpperCase() + cfTab.slice(1)}</td>{cfData.map((d) => <td key={d.label} className={`${td} ${(d.value as number) < 0 ? "text-[#9A3A2D]" : ""}`}>{rm(d.value as number)}</td>)}</tr>
-                    <tr className="bg-[#F7F4EF]"><td className={`${td} text-left font-semibold`}>Net change</td>{cfData.map((d) => <td key={d.label} className={`${td} font-semibold ${(d.net as number) < 0 ? "text-[#9A3A2D]" : ""}`}>{rm(d.net as number)}</td>)}</tr>
+                    <tr><td className={`${td} text-left font-medium text-[#2F7A3B]`}>Money in</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#2F7A3B]`}>{rm(d.inflow as number)}</td>)}</tr>
+                    <tr><td className={`${td} text-left font-medium text-[#B4452F]`}>Money out</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#B4452F]`}>{rm(d.outflow as number)}</td>)}</tr>
+                    <tr><td className={`${td} text-left font-medium`}>{cfTab === "freeCashFlow" ? "Free cash flow" : cfTab[0].toUpperCase() + cfTab.slice(1)}</td>{cfData.map((d) => <td key={d.label} className={`${td} ${(d.value as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.value as number)}</td>)}</tr>
+                    <tr className="bg-[#FBF9F6]"><td className={`${td} text-left font-semibold`}>Net change</td>{cfData.map((d) => <td key={d.label} className={`${td} font-semibold ${(d.net as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.net as number)}</td>)}</tr>
                     {cfView === "detail" &&
                       cfSections.map((sec) => {
                         const open = cfOpenSection === sec.name;
                         return (
                           <Fragment key={sec.name}>
-                            <tr className="border-b border-[#F0ECE9] bg-[#F7F4EF]">
+                            <tr data-fin-reveal="" className="border-b border-[#F0ECE9] bg-[#F7F7F5]">
                               <td className={`${td} text-left`}>
                                 <button
                                   onClick={() => setCfOpenSection(open ? null : sec.name)}
@@ -1359,15 +1366,15 @@ export default function FinanceDashboardPage() {
                                 </button>
                               </td>
                               {sec.totals.map((v, i) => (
-                                <td key={i} className={`${td} font-medium ${v < 0 ? "text-[#9A3A2D]" : v > 0 ? "text-[#4F7C3A]" : ""}`}>{v === 0 ? "-" : rm(v)}</td>
+                                <td key={i} className={`${td} font-medium ${v < 0 ? "text-[#B4452F]" : v > 0 ? "text-[#2F7A3B]" : ""}`}>{v === 0 ? "-" : rm(v)}</td>
                               ))}
                             </tr>
                             {open &&
                               sec.rows.map((l) => (
-                                <tr key={l.key} className="border-b border-[#F0ECE9]">
+                                <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
                                   <td className={`${td} text-left pl-8 text-[#4B5563]`}>{l.label}</td>
                                   {l.values.map((v, i) => (
-                                    <td key={i} className={`${td} ${v < 0 ? "text-[#9A3A2D]" : v > 0 ? "text-[#4F7C3A]" : ""}`}>{v === 0 ? "-" : rm(v)}</td>
+                                    <td key={i} className={`${td} ${v < 0 ? "text-[#B4452F]" : v > 0 ? "text-[#2F7A3B]" : ""}`}>{v === 0 ? "-" : rm(v)}</td>
                                   ))}
                                 </tr>
                               ))}
@@ -1387,10 +1394,10 @@ export default function FinanceDashboardPage() {
             onTab={() => {}}
             data={bsData}
             bars={[
-              { key: "assets", name: "Total assets", color: GOLD },
-              { key: "liabilities", name: "Total liabilities", color: "#C9B98A" },
+              { key: "assets", name: "Total assets", color: CH.assets },
+              { key: "liabilities", name: "Total liabilities", color: CH.liab },
             ]}
-            line={{ key: "debtPct", name: "Debt to assets %", color: RUST, axis: "right" }}
+            line={{ key: "debtPct", name: "Debt to assets %", color: CH.net, axis: "right" }}
             footer={
               bsData.length === 0 ? (
                 <p className="text-xs text-[#9CA3AF]">Balances start at the opening date — nothing before it.</p>
@@ -1400,7 +1407,7 @@ export default function FinanceDashboardPage() {
                   <tbody>
                     <tr><td className={`${td} text-left font-medium`}>Total assets</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.assets)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>Total liabilities</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.liabilities)}</td>)}</tr>
-                    <tr><td className={`${td} text-left font-medium text-[#9A3A2D]`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#9A3A2D]`}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
+                    <tr><td className={`${td} text-left font-medium text-[#B4452F]`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#B4452F]`}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
                   </tbody>
                 </table>
               )
@@ -1420,7 +1427,7 @@ export default function FinanceDashboardPage() {
             active={ratioTab}
             onTab={(k) => setRatioTab(k as typeof ratioTab)}
             data={ratioData}
-            bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: TEAL }]}
+            bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: CH.single }]}
             footer={
               <table data-fin-list data-fin-stick className="w-full">
                 <thead>{periodHead(ratioData.map((d) => d.label))}</thead>
@@ -1428,7 +1435,7 @@ export default function FinanceDashboardPage() {
                   <tr>
                     <td className={`${td} text-left font-medium`}>{/Pct$/.test(ratioTab) ? "Percent" : "Ratio"}</td>
                     {ratioData.map((d) => (
-                      <td key={d.label} className={`${td} ${(d.value ?? 0) < 0 ? "text-[#9A3A2D]" : ""}`}>
+                      <td key={d.label} className={`${td} ${(d.value ?? 0) < 0 ? "text-[#B4452F]" : ""}`}>
                         {d.value === null ? "-" : `${(d.value as number).toFixed(2)}${/Pct$/.test(ratioTab) ? "%" : ""}`}
                       </td>
                     ))}

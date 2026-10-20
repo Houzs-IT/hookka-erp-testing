@@ -424,3 +424,9 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-zero] {
   color: #C4BDB3;
 }
+
+/* Motion (the design: a toggle's rows fade in, about 180ms). No fill mode, so
+   a row's own hover lift is untouched once it has arrived. */
+[data-fin-ui] [data-fin-reveal] {
+  animation: fin-reveal .18s ease-out;
+}
