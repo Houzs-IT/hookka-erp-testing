@@ -341,7 +341,7 @@ export function CashFlowCard({ month }: { month: DashFullRow }) {
         label="Net change"
         value={rmWhole(cf?.net ?? null)}
         negative={(cf?.net ?? 0) < 0}
-        sub={`In ${rmWhole(cf?.inflow ?? null)} · Out ${rmWhole(cf?.outflow ?? null)}`}
+        sub={`In ${rmWhole(cf?.inflow ?? null)} · Out ${rmWhole(cf?.outflow == null ? null : Math.abs(cf.outflow))}`}
         vs={null}
       />
       {sections.length > 0 && (

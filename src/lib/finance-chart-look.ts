@@ -44,6 +44,15 @@ export const DASH_FIRST_MONTH = "2026-07";
 
 export type DashSpan = 6 | 12;
 
+/** A period as the design labels it: "Jul 2026" (a quarter key such as
+ *  "2026/Q3" stays as it is), starred while it is still running. */
+export function dashPeriodLabel(label: string, partial: boolean): string {
+  const words = /^\d{4}-\d{2}$/.test(label)
+    ? new Date(`${label}-01T00:00:00Z`).toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })
+    : label;
+  return `${words}${partial ? " *" : ""}`;
+}
+
 /** The first month of a period key — a month "2026-07" is itself; a quarter
  *  "2026-Q3" starts in "2026-07". */
 export function periodStartYm(key: string): string {
