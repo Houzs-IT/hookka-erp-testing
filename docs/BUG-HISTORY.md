@@ -1,4 +1,6 @@
 # Bug History
+> **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
+> **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-345 (branch `feat/einvoice-myinvois-tracking`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-344 flipped to ✅ after the #1026 prod check.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
@@ -154,6 +156,48 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/dashboard-period-keeps-scroll` → `staging`, #1008; to `main` in #1015). Reported 2026-10-19 on staging, right after the Day view (#1003).
+
+**Symptom.** On Operations, clicking a day on the Department Revenue chart (or any period change) scrolled the page to the top, away from the chart.
+
+**Root cause.** Measured on staging: `scrollY` went from 487 to 0 on a day click while the page height stayed 3318, and the only `window.scrollTo(0, 0)` call came from react-router. `DashboardLayout` renders `<ScrollRestoration>`, which scrolls to the top on every navigation without `preventScrollReset`. A period change is a `setSearchParams(..., { replace: true })` in `use-dashboard-url-state.ts` (and `/m`'s `hooks.ts`) with no such flag.
+
+**Fix.** Period and day writes pass `preventScrollReset` (desktop: on the replace writes only, so a tab switch still opens at the top; phone: the period setter).
+
+**Regression.** `tests/dashboard-period-keeps-scroll.test.mjs`.
+
+---
+
+## BUG-2026-10-19-335 — Clicking a dashboard chart drew a box round it and selected the axis labels `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/chart-click-focus-box` → `staging`, #1006; to `main` in #1015). Reported 2026-10-19 on staging after the Day view (#1003) made the Department Revenue chart clickable.
+
+**Symptom.** Clicking a day on the Department Revenue chart, or anywhere on the Revenue chart, drew a dark box round the whole chart. Clicking quickly also highlighted the x-axis dates in blue.
+
+**Root cause.** Measured on staging: recharts 3 renders the chart `<svg class="recharts-surface">` with `tabindex="0"`. After a real mouse click it is `document.activeElement` with `outline: auto` (not `:focus-visible`, so a focus-visible rule would not catch it). The charts on the newer dashboard tabs already hid this with a per-chart wrapper (`select-none [&_*]:outline-none`); the Command Center charts embedded on 2026-10-17 never had it.
+
+**Fix.** `src/index.css`: `.recharts-wrapper { user-select: none }` and `.recharts-wrapper *:focus { outline: none }`, so every chart in the app is covered once. Buttons and inputs outside charts keep their focus rings. Checked by injecting the same rule on staging: the clicked surface reads `outline: none`.
+
+**Regression.** `tests/chart-click-no-focus-box.test.mjs`.
+
+---
+
+## BUG-2026-10-19-343 — Clicking a day on the Department Revenue chart jumped the page down to the worklist `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/tabs-no-page-scroll` → `staging`; cherry-picked to `main` on `fix/dashboard-dept-revenue-to-main`). Reported 2026-10-19 on staging, after BUG-2026-10-19-336 stopped the jump to the top.
+
+**Symptom.** On Operations, clicking a day on a Department Revenue small chart scrolled the page down to the overdue production orders / Due within 3 Days worklist.
+
+**Root cause.** Measured on staging in Chrome: after the click, `scrollIntoView` ran on four buttons in a row (`Overview`, `Still in production · 625`, `All · 625`, `All · 113`). All four are the active pill of a `scrollable` `Tabs` strip. `src/components/ui/tabs.tsx` passed an inline ref callback that called `el.scrollIntoView({ block: "nearest", inline: "center" })`. An inline ref is a new function on every render, so React re-ran it on every re-render of those cards, and `scrollIntoView` scrolls every scrollable ancestor, including the page. The last strip (the worklist filter) won, so the page landed there. It was meant only to centre the active pill inside its own horizontally scrolling row on phones.
+
+**Fix.** The ref now sets `scrollLeft` on the pill row itself, and does nothing when the row does not overflow (desktop). The page's vertical scroll is never touched. One shared component, so all 13 `scrollable` callers are covered. `main` carries the same code.
+
+**Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
 

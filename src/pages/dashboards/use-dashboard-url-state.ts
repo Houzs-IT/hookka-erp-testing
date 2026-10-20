@@ -7,7 +7,9 @@ import { parseDashboardUrl, serializeDashboardUrl, defaultSub, DEFAULT_TAB } fro
  * Dashboard navigation state lives in the query string (see the scheme in
  * dashboard-url-state-lib.ts) - no React state to drift from it.
  * Tab / sub-tab changes PUSH a history entry (Back walks tabs); period and
- * focused-day changes REPLACE (Back does not step through every month click).
+ * focused-day changes REPLACE (Back does not step through every month click)
+ * and keep the scroll position: without preventScrollReset the layout's
+ * <ScrollRestoration> jumps to the top on every day click (BUG-2026-10-19-336).
  * `landingTab` is where a bare URL opens (Overview unless the role is tab-restricted).
  */
 export function useDashboardUrlState<T extends string>(tabKeys: readonly T[], landingTab: string = DEFAULT_TAB) {
@@ -21,7 +23,7 @@ export function useDashboardUrlState<T extends string>(tabKeys: readonly T[], la
           const cur = parseDashboardUrl(prev, tabKeys, landingTab);
           return serializeDashboardUrl({ ...cur, ...patch(cur) }, prev);
         },
-        { replace },
+        { replace, preventScrollReset: replace },
       ),
     [setParams, tabKeys, landingTab],
   );

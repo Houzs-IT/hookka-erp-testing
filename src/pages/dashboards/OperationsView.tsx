@@ -110,7 +110,7 @@ export function OperationsView({
                 Plant Load beside it instead of stretched across the page.
                 The overdue / due-soon counts live in "Today's problems" up
                 top; its tiles scroll down to these two lists. */}
-            <CommandCenterSections period={period} sections={["dailyReport", "deptRevenue"]} />
+            <CommandCenterSections period={period} sections={["dailyReport", "deptRevenue"]} onPeriodChange={onPeriodChange} />
             {/* Stretch both to the taller one (owner 2026-10-17: the backlog
                 card left a gap under it beside Plant Load). */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
