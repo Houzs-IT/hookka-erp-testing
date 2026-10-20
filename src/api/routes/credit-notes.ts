@@ -23,6 +23,14 @@ import {
   noteLedgerSourceType,
 } from "../lib/note-ledger";
 import { ensureDeliveryReturnTables } from "../lib/delivery-return-create";
+import {
+  CREDIT_NOTE_REASONS,
+  noteDeleteStatement,
+  noteDraftOnly,
+  noteIsDeleted,
+  notDeletedSql,
+  parseNoteItems,
+} from "../lib/note-edit";
 import { priceReturnLines, type InvoiceLineOfReturn, type InvoiceOfReturn, type ReturnLine } from "../../lib/cn-from-return";
 
 const app = new Hono<Env>();
@@ -192,8 +200,9 @@ app.get("/", async (c) => {
   const denied = await requirePermission(c, "credit-notes", "read");
   if (denied) return denied;
   const orgId = getOrgId(c);
+  // A deleted note is hidden from the list (DELETE /:id keeps the row).
   const res = await c.var.DB.prepare(
-    "SELECT * FROM credit_notes WHERE orgId = ? ORDER BY date DESC",
+    `SELECT * FROM credit_notes WHERE orgId = ? AND ${notDeletedSql("credit_note", "credit_notes")} ORDER BY date DESC`,
   )
     .bind(orgId)
     .all<CreditNoteRow>();
@@ -239,7 +248,8 @@ app.get("/from-returns", async (c) => {
             WHERE delivery_order_id IN (${marks(doIds.length)}) AND status NOT IN ('DRAFT','CANCELLED')`,
         ).bind(...doIds).all<Record<string, unknown>>()
       : Promise.resolve({ results: [] as Record<string, unknown>[] }),
-    db.prepare("SELECT * FROM credit_notes").all<Record<string, unknown>>(),
+    // A deleted note frees its return for a new one.
+    db.prepare(`SELECT * FROM credit_notes WHERE ${notDeletedSql("credit_note", "credit_notes")}`).all<Record<string, unknown>>(),
   ]);
   const invRows = invRes.results ?? [];
   const invIds = invRows.map((r) => String(r.id));
@@ -313,7 +323,7 @@ app.post("/", async (c) => {
     const deliveryReturnId = typeof body.deliveryReturnId === "string" ? body.deliveryReturnId.trim() : "";
     await ensureCreditNoteReturnColumn(c.var.DB);
     if (deliveryReturnId) {
-      const used = await c.var.DB.prepare("SELECT noteNumber FROM credit_notes WHERE delivery_return_id = ?")
+      const used = await c.var.DB.prepare(`SELECT noteNumber FROM credit_notes WHERE delivery_return_id = ? AND ${notDeletedSql("credit_note", "credit_notes")}`)
         .bind(deliveryReturnId).first<{ noteNumber?: string; note_number?: string }>();
       if (used) {
         return c.json({ success: false, error: `This delivery return already has credit note ${used.noteNumber ?? used.note_number ?? ""}.` }, 409);
@@ -584,7 +594,7 @@ app.get("/:id", async (c) => {
   )
     .bind(id)
     .first<CreditNoteRow>();
-  if (!row) {
+  if (!row || (await noteIsDeleted(c.var.DB, getOrgId(c), "credit_note", id))) {
     return c.json({ success: false, error: "Credit note not found" }, 404);
   }
   return c.json({ success: true, data: rowToCreditNote(row) });
@@ -609,7 +619,8 @@ app.put("/:id", async (c) => {
     )
       .bind(id)
       .first<CreditNoteRow>();
-    if (!existing) {
+    // A deleted draft is gone from every list — it cannot be posted either.
+    if (!existing || (await noteIsDeleted(c.var.DB, getOrgId(c), "credit_note", id))) {
       return c.json({ success: false, error: "Credit note not found" }, 404);
     }
     const body = await c.req.json();
@@ -884,6 +895,127 @@ app.post("/:id/unpost", async (c) => {
     after: rowToCreditNote(updated),
   });
   return c.json({ success: true, data: rowToCreditNote(updated) });
+});
+
+// PUT /api/credit-notes/:id/edit — change a draft (owner 2026-10-20 「edit,
+// duplicate, delete 可以做， approve 不需要」): its invoice, reason, detail and
+// lines, checked as on create (the customer block re-read from the invoice,
+// the total within what the invoice still has uncollected). A draft has
+// touched nothing, so nothing else moves; a posted note goes Back to Draft
+// first. Its number, date and delivery return stay.
+app.put("/:id/edit", async (c) => {
+  const denied = await requirePermission(c, "credit-notes", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const db = c.var.DB;
+  const existing = await db
+    .prepare("SELECT * FROM credit_notes WHERE id = ? AND orgId = ?")
+    .bind(id, orgId)
+    .first<CreditNoteRow>();
+  if (!existing || (await noteIsDeleted(db, orgId, "credit_note", id))) {
+    return c.json({ success: false, error: "Credit note not found" }, 404);
+  }
+  const notDraft = noteDraftOnly("Credit note", existing.noteNumber, existing.status, "edited");
+  if (notDraft) return c.json({ success: false, error: notDraft }, 409);
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body) return c.json({ success: false, error: "Invalid request body" }, 400);
+  const invoiceId = typeof body.invoiceId === "string" ? body.invoiceId.trim() : "";
+  const reason = typeof body.reason === "string" ? body.reason : "";
+  if (!invoiceId || !reason) {
+    return c.json({ success: false, error: "invoiceId, reason, and items are required" }, 400);
+  }
+  if (!(CREDIT_NOTE_REASONS as readonly string[]).includes(reason)) {
+    return c.json({ success: false, error: `Unknown reason "${reason}".` }, 400);
+  }
+  const parsed = parseNoteItems(body.items, "Credit note");
+  if ("error" in parsed) return c.json({ success: false, error: parsed.error }, 400);
+  const invoice = await db
+    .prepare(
+      `SELECT id, invoiceNo, customerId, customerName, customerState,
+              customerAddress, attention, customerPhone, totalSen, paidAmount
+         FROM invoices WHERE id = ? AND orgId = ?`,
+    )
+    .bind(invoiceId, orgId)
+    .first<{
+      id: string; invoiceNo: string; customerId: string; customerName: string;
+      customerState: string | null; customerAddress: string | null; attention: string | null; customerPhone: string | null;
+      totalSen: number; paidAmount: number;
+    }>();
+  if (!invoice) return c.json({ success: false, error: "Invoice not found" }, 404);
+  const uncollectedSen = Math.max(0, (Number(invoice.totalSen) || 0) - (Number(invoice.paidAmount) || 0));
+  if (parsed.totalSen > uncollectedSen) {
+    return c.json(
+      {
+        success: false,
+        error: `Credit note amount (${parsed.totalSen} sen) exceeds the invoice's uncollected balance (${uncollectedSen} sen) on ${invoice.invoiceNo}. Reduce the CN amount or issue a refund instead.`,
+      },
+      400,
+    );
+  }
+  await db
+    .prepare(
+      `UPDATE credit_notes
+          SET invoiceId = ?, invoiceNumber = ?, customerId = ?, customerName = ?, customerState = ?,
+              customerAddress = ?, attention = ?, customerPhone = ?,
+              reason = ?, reasonDetail = ?, totalAmount = ?, items = ?
+        WHERE id = ? AND orgId = ? AND status = 'DRAFT'`,
+    )
+    .bind(
+      invoice.id, invoice.invoiceNo, invoice.customerId, invoice.customerName, invoice.customerState,
+      invoice.customerAddress, invoice.attention, invoice.customerPhone,
+      reason, typeof body.reasonDetail === "string" ? body.reasonDetail : "", parsed.totalSen, JSON.stringify(parsed.items),
+      id, orgId,
+    )
+    .run();
+  const updated = await db
+    .prepare("SELECT * FROM credit_notes WHERE id = ? AND orgId = ?")
+    .bind(id, orgId)
+    .first<CreditNoteRow>();
+  if (!updated) return c.json({ success: false, error: "Credit note not found" }, 404);
+  await emitAudit(c, {
+    resource: "credit-notes",
+    resourceId: id,
+    action: "update",
+    before: rowToCreditNote(existing),
+    after: rowToCreditNote(updated),
+  });
+  return c.json({ success: true, data: rowToCreditNote(updated) });
+});
+
+// DELETE /api/credit-notes/:id — delete a draft (owner 2026-10-20). It is
+// hidden from every list and the row kept (document_lifecycle DELETED); a
+// delivery return it was raised from lets go of it, so the return can take a
+// new note. Its number is not used again. A posted note goes Back to Draft
+// first.
+app.delete("/:id", async (c) => {
+  const denied = await requirePermission(c, "credit-notes", "delete");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const db = c.var.DB;
+  const existing = await db
+    .prepare("SELECT * FROM credit_notes WHERE id = ? AND orgId = ?")
+    .bind(id, orgId)
+    .first<CreditNoteRow>();
+  if (!existing || (await noteIsDeleted(db, orgId, "credit_note", id))) {
+    return c.json({ success: false, error: "Credit note not found" }, 404);
+  }
+  const notDraft = noteDraftOnly("Credit note", existing.noteNumber, existing.status, "deleted");
+  if (notDraft) return c.json({ success: false, error: notDraft }, 409);
+  await ensureDeliveryReturnTables(db);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  await db.batch([
+    noteDeleteStatement(db, orgId, "credit_note", id, actorUserId),
+    db.prepare("UPDATE delivery_returns SET credit_note_id = NULL WHERE credit_note_id = ?").bind(id),
+  ]);
+  await emitAudit(c, {
+    resource: "credit-notes",
+    resourceId: id,
+    action: "delete",
+    before: rowToCreditNote(existing),
+  });
+  return c.json({ success: true });
 });
 
 export default app;

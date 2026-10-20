@@ -77,6 +77,7 @@ import {
   buildDoStatusSyncStatement,
 } from "../lib/do-partial-invoice";
 import type { DoDraw } from "../lib/do-partial-invoice";
+import { notDeletedSql } from "../lib/note-edit";
 
 const app = new Hono<Env>();
 
@@ -2324,7 +2325,7 @@ app.get("/:id", async (c) => {
     c.var.DB.prepare(
       `SELECT id, noteNumber, date, reason, totalAmount, status
          FROM credit_notes
-        WHERE invoiceId = ?
+        WHERE invoiceId = ? AND ${notDeletedSql("credit_note", "credit_notes")}
         ORDER BY date DESC`,
     )
       .bind(id)
@@ -2332,7 +2333,7 @@ app.get("/:id", async (c) => {
     c.var.DB.prepare(
       `SELECT id, noteNumber, date, reason, totalAmount, status
          FROM debit_notes
-        WHERE invoiceId = ?
+        WHERE invoiceId = ? AND ${notDeletedSql("debit_note", "debit_notes")}
         ORDER BY date DESC`,
     )
       .bind(id)

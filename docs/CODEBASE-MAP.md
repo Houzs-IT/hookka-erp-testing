@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-20 on branch `feat/notes-edit-duplicate-delete` (to `main`)**: the Debit Notes section (§5) and its credit-note twin — Edit / Duplicate / Delete, the double-click popup, the deleted-note filter — read from `src/api/routes/debit-notes.ts`, `src/api/routes/credit-notes.ts`, `src/api/lib/note-edit.ts`, `src/api/routes/invoices.ts` (invoice detail note lists), `src/pages/invoices/debit-notes.tsx`, `src/pages/invoices/credit-notes.tsx`, `src/components/finance/doc-popup.tsx`, `src/components/finance/note-popup.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-20 on branch `fix/dashboard-design-labels-tabs` (to `main`)**: the Financial Dashboard sentence (`dashPeriodLabel`, the `SegmentedSwitch` `tone="pill"`) and the phone dashboard's cash sections (`cfSectionTotals` order), read from `src/lib/finance-chart-look.ts`, `src/components/finance/report-shell.tsx`, `src/pages/finance-dashboard.tsx`, `src/pages/m/screens/finance/m-finance-lib.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-20 on branch `feat/m-finance-dashboard-design` (to `main`)**: the phone Finance Dashboard sentence (Mobile part C) and the swipe back, read from `src/pages/m/screens/finance/DashScreen.tsx`, `DashSections.tsx`, `m-finance-lib.ts`, `finance-shell.tsx`, `FinanceRoute.tsx`. Nothing else re-checked.
 > **Last verified: 2026-10-20 on branch `feat/finance-dashboard-design-look` (to `main`)**: the Financial Dashboard sentence in the Finance v2 note (the design's look), read from `src/lib/finance-chart-look.ts`, `src/components/finance/chart-look.tsx`, `src/pages/finance-dashboard.tsx`, `src/styles/finance-v2.css`, `src/index.css`. Nothing else re-checked.
@@ -2197,11 +2198,23 @@ and `/api/files/:id/download` as an `<img src>` (`:671`).
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/invoices/debit-notes.tsx` — `/invoices/debit-notes`, gated `RequirePermission resource="invoices" action="read"` (`src/dashboard-routes.tsx:349-356`); DataGrid list + create modal + batch voucher print/export + Post / Back to Draft in the row menu (536) | `src/api/routes/debit-notes.ts` (602) — `GET /` (`:124`), `POST /` (`:139`), `GET /:id` (`:284`), `PUT /:id` (`:304`), `POST /:id/unpost` (`:492`, Back to Draft) | `debit_notes` (items are JSON TEXT in one column), and on POSTED: `customers.outstandingSen`, `invoices.totalSen/subtotalSen/status`, the GL via `buildDebitNoteLedgerLegs` | `tests/finance-notes-post.test.mjs` (with the credit-note twin), plus the cross-cutting sweeps — `tests/tenant-isolation.test.mjs`, `tests/security-route-coverage.test.mjs`, `tests/security-permission-matrix.test.mjs`, `tests/audit-coverage.test.mjs` |
+| `src/pages/invoices/debit-notes.tsx` — `/invoices/debit-notes`, gated `RequirePermission resource="invoices" action="read"` (`src/dashboard-routes.tsx:349-356`); DataGrid list + create / edit modal + batch voucher print/export + the row menu Print / Edit / Duplicate / Post / Back to Draft / Delete + double-click → `NotePopup` (`src/components/finance/note-popup.tsx` in the shared `DocPopup` frame, `doc-popup.tsx`) (633) | `src/api/routes/debit-notes.ts` (706) — `GET /` (`:120`, deleted notes left out), `POST /` (`:136`), `GET /:id` (`:281`), `PUT /:id` (`:301`), `POST /:id/unpost` (`:491`, Back to Draft), `PUT /:id/edit` (`:608`, a draft only), `DELETE /:id` (`:680`, a draft only → `document_lifecycle` DELETED, the row kept) | `debit_notes` (items are JSON TEXT in one column), and on POSTED: `customers.outstandingSen`, `invoices.totalSen/subtotalSen/status`, the GL via `buildDebitNoteLedgerLegs` | `tests/finance-notes-post.test.mjs` (with the credit-note twin), plus the cross-cutting sweeps — `tests/tenant-isolation.test.mjs`, `tests/security-route-coverage.test.mjs`, `tests/security-permission-matrix.test.mjs`, `tests/audit-coverage.test.mjs` |
 
-**Endpoints called:** `GET /api/debit-notes` (`:78`, via `useCachedJson`),
-`GET /api/invoices` (`:84`, only while the create modal is open),
-`POST /api/debit-notes` (`:152`).
+**Endpoints called:** `GET /api/debit-notes` (`:85`, via `useCachedJson`),
+`GET /api/invoices` (`:91`, only while the create modal is open),
+`POST /api/debit-notes` / `PUT /api/debit-notes/:id/edit` (`:212`), `DELETE /api/debit-notes/:id` (the row menu's Delete).
+
+**Edit / Duplicate / Delete (owner 2026-10-20 「edit, duplicate, delete 可以做， approve 不需要」 — no Approve step).**
+Only a DRAFT is edited or deleted (`noteDraftOnly`, `src/api/lib/note-edit.ts`): a draft has touched
+nothing, so neither moves the customer, the invoice or the GL. Edit (`PUT /:id/edit`) re-reads the
+customer block from the chosen invoice and checks the lines as on create (`parseNoteItems`); the
+credit note also keeps its total within the invoice's uncollected balance. Duplicate is the New form
+filled from a note (a credit note's copy never takes its delivery return — one note per return).
+Delete hides the note (`document_lifecycle` state DELETED, upsert `noteDeleteStatement`), keeps the
+row (the number is never reused) and, for a credit note, clears `delivery_returns.credit_note_id`.
+Every reader that lists drafts leaves a deleted note out (`notDeletedSql`): both list routes, the
+credit note's `/from-returns` and its one-note-per-return check, the invoice detail's note lists
+(`invoices.ts`); `GET /:id`, `PUT /:id` (post) and the edit / delete routes answer 404.
 
 **Gotchas — three, all worth knowing before you touch this**
 
