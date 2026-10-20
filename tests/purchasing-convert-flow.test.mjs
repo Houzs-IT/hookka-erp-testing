@@ -25,6 +25,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { execPoReceiptSql, runAtomic } from "./_po-receipt-mock.mjs";
 
 try {
   register("tsx/esm", pathToFileURL("./"));
@@ -95,15 +96,13 @@ function makeDb() {
   }
 
   async function batch(stmts) {
-    // stmts are the prepared-statement objects from prepare().bind(); each
-    // carries its own captured SQL+binds via the closure. We re-run them.
-    const out = [];
-    for (const s of stmts) out.push(await s.run());
-    return out;
+    // One transaction, as on Postgres: a raising statement rolls back all.
+    return runAtomic(tables, stmts);
   }
 
   // ---- write side -----------------------------------------------------------
   function exec(sql, binds) {
+    if (execPoReceiptSql(sql, binds, tables)) return;
     // ALTER / CREATE INDEX — no-op in the mock (all columns already present).
     if (/^ALTER TABLE/i.test(sql) || /^CREATE (UNIQUE )?INDEX/i.test(sql) || /^CREATE TABLE/i.test(sql)) {
       return;
