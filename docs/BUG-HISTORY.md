@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-350 to -353 (branch `claude/t006-grn-core-main-4f46ca`, to main; T-006 R2/R3 + HK-0108); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -201,6 +202,46 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-353 — A POSTED multi-PO receipt's qty edit was checked and booked against the header PO's line `procurement` `grn` 🟡
+
+🟡 **On branch** (`claude/t006-grn-core-main-4f46ca` → `main`). T-006 R2 port; the same bug existed in the staging version of R2.
+
+**Symptom.** On a receipt drawing from two POs, raising the qty of a line that belongs to the second PO was refused as an over-receipt when the header PO's line at the same position was full, and a permitted change moved the header PO's line counter instead of the second PO's.
+
+**Cause.** The POSTED-edit over-receipt check and `cascadePOReceivedQtyDelta` found the PO line from the GRN header's `poId` plus the line's `poItemIndex`, a position that only means something on the header PO.
+
+**Fix.** Each changed line is resolved through its own `po_id` / `po_item_id` (`resolveGrnLineTargets`, the header + index stays only as the legacy fallback); every raised line is checked, and the counter moves, on that line. Regression: `tests/t006-grn-core.test.mjs` ("R2 a POSTED edit checks the line against its OWN PO line").
+
+## BUG-2026-10-20-352 — HK-0108: editing a POSTED multi-PO receipt saved screen line 1 onto stored line 2 `procurement` `grn` 🟡
+
+🟡 **On branch** (`claude/t006-grn-core-main-4f46ca` → `main`).
+
+**Symptom.** Correcting the accepted qty of one line on a POSTED receipt whose lines came from several POs changed a different line: the wrong row's qty, the wrong material's stock and batch, and the wrong PO line's received counter.
+
+**Cause.** The GET lists lines by `poItemIndex`; the POSTED-edit path read the stored lines `ORDER BY id` and paired `existingItems[i]` with `rawItems[i]`. On a multi-PO receipt every PO's lines start at index 0, so the two orders differ.
+
+**Fix.** Incoming lines are paired with stored rows by the `id` the page already sends (as the DRAFT path does since HK-0107); a client without ids is paired in GET order; an unknown or repeated id is refused with 409. The stock batch is still keyed by the row's position in id order. Regression: `tests/t006-grn-core.test.mjs` ("HK-0108 …").
+
+## BUG-2026-10-20-351 — A GRN was created, and posted from DRAFT, in several transactions; a failure left a POSTED receipt without stock `procurement` `grn` `data-integrity` 🟡
+
+🟡 **On branch** (`claude/t006-grn-core-main-4f46ca` → `main`). T-006 R3 port, extended to the DRAFT → POSTED flip, which staging still ran after commit.
+
+**Symptom.** If anything failed after the GRN rows were written (the stock post, the PO counter bump, the PO status), the receipt existed as POSTED with no stock or with an untouched PO, and the client saw a 500. A retry created a second GRN.
+
+**Cause.** POST wrote the header and lines in one batch, then `postGRNToStock` and `cascadePOStatusAfterGRNPost` ran their own writes after commit. The PUT's DRAFT → POSTED flip did the same after its batch.
+
+**Fix.** Stock (`buildGRNStockStatements`), the PO counter and the PO status (`buildPoReceiptStatements` / `poStatusStatements`, status recomputed in SQL so it sees this receipt) are statements in the same batch as the receipt or the status flip. A failure rolls everything back; after commit, a failed read-back answers 201 with the id instead of a 500. Regression: `tests/t006-grn-core.test.mjs` ("R3 …").
+
+## BUG-2026-10-20-350 — Two receipts saved at the same moment could both pass the over-receipt ceiling `procurement` `grn` `data-integrity` 🟡
+
+🟡 **On branch** (`claude/t006-grn-core-main-4f46ca` → `main`). T-006 R2 port.
+
+**Symptom.** Two GRNs (or a GRN and a POSTED-line raise) against the same PO line, saved together, could take it past 110% of ordered.
+
+**Cause.** The ceiling (`findOverReceipt`, HK-0096) reads `receivedQty` before the write. Both requests read the old figure, both passed, both added.
+
+**Fix.** The counter UPDATE re-tests the ceiling against the row it writes and, when it would pass 110%, casts a marker string to a number, which raises; the whole batch rolls back and the route answers 409. `findOverReceipt` stays as the friendly pre-check. Works only if the cast is not folded at plan time and the row lock re-evaluates the CASE: **UNVERIFIED on real Postgres** (tests use node:sqlite with the cast mapped to a raising function). Regression: `tests/t006-grn-core.test.mjs` ("R2 …").
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 
