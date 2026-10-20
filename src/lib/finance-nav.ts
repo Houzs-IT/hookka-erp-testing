@@ -53,6 +53,7 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   ocreditorbills: { title: "Other Creditor Bills", explain: "Bills from parties other than suppliers." },
   ocreditorpay: { title: "Other Creditor Payments", explain: "Money out to parties other than suppliers." },
   coa: { title: "Chart of Accounts", explain: "Accounts, their types and the report sections they go to." },
+  fx: { title: "Currency & FX", explain: "Monthly rates keyed by Finance (1 unit = RM). A form fills in the rate for its document's month — it can be changed there, and each document keeps its own rate. A realised FX gain or loss on a payment posts to the accounts set here." },
   labor: { title: "Labour", explain: "Month-end posting of production wages and the employer's contributions." },
   stockmap: { title: "Stock Mapping", explain: "Which accounts each material group posts to." },
   openstock: { title: "Opening Stock", explain: "Quantity and cost on hand at the switch date." },

@@ -99,6 +99,7 @@ import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
 import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
 import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
+import { FxTab } from "./tabs/FxTab";
 import { CoaEditModal, CoaListView } from "./tabs/CoaListView";
 import { coaInactiveBlock, coaListRows } from "@/lib/coa-list";
 import { PartyListTab } from "./tabs/PartyListTab";
@@ -159,7 +160,7 @@ function CompanySelect({
 
 // =============== TYPES ===============
 
-type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "contra" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
+type TabKey = "overview" | "coa" | "fx" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "contra" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
 
 // =============== VOUCHER PRINTING (PV / OR / JV) ===============
 //
@@ -649,6 +650,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "ocreditorpay", label: "Other Creditor Payments", icon: <Wallet className="h-4 w-4" />, group: "Debtor / Creditor" },
   // Maintenance
   { key: "coa", label: "Chart of Accounts", icon: <List className="h-4 w-4" />, group: "Setup" },
+  { key: "fx", label: "Currency & FX", icon: <Wallet className="h-4 w-4" />, group: "Setup" },
   { key: "labor", label: "Labour", icon: <Users className="h-4 w-4" />, group: "Monthly" },
   { key: "stock", label: "Stock Summary", icon: <List className="h-4 w-4" />, group: "Reports" },
   { key: "stockmap", label: "Stock Mapping", icon: <List className="h-4 w-4" />, group: "Setup" },
@@ -665,7 +667,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
 // fetches its own data and opens at once.
 const TABS_WITH_ACCOUNTS = new Set<TabKey>([
   "coa", "journals", "gl", "odebtorbills", "odebtorpay", "ocreditorbills", "apinvoices", "ocreditorpay",
-  "payments", "receipts", "transfer", "cashbook", "assets", "labor", "opening", "stockmap", "maint",
+  "payments", "receipts", "transfer", "cashbook", "assets", "labor", "opening", "stockmap", "maint", "fx",
 ]);
 
 export default function AccountingPage() {
@@ -752,6 +754,7 @@ export default function AccountingPage() {
           {tab === "bs" && <BalanceSheetTab />}
           {tab === "cashflow" && <CashFlowTab />}
           {tab === "coa" && <COATab accounts={accounts} onRefresh={fetchAll} />}
+          {tab === "fx" && <FxTab accounts={accounts} />}
           {tab === "journals" && (
             <JournalsTab journals={journals} accounts={accounts} onRefresh={fetchAll} />
           )}

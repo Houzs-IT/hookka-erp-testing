@@ -361,6 +361,7 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   tf_interest: "Trade finance interest",
   tf_bank_charge: "Trade finance bank charge",
   "trade-finance": "Trade finance",
+  "fx-settings": "Currency & FX",
   labor_post: "Labour posting",
   closing_stock: "Closing stock",
   depreciation: "Depreciation",
