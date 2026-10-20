@@ -737,7 +737,7 @@ export default function AccountingPage() {
           <div className="text-[#6B7280]">Loading accounting data...</div>
         </div>
       ) : (
-        <>
+        <div key={tab} data-fin-tab="">
           {tab === "overview" && (
             <OverviewTab arData={arData} apData={apData} agingLoading={agingPending} />
           )}
@@ -810,7 +810,7 @@ export default function AccountingPage() {
               <TradeFinanceLinesCard />
             </div>
           )}
-        </>
+        </div>
       )}
       </FinanceTitleSlotContext.Provider>
     </div>
@@ -8426,8 +8426,8 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
   // a light body whose blocks read as white cards (finance-v2.css,
   // [data-fin-modal-body]); the body scrolls, the header and actions stay.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
-      <div className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
+    <div data-fin-backdrop="" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
+      <div data-fin-pop="" className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-[16px] font-semibold text-[#1F1D1B]">{title}</h2>

@@ -15,8 +15,8 @@ export function DocPopup({ title, badges, onClose, children, actions }: {
 }) {
   useEscapeClose(onClose);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
-      <div className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]" onClick={(e) => e.stopPropagation()}>
+    <div data-fin-backdrop="" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
+      <div data-fin-pop="" className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-[16px] font-semibold text-[#1F1D1B]">{title}</h2>
