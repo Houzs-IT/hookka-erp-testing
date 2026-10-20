@@ -83,7 +83,7 @@ test("every finance popup closes on Esc", () => {
   assert.match(ui, /useEscapeClose\(closeImgPopup, !!imgPopup\);/, "report image");
   assert.match(sp, /useEscapeClose\(\(\) => setDetail\(null\), !!detail\);/);
   assert.match(read("src/pages/invoices/payments.tsx"), /useEscapeClose\(\(\) => setDetail\(null\), !!detail\);/);
-  assert.match(read("src/pages/invoices/e-invoice.tsx"), /useEscapeClose\(\(\) => \{ if \(!cancelling\) setCancelConfirmId\(null\); \}, !!cancelConfirmId\);/);
+  assert.match(read("src/pages/invoices/e-invoice.tsx"), /useEscapeClose\(\(\) => \{ if \(!busy\) setDialog\(null\); \}, !!dialog\);/, "the e-Invoice step dialog");
 });
 
 test("a form popup asks before Esc drops what was keyed", () => {

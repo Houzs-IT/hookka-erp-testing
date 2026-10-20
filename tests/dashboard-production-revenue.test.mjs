@@ -72,7 +72,9 @@ test("cost structure: SALES REVENUE, then PRODUCTION REVENUE, then the materials
   // sales revenue, with production revenue right under it.
   assert.equal((UI.match(/>SALES REVENUE<\/td>[\s\S]{0,1200}?>PRODUCTION REVENUE<\/td>/g) ?? []).length, 2);
   // Sofa takes the accessories, like the sales side (only bedframe sales are their own account).
-  assert.match(UI, /csLine === "bedframe" \? p\.bedframe : p\.sofa \+ p\.accessory/);
+  // (in the module the page and the phone share since 2026-10-19)
+  assert.match(UI, /const csLineProdRev = \(r: Row\): number \| null => csLineProdRevOf\(r, csLine\);/);
+  assert.match(read("src/lib/finance-dashboard-calc.ts"), /line === "bedframe" \? p\.bedframe : p\.sofa \+ p\.accessory/);
   assert.match(UI, /point\[`__ppct__\$\{cat\}`\] = pctOf\(amt, prod\);/);
   // The total sums every material in the table, not just the ones drawn.
   assert.match(UI, /for \(const cat of csCats\) \{\n\s*sum \+= point\[cat\] as number;/);

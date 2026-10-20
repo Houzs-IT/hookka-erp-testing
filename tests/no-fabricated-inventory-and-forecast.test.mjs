@@ -426,10 +426,17 @@ test("no LHDN identifier is minted locally", () => {
 
 test("the e-invoice page surfaces the refusal and its own limits", () => {
   const src = read("src/pages/invoices/e-invoice.tsx");
+  // 2026-10-19: the Submit button is gone (the MyInvois tracking keys the
+  // Submission ID and the UUID instead); every refusal is still shown.
   assert.ok(
-    src.includes("setSubmitError"),
+    src.includes("setDialogError(json?.error") && src.includes("failed.push(json?.error"),
     "e-invoice.tsx: submitToLHDN threw the response away, so a failure " +
       "looked like a button that did nothing.",
+  );
+  assert.ok(
+    !src.includes('action: "submit"') && /Nothing\s+turns Valid without a UUID\./.test(src),
+    "e-invoice.tsx: the page never asks for the LHDN transmission, and says " +
+      "that nothing turns Valid without a UUID LHDN issued.",
   );
   assert.ok(
     src.includes("Not connected to LHDN."),

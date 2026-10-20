@@ -1,6 +1,9 @@
 # Bug History
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-345 (branch `feat/einvoice-myinvois-tracking`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: BUG-2026-10-19-344 flipped to ✅ after the #1026 prod check.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
@@ -197,6 +200,18 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-345 — e-Invoice Generate failed for every invoice whose total had cents `finance` `e-invoice` 🟡
+
+Found 2026-10-19 while building the MyInvois tracking (owner 「1 做」). `POST /api/e-invoices` wrote the three amounts as ringgit with decimals (total ÷ 100) into the table's INTEGER columns. postgres.js sends a number untyped, so the server reads it as the column's type and refuses a decimal for an integer; the catch-all answered 400 "Invalid request body", and the page never read the answer — Generate looked as if it worked and nothing was made. (A whole-ringgit total would have saved, in ringgit, against the sen rule.) The phone's e-Invoice list read `totalSen`, which the row does not have, so every amount there showed 0. Prod held no e-invoices when the list was read through the API on 2026-10-19.
+
+Fix (with the tracking): the columns hold sen, taken from the invoice — total, its stored SST, total − SST; the page and the phone read them as sen (`totalIncludingTax`); every refusal is shown (Generate collects each one, the catch logs and names the error). Regression: `tests/einvoice-tracking.test.mjs` (its mock refuses a non-integer amount the way Postgres does).
+
+## BUG-2026-10-19-344 — The Financial Dashboard's equity read 0 every month, so ROE never showed `finance` `dashboard` ✅
+
+Found 2026-10-19 while checking the phone dashboard's new Balance Sheet card (owner 「要」 — the five sections): its Equity line read 0.00 for October, though total assets were well above total liabilities. `GET /api/accounting/dashboard` added up only the accounts whose balance-sheet section is EQUITY. The un-closed current-year earnings sit in the P&L accounts until a year close, and those have no balance-sheet section, so they were left out. On these books the equity side of the Balance Sheet tab is exactly that one line ("Current Year Earnings (unclosed)"), so the dashboard's equity was 0 in every month, and ROE (`net ÷ equity`, only when equity > 0) read "-" on the desktop dashboard all along. The desktop card never printed equity itself, which is why nobody saw it.
+
+Fix = equity is net assets (total assets − total liabilities): the equity accounts plus the un-closed earnings, the sum the Balance Sheet tab's equity side adds up to. Payload version v20 retires the stored copies. Regression: `tests/dashboard-equity-net-assets.test.mjs`. Verified on prod after #1026: each month's equity equals the Balance Sheet tab's equity side (September negative, October positive), ROE shows for the month whose equity is positive, and the phone's Balance Sheet / Ratios cards read the same.
 
 ## BUG-2026-10-19-342 — Today's efficiency read 4,000% on the dashboard: working hours only land at punch-out `dashboard` `workforce` ✅
 

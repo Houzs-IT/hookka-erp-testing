@@ -41,6 +41,7 @@ import {
   STATUS_MAPS,
   PAYMENT_STATUS_MAP,
   SERVICE_CASE_STATUS_MAP,
+  E_INVOICE_STATUS_MAP,
   selectData,
   selectNested,
   selectDocData,
@@ -840,6 +841,9 @@ const debitNotesSource: DataSource = {
   subTabs: [{ key: "debit_notes", label: "Debit Notes", match: () => true }],
 };
 
+// The e-Invoice record (src/api/routes/e-invoices.ts): the amount is the
+// gross total in sen (totalIncludingTax — the row has no totalSen, so this
+// read 0), and the statuses are the record's own six.
 const eInvoiceSource: DataSource = {
   url: "/api/e-invoices",
   select: selectData,
@@ -847,15 +851,15 @@ const eInvoiceSource: DataSource = {
     id: str(r, "id", "invoiceNo"),
     code: str(r, "invoiceNo") || str(r, "id"),
     title: str(r, "customerName") || "—",
-    subLine: undefined,
-    meta1: { label: "Amount", value: money(num(r, "totalSen")) },
-    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+    subLine: str(r, "errorMessage") || (str(r, "uuid") ? `UUID ${str(r, "uuid")}` : str(r, "submissionId") ? `Submission ID ${str(r, "submissionId")}` : undefined),
+    meta1: { label: "Amount", value: money(num(r, "totalIncludingTax")) },
+    status: resolveStatus(str(r, "status"), E_INVOICE_STATUS_MAP),
   }),
   columns: [
     textCol("invoiceNo", "Reference", (r) => str(r, "invoiceNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["VALIDATED", "SUBMITTED", "PENDING"]),
+    numCol("amount", "Amount", (r) => num(r, "totalIncludingTax")),
+    enumCol("status", "Status", (r) => str(r, "status"), ["PENDING", "SUBMITTED", "VALID", "INVALID", "REJECTED", "CANCELLED"]),
   ],
   defaultSort: { key: "invoiceNo", dir: "desc" },
   subTabs: [{ key: "e_invoice", label: "e-Invoice", match: () => true }],
