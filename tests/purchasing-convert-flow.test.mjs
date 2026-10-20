@@ -97,9 +97,39 @@ function makeDb() {
   async function batch(stmts) {
     // stmts are the prepared-statement objects from prepare().bind(); each
     // carries its own captured SQL+binds via the closure. We re-run them.
+    // T-006 R5: `db.beforeBatch` stands in for another invoice committing
+    // between a route's check and its write. A batch is one transaction on
+    // prod, so a throw rolls every table back.
+    if (db.beforeBatch) {
+      const hook = db.beforeBatch;
+      db.beforeBatch = null;
+      hook(tables);
+    }
+    const snapshot = JSON.stringify(tables);
     const out = [];
-    for (const s of stmts) out.push(await s.run());
+    try {
+      for (const s of stmts) out.push(await s.run());
+    } catch (e) {
+      const restored = JSON.parse(snapshot);
+      for (const k of Object.keys(tables)) delete tables[k];
+      Object.assign(tables, restored);
+      throw e;
+    }
     return out;
+  }
+
+  // Prod's chk_grn_items_invoiced_qty (migration 0243): the error postgres.js
+  // throws, code and constraint name included.
+  function checkInvoiced(gi) {
+    const inv = Number(gi.invoiced_qty) || 0;
+    if (inv < 0 || inv > (Number(getCol(gi, "acceptedQty")) || 0)) {
+      const err = new Error(
+        'new row for relation "grn_items" violates check constraint "chk_grn_items_invoiced_qty"',
+      );
+      err.code = "23514";
+      err.constraint_name = "chk_grn_items_invoiced_qty";
+      throw err;
+    }
   }
 
   // ---- write side -----------------------------------------------------------
@@ -135,15 +165,22 @@ function makeDb() {
     if (m) {
       const [delta, id] = binds;
       const gi = tables.grn_items.find((r) => String(r.id) === String(id));
-      if (gi) gi.invoiced_qty = (Number(gi.invoiced_qty) || 0) + Number(delta);
+      if (gi) {
+        gi.invoiced_qty = (Number(gi.invoiced_qty) || 0) + Number(delta);
+        checkInvoiced(gi);
+      }
       return;
     }
-    // UPDATE grn_items SET invoiced_qty = invoiced_qty - ? WHERE id = ?
-    m = sql.match(/^UPDATE grn_items SET invoiced_qty = invoiced_qty - \? WHERE id = \?/i);
+    // UPDATE grn_items SET invoiced_qty = invoiced_qty ± ? WHERE id = ?
+    // (+ is the unvoid re-consume, − the delete / re-line restore)
+    m = sql.match(/^UPDATE grn_items SET invoiced_qty = invoiced_qty ([+-]) \? WHERE id = \?/i);
     if (m) {
       const [delta, id] = binds;
       const gi = tables.grn_items.find((r) => String(r.id) === String(id));
-      if (gi) gi.invoiced_qty = (Number(gi.invoiced_qty) || 0) - Number(delta);
+      if (gi) {
+        gi.invoiced_qty = (Number(gi.invoiced_qty) || 0) + (m[1] === "+" ? 1 : -1) * Number(delta);
+        checkInvoiced(gi);
+      }
       return;
     }
     // UPDATE purchase_order_items SET receivedQty = receivedQty + ? WHERE id = ?
@@ -423,6 +460,11 @@ function makeDb() {
     // A GRN-sourced line counts here through its own po_id — which is exactly
     // why the GRN-then-PO order was already blocked while PO-then-GRN was not.
     if (/FROM purchase_invoice_items pii JOIN purchase_invoices/i.test(sql)) {
+      // grn_items.id is BIGINT, grn_item_id TEXT: Postgres refuses the uncast
+      // join (BUG-2026-09-24-182) — and so does this mock.
+      if (/JOIN grn_items gi ON gi\.id = /i.test(sql)) {
+        throw new Error("operator does not exist: bigint = text");
+      }
       const wanted = String(binds[0]);
       // The re-line path excludes the invoice being edited (AND pii.pi_id != ?)
       // — its current lines are about to be replaced.
@@ -437,11 +479,24 @@ function makeDb() {
         const effectivePo =
           getCol(it, "po_id") ?? getCol(pi, "purchaseOrderId") ?? null;
         if (effectivePo == null || String(effectivePo) !== wanted) continue;
-        const code = getCol(it, "material_code");
-        if (!code) continue;
-        byCode.set(code, (byCode.get(code) ?? 0) + (Number(getCol(it, "qty")) || 0));
+        // T-006 R8: COALESCE(pii.po_item_id, gi.po_item_id), grouped with the code.
+        const gi = tables.grn_items.find((g) => String(g.id) === String(getCol(it, "grn_item_id") ?? ""));
+        const poItemId = getCol(it, "po_item_id") ?? (gi ? getCol(gi, "po_item_id") : null) ?? null;
+        const mc = getCol(it, "material_code") ?? null;
+        const k = JSON.stringify([poItemId, mc]);
+        byCode.set(k, (byCode.get(k) ?? 0) + (Number(getCol(it, "qty")) || 0));
       }
-      return [...byCode].map(([mc, qty]) => ({ mc, qty }));
+      return [...byCode].map(([k, qty]) => {
+        const [poItemId, mc] = JSON.parse(k);
+        return { poItemId, mc, qty };
+      });
+    }
+    // SELECT id, po_item_id FROM grn_items WHERE id IN (...)  (re-line, R8)
+    if (/SELECT id, po_item_id FROM grn_items WHERE id IN/i.test(sql)) {
+      const ids = binds.map(String);
+      return tables.grn_items
+        .filter((r) => ids.includes(String(r.id)))
+        .map((r) => ({ id: r.id, po_item_id: getCol(r, "po_item_id") ?? null }));
     }
     // suppliers / poNo lookups not used here
     if (/FROM purchase_orders WHERE id = \?/i.test(sql)) {
@@ -450,7 +505,8 @@ function makeDb() {
     return [];
   }
 
-  return { tables, prepare, batch };
+  const db = { tables, prepare, batch, beforeBatch: null };
+  return db;
 }
 
 // Wrap a route sub-app so c.var.DB + userRole are injected (SUPER_ADMIN
@@ -1170,4 +1226,262 @@ test("HK-0096 a GRN line cannot be returned twice over", async () => {
   assert.equal(over.status, 409, "6 already returned + 6 > 10 received");
   assert.match((await over.json()).error, /already returned 6/);
   assert.equal((await ret(4)).status, 200, "the remaining 4 can still go back");
+});
+
+// ---------------------------------------------------------------------------
+// T-006 R5 / R8 / R9 (ported from staging, BUG-2026-10-20-355..357).
+// ---------------------------------------------------------------------------
+
+// A PO whose only line has NO material code (PO lines raised from a free-text
+// description), fully received on a GRN that records the PO line id.
+function seedBlankCodePo(db, { ordered = 10 } = {}) {
+  db.tables.suppliers.push({ id: "sup-4", code: "S4", name: "BLANK CO", email: null });
+  db.tables.purchase_orders.push({
+    id: "po-4", poNo: "PO-4", supplierId: "sup-4", supplierName: "BLANK CO",
+    subtotalSen: ordered * 1000, totalSen: ordered * 1000, status: "RECEIVED",
+    orderDate: "2026-10-01", expectedDate: "", receivedDate: "2026-10-02",
+    notes: "", orgId: "org-test",
+  });
+  db.tables.purchase_order_items.push({
+    id: "poi-4", purchaseOrderId: "po-4", materialCategory: "OTHER",
+    material_code: null, materialName: "Hand-cut panel", supplierSKU: "",
+    quantity: ordered, unitPriceSen: 1000, totalSen: ordered * 1000,
+    receivedQty: ordered, unit: "pcs", orgId: "org-test",
+  });
+  db.tables.grns.push({
+    id: "grn-4", grnNumber: "GRN-4", poId: "po-4", poNumber: "PO-4",
+    supplierId: "sup-4", supplierName: "BLANK CO", receiveDate: "2026-10-02",
+    receivedBy: "x", totalAmount: ordered * 1000, qcStatus: "PASSED",
+    status: "POSTED", notes: "", arrival_state: "ARRIVED",
+  });
+  db.tables.grn_items.push({
+    id: 401, grnId: "grn-4", poItemIndex: 0, po_id: "po-4", po_item_id: "poi-4",
+    materialCode: "", materialName: "Hand-cut panel",
+    orderedQty: ordered, receivedQty: ordered, acceptedQty: ordered,
+    rejectedQty: 0, rejectionReason: null, unitPrice: 1000, invoiced_qty: 0,
+  });
+}
+
+const blankLine = (qty, extra = {}) => ({
+  materialCode: null, materialName: "Hand-cut panel", qty, unitPriceSen: 1000, ...extra,
+});
+const blankHeader = { supplierId: "sup-4", supplierName: "BLANK CO" };
+
+test("T-006 R8: a blank-code PO line billed straight off the PO is capped by its PO line id", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  const piRoot = mount(piApp, db);
+  const bill = (qty) => post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [blankLine(qty, { poId: "po-4", poItemId: "poi-4" })],
+  });
+
+  assert.equal((await bill(10)).status, 200);
+  // Before R8 the blank code matched no PO line and this sailed through.
+  const over = await bill(1);
+  assert.equal(over.status, 409);
+  const err = (await over.json()).error;
+  assert.match(err, /remaining 0/);
+  assert.match(err, /PO-4/);
+  assert.doesNotMatch(err, /poi-4|item:/, "never print a bucket key or a raw PO-line id");
+  // The PO line is stored on the invoice line, so the NEXT check can count it.
+  assert.equal(db.tables.purchase_invoice_items[0].po_item_id, "poi-4");
+});
+
+test("T-006 R8: a blank-code GRN line is capped through grn_items.po_item_id", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  const piRoot = mount(piApp, db);
+
+  // All 10 billed off the PO first...
+  assert.equal((await post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [blankLine(10, { poId: "po-4", poItemId: "poi-4" })],
+  })).status, 200);
+  // ...so the receipt, which still shows 10 un-invoiced, may not bill them again.
+  const res = await post(piRoot, { ...blankHeader, grnId: "grn-4", items: [blankLine(10, { grnItemId: 401 })] });
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /remaining 0/);
+  assert.equal(Number(db.tables.grn_items.find((g) => g.id === 401).invoiced_qty), 0);
+});
+
+test("T-006 R8: the GRN line's PO line is stored, and counts against a later PO-direct bill", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  const piRoot = mount(piApp, db);
+
+  assert.equal((await post(piRoot, { ...blankHeader, grnId: "grn-4", items: [blankLine(6, { grnItemId: 401 })] })).status, 200);
+  assert.equal(db.tables.purchase_invoice_items[0].po_item_id, "poi-4");
+  const bill = (qty) => post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [blankLine(qty, { poId: "po-4", poItemId: "poi-4" })],
+  });
+  assert.equal((await bill(5)).status, 409, "6 billed off the receipt leaves 4");
+  assert.equal((await bill(4)).status, 200);
+});
+
+test("T-006 R8: a PO-linked stocked line with neither a PO line nor a code is refused, not skipped", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  const piRoot = mount(piApp, db);
+  const res = await post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [blankLine(500, { poId: "po-4" })],
+  });
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /matches none of its lines/);
+  assert.equal(db.tables.purchase_invoices.length, 0);
+});
+
+test("T-006 R8: fee lines and hand-added lines with no PO link of their own stay allowed", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  const piRoot = mount(piApp, db);
+  const res = await post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [
+      blankLine(10, { poId: "po-4", poItemId: "poi-4" }),
+      // Inherits the header PO only — e.g. a line typed in by hand.
+      { materialCode: null, materialName: "Pallet", qty: 2, unitPriceSen: 500 },
+      // A fee line, even one stamped with the PO.
+      { materialCode: null, materialName: "Transport", qty: 1, unitPriceSen: 5000, lineType: "FEE", poId: "po-4" },
+    ],
+  });
+  assert.equal(res.status, 200, await res.clone().text());
+});
+
+test("T-006 R8: a blank-code GRN line from before R8 (no po_item_id) is still billable", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  db.tables.grn_items.find((g) => g.id === 401).po_item_id = null;
+  const piRoot = mount(piApp, db);
+  // The GRN modal sends the line's PO too; the receipt still caps it.
+  const res = await post(piRoot, {
+    ...blankHeader, grnId: "grn-4", purchaseOrderId: "po-4",
+    items: [blankLine(10, { grnItemId: 401, poId: "po-4" })],
+  });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal((await post(piRoot, { ...blankHeader, grnId: "grn-4", items: [blankLine(1, { grnItemId: 401 })] })).status, 409);
+});
+
+test("T-006 R8: a line re-coded after picking counts under its new code, not its old PO line", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // poi-9: FOAM-9, 5 ordered
+  db.tables.purchase_order_items.push({
+    id: "poi-10", purchaseOrderId: "po-9", materialCategory: "FOAM",
+    material_code: "FOAM-10", materialName: "FOAM-10 - Foam slab", supplierSKU: "",
+    quantity: 5, unitPriceSen: 10000, totalSen: 50000, receivedQty: 0, unit: "pcs",
+    orgId: "org-test",
+  });
+  const piRoot = mount(piApp, db);
+  const line = (code, qty) => ({ materialCode: code, materialName: code, qty, unitPriceSen: 10000, poId: "po-9", poItemId: "poi-9" });
+  // FOAM-9 fully billed...
+  assert.equal((await post(piRoot, { supplierId: "sup-9", supplierName: "OPEN CO", purchaseOrderId: "po-9", items: [line("FOAM-9", 5)] })).status, 200);
+  // ...a line picked on FOAM-9 then re-coded to FOAM-10 bills FOAM-10's 5.
+  assert.equal((await post(piRoot, { supplierId: "sup-9", supplierName: "OPEN CO", purchaseOrderId: "po-9", items: [line("FOAM-10", 5)] })).status, 200);
+  assert.equal((await post(piRoot, { supplierId: "sup-9", supplierName: "OPEN CO", purchaseOrderId: "po-9", items: [line("FOAM-10", 1)] })).status, 409);
+});
+
+test("T-006 R8: a material ordered on two PO lines is billable for both lines together (f740d53c)", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // poi-9: FOAM-9, 5 ordered
+  db.tables.purchase_order_items.push({
+    id: "poi-9b", purchaseOrderId: "po-9", materialCategory: "FOAM",
+    material_code: "FOAM-9", materialName: "FOAM-9 - Foam block", supplierSKU: "",
+    quantity: 5, unitPriceSen: 10000, totalSen: 50000, receivedQty: 0, unit: "pcs",
+    orgId: "org-test",
+  });
+  const piRoot = mount(piApp, db);
+  const bill = (qty, poItemId) => post(piRoot, {
+    purchaseOrderId: "po-9", supplierId: "sup-9", supplierName: "OPEN CO",
+    items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty, unitPriceSen: 10000, poId: "po-9", poItemId }],
+  });
+  // Billed against ONE of the two lines, it still draws on the shared 10.
+  assert.equal((await bill(10, "poi-9")).status, 200, "both lines' 10 are billable");
+  const over = await bill(1, "poi-9b");
+  assert.equal(over.status, 409, "but not an 11th");
+  assert.match((await over.json()).error, /FOAM-9/);
+});
+
+test("T-006 R8: re-lining keeps the PO line and cannot walk a blank-code line past the PO", async () => {
+  const db = makeDb();
+  seedBlankCodePo(db);
+  const piRoot = mount(piApp, db);
+  assert.equal((await post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [blankLine(8, { poId: "po-4", poItemId: "poi-4" })],
+  })).status, 200);
+  const small = (await (await post(piRoot, {
+    ...blankHeader, purchaseOrderId: "po-4",
+    items: [blankLine(1, { poId: "po-4", poItemId: "poi-4" })],
+  })).json()).data;
+  // The editor sends the stored poId back but (an older client) no poItemId:
+  // the line inherits it from the stored line.
+  const reline = (qty) => piRoot.request(`/${small.id}`, json("PUT", {
+    items: [{ ...blankLine(qty, { poId: "po-4" }), id: db.tables.purchase_invoice_items.find((l) => l.pi_id === small.id).id }],
+  }));
+  const over = await reline(5);
+  assert.equal(over.status, 409);
+  assert.match((await over.json()).error, /remaining 2/);
+  assert.equal((await reline(2)).status, 200);
+  assert.equal(db.tables.purchase_invoice_items.find((l) => l.pi_id === small.id).po_item_id, "poi-4");
+});
+
+test("T-006 R9: a line's own poId is capped even when the header names no PO and no GRN", async () => {
+  const db = makeDb();
+  seedOpenPo(db); // poi-9: FOAM-9, 5 ordered
+  const piRoot = mount(piApp, db);
+  const res = await post(piRoot, {
+    supplierId: "sup-9", supplierName: "OPEN CO",
+    items: [{ materialCode: "FOAM-9", materialName: "FOAM-9 - Foam block", qty: 6, unitPriceSen: 10000, poId: "po-9" }],
+  });
+  assert.equal(res.status, 409, "before R9 this skipped the ceiling entirely");
+  assert.match((await res.json()).error, /requested 6 exceeds PO PO-9 remaining 5/);
+  assert.equal(db.tables.purchase_invoices.length, 0);
+});
+
+// R5: `beforeBatch` commits a rival invoice's consumption between the route's
+// availability check and its own write — the window the CHECK exists for.
+const rivalTakes = (grnItemId, qty) => (tables) => {
+  const gi = tables.grn_items.find((g) => String(g.id) === String(grnItemId));
+  gi.invoiced_qty = (Number(gi.invoiced_qty) || 0) + qty;
+};
+
+test("T-006 R5: a create that loses the race for a GRN line gets a 409 and writes nothing", async () => {
+  const db = makeDb();
+  seedPoAndReceipt(db); // grn line 201: accepted 100
+  const piRoot = mount(piApp, db);
+  db.beforeBatch = rivalTakes(201, 50);
+  const res = await post(piRoot, grnSourcedPI(60, { purchaseOrderId: "po-2" }));
+  assert.equal(res.status, 409, await res.clone().text());
+  assert.match((await res.json()).error, /just billed by another invoice/);
+  assert.equal(db.tables.purchase_invoices.length, 0, "the transaction rolled back");
+  assert.equal(Number(db.tables.grn_items.find((g) => g.id === 201).invoiced_qty), 50);
+});
+
+test("T-006 R5: a re-line that loses the race gets a 409", async () => {
+  const db = makeDb();
+  seedPoAndReceipt(db);
+  const piRoot = mount(piApp, db);
+  const pi = (await (await post(piRoot, grnSourcedPI(10, { purchaseOrderId: "po-2" }))).json()).data;
+  db.beforeBatch = rivalTakes(201, 80); // 10 ours + 80 theirs; we ask for 30
+  const res = await piRoot.request(`/${pi.id}`, json("PUT", {
+    items: [{ materialCode: "WOOD-2", materialName: "WOOD-2 - Pine plank", qty: 30, unitPriceSen: 10000, grnItemId: 201, poId: "po-2" }],
+  }));
+  assert.equal(res.status, 409, await res.clone().text());
+  assert.match((await res.json()).error, /just billed by another invoice/);
+});
+
+test("T-006 R5: an unvoid that loses the race gets a 409, not a 500", async () => {
+  const db = makeDb();
+  seedPoAndReceipt(db);
+  const piRoot = mount(piApp, db);
+  const pi = (await (await post(piRoot, grnSourcedPI(40, { purchaseOrderId: "po-2" }))).json()).data;
+  assert.equal((await piRoot.request(`/${pi.id}`, json("PUT", { status: "CONFIRMED" }))).status, 200);
+  assert.equal((await piRoot.request(`/${pi.id}/void`, json("POST", {}))).status, 200);
+  db.beforeBatch = rivalTakes(201, 70); // 70 of 100 gone; re-taking our 40 overshoots
+  const res = await piRoot.request(`/${pi.id}/unvoid`, json("POST", {}));
+  assert.equal(res.status, 409, await res.clone().text());
+  assert.match((await res.json()).error, /just billed by another invoice/);
+  assert.equal(db.tables.purchase_invoices.find((p) => p.id === pi.id).status, "CANCELLED");
 });
