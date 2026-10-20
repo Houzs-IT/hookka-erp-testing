@@ -70,7 +70,9 @@ test("Audit Log: no repeated heading; the list in the v2 look; Unvoid unchanged"
 test("Settings: Document Numbering and Landed Cost lists in the v2 look; their buttons stay in their cards", () => {
   const dn = fn("DocNumberingCard");
   assert.match(dn, /<table data-fin-list className="w-full text-sm">/);
-  assert.match(dn, /<tr key=\{a\.code\} data-fin-nolift="" className="border-t border-\[#F0ECE9\]">/);
+  // The design's table since 2026-10-20: a payment and a receipt row per bank, then the documents.
+  assert.match(dn, /<tr key=\{`\$\{dir\}:\$\{a\.code\}`\} data-fin-nolift="" className="border-t border-\[#F0ECE9\]">/);
+  assert.match(dn, /<tr key=\{t\.key\} data-fin-nolift="" className="border-t border-\[#F0ECE9\]">/);
   assert.doesNotMatch(dn, /FinanceTitleActions/, "several cards share the Settings page — each keeps its own Save");
   const lc = fn("LandedCostCard");
   assert.match(lc, /<table data-fin-list className="w-full text-sm">/);

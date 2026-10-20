@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { humanizeError } from "@/lib/humanize-error";
 import { useToast } from "@/components/ui/toast";
+import { DEFAULT_IN_PREFIX, DEFAULT_OUT_PREFIX, DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypeKey } from "@/lib/doc-number";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { LifecycleBadge } from "@/components/accounting/lifecycle-actions";
 import { defaultBankCode } from "@/lib/default-bank";
@@ -1157,20 +1158,36 @@ function LandedCostCard() {
   );
 }
 
+// Document Numbering (owner 2026-10-20 「可以」 — the design's table). Every
+// document's next number is shown; payments and receipts keep their prefix per
+// bank; the self-numbering documents take theirs from here (the sales invoice
+// is shown, not changed). A changed prefix applies from the next document.
+type NumberingPreview = {
+  ym: string;
+  counters: Record<string, number>;
+  types: { key: DocTypeKey; label: string; prefix: string; editable: boolean; next: string }[];
+};
+
 function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   const [map, setMap] = useState<Record<string, { out: string; in: string }>>({});
+  const [typePrefix, setTypePrefix] = useState<Partial<Record<DocTypeKey, string>>>({});
+  const [preview, setPreview] = useState<NumberingPreview | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const apply = (data?: { map?: Record<string, { out?: string; in?: string }>; preview?: NumberingPreview }) => {
+    const norm: Record<string, { out: string; in: string }> = {};
+    for (const [k, v] of Object.entries(data?.map ?? {})) norm[k] = { out: v?.out ?? "", in: v?.in ?? "" };
+    setMap(norm);
+    if (data?.preview) {
+      setPreview(data.preview);
+      setTypePrefix(Object.fromEntries(data.preview.types.map((t) => [t.key, t.prefix])));
+    }
+  };
   useEffect(() => {
     fetch("/api/accounting/doc-number-prefixes")
-      .then((r) => r.json() as Promise<{ data?: { map?: Record<string, { out?: string; in?: string }> } }>)
-      .then((j) => {
-        const m = j?.data?.map ?? {};
-        const norm: Record<string, { out: string; in: string }> = {};
-        for (const [k, v] of Object.entries(m)) norm[k] = { out: v?.out ?? "", in: v?.in ?? "" };
-        setMap(norm);
-      })
+      .then((r) => r.json() as Promise<{ data?: { map?: Record<string, { out?: string; in?: string }>; preview?: NumberingPreview } }>)
+      .then((j) => apply(j?.data))
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, []);
@@ -1178,42 +1195,98 @@ function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
   const setField = (code: string, dir: "out" | "in", val: string) => {
     setMap((prev) => ({ ...prev, [code]: { out: prev[code]?.out ?? "", in: prev[code]?.in ?? "", [dir]: val } }));
   };
+  const ym = preview?.ym ?? "";
+  const defaultOf = (key: DocTypeKey) => DOC_TYPES.find((d) => d.key === key)?.defaultPrefix ?? key;
+  const pad = (n: number, digits = 3) => String(n).padStart(digits, "0");
+  // A bank's payment / receipt number: its prefix (or the PV / OR default) and
+  // this month's counter for that prefix — a shared book continues its run.
+  const bankNext = (code: string, dir: "out" | "in") => {
+    const p = normalisePrefix(map[code]?.[dir]) || (dir === "out" ? DEFAULT_OUT_PREFIX : DEFAULT_IN_PREFIX);
+    return `${p}-${ym}-${pad(preview?.counters[p] ?? 1)}`;
+  };
+  // A document type's number: the server's when the prefix is the saved one;
+  // a changed prefix starts its own run at 1.
+  const typeNext = (t: NumberingPreview["types"][number]) => {
+    const p = normalisePrefix(typePrefix[t.key]) || defaultOf(t.key);
+    if (p === t.prefix) return t.next;
+    const [, yymm, num] = t.next.split("-");
+    return `${p}-${yymm}-${pad(1, num?.length ?? 3)}`;
+  };
+  const keyedTypes = Object.fromEntries(
+    (preview?.types ?? []).filter((t) => t.editable).map((t) => [t.key, normalisePrefix(typePrefix[t.key]) || defaultOf(t.key)]),
+  ) as Partial<Record<DocTypeKey, string>>;
+  const problem =
+    banks.flatMap((a) => (["out", "in"] as const).map((d) => normalisePrefix(map[a.code]?.[d]))).filter(Boolean).map((p) => prefixProblem(p)).find(Boolean) ??
+    Object.values(keyedTypes).map((p) => prefixProblem(p ?? "")).find(Boolean) ??
+    findPrefixClash(map, keyedTypes);
   const save = async () => {
     setSaving(true);
     try {
       const res = await fetch("/api/accounting/doc-number-prefixes", {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ map }),
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ map, types: keyedTypes }),
       });
-      const j = (await res.json()) as { success?: boolean; error?: string };
-      if (j?.success) toast.success("Numbering prefixes saved"); else toast.error(j?.error || "Save failed");
+      const j = (await res.json()) as { success?: boolean; error?: string; data?: { map?: Record<string, { out?: string; in?: string }>; preview?: NumberingPreview } };
+      if (j?.success) {
+        apply(j.data);
+        toast.success("Document numbering saved — applies from the next document");
+      } else toast.error(j?.error || "Save failed");
     } catch { toast.error("Save failed"); } finally { setSaving(false); }
   };
+  const input = "w-28 rounded border border-[#E2DDD8] px-2 py-1 text-sm uppercase";
+  const fixedCells = (
+    <>
+      <td className="py-1.5 text-[#6B7280]">YYMM-</td>
+      <td className="py-1.5 text-[#6B7280]">Monthly</td>
+    </>
+  );
   return (
     <Card className="mb-4">
       <CardContent className="p-4">
         <div className="flex items-center gap-3 mb-2">
           <h3 className="text-sm font-semibold text-[#1F1D1B]">Document Numbering</h3>
-          <Button variant="primary" size="sm" onClick={save} disabled={saving || !loaded} className="ml-auto">{saving ? "Saving…" : "Save"}</Button>
+          <Button variant="primary" size="sm" onClick={save} disabled={saving || !loaded || !!problem} className="ml-auto">{saving ? "Saving…" : "Save"}</Button>
         </div>
-        <p className="text-[11px] text-[#9CA3AF] mb-3">Number = prefix + voucher month + running no. Outgoing (Expense / Supplier payment) uses the OUT prefix; incoming (Customer payment / Receipt) uses the IN prefix. Per bank.</p>
+        <p className="text-[11px] text-[#9CA3AF] mb-3">
+          Number = prefix + month (YYMM) + running number, starting again each month. Payments and receipts take their bank&apos;s prefix — supplier payments, other-creditor payments and fund transfers share the bank&apos;s payment book. A changed prefix applies from the next document; numbers already issued never change.
+        </p>
+        {problem && <p className="text-xs text-[#9A3A2D] mb-2">{problem}</p>}
         <div className="overflow-x-auto">
         <table data-fin-list className="w-full text-sm">
           <thead>
             <tr className="text-[12px] text-[#6B7280]">
-              <td className="text-left pb-1">Bank / Cash account</td>
-              <td className="text-left pb-1 w-40">OUT prefix (payments)</td>
-              <td className="text-left pb-1 w-40">IN prefix (receipts)</td>
+              <td className="text-left pb-1">Document</td>
+              <td className="text-left pb-1 w-36">Prefix</td>
+              <td className="text-left pb-1 w-24">Middle</td>
+              <td className="text-left pb-1 w-24">Restart</td>
+              <td className="text-left pb-1 w-48">Next Number Looks Like</td>
             </tr>
           </thead>
           <tbody>
-            {banks.map((a) => (
-              <tr key={a.code} data-fin-nolift="" className="border-t border-[#F0ECE9]">
-                <td className="py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-2">{a.code}</span>{a.name}</td>
-                <td className="py-1.5"><input value={map[a.code]?.out ?? ""} onChange={(e) => setField(a.code, "out", e.target.value)} placeholder="e.g. HPV" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
-                <td className="py-1.5"><input value={map[a.code]?.in ?? ""} onChange={(e) => setField(a.code, "in", e.target.value)} placeholder="e.g. HOR" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
+            {(["out", "in"] as const).flatMap((dir) =>
+              banks.map((a) => (
+                <tr key={`${dir}:${a.code}`} data-fin-nolift="" className="border-t border-[#F0ECE9]">
+                  <td className="py-1.5">{dir === "out" ? "Payment Voucher" : "Receipt"} <span className="text-[#6B7280]">· <span className="tabular-nums text-xs">{a.code}</span> {a.name}</span></td>
+                  <td className="py-1.5"><input aria-label={`${dir === "out" ? "Payment" : "Receipt"} prefix for ${a.code}`} value={map[a.code]?.[dir] ?? ""} onChange={(e) => setField(a.code, dir, e.target.value)} placeholder={dir === "out" ? DEFAULT_OUT_PREFIX : DEFAULT_IN_PREFIX} className={input} /></td>
+                  {fixedCells}
+                  <td className="py-1.5 font-mono text-[13px] text-[#6B5C32]">{preview ? bankNext(a.code, dir) : "…"}</td>
+                </tr>
+              )),
+            )}
+            {(preview?.types ?? []).map((t) => (
+              <tr key={t.key} data-fin-nolift="" className="border-t border-[#F0ECE9]">
+                <td className="py-1.5">{t.label}</td>
+                <td className="py-1.5">
+                  {t.editable ? (
+                    <input aria-label={`${t.label} prefix`} value={typePrefix[t.key] ?? ""} onChange={(e) => setTypePrefix((prev) => ({ ...prev, [t.key]: e.target.value }))} className={input} />
+                  ) : (
+                    <span className="text-[#6B7280]" title="Set by Sales — not changed here">{t.prefix} <span className="text-[11px]">(fixed)</span></span>
+                  )}
+                </td>
+                {fixedCells}
+                <td className="py-1.5 font-mono text-[13px] text-[#6B5C32]">{typeNext(t)}</td>
               </tr>
             ))}
-            {banks.length === 0 && <tr data-fin-nolift=""><td colSpan={3} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
+            {banks.length === 0 && <tr data-fin-nolift=""><td colSpan={5} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
           </tbody>
         </table>
         </div>

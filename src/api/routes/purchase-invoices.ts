@@ -26,7 +26,7 @@ import {
 import { ClosedYearError } from "../lib/fiscal";
 import { nextMonthDueDate } from "../../lib/terms";
 import { roundUnitPriceSen, discountedLineSen } from "../../lib/unit-price";
-import { issueDocNumber } from "../lib/doc-number-service";
+import { issueDocNumber, nextSelfNumber } from "../lib/doc-number-service";
 import {
   checkConvertAvailability,
   clampDecrement,
@@ -775,21 +775,10 @@ async function checkInvoicedQtyCeilingAfterEdit(
   return { ok: true };
 }
 
-// Generate next PI number for the current YYMM. Pattern: PI-YYMM-NNN.
+// Generate next PI number for the current YYMM. Pattern: PI-YYMM-NNN — the
+// prefix is Finance Settings' (Document Numbering, 2026-10-20).
 async function generatePiNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const prefix = `PI-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT piNo FROM purchase_invoices WHERE piNo LIKE ? ORDER BY piNo DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ piNo: string }>();
-  if (!res) return `${prefix}001`;
-  const seq = parseInt(res.piNo.replace(prefix, ""), 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  return nextSelfNumber(db, "PI");
 }
 
 // ---------------------------------------------------------------------------

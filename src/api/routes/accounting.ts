@@ -37,7 +37,8 @@ import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
 import { buildStatement, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
 import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection } from "../../lib/cashflow-engine";
-import { getDocNumberPrefixes, issueDocNumber, issueDocNumberWithPrefix } from "../lib/doc-number-service";
+import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
+import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { ensureFinanceOrgColumns } from "../lib/ensure-finance-org";
@@ -277,17 +278,10 @@ function genId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+// JE-YYMM-NNNN — the prefix is Settings' (Document Numbering), the run the
+// month's count + 1 as always (nextSelfNumber).
 async function nextJeNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const res = await db
-    .prepare(
-      "SELECT COUNT(*) AS c FROM journal_entries WHERE entryNo LIKE ?",
-    )
-    .bind(`JE-${yymm}-%`)
-    .first<{ c: number }>();
-  const seq = (res?.c ?? 0) + 1;
-  return `JE-${yymm}-${String(seq).padStart(4, "0")}`;
+  return nextSelfNumber(db, "JE");
 }
 
 // Account-code rename aliases: loadAccountResolver, src/api/lib/account-resolver.ts.
@@ -2259,20 +2253,9 @@ function rowToPcn(r: PcnRow) {
   };
 }
 
+// PCN-YYMM-NNN — Settings' prefix, highest + 1 (nextSelfNumber).
 async function nextPcnNo(db: Env["Variables"]["DB"]): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const prefix = `PCN-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT noteNumber FROM purchase_credit_notes WHERE noteNumber LIKE ? ORDER BY noteNumber DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ noteNumber: string }>();
-  if (!res) return `${prefix}001`;
-  const seq = parseInt(res.noteNumber.replace(prefix, ""), 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  return nextSelfNumber(db, "PCN");
 }
 
 app.get("/purchase-credit-notes", async (c) => {
@@ -4303,9 +4286,10 @@ app.post("/other-party-bills", async (c) => {
 
     const partyType = party.type as PartyType;
     const { subtotalSen, totalSen } = computeBillTotals(items, taxSen);
+    // OCB / ODB, or the prefix Settings gave them (Document Numbering).
     const billNo = await issueDocNumberWithPrefix(
       c.var.DB,
-      prefixForPartyType(partyType),
+      await docTypePrefix(c.var.DB, prefixForPartyType(partyType) === "OCB" ? "OCB" : "ODB"),
       billDate,
     );
     const billId = `opb-${crypto.randomUUID().slice(0, 10)}`;
@@ -14801,33 +14785,79 @@ app.put("/cashflow/map", async (c) => {
   }
 });
 
+// Document Numbering (Settings). `map` = the payment / receipt prefix per bank
+// (kv doc_number_prefixes); `types` = the prefix per self-numbering document
+// (kv doc_type_prefixes, owner 2026-10-20); `preview` = what each next number
+// will look like. Reads only.
 app.get("/doc-number-prefixes", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const map = await getDocNumberPrefixes(c.var.DB);
-  return c.json({ success: true, data: { map } });
+  const [map, types, preview] = await Promise.all([
+    getDocNumberPrefixes(c.var.DB),
+    getDocTypePrefixes(c.var.DB),
+    docNumberPreview(c.var.DB),
+  ]);
+  return c.json({ success: true, data: { map, types, preview } });
 });
 
+// Save either half (or both). A changed prefix applies from the next document:
+// numbers already issued never change. Every prefix is 1–8 letters / digits,
+// and no document type may share a prefix with another type or with a bank's
+// payments / receipts (banks may share one between them — a shared book).
 app.put("/doc-number-prefixes", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
-  const kvBefore = await kvSnapshot(c.var.DB, ["doc_number_prefixes"]);
+  const kvBefore = await kvSnapshot(c.var.DB, ["doc_number_prefixes", "doc_type_prefixes"]);
   try {
-    const body = (await c.req.json()) as { map?: Record<string, { out?: string; in?: string }> };
-    if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
-    const map: Record<string, { out: string; in: string }> = {};
-    for (const [code, v] of Object.entries(body.map)) {
-      if (!v) continue;
-      const out = typeof v.out === "string" ? v.out.trim() : "";
-      const inp = typeof v.in === "string" ? v.in.trim() : "";
-      if (out || inp) map[code] = { out, in: inp };
+    const body = (await c.req.json()) as { map?: Record<string, { out?: string; in?: string }>; types?: Record<string, unknown> };
+    if (body.map === undefined && body.types === undefined) return c.json({ success: false, error: "map or types required" }, 400);
+
+    let map: Record<string, { out: string; in: string }> | null = null;
+    if (body.map !== undefined) {
+      map = {};
+      for (const [code, v] of Object.entries(body.map ?? {})) {
+        if (!v) continue;
+        const out = normalisePrefix(v.out);
+        const inp = normalisePrefix(v.in);
+        for (const p of [out, inp]) {
+          const problem = p ? prefixProblem(p) : null;
+          if (problem) return c.json({ success: false, error: `${code}: ${problem}` }, 400);
+        }
+        if (out || inp) map[code] = { out, in: inp };
+      }
     }
-    await c.var.DB.prepare(
-      `INSERT INTO kv_config (key, value, updated_at) VALUES ('doc_number_prefixes', ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    ).bind(JSON.stringify(map), new Date().toISOString()).run();
-    await emitAudit(c, { resource: "finance-settings", resourceId: "doc_number_prefixes", action: "update", before: kvBefore["doc_number_prefixes"] ?? null, after: map });
-    return c.json({ success: true, data: { map } });
+
+    let types: DocTypePrefixMap | null = null;
+    if (body.types !== undefined) {
+      types = {};
+      for (const t of DOC_TYPES) {
+        if (!t.editable) continue;
+        const p = normalisePrefix((body.types ?? {})[t.key]);
+        if (!p || p === t.defaultPrefix) continue;
+        const problem = prefixProblem(p);
+        if (problem) return c.json({ success: false, error: `${t.label}: ${problem}` }, 400);
+        types[t.key] = p;
+      }
+    }
+
+    const clash = findPrefixClash(map ?? (await getDocNumberPrefixes(c.var.DB)), types ?? (await getDocTypePrefixes(c.var.DB)));
+    if (clash) return c.json({ success: false, error: clash }, 400);
+
+    const now = new Date().toISOString();
+    const put = (key: string, value: unknown) =>
+      c.var.DB.prepare(
+        `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      ).bind(key, JSON.stringify(value), now).run();
+    if (map) {
+      await put("doc_number_prefixes", map);
+      await emitAudit(c, { resource: "finance-settings", resourceId: "doc_number_prefixes", action: "update", before: kvBefore["doc_number_prefixes"] ?? null, after: map });
+    }
+    if (types) {
+      await put("doc_type_prefixes", types);
+      await emitAudit(c, { resource: "finance-settings", resourceId: "doc_type_prefixes", action: "update", before: kvBefore["doc_type_prefixes"] ?? null, after: types });
+    }
+    return c.json({ success: true, data: { map: map ?? (await getDocNumberPrefixes(c.var.DB)), types: types ?? (await getDocTypePrefixes(c.var.DB)), preview: await docNumberPreview(c.var.DB) } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
