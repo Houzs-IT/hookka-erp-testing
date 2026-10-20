@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import {
   MOBILE_DASH_LINES, FIN_DASH_LINES, rmWhole, vsForecast, phoneDashMonths, smoothPath, cfSectionTotals, shareWidths,
   monthName, shortName, SWIPE_EDGE_PX, swipeGoesBack,
-  pctPointLabel,
+  pctPointLabel, pctLabelBelow, PCT_LABELS_ONE_ROW,
 } from "../src/pages/m/screens/finance/m-finance-lib.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
@@ -114,4 +114,12 @@ test("a percentage chart's point carries its figure on the phone (owner 2026-10-
   assert.equal(pctPointLabel(-2.5), "(2.5%)");
   assert.equal(pctPointLabel(null), "", "a month without sales has no point, so no label");
   assert.equal(pctPointLabel(Number.NaN), "");
+});
+
+test("twelve months on a phone: every other label drops under its point; six or fewer stay in one row", () => {
+  assert.equal(PCT_LABELS_ONE_ROW, 6);
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map((i) => pctLabelBelow(i, 6)), [false, false, false, false, false, false]);
+  assert.deepEqual([0, 1, 2, 3].map((i) => pctLabelBelow(i, 12)), [false, true, false, true]);
+  assert.equal(pctLabelBelow(11, 12), true);
+  assert.equal(pctLabelBelow(0, 3), false);
 });

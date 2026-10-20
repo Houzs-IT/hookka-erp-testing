@@ -13,6 +13,14 @@ import { fmtPct } from "../../../../lib/finance-money";
  *  month without sales has no point, so no label. */
 export const pctPointLabel = (v: unknown): string => (typeof v === "number" && Number.isFinite(v) ? fmtPct(v) : "");
 
+/** Up to this many months a phone's width fits every label above its point. */
+export const PCT_LABELS_ONE_ROW = 6;
+
+/** Whether a point's label sits below it: on a crowded chart (12 months on a
+ *  phone) every other label drops under its point, so neighbours never print
+ *  over each other (seen on prod 2026-10-20 after #1048). */
+export const pctLabelBelow = (index: number, points: number): boolean => points > PCT_LABELS_ONE_ROW && index % 2 === 1;
+
 /** The five aging buckets, in order, as /api/accounting/aging names them. */
 export const AGING_BUCKETS = [
   { key: "currentSen", label: "Current" },
