@@ -11852,9 +11852,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Duplicate: a NEW voucher seeded from this one, dated today — its lines (or
   // a transfer's accounts and amount), payee, paid-from and description; never
   // its reference, bill no., notes or attachments. An AP payment copies the
-  // creditor, paid-from and description only — never its knock-offs (the
-  // design's rule): the bills are ticked again. Nothing is recorded until it
-  // is saved; the copy closes at once on Esc while nothing was changed.
+  // creditor and paid-from only — never its knock-offs (the design's rule):
+  // the bills are ticked again. Its description is left blank too: on these
+  // books it names the bills that payment paid (measured on prod 2026-10-20 —
+  // the AP rows' descriptions are bill / invoice numbers). Nothing is
+  // recorded until it is saved; the copy closes at once on Esc while nothing
+  // was changed.
   const openCopy = (no: string, kind: "EXPENSE" | "AP", seed: { ap?: typeof apForm; form?: PvFormState; lines?: PvLineDraft[] }) => {
     resetForm();
     setCopyOf(no.startsWith("DRAFT-") ? "a draft" : no);
@@ -11871,13 +11874,13 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     }
     setShowForm(true);
   };
-  const copyApForm = (party: { kind: "SUPPLIER" | "OTHER"; id: string }, payFrom: string, description: string): typeof apForm => ({
+  const copyApForm = (party: { kind: "SUPPLIER" | "OTHER"; id: string }, payFrom: string): typeof apForm => ({
     date: new Date().toISOString().slice(0, 10), payFrom, partyKind: party.kind, partyId: party.id,
-    reference: "", description, advance: "", tfDue: "", tfInterest: "",
+    reference: "", description: "", advance: "", tfDue: "", tfInterest: "",
   });
   const startDuplicate = (r: PvRow) => {
     if (r.pvKind === "AP") {
-      openCopy(r.pvNo, "AP", { ap: copyApForm({ kind: r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER", id: r.partyId ?? "" }, r.payFrom ?? "", r.description ?? "") });
+      openCopy(r.pvNo, "AP", { ap: copyApForm({ kind: r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER", id: r.partyId ?? "" }, r.payFrom ?? "") });
       return;
     }
     const isTransfer = r.pvKind === "TRANSFER";
@@ -11898,8 +11901,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // again); an old Fund Transfer becomes a NEW transfer voucher.
   const startDuplicatePay = (g: PayRow) => {
     if (g.pv) { startDuplicate(g.pv); return; }
-    if (g.sp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "SUPPLIER", id: g.sp.supplierId }, g.sp.bankAccount ?? "", "") }); return; }
-    if (g.ocp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "OTHER", id: g.ocp.partyId }, g.ocp.bankAccount ?? "", "") }); return; }
+    if (g.sp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "SUPPLIER", id: g.sp.supplierId }, g.sp.bankAccount ?? "") }); return; }
+    if (g.ocp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "OTHER", id: g.ocp.partyId }, g.ocp.bankAccount ?? "") }); return; }
     if (g.ft) {
       openCopy(g.no, "EXPENSE", { form: {
         ...blankPvForm(), mode: "TRANSFER", payFrom: g.ft.fromAccount, transferTo: g.ft.toAccount,

@@ -53,13 +53,14 @@ test("a copy is a NEW voucher: no editing id, dated today, the copy's source in 
   assert.match(copy, /editBaseline\.current = JSON\.stringify\(\[f, ls\]\);/);
 });
 
-test("what a copy carries: an AP payment = creditor, paid from, description; never the knock-offs", () => {
+test("what a copy carries: an AP payment = creditor and paid from; never the knock-offs or the bills' description", () => {
   const copy = block(pvTab, "const openCopy = (", "const selCls =");
-  assert.match(copy, /date: new Date\(\)\.toISOString\(\)\.slice\(0, 10\), payFrom, partyKind: party\.kind, partyId: party\.id,\n\s+reference: "", description, advance: "", tfDue: "", tfInterest: "",/);
-  assert.match(copy, /openCopy\(r\.pvNo, "AP", \{ ap: copyApForm\(\{ kind: r\.partyKind === "OTHER" \? "OTHER" : "SUPPLIER", id: r\.partyId \?\? "" \}, r\.payFrom \?\? "", r\.description \?\? ""\) \}\);/);
+  assert.match(copy, /date: new Date\(\)\.toISOString\(\)\.slice\(0, 10\), payFrom, partyKind: party\.kind, partyId: party\.id,\n\s+reference: "", description: "", advance: "", tfDue: "", tfInterest: "",/);
+  assert.match(copy, /openCopy\(r\.pvNo, "AP", \{ ap: copyApForm\(\{ kind: r\.partyKind === "OTHER" \? "OTHER" : "SUPPLIER", id: r\.partyId \?\? "" \}, r\.payFrom \?\? ""\) \}\);/);
   // Supplier / other-creditor payments recorded on their own pages.
-  assert.match(copy, /if \(g\.sp\) \{ openCopy\(g\.no, "AP", \{ ap: copyApForm\(\{ kind: "SUPPLIER", id: g\.sp\.supplierId \}, g\.sp\.bankAccount \?\? "", ""\) \}\); return; \}/);
-  assert.match(copy, /if \(g\.ocp\) \{ openCopy\(g\.no, "AP", \{ ap: copyApForm\(\{ kind: "OTHER", id: g\.ocp\.partyId \}, g\.ocp\.bankAccount \?\? "", ""\) \}\); return; \}/);
+  assert.match(copy, /if \(g\.sp\) \{ openCopy\(g\.no, "AP", \{ ap: copyApForm\(\{ kind: "SUPPLIER", id: g\.sp\.supplierId \}, g\.sp\.bankAccount \?\? ""\) \}\); return; \}/);
+  assert.match(copy, /if \(g\.ocp\) \{ openCopy\(g\.no, "AP", \{ ap: copyApForm\(\{ kind: "OTHER", id: g\.ocp\.partyId \}, g\.ocp\.bankAccount \?\? ""\) \}\); return; \}/);
+  assert.doesNotMatch(block(pvTab, "const copyApForm = (", "const startDuplicate"), /r\.description/, "an AP payment's description names the bills it paid");
   assert.doesNotMatch(copy, /allocs|advanceSen|tfDueDate|tfInterestSen/, "no knock-off, advance or drawdown terms are copied");
 });
 
