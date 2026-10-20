@@ -430,3 +430,17 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 [data-fin-ui] [data-fin-reveal] {
   animation: fin-reveal .18s ease-out;
 }
+
+/* Opening and switching (owner 2026-10-20 「要」, the design's 150–200 ms): a
+   page's content fades in as it opens or its tab switches; a popup's panel
+   rises in over its fading backdrop. No fill mode — nothing keeps a transform
+   once it has arrived (a transform would re-anchor fixed menus inside it). */
+[data-fin-ui] [data-fin-tab] {
+  animation: fin-fade .16s ease-out;
+}
+[data-fin-ui] [data-fin-backdrop] {
+  animation: fin-fade .15s ease-out;
+}
+[data-fin-ui] [data-fin-pop] {
+  animation: fin-pop .18s ease-out;
+}

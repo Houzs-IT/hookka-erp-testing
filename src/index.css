@@ -190,3 +190,22 @@ table tbody tr:hover {
   from { opacity: 0; transform: translateY(-3px); }
   to { opacity: 1; transform: none; }
 }
+/* …a page's content fading in as it opens or switches, a popup rising in. */
+@keyframes fin-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fin-pop {
+  from { opacity: 0; transform: translateY(6px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+/* Whoever asks the system for less motion gets none (kept here: finance-v2.css
+   stays a flat sheet). */
+@media (prefers-reduced-motion: reduce) {
+  [data-fin-ui] [data-fin-reveal],
+  [data-fin-ui] [data-fin-tab],
+  [data-fin-ui] [data-fin-backdrop],
+  [data-fin-ui] [data-fin-pop] {
+    animation: none;
+  }
+}
