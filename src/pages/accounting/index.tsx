@@ -33,6 +33,7 @@ import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFro
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
+import { loadPiForPrint, type PiPrintSupplier } from "@/lib/pi-print-load";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party-aging-rows";
 import { daysUntil, dueText, dueTone, monthBucket, nextDueOf, overdueSen } from "@/lib/aging-next-due";
@@ -8050,10 +8051,56 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // opens ITS OWN detail page; an AP bill its detail popup.
   const openApInv = (r: ApInvRow) => { if (r.kind === "PI") navigate(`/procurement/pi/${r.id}`); else setDetailBillNo(r.no); };
   const payHref = (r: ApInvRow) => `/accounting?tab=payments&pay=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId ?? "")}`;
-  const apInvRowMenu = (r: ApInvRow): RowMenuGroups => [
-    [{ label: r.kind === "PI" ? "Open the purchase invoice" : "Open the bill", action: () => openApInv(r) }],
-    r.status === "OPEN" && r.partyId ? [{ label: "Pay", action: () => navigate(payHref(r)) }] : [],
-  ];
+  // Print (owner 2026-10-20 「这个需要」 — tick-box print and the row menu's
+  // Print): an AP bill prints as its voucher, a purchase invoice as its own
+  // PDF through the same loader Procurement's list uses (pi-print-load.ts).
+  const billOf = (r: ApInvRow) => (r.kind === "AP" ? bills.find((b) => b.billNo === r.no) : undefined);
+  const printApRows = async (list: ApInvRow[]) => {
+    const apBills = list.map(billOf).filter((b): b is OtherPartyBill => !!b);
+    const unloaded = list.filter((r) => r.kind === "AP" && !billOf(r)).map((r) => r.no);
+    if (apBills.length) printVouchers(apBills.map((b) => buildOtherPartyBillVoucher(b, accounts)));
+    const pis = list.filter((r) => r.kind === "PI");
+    if (pis.length) {
+      const [sup, orgs] = await Promise.all([
+        fetch("/api/suppliers").then((res) => res.json() as Promise<{ data?: PiPrintSupplier[] }>).catch(() => null),
+        fetch("/api/organisations").then((res) => res.json() as Promise<{ organisations?: Parameters<typeof loadPiForPrint>[2] }>).catch(() => null),
+      ]);
+      const loaded = await Promise.all(pis.map(async (r) => ({ r, one: await loadPiForPrint(r.id, sup?.data ?? [], orgs?.organisations).catch(() => null) })));
+      const ok = loaded.flatMap((x) => (x.one ? [x.one] : []));
+      unloaded.push(...loaded.filter((x) => !x.one).map((x) => x.r.no));
+      if (ok.length) {
+        const { generatePurchaseInvoicePdf, generateCombinedPurchaseInvoicePdf } = await import("@/lib/generate-purchase-invoice-pdf");
+        type PiPdf = Parameters<typeof generatePurchaseInvoicePdf>[0];
+        if (ok.length === 1) generatePurchaseInvoicePdf(ok[0].pi as unknown as PiPdf, ok[0].letterhead);
+        else await generateCombinedPurchaseInvoicePdf(ok.map((o) => ({ pi: o.pi as unknown as PiPdf, letterhead: o.letterhead })), `PurchaseInvoices-${ok.length}.pdf`);
+      }
+    }
+    if (unloaded.length) toast.error(`Not printed — ${unloaded.length} could not be loaded (${unloaded.slice(0, 3).join(", ")}).`);
+  };
+  const [selectedApRows, setSelectedApRows] = useState<(ApInvRow & { key: string })[]>([]);
+  // The row menu (owner 2026-10-20): Print for every row; an AP bill's Edit /
+  // Copy / Void here (as its popup); a purchase invoice is edited or
+  // cancelled on its own page (Open). Pay while it is open.
+  const apInvRowMenu = (r: ApInvRow): RowMenuGroups => {
+    const b = billOf(r);
+    const voided = !!b && ((b.lifecycleState ?? "ACTIVE") !== "ACTIVE" || b.status === "VOID");
+    return [
+      [
+        { label: r.kind === "PI" ? "Open the purchase invoice" : "Open the bill", action: () => openApInv(r) },
+        { label: "Print", action: () => void printApRows([r]) },
+      ],
+      b
+        ? [
+            ...(!voided ? [{ label: "Edit", action: () => setBillPopup({ mode: "edit", bill: b }) }] : []),
+            { label: "Copy", action: () => setBillPopup({ mode: "copy", bill: b }) },
+            voided
+              ? { label: "Unvoid", action: () => void billLifecycle(b, "unvoid") }
+              : { label: "Void", danger: true, action: () => void billLifecycle(b, "void") },
+          ]
+        : [],
+      r.status === "OPEN" && r.partyId ? [{ label: "Pay", action: () => navigate(payHref(r)) }] : [],
+    ];
+  };
   const liveSum = (list: ApInvRow[], pick: (r: ApInvRow) => number) => list.filter((r) => r.status !== "CANCELLED").reduce((t, r) => t + pick(r), 0);
   const apInvColumns = useMemo<Column<ApInvRow & { key: string }>[]>(() => [
     {
@@ -8094,7 +8141,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <Link to="/accounting?tab=payments"><Button variant="primary" size="sm">New AP Payment</Button></Link>
         </ReportToolbar>
       </FinanceTitleActions>
-      <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
+      <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click or right-click a bill to print / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page, where it is edited or cancelled. Tick rows to print them or take them to Excel.</p>
       {data && (
         <KpiCards
           items={[
@@ -8119,6 +8166,19 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <SearchableSelect value={supplier} onChange={setSupplier} options={supplierOpts} placeholder="All suppliers" allowClear />
         </div>
       </div>
+      {/* Tick rows → print them (bills as vouchers, purchase invoices as their PDF) or take them to Excel. */}
+      <BatchActionsBar
+        count={selectedApRows.length}
+        onPrint={() => void printApRows(selectedApRows)}
+        exportName="ap-invoices"
+        exportAoa={() => [
+          ["Kind", "No.", "Supplier", "Supplier ref", "Date", "Due", "Description", "Total (RM)", "Paid (RM)", "Outstanding (RM)", "Status"],
+          ...selectedApRows.map((r) => [
+            r.kind, r.no, r.supplier, r.supplierRef, r.date, r.dueDate ?? "", r.description,
+            r.totalSen / 100, r.paidSen / 100, r.outstandingSen / 100, r.status,
+          ]),
+        ]}
+      />
       <Card>
         <CardContent className="p-0">
           <DataGrid
@@ -8126,6 +8186,9 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
             data={rows}
             keyField="key"
             gridId="accounting-ap-invoices"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setSelectedApRows}
             onDoubleClick={openApInv}
             contextMenuItems={(r) => rowMenuItems(apInvRowMenu(r))}
             rowClassName={(r) => (r.status === "CANCELLED" ? "opacity-50" : "")}
