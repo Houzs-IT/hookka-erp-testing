@@ -27,6 +27,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { returnCandidateBlock, type ReturnCreditCandidate } from "@/lib/cn-from-return";
+import { NotePopup } from "@/components/finance/note-popup";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
 
@@ -97,15 +98,26 @@ export default function CreditNotesPage() {
   );
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  // #5: pick the customer first, then list only their not-yet-settled invoices.
+  // Edit / Duplicate (owner 2026-10-20 「edit, duplicate, delete 可以做， approve
+  // 不需要」): the same form, filled from a note. Edit saves over the draft
+  // (PUT /:id/edit); Duplicate saves a new draft, without the delivery return
+  // (one note per return). Double-click opens the note (viewNote).
+  const [editingNote, setEditingNote] = useState<CreditNote | null>(null);
+  const [copyOf, setCopyOf] = useState("");
+  const [viewNote, setViewNote] = useState<CreditNote | null>(null);
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
+  // #5: pick the customer first, then list only their not-yet-settled invoices
+  // (and, on Edit, the draft's own invoice, so it never drops out of the pick).
   const cnCustomers = useMemo(() => {
     const m = new Map<string, string>();
     for (const inv of invoices) if (inv.customerId) m.set(inv.customerId, inv.customerName);
     return [...m].map(([id, name]) => ({ value: id, label: name })).sort((a, b) => a.label.localeCompare(b.label));
   }, [invoices]);
+  const keepInvoiceId = editingNote?.invoiceId ?? "";
   const cnInvoices = useMemo(
-    () => invoices.filter((inv) => inv.customerId === selectedCustomerId && inv.status !== "PAID" && inv.status !== "CANCELLED"),
-    [invoices, selectedCustomerId],
+    () => invoices.filter((inv) => inv.customerId === selectedCustomerId && ((inv.status !== "PAID" && inv.status !== "CANCELLED") || inv.id === keepInvoiceId)),
+    [invoices, selectedCustomerId, keepInvoiceId],
   );
   const [reason, setReason] = useState<CreditNote["reason"]>("RETURN");
   const [reasonDetail, setReasonDetail] = useState("");
@@ -144,6 +156,8 @@ export default function CreditNotesPage() {
   const prefillRan = useRef(false);
 
   const applyReturn = (d: ReturnCreditCandidate) => {
+    setEditingNote(null);
+    setCopyOf("");
     setFromReturnDraft(d);
     setSelectedCustomerId(d.customerId);
     pendingInvoiceId.current = d.invoice?.id ?? "";
@@ -206,6 +220,40 @@ export default function CreditNotesPage() {
     setShowCreateModal(true);
   };
 
+  const fillFromNote = (cn: CreditNote) => {
+    setFromReturnDraft(null);
+    setSelectedCustomerId(cn.customerId);
+    pendingInvoiceId.current = cn.invoiceId;
+    setSelectedInvoiceId(cn.invoiceId);
+    setReason(cn.reason);
+    setReasonDetail(cn.reasonDetail);
+    setItems(cn.items.length
+      ? cn.items.map((it) => {
+          const sen = it.unitPriceSen ?? it.unitPrice ?? 0;
+          return { _uid: crypto.randomUUID(), description: it.description, quantity: it.quantity, unitPriceSen: sen, priceStr: (sen / 100).toFixed(2) };
+        })
+      : [newCNItem()]);
+    openCreate();
+  };
+  const openEdit = (cn: CreditNote) => { setEditingNote(cn); setCopyOf(""); fillFromNote(cn); };
+  const openDuplicate = (cn: CreditNote) => { setEditingNote(null); setCopyOf(cn.noteNumber); fillFromNote(cn); };
+  const resetForm = () => {
+    setFromReturnDraft(null);
+    setEditingNote(null);
+    setCopyOf("");
+    setSelectedCustomerId("");
+    setSelectedInvoiceId("");
+    setReason("RETURN");
+    setReasonDetail("");
+    setItems([newCNItem()]);
+  };
+  // A cancelled Edit / Duplicate leaves nothing behind for the next New.
+  const closeForm = () => {
+    setShowCreateModal(false);
+    if (editingNote || copyOf) resetForm();
+    else setFromReturnDraft(null);
+  };
+
   const addItem = () => {
     setItems([...items, newCNItem()]);
   };
@@ -231,29 +279,34 @@ export default function CreditNotesPage() {
       const payloadItems = items
         .filter((i) => i.description && i.unitPriceSen > 0)
         .map((i) => ({ description: i.description, quantity: i.quantity, unitPriceSen: i.unitPriceSen }));
-      const data = await fetchJson("/api/credit-notes", CNMutationSchema, {
-        method: "POST",
-        body: {
-          invoiceId: selectedInvoiceId,
-          reason,
-          reasonDetail,
-          items: payloadItems,
-          ...(fromReturnDraft ? { deliveryReturnId: fromReturnDraft.id } : {}),
-        },
-      });
+      const body = { invoiceId: selectedInvoiceId, reason, reasonDetail, items: payloadItems };
+      const data = editingNote
+        ? await fetchJson(`/api/credit-notes/${encodeURIComponent(editingNote.id)}/edit`, CNMutationSchema, { method: "PUT", body })
+        : await fetchJson("/api/credit-notes", CNMutationSchema, {
+            method: "POST",
+            body: {
+              ...body,
+              ...(fromReturnDraft ? { deliveryReturnId: fromReturnDraft.id } : {}),
+            },
+          });
       if (data.success) {
+        const no = data.data?.noteNumber ?? editingNote?.noteNumber ?? "The credit note";
+        toast.success(editingNote ? `${no} saved` : `${no} created${copyOf ? ` from ${copyOf}` : ""}`);
         setShowCreateModal(false);
-        setFromReturnDraft(null);
-        setSelectedInvoiceId("");
-        setReason("RETURN");
-        setReasonDetail("");
-        setItems([newCNItem()]);
+        if (editingNote || copyOf) resetForm();
+        else {
+          setFromReturnDraft(null);
+          setSelectedInvoiceId("");
+          setReason("RETURN");
+          setReasonDetail("");
+          setItems([newCNItem()]);
+        }
         invalidateCachePrefix("/api/credit-notes");
         invalidateCachePrefix("/api/invoices");
         refreshCreditNotes();
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : "Could not save the credit note");
     }
     setCreating(false);
   };
@@ -317,8 +370,6 @@ export default function CreditNotesPage() {
   // Post / Back to Draft (owner 2026-10-17, Finance v2). Posting applies the
   // note — the customer owes less, the invoice's total drops, the books take
   // the entries; Back to Draft undoes all three in one go.
-  const { confirm } = useConfirm();
-  const { toast } = useToast();
   const afterNoteChange = () => {
     invalidateCachePrefix("/api/credit-notes");
     invalidateCachePrefix("/api/invoices");
@@ -359,22 +410,36 @@ export default function CreditNotesPage() {
     await sendNote(`/api/credit-notes/${encodeURIComponent(cn.id)}/unpost`, { method: "POST" },
       `${cn.noteNumber} is a draft again`, "Could not put the credit note back to draft");
   };
+  // Delete (owner 2026-10-20): a draft only — it is hidden, the record kept.
+  const deleteNote = async (cn: CreditNote) => {
+    if (!(await confirm({
+      title: `Delete ${cn.noteNumber}?`,
+      message: "The draft goes from the list. It was never posted, so nothing else changes. Its number is not used again.",
+      confirmLabel: "Delete",
+      danger: true,
+    }))) return;
+    await sendNote(`/api/credit-notes/${encodeURIComponent(cn.id)}`, { method: "DELETE" },
+      `${cn.noteNumber} deleted`, "Could not delete the credit note");
+  };
+  const printNote = async (cn: CreditNote) => {
+    try {
+      const { generateCreditNotePdf } = await import("@/lib/generate-credit-note-pdf");
+      generateCreditNotePdf(cn);
+    } catch {
+      /* generator handles its own draw; nothing to surface here */
+    }
+  };
 
+  // Edit and Delete only on a draft; Duplicate on any note. No Approve step
+  // (owner 2026-10-20 「approve 不需要」) — a draft is posted straight.
   const contextMenuItems = (row: CreditNote): ContextMenuItem[] => [
-    {
-      label: "Print PDF",
-      action: async (r: CreditNote) => {
-        try {
-          const { generateCreditNotePdf } = await import("@/lib/generate-credit-note-pdf");
-          generateCreditNotePdf(r);
-        } catch {
-          /* generator handles its own draw; nothing to surface here */
-        }
-      },
-    },
+    { label: "Print PDF", action: (r: CreditNote) => void printNote(r) },
+    ...(row.status === "DRAFT" ? [{ label: "Edit", action: (r: CreditNote) => openEdit(r) }] : []),
+    { label: "Duplicate", action: (r: CreditNote) => openDuplicate(r) },
     ...(row.status === "DRAFT"
       ? [{ label: "Post", action: (r: CreditNote) => void postNote(r) }]
       : [{ label: "Back to Draft", danger: true, action: (r: CreditNote) => void unpostNote(r) }]),
+    ...(row.status === "DRAFT" ? [{ label: "Delete", danger: true, action: (r: CreditNote) => void deleteNote(r) }] : []),
     {
       label: "Refresh",
       separator: true,
@@ -407,7 +472,7 @@ export default function CreditNotesPage() {
         actions={
           <>
             <Button variant="outline" onClick={openPicker}>From Delivery Return</Button>
-            <Button onClick={() => { setFromReturnDraft(null); openCreate(); }}>
+            <Button onClick={() => { if (editingNote || copyOf) resetForm(); setFromReturnDraft(null); openCreate(); }}>
               <Plus className="h-4 w-4 mr-2" /> New Credit Note
             </Button>
           </>
@@ -466,10 +531,33 @@ export default function CreditNotesPage() {
               headerMenu
               reorderableHeaders
               exportName="Credit Notes"
+              onDoubleClick={setViewNote}
             />
           </CardContent>
         </Card>
       </div>
+
+      {/* Double-click: the note, with the row's actions. */}
+      {viewNote && (
+        <NotePopup
+          kind="credit"
+          note={viewNote}
+          onClose={() => setViewNote(null)}
+          actions={<>
+            <Button variant="outline" size="sm" onClick={() => void printNote(viewNote)}>Print PDF</Button>
+            <Button variant="outline" size="sm" onClick={() => { setViewNote(null); openDuplicate(viewNote); }}>Duplicate</Button>
+            {viewNote.status === "DRAFT" ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => { setViewNote(null); void deleteNote(viewNote); }}>Delete</Button>
+                <Button variant="outline" size="sm" onClick={() => { setViewNote(null); openEdit(viewNote); }}>Edit</Button>
+                <Button size="sm" onClick={() => { setViewNote(null); void postNote(viewNote); }}>Post</Button>
+              </>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => { setViewNote(null); void unpostNote(viewNote); }}>Back to Draft</Button>
+            )}
+          </>}
+        />
+      )}
 
       {/* From Delivery Return — pick a return, the form fills in. */}
       {pickOpen && (
@@ -534,8 +622,12 @@ export default function CreditNotesPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-lg font-semibold">Create Credit Note{fromReturnDraft ? <span className="ml-2 text-sm font-normal text-[#6B7280]">from {fromReturnDraft.returnNo}</span> : null}</h2>
-              <button onClick={() => { setShowCreateModal(false); setFromReturnDraft(null); }}>
+              <h2 className="text-lg font-semibold">
+                {editingNote ? `Edit Credit Note ${editingNote.noteNumber}` : "Create Credit Note"}
+                {fromReturnDraft ? <span className="ml-2 text-sm font-normal text-[#6B7280]">from {fromReturnDraft.returnNo}</span> : null}
+                {copyOf ? <span className="ml-2 text-sm font-normal text-[#6B7280]">copy of {copyOf}</span> : null}
+              </h2>
+              <button onClick={closeForm} aria-label="Close">
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
@@ -669,12 +761,12 @@ export default function CreditNotesPage() {
               </div>
             </div>
             <div className="flex justify-end gap-2 p-6 border-t">
-              <Button variant="ghost" onClick={() => setShowCreateModal(false)}>Cancel</Button>
+              <Button variant="ghost" onClick={closeForm}>Cancel</Button>
               <Button
                 onClick={handleCreate}
                 disabled={creating || !selectedInvoiceId || items.every((i) => !i.description)}
               >
-                {creating ? "Creating..." : "Create Credit Note"}
+                {editingNote ? (creating ? "Saving..." : "Save Changes") : creating ? "Creating..." : "Create Credit Note"}
               </Button>
             </div>
           </div>
