@@ -1,5 +1,5 @@
 # Bug History
-> **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-350 to -353 (branch `claude/t006-grn-core-main-4f46ca`, to main; T-006 R2/R3 + HK-0108); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-350 to -354 (branch `claude/t006-grn-core-main-4f46ca`, to main; T-006 R2/R3 + HK-0108); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -200,6 +200,18 @@ Entries themselves stay newest-first.
 **Fix.** The ref now sets `scrollLeft` on the pill row itself, and does nothing when the row does not overflow (desktop). The page's vertical scroll is never touched. One shared component, so all 13 `scrollable` callers are covered. `main` carries the same code.
 
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
+
+---
+
+## BUG-2026-10-20-354 — Two DRAFT → POSTED flips of one GRN at once could both commit and count the receipt twice `procurement` `grn` 🟡
+
+🟡 **On branch** (`claude/t006-grn-core-main-4f46ca` → `main`). Found by review of the T-006 R3 change; the old code had the same gap.
+
+**Symptom.** A double-click on Post (or two users posting the same DRAFT) could commit both saves. When no line resolved to a raw material, the PO line's received qty went up twice.
+
+**Cause.** The PUT's `UPDATE grns SET status = ?` had no check on the status it read. Only the `rm_batches` primary key, clashing on the second flip, stopped a double post, and that key only exists for lines that resolve to a raw material.
+
+**Fix.** `grnStatusGuard` runs first in the flip's batch: it raises (marker cast, as the PO counter guard does) when the stored status is no longer the one this request read, so the whole batch rolls back and the route answers 409. UNVERIFIED on real Postgres, like -350. Regression: `tests/t006-grn-core.test.mjs` ("R3 two DRAFT → POSTED flips at once").
 
 ---
 

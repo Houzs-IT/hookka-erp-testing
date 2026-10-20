@@ -292,6 +292,31 @@ test("R2 posting a DRAFT over a line another receipt filled meanwhile rolls back
   assert.equal(poi(db, "poi-a").receivedQty, 10);
 });
 
+test("R3 two DRAFT → POSTED flips at once: only one commits, the counter moves once", needsSqlite, async () => {
+  const db = makeDb();
+  seedPos(db);
+  const app = mount(db);
+  const grnId = (await (await app.request("/", json("POST", { ...createBody([["po-1", "poi-a", 4]]), status: "DRAFT" }))).json()).data.id;
+  // No line resolves to a raw material, so no rm_batches key can clash and
+  // stop the second flip — only the status compare-and-set can.
+  db.sqlite.exec("DELETE FROM raw_materials");
+  // The other flip commits right after this request read the GRN as DRAFT.
+  let raced = false;
+  db.afterRead((sql) => {
+    if (!raced && /FROM grns/i.test(sql)) {
+      raced = true;
+      db.sqlite.prepare("UPDATE grns SET status = 'POSTED' WHERE id = ?").run(grnId);
+      db.sqlite.prepare("UPDATE purchase_order_items SET receivedQty = receivedQty + 4 WHERE id = 'poi-a'").run();
+    }
+  });
+  const res = await app.request(`/${grnId}`, json("PUT", { status: "POSTED" }));
+  assert.ok(raced, "the race hook must have fired");
+  assert.equal(res.status, 409, await res.clone().text());
+  assert.match((await res.json()).error, /status was just changed/);
+  assert.equal(poi(db, "poi-a").receivedQty, 4, "counted once, not twice");
+  assert.equal(db.rows("SELECT * FROM rm_batches").length, 0);
+});
+
 // A POSTED two-PO receipt whose id order differs from its screen order:
 // stored id 1 = PO-2 line B (poItemIndex 1), id 2 = PO-1 line A (index 0).
 // GET lists A first; batches were keyed by id order (B → "-1", A → "-2").

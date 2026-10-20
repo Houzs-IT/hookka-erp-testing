@@ -93,13 +93,13 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `app.put("/:id")` (PO edit) | `src/api/routes/purchase-orders.ts:789` | PO edit + status lifecycle |
 | `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1125` | Runtime column self-apply |
 | `buildGRNStockStatements` | `src/api/routes/grn.ts:531` | Stock + cost_ledger statements for the post's own batch (T-006 R3) |
-| `buildPoReceiptStatements` | `src/api/routes/grn.ts:921` | Guarded PO counter bump + PO status → RECEIVED/PARTIAL_RECEIVED, in the post's batch |
+| `buildPoReceiptStatements` | `src/api/routes/grn.ts:946` | Guarded PO counter bump + PO status → RECEIVED/PARTIAL_RECEIVED, in the post's batch |
 | `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:676` | Compensating DELTA for POSTED-line edit |
 | `poCounterIncrement` | `src/api/routes/grn.ts:814` | PO line receivedQty += qty with the 110% ceiling in the UPDATE (T-006 R2) |
-| `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1092` | Un-post/cancel/delete: give back PO qty |
+| `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1117` | Un-post/cancel/delete: give back PO qty |
 | `resolveRmForGRNItem` | `src/api/routes/grn.ts:479` | Resolve GRN line → raw_material |
-| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1309` | GRN create; status derived from arrival |
-| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2317` | Arrival state transition (gate) |
+| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1334` | GRN create; status derived from arrival |
+| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2348` | Arrival state transition (gate) |
 | `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1089` | PI create + convert-chain + GL post |
 | `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:1963` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
 | `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:711` | Ceiling on re-synced invoiced_qty |

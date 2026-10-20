@@ -847,6 +847,28 @@ function isPoOverReceiptRace(err: unknown): boolean {
   return msg.includes(PO_OVER_RECEIPT_MARKER);
 }
 
+// Compare-and-set for a status flip, by the same marker trick: first in the
+// batch, it locks the GRN row and raises if another save changed the status
+// since this request read it. Without it two DRAFT → POSTED flips at once
+// both commit, and when no line resolves to a raw material (so no rm_batches
+// key clash) the PO counter is bumped twice.
+const GRN_STATUS_RACE_MARKER = "grn_status_race";
+const GRN_STATUS_RACE_ERROR =
+  "This GRN's status was just changed by another save. Nothing was saved — reload and check it.";
+
+function grnStatusGuard(db: D1Database, grnId: string, expected: string): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE grns
+          SET status = CASE
+                WHEN status = ? THEN status
+                ELSE CAST(CAST('${GRN_STATUS_RACE_MARKER}:' || id AS DOUBLE PRECISION) AS TEXT)
+              END
+        WHERE id = ?`,
+    )
+    .bind(expected, grnId);
+}
+
 // PO status from the counters as they stand when these statements run — so,
 // placed after the counter updates in the same batch, they see this receipt
 // and any receipt that committed before they started. Two receipts filling
@@ -2224,6 +2246,7 @@ app.put("/:id", async (c) => {
             .bind(id)
             .all<GRNItemRow & GrnLinePoRef>()
         ).results ?? []);
+      statements.unshift(grnStatusGuard(c.var.DB, id, prevStatus));
       const stock = await buildGRNStockStatements(c.var.DB, existing, lines);
       statements.push(...stock.statements);
       postSummary = {
@@ -2254,6 +2277,9 @@ app.put("/:id", async (c) => {
     } catch (e) {
       if (isPoOverReceiptRace(e)) {
         return c.json({ success: false, error: PO_OVER_RECEIPT_RACE_ERROR }, 409);
+      }
+      if (String(e instanceof Error ? e.message : e).includes(GRN_STATUS_RACE_MARKER)) {
+        return c.json({ success: false, error: GRN_STATUS_RACE_ERROR }, 409);
       }
       throw e;
     }
