@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-349 (branch `fix/hk0110-delivery-return-caps`, to main; HK-0110); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -201,6 +202,12 @@ Entries themselves stay newest-first.
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-349 — One delivered item could be returned twice: no qty cap on a delivery return `delivery-orders` `inventory-cascade` 🟡
+
+Ticket HK-0110 (YH, prod hub, 2026-10-20): on prod DO-2610-071, production order SO-2610-095-01 (qty 1) was returned twice the same day (DR-2610-001, DR-2610-002, both CN_ISSUED); whether stock went back twice or two credit notes were issued is not measured. `createDeliveryReturnRecord` never compared the returned quantity with the DO line or with earlier returns, saved a missing quantity as 1 (`Number(it.quantity ?? 1)`) and let zero / negative through. Return-to-stock is idempotent only per return (refId = this DR), so each of two returns on one item puts stock back. Cancel refused only CLOSED / REDELIVERED / CN_ISSUED, so a RETURNED_TO_STOCK return could be cancelled with nothing reversed (and would free its quantity for another return).
+
+Fix (ported from staging T-006 R7, #604, plus its two known gaps): a line's quantity must be a number > 0 (400); a line must name its production order when the DO's lines do; per production order, earlier non-cancelled returns + this one may not exceed the DO's delivered quantity, summed over every DO line carrying that order (staging kept only the last line's). Race: the write batch (one transaction) takes `pg_advisory_xact_lock` on the DO first and re-checks the cap last, after its own rows are in; over the cap divides by zero and rolls back. Cancel refuses RETURNED_TO_STOCK (no reversal exists on main). The two prod returns are not touched. Regression: `tests/hk0110-delivery-return-caps.test.mjs`.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 

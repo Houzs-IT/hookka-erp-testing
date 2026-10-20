@@ -251,7 +251,13 @@ export async function enrichItemsWithRefs(db: D1Database, items: DRCreateItem[])
 // Header (SO / customer) is snapshotted from the source DO. BOTH lookups are
 // best-effort (a missing/renamed column or an un-rewritten JOIN alias must NOT
 // fail the create — the DR header + items still get written). Returns the new
-// DR id + number, or null on hard failure.
+// DR id + number, or an error on hard failure / bad quantity / over-return.
+export type CreateDeliveryReturnResult =
+  | { ok: true; id: string; returnNo: string }
+  | { ok: false; error: string; status?: 400 };
+
+const OVER_RETURN_ERROR = "Return exceeds what was delivered on this line";
+
 export async function createDeliveryReturnRecord(
   db: D1Database,
   orgId: string,
@@ -261,17 +267,109 @@ export async function createDeliveryReturnRecord(
     reason?: string;
     notes?: string;
   },
-): Promise<{ id: string; returnNo: string } | null> {
+): Promise<CreateDeliveryReturnResult> {
   await ensureDeliveryReturnTables(db);
   const doId = String(input.doId ?? "").trim();
-  const items = Array.isArray(input.items) ? input.items : [];
+  const rawItems = Array.isArray(input.items) ? input.items : [];
+  // HK-0110: a missing quantity was saved as 1 and zero / negative went
+  // through. Read each line's quantity ONCE so the cap and the insert agree.
+  const badQty = rawItems.find((it) => {
+    const q = Number(it.quantity);
+    return !(Number.isFinite(q) && q > 0);
+  });
+  if (badQty) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Each returned line needs a quantity greater than 0 (${badQty.productCode || badQty.productionOrderId || "a line"} has ${badQty.quantity ?? "none"}).`,
+    };
+  }
+  const items: (DRCreateItem & { quantity: number })[] = rawItems.map((it) => ({
+    ...it,
+    quantity: Number(it.quantity),
+  }));
   // The refs are resolved HERE, not taken from the caller: the office modal
   // posts what the DO API gave it (which carries neither the line's customer PO
   // nor its Reference), and a client should not be able to assert them anyway.
   // Both entry points — office "New return" and the driver flow — land here, so
   // both records come out identical (owner 2026-07-16).
   await enrichItemsWithRefs(db, items);
-  if (!doId || items.length === 0) return null;
+  if (!doId || items.length === 0) {
+    return { ok: false, status: 400, error: "A delivery order id and at least one item are required" };
+  }
+
+  // The cap is keyed by production order, so a line without one would skip
+  // it. Refuse such a line when the DO's own lines carry production orders; a
+  // legacy DO with none has nothing to key a cap on.
+  if (items.some((it) => !it.productionOrderId)) {
+    const poLines = await db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM delivery_order_items
+          WHERE deliveryOrderId = ? AND productionOrderId IS NOT NULL AND productionOrderId <> ''`,
+      )
+      .bind(doId)
+      .first<{ n: number }>();
+    if (Number(poLines?.n) > 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Each returned line must name the production order it came from on this delivery order.",
+      };
+    }
+  }
+
+  // HK-0110 — cap each production order at what the DO delivered (summed over
+  // every DO line carrying it), cumulative across non-cancelled returns.
+  // Without it one delivered item could be returned (and restocked) twice.
+  const poIds = [
+    ...new Set(items.map((it) => it.productionOrderId).filter((v): v is string => !!v)),
+  ];
+  const ph = poIds.map(() => "?").join(",");
+  if (poIds.length) {
+    const [doLinesRes, priorReturnsRes] = await Promise.all([
+      db
+        .prepare(
+          `SELECT productionOrderId AS "poId", quantity
+             FROM delivery_order_items
+            WHERE deliveryOrderId = ? AND productionOrderId IN (${ph})`,
+        )
+        .bind(doId, ...poIds)
+        .all<{ poId: string; quantity: number }>(),
+      db
+        .prepare(
+          `SELECT dri.production_order_id AS "poId", COALESCE(SUM(dri.quantity),0) AS qty
+             FROM delivery_return_items dri
+             JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
+            WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'
+              AND dri.production_order_id IN (${ph})
+            GROUP BY dri.production_order_id`,
+        )
+        .bind(doId, ...poIds)
+        .all<{ poId: string; qty: number }>(),
+    ]);
+    // Summed, not last-wins: a DO can carry the same production order on two lines.
+    const delivered = new Map<string, number>();
+    for (const r of doLinesRes.results ?? []) {
+      delivered.set(r.poId, (delivered.get(r.poId) ?? 0) + (Number(r.quantity) || 0));
+    }
+    const prior = new Map<string, number>();
+    for (const r of priorReturnsRes.results ?? []) {
+      prior.set(r.poId, (prior.get(r.poId) ?? 0) + (Number(r.qty) || 0));
+    }
+    for (const poId of poIds) {
+      const doLineQty = delivered.get(poId) ?? 0;
+      const priorReturned = prior.get(poId) ?? 0;
+      const thisReturn = items
+        .filter((it) => it.productionOrderId === poId)
+        .reduce((s, it) => s + it.quantity, 0);
+      if (priorReturned + thisReturn > doLineQty) {
+        return {
+          ok: false,
+          error: `${OVER_RETURN_ERROR}: already returned ${priorReturned} + this return ${thisReturn} > delivered ${doLineQty}.`,
+        };
+      }
+    }
+  }
 
   try {
     let doNo = "";
@@ -333,6 +431,12 @@ export async function createDeliveryReturnRecord(
     const now = new Date().toISOString();
 
     const statements: D1PreparedStatement[] = [
+      // Serialise returns against the same DO (released at COMMIT) so the
+      // over-return guard at the end of this batch sees any return that
+      // committed while this one was being checked above.
+      db
+        .prepare(`SELECT pg_advisory_xact_lock(hashtext('delivery_return:' || ?)::bigint)`)
+        .bind(doId),
       db
         .prepare(
           `INSERT INTO delivery_returns
@@ -379,7 +483,7 @@ export async function createDeliveryReturnRecord(
             String(it.productCode ?? ""),
             String(it.productName ?? ""),
             String(it.wipLabel ?? ""),
-            Number(it.quantity ?? 1),
+            it.quantity,
             String(it.problem ?? ""),
             String(it.fgUnitId ?? ""),
             it.wasInvoiced ? 1 : 0,
@@ -397,10 +501,34 @@ export async function createDeliveryReturnRecord(
           ),
       );
     }
+    if (poIds.length) {
+      // Race backstop for the cap above, re-checked inside the transaction
+      // after this return's own rows are in: over the cap -> division by zero
+      // -> the whole batch rolls back.
+      statements.push(
+        db
+          .prepare(
+            `SELECT 1 / CASE WHEN EXISTS (
+               SELECT 1 FROM delivery_return_items dri
+                 JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
+                WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'
+                  AND dri.production_order_id IN (${ph})
+                GROUP BY dri.production_order_id
+               HAVING SUM(dri.quantity) > (
+                 SELECT COALESCE(SUM(doi.quantity),0) FROM delivery_order_items doi
+                  WHERE doi.deliveryOrderId = ? AND doi.productionOrderId = dri.production_order_id)
+             ) THEN 0 ELSE 1 END AS "capOk"`,
+          )
+          .bind(doId, ...poIds, doId),
+      );
+    }
     await db.batch(statements);
-    return { id, returnNo };
+    return { ok: true, id, returnNo };
   } catch (err) {
     console.error("[delivery-return-create] create failed:", err);
-    return null;
+    if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
+      return { ok: false, error: `${OVER_RETURN_ERROR} (another return was raised at the same time).` };
+    }
+    return { ok: false, status: 400, error: "Failed to create delivery return" };
   }
 }

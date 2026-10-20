@@ -263,8 +263,8 @@ app.post("/", async (c) => {
       reason: String(body.reason ?? ""),
       notes: String(body.notes ?? ""),
     });
-    if (!created) {
-      return c.json({ success: false, error: "Failed to create delivery return" }, 400);
+    if (!created.ok) {
+      return c.json({ success: false, error: created.error }, created.status ?? 409);
     }
 
     const header = await c.var.DB
@@ -481,7 +481,14 @@ app.post("/:id/cancel", async (c) => {
     .bind(id)
     .first<{ status: string }>();
   if (!h) return c.json({ success: false, error: "Not found" }, 404);
-  if (h.status === "CLOSED" || h.status === "REDELIVERED" || h.status === "CN_ISSUED") {
+  // HK-0110: RETURNED_TO_STOCK already credited stock back and there is no
+  // reversal, so cancelling it (which also frees the qty cap) is refused.
+  if (
+    h.status === "CLOSED" ||
+    h.status === "REDELIVERED" ||
+    h.status === "CN_ISSUED" ||
+    h.status === "RETURNED_TO_STOCK"
+  ) {
     return c.json(
       { success: false, error: `Cannot cancel a ${h.status} return` },
       409,
