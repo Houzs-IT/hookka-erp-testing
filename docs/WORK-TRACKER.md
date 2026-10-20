@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-20**: the owner's answer on the last unsettled design item logged (the Financial Dashboard's tables and Contra's tick list stay as they are — 「不需要，先这样」); the design list is closed.
 > **Last verified: 2026-10-20**: Currency & FX step 4 (#1062) and BUG-2026-10-20-350 checked on prod read-only — all four steps done.
 > **Last verified: 2026-10-20**: Currency & FX step 3 checked on prod read-only (#1061); step 4 (Confirm bank amount) and BUG-2026-10-20-350 on branch `feat/fx-confirm-bank`.
 > **Last verified: 2026-10-20**: Currency & FX steps 1–2 checked on prod read-only (#1057, #1060); step 3 (AP Payment pays foreign-currency bills) on branch `feat/fx-ap-payment`.
@@ -301,6 +302,7 @@ Asked 「还有什么是设计稿没做的？」 after the picks below were done
    - ⚪ The phone's Month / Quarter / Financial Year on P&L, Cash Flow, Balance Sheet and aging as at a past month-end — 「不需要先」. Not now.
    - ✅ The agings' own company picker — 「不需要」. Nothing to change: the picker already renders nothing (the company list holds only the group, so `CompanySelect` hides itself — `useCompanyOptions` in `src/pages/accounting/shared.ts`); the design's company switch lives in the top bar.
    - ✅ His own two: the trade-finance limit — 「填了」, measured on prod 2026-10-20: `GET /api/accounting/trade-finance` gives line 310-0020 a limit, used = the line's balance, available = limit − used; the swipe back in the iPhone home-screen app — 「可以」 (works).
+5. ✅ Asked again 「还有什么设计稿没做的？」 once Currency & FX was done: everything he picked is built; what is not built he declined, postponed or kept as it is. One thing had not been settled — the Financial Dashboard's seven tables (Income Statement, the two salary tables, Cost Structure, Cash Flow, Balance Sheet, Financial Ratios) have the design's colours but not the table header menu (export, columns, drag), and Contra's tick list is a form's picker — owner 2026-10-20: **「不需要，先这样」**. Left as they are; the design list is closed.
 
 ## 2026-10-20 — 🔵 The owner's picks from the design list (his answers item by item, with a screenshot of Creditor Aging's lower half)
 
