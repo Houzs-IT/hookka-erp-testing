@@ -22,7 +22,7 @@ test("seven groups, one door per job", () => {
   assert.deepEqual(groups, ["Reports", "Daily", "Monthly", "Debtors", "Creditors", "Setup"]);
   assert.ok(names.includes("e-Invoice"));
   const leaves = names.filter((n) => !groups.includes(n));
-  assert.equal(leaves.length, 34, `expected 34 menu entries (Other Creditors back 2026-09-29, Fund Transfer folded into Payment Vouchers 2026-10-01, Debtor List / Creditor List added 2026-10-17), saw ${leaves.length}: ${leaves.join(", ")}`);
+  assert.equal(leaves.length, 35, `expected 35 menu entries (Other Creditors back 2026-09-29, Fund Transfer folded into Payment Vouchers 2026-10-01, Debtor List / Creditor List added 2026-10-17, Contra moved from Creditor Aging to Monthly 2026-10-20), saw ${leaves.length}: ${leaves.join(", ")}`);
   assert.ok(!names.includes("Fund Transfer"), "a transfer is a voucher now");
 });
 
@@ -45,6 +45,8 @@ test("what stayed is filed where it belongs", () => {
   assert.equal(group("Stock Summary"), "Reports");
   assert.equal(group("Stock Take"), "Monthly");
   assert.equal(group("Labour"), "Monthly");
+  // Owner 2026-10-20 「这个放去side bar 那边的monthly」: Contra left Creditor Aging for Monthly.
+  assert.equal(group("Contra"), "Monthly");
   assert.equal(group("Credit Notes"), "Debtors");
   assert.equal(group("Debit Notes"), "Debtors");
   assert.equal(group("AP Invoices"), "Creditors");

@@ -3,8 +3,11 @@
 // 2026-10-17-finance-v2-debtors-creditors Task 1). Same reads, figures and
 // writes. New places, as in the design: the control figures as KPI cards with
 // Recalculate counter on the title row, one download (Excel / PDF, no CSV —
-// owner 2026-10-17), the lists in the v2 list look, then the statement (and on
-// the creditor side Trade Finance and Contra) under the list.
+// owner 2026-10-17), the lists in the v2 list look, then (creditor side) Trade
+// Finance under the list. Since 2026-10-20 (owner) the statements and Contra
+// live elsewhere: the supplier statement on AP Invoices, the customer statement
+// on Other Debtor Bills, Contra on its own Monthly page; the trade-finance
+// block has no Repay (an AP Payment repays it).
 // ---------------------------------------------------------------------------
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -107,11 +110,15 @@ test("statements: same reads and print; v2 list look with the closing balance as
     assert.match(s, /<tr data-fin-nolift="" className="border-b border-\[#F0ECE9\] text-\[#6B7280\]">\n\s*<td className="px-3 py-1\.5" colSpan=\{5\}>Opening balance<\/td>/);
     assert.match(s, /<tfoot>\n\s*<tr className="border-t border-\[#1F1D1B\] font-semibold">\n\s*<td className="px-3 py-2" colSpan=\{5\}>Closing balance<\/td>/);
   }
-  assert.match(ar, /<CustomerStatementCard \/>/);
+  // The statements moved (owner 2026-10-20): customer → Other Debtor Bills, supplier → AP Invoices.
+  assert.doesNotMatch(ar, /<CustomerStatementCard \/>/);
+  assert.doesNotMatch(ap, /<SupplierStatementCard \/>/);
+  assert.match(ui, /\{tab === "odebtorbills" && \(\n\s+<div className="space-y-4">\n\s+<OtherPartyBillsTab accounts=\{accounts\} side="DEBTOR" \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  assert.match(ui, /\{tab === "apinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ApInvoicesTab accounts=\{accounts\} \/>\n\s+<SupplierStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
 });
 
-test("Creditor Aging: the list first, then Trade Finance, Contra and the statement", () => {
-  const order = ["<KpiCards", "<AgingListTable", "<TradeFinanceBlock />", "<ContraCard />", "<SupplierStatementCard />"];
+test("Creditor Aging: the list first, then Trade Finance; Contra is its own Monthly page", () => {
+  const order = ["<KpiCards", "<AgingListTable", "<TradeFinanceBlock />"];
   let at = -1;
   for (const o of order) {
     const i = ap.indexOf(o, at + 1);
@@ -119,6 +126,16 @@ test("Creditor Aging: the list first, then Trade Finance, Contra and the stateme
     at = i;
   }
   assert.match(ui, /\{tab === "ap" && <APTab apData=\{apData\} onRefresh=\{fetchAll\} \/>\}/);
+  assert.doesNotMatch(ap, /<ContraCard \/>/);
+  // Contra: Monthly in the sidebar and the tab list, a page of its own (owner 2026-10-20 「放去side bar 那边的monthly」).
+  assert.match(ui, /\{ key: "contra", label: "Contra", icon: <Scale className="h-4 w-4" \/>, group: "Monthly" \},/);
+  assert.match(ui, /\{tab === "contra" && <ContraCard \/>\}/);
+  assert.match(read("src/components/layout/sidebar.tsx"), /\{ name: "Fixed Assets", href: "\/accounting\?tab=assets", icon: Building2 \},\n\s+\{ name: "Contra", href: "\/accounting\?tab=contra", icon: Scale \},/);
+  assert.match(read("src/lib/finance-nav.ts"), /contra: \{ title: "Contra", explain: /);
+  // Trade finance is repaid with an AP Payment — the block has no Repay (owner 「拿掉」).
+  assert.doesNotMatch(tf, />Repay</);
+  assert.doesNotMatch(tf, /supplier-payments\?supplier=/);
+  assert.match(ap, /Pay a bill or repay trade finance with an AP Payment on <Link to="\/accounting\?tab=payments"/);
   const contra = fn("ContraCard");
   assert.match(contra, /<table data-fin-list className="w-full text-sm">/);
   assert.match(contra, /fetch\("\/api\/accounting\/contra", \{\n\s*method: "POST"/, "the contra post is unchanged");

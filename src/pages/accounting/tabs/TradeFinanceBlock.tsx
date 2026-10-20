@@ -6,8 +6,8 @@
 // Buckets run on each draw's DUE date. The identity line the owner can check
 // at a glance: Σ draw outstanding + unallocated = TF account ledger net.
 // Amounts are ledger-derived server-side (loadTfDraws) — this block only
-// displays, edits due dates, and links to the Supplier Payment screen to
-// repay (payee = the lender; the grid there lists draws instead of PIs).
+// displays and edits due dates, interest and bank charges. Repaying is an AP
+// Payment on Payment Vouchers (its Repay button left 2026-10-20, owner 「拿掉」).
 //
 // Since 2026-10-17 (owner 「这些都做」, Finance v2) Creditor Aging's list ALSO
 // shows one row per open draw, in its own Trade finance section (never mixed
@@ -125,9 +125,6 @@ export function TradeFinanceBlock() {
                 {s.accountCode} {s.accountName} · default tenor {s.tenorDays} days · buckets by DUE date
               </span>
               <div className="ml-auto flex items-center gap-2">
-                <a href={`/invoices/supplier-payments?supplier=${encodeURIComponent(s.lenderSupplierId)}`}>
-                  <Button size="sm">Repay</Button>
-                </a>
                 <Button variant="outline" size="sm" onClick={() => setShowSetup((v) => !v)}>
                   <Settings2 className="h-4 w-4 mr-1" /> Settings
                 </Button>
