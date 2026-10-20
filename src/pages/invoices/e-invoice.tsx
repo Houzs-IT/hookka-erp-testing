@@ -1,6 +1,6 @@
-import { useState, useMemo, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { KpiCards, SegmentedSwitch } from "@/components/finance/report-shell";
 import { Button } from "@/components/ui/button";
@@ -235,21 +235,81 @@ export default function EInvoicePage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  // Window both e-invoice tables so large invoice volumes stay light.
-  const submissionsScrollRef = useRef<HTMLDivElement>(null);
-  const submissionsVirtualizer = useVirtualizer({
-    count: eInvoices.length,
-    getScrollElement: () => submissionsScrollRef.current,
-    estimateSize: () => 57,
-    overscan: 10,
-  });
-  const availableScrollRef = useRef<HTMLDivElement>(null);
-  const availableVirtualizer = useVirtualizer({
-    count: candidates.length,
-    getScrollElement: () => availableScrollRef.current,
-    estimateSize: () => 49,
-    overscan: 10,
-  });
+  // Both lists in the Payment Vouchers table standard (owner 2026-10-20
+  // 「这个可以」): the grid's header menu (export, columns), draggable headers,
+  // its own search and windowing; the row's steps on right-click (or ⋮), no
+  // action buttons in the rows; double-click a submission for its XML.
+  const openXml = (e: EInvoice) => { setSelectedXmlId(e.id); setActiveTab("xml"); };
+  const submissionMenu = (e: EInvoice): ContextMenuItem[] => {
+    const next = eInvoiceNextStep(statusOf(e));
+    return [
+      ...(next === "mark" ? [{ label: "Mark as Submitted", action: () => openDialog("mark", e) }] : []),
+      ...(next === "record" ? [{ label: "Record Result", action: () => openDialog("record", e) }] : []),
+      ...(next === "cancel" ? [{ label: "Cancel", danger: true, action: () => openDialog("cancel", e) }] : []),
+      { label: "View XML", separator: next !== null, action: () => openXml(e) },
+    ];
+  };
+  const candidateMenu = (c: Candidate): ContextMenuItem[] => [
+    { label: "Generate XML", disabled: !!generating, action: () => void generate([c.id]) },
+  ];
+  const submissionColumns = useMemo<Column<EInvoice>[]>(() => [
+    { key: "invoiceNo", label: "Invoice No", type: "docno", width: "140px", render: (_v, e) => <span className="font-medium text-[#1F1D1B]">{e.invoiceNo}</span> },
+    {
+      key: "customerName", label: "Customer", width: "260px",
+      exportValue: (e) => e.customerName ?? "",
+      render: (_v, e) => (
+        <span className="block leading-tight">
+          <span className="text-[#1F1D1B]">{e.customerName}</span>
+          <span className={`block text-xs ${e.customerTIN ? "text-[#6B7280]" : "text-[#9A3A2D]"}`}>{e.customerTIN ? `TIN ${e.customerTIN}` : "TIN missing"}</span>
+        </span>
+      ),
+    },
+    { key: "totalIncludingTax", label: "Total (RM)", type: "currency", align: "right", width: "130px", total: "sum", render: (_v, e) => <span className="font-medium text-[#1F1D1B]">{fmtAmt(e.totalIncludingTax)}</span> },
+    {
+      key: "submittedAt", label: "Uploaded To MyInvois", type: "date", width: "170px",
+      exportValue: (e) => (e.submissionId && e.submittedAt ? formatDate(e.submittedAt) : ""),
+      render: (_v, e) => (e.submissionId && e.submittedAt ? (
+        <span className="block leading-tight text-[#374151]">
+          {formatDate(e.submittedAt)}
+          <span className="block text-xs text-[#6B7280]">{new Date(e.submittedAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}</span>
+        </span>
+      ) : <span className="text-[#C4BDB3]">-</span>),
+    },
+    {
+      key: "status", label: "Status", width: "140px",
+      filterAccessor: (e) => E_INVOICE_STATUS_NAME[statusOf(e)],
+      exportValue: (e) => E_INVOICE_STATUS_NAME[statusOf(e)],
+      render: (_v, e) => statusBadge(statusOf(e)),
+    },
+    {
+      key: "where", label: "Where It Is", width: "280px", noFilter: true,
+      exportValue: (e) => [E_INVOICE_WHERE[statusOf(e)], whereDetail(e)].filter(Boolean).join(" — "),
+      render: (_v, e) => {
+        const st = statusOf(e);
+        const bad = st === "INVALID" || st === "REJECTED";
+        return (
+          <span className="block leading-tight">
+            <span className={bad ? "text-[#9A3A2D]" : "text-[#374151]"}>{E_INVOICE_WHERE[st]}</span>
+            {whereDetail(e) && <span className={`block text-xs ${bad ? "text-[#9A3A2D]" : "text-[#6B7280]"}`}>{whereDetail(e)}</span>}
+          </span>
+        );
+      },
+    },
+  ], []);
+  const candidateColumns = useMemo<Column<Candidate>[]>(() => [
+    { key: "invoiceNo", label: "Invoice No", type: "docno", width: "140px", render: (_v, c) => <span className="font-medium text-[#1F1D1B]">{c.invoiceNo}</span> },
+    { key: "invoiceDate", label: "Date", type: "date", width: "120px", render: (_v, c) => <span className="text-[#6B7280]">{c.invoiceDate ? formatDate(c.invoiceDate) : "-"}</span> },
+    { key: "customerName", label: "Customer", width: "260px" },
+    {
+      key: "buyerTin", label: "Buyer TIN", width: "160px",
+      filterAccessor: (c) => (c.buyerTin ? "Has TIN" : "TIN missing"),
+      exportValue: (c) => c.buyerTin || "TIN missing",
+      render: (_v, c) => (c.buyerTin
+        ? <span className="text-[#374151]">{c.buyerTin}</span>
+        : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-[#F9E1DA] border-[#E8B2A1] text-[#9A3A2D]">TIN missing</span>),
+    },
+    { key: "totalSen", label: "Total (RM)", type: "currency", align: "right", width: "130px", total: "sum", render: (_v, c) => <span className="font-medium text-[#1F1D1B]">{fmtAmt(c.totalSen)}</span> },
+  ], []);
 
   // Finance tables (owner 2026-10-01): no wrapping; drag a column edge to
   // resize — widths remembered (src/lib/use-resizable-tables.ts).
@@ -263,9 +323,6 @@ export default function EInvoicePage() {
     );
   }
 
-  const th = "text-left py-3 px-4 text-xs font-bold text-[#4B5563]";
-  const thR = "text-right py-3 px-4 text-xs font-bold text-[#4B5563]";
-  const actBtn = "h-7 px-2 text-[#3E6570] hover:text-[#2E4D57] hover:bg-[#E0EDF0]";
 
   return (
     <div ref={tablesRef} data-fin-tables className="space-y-6 max-md:space-y-4" data-fin-ui>
@@ -342,141 +399,21 @@ export default function EInvoicePage() {
                   No e-invoices yet. Go to the Generate tab to build one.
                 </p>
               ) : (
-                <div
-                  ref={submissionsScrollRef}
-                  className="overflow-auto"
-                  style={{ maxHeight: "calc(100vh - 340px)" }}
-                >
-                  <table data-fin-list className="w-full text-sm">
-                    <thead className="sticky top-0 z-10">
-                      <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
-                        <th className={th}>Invoice No</th>
-                        <th className={th}>Customer</th>
-                        <th className={thR}>Total (RM)</th>
-                        <th className={th}>Uploaded To MyInvois</th>
-                        <th className={th}>Status</th>
-                        <th className={th}>Where It Is</th>
-                        <th className={th}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const vItems = submissionsVirtualizer.getVirtualItems();
-                        const padTop = vItems.length > 0 ? vItems[0].start : 0;
-                        const padBottom =
-                          vItems.length > 0
-                            ? submissionsVirtualizer.getTotalSize() -
-                              vItems[vItems.length - 1].end
-                            : 0;
-                        return (
-                          <>
-                            {padTop > 0 && (
-                              <tr aria-hidden="true" data-fin-nolift="">
-                                <td colSpan={7} style={{ height: padTop, padding: 0, border: 0 }} />
-                              </tr>
-                            )}
-                            {vItems.map((vi) => {
-                              const einv = eInvoices[vi.index];
-                              if (!einv) return null;
-                              const st = statusOf(einv);
-                              const next = eInvoiceNextStep(st);
-                              const bad = st === "INVALID" || st === "REJECTED";
-                              return (
-                        <tr
-                          key={einv.id}
-                          data-index={vi.index}
-                          ref={submissionsVirtualizer.measureElement}
-                          className="border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50 cursor-pointer"
-                          title="Double-click to see the XML"
-                          onDoubleClick={() => {
-                            setSelectedXmlId(einv.id);
-                            setActiveTab("xml");
-                          }}
-                        >
-                          <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                            {einv.invoiceNo}
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="text-[#1F1D1B]">{einv.customerName}</div>
-                            <div className={`text-xs ${einv.customerTIN ? "text-[#6B7280]" : "text-[#9A3A2D]"}`}>
-                              {einv.customerTIN ? `TIN ${einv.customerTIN}` : "TIN missing"}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            {fmtAmt(einv.totalIncludingTax)}
-                          </td>
-                          <td className="py-3 px-4 text-[#374151]">
-                            {einv.submissionId && einv.submittedAt ? (
-                              <>
-                                <div>{formatDate(einv.submittedAt)}</div>
-                                <div className="text-xs text-[#6B7280]">
-                                  {new Date(einv.submittedAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
-                                </div>
-                              </>
-                            ) : (
-                              <span className="text-[#C4BDB3]">-</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4">{statusBadge(st)}</td>
-                          <td className="py-3 px-4">
-                            <div className={bad ? "text-[#9A3A2D]" : "text-[#374151]"}>{E_INVOICE_WHERE[st]}</div>
-                            {whereDetail(einv) && (
-                              <div className={`text-xs ${bad ? "text-[#9A3A2D]" : "text-[#6B7280]"}`}>{whereDetail(einv)}</div>
-                            )}
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center justify-end gap-1">
-                              {next === "mark" && (
-                                <Button variant="ghost" size="sm" className={actBtn} onClick={() => openDialog("mark", einv)}>
-                                  <Send className="h-3 w-3 mr-1" />
-                                  Mark as Submitted
-                                </Button>
-                              )}
-                              {next === "record" && (
-                                <Button variant="ghost" size="sm" className={actBtn} onClick={() => openDialog("record", einv)}>
-                                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                                  Record Result
-                                </Button>
-                              )}
-                              {next === "cancel" && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 px-2 text-[#9A3A2D] hover:text-[#7A2E24] hover:bg-[#F9E1DA]"
-                                  onClick={() => openDialog("cancel", einv)}
-                                >
-                                  <Ban className="h-3 w-3 mr-1" />
-                                  Cancel
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-[#6B5C32] hover:bg-[#F0ECE9]"
-                                onClick={() => {
-                                  setSelectedXmlId(einv.id);
-                                  setActiveTab("xml");
-                                }}
-                              >
-                                <Code className="h-3 w-3 mr-1" />
-                                XML
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                              );
-                            })}
-                            {padBottom > 0 && (
-                              <tr aria-hidden="true" data-fin-nolift="">
-                                <td colSpan={7} style={{ height: padBottom, padding: 0, border: 0 }} />
-                              </tr>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
+                <DataGrid
+                  columns={submissionColumns}
+                  data={eInvoices}
+                  keyField="id"
+                  gridId="e-invoice-submissions"
+                  virtualize
+                  onDoubleClick={openXml}
+                  contextMenuItems={submissionMenu}
+                  headerMenu
+                  reorderableHeaders
+                  exportName="e-Invoice Submissions"
+                  searchPlaceholder="Search invoice / customer / TIN"
+                  alwaysSearchKeys={["invoiceNo", "customerName", "customerTIN", "submissionId", "uuid"]}
+                  maxHeight="calc(100vh - 340px)"
+                />
               )}
             </CardContent>
           </Card>
@@ -517,95 +454,20 @@ export default function EInvoicePage() {
                   Every issued invoice already has an e-Invoice.
                 </p>
               ) : (
-                <div
-                  ref={availableScrollRef}
-                  className="overflow-auto"
-                  style={{ maxHeight: "calc(100vh - 340px)" }}
-                >
-                  <table data-fin-list className="w-full text-sm">
-                    <thead className="sticky top-0 z-10">
-                      <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
-                        <th className={th}>Invoice No</th>
-                        <th className={th}>Date</th>
-                        <th className={th}>Customer</th>
-                        <th className={th}>Buyer TIN</th>
-                        <th className={thR}>Total (RM)</th>
-                        <th className={th}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const vItems = availableVirtualizer.getVirtualItems();
-                        const padTop = vItems.length > 0 ? vItems[0].start : 0;
-                        const padBottom =
-                          vItems.length > 0
-                            ? availableVirtualizer.getTotalSize() -
-                              vItems[vItems.length - 1].end
-                            : 0;
-                        return (
-                          <>
-                            {padTop > 0 && (
-                              <tr aria-hidden="true" data-fin-nolift="">
-                                <td colSpan={6} style={{ height: padTop, padding: 0, border: 0 }} />
-                              </tr>
-                            )}
-                            {vItems.map((vi) => {
-                              const inv = candidates[vi.index];
-                              if (!inv) return null;
-                              return (
-                        <tr
-                          key={inv.id}
-                          data-index={vi.index}
-                          ref={availableVirtualizer.measureElement}
-                          className="border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/50"
-                        >
-                          <td className="py-3 px-4 font-medium text-[#1F1D1B]">
-                            {inv.invoiceNo}
-                          </td>
-                          <td className="py-3 px-4 text-[#6B7280]">
-                            {inv.invoiceDate ? formatDate(inv.invoiceDate) : "-"}
-                          </td>
-                          <td className="py-3 px-4 text-[#1F1D1B]">
-                            {inv.customerName}
-                          </td>
-                          <td className="py-3 px-4">
-                            {inv.buyerTin ? (
-                              <span className="text-[#374151]">{inv.buyerTin}</span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-[#F9E1DA] border-[#E8B2A1] text-[#9A3A2D]">
-                                TIN missing
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right font-medium text-[#1F1D1B]">
-                            {fmtAmt(inv.totalSen)}
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className={actBtn}
-                              disabled={!!generating}
-                              onClick={() => generate([inv.id])}
-                            >
-                              <FileCheck className="h-3 w-3 mr-1" />
-                              Generate XML
-                            </Button>
-                          </td>
-                        </tr>
-                              );
-                            })}
-                            {padBottom > 0 && (
-                              <tr aria-hidden="true" data-fin-nolift="">
-                                <td colSpan={6} style={{ height: padBottom, padding: 0, border: 0 }} />
-                              </tr>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
+                <DataGrid
+                  columns={candidateColumns}
+                  data={candidates}
+                  keyField="id"
+                  gridId="e-invoice-candidates"
+                  virtualize
+                  contextMenuItems={candidateMenu}
+                  headerMenu
+                  reorderableHeaders
+                  exportName="Sales Invoices Without An e-Invoice"
+                  searchPlaceholder="Search invoice / customer / TIN"
+                  alwaysSearchKeys={["invoiceNo", "customerName", "buyerTin"]}
+                  maxHeight="calc(100vh - 340px)"
+                />
               )}
             </CardContent>
           </Card>

@@ -31,16 +31,23 @@ test("the design's four figures as KPI cards", () => {
   assert.doesNotMatch(src, /grid gap-4 grid-cols-1 sm:grid-cols-4/, "the old card row is gone");
 });
 
-test("both lists in the v2 list look; the virtual-scroll spacers never lift", () => {
-  assert.equal((src.match(/<table data-fin-list className="w-full text-sm">\n\s*<thead className="sticky top-0 z-10">/g) ?? []).length, 2);
-  assert.equal((src.match(/<tr aria-hidden="true" data-fin-nolift="">/g) ?? []).length, 4);
-  assert.doesNotMatch(src, /<tr aria-hidden="true">/);
+test("both lists in the Payment Vouchers table standard (owner 2026-10-20 「这个可以」): the grid, its header menu, draggable headers, windowing", () => {
+  const grids = src.match(/<DataGrid\n[\s\S]*?\/>/g) ?? [];
+  assert.equal(grids.length, 2);
+  for (const g of grids) {
+    for (const p of ["virtualize", "headerMenu", "reorderableHeaders", 'maxHeight="calc(100vh - 340px)"']) assert.ok(g.includes(p), p);
+  }
+  assert.match(grids[0], /gridId="e-invoice-submissions"[\s\S]*onDoubleClick=\{openXml\}[\s\S]*contextMenuItems=\{submissionMenu\}[\s\S]*exportName="e-Invoice Submissions"/);
+  assert.match(grids[1], /gridId="e-invoice-candidates"[\s\S]*contextMenuItems=\{candidateMenu\}[\s\S]*exportName="Sales Invoices Without An e-Invoice"/);
+  assert.doesNotMatch(src, /useVirtualizer/, "the grid windows the rows itself");
+  assert.doesNotMatch(src, /<table data-fin-list/, "no hand-rolled tables left");
 });
 
 test("the notice stays; the writes are the three steps and Generate", () => {
   assert.match(src, /<span className="font-semibold">Not connected to LHDN\.<\/span>/);
-  assert.match(src, /onClick=\{\(\) => openDialog\("mark", einv\)\}/);
-  assert.match(src, /onClick=\{\(\) => openDialog\("record", einv\)\}/);
-  assert.match(src, /onClick=\{\(\) => openDialog\("cancel", einv\)\}/);
-  assert.match(src, /onClick=\{\(\) => generate\(\[inv\.id\]\)\}/);
+  // The steps live in the row menu (right-click or ⋮), offered by the record's next step.
+  assert.match(src, /next === "mark" \? \[\{ label: "Mark as Submitted", action: \(\) => openDialog\("mark", e\) \}\] : \[\]/);
+  assert.match(src, /next === "record" \? \[\{ label: "Record Result", action: \(\) => openDialog\("record", e\) \}\] : \[\]/);
+  assert.match(src, /next === "cancel" \? \[\{ label: "Cancel", danger: true, action: \(\) => openDialog\("cancel", e\) \}\] : \[\]/);
+  assert.match(src, /\{ label: "Generate XML", disabled: !!generating, action: \(\) => void generate\(\[c\.id\]\) \}/);
 });
