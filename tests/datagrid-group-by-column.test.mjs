@@ -64,6 +64,13 @@ test("the body: a header per group that folds it, the rows, a subtotal row kept 
   assert.match(body, /while \(i \+ span < visibleColumns\.length && t\[visibleColumns\[i \+ span\]\.key\] === undefined && !stickyOffsets\.has\(visibleColumns\[i \+ span\]\.key\)\) span\+\+;/);
 });
 
+test("a column can name its own group; the Payment Vouchers status groups by its kind", () => {
+  assert.match(src, /groupAccessor\?: \(row: T\) => string \| number \| null;/, "Column.groupAccessor");
+  assert.match(src, /columnGroupValue\(userGroupCol as unknown as GroupColumn<T>, row\)/);
+  const ui = read("src/pages/accounting/index.tsx");
+  assert.match(ui, /\{ key: "statusLabel", label: "Status", width: "250px", noClip: true,\n(?:\s+\/\/.*\n)*\s+groupAccessor: \(r\) => r\.status\.group \?\? r\.status\.label,/);
+});
+
 test("the export carries each group's subtotal row; the PDF bands them", () => {
   const sheet = between("const exportSheet = (): { aoa: Aoa; subtotalRows: number[] } => {", "const exportBase");
   assert.match(sheet, /buildGroupedListingAoa\(/);
