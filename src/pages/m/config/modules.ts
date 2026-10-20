@@ -21,6 +21,7 @@ import {
   type RowVM,
 } from "./types";
 import { logHoursSpec, hubFormSpec, addAffectedProductSpec } from "./forms";
+import { DO_STATUS_LABEL, TIMELINE_STEPS } from "../lib/do-mobile";
 import { normalizeStoredPcbStatus, pcbHasFigure } from "@/lib/pcb";
 import {
   type DetailConfig,
@@ -231,9 +232,10 @@ const SO_STATUSES = [
   "DRAFT", "CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED",
   "DELIVERED", "INVOICED", "CLOSED", "ON_HOLD", "CANCELLED",
 ];
+// The server's DO statuses (VALID_TRANSITIONS, delivery-orders/_helpers.ts).
+// There is no DISPATCHED or SIGNED status: "Dispatched" is LOADED's label.
 const DO_STATUSES = [
-  "DRAFT", "LOADED", "DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED",
-  "INVOICED", "CANCELLED",
+  "DRAFT", "LOADED", "IN_TRANSIT", "DELIVERED", "INVOICED", "CANCELLED",
 ];
 const PROD_STATUSES = [
   "PENDING", "IN_PROGRESS", "COMPLETED", "ON_HOLD", "PAUSED", "CANCELLED",
@@ -508,10 +510,12 @@ const deliveryOrdersSource: DataSource = {
   // Design 2026-07: a DO only exists from Pending Dispatch onward, so the DO
   // source only feeds Dispatch / Dispatched / Delivered. Planning + Pending
   // Delivery are SALES ORDERS (no DO yet) — see pendingSosSource below.
+  // Buckets = desktop TAB_DO_STATUSES (src/pages/delivery/index.tsx).
   subTabs: [
-    { key: "dispatch", label: "Pending Dispatch", match: (r) => ["DRAFT", "LOADED"].includes(str(r, "status")) },
-    { key: "dispatched", label: "Dispatched", match: (r) => ["DISPATCHED", "IN_TRANSIT"].includes(str(r, "status")) },
-    { key: "delivered", label: "Delivered", match: (r) => ["DELIVERED", "SIGNED", "INVOICED"].includes(str(r, "status")) },
+    { key: "dispatch", label: "Pending Dispatch", match: (r) => str(r, "status") === "DRAFT" },
+    { key: "dispatched", label: "Dispatched", match: (r) => ["LOADED", "IN_TRANSIT"].includes(str(r, "status")) },
+    { key: "delivered", label: "Delivered", match: (r) => ["DELIVERED", "INVOICED"].includes(str(r, "status")) },
+    { key: "cancelled", label: "Cancelled", match: (r) => str(r, "status") === "CANCELLED" },
   ],
 };
 
@@ -639,7 +643,8 @@ const deliveryDetail: DetailConfig = {
   title: (d) => str(d, "customerName") || "—",
   status: (d) => resolveStatus(str(d, "status"), STATUS_MAPS.delivery),
   flow: {
-    steps: flowSteps(["LOADED", "DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED"]),
+    // Desktop's Delivery Timeline: the five forward statuses, list labels.
+    steps: TIMELINE_STEPS.map((k) => ({ key: k, label: DO_STATUS_LABEL[k] })),
     current: (d) => str(d, "status"),
   },
   fields: [
@@ -651,7 +656,8 @@ const deliveryDetail: DetailConfig = {
     fld("Customer PO", (d) => str(d, "customerPOId", "customerPO")),
     fld("Customer SO", (d) => str(d, "customerSO", "customerSOId")),
     fld("State", (d) => str(d, "hubState", "customerState")),
-    fld("Expected DD", (d) => dateOnly(d, "deliveryDate", "hookkaExpectedDD")),
+    fld("Delivery Date", (d) => dateOnly(d, "deliveryDate")),
+    fld("Expected DD", (d) => dateOnly(d, "hookkaExpectedDD")),
     fld("Driver", (d) => str(d, "driverName")),
     fld("Vehicle", (d) => str(d, "vehicleNo", "vehicleType")),
     fld("Contact", (d) => str(d, "contactPerson")),
@@ -688,11 +694,12 @@ const deliveryDetail: DetailConfig = {
     return out;
   },
   // "Mark Delivered" opens the POD capture sheet (signature + photos) and, on
-  // confirm, PUTs proofOfDelivery + status DELIVERED — the desktop flow. Hidden
-  // once the DO is delivered/invoiced.
+  // confirm, PUTs proofOfDelivery + status DELIVERED — the desktop flow. Only
+  // where desktop offers it: LOADED (its second button) and IN_TRANSIT. DRAFT
+  // must be loaded first; DRAFT / CANCELLED → DELIVERED is refused by the API.
   primaryCta: (d) => {
     const s = str(d, "status");
-    return s === "DELIVERED" || s === "INVOICED" ? undefined : "Mark Delivered";
+    return s === "LOADED" || s === "IN_TRANSIT" ? "Mark Delivered" : undefined;
   },
   attachmentsResource: (id) => ({ type: "DO", id }),
   auditResource: () => "delivery-orders",

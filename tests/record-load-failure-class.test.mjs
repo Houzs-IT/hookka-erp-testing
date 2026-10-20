@@ -124,6 +124,8 @@ const CONSUMERS = [
   ["src/pages/service-cases/detail.tsx", "isUnknownOutcome", "eternal Loading…"],
   ["src/pages/service-orders/detail.tsx", "isUnknownOutcome", "eternal Loading…"],
   ["src/pages/m/screens/LineItemDetailScreen.tsx", "failure", '"Line item not found."'],
+  // Phone DO detail (2026-10-20): "not found" only on failure.kind === "notFound".
+  ["src/pages/m/screens/delivery/DeliveryDetailPhone.tsx", "failure", '"Delivery order not found."'],
   // --- asserted an empty child set ----------------------------------------
   ["src/components/ui/document-chain-map.tsx", "failure", '"No job cards on this production order yet."'],
   // --- already gated on the hook's error; correct the moment the primitive

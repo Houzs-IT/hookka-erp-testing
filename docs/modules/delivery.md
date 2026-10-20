@@ -1,5 +1,6 @@
 # Delivery & Consignment — Module Guide
 
+> **Last verified: 2026-10-20** (branch `design/mobile-delivery-redesign`): the customer-notice helpers (`sendCustomerNotice`, `renderDeliveredInvoicePdf`) moved unchanged from `delivery/index.tsx` to `src/lib/delivery-customer-notice.ts` (shared with the phone Delivery screens); the `DeliveryPage`, `runBulkDoTransition`, `resendCustomerNotice` / `warnIfNoCustomerEmail`, `detailLive`, `lineSpec` anchors re-derived after that move; `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2139` (it had drifted on staging before this branch). Nothing else re-checked.
 > **Last verified: 2026-10-17** (branch `feat/finance-notes-post`): `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2104` (the void-and-reissue backfill above it now skips invoices with an issued credit / debit note). Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/dashboard-month-static-kpis`): the `app.post("/packing-list-first")` anchor re-derived after `/stats` and `/pending-value` gained the dashboard's daily save. Nothing else re-checked.
 > **Last verified: 2026-09-30** (branch `test/bug06-do-guard-behavioural`, BUG-2026-09-30-223): `createDeliveryOrderForPOs` `_helpers.ts:2242` and `validateDoComposition` `:2113` re-derived; create now guards every production order named in `items` as well as `productionOrderIds`. Nothing else re-checked.
@@ -103,15 +104,15 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `DeliveryPage` | `src/pages/delivery/index.tsx:903` | DO workbench + 3PL + agent, `pageTab` toggle |
-| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3090` | FE bulk status move (all guards/cascades); its credit override prompt no longer fires at dispatch (BUG-2026-10-12-282) |
+| `DeliveryPage` | `src/pages/delivery/index.tsx:748` | DO workbench + 3PL + agent, `pageTab` toggle |
+| `runBulkDoTransition` | `src/pages/delivery/index.tsx:2938` | FE bulk status move (all guards/cascades); its credit override prompt no longer fires at dispatch (BUG-2026-10-12-282) |
 | `askCreditOverride` / `isCreditBlock` | `src/pages/delivery/credit-override.tsx` | Credit block dialog (BUG-34): shows why, takes the override reason when the server allows it |
 | `checkCustomerCredit` / `gateCredit` | `src/api/lib/customer-credit.ts` | THE customer credit gate (overdue by term + limit incl. undelivered DOs), run at DO create and packing-list-first (not at dispatch, BUG-2026-10-12-282) |
-| `resendCustomerNotice` / `warnIfNoCustomerEmail` | `delivery/index.tsx:2979 / :2961` | Feature A per-DO resend / Feature B no-email warning |
+| `resendCustomerNotice` / `warnIfNoCustomerEmail` | `delivery/index.tsx:2827 / :2809` | Feature A per-DO resend / Feature B no-email warning |
 | `columns` (DataGrid) | `src/pages/delivery/index.tsx` (~3.9k) | DO grid column defs |
 | `getContextMenuItems` | `src/pages/delivery/index.tsx` (~4.4k) | THE DO status table — row menu **and** the drawer's action bar |
-| `detailLive` | `src/pages/delivery/index.tsx:3751` | Drawer's document re-read from the list; its bar filtered from the row menu |
-| `lineSpec` | `src/pages/delivery/index.tsx:3784` | One-line build spec per DO line, via the shared `buildSpec` |
+| `detailLive` | `src/pages/delivery/index.tsx:3599` | Drawer's document re-read from the list; its bar filtered from the row menu |
+| `lineSpec` | `src/pages/delivery/index.tsx:3632` | One-line build spec per DO line, via the shared `buildSpec` |
 | `drawerActionBar` / `drawerLineSpec` / `DRAWER_DOC_CONFIG` | `src/lib/document-drawer.ts` | Drawer model: full-page route, action-bar filter, spec-line delegation |
 | `DocumentDetailDrawer` | `src/components/ui/document-detail-drawer.tsx` | Shared slide-over chrome (chrome only, no domain knowledge) |
 | 3PL Providers block | `src/pages/delivery/index.tsx` (~6.5k) | `pageTab==="3pl"` list + Create/Edit dialog |
@@ -124,7 +125,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | `applyDeliveryOrderUpdate` | `delivery-orders/_helpers.ts:4194` | DO edit + transition apply |
 | `buildDoDeliveredSoAndInvoice` / `computeDoInvoiceLines` | `delivery-orders/_helpers.ts:1558 / 1342` | DELIVERED→INVOICED SO + invoice build |
 | `queueDoCustomerNotice` | `delivery-orders/_helpers.ts:3637` | Recipient chain + idempotent email claim |
-| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2104` | PL-first auto-split create |
+| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2139` | PL-first auto-split create |
 | `createPackingListCore` | `src/api/routes/packing-lists.ts:628` | Truck-run packing-list build |
 | `collectDeliveryBrief` / `generateDeliveryProposals` | `src/api/lib/delivery-agent.ts:633 / 868` | Agent brief + proposals |
 | `cheapestForState` / `loadStateRateCard` | `src/api/lib/delivery-agent.ts` | Cheapest-3PL routing |

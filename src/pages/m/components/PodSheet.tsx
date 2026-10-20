@@ -5,11 +5,27 @@
 // signatureDataUrl, photoDataUrls[], remarks, deliveredAt, capturedBy}, status:
 // "DELIVERED" }. Backend attaches the proof + transitions the DO (delivery-orders
 // .ts:5794) and auto-creates the invoice.
+//
+// 2026-10-20: the RULES are now desktop POD-dialog.tsx's (lib/do-mobile.ts) —
+// receiver name AND a signature or at least one photo; photos compressed with
+// the shared helper (1280px, JPEG 0.7); raw files over 10 MB refused; the
+// whole proof refused over 700 KB. The look is unchanged. The Delivery screens
+// use their own Claude Design sheet (screens/delivery/DeliveryPodSheet.tsx).
 // ===========================================================================
 import { useRef, useState } from "react";
 import { Sheet } from "./Sheet";
 import { M } from "../theme";
 import type { ProofOfDelivery } from "@/types";
+import { compressImage } from "@/lib/image-compress";
+import {
+  POD_MAX_INPUT_FILE_BYTES,
+  POD_MAX_PHOTOS,
+  POD_PHOTO_JPEG_QUALITY,
+  POD_PHOTO_MAX_DIMENSION,
+  podCanSubmit,
+  podOversizeFileError,
+  podSizeError,
+} from "../lib/do-mobile";
 
 type Props = {
   open: boolean;
@@ -24,11 +40,11 @@ export function PodSheet({ open, onClose, onSubmit }: Props) {
   const [photos, setPhotos] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [hasSignature, setHasSignature] = useState(false);
 
   // ---- Signature canvas (pointer draw, no external lib) ----
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
-  const signed = useRef(false);
 
   const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const c = canvasRef.current!;
@@ -54,7 +70,7 @@ export function PodSheet({ open, onClose, onSubmit }: Props) {
     const p = pos(e);
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
-    signed.current = true;
+    if (!hasSignature) setHasSignature(true);
   };
   const end = () => {
     drawing.current = false;
@@ -63,19 +79,29 @@ export function PodSheet({ open, onClose, onSubmit }: Props) {
     const c = canvasRef.current;
     if (!c) return;
     c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
-    signed.current = false;
+    setHasSignature(false);
   };
 
-  const addPhotos = (files: FileList | null) => {
-    if (!files) return;
-    Array.from(files)
-      .slice(0, 5 - photos.length)
-      .forEach((f) => {
-        const reader = new FileReader();
-        reader.onload = () =>
-          setPhotos((prev) => (prev.length >= 5 ? prev : [...prev, String(reader.result)]));
-        reader.readAsDataURL(f);
-      });
+  // Desktop pipeline: refuse >10 MB raw files, compress one at a time.
+  const addPhotos = async (input: HTMLInputElement) => {
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    if (!files.length) return;
+    const toProcess = files.slice(0, POD_MAX_PHOTOS - photos.length);
+    const oversize = toProcess.find((f) => f.size > POD_MAX_INPUT_FILE_BYTES);
+    if (oversize) {
+      setErr(podOversizeFileError(oversize.name));
+      return;
+    }
+    const out: string[] = [];
+    for (const f of toProcess) {
+      try {
+        out.push(await compressImage(f, { maxDim: POD_PHOTO_MAX_DIMENSION, quality: POD_PHOTO_JPEG_QUALITY }));
+      } catch (e) {
+        setErr(`Couldn't process "${f.name}": ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (out.length) setPhotos((prev) => [...prev, ...out].slice(0, POD_MAX_PHOTOS));
   };
 
   const reset = () => {
@@ -84,7 +110,7 @@ export function PodSheet({ open, onClose, onSubmit }: Props) {
     setRemarks("");
     setPhotos([]);
     setErr(null);
-    signed.current = false;
+    setHasSignature(false);
   };
 
   const confirm = async () => {
@@ -93,18 +119,27 @@ export function PodSheet({ open, onClose, onSubmit }: Props) {
       setErr("Receiver name is required.");
       return;
     }
-    setBusy(true);
-    setErr(null);
+    if (!podCanSubmit(receiverName, hasSignature, photos.length)) {
+      setErr("Add a signature or at least one photo.");
+      return;
+    }
     const c = canvasRef.current;
     const pod: ProofOfDelivery = {
       receiverName: receiverName.trim(),
       receiverIC: receiverIC.trim(),
-      signatureDataUrl: signed.current && c ? c.toDataURL("image/png") : "",
+      signatureDataUrl: hasSignature && c ? c.toDataURL("image/png") : "",
       photoDataUrls: photos,
       remarks: remarks.trim(),
       deliveredAt: new Date().toISOString(),
       capturedBy: "",
     };
+    const tooBig = podSizeError(pod);
+    if (tooBig) {
+      setErr(tooBig);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
     const res = await onSubmit(pod);
     setBusy(false);
     if (res.ok) {
@@ -175,7 +210,7 @@ export function PodSheet({ open, onClose, onSubmit }: Props) {
           {photos.length < 5 ? (
             <label style={{ width: 56, height: 56, borderRadius: 8, border: `1px dashed ${M.taupe}`, color: M.taupe, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, cursor: "pointer" }}>
               +
-              <input type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => addPhotos(e.target.files)} />
+              <input type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => void addPhotos(e.currentTarget)} />
             </label>
           ) : null}
         </div>
