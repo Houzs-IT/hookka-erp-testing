@@ -985,8 +985,11 @@ app.post("/aging", async (c) => {
 app.get("/coa", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
+  // ?includeInactive=1: the Chart of Accounts list (2026-10-20) shows the
+  // inactive ones too, to set them active again. Every picker keeps the default.
+  const includeInactive = c.req.query("includeInactive") === "1";
   const res = await c.var.DB.prepare(
-    "SELECT * FROM chart_of_accounts WHERE isActive = 1 ORDER BY code",
+    `SELECT * FROM chart_of_accounts${includeInactive ? "" : " WHERE isActive = 1"} ORDER BY code`,
   ).all<CoaRow>();
   // A parent is never postable (see EFFECTIVE_POSTABLE_SQL) — every account
   // picker filters on isPostable, so a header can no longer be chosen.
