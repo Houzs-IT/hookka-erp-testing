@@ -118,7 +118,8 @@ function fakeDb(b) {
       return { results: b.soItems.filter((si) => args.includes(si.salesOrderId)) };
     }
     if (/FROM delivery_return_items dri/.test(q)) {
-      throw new Error('relation "delivery_returns" does not exist');
+      if (!b.returned) throw new Error('relation "delivery_returns" does not exist');
+      return { results: Object.entries(b.returned).map(([poId, qty]) => ({ poId, qty })) };
     }
     throw new Error("unexpected all(): " + q);
   };
@@ -427,4 +428,22 @@ test("the sales-order fallbacks are restricted to the FIRST whole-document bill"
     2,
     "both fallbacks — the SO lines and the SO header total — must be gated",
   );
+});
+
+// ── T-006 R7 (BUG-2026-10-20-362): Delivery Returns net the bill by quantity ──
+
+test("R7: returning 1 of 4 chairs bills the other 3, not 0", async () => {
+  const b = book();
+  b.returned = { "po-1": 1 };
+  const { invItems, computedTotal } = await computeDoInvoiceLines(fakeDb(b), "do-1", ["so-1"], null);
+  assert.deepEqual(invItems.map((i) => [i.productCode, i.quantity]), [["CHAIR", 3], ["TABLE", 2]]);
+  assert.equal(computedTotal, 3 * 10000 + 2 * 50000);
+});
+
+test("R7: a fully returned DO bills nothing — never the whole SO through the fallback", async () => {
+  const b = book();
+  b.returned = { "po-1": 4, "po-2": 2 };
+  const { invItems, computedTotal } = await computeDoInvoiceLines(fakeDb(b), "do-1", ["so-1"], null);
+  assert.equal(invItems.length, 0);
+  assert.equal(computedTotal, 0);
 });
