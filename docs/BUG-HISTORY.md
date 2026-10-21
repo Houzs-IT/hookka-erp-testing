@@ -9,6 +9,7 @@
 > **Last verified: 2026-10-19**: BUG-2026-10-19-344 flipped to ✅ after the #1026 prod check.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-375 (branch `fix/hk0002-import-blank-keeps`, to main; renumbered from 287, then 342, on rebase; both taken on main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -272,6 +273,19 @@ Fix = every punch still open today gets its hours so far in the dashboard feed �
 **Regression.** `tests/grn-pi-edit-keeps-line-po.test.mjs`.
 
 ---
+## BUG-2026-10-19-375 — Inventory raw-material batch import wiped min / max stock, notes, item type and supplier on every row it touched; exports wrote an unpriced SKU as RM 0 `inventory` `import-export` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0002-import-blank-keeps` → `main`). IT Hub HK-0002 (reporter Lim Wei Siang, 2026-09-07). Prod occurrences UNMEASURED (no prod access this session).
+
+**Symptom.** HK-0002 says an empty cell in a batch import clears a saved value, and that an exported file cannot be imported back without damage. Re-checked against the code on `main` 2026-10-15: the products import and the "batch import never saves" half were already fixed (both inventory dialogs call `/api/products/bulk-import` and `/api/raw-materials/bulk-import`; `shapeProductBulkRow` drops blanks). What was still true: the raw-material import and the price export.
+
+**Root cause.** `POST /api/raw-materials/bulk-import` built every UPDATE from the sheet row alone: description fell back to the item code, group to "OTHERS", `minStock`/`maxStock` to 0, `notes`/`itemType`/`mainSupplierCode` to NULL, `uomCount` to 1, `stockControl` to 1. The template carries none of the last seven, so every re-import reset them on every row it touched; a blank group cell re-grouped the material to OTHERS and with it its GL accounts (BUG-2026-08-21-160). Separately, the products and inventory FG exports wrote `(basePriceSen ?? 0) / 100`, so a SKU with no price exported as 0 and re-imported as a real RM 0.
+
+**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell. Review fixes: the route's stored-value read and UPDATE/INSERT are scoped by `orgId`; `[CLEAR]` in a notes / main supplier code / item type cell sets NULL (blank still keeps; documented in the RM import template); whitespace-only notes keep; an unrecognised `stockControl` keeps. `products.basePriceSen` is nullable (`0001_init.sql:90`, so the blank export is live; `:425` is `sales_order_items`), while `products.costPriceSen` is NOT NULL DEFAULT 0 (`:89`) so a never-priced cost cannot be told from 0 and now also exports blank (imports back as keep = 0).
+
+**Not done (needs the ticket's PRD, not visible to this session).** Preview and audit row already exist (dialog diff preview; `products` bulk-import audit; RM audit only on re-group). Other modules' exports (customers, suppliers, ...) were not swept.
+
+**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix; now drives the route with two orgs).
 
 ## BUG-2026-10-19-334 — Two PO files die on every scan attempt with no error recorded `ocr` `scan-queue` 🟡
 

@@ -97,6 +97,7 @@
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-foundation` (to `main`) added below (its entry is the newest).
 
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main` (ports staging #888, #889, #890; BUG-2026-10-16-295 to -299) added below (its entries are the newest).
+> **Last verified: 2026-10-15**: branch `fix/hk0002-import-blank-keeps` (to `main`, BUG-2026-10-19-375) added below.
 > **Last verified: 2026-10-15**: branch `feat/hk0005-scan-originals-learning` (to `staging`, ticket HK-0005) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `feat/hk-0025-production-notify` (to `staging`, ticket HK-0025) added below (its entry is the newest).
 > **Last verified: 2026-10-15**: branch `docs/hk0055-dept-efficiency-triage` (to `staging`, HK-0055 triage, docs only) added below (its entry is the newest).
@@ -516,6 +517,14 @@ From the 2026-10-15 perf audit (prod, read-only): each 8 s poll was 906 KB on th
 3. ⚪ Self-reload when leaving a page (`vite:preloadError` in `src/main.tsx`): not in this branch, cause not confirmed yet.
 4. ⚪ Bundle split (React out of the `charts` chunk, lazy `WorkerLayout`): not in this branch.
 5. 🔵 Check on staging: a second poll with unchanged data returns 304, and a scan still shows within about 8 s. After deploy, prod bytes per idle poll are UNMEASURED.
+
+## 2026-10-15 — 🔵 Import / export: a blank cell must never clear a value (IT Hub HK-0002, Lim Wei Siang)(branch `fix/hk0002-import-blank-keeps` → `main`, BUG-2026-10-19-375)
+
+1. Raw-material batch import UPDATE keeps stored values for blank cells — done, test `tests/rm-bulk-import-blank-keeps.test.mjs`.
+2. Exports write an unpriced SKU as a blank cell, not 0 — done (products + inventory FG).
+3. Review fixes — done: org-scoped import, `[CLEAR]` token, whitespace notes / bad stockControl keep, cost export blank, behavioural two-org test.
+4. Open: the ticket's PRD attachment was not readable by this session (only the description text); preview / audit row / "any export imports back" for the other modules is UNVERIFIED against it. Owner to confirm what remains.
+
 ## 2026-10-15 — 🟡 HK-0005 Document scanning: keep originals, learn corrections, leaner prompts (branch `feat/hk0005-scan-originals-learning` → `staging`)
 
 Ticket HK-0005 (Lim Wei Siang, 2026-09-07; Development; size L). Asks:
