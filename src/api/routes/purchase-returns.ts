@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { getOrgId } from "../lib/tenant";
 import {
   ensurePurchaseReturnTables,
@@ -123,7 +124,7 @@ app.get("/:id", async (c) => {
 });
 
 // POST /api/purchase-returns — create from a PI
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "purchase-returns", "create");
   if (denied) return denied;
   await ensurePurchaseReturnTables(c.var.DB);

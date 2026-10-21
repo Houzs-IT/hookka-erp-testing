@@ -31,6 +31,7 @@ import {
 import type { SalesOrder } from "@/types";
 import type { Customer, DeliveryOrder } from "@/types";
 import { fetchJson } from "@/lib/fetch-json";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { mutationWithData } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
@@ -446,6 +447,9 @@ export default function SalesPage() {
   const [transferDORow, setTransferDORow] = useState<SalesOrder | null>(null);
   const [transferInvRow, setTransferInvRow] = useState<SalesOrder | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
+  // T-006 R10 — a retry after a lost response replays the first answer
+  // instead of creating a second DO.
+  const transferDoIdem = useIdempotencyKey();
   const [doDeliveryDate, setDoDeliveryDate] = useState("");
   const [doDriverName, setDoDriverName] = useState("");
   const [doVehicleNo, setDoVehicleNo] = useState("");
@@ -1938,15 +1942,18 @@ export default function SalesPage() {
                         // This is what makes validateDoComposition's
                         // once-only-delivery guard actually run; the old
                         // items-only body skipped it entirely.
-                        const d = await fetchJson("/api/delivery-orders", DOMutationSchema, {
-                          method: "POST",
-                          body: {
-                            productionOrderIds: transferReadyPOs.map((po) => po.id),
-                            ...(doDeliveryDate && { deliveryDate: doDeliveryDate }),
-                            ...(doDriverName && { driverName: doDriverName }),
-                            ...(doVehicleNo && { vehicleNo: doVehicleNo }),
-                          },
-                        });
+                        const d = await transferDoIdem.withKey((key) =>
+                          fetchJson("/api/delivery-orders", DOMutationSchema, {
+                            method: "POST",
+                            headers: { "Idempotency-Key": key },
+                            body: {
+                              productionOrderIds: transferReadyPOs.map((po) => po.id),
+                              ...(doDeliveryDate && { deliveryDate: doDeliveryDate }),
+                              ...(doDriverName && { driverName: doDriverName }),
+                              ...(doVehicleNo && { vehicleNo: doVehicleNo }),
+                            },
+                          }),
+                        );
                         if (d.success) {
                           invalidateCachePrefix("/api/delivery-orders");
                           invalidateCachePrefix("/api/sales-orders");

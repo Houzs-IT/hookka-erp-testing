@@ -54,8 +54,10 @@ jobs:
           git rev-parse --verify "origin/${{ github.base_ref }}" >/dev/null
           node scripts/check-docs-freshness.mjs --base "origin/${{ github.base_ref }}"
 
-      - name: API.md is generated, not hand-written
-        run: node scripts/gen-api-docs.mjs --check
+      # API.md belongs to main (2026-10-21). Its line numbers and date move with
+      # almost every route change, so every branch that committed a regen
+      # conflicted with every other one. A PR must not touch it (the pairing step
+      # above fails one that does); main regenerates it after each merge, below.
 
       # The map is the one doc whose ERRORS are worse than its gaps. Nobody
       # reads 511k lines — ~6,000 A4 pages, 6-12 months to hold in your head —
@@ -67,3 +69,41 @@ jobs:
       # 57% of recent src commits never touched the map at all.
       - name: CODEBASE-MAP points where it says it does
         run: node scripts/check-codebase-map.mjs
+
+  # Regenerate docs/API.md on main after every merge and commit it back, the
+  # same way refresh-bundle-baseline.yml keeps .bundle-baseline.json. A push
+  # made with GITHUB_TOKEN does not trigger workflows, and [skip ci] is a second
+  # guard, so this cannot loop.
+  api-md:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: regen-api-md
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate API.md and commit it to main if it changed
+        run: |
+          node scripts/gen-api-docs.mjs
+          if git diff --quiet -- docs/API.md; then
+            echo "[api-md] up to date"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/API.md
+          git commit -m "chore: auto-regen docs/API.md [skip ci]"
+          for i in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git fetch origin main || true
+            git rebase origin/main || { git rebase --abort || true; break; }
+          done
+          echo "[api-md] could not push this run; the next push to main regenerates it"

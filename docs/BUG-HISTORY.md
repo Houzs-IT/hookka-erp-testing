@@ -1,10 +1,21 @@
 # Bug History
-> **Last verified: 2026-10-20**: entries BUG-2026-10-20-360 and -361 added (branch `claude/t006-returns-main-15961f`, T-006 R6 to main); a log, so "verified" means the entry matches the code on its branch.
+
+> **New entries do not go in this file (2026-10-21).** Write each new bug as its own file,
+> `docs/bugs/BUG-YYYY-MM-DD-NNN.md`, with the same `## BUG-… — title` heading. This file is
+> the archive up to BUG-2026-10-21-380. Every branch used to insert its entry and a
+> verified-stamp line at the same spot near the top, so every merge to `main` put every
+> other open PR into conflict; a new file never conflicts. Do not add stamp lines here
+> either: `check-docs-freshness.mjs` fails a PR that adds an entry or a stamp to this file.
+
 > **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-355 to -357 (branch `claude/t006-pi-caps-main-096a64`, to main, ported from staging T-006 R5 / R8 / R9; 355 to 359 are assigned to this branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-350 (branch `feat/fx-confirm-bank`, to main; 347–349 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-348 (branch `fix/hk0109-cn-convert-customers-updated-at`, to main; number reserved for HK-0109); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-347 gains its PO-side fix (same branch `fix/hk0108-posted-grn-line-pairing`, to main): the correction now moves each line's own PO line.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-347 (branch `fix/hk0108-posted-grn-line-pairing`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-349 gains the return-to-stock undo and partial returns (branch `fix/hk0110-delivery-return-caps`, to main).
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-349 (branch `fix/hk0110-delivery-return-caps`, to main; HK-0110); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -167,6 +178,48 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-20-372 — A retried DO / GRN / PI create, CN convert or return create could make a second document `procurement` `delivery` `idempotency` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). T-006 R10, ported from staging.
+
+**Symptom.** A create whose response was lost (timeout, network drop) and then retried could mint a duplicate DO, GRN, purchase invoice, CN-conversion invoice, purchase return or delivery return.
+
+**Root cause.** The six routes had no `withIdempotency`, and no screen sent an `Idempotency-Key` to them.
+
+**Fix.** Each route carries the `idempotent()` middleware (one changed line). Screens send a key from `useIdempotencyKey(s)` (`src/lib/idempotency-key.ts`), held while the attempt is unresolved (no answer, a 5xx, or the server's in-flight 409) and dropped once the server answers. The PI scan uploads its source PDF once per card, so a retry sends the same body.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs`.
+
+---
+
+## BUG-2026-10-20-371 — The same Idempotency-Key with a different body replayed the first response `idempotency` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). Gap found in staging's R10.
+
+**Symptom.** A second request carrying an already-used key but a different body got the first request's response back, as if it had succeeded.
+
+**Root cause.** `withIdempotency` cached by key only and never compared the request.
+
+**Fix.** The SHA-256 of the raw body is stored with the entry; a mismatch returns 422.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs` ("BUG-371").
+
+---
+
+## BUG-2026-10-20-370 — Idempotency keys were not scoped per org `idempotency` `multi-tenancy` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). Gap found in staging's R10.
+
+**Symptom.** Two orgs sending the same `Idempotency-Key` to the same route would share one cache slot: the second org got the first org's response.
+
+**Root cause.** The KV key was `idem:<resource>:<key>`, with no org.
+
+**Fix.** The key is `idem:<orgId>:<resource>:<key>` (requests with no org share an `_` bucket). Applies to every wrapped route, including the seven wrapped before R10.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs` ("BUG-370").
+
+---
+
 ## BUG-2026-10-20-355 — Two purchase invoices saved at once could bill the same goods-receipt line twice `procurement` `purchase-invoice` 🟡
 
 Ported from staging (T-006 R5); not reproduced on prod, which would take two concurrent writes. Each invoice checks a GRN line's remaining quantity and then raises `grn_items.invoiced_qty`, in separate statements, so two saves in the same moment both pass the check and the line ends up billed past what was received. Nothing in the database refused it.
@@ -193,38 +246,6 @@ Found 2026-10-21: merges of `main` into open PR branches (about 33 staged files)
 **Fix.** The task is `node node_modules/eslint/bin/eslint.js`: `node` resolves to node.exe, which tinyexec spawns directly with no cmd.exe. Same rules, same files; an unused variable still fails the commit. 40 staged files: hung (killed at 5 min) → 5 s for lint-staged.
 
 **Regression.** `tests/lint-staged-no-cmd-shim.test.mjs` fails if any lint-staged command does not start with `node `. Class: none (tooling).
-
----
-
-## BUG-2026-10-20-360 — A purchase return never gave the PO line back what it received `purchasing` `returns` 🟡
-
-🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`; T-006 R6 ported from staging). R6 signed off by YH, 20 Oct.
-
-**Symptom.** PO 100, received 100, 20 returned: the PO line still showed 100 received, so no replacement could be received against it and the PO stayed RECEIVED (hidden from outstanding-PO lists).
-
-**Cause.** `createPurchaseReturn` wrote only `purchase_returns` / `purchase_return_items`; `purchase_order_items.receivedQty` was never touched, and nothing recomputed `purchase_orders.status`.
-
-**Fix.** The create batch also runs `receivedQty = GREATEST(0, receivedQty - qty)` on the GRN line's PO line (explicit `po_item_id`); deleting an OPEN return puts it back in the delete's batch; both recompute the PO status (`recomputePoStatusFromReceipts`, now exported, also drops to CONFIRMED when nothing is left received). PO 100 / 100 / return 20 → 80 → 30 more fits under 110%, 31 does not. `grn_items.invoiced_qty` is deliberately not written (staging BUG-2026-09-24-184: it let the same goods be billed twice). A return off a GRN that is not POSTED/CONFIRMED is refused, so the give-back and the restore always move a quantity the receipt really added. The RECEIVED / PARTIAL_RECEIVED updates in the recompute now skip a CLOSED or CANCELLED PO, so a return on a short-closed PO never reopens it.
-
-**Regression.** `tests/t006-returns-main.test.mjs` (R6 tests).
-
----
-
-## BUG-2026-10-20-361 — Cancelling a GRN after a purchase return would take the returned quantity off the PO twice `purchasing` `grn` 🟡
-
-🟡 **Fixed on branch** (`claude/t006-returns-main-15961f`, to `main`). Found in the staging R6 code while porting it; never on main, because main had no give-back until BUG-2026-10-20-360.
-
-**Symptom.** PO 100, receive 100, return 20 (PO line 80), then cancel the GRN: the PO line ends at 0 instead of 20, silently.
-
-**Cause.** GRN cancel / delete / un-post call `restorePOReceivedQtyForGRN`, which subtracts the GRN's full accepted qty, on top of the 20 the return already subtracted.
-
-**Fix.** `grn.ts` refuses all three (409, "Cancel the purchase returns on this GRN first") while any non-CANCELLED purchase return references the GRN's lines (`grn_item_id` TEXT joined on `grn_items.id::text`).
-
-**Known follow-up (kept as is, YH 20 Oct).** Purchase returns on main have no cancel: only an OPEN return can be deleted. A STOCK_OUT or DN_ISSUED return therefore blocks cancel / delete / un-post of its GRN permanently, and the message's "Cancel the purchase returns" has no button behind it for those.
-
-**Regression.** `tests/t006-returns-main.test.mjs` ("a live return blocks the GRN", "GRN cancel, delete and un-post all ask the guard").
-
----
 
 ## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
 
@@ -274,11 +295,25 @@ Found 2026-10-20 building Confirm bank amount (Currency & FX step 4). The Paymen
 
 Fix = an AP voucher's popup asks for `supplier_payment` (or `other_party_payment`) under its number, keyed so it reloads after a bank amount is confirmed. Shipped in #1062; checked on prod read-only the same day — the posted AP Payment it was measured on now shows its two legs and the HLBB bank state. Regression: `tests/fx-confirm-bank.test.mjs`, `tests/pv-popup-form-transfer.test.mjs`, `tests/doc-detail-dblclick.test.mjs`.
 
+## BUG-2026-10-20-349 — One delivered item could be returned twice: no qty cap on a delivery return `delivery-orders` `inventory-cascade` 🟡
+
+Ticket HK-0110 (YH, prod hub, 2026-10-20): on prod DO-2610-071, production order SO-2610-095-01 (qty 1) was returned twice the same day (DR-2610-001, DR-2610-002, both CN_ISSUED); whether stock went back twice or two credit notes were issued is not measured. `createDeliveryReturnRecord` never compared the returned quantity with the DO line or with earlier returns, saved a missing quantity as 1 (`Number(it.quantity ?? 1)`) and let zero / negative through. Return-to-stock is idempotent only per return (refId = this DR), so each of two returns on one item puts stock back. Cancel refused only CLOSED / REDELIVERED / CN_ISSUED, so a RETURNED_TO_STOCK return could be cancelled with nothing reversed (and would free its quantity for another return).
+
+Fix (ported from staging T-006 R7, #604, plus its two known gaps): a line's quantity must be a number > 0 (400); a line must name its production order when the DO's lines do; per production order, earlier non-cancelled returns + this one may not exceed the DO's delivered quantity, summed over every DO line carrying that order (staging kept only the last line's). Race: the write batch (one transaction) takes `pg_advisory_xact_lock` on the DO first and re-checks the cap last, after its own rows are in; over the cap divides by zero and rolls back. Regression: `tests/hk0110-delivery-return-caps.test.mjs`.
+
+Follow-up on the same branch (YH, relayed 2026-10-20). Cancelling a RETURNED_TO_STOCK return now undoes the restock instead of being refused (the return's page shows "Undo return to stock"). `undoFGForDeliveryReturn` (`do-cost-cascade.ts`) replays that return's own `DELIVERY_RETURN` ledger rows: each qty comes back off its batch, with an ADJUSTMENT OUT counter-row at the same unit cost, refType `DELIVERY_RETURN_UNDO`. The returned `fg_units` go back to DELIVERED with stock-event counter-rows, and the return becomes CANCELLED, all in one batch. It is refused (409, nothing written) if it already ran, if a batch no longer holds what the return put on it, or if a unit is no longer RETURNED. In the batch, a per-return lock and two divide-by-zero guards (return still RETURNED_TO_STOCK; no batch below 0) cover a double click or a sale running at the same time. CN_ISSUED (pure return, which also restocks) is still refused. Partial returns: the "New return" picker takes a quantity per line. It defaults to what is still returnable (delivered minus earlier non-cancelled returns, split across lines of the same production order: `src/lib/delivery-return-qty.ts`) and is capped there. The invoice now subtracts only the returned quantity; before, a line dropped out whole on any return (the staging 26bc84c9 change, with the same split). Review fixes: a database failure on create is now 500, not 400. The driver QR "returned at delivery" flow logs a refused return instead of dropping it silently.
+
 ## BUG-2026-10-20-348 — CN → invoice convert never worked: it wrote `customers.updated_at`, which does not exist `consignment` `data-integrity` 🟡
 
 HK-0109 (YH, 2026-10-20). Same bug as staging's BUG-2026-09-24-201, whose fix (T-006 R4, `6f242d90`) never reached `main`. Since `7701e1aa` (2026-05-04) `POST /api/consignment-notes/:id/convert-to-invoice` bumps the customer's A/R with `UPDATE customers SET outstandingSen = …, updated_at = ?`, and the CN `/return` A/R refund does the same. `customers` has no `updated_at`: not in `0001_init.sql`, no later migration adds it, and the prod schema snapshot `tests/db-schema.json` does not list it. Both writes sit in one atomic `DB.batch`, so the whole convert (invoice, CN → FULLY_SOLD, items SOLD, units DELIVERED) rolls back, and so does a return on a converted CN. Prod: 22 CNs, none with `convertedInvoiceId` (per the ticket); whether prod's live `customers` has the column is UNMEASURED.
 
 Fix = drop `updated_at` from both `UPDATE customers` in `consignment-notes.ts`, as staging did. Not brought over: staging's release of the CN when its invoice is voided or deleted (owner question on the PR). Regression: `tests/sql-columns-exist.test.mjs` checks every column an `UPDATE customers` sets against the snapshot.
+
+## BUG-2026-10-20-347 — Editing a received GRN could correct the wrong line `procurement` `grn` 🟡
+
+HK-0108, the POSTED-edit sibling of BUG-2026-10-19-340 (HK-0107). Prod impact unmeasured. On a received (POSTED) GRN whose lines' ids and PO-line order differ (e.g. a multi-PO receipt), correcting one line's accepted qty could land on another line, so its stock, cost and PO received qty moved instead. Even on the right line, the PO received qty moved on the header PO's line at the same position, not the line's own PO line, so correcting a PO-2 line moved PO-1.
+
+Cause: GET returns the lines sorted by `poItemIndex` (`rowToGRN`), but `PUT /:id` on a POSTED GRN read the stored lines `ORDER BY id` and paired them with the body lines by position. Fix = pair by line id, else by position in GET order (as the draft path does since HK-0107); the stored lines stay in id order, so `lineIdx` still names the batch `postGRNToStock` wrote. Second cause: `cascadePOReceivedQtyDelta` looked the PO line up by `poItemIndex` in the header PO only, and the over-receipt check on the edit was fed only `poItemIndex`, so both ignored each line's `po_id` / `po_item_id`. Fix = both now carry the line's own PO link through `resolveGrnLineTargets` (header PO by position only for legacy lines, as the post cascade does), and status is recomputed for every PO touched. Regression: `tests/grn-posted-edit-line-pairing.test.mjs`.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 

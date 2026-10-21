@@ -268,6 +268,105 @@ export async function reverseFGForDeliveryReturn(
 }
 
 // ---------------------------------------------------------------------------
+// UNDO a return-to-stock (HK-0110) — cancelling a RETURNED_TO_STOCK Delivery
+// Return takes back exactly what reverseFGForDeliveryReturn credited. Driven by
+// that return's OWN ledger rows (refType='DELIVERY_RETURN', refId=drId), the
+// same row-for-row replay reverseFGForDoCancel uses: each row's qty comes back
+// OFF the batch it went onto, with a counter ADJUSTMENT (OUT) at the same unit
+// cost, refType='DELIVERY_RETURN_UNDO'. Refused (nothing written) when it has
+// already run, or when a batch no longer holds what the return put on it (the
+// goods were sold or used since) — it would go negative.
+// ---------------------------------------------------------------------------
+export async function undoFGForDeliveryReturn(
+  db: D1Database,
+  drId: string,
+  undoneAtIso: string,
+): Promise<
+  | { ok: true; statements: D1PreparedStatement[]; batchIds: string[]; undoneCogsSen: number }
+  | { ok: false; error: string }
+> {
+  const done = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM cost_ledger WHERE refType = 'DELIVERY_RETURN_UNDO' AND refId = ?",
+    )
+    .bind(drId)
+    .first<{ n: number }>();
+  if ((done?.n ?? 0) > 0) {
+    return { ok: false, error: "This return's stock credit has already been undone." };
+  }
+  const rowsRes = await db
+    .prepare(
+      `SELECT itemId AS "itemId", batchId AS "batchId", qty AS "qty",
+              unitCostSen AS "unitCostSen"
+         FROM cost_ledger
+        WHERE refType = 'DELIVERY_RETURN' AND refId = ?`,
+    )
+    .bind(drId)
+    .all<{ itemId: string; batchId: string | null; qty: number; unitCostSen: number }>();
+  const rows = (rowsRes.results ?? []).filter((r) => (Number(r.qty) || 0) > 0);
+
+  const needByBatch = new Map<string, number>();
+  for (const r of rows) {
+    if (r.batchId) needByBatch.set(r.batchId, (needByBatch.get(r.batchId) ?? 0) + Number(r.qty));
+  }
+  const batchIds = [...needByBatch.keys()];
+  if (batchIds.length) {
+    const ph = batchIds.map(() => "?").join(",");
+    const held = await db
+      .prepare(`SELECT id, remainingQty AS "remainingQty" FROM fg_batches WHERE id IN (${ph})`)
+      .bind(...batchIds)
+      .all<{ id: string; remainingQty: number }>();
+    const heldBy = new Map((held.results ?? []).map((b) => [b.id, Number(b.remainingQty) || 0]));
+    for (const [batchId, need] of needByBatch) {
+      const have = heldBy.get(batchId) ?? 0;
+      if (have < need) {
+        return {
+          ok: false,
+          error: `Cannot undo: FG batch ${batchId} holds ${have} but this return put ${need} on it — the returned goods were sold or used since. Fix the stock with a stock adjustment instead.`,
+        };
+      }
+    }
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  let undoneCogsSen = 0;
+  for (const r of rows) {
+    const qty = Number(r.qty);
+    const unitSen = Number(r.unitCostSen) || 0;
+    const costSen = Math.round(unitSen * qty);
+    undoneCogsSen += costSen;
+    if (r.batchId) {
+      statements.push(
+        db
+          .prepare("UPDATE fg_batches SET remainingQty = remainingQty - ? WHERE id = ?")
+          .bind(qty, r.batchId),
+      );
+    }
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO cost_ledger
+             (id, date, type, itemType, itemId, batchId, qty, direction,
+              unitCostSen, totalCostSen, refType, refId, notes)
+           VALUES (?, ?, 'ADJUSTMENT', 'FG', ?, ?, ?, 'OUT', ?, ?, 'DELIVERY_RETURN_UNDO', ?, ?)`,
+        )
+        .bind(
+          genLedgerId("fgu"),
+          undoneAtIso,
+          r.itemId,
+          r.batchId,
+          qty,
+          unitSen,
+          costSen,
+          drId,
+          `Return to stock undone — ${drId} cancelled`,
+        ),
+    );
+  }
+  return { ok: true, statements, batchIds, undoneCogsSen };
+}
+
+// ---------------------------------------------------------------------------
 // REVERSE (whole document) — when a DELIVERED delivery order is CANCELLED, the
 // goods never left in the eyes of the book: every FG_DELIVERED slice this DO
 // consumed must be handed back to its fg_batches layer and the COGS undone.

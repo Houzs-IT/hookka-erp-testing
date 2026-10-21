@@ -9,7 +9,13 @@
 //
 // Spec:
 //   * Client sends `Idempotency-Key: <uuid>` header on the POST.
-//   * Server hashes (resource, key) into a KV cache key.
+//   * Server hashes (org, resource, key) into a KV cache key. The org is
+//     part of the key so two tenants sending the same key never collide
+//     (BUG-2026-10-20-370).
+//   * The SHA-256 of the raw request body is stored with the entry. The
+//     same key with a DIFFERENT body is a client bug, not a retry: it
+//     gets 422 instead of the first request's response
+//     (BUG-2026-10-20-371).
 //   * First request runs the handler, stores the response (status + JSON
 //     body) in KV with a 24h TTL, returns the response.
 //   * Subsequent requests with the same (resource, key) read from KV and
@@ -36,8 +42,9 @@
 // At 1k POSTs/day with a 24h TTL, that's 5MB resident — well within
 // the SESSION_CACHE budget.
 // ---------------------------------------------------------------------------
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../worker";
+import { tryGetOrgId } from "./tenant";
 
 const TTL_SECONDS = 60 * 60 * 24; // 24h
 const PENDING_TTL_SECONDS = 60 * 5; // 5min — enough for a slow handler
@@ -45,6 +52,7 @@ const MAX_KEY_LENGTH = 200;
 
 type CachedResponse = {
   state: "complete";
+  bodyHash: string;
   status: number;
   body: unknown;
   storedAt: string;
@@ -52,6 +60,7 @@ type CachedResponse = {
 
 type PendingMarker = {
   state: "pending";
+  bodyHash: string;
   startedAt: string;
 };
 
@@ -69,8 +78,21 @@ export function readIdempotencyKey(c: Context<Env>): string | null {
   return trimmed;
 }
 
-function cacheKey(resource: string, key: string): string {
-  return `idem:${resource}:${key}`;
+function cacheKey(orgId: string, resource: string, key: string): string {
+  return `idem:${orgId}:${resource}:${key}`;
+}
+
+// Hash the raw bytes without consuming the body the handler will read.
+// Wrappers sit at the route entry, before anything reads the body; if
+// something already did, Hono's body cache still has it as text.
+async function hashRequestBody(c: Context<Env>): Promise<string> {
+  const buf = c.req.raw.bodyUsed
+    ? new TextEncoder().encode(await c.req.text())
+    : await c.req.raw.clone().arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
@@ -101,7 +123,9 @@ export async function withIdempotency(
     return handler();
   }
 
-  const k = cacheKey(resource, key);
+  // No org (system paths) shares one "_" bucket — same as before scoping.
+  const k = cacheKey(tryGetOrgId(c) ?? "_", resource, key);
+  const bodyHash = await hashRequestBody(c);
 
   // 1. Check for an existing entry.
   let existing: CacheEntry | null = null;
@@ -109,6 +133,17 @@ export async function withIdempotency(
     existing = await kv.get<CacheEntry>(k, { type: "json" });
   } catch {
     /* KV read failure is non-fatal — fall through and run the handler */
+  }
+
+  if (existing && existing.bodyHash !== bodyHash) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error:
+          "This Idempotency-Key was already used with a different request body. Use a new key for a new request.",
+      }),
+      { status: 422, headers: { "content-type": "application/json" } },
+    );
   }
 
   if (existing?.state === "complete") {
@@ -129,12 +164,16 @@ export async function withIdempotency(
         success: false,
         error:
           "A request with this Idempotency-Key is already in flight. Retry once it completes.",
+        // Lets the client tell this 409 from a business-rule 409: the
+        // attempt is still unresolved, so it must keep its key.
+        inFlight: true,
       }),
       {
         status: 409,
         headers: {
           "content-type": "application/json",
           "retry-after": "5",
+          "idempotency-in-flight": "true",
         },
       },
     );
@@ -143,6 +182,7 @@ export async function withIdempotency(
   // 2. Mark pending so concurrent retries 409 instead of double-running.
   const pending: PendingMarker = {
     state: "pending",
+    bodyHash,
     startedAt: new Date().toISOString(),
   };
   try {
@@ -167,8 +207,9 @@ export async function withIdempotency(
     throw e;
   }
 
-  // 4. Cache the response (only 2xx and 4xx — never 5xx).
-  if (res.status >= 500) {
+  // 4. Cache the response (only 2xx and 4xx — never 5xx, and never 401/403:
+  //    a permission answer can change, it is not the request's outcome).
+  if (res.status >= 500 || res.status === 401 || res.status === 403) {
     try {
       await kv.delete(k);
     } catch {
@@ -194,6 +235,7 @@ export async function withIdempotency(
 
   const complete: CachedResponse = {
     state: "complete",
+    bodyHash,
     status: res.status,
     body,
     storedAt: new Date().toISOString(),
@@ -206,4 +248,20 @@ export async function withIdempotency(
     /* swallow — better to return the live response than to 500 */
   }
   return res;
+}
+
+/**
+ * Same wrapper as Hono route middleware, so a route opts in with one
+ * changed line and no re-indent:
+ *   app.post("/", idempotent(), async (c) => { ... })
+ * The resource is the method + full path, so a path id (CN convert's
+ * `/:id/`) is part of the key. It runs before the handler's RBAC gate,
+ * which is why 401/403 are never cached (see withIdempotency).
+ */
+export function idempotent(): MiddlewareHandler<Env> {
+  return (c, next) =>
+    withIdempotency(c, `${c.req.method} ${c.req.path}`, readIdempotencyKey(c), async () => {
+      await next();
+      return c.res;
+    });
 }
