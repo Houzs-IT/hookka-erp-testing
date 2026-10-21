@@ -4,11 +4,17 @@
 // Everyone who owes us — trade customers and other debtors — or whom we owe —
 // suppliers and other creditors — in one list, each with what is outstanding
 // (the same figure its aging row shows). Double-click opens the record where
-// it is kept: a customer's edit form on Customers, a supplier's page, an other
-// party's form on its own page. Read-only here; nothing is deleted — a record
-// is set inactive where it is kept.
+// it is kept: a customer's edit form on Customers, a supplier's page. An other
+// debtor / creditor opens in a popup right here — + New too — and its row menu
+// sets it inactive or deletes it: the list is the one door (owner 2026-10-21
+// 「只留 Creditor List 一个入口，用弹窗编辑」 → 「可以，全部做」; the register page
+// left the sidebar). A customer or supplier is set inactive where it is kept.
 // ---------------------------------------------------------------------------
 import { useMemo, useState } from "react";
+import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { asMutationResponse } from "../shared";
+import { OtherPartyFormPopup, type OtherPartyRecord } from "./OtherPartyFormPopup";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,7 +40,15 @@ export function PartyListTab({ side }: { side: Side }) {
   const debtor = side === "DEBTOR";
   const otherLabel = debtor ? "Other Debtor" : "Other Creditor";
   const { data: tradeResp } = useCachedJson<ListResp>(debtor ? "/api/customers" : "/api/suppliers");
-  const { data: othersResp } = useCachedJson<ListResp>(`/api/accounting/other-parties?type=${side}`);
+  const { data: othersResp, refresh: refreshOthers } = useCachedJson<ListResp>(`/api/accounting/other-parties?type=${side}`);
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  // The other party being edited in the popup (null party = a new one).
+  const [partyPopup, setPartyPopup] = useState<{ party: OtherPartyRecord | null } | null>(null);
+  const otherById = useMemo(
+    () => new Map(listOf(othersResp).map((p) => [String(p.id), p as unknown as OtherPartyRecord] as const)),
+    [othersResp],
+  );
   const { data: agingResp } = useCachedJson<{ success?: boolean; data?: { ar?: AgingRow[]; ap?: AgingRow[] } }>("/api/accounting/aging");
   const { data: otherAgingResp } = useCachedJson<{ success?: boolean; data?: { bills?: { partyId: string; outstandingSen: number }[] } }>(
     `/api/accounting/other-party-aging?type=${side}`,
@@ -56,9 +70,28 @@ export function PartyListTab({ side }: { side: Side }) {
   const shown = show === "all" ? all : show === "trade" ? trade : other;
 
   const open = (r: PartyListRow) => {
-    if (r.kind === "other") navigate(`/accounting?tab=${debtor ? "odebtor" : "ocreditor"}&edit=${encodeURIComponent(r.id)}`);
+    if (r.kind === "other") setPartyPopup({ party: otherById.get(r.id) ?? null });
     else if (debtor) navigate(`/customers?edit=${encodeURIComponent(r.id)}`);
     else navigate(`/suppliers/${encodeURIComponent(r.id)}`);
+  };
+
+  // An other party's status and delete, from its row menu (they lived on the register page).
+  const setOtherActive = async (r: PartyListRow, isActive: boolean) => {
+    const res = await fetch(`/api/accounting/other-parties/${encodeURIComponent(r.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive }),
+    }).catch(() => null);
+    const j = res ? asMutationResponse(await res.json().catch(() => null)) : null;
+    if (j?.success) { toast.success(`${r.name} ${isActive ? "active" : "inactive"}`); refreshOthers(); }
+    else toast.error(j?.error || "Failed to update party");
+  };
+  const deleteOther = async (r: PartyListRow) => {
+    if (!(await confirm({ title: "Delete party?", message: `Delete ${r.name}? (only allowed if it has no bills or payments)`, danger: true }))) return;
+    const res = await fetch(`/api/accounting/other-parties/${encodeURIComponent(r.id)}`, { method: "DELETE" }).catch(() => null);
+    const j = res ? asMutationResponse(await res.json().catch(() => null)) : null;
+    if (j?.success) { toast.success(`${r.name} deleted`); refreshOthers(); }
+    else toast.error(j?.error || "Failed to delete party");
   };
 
   const columns = useMemo<Column<PartyListRow>[]>(() => [
@@ -109,7 +142,7 @@ export function PartyListTab({ side }: { side: Side }) {
   return (
     <div className="space-y-4" data-party-list={side}>
       <FinanceTitleActions>
-        <Button variant="outline" size="sm" onClick={() => navigate(`/accounting?tab=${debtor ? "odebtor" : "ocreditor"}&new=1`)}>
+        <Button variant="outline" size="sm" onClick={() => setPartyPopup({ party: null })}>
           + New {otherLabel}
         </Button>
         <Button variant="primary" size="sm" onClick={() => navigate(debtor ? "/customers?new=1" : "/procurement/maintenance?new=1")}>
@@ -133,9 +166,16 @@ export function PartyListTab({ side }: { side: Side }) {
             keyField="key"
             gridId={debtor ? "accounting-debtor-list" : "accounting-creditor-list"}
             onDoubleClick={open}
-            // Right-click: Edit only (owner 2026-10-20 「可以加右键edit 就好」) —
-            // the same place a double-click goes.
-            contextMenuItems={() => [{ label: "Edit", action: open }]}
+            // Right-click: Edit (owner 2026-10-20 「可以加右键edit 就好」) — the
+            // same place a double-click goes; an other party also Set Inactive /
+            // Active and Delete, which lived on its register page (2026-10-21).
+            contextMenuItems={(r) => (r.kind === "other"
+              ? [
+                  { label: "Edit", action: open },
+                  { label: r.active ? "Set Inactive" : "Set Active", action: () => void setOtherActive(r, !r.active) },
+                  { label: "Delete", danger: true, action: () => void deleteOther(r) },
+                ]
+              : [{ label: "Edit", action: open }])}
             rowClassName={(r) => (r.active ? "" : "opacity-60")}
             headerMenu
             reorderableHeaders
@@ -155,8 +195,16 @@ export function PartyListTab({ side }: { side: Side }) {
         </CardContent>
       </Card>
       <p className="text-[12px] text-[#9CA3AF]">
-        Double-click a row to edit it where it is kept. Set a {debtor ? "customer" : "supplier"} inactive instead of deleting it.
+        Double-click a row to edit it — an {otherLabel.toLowerCase()} opens right here, a {debtor ? "customer" : "supplier"} where it is kept. Set a {debtor ? "customer" : "supplier"} inactive instead of deleting it.
       </p>
+      {partyPopup && (
+        <OtherPartyFormPopup
+          side={side}
+          party={partyPopup.party}
+          onClose={() => setPartyPopup(null)}
+          onSaved={() => { setPartyPopup(null); refreshOthers(); }}
+        />
+      )}
     </div>
   );
 }
