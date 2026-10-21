@@ -1028,6 +1028,8 @@ type PreviewLine = {
    * and the header PO is display only.
    */
   poId?: string | null;
+  /** ...and the PO LINE (T-006 R8), so a line with no material code is still capped. */
+  poItemId?: string | null;
 };
 
 type PreviewCard = {
@@ -1672,6 +1674,7 @@ function CreatePIWizard({
       const allocatedLines = lines.map((l, i) => ({
         ...l,
         poId: allocations[i]?.poId ?? null,
+        poItemId: allocations[i]?.poItemId ?? null,
       }));
       const purchaseOrderId = headerPoId(allocations, namedPoIds);
       const touchedPoIds = allocatedPoIds(allocations);
@@ -2122,6 +2125,7 @@ function CreatePIWizard({
               // the header would over-bill one order and wrongly reject a line
               // that is within budget on its own.
               poId: l.poId ?? null,
+              poItemId: l.poItemId ?? null,
               // The catalogue tier is the scanner reading text with nothing to
               // corroborate it — no PO line, no history with this supplier. Now
               // that creating a document teaches a binding, a wrong guess there
@@ -3190,7 +3194,8 @@ function PICard({
     const byId = new Map(pos.map((p) => [p.id, p]));
     const lines = card.lines.map((l, i) => {
       const poId = allocations[i]?.poId ?? null;
-      return applyPoPriceFill([{ ...l, poId }], byId.get(poId ?? "") ?? null)[0];
+      const poItemId = allocations[i]?.poItemId ?? null;
+      return applyPoPriceFill([{ ...l, poId, poItemId }], byId.get(poId ?? "") ?? null)[0];
     });
     return {
       purchaseOrderIds: nextIds,
