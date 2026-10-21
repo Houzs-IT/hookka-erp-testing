@@ -24,6 +24,7 @@ import {
   loadPoValueMap,
 } from "../lib/do-value";
 import { requirePermission, requireReadOrDashboardTab } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { customerScopeSql, salesOrderScopeSql, isCustomerScoped } from "../lib/customer-scope";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
@@ -2056,7 +2057,7 @@ app.post("/backfill-dedupe-delivered", async (c) => {
 });
 
 // POST /api/delivery-orders — create
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   // RBAC gate — only roles with delivery-orders:create may insert a new DO.
   const denied = await requirePermission(c, "delivery-orders", "create");
   if (denied) return denied;

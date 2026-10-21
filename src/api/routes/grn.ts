@@ -25,6 +25,7 @@ import { runSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { makeLedgerEntry } from "../../lib/costing";
 import { emitAudit } from "../lib/audit";
 import { learnSupplierBindings } from "../lib/supplier-binding-learn";
@@ -1352,7 +1353,7 @@ app.get("/stats", async (c) => {
 //     ARRIVED and posts (the existing arrival-gated flow). We never create a
 //     committed (CONFIRMED/POSTED) status before goods have ARRIVED — that
 //     would bypass the arrival gate the PUT enforces.
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   // RBAC gate (P3.3-followup) — grn:create.
   const denied = await requirePermission(c, "grn", "create");
   if (denied) return denied;

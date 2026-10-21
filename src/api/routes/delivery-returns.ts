@@ -14,6 +14,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { customerScopeSql } from "../lib/customer-scope";
 import { getOrgId } from "../lib/tenant";
 import { reverseFGForDeliveryReturn, undoFGForDeliveryReturn } from "../lib/do-cost-cascade";
@@ -247,7 +248,7 @@ app.get("/do-items", async (c) => {
   }
 });
 
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "delivery-returns", "update");
   if (denied) return denied;
   await ensureDeliveryReturnTables(c.var.DB);

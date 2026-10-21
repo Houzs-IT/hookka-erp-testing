@@ -170,6 +170,48 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-20-372 — A retried DO / GRN / PI create, CN convert or return create could make a second document `procurement` `delivery` `idempotency` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). T-006 R10, ported from staging.
+
+**Symptom.** A create whose response was lost (timeout, network drop) and then retried could mint a duplicate DO, GRN, purchase invoice, CN-conversion invoice, purchase return or delivery return.
+
+**Root cause.** The six routes had no `withIdempotency`, and no screen sent an `Idempotency-Key` to them.
+
+**Fix.** Each route carries the `idempotent()` middleware (one changed line). Screens send a key from `useIdempotencyKey(s)` (`src/lib/idempotency-key.ts`), held while the attempt is unresolved (no answer, a 5xx, or the server's in-flight 409) and dropped once the server answers. The PI scan uploads its source PDF once per card, so a retry sends the same body.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs`.
+
+---
+
+## BUG-2026-10-20-371 — The same Idempotency-Key with a different body replayed the first response `idempotency` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). Gap found in staging's R10.
+
+**Symptom.** A second request carrying an already-used key but a different body got the first request's response back, as if it had succeeded.
+
+**Root cause.** `withIdempotency` cached by key only and never compared the request.
+
+**Fix.** The SHA-256 of the raw body is stored with the entry; a mismatch returns 422.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs` ("BUG-371").
+
+---
+
+## BUG-2026-10-20-370 — Idempotency keys were not scoped per org `idempotency` `multi-tenancy` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). Gap found in staging's R10.
+
+**Symptom.** Two orgs sending the same `Idempotency-Key` to the same route would share one cache slot: the second org got the first org's response.
+
+**Root cause.** The KV key was `idem:<resource>:<key>`, with no org.
+
+**Fix.** The key is `idem:<orgId>:<resource>:<key>` (requests with no org share an `_` bucket). Applies to every wrapped route, including the seven wrapped before R10.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs` ("BUG-370").
+
+---
+
 ## BUG-2026-10-20-355 — Two purchase invoices saved at once could bill the same goods-receipt line twice `procurement` `purchase-invoice` 🟡
 
 Ported from staging (T-006 R5); not reproduced on prod, which would take two concurrent writes. Each invoice checks a GRN line's remaining quantity and then raises `grn_items.invoiced_qty`, in separate statements, so two saves in the same moment both pass the check and the line ends up billed past what was received. Nothing in the database refused it.

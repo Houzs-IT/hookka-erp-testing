@@ -1,5 +1,6 @@
 # Procurement — Module Guide
 
+> **Last verified: 2026-10-21** (`claude/t006-idempotency-main-0d4efa`, T-006 R10): the four `purchase-invoices.ts` anchors (PI create :1212, edit :2111, `checkInvoicedQtyCeilingAfterEdit` :747, `mapPurchaseLinesToAccounts` :211) and the GRN create :1356 / arrival :2308 anchors re-derived after merging HK-0108 (#1055) and the R5/R8/R9 port with the `idempotent()` create routes. Nothing else re-checked.
 > **Last verified: 2026-10-20** (`claude/t006-pi-caps-main-096a64`, main): the four `purchase-invoices.ts` anchors (PI create :1207, edit :2106, `checkInvoicedQtyCeilingAfterEdit` :742, `mapPurchaseLinesToAccounts` :206) re-derived after the T-006 R5 / R8 / R9 port. Nothing else re-checked.
 > **Last verified: 2026-10-20** (`feat/fx-confirm-bank`, main): the `supplier-payments.ts` table anchors (POST / , /knock-off, /un-knock, `buildSupplierPaymentCreate`, `buildSupplierPaymentLifecycle`) re-derived after `CreateAllocation` gained the Confirm bank amount fields and `supplierPaymentBankAccount` was added (Currency & FX step 4).
 > **Last verified: 2026-10-20** (`feat/doc-numbering-settings`, main): the two `purchase-invoices.ts` handler anchors (PI create / edit) re-derived after `generatePiNo` became one line (Document Numbering).
@@ -99,12 +100,12 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `cascadePOReceivedQtyDelta` | `src/api/routes/grn.ts:1137` | Move PO line receivedQty by delta |
 | `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1043` | Un-post/cancel/delete: give back PO qty |
 | `resolveRmForGRNItem` | `src/api/routes/grn.ts:479` | Resolve GRN line → raw_material |
-| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1355` | GRN create; status derived from arrival |
-| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2307` | Arrival state transition (gate) |
-| `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1211` | PI create + convert-chain + GL post |
-| `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:2110` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
-| `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:746` | Ceiling on re-synced invoiced_qty |
-| `mapPurchaseLinesToAccounts` | `src/api/routes/purchase-invoices.ts:210` | PI lines → GL account buckets |
+| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1356` | GRN create; status derived from arrival |
+| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2308` | Arrival state transition (gate) |
+| `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1212` | PI create + convert-chain + GL post |
+| `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:2111` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
+| `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:747` | Ceiling on re-synced invoiced_qty |
+| `mapPurchaseLinesToAccounts` | `src/api/routes/purchase-invoices.ts:211` | PI lines → GL account buckets |
 | `buildPiApprovalLegs` | `src/lib/pi-posting.ts:35` | PI AP GL legs on CONFIRMED (DR mapped buckets · CR 400-0000) |
 | `isPiEditable` / `checkGrnLineQtyEdit` | `src/lib/purchase-edit-rules.ts:34 / 135` | Shared FE+BE edit gates |
 | `checkConvertAvailability` / `clampDecrement` | `src/lib/convert-chain.ts:81 / 138` | Line-level 409 guard + floor |
