@@ -2497,6 +2497,7 @@
     "notes",
     "pi_id",
     "po_id",
+    "po_item_id",
     "qty",
     "supplier_sku",
     "tax_sen",

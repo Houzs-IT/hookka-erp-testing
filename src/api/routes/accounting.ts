@@ -5078,6 +5078,81 @@ app.get("/ap-invoices", async (c) => {
   return c.json({ success: true, data: { rows: filtered, totals } });
 });
 
+// ---------------------------------------------------------------------------
+// GET /ar-invoices — everything owed to us on paper in one list (owner
+// 2026-10-21 「我没发现ar invoice 在我的debtor part」 / 「这个other debtor bill
+// 里面…我希望只有bill，然后…ar invoice 一起放进来，像creditor 的ap invoice」 →
+// 「可以」): sales invoices (INV) and other-debtor bills (OD), the debtor twin of
+// /ap-invoices. An invoice dated before the books opened and not keyed as an
+// opening invoice is BEFORE_OPENING: its balance is in the opening balance, so
+// it owes nothing here — the open figures match Debtor Aging's.
+// ---------------------------------------------------------------------------
+app.get("/ar-invoices", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const [odRes, invRes, openingDate] = await Promise.all([
+    c.var.DB.prepare(
+      `SELECT b.id, b.billNo, b.partyId, b.partyName, b.billDate, b.referenceNo, b.description, b.totalSen, b.paidAmountSen, b.status,
+              dl.state AS lifecycleState
+         FROM other_party_bills b
+         LEFT JOIN document_lifecycle dl ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
+        WHERE b.orgId = ? AND b.partyType = 'DEBTOR' AND (dl.state IS NULL OR dl.state <> 'DELETED')`,
+    ).bind(orgId).all<Record<string, unknown>>(),
+    c.var.DB.prepare(
+      `SELECT id, invoiceNo, customerId, customerName, doNo, invoiceDate, dueDate, totalSen, paidAmount, status, isOpening
+         FROM invoices
+        WHERE status <> 'DRAFT'`,
+    ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
+    getOpeningDate(c.var.DB),
+  ]);
+  type ArRow = {
+    kind: "OD" | "INV"; id: string; no: string; customer: string; partyId: string; ref: string; date: string; dueDate: string | null;
+    description: string; totalSen: number; receivedSen: number; outstandingSen: number;
+    status: "OPEN" | "PAID" | "CANCELLED" | "BEFORE_OPENING"; opening: boolean;
+  };
+  const rows: ArRow[] = [];
+  for (const b of odRes.results ?? []) {
+    const total = Math.round(Number(b.totalSen ?? b.total_sen) || 0);
+    const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
+    const lc = String(b.lifecycleState ?? b.lifecycle_state ?? "ACTIVE");
+    const st = String(b.status ?? "");
+    const rowStatus = lc !== "ACTIVE" || st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN";
+    rows.push({
+      kind: "OD", id: String(b.id), no: String(b.billNo ?? b.bill_no ?? ""), customer: String(b.partyName ?? b.party_name ?? ""),
+      partyId: String(b.partyId ?? b.party_id ?? ""), ref: String(b.referenceNo ?? b.reference_no ?? ""),
+      date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null, description: String(b.description ?? ""),
+      totalSen: total, receivedSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0, status: rowStatus, opening: false,
+    });
+  }
+  for (const i of invRes.results ?? []) {
+    const total = Math.round(Number(i.totalSen ?? i.total_sen) || 0);
+    const paid = Math.round(Number(i.paidAmount ?? i.paid_amount) || 0);
+    const st = String(i.status ?? "");
+    const date = String(i.invoiceDate ?? i.invoice_date ?? "").slice(0, 10);
+    const isOpening = !!Number(i.isOpening ?? i.is_opening ?? 0);
+    const rowStatus = st === "CANCELLED" || st === "VOID" ? "CANCELLED"
+      : st === "PAID" || total - paid <= 0 ? "PAID"
+      : rowBeforeOpening(date, openingDate, isOpening) ? "BEFORE_OPENING"
+      : "OPEN";
+    rows.push({
+      kind: "INV", id: String(i.id), no: String(i.invoiceNo ?? i.invoice_no ?? ""), customer: String(i.customerName ?? i.customer_name ?? ""),
+      partyId: String(i.customerId ?? i.customer_id ?? ""), ref: String(i.doNo ?? i.do_no ?? ""),
+      date, dueDate: (i.dueDate ?? i.due_date) ? String(i.dueDate ?? i.due_date).slice(0, 10) : null, description: "",
+      totalSen: total, receivedSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0, status: rowStatus, opening: isOpening,
+    });
+  }
+  rows.sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
+  const open = rows.filter((r) => r.status === "OPEN");
+  const totals = {
+    openSen: open.reduce((s, r) => s + r.outstandingSen, 0),
+    openCount: open.length,
+    invOpenSen: open.filter((r) => r.kind === "INV").reduce((s, r) => s + r.outstandingSen, 0),
+    odOpenSen: open.filter((r) => r.kind === "OD").reduce((s, r) => s + r.outstandingSen, 0),
+  };
+  return c.json({ success: true, data: { rows, totals, openingDate } });
+});
+
 app.delete("/other-party-bills/:billNo", async (c) => {
   const denied = await requirePermission(c, "accounting", "delete");
   if (denied) return denied;
@@ -9369,7 +9444,8 @@ type AccountingCtx = Context<Env>;
 const REPORT_SNAPSHOT_TABLE = "accounting_report_snapshot";
 // Bump when a view's response SHAPE (or what its figures mean) changes — the
 // freshness probe watches tables, so a code change alone retires no copy.
-const REPORT_SNAPSHOT_V = "v1";
+// v2: the Balance Sheet's accounts carry their Chart of Accounts parent (2026-10-21).
+const REPORT_SNAPSHOT_V = "v2";
 const REPORT_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
 // The P&L replay's tables plus what the statements, the Balance Sheet and the
 // material replay read besides (a table with no timestamp column is skipped by
@@ -11290,13 +11366,14 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
 
   // --- chart of accounts lookup ---
   const coaRes = await c.var.DB.prepare(
-    "SELECT code, name, type, specialAccountType, cashFlowCategory FROM chart_of_accounts",
+    "SELECT code, name, type, specialAccountType, cashFlowCategory, parentCode FROM chart_of_accounts",
   ).all<{
     code: string;
     name: string;
     type: CoaRow["type"];
     specialAccountType: string | null;
     cashFlowCategory: string | null;
+    parentCode: string | null;
   }>();
   const coa = new Map<
     string,
@@ -11305,6 +11382,7 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
       type: CoaRow["type"];
       sat: string | null;
       cf: string | null;
+      parent: string | null;
     }
   >();
   for (const a of coaRes.results ?? [])
@@ -11313,6 +11391,7 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
       type: a.type,
       sat: a.specialAccountType ?? null,
       cf: a.cashFlowCategory ?? null,
+      parent: a.parentCode ?? (a as { parent_code?: string | null }).parent_code ?? null,
     });
 
   // --- ledger legs ---
@@ -11571,6 +11650,10 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
     category: BsSection;
     balance: number;
     asOfDate: string;
+    // The account's Chart of Accounts parent: the sheet nests the accounts
+    // that share one under it (owner 2026-10-21; src/lib/bs-groups.ts).
+    parentCode?: string | null;
+    parentName?: string | null;
   }[] = [];
   const asOf = endYm ? `${endYm}-28` : new Date().toISOString().slice(0, 10);
   const bsOverride = await getBsSectionMap(c.var.DB);
@@ -11603,6 +11686,8 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
     const stockSen = sheetStock?.balances.get(code);
     const shown = stockSen === undefined ? bal : bsSectionClass(section) === "asset" ? stockSen : -stockSen;
     if (shown === 0) continue;
+    const parent = acct.parent ? resolveAcct(acct.parent) : null;
+    const parentCode = parent && parent !== code ? parent : null;
     balanceSheet.push({
       id: code,
       accountCode: code,
@@ -11610,6 +11695,8 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
       category: section,
       balance: shown,
       asOfDate: asOf,
+      parentCode,
+      parentName: parentCode ? coa.get(parentCode)?.name ?? null : null,
     });
   }
   // Account-code order within every section (owner 2026-10-13 「排序按科目编号」);

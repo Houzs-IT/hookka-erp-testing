@@ -48,7 +48,7 @@ Pair with `docs/CODEBASE-MAP.md` (where the code is) and
 3. Commit on a branch (feature) or `main` (bugfix); `git pull --rebase origin main`; push.
 4. Watch: `gh run watch <id> --exit-status`.
 5. **Verify-live** on erp.hookka.com — check the **READ and the WRITE** path (patch → refetch → confirm). Deploy exit 0 ≠ feature works.
-6. Bug? → append `docs/BUG-HISTORY.md`. Always → update `docs/WORK-TRACKER.md`.
+6. Bug? → a new file `docs/bugs/<BUG-id>.md` (not `docs/BUG-HISTORY.md`, the archive). Always → update `docs/WORK-TRACKER.md`.
 *Refs: `HOOKKA-GOTCHAS.md` (build/ship), memory verify-live.*
 
 ## P4 — Money field

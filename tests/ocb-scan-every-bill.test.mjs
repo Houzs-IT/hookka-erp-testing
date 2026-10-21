@@ -15,7 +15,7 @@ const start = ui.indexOf("function OtherPartyBillsManager(");
 const mgr = ui.slice(start, ui.indexOf("\nfunction ", start + 10));
 
 test("the bill scan uses every bill in the file (no 'only the first was used' warning)", () => {
-  assert.match(mgr, /<ScanPrefillButton label="Scan Bill" allDocs onResult=\{applyScan\} \/>/);
+  assert.match(mgr, /<ScanPrefillButton label="Scan Bill" allDocs onResult=\{applyScan\} startOpen=\{!!formOnly\?\.scan\} \/>/);
   assert.match(mgr, /const docs = d\.docs && d\.docs\.length > 1 \? d\.docs : null;\n\s*setScanQueue\(docs \? \{ docs, file, index: 0 \} : null\);\n\s*await prefillFromDoc\(docs \? docs\[0\] : d, file\);/);
 });
 

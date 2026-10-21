@@ -45,6 +45,7 @@ import { getOrgId, withOrgScope } from "../lib/tenant";
 import { loadCnValueMap, loadCnCustomerRefMap } from "../lib/cn-value";
 import { emitAudit } from "../lib/audit";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { customerScopeSql } from "../lib/customer-scope";
 import { enqueueEmail } from "../lib/email-outbox";
 import {
@@ -1352,6 +1353,7 @@ app.post("/:id/return", async (c) => {
       const refundSen = cn.totalValue - nextTotalValue;
       statements.push(
         c.var.DB.prepare(
+          // No updated_at: `customers` has no such column (HK-0109).
           `UPDATE customers
               SET outstandingSen = GREATEST(0, COALESCE(outstandingSen, 0) - ?)
             WHERE id = ?`,
@@ -1441,7 +1443,7 @@ app.post("/:id/return", async (c) => {
 //      yet set. Writes converted_invoice_id pointing at the new invoice.
 //   7. Marks every consignment_items row status='SOLD' + soldDate=now.
 // ---------------------------------------------------------------------------
-app.post("/:id/convert-to-invoice", async (c) => {
+app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
   const denied = await requirePermission(c, "consignment-notes", "create");
   if (denied) return denied;
   try {
@@ -1695,8 +1697,8 @@ app.post("/:id/convert-to-invoice", async (c) => {
       // invoice total, mirroring DO's DELIVERED → invoice flow
       // (delivery-orders.ts:1857-1861). Without this, every CN-origin
       // invoice was off-ledger from the customer's A/R balance.
-      // No updated_at: customers has none (0001_init, no later ALTER), and
-      // writing it failed the whole convert batch (HK-0109).
+      // No updated_at: `customers` has no such column, and writing it failed
+      // the whole convert batch (HK-0109). Same shape as the DO-side bump.
       c.var.DB.prepare(
         `UPDATE customers
             SET outstandingSen = COALESCE(outstandingSen, 0) + ?

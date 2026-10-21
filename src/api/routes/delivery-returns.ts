@@ -14,9 +14,10 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { customerScopeSql } from "../lib/customer-scope";
 import { getOrgId } from "../lib/tenant";
-import { reverseFGForDeliveryReturn } from "../lib/do-cost-cascade";
+import { reverseFGForDeliveryReturn, undoFGForDeliveryReturn } from "../lib/do-cost-cascade";
 import {
   buildFgStockEventStatements,
   ensureFgStockEventsSchema,
@@ -27,7 +28,9 @@ import {
   createDeliveryReturnRecord,
   ensureDeliveryReturnTables,
   loadDoItemsForReturn,
+  loadReturnedQtyByPo,
 } from "../lib/delivery-return-create";
+import { returnableByLine } from "../../lib/delivery-return-qty";
 
 const app = new Hono<Env>();
 export default app;
@@ -230,15 +233,22 @@ app.get("/do-items", async (c) => {
   const doId = String(c.req.query("doId") ?? "").trim();
   if (!doId) return c.json({ success: false, error: "doId is required" }, 400);
   try {
+    await ensureDeliveryReturnTables(c.var.DB);
     const items = await loadDoItemsForReturn(c.var.DB, doId);
-    return c.json({ success: true, data: items });
+    // HK-0110: partial returns — the picker defaults each line to (and caps it
+    // at) what is still returnable. The create cap stays the authority.
+    const returnable = returnableByLine(items, await loadReturnedQtyByPo(c.var.DB, doId));
+    return c.json({
+      success: true,
+      data: items.map((it, i) => ({ ...it, returnableQty: returnable[i] })),
+    });
   } catch (err) {
     console.error("[delivery-returns/do-items] failed:", err);
     return c.json({ success: false, error: "Failed to load the delivery order's items" }, 500);
   }
 });
 
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "delivery-returns", "update");
   if (denied) return denied;
   await ensureDeliveryReturnTables(c.var.DB);
@@ -263,8 +273,8 @@ app.post("/", async (c) => {
       reason: String(body.reason ?? ""),
       notes: String(body.notes ?? ""),
     });
-    if (!created) {
-      return c.json({ success: false, error: "Failed to create delivery return" }, 400);
+    if (!created.ok) {
+      return c.json({ success: false, error: created.error }, created.status ?? 409);
     }
 
     const header = await c.var.DB
@@ -349,6 +359,93 @@ async function buildReturnToStockStatements(
     );
   }
   return { statements, reversedCogsSen };
+}
+
+// HK-0110 — undo buildReturnToStockStatements, for cancelling a
+// RETURNED_TO_STOCK return: FG batches + COGS back via
+// undoFGForDeliveryReturn, the returned fg_units back to DELIVERED (with their
+// stock-event counter-rows), the return to CANCELLED — one batch. Refused
+// (nothing written) if a unit is no longer RETURNED or a batch no longer holds
+// the returned qty. Race-safe: a per-return lock first, then a guard that the
+// return is still RETURNED_TO_STOCK, and a last guard that no batch went
+// negative; either guard failing divides by zero and rolls the batch back.
+export async function buildUndoReturnToStockStatements(
+  db: D1Database,
+  drId: string,
+  items: ReturnItemRow[],
+  now: string,
+): Promise<
+  | { ok: true; statements: D1PreparedStatement[]; undoneCogsSen: number }
+  | { ok: false; error: string }
+> {
+  const unitIds = items.map((it) => it.fgUnitId).filter((x): x is string => !!x);
+  const marks = unitIds.map(() => "?").join(",");
+  let units: Awaited<ReturnType<typeof loadFgUnitsForEvent>> = [];
+  if (unitIds.length) {
+    await ensureFgStockEventsSchema(db);
+    units = await loadFgUnitsForEvent(db, `id IN (${marks})`, unitIds);
+    const moved = units.find((u) => u.status !== "RETURNED");
+    if (moved) {
+      return {
+        ok: false,
+        error: `Cannot undo: FG unit ${moved.id} is now ${moved.status ?? "missing"}, not RETURNED — it was re-used since this return. Fix the stock with a stock adjustment instead.`,
+      };
+    }
+  }
+  const fg = await undoFGForDeliveryReturn(db, drId, now);
+  if (!fg.ok) return fg;
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(`SELECT pg_advisory_xact_lock(hashtext('delivery_return_undo:' || ?)::bigint)`)
+      .bind(drId),
+    db
+      .prepare(
+        `SELECT 1 / CASE WHEN EXISTS (
+           SELECT 1 FROM delivery_returns WHERE id = ? AND status = 'RETURNED_TO_STOCK'
+         ) THEN 1 ELSE 0 END AS "stillReturned"`,
+      )
+      .bind(drId),
+    ...fg.statements,
+  ];
+  if (unitIds.length) {
+    statements.push(
+      db
+        .prepare(
+          `UPDATE fg_units SET status='DELIVERED', returnedAt=NULL
+            WHERE id IN (${marks}) AND status='RETURNED'`,
+        )
+        .bind(...unitIds),
+      ...buildFgStockEventStatements(db, units, {
+        toStatus: "DELIVERED",
+        doc: { docType: "DELIVERY_RETURN", docId: drId, docNo: null },
+        actor: SYSTEM_ACTOR,
+        occurredAt: now,
+        note: "Delivery return cancelled — return to stock undone",
+        reverses: { docType: "DELIVERY_RETURN", docId: drId },
+      }),
+    );
+  }
+  statements.push(
+    db
+      .prepare(
+        `UPDATE delivery_returns SET status='CANCELLED', updated_at=?
+          WHERE id=? AND status='RETURNED_TO_STOCK'`,
+      )
+      .bind(now, drId),
+  );
+  if (fg.batchIds.length) {
+    statements.push(
+      db
+        .prepare(
+          `SELECT 1 / CASE WHEN EXISTS (
+             SELECT 1 FROM fg_batches WHERE id IN (${fg.batchIds.map(() => "?").join(",")}) AND remainingQty < 0
+           ) THEN 0 ELSE 1 END AS "batchesOk"`,
+        )
+        .bind(...fg.batchIds),
+    );
+  }
+  return { ok: true, statements, undoneCogsSen: fg.undoneCogsSen };
 }
 
 app.post("/:id/return-to-stock", async (c) => {
@@ -486,6 +583,30 @@ app.post("/:id/cancel", async (c) => {
       { success: false, error: `Cannot cancel a ${h.status} return` },
       409,
     );
+  }
+  // HK-0110: RETURNED_TO_STOCK already credited stock back. Cancelling it
+  // (which also frees its qty under the return cap) must take that back first.
+  if (h.status === "RETURNED_TO_STOCK") {
+    const now = new Date().toISOString();
+    const undo = await buildUndoReturnToStockStatements(
+      c.var.DB,
+      id,
+      await loadItems(c.var.DB, id),
+      now,
+    );
+    if (!undo.ok) return c.json({ success: false, error: undo.error }, 409);
+    try {
+      await c.var.DB.batch(undo.statements);
+    } catch (err) {
+      if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
+        return c.json(
+          { success: false, error: "Not undone: this return was already cancelled, or its stock was used while undoing. Reload and check." },
+          409,
+        );
+      }
+      throw err;
+    }
+    return c.json({ success: true, undoneCogsSen: undo.undoneCogsSen });
   }
   await c.var.DB
     .prepare(
