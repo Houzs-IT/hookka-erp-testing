@@ -28,6 +28,7 @@ import { requirePermission } from "../lib/rbac";
 import { idempotent } from "../lib/idempotency";
 import { makeLedgerEntry } from "../../lib/costing";
 import { emitAudit } from "../lib/audit";
+import { ensurePurchaseReturnTables } from "../lib/purchase-return-create";
 import { learnSupplierBindings } from "../lib/supplier-binding-learn";
 import { availableQty as computeAvailableQty, clampDecrement } from "../../lib/convert-chain";
 import {
@@ -875,10 +876,11 @@ function grnStatusGuard(db: D1Database, grnId: string, expected: string): D1Prep
 // and any receipt that committed before they started. Two receipts filling
 // DIFFERENT lines of one PO at the same moment can each miss the other's
 // line and leave it PARTIAL_RECEIVED (the old JS recompute had the same hole;
-// a per-PO lock would close it). `onEdit` mirrors what a POSTED-line
+// a per-PO lock would close it). `qtyMayHaveDropped` mirrors what a POSTED-line
 // edit always did: only move a PO already in a receiving status, and allow
-// stepping back to CONFIRMED when nothing is received any more. The post path
-// (onEdit false) is recomputePoStatusFromReceipts' rule: RECEIVED (and clear
+// stepping back to CONFIRMED when nothing is received any more; purchase
+// returns use it too (recomputePoStatusFromReceipts). The post path
+// (qtyMayHaveDropped false): RECEIVED (and clear
 // goods-in-transit) when every line is full, else PARTIAL_RECEIVED when any is.
 const PO_HAS_LINES = "EXISTS (SELECT 1 FROM purchase_order_items WHERE purchaseOrderId = ?)";
 const PO_HAS_SHORT_LINE =
@@ -889,11 +891,11 @@ const PO_HAS_RECEIPT =
 function poStatusStatements(
   db: D1Database,
   poId: string,
-  onEdit = false,
+  qtyMayHaveDropped = false,
 ): D1PreparedStatement[] {
   const nowIso = new Date().toISOString();
   const today = nowIso.split("T")[0];
-  if (!onEdit) {
+  if (!qtyMayHaveDropped) {
     return [
       db
         .prepare(
@@ -1078,7 +1080,7 @@ async function resolveGrnLineTargets(
  * first, so two lines of one receipt against the same PO line count together.
  * Returns the error text, or null when every line fits.
  */
-async function findOverReceipt(
+export async function findOverReceipt(
   db: D1Database,
   targets: Array<{ poItemId: string; qty: number }>,
 ): Promise<string | null> {
@@ -1106,13 +1108,45 @@ async function findOverReceipt(
 }
 
 /**
- * Recompute status for ONE purchase order from its current receivedQty totals.
- * Split out because a multi-PO receipt has to refresh every PO it touched, not
- * just the GRN's header PO — otherwise the second PO stays CONFIRMED forever
- * while its goods are physically in the building.
+ * Recompute ONE purchase order's status from its current receivedQty totals.
+ * Purchase returns (T-006 R6) call it after lowering received qty, the same
+ * case as a POSTED-GRN edit that lowers qty, so it uses that rule: only a PO
+ * in a receiving status moves, and it steps back to CONFIRMED when nothing is
+ * received any more. A CLOSED, CANCELLED or DRAFT PO is never touched.
  */
 export async function recomputePoStatusFromReceipts(db: D1Database, poId: string): Promise<void> {
-  await db.batch(poStatusStatements(db, poId));
+  await db.batch(poStatusStatements(db, poId, true));
+}
+
+/**
+ * T-006 R6 — a purchase return gives its quantity back to the PO line, so a
+ * GRN with a live return on its lines must not be cancelled, deleted or
+ * un-posted: restorePOReceivedQtyForGRN would take the GRN's FULL accepted
+ * qty off again, on top of what the return already took (PO 100, receive
+ * 100, return 20, cancel → 0 instead of 20, silently). Returns the blocking
+ * return's number, or null. grn_item_id is TEXT, grn_items.id BIGINT.
+ */
+export async function findLivePurchaseReturnOnGrn(db: D1Database, grnId: string): Promise<string | null> {
+  await ensurePurchaseReturnTables(db);
+  const row = await db
+    .prepare(
+      `SELECT pr.return_no AS "returnNo"
+         FROM purchase_return_items pri
+         JOIN purchase_returns pr ON pr.id = pri.purchase_return_id
+         JOIN grn_items gi ON gi.id::text = pri.grn_item_id
+        WHERE gi.grnId = ? AND COALESCE(pr.status, '') <> 'CANCELLED'
+        LIMIT 1`,
+    )
+    .bind(grnId)
+    .first<{ returnNo: string }>();
+  return row ? row.returnNo || "a purchase return" : null;
+}
+
+function purchaseReturnBlocks(returnNo: string) {
+  return {
+    success: false,
+    error: `Cancel the purchase returns on this GRN first (${returnNo}).`,
+  };
 }
 
 async function restorePOReceivedQtyForGRN(
@@ -1918,6 +1952,11 @@ app.put("/:id", async (c) => {
         409,
       );
     }
+    // CONFIRMED is committed too: leaving it restores the PO's receivedQty.
+    if (COMMITTED_STATUSES.has(prevStatus) && !COMMITTED_STATUSES.has(newStatus)) {
+      const ret = await findLivePurchaseReturnOnGrn(c.var.DB, id);
+      if (ret) return c.json(purchaseReturnBlocks(ret), 409);
+    }
 
     // ── Arrival gate on post-to-stock ────────────────────────────────────
     // Crossing into a committed status requires goods to have physically
@@ -2523,6 +2562,8 @@ app.post("/:id/cancel", async (c) => {
         409,
       );
     }
+    const liveReturn = await findLivePurchaseReturnOnGrn(c.var.DB, id);
+    if (liveReturn) return c.json(purchaseReturnBlocks(liveReturn), 409);
 
     const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
     const reason =
@@ -2739,6 +2780,9 @@ app.delete("/:id", async (c) => {
         409,
       );
     }
+
+    const liveReturn = await findLivePurchaseReturnOnGrn(c.var.DB, id);
+    if (liveReturn) return c.json(purchaseReturnBlocks(liveReturn), 409);
 
     const prevStatus = existing.status ?? "DRAFT";
     // Restore PO availability BEFORE the row is gone (the helper reads
