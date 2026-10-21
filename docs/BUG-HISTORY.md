@@ -1,5 +1,6 @@
 # Bug History
-> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-346 (branch `design/mobile-products-v2`, to `staging`; 344 and 345 are taken on `design/mobile-procurement`).
+> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-346 (branch `design/mobile-products-v2`, to `staging`; committed `31afa056`; 344 and 345 are Procurement's, from `design/mobile-procurement`).
+> **Last verified: 2026-10-21**: newest entries BUG-2026-10-21-344 / -345 (branch `design/mobile-procurement`, to `staging`) — both 🔴 open, logged for backend review, nothing fixed.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-336 (branch `fix/dashboard-period-keeps-scroll`, to `staging`).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-335 (branch `fix/chart-click-focus-box`, to `staging`; 334 is taken on both branches).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -238,6 +239,36 @@ Entries themselves stay newest-first.
 **Fix.** Products now have their own L2, `src/pages/m/screens/ProductDetailScreen.tsx` (CUSTOM_L2 `products` in `MobileLayout.tsx`). Its pricing card follows the owner-approved rules (Sofa: SEAT PRICES + View prices → the seat sheet; Bedframe: Price 1 + Price 2, "—" when one is unset; Accessory: its price; none: "No price set") through `priceDisplay()`, and the whole card is hidden without `product-pricing:read`. The old `productDetail` config line is no longer routed for Products and was left untouched (the shared screen and config serve other modules).
 
 **Regression.** `tests/m-product-detail.test.mjs` (routing + permission gate + no formatting of a missing price) and the `priceDisplay` cases in `tests/m-products-hub.test.mjs`.
+
+---
+
+## BUG-2026-10-21-345 — Purchase invoice list and detail reads have no permission check `auth-rbac` `procurement` 🔴
+
+🔴 **Open, not fixed — for backend review.** Logged on branch `design/mobile-procurement` (to `staging`) by the mobile Procurement audit; the owner asked for it to be documented, not changed, in that task. Found by reading code; nothing measured on any database.
+
+**Symptom.** Any logged-in account, of any role, can list every purchase invoice and open any one of them, even when its role has no `purchase-invoices` grant. A UI that hides invoices from such a user hides them only on screen.
+
+**Root cause.** `src/api/routes/purchase-invoices.ts` `app.get("/")` (L821) and `app.get("/:id")` (L874) call no `requirePermission`; create / update / delete do (`purchase-invoices`, L1397 / L2306 / L3078). Neither read filters by organisation in its SQL either (`SELECT * FROM purchase_invoices …` / `… WHERE id = ?`); whether the table carries an org column was not checked. Already listed as open in `docs/RBAC-REMEDIATION.md` ("`purchase-invoices` ×2").
+
+**Fix (proposed, not done).** Gate both reads on `requirePermission(c, "purchase-invoices", "read")`, per the RBAC-REMEDIATION per-batch loop (check which roles hold the grant first, so no current reader is locked out).
+
+**Mobile impact.** `/m/procurement` shows the Invoices segment only with `purchase-invoices:read` (the same check the server would make once gated). Until this is fixed that is a screen-level hide, not a security boundary.
+
+---
+
+## BUG-2026-10-21-344 — Approving a goods receipt posts its stock but never draws down the purchase order `procurement` `inventory-cascade` 🔴
+
+🔴 **Open, not fixed — for backend review.** Logged on branch `design/mobile-procurement` (to `staging`) by the mobile Procurement audit; the owner asked for it to be documented and the backend left alone. Found by reading code; nothing measured on any database (how many GRNs took this path is UNMEASURED).
+
+**Symptom (expected from the code).** A GRN taken Draft → Approved (CONFIRMED) → Posted puts its goods into stock, but the PO line's `receivedQty` never rises, so the PO stays receivable for goods already received (and its status is recomputed from an unchanged counter). A GRN posted straight from Draft is correct.
+
+**Root cause.** `src/api/routes/grn.ts` PUT `/:id`, L2411-2428: `crossesIntoCommitted` is true for DRAFT → CONFIRMED and for DRAFT → POSTED (COMMITTED_STATUSES = {CONFIRMED, POSTED}), and `postGRNToStock` runs on either (L2451). But the guarded PO counter (`buildPOCounterStatements`) is added only `if (crossesIntoCommitted && newStatus === "POSTED")`. So Approve posts stock without the counter, and the later CONFIRMED → POSTED is not a crossing, so it adds neither. Desktop exposes Approve on `grn.tsx` (row menu, "Convert N drafts") and `grn-detail.tsx`.
+
+**Related desktop copy.** `grn-detail.tsx` `cancelReceipt` (L484-486) tells the user "No stock was posted" for any status other than POSTED, but an Approved receipt has posted stock (see above); the cancel route does reverse its lots.
+
+**Fix (proposed, not done).** Raise the PO counter on the same boundary the stock posts on (any crossing into a committed status), or stop Approve posting stock — an owner decision. Backfill needs a measured list of CONFIRMED / POSTED GRNs whose PO lines were never drawn down.
+
+**Mobile impact.** `/m/procurement` offers no Approve action (owner 2026-10-21). Post to Stock (from Draft, once arrived) and mobile receiving (born POSTED) are the paths that do draw the PO down.
 
 ---
 

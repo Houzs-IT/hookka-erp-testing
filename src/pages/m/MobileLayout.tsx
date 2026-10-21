@@ -112,6 +112,31 @@ function DeliveryDetailRoute() {
   );
 }
 
+// Procurement core (Orders · Receipts · Invoices) from Claude Design
+// `Procurement.dc.html` (2026-10-21), code-split like Delivery. The detail keeps
+// the old id-prefix dispatch (po- / grn- / pi-), so every /m/procurement/:id
+// link still lands on the right document.
+const ProcurementScreenLazy = lazy(() =>
+  import("./screens/procurement/ProcurementScreen").then((m) => ({ default: m.ProcurementScreen })),
+);
+const ProcurementDetailLazy = lazy(() =>
+  import("./screens/procurement/ProcurementDetailScreen").then((m) => ({ default: m.ProcurementDetailScreen })),
+);
+function ProcurementRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ProcurementScreenLazy />
+    </Suspense>
+  );
+}
+function ProcurementDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ProcurementDetailLazy />
+    </Suspense>
+  );
+}
+
 function DashboardRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -143,6 +168,8 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // DO / Packing List, bulk moves); the screen adapts to tablet widths and to
   // the split view's list pane itself.
   delivery: DeliveryRoute,
+  // Claude Design `Procurement.dc.html`: Orders · Receipts · Invoices, phone + tablet.
+  procurement: ProcurementRoute,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -156,6 +183,8 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   delivery: DeliveryDetailRoute,
   // Products Hub v2 SKU detail, phone AND tablet (owner 2026-10-21).
   products: ProductDetailScreen,
+  // PO / GRN / PI detail with desktop's per-status actions.
+  procurement: ProcurementDetailRoute,
 };
 
 export default function MobileLayout() {

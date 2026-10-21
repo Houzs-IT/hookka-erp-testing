@@ -1,5 +1,9 @@
 # Mobile UI Foundation
 
+> **Last verified: 2026-10-21** (branch `design/mobile-procurement`): the adopters list of
+> "Segmented switch and filter chips" gained Procurement, read from
+> `src/pages/m/screens/procurement/parts.tsx`. Nothing else re-checked.
+>
 > **Last verified: 2026-10-21** against `src/pages/m/lib/control-styles.ts`,
 > `src/pages/m/theme-vars.css` and `src/pages/m/components/SegmentedSwitch.tsx` on
 > branch `design/mobile-filter-chips-standardization` — the "Segmented switch and
@@ -172,7 +176,9 @@ The approved Claude Design handoff for these two controls lives in one place,
 
 Adopted by Home (`SegmentedSwitch variant="prominent"`), Products (`ViewSwitch`,
 `CategoryChips`), Sales Orders (phone and tablet status chips; the tablet row
-keeps its 10px top spacing) and Delivery (`SectionSwitch`, stage `Chips`).
+keeps its 10px top spacing), Delivery (`SectionSwitch`, stage `Chips`) and
+Procurement (Orders · Receipts · Invoices `SectionSwitch`, status `Chips`, both in
+`screens/procurement/parts.tsx`; 2026-10-21).
 `SegmentedSwitch`'s default variant, `ChipTabs`, `SubTabs` and other screens are
 unchanged. To adopt it on another screen, import these helpers rather than
 copying the values, and keep the screen's labels, counts and tap behaviour.

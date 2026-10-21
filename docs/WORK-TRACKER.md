@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-21**: mobile Procurement core entry added (branch `design/mobile-procurement`); nothing else re-checked.
 > **Last verified: 2026-10-21**: mobile switch / chip standardisation entry added (branch `design/mobile-filter-chips-standardization`); nothing else re-checked.
 > **Last verified: 2026-10-19**: staging<-main sync (branch `chore/sync-staging-from-main-1019`): main entries staging lacked are added above staging's newest; nothing else re-checked.
 > **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (`<<<<<<< HEAD` … `>>>>>>> 85e58b40`) on `main`; left for its owner to resolve.
@@ -335,7 +336,7 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
-## 2026-10-21 — 🔵 Mobile Products Hub v2 visual refresh (/m/products list, phone + tablet) from Claude Design `Products Hub v2.dc.html` (branch `design/mobile-products-v2` → `staging`; frontend, visual only) — list + Product Detail built locally, uncommitted, awaiting the owner's review
+## 2026-10-21 — 🔵 Mobile Products Hub v2 visual refresh (/m/products list, phone + tablet) from Claude Design `Products Hub v2.dc.html` (branch `design/mobile-products-v2` → `staging`; frontend, visual only) — list + Product Detail committed `31afa056` on `design/mobile-products-v2`, awaiting the owner's QA and review
 
 Result 2026-10-21: asks 1–5 built. Touched: `ProductsScreen.tsx`, `lib/products-hub.ts` (`categoryTone`, `leadTimeDays` read, `fmtLeadDays` — no pricing change), `theme.ts` (`M_CAT`), `theme-vars.css` (`--m-cat-*`, spec chip, price box; light + dark), `tests/m-products-hub.test.mjs` (+3 tests), and the stale tablet comment in `MobileLayout.tsx` (comment only). Checks: `tsc -p tsconfig.app.json` = the two pre-existing errors only; eslint on touched files = 0; `m-products-hub` 12/12; `npm test` = 6627 tests, the same 4 pre-existing failures, none new; `check-codebase-map` OK. NOT done: browser visual check at 390px / tablet / split pane / dark (no browser in session) — owner to verify on sandbox.
 
@@ -358,6 +359,29 @@ Owner asks (logged before work):
 7. 🟡 Staging sofa photos missing on iPhone: postponed by the owner. Read-only finding so far: photos are per-environment data (`file_assets` modular rows + `hookka-files` objects); most likely staging lacks the rows or objects — UNMEASURED.
 
 Baseline before edits: `tsc -p tsconfig.app.json` = the two pre-existing errors (`dashboard-b/charts.tsx`, `dashboards/EmployeesView.tsx`); `tests/m-products-hub.test.mjs` 9/9 pass.
+
+## 2026-10-21 — 🟡 Mobile Procurement core (/m/procurement: Orders · Receipts · Invoices) from Claude Design `Procurement.dc.html` (branch `design/mobile-procurement` → `staging`; frontend only) — built locally, uncommitted, awaiting the owner's review
+
+Result 2026-10-21: Steps 0–6 done. New `src/pages/m/screens/procurement/*` + `src/pages/m/lib/procurement-mobile.ts`, wired as CUSTOM_L1 / CUSTOM_L2 in `MobileLayout.tsx`; `procurementConfig` (modules.ts) got real statuses / supplier labels and lost the Maintenance source. Independent code review found 8 issues (PO unit price rounded to whole sen, decimal qty, capped pickers, import reseed, MOQ default, line keys, detail not keyed by id, PI supplier resolve) — all fixed, regression tests added. Checks: `tsc -p tsconfig.app.json` = the two pre-existing errors only; eslint on the touched files = 0; `npm test` = 6624 tests, the same 4 pre-existing failures, none new; `vite build` OK (lazy chunks). NOT done: 390px / tablet / dark visual check in a browser (no browser in session) and any live write (none allowed) — owner to verify on sandbox. BUG-2026-10-21-344 / -345 logged for backend review.
+
+Status 2026-10-21: branch fast-forwarded to `upstream/staging` (`f290c2b6`, #1072). Baseline before any edit: `tsc -p tsconfig.app.json` = the two pre-existing errors (`dashboard-b/charts.tsx`, `dashboards/EmployeesView.tsx`); `npm test` = 6588 tests, 4 pre-existing failures (More Finance row, column text filters, module guides anchors, module search). Phase 1 audit (read-only) done and reported; corrected spec in `docs/mobile/PROCUREMENT-MOBILE.md`.
+
+Owner asks (2026-10-21):
+
+1. 🔵 Claude Design is the visual / UX reference — the result must not look significantly different from the prototype; business rules come from the code (prototype assumptions corrected first).
+2. 🔵 Scope = Procurement core only (PO · GRN · PI). Out: Purchase Returns, Suppliers / Price Comparison, MRP, "Create Purchase Return", Maintenance, side menu / bottom nav changes, GRN Edit Quantities.
+3. 🔵 Preserve statuses, validations, permissions, API contracts; no backend / DB / desktop / unrelated-module change; real API data only.
+4. 🔵 GRN create: keep the existing mobile receive workflow (arrival ARRIVED → born POSTED); no Mark Arrived; show the arrival state and resulting status correctly. Received By required (desktop parity) after verifying the API field.
+5. 🔵 No GRN Approve on mobile (PO received-qty issue, documented for backend review, not fixed).
+6. 🔵 Native PI create with the existing import-from-GRN (and PO) workflow; report anything the existing APIs can't support.
+7. 🔵 Foreign-currency PI Mark Paid asks for the payment-day rate (desktop parity).
+8. 🔵 Low-stock PO stays Draft; manual PO create stays Confirmed; flows kept separate.
+9. 🔵 Closed PO chip — verify client-side filtering is not limited by pagination.
+10. 🔵 Shipment / landed cost read-only on mobile.
+11. 🔵 Supplier terminology fixed; header / switch / search / chips / cards / forms / badges / spacing consistent with Home, Products, Sales, Delivery.
+12. 🔵 Document the GRN received-qty issue and the PI read-permission gap for backend review.
+13. 🔵 Checks after every step, new failures reported apart from the baseline; final review against the handoff.
+14. 🟡 No commit / push / merge / deploy without the owner's approval.
 
 ## 2026-10-21 — 🟡 Mobile segmented switch + filter chips standardised (Home, Products, Sales Orders, Delivery) from the Claude Design handoff (branch `design/mobile-filter-chips-standardization` → `staging`; frontend, visual only) — PR open, awaiting the owner's review
 

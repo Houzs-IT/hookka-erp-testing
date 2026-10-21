@@ -975,9 +975,22 @@ export const invoicesConfig: ModuleConfig = {
 };
 
 // ---------------------------------------------------------------------------
-// PROCUREMENT — Purchase Orders / Goods Receipt / Purchase Invoice / Maintenance.
-// Maintenance has no list endpoint → reuse suppliers (the page is supplier mgmt).
+// PROCUREMENT — Purchase Orders / Goods Receipt / Purchase Invoice.
+// The /m/procurement screens are bespoke (screens/procurement/, CUSTOM_L1 /
+// CUSTOM_L2); this config still feeds the route, global search and the line-
+// item screen, so its statuses and labels follow the real documents
+// (docs/mobile/PROCUREMENT-MOBILE.md). Suppliers are their own module.
 // ---------------------------------------------------------------------------
+const P = PAYMENT_STATUS_MAP;
+const PO_STATUS_MAP = {
+  DRAFT: P.DRAFT, SUBMITTED: P.SUBMITTED, CONFIRMED: P.CONFIRMED, PARTIAL_RECEIVED: P.PARTIAL,
+  RECEIVED: P.RECEIVED, CLOSED: P.CLOSED, CANCELLED: P.CANCELLED,
+};
+const GRN_STATUS_MAP = { DRAFT: P.DRAFT, CONFIRMED: P.CONFIRMED, POSTED: P.RECEIVED, CANCELLED: P.CANCELLED };
+const PI_STATUS_MAP = {
+  DRAFT: P.DRAFT, PENDING_APPROVAL: P.CONFIRMED, APPROVED: P.CONFIRMED, CONFIRMED: P.CONFIRMED,
+  PARTIAL_PAID: P.PARTIAL, PAID: P.PAID, CANCELLED: P.CANCELLED,
+};
 const poSource: DataSource = {
   url: "/api/purchase-orders",
   select: selectData,
@@ -988,19 +1001,19 @@ const poSource: DataSource = {
     title: str(r, "supplierName") || "—",
     items: summariseItems(r),
     metas: [
-      { label: "ETA", value: shortDate(dateOnly(r, "expectedDate")) || "—" },
+      { label: "Expected", value: shortDate(dateOnly(r, "expectedDate")) || "—" },
       { label: "Amount", value: money(num(r, "totalSen")) },
     ],
-    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+    status: resolveStatus(str(r, "status"), PO_STATUS_MAP),
   }),
   columns: [
-    textCol("poNo", "Reference", (r) => str(r, "poNo")),
-    textCol("supplier", "Customer", (r) => str(r, "supplierName")),
+    textCol("poNo", "PO No.", (r) => str(r, "poNo")),
+    textCol("supplier", "Supplier", (r) => str(r, "supplierName")),
     dateCol("orderDate", "Order Date", (r) => dateOnly(r, "orderDate")),
-    dateCol("expectedDate", "Expected DD", (r) => dateOnly(r, "expectedDate")),
+    dateCol("expectedDate", "Expected Date", (r) => dateOnly(r, "expectedDate")),
     numCol("items", "Items", (r) => (Array.isArray(r.items) ? (r.items as unknown[]).length : 0)),
     numCol("amount", "Amount", (r) => num(r, "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "AWAITING", "PARTIAL", "RECEIVED", "MATCHED", "CANCELLED"]),
+    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED"]),
   ],
   defaultSort: { key: "orderDate", dir: "desc" },
   subTabs: [{ key: "po", label: "Purchase Orders", match: () => true }],
@@ -1014,25 +1027,25 @@ const grnSource: DataSource = {
     const items = Array.isArray(r.items) ? (r.items as RawRow[]) : [];
     const matched = items.filter((i) => num(i, "receivedQty") > 0).length;
     const total = items.length;
-    const sub = str(r, "poRef", "poNo");
+    const sub = str(r, "poNumber", "poRef", "poNo");
     return {
       id: str(r, "id", "grnNo"),
-      code: str(r, "grnNo") || "—",
+      code: str(r, "grnNumber", "grnNo") || "—",
       title: str(r, "supplierName") || "—",
       items: sub ? `${sub} · ${matched === total ? "full" : "partial"}` : undefined,
       metas: [
-        { label: "Date", value: shortDate(dateOnly(r, "receivedDate", "createdAt")) || "—" },
+        { label: "Received", value: shortDate(dateOnly(r, "receiveDate", "receivedDate", "createdAt")) || "—" },
         { label: "Lines", value: total === matched ? `${total}` : `${matched}/${total}` },
       ],
-      status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+      status: resolveStatus(str(r, "status"), GRN_STATUS_MAP),
     };
   },
   columns: [
-    textCol("grnNo", "Reference", (r) => str(r, "grnNo")),
-    textCol("poRef", "Customer PO", (r) => str(r, "poRef", "poNo")),
-    textCol("supplier", "Customer", (r) => str(r, "supplierName")),
-    dateCol("receivedDate", "Order Date", (r) => dateOnly(r, "receivedDate", "createdAt")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "PARTIAL", "RECEIVED", "MATCHED", "MISMATCH"]),
+    textCol("grnNo", "GRN No.", (r) => str(r, "grnNumber", "grnNo")),
+    textCol("poRef", "PO No.", (r) => str(r, "poNumber", "poRef", "poNo")),
+    textCol("supplier", "Supplier", (r) => str(r, "supplierName")),
+    dateCol("receivedDate", "Receive Date", (r) => dateOnly(r, "receiveDate", "receivedDate", "createdAt")),
+    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"]),
   ],
   defaultSort: { key: "receivedDate", dir: "desc" },
   subTabs: [{ key: "grn", label: "Goods Receipt", match: () => true }],
@@ -1043,11 +1056,9 @@ const piSource: DataSource = {
   select: selectData,
   // dc13 (line ~1758): code · supplier · "GRN-... · matched" · [Due · Amount]
   toVM: (r): RowVM => {
-    const grn = str(r, "grnRef", "grnNo");
-    const status = str(r, "status").toUpperCase();
-    const sub = grn
-      ? `${grn} · ${status === "MISMATCH" ? "mismatch" : "matched"}`
-      : str(r, "poRef", "poNo") || undefined;
+    const sub = [str(r, "poRef", "poNo"), str(r, "supplierInvoiceNo") ? `Supplier inv ${str(r, "supplierInvoiceNo")}` : ""]
+      .filter(Boolean)
+      .join(" · ") || undefined;
     return {
       id: str(r, "id", "piNo"),
       code: str(r, "piNo") || "—",
@@ -1057,44 +1068,21 @@ const piSource: DataSource = {
         { label: "Due", value: shortDate(dateOnly(r, "dueDate")) || "—" },
         { label: "Amount", value: money(num(r, "amountSen", "totalSen")) },
       ],
-      status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+      status: resolveStatus(str(r, "status"), PI_STATUS_MAP),
     };
   },
   columns: [
-    textCol("piNo", "Reference", (r) => str(r, "piNo")),
-    textCol("poRef", "Customer PO", (r) => str(r, "poRef", "poNo")),
-    textCol("supplier", "Customer", (r) => str(r, "supplier", "supplierName")),
-    dateCol("invoiceDate", "Order Date", (r) => dateOnly(r, "invoiceDate")),
-    dateCol("dueDate", "Expected DD", (r) => dateOnly(r, "dueDate")),
+    textCol("piNo", "PI No.", (r) => str(r, "piNo")),
+    textCol("poRef", "PO No.", (r) => str(r, "poRef", "poNo")),
+    textCol("supplier", "Supplier", (r) => str(r, "supplier", "supplierName")),
+    textCol("supplierInvoiceNo", "Supplier Inv No.", (r) => str(r, "supplierInvoiceNo")),
+    dateCol("invoiceDate", "Invoice Date", (r) => dateOnly(r, "invoiceDate")),
+    dateCol("dueDate", "Due Date", (r) => dateOnly(r, "dueDate")),
     numCol("amount", "Amount", (r) => num(r, "amountSen", "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "PARTIAL", "PAID", "UNPAID", "OVERDUE"]),
+    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "CONFIRMED", "PARTIAL_PAID", "PAID", "CANCELLED"]),
   ],
   defaultSort: { key: "invoiceDate", dir: "desc" },
   subTabs: [{ key: "pi", label: "Purchase Invoice", match: () => true }],
-};
-
-// Maintenance sub-tab: no dedicated list endpoint — the desktop Maintenance
-// page is supplier management. Reuse /api/suppliers as the closest existing
-// list. TODO: if a real "maintenance" list endpoint lands, swap it here.
-const maintenanceSource: DataSource = {
-  url: "/api/suppliers",
-  select: selectData,
-  toVM: (r): RowVM => ({
-    id: str(r, "id", "code"),
-    code: str(r, "code") || "—",
-    title: str(r, "name") || "—",
-    subLine: [str(r, "contactPerson"), str(r, "phone")].filter(Boolean).join(" · ") || undefined,
-    meta1: { label: "State", value: str(r, "state") || "—" },
-    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
-  }),
-  columns: [
-    textCol("code", "Reference", (r) => str(r, "code")),
-    textCol("name", "Customer", (r) => str(r, "name")),
-    textCol("state", "State", (r) => str(r, "state")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["ACTIVE", "INACTIVE"]),
-  ],
-  defaultSort: { key: "name", dir: "asc" },
-  subTabs: [{ key: "maintenance", label: "Maintenance", match: () => true }],
 };
 
 // PROCUREMENT detail — three distinct doc types share one slug, dispatched by
@@ -1105,15 +1093,15 @@ const poDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "poNo") || "—",
   title: (d) => str(d, "supplierName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  status: (d) => resolveStatus(str(d, "status"), PO_STATUS_MAP),
   flow: {
-    steps: flowSteps(["DRAFT", "AWAITING", "PARTIAL", "RECEIVED", "MATCHED"]),
+    steps: flowSteps(["DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CLOSED"]),
     current: (d) => str(d, "status"),
   },
   fields: [
     fld("Supplier", (d) => str(d, "supplierName")),
     fld("Order Date", (d) => dateOnly(d, "orderDate")),
-    fld("Expected DD", (d) => dateOnly(d, "expectedDate")),
+    fld("Expected Date", (d) => dateOnly(d, "expectedDate")),
     fld("Amount", (d) => money(num(d, "totalSen"))),
     fld("Notes", (d) => str(d, "notes"), true),
   ],
@@ -1159,7 +1147,7 @@ const poDetail: DetailConfig = {
   primaryCta: (d) => {
     const s = str(d, "status");
     if (["CONFIRMED", "SUBMITTED", "PARTIAL_RECEIVED"].includes(s)) return "Receive (GRN)";
-    return s === "DRAFT" ? "Submit" : "Status";
+    return "Status";
   },
   attachmentsResource: (id) => ({ type: "PO", id }),
   auditResource: () => "purchase-orders",
@@ -1171,15 +1159,15 @@ const grnDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "grnNumber", "grnNo") || "—",
   title: (d) => str(d, "supplierName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  status: (d) => resolveStatus(str(d, "status"), GRN_STATUS_MAP),
   flow: {
     steps: flowSteps(["DRAFT", "CONFIRMED", "POSTED"]),
     current: (d) => str(d, "status"),
   },
   fields: [
-    fld("Customer PO", (d) => str(d, "poNumber", "poRef", "poNo")),
+    fld("PO No.", (d) => str(d, "poNumber", "poRef", "poNo")),
     fld("Supplier", (d) => str(d, "supplierName")),
-    fld("Order Date", (d) => dateOnly(d, "receiveDate", "receivedDate")),
+    fld("Receive Date", (d) => dateOnly(d, "receiveDate", "receivedDate")),
     fld("Received By", (d) => str(d, "receivedBy")),
     fld("QC Status", (d) => str(d, "qcStatus")),
     fld("Notes", (d) => str(d, "notes"), true),
@@ -1198,7 +1186,7 @@ const grnDetail: DetailConfig = {
     }
     return out;
   },
-  primaryCta: (d) => (str(d, "status") === "DRAFT" ? "Post to Stock" : "Status"),
+  primaryCta: () => "Status",
   attachmentsResource: (id) => ({ type: "GRN", id }),
   auditResource: () => "grn",
   lineAttachmentsResource: (_parent, lineId) => ({ type: "GRN_LINE", id: lineId }),
@@ -1209,17 +1197,17 @@ const piDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "piNo") || "—",
   title: (d) => str(d, "supplier", "supplierName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  status: (d) => resolveStatus(str(d, "status"), PI_STATUS_MAP),
   flow: {
-    steps: flowSteps(["DRAFT", "UNPAID", "PARTIAL", "PAID"]),
+    steps: flowSteps(["DRAFT", "CONFIRMED", "PAID"]),
     current: (d) => str(d, "status"),
   },
   fields: [
-    fld("Customer PO", (d) => str(d, "poRef", "poNo")),
+    fld("PO No.", (d) => str(d, "poRef", "poNo")),
     fld("Supplier", (d) => str(d, "supplier", "supplierName")),
     fld("Supplier Invoice", (d) => str(d, "supplierInvoiceNo")),
-    fld("Order Date", (d) => dateOnly(d, "invoiceDate")),
-    fld("Expected DD", (d) => dateOnly(d, "dueDate")),
+    fld("Invoice Date", (d) => dateOnly(d, "invoiceDate")),
+    fld("Due Date", (d) => dateOnly(d, "dueDate")),
     fld("Amount", (d) => money(num(d, "amountSen", "totalSen"))),
     fld("Outstanding", (d) =>
       money(num(d, "amountSen", "totalSen") - num(d, "paidAmountSen"))),
@@ -1248,7 +1236,7 @@ const piDetail: DetailConfig = {
     }
     return out;
   },
-  primaryCta: (d) => (str(d, "status") === "PAID" ? "Status" : "Record Payment"),
+  primaryCta: () => "Status",
   attachmentsResource: (id) => ({ type: "PI", id }),
   auditResource: () => "purchase-invoices",
   lineAttachmentsResource: (_parent, lineId) => ({ type: "PI_LINE", id: lineId }),
@@ -1276,13 +1264,13 @@ const procurementDetail: DetailConfig = {
 export const procurementConfig: ModuleConfig = {
   slug: "procurement",
   title: "Procurement",
-  // Suppliers (Maintenance) have no doc detail — only po/grn/pi ids navigate.
+  // Only po/grn/pi ids navigate (suppliers are their own module, /m/suppliers).
   detailPath: (vm) =>
     /^(po|grn|pi)-/.test(vm.id)
       ? `/m/procurement/${encodeURIComponent(vm.id)}`
       : null,
   detail: procurementDetail,
-  sources: [poSource, grnSource, piSource, maintenanceSource],
+  sources: [poSource, grnSource, piSource],
 };
 
 // ---------------------------------------------------------------------------
