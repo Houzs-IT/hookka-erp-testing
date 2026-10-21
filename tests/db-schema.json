@@ -280,6 +280,7 @@
     "cash_flow_category",
     "code",
     "created_at",
+    "estimate_monthly",
     "is_active",
     "is_postable",
     "name",

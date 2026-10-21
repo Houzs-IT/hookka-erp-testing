@@ -6385,7 +6385,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       </ReportFrame>
       {rows.some((r) => r.estValues) && (
         <p className="text-[11px] text-[#9C6F1E]">
-          Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          Amber cells are estimates: recurring costs (in each of the last three months, or ticked Estimate every month in the Chart of Accounts) with nothing recorded yet this
           month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
         </p>
       )}
@@ -6934,7 +6934,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
       </ReportFrame>
       {rows.some((r) => r.estSen) && (
         <p className="text-[11px] text-[#9C6F1E]">
-          Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          Amber rows are estimates: recurring costs (in each of the last three months, or ticked Estimate every month in the Chart of Accounts) with nothing recorded yet this
           month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
         </p>
       )}
