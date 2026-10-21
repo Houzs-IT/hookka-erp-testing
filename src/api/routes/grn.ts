@@ -1131,92 +1131,93 @@ async function restorePOReceivedQtyForGRN(
 // POSTED GRN line is edited. Mirrors cascadePOStatusAfterGRNPost but moves each
 // PO line by the (possibly negative) delta instead of the full accepted qty,
 // then recomputes PO status (RECEIVED / PARTIAL_RECEIVED / CONFIRMED).
-// receivedQty is clamped at ≥ 0. Keyed by poItemIndex → PO line (deterministic
-// ORDER BY id, the same mapping the post cascade relies on).
+// receivedQty is clamped at ≥ 0. HK-0108: each delta goes to the line's OWN
+// PO line (po_item_id), header PO by poItemIndex only for legacy lines — the
+// same resolveGrnLineTargets the post cascade uses.
 // ---------------------------------------------------------------------------
 async function cascadePOReceivedQtyDelta(
   db: D1Database,
   grnId: string,
-  deltas: { poItemIndex: number; delta: number }[],
+  deltas: Array<Omit<GrnLinePoRef, "acceptedQty"> & { delta: number }>,
 ): Promise<void> {
   const grn = await db
     .prepare("SELECT poId FROM grns WHERE id = ?")
     .bind(grnId)
     .first<{ poId: string | null }>();
-  if (!grn?.poId) return;
-  const poId = grn.poId;
-
-  await ensurePoItemLineNo(db);
-  const poItemsRes = await db
-    .prepare(
-      `SELECT id, quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ? ${PO_ITEMS_ORDER}`,
-    )
-    .bind(poId)
-    .all<{ id: string; quantity: number; receivedQty: number }>();
-  const poItemsOrdered = poItemsRes.results ?? [];
 
   const statements: D1PreparedStatement[] = [];
+  const touchedPoIds = new Set<string>();
   for (const d of deltas) {
-    const idx = d.poItemIndex ?? -1;
-    if (idx < 0 || idx >= poItemsOrdered.length) continue;
-    const poItem = poItemsOrdered[idx];
     const delta = Number(d.delta) || 0;
     if (delta === 0) continue;
+    // One line at a time: the resolver drops lines it can't place, so a
+    // batched call would lose the sign ↔ target pairing.
+    const [target] = await resolveGrnLineTargets(db, grnId, grn?.poId ?? null, [
+      { ...d, acceptedQty: Math.abs(delta) },
+    ]);
+    if (!target) continue;
+    touchedPoIds.add(target.poId);
     if (delta > 0) {
       statements.push(
         db
           .prepare("UPDATE purchase_order_items SET receivedQty = receivedQty + ? WHERE id = ?")
-          .bind(delta, poItem.id),
+          .bind(delta, target.poItemId),
       );
     } else {
       // Reduction — clamp so receivedQty can't go negative.
-      const dec = clampDecrement(Number(poItem.receivedQty) || 0, -delta);
+      const cur = await db
+        .prepare("SELECT receivedQty FROM purchase_order_items WHERE id = ?")
+        .bind(target.poItemId)
+        .first<{ receivedQty: number | null }>();
+      const dec = clampDecrement(Number(cur?.receivedQty) || 0, -delta);
       if (dec <= 0) continue;
       statements.push(
         db
           .prepare("UPDATE purchase_order_items SET receivedQty = receivedQty - ? WHERE id = ?")
-          .bind(dec, poItem.id),
+          .bind(dec, target.poItemId),
       );
     }
   }
   if (statements.length > 0) await db.batch(statements);
 
-  // Recompute PO status from the post-edit receivedQty totals.
-  const afterRes = await db
-    .prepare(
-      "SELECT quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ?",
-    )
-    .bind(poId)
-    .all<{ quantity: number; receivedQty: number }>();
-  const after = afterRes.results ?? [];
-  if (after.length === 0) return;
-  const allFull = after.every(
-    (r) => (Number(r.receivedQty) || 0) >= (Number(r.quantity) || 0),
-  );
-  const anyReceived = after.some((r) => (Number(r.receivedQty) || 0) > 0);
+  // Recompute status of every PO the edit touched from its receivedQty totals.
+  for (const poId of touchedPoIds) {
+    const afterRes = await db
+      .prepare(
+        "SELECT quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ?",
+      )
+      .bind(poId)
+      .all<{ quantity: number; receivedQty: number }>();
+    const after = afterRes.results ?? [];
+    if (after.length === 0) continue;
+    const allFull = after.every(
+      (r) => (Number(r.receivedQty) || 0) >= (Number(r.quantity) || 0),
+    );
+    const anyReceived = after.some((r) => (Number(r.receivedQty) || 0) > 0);
 
-  const nowIso = new Date().toISOString();
-  if (allFull) {
-    await db
-      .prepare(
-        "UPDATE purchase_orders SET status = 'RECEIVED', receivedDate = ?, updated_at = ? WHERE id = ? AND status IN ('CONFIRMED','PARTIAL_RECEIVED','RECEIVED')",
-      )
-      .bind(nowIso.split("T")[0], nowIso, poId)
-      .run();
-  } else if (anyReceived) {
-    await db
-      .prepare(
-        "UPDATE purchase_orders SET status = 'PARTIAL_RECEIVED', receivedDate = NULL, updated_at = ? WHERE id = ? AND status IN ('CONFIRMED','PARTIAL_RECEIVED','RECEIVED')",
-      )
-      .bind(nowIso, poId)
-      .run();
-  } else {
-    await db
-      .prepare(
-        "UPDATE purchase_orders SET status = 'CONFIRMED', receivedDate = NULL, updated_at = ? WHERE id = ? AND status IN ('RECEIVED','PARTIAL_RECEIVED')",
-      )
-      .bind(nowIso, poId)
-      .run();
+    const nowIso = new Date().toISOString();
+    if (allFull) {
+      await db
+        .prepare(
+          "UPDATE purchase_orders SET status = 'RECEIVED', receivedDate = ?, updated_at = ? WHERE id = ? AND status IN ('CONFIRMED','PARTIAL_RECEIVED','RECEIVED')",
+        )
+        .bind(nowIso.split("T")[0], nowIso, poId)
+        .run();
+    } else if (anyReceived) {
+      await db
+        .prepare(
+          "UPDATE purchase_orders SET status = 'PARTIAL_RECEIVED', receivedDate = NULL, updated_at = ? WHERE id = ? AND status IN ('CONFIRMED','PARTIAL_RECEIVED','RECEIVED')",
+        )
+        .bind(nowIso, poId)
+        .run();
+    } else {
+      await db
+        .prepare(
+          "UPDATE purchase_orders SET status = 'CONFIRMED', receivedDate = NULL, updated_at = ? WHERE id = ? AND status IN ('RECEIVED','PARTIAL_RECEIVED')",
+        )
+        .bind(nowIso, poId)
+        .run();
+    }
   }
 }
 
@@ -1954,8 +1955,9 @@ app.put("/:id", async (c) => {
         // A committed GRN already wrote rm_batches + cost_ledger +
         // raw_materials.balanceQty. The owner wants accepted-qty corrections
         // with stock + cost FOLLOWING the change, not a hard lock. We match the
-        // incoming lines to the existing grn_items BY POSITION (the same
-        // line-index key postGRNToStock uses for its batch ids), compute each
+        // incoming lines to the existing grn_items by line id (see HK-0108
+        // below; lineIdx stays the ORDER BY id index postGRNToStock uses for
+        // its batch ids), compute each
         // line's accepted-qty delta, BLOCK any line whose new qty drops below
         // what a PI already invoiced, then post the compensating movement for
         // the delta via the SAME helpers the post path uses. We do NOT touch
@@ -2000,10 +2002,22 @@ app.put("/:id", async (c) => {
           materialCode: string;
           materialName: string;
         }> = [];
-        const poLineDeltas: { poItemIndex: number; delta: number }[] = [];
+        const poLineDeltas: Array<Omit<GrnLinePoRef, "acceptedQty"> & { delta: number }> = [];
+        // HK-0108: pair each stored line with its incoming line by line id;
+        // else by position in GET order (poItemIndex, id), as the draft path
+        // does since HK-0107. existingItems stays ORDER BY id — lineIdx is the
+        // batch-id key postGRNToStock used.
+        const getOrder = [...existingItems].sort(
+          (a, b) => (a.poItemIndex ?? 0) - (b.poItemIndex ?? 0),
+        );
+        const pairedIncoming = existingItems.map(
+          (ex) =>
+            rawItems.find((r) => r.id != null && String(r.id) === String(ex.id)) ??
+            rawItems[getOrder.indexOf(ex)],
+        );
         for (let i = 0; i < existingItems.length; i++) {
           const ex = existingItems[i];
-          const incoming = rawItems[i];
+          const incoming = pairedIncoming[i];
           const oldAccepted = Number(ex.acceptedQty) || 0;
           const newAccepted = Number(incoming.acceptedQty);
           // One formula for "how much of this line is already billed" — the
@@ -2042,15 +2056,21 @@ app.put("/:id", async (c) => {
               materialCode: ex.materialCode ?? "",
               materialName: ex.materialName ?? "",
             });
-            if (ex.poItemIndex != null && ex.poItemIndex >= 0) {
-              poLineDeltas.push({ poItemIndex: ex.poItemIndex, delta });
-            }
+            // HK-0108: carry the line's own PO link; header PO by
+            // poItemIndex is only the legacy fallback (resolveGrnLineTargets).
+            const ref = ex as GRNItemRow & GrnLinePoRef;
+            poLineDeltas.push({
+              poItemIndex: ex.poItemIndex,
+              poId: ref.poId ?? ref.po_id ?? null,
+              poItemId: ref.poItemId ?? ref.po_item_id ?? null,
+              delta,
+            });
           }
         }
 
         // Recompute total from the new accepted qtys.
         totalAmount = existingItems.reduce((sum, ex, i) => {
-          const newAccepted = Number((rawItems[i] as Record<string, unknown>).acceptedQty) || 0;
+          const newAccepted = Number(pairedIncoming[i].acceptedQty) || 0;
           return sum + newAccepted * (Number(ex.unitPrice) || 0);
         }, 0);
 
@@ -2069,14 +2089,14 @@ app.put("/:id", async (c) => {
 
         // HK-0096 — a qty increase draws the PO line down further, so it
         // must fit the same cumulative ceiling a new receipt does. Resolved
-        // the way cascadePOReceivedQtyDelta applies it (by poItemIndex).
+        // the way cascadePOReceivedQtyDelta applies it (each line's own PO line).
         const overOnEdit = await findOverReceipt(
           c.var.DB,
           await resolveGrnLineTargets(
             c.var.DB,
             id,
             existing.poId ?? null,
-            poLineDeltas.map((d) => ({ poItemIndex: d.poItemIndex, acceptedQty: d.delta })),
+            poLineDeltas.map((d) => ({ ...d, acceptedQty: d.delta })),
           ),
         );
         if (overOnEdit) {
@@ -2085,7 +2105,7 @@ app.put("/:id", async (c) => {
         // Cascade the accepted-qty delta to the parent PO's receivedQty so the
         // PO's per-line consumed counter (and status) tracks the correction.
         // Deferred to after the main batch (it re-reads PO lines / recomputes
-        // status, like the post cascade). Keyed by poItemIndex → PO line.
+        // status, like the post cascade). Keyed by each line's own PO line.
         if (poLineDeltas.length > 0) {
           poDeltaStatementsAfter.push({
             run: async () => {
