@@ -73,7 +73,7 @@ test("New AP Payment is a popup like the voucher form; fields and rules unchange
   // cheque no.) and the printed Description (tests/finance-reference-fields.test.mjs).
   assert.match(ap, /\{apTfDraw \? "Reference \(drawdown no\.\)" : "Reference"\}/);
   assert.match(ap, />Description <span className="normal-case font-normal text-\[#9CA3AF\]">\(printed on the voucher\)<\/span><\/label>/);
-  assert.match(ap, /const cannot = saving \|\| apTotalSen <= 0 \|\| !!apMoneyError \|\| !!apOverAlloc \|\| !apForm\.partyId/, "the same save rule");
+  assert.match(ap, /const cannot = saving \|\| apTotalSen <= 0 \|\| !!apMoneyError \|\| !!apOverAlloc \|\| !!apFxError \|\| !apForm\.partyId/, "the same save rule");
   assert.match(ap, /onClick=\{\(\) => void handleSaveAp\("draft"\)\}/);
   assert.doesNotMatch(ap, /<Card>/, "no longer an inline card");
 });

@@ -719,6 +719,9 @@ export type ChartOfAccount = {
   pnlCategory?: "FIXED" | "VARIABLE" | "OTHERS";
   /** False = header/parent account; journals must post to leaf accounts. */
   isPostable?: boolean;
+  /** Ticked "Estimate every month" (owner 2026-10-21): the running month's
+   *  P&L shows it at last month's amount while nothing is recorded. */
+  estimateMonthly?: boolean;
 };
 
 export type JournalLine = {
@@ -999,7 +1002,7 @@ export type SupplierMaterialBinding = {
    */
   supplierDescription?: string;
   unitPrice: number;
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   leadTimeDays: number;
   paymentTerms: string;
   moq: number;
@@ -1018,7 +1021,7 @@ export type PriceHistory = {
   materialCode: string;
   oldPrice: number;
   newPrice: number;
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   changedDate: string;
   // The date the price takes effect (effective-dated model). Falls back to
   // changedDate for rows that predate the column.
@@ -1228,7 +1231,7 @@ export type GoodsInTransit = {
   actualArrival: string | null;
   customsClearanceDate: string | null;
   customsStatus: "N/A" | "PENDING" | "CLEARED" | "HELD";
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   productCost: number;
   shippingCost: number;
   customsDuty: number;

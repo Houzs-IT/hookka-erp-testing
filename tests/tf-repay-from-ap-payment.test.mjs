@@ -101,12 +101,12 @@ const api = readFileSync("src/api/routes/accounting.ts", "utf8").replace(/\r\n/g
 
 test("screen: the lender's AP Payment lists drawdowns to repay, with no advance box", () => {
   assert.match(ui, /const apTfLender = apBills\?\.tfLender \?\? null;/);
-  assert.match(ui, /const apAdvanceSen = apTfLender \? 0 : apSen\(apForm\.advance\);/);
+  assert.match(ui, /const apAdvanceSen = apTfLender \|\| apFxCcy \? 0 : apSen\(apForm\.advance\);/);
   assert.match(ui, /\{apTfLender \? "Drawdowns to repay" : "Bills to pay"\}/);
   for (const h of ["Drawdown", "For", "Drawn", "Due", "Balance", "Interest (at drawdown)", "Repay (RM)"]) {
     assert.ok(ui.includes(`<th className="px-2.5 py-1.5 text-left">${h}</th>`) || ui.includes(`<th className="px-2.5 py-1.5 text-right">${h}</th>`), h);
   }
-  assert.match(ui, /\{apForm\.partyKind === "SUPPLIER" && !apTfLender \? \(/, "no advance for the lender");
+  assert.match(ui, /\{apForm\.partyKind === "SUPPLIER" && !apTfLender && !apFxCcy \? \(/, "no advance for the lender (nor on a foreign-currency payment)");
   assert.match(ui, /a\.docKind === "TF" \? "trade-finance drawdown"/);
 });
 

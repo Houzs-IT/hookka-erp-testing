@@ -39,7 +39,7 @@ export type SupplierQuotationLine = {
   supplierSku: string;
   supplierDescription?: string | null;
   unitPriceSen: number; // stored in sen (display = /100)
-  currency: string; // MYR / RMB / …
+  currency: string; // MYR / CNY / …
   leadTimeDays: number;
   moq: number;
   // The date this price takes effect (effective-dated model). Replaces the old

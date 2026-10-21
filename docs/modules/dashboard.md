@@ -84,6 +84,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 
 - **Sales forecast** (2026-10-18, owner): target = sales keyed in **Forecast P&L** (`GET /api/accounting/forecast`, kv `forecast_pnl`, months[ym].salesSen; quarter/year = sum of keyed months); actual = **invoiced** by invoice date. No rolling-average fallback — an unkeyed month shows no target. Viewers without Accounting read see actuals only.
 
+- **Working day for production averages** (2026-10-20): a day any department produced something. Department Revenue's Avg / day and the Daily production revenue card both use it, so their averages match; a weekly view (quarter / year) counts Mon–Sat days elapsed.
+
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:58`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
 - **Add a chart** → put the recharts component in `charts.tsx` and lazy-import it (keep recharts out of `index.tsx`); pass computed data + colors as props (parent owns the numbers).
