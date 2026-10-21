@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-350 (branch `feat/fx-confirm-bank`, to main; 347–349 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
@@ -161,6 +162,16 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-21-380 — A commit with 9 or more staged ts/tsx files hung in pre-commit `infrastructure` 🟡
+
+Found 2026-10-21: merges of `main` into open PR branches (about 33 staged files) hung in the pre-commit hook for 20+ minutes with no CPU. Reproduced in a worktree: 8 staged ts files lint in 5 s, 9 hang, whichever files they are.
+
+**Root cause.** lint-staged 16 starts its task with tinyexec. On Windows a bare `node_modules/.bin` name (`eslint`, from `package.json` `lint-staged`) is run as `cmd.exe /d /s /c "eslint ^^^"file^^^" …"` (the `.cmd` shim rule in tinyexec's bundled cross-spawn). cmd.exe on this machine (Windows 11 build 26200) hangs before running anything once that line holds 9 or more `^^^"…^^^"` arguments — even `echo` does; with plain `"…"` quoting it does not. No eslint process ever starts, so the hook waits forever. eslint itself lints the same 40 files in 8 s.
+
+**Fix.** The task is `node node_modules/eslint/bin/eslint.js`: `node` resolves to node.exe, which tinyexec spawns directly with no cmd.exe. Same rules, same files; an unused variable still fails the commit. 40 staged files: hung (killed at 5 min) → 5 s for lint-staged.
+
+**Regression.** `tests/lint-staged-no-cmd-shim.test.mjs` fails if any lint-staged command does not start with `node `. Class: none (tooling).
 
 ## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
 
