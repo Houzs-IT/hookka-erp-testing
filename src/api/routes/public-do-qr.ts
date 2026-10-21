@@ -924,11 +924,12 @@ app.post("/:token/advance", async (c) => {
             returnedIds,
           );
           if (drItems.length > 0) {
-            await createDeliveryReturnRecord(c.var.DB, orgId, {
+            const dr = await createDeliveryReturnRecord(c.var.DB, orgId, {
               doId: d.id,
               items: drItems,
               reason: "Returned at delivery — driver flagged",
             });
+            if (!dr.ok) throw new Error(dr.error); // HK-0110: a refusal is logged below, not dropped
           }
         } catch (drErr) {
           console.warn(

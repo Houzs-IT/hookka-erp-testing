@@ -50,10 +50,11 @@ measured 2026-09-22; this line said 2,122). Use the map's file:line +
 
 5. **Which endpoint** → [`docs/API.md`](docs/API.md) — **generated** from
    `src/api/worker.ts` + `src/api/routes/*.ts` by `node scripts/gen-api-docs.mjs`
-   (143 mounts, **1016** handlers, plus the exact public/auth surface — re-measured 2026-10-09
-   by `--check` on branch `feat/labour-statutory-accruals-system-journals`, which adds
-   `GET /api/accounting/system-journals`; this line said 1015).
-   Regenerate it instead of hand-editing; `--check` tells you if it is stale — **it WAS stale
+   (every mount and handler, plus the exact public/auth surface; no counts here, because
+   every branch that bumped them conflicted with every other one).
+   **Main owns it:** CI regenerates and commits it after every merge to `main`; a branch
+   must not commit it (2026-10-21). To read it fresh on a branch, regenerate locally and
+   don't stage it. `--check` tells you if a copy is stale — **it WAS stale
    on `main` on 2026-08-14**, and the committed copy carried four duplicated mount rows with
    two different line sets for the same handlers. Run `--check` before trusting it.
 
@@ -83,8 +84,8 @@ Doc map: [`docs/DOCS-INDEX.md`](docs/DOCS-INDEX.md). The big picture: [`docs/DEV
   flags "N fetches missing the CSRF token" is ALL false positives — don't add `csrfHeaders()`.
 - **QR / sticker URLs encode `window.location.origin`** (the print-time domain); scanning is
   path-based + domain-agnostic but resolves against the DB of whatever site you scan ON.
-- **Verify live on prod after every deploy** — read AND write path. Log every bug to
-  `docs/BUG-HISTORY.md` and add a regression test.
+- **Verify live on prod after every deploy** — read AND write path. Log every bug as its own
+  file, `docs/bugs/<BUG-id>.md` (`docs/BUG-HISTORY.md` is the archive), and add a regression test.
 - **UI is 100% English.** Bug fixes merge straight to `main`; features go to `staging`.
 
 ## Environment — sandbox / staging / production
@@ -155,3 +156,10 @@ planner's "0 items" meant *cannot see*, not *nothing wrong*.
 - **Update-on-touch:** when you edit a module, refresh its `CODEBASE-MAP` entry as a byproduct,
   and restamp `Last verified:` on any doc whose claims you just changed or re-checked.
   A doc you leave stale is a wrong answer you have shipped to every future session.
+- **Except on the conflict magnets (2026-10-21)** — every branch writing at the same spot put
+  every other open PR into conflict on every merge to `main`. So on a branch: **never add a
+  `Last verified` line** to `docs/CODEBASE-MAP.md`, `docs/modules/*.md` or
+  `docs/BUG-HISTORY.md` (CI checks their file:line refs on every PR; say what you verified
+  in the commit message); **never commit `docs/API.md`** (main regenerates it after each
+  merge); **a new bug is its own file**, `docs/bugs/<BUG-id>.md` (see `docs/bugs/README.md`).
+  `scripts/check-docs-freshness.mjs` fails a PR that does any of these.

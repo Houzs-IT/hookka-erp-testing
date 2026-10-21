@@ -376,6 +376,19 @@ export default function DeliveryReturnDetail() {
                 Cancel return
               </Button>
             )}
+            {dr.status === "RETURNED_TO_STOCK" && (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={async () => {
+                  if (await confirm({ title: "Undo return to stock?", message: "The returned goods come back off stock, the units go back to Delivered, and this return is cancelled.", confirmLabel: "Undo and cancel" })) {
+                    call("/cancel");
+                  }
+                }}
+              >
+                Undo return to stock
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
