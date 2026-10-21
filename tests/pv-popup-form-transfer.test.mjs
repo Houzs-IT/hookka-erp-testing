@@ -48,7 +48,7 @@ test("all three write paths know a transfer; the voucher keeps notes, bill no. a
   // (+ tf_due_date / tf_interest_sen since 2026-10-17 — an AP Payment that
   // draws on trade finance, tests/tf-draw-from-ap-payment.test.mjs.)
   // (+ reference since 2026-10-19 — the TT / cheque no., tests/finance-reference-fields.test.mjs.)
-  assert.match(api, /for \(const col of \["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT"\]\)/);
+  assert.match(api, /for \(const col of \["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"\]\)/);
   const post = slice(api, 'app.post("/payment-vouchers", async (c) => {', 'app.put("/payment-vouchers/:id"');
   assert.match(post, /const isTransfer = body\.kind === PV_KIND_TRANSFER;/);
   assert.match(post, /const t = validatePvTransfer\(coa, body\);/);
@@ -92,7 +92,8 @@ test("the form is a popup: Payment | Transfer, the voucher's own fields, lines a
 test("the list: no single-click expand; transfers and old fund transfers are doors; the popup shows everything", () => {
   const tab = slice(ui, "function PaymentsTab(", "// =============== TAB: OFFICIAL RECEIPT");
   assert.doesNotMatch(tab, /expandedPv/);
-  assert.match(tab, /<DocTrailBlock family="payment_voucher" sourceId=\{r\.id\} \/>/);
+  // An AP voucher's entry is its settlement's, under its number (BUG-2026-10-20-350).
+  assert.match(tab, /family=\{r\.pvKind === "AP" \? \(r\.partyKind === "OTHER" \? "other_party_payment" : "supplier_payment"\) : "payment_voucher"\}/);
   assert.match(tab, /<DocTrailBlock family=\{g\.sp \? "supplier_payment" : g\.ft \? "fund_transfer" : "other_party_payment"\} sourceId=\{g\.no\} \/>/);
   assert.match(tab, /<DetailField label="Notes \(internal\)"/);
   assert.match(ui, /partyLabel: isTransfer \? "Transfer To" : supplierAp \? "Pay To \(Supplier\)" : "Pay To",/, "a transfer prints the receiving account");

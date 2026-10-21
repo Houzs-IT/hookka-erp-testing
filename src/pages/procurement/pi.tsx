@@ -11,7 +11,9 @@ import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
+import { fetchFxRate } from "@/lib/fx-client";
+import { fmtFxRate } from "@/lib/fx";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { loadPiForPrint as loadPiPrint } from "@/lib/pi-print-load";
 import { useUrlState } from "@/lib/use-url-state";
@@ -491,15 +493,21 @@ export default function PurchaseInvoicesPage() {
         icon: <DollarSign className="h-3.5 w-3.5" />,
         action: () => {
           // Phase 3.6 — a foreign PI settles at the PAYMENT-DAY rate; the
-          // realised difference vs the booking rate posts to 530-0000.
+          // realised difference vs the booking rate posts to the FX accounts
+          // (Setup › Currency & FX). The box opens on this month's Setup rate
+          // (owner 2026-10-20: a default only), else the booking rate.
           const fx = row as unknown as { currency?: string; fxRate?: number | null };
           if (fx.currency && fx.currency !== "MYR") {
-            const r = parseFloat(window.prompt(
-              `${fx.currency} invoice — payment-day rate (MYR per 1 ${fx.currency}; booked at ${fx.fxRate ?? "?"}):`,
-              String(fx.fxRate ?? ""),
-            ) || "");
-            if (!Number.isFinite(r) || r <= 0) return;
-            updateStatus(row.id, "PAID", { payFxRate: r });
+            const ccy = fx.currency;
+            void (async () => {
+              const setup = await fetchFxRate(ccy, todayYmdMY());
+              const r = parseFloat(window.prompt(
+                `${ccy} invoice — payment-day rate (MYR per 1 ${ccy}; booked at ${fx.fxRate ?? "?"}${setup !== null ? `; this month in Setup: ${fmtFxRate(setup)}` : ""}):`,
+                setup !== null ? fmtFxRate(setup) : String(fx.fxRate ?? ""),
+              ) || "");
+              if (!Number.isFinite(r) || r <= 0) return;
+              updateStatus(row.id, "PAID", { payFxRate: r });
+            })();
           } else {
             updateStatus(row.id, "PAID");
           }

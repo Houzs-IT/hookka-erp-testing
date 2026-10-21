@@ -46,7 +46,7 @@ test("the API lists each draw still owed, by due date, with the supplier it paid
   assert.match(block, /for \(const d of derived\.draws\) if \(d\.outstandingSen > 0\) open\.push\(\{ lender: s\.lenderName, d \}\);/);
   assert.match(block, /tradeFinance\.push\(\{ dueDate: d\.dueDate, drawDate: d\.drawDate, lender, ref: d\.drawSourceId, paidFor: \[\.\.\.\(paidFor\.get\(d\.drawSourceId\) \?\? \[\]\)\]\.join\(", "\), outstandingSen: d\.outstandingSen \}\);/);
   assert.match(block, /tradeFinance\.sort\(\(x, y\) => \(x\.dueDate \|\| "9999-12-31"\)\.localeCompare\(y\.dueDate \|\| "9999-12-31"\)/);
-  assert.match(block, /awaitingApproval, awaitingCheckedSen, tradeFinance \},/);
+  assert.match(block, /awaitingApproval, awaitingCheckedSen, fxBankPending, tradeFinance \},/);
 });
 
 test("the desktop lists it under TO REPAY and takes it off the bottom line; image and phone say so", () => {
