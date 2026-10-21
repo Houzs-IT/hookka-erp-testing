@@ -118,6 +118,14 @@ export function categoryLabel(cat: string): string {
   return cat.charAt(0) + cat.slice(1).toLowerCase();
 }
 
+/** Category → tone key for the Products Hub v2 colours; unknown → "other". */
+export function categoryTone(cat: string): "sofa" | "bedframe" | "accessory" | "other" {
+  if (cat === "SOFA") return "sofa";
+  if (cat === "BEDFRAME") return "bedframe";
+  if (cat === "ACCESSORY") return "accessory";
+  return "other";
+}
+
 /** The chip keys: All, the three known categories, then any other category present. */
 export function categoryKeys(products: HubProduct[]): string[] {
   const extra = [...new Set(products.map((p) => p.category))]
@@ -331,6 +339,264 @@ export function fmtMinutes(m: number | null): string | null {
 
 export function fmtM3(v: number | null): string | null {
   return v != null && v > 0 ? `${v.toFixed(2)} m³` : null;
+}
+
+// ---- Product detail (ProductDetailScreen, Products Hub v2) ---------------------
+
+/** The family key a SKU belongs to (same rule as buildFamilies / desktop Catalog). */
+export function familyKeyOf(code: string): string {
+  return familyOf(code) || code;
+}
+
+/** The family holding this product: by id, else by its family key. */
+export function familyOfProduct(
+  families: HubFamily[],
+  p: { id: string; code: string },
+): HubFamily | null {
+  return (
+    families.find((f) => f.products.some((x) => x.id === p.id)) ??
+    families.find((f) => f.familyKey === familyKeyOf(p.code)) ??
+    null
+  );
+}
+
+/** BOM row icon tone (prototype: fabric plum, foam teal, wood ochre, hardware neutral). */
+export type MaterialTone = "fabric" | "foam" | "wood" | "hardware";
+
+export function materialTone(category: string): MaterialTone {
+  const c = (category || "").toUpperCase();
+  if (c.includes("FABRIC")) return "fabric";
+  if (c.includes("FILLER") || c.includes("FOAM")) return "foam";
+  if (c.includes("PLYWOOD") || c.startsWith("WD_") || c.includes("WOOD")) return "wood";
+  return "hardware";
+}
+
+/** `FABRIC_SEWING` → "Fabric Sewing". */
+export function deptLabel(code: string): string {
+  const words = (code || "").split(/[_\s]+/).filter(Boolean);
+  if (words.length === 0) return "Department";
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+
+export type DeptRow = { id: string; dept: string; category: string; minutes: number; pct: number };
+
+/**
+ * Dept Working Times as bar rows. `totalMinutes` is the sum of the rows shown
+ * ("Department Time Total") — NOT productionTimeMinutes, which the API derives
+ * from the active BOM template and can differ (owner 2026-10-21).
+ */
+export function deptRows(raw: unknown): { rows: DeptRow[]; totalMinutes: number } {
+  const list = Array.isArray(raw) ? (raw as Raw[]) : [];
+  const base = list
+    .filter((r) => !!r && typeof r === "object")
+    .map((r, i) => {
+      const code = rawStr(r, "departmentCode", "department_code");
+      const m = rawNum(r, "minutes");
+      return {
+        id: rawStr(r, "id") || `${code || "dept"}-${i}`,
+        dept: deptLabel(code),
+        category: rawStr(r, "category"),
+        minutes: m != null && m > 0 ? m : 0,
+      };
+    });
+  return withBars(base);
+}
+
+function withBars(base: Omit<DeptRow, "pct">[]): { rows: DeptRow[]; totalMinutes: number } {
+  const max = base.reduce((a, r) => Math.max(a, r.minutes), 0);
+  const totalMinutes = base.reduce((a, r) => a + r.minutes, 0);
+  return {
+    rows: base.map((r) => ({ ...r, pct: max > 0 ? Math.round((r.minutes / max) * 100) : 0 })),
+    totalMinutes,
+  };
+}
+
+// ---- Active BOM template (GET /api/bom/templates) -------------------------------
+//
+// The BOM editor's source of truth. The SKU's productionTimeMinutes is computed
+// by the API from this same template (fetchProductWithChildren in
+// src/api/routes/products.ts): productCode = the SKU code exactly, versionStatus
+// ACTIVE (missing = DRAFT), newest effectiveFrom first with empty last, one row.
+// The list endpoint orders by productCode only, so the pick is repeated here.
+
+export type BomTemplate = {
+  id: string;
+  productCode: string;
+  version: string;
+  effectiveFrom: string;
+  l1Processes: unknown[];
+  wipComponents: unknown[];
+};
+
+/** The ACTIVE template for exactly this code, chosen as the API does; else null. */
+export function pickActiveTemplate(resp: unknown, code: string): BomTemplate | null {
+  const list = resp && typeof resp === "object" ? (resp as { data?: unknown }).data : undefined;
+  if (!Array.isArray(list) || !code) return null;
+  const hits = (list as Raw[])
+    .filter((t) => !!t && typeof t === "object")
+    .filter(
+      (t) =>
+        rawStr(t, "productCode", "product_code") === code &&
+        (rawStr(t, "versionStatus", "version_status") || "DRAFT").toUpperCase() === "ACTIVE",
+    )
+    .sort((a, b) =>
+      rawStr(b, "effectiveFrom", "effective_from").localeCompare(rawStr(a, "effectiveFrom", "effective_from")),
+    );
+  const t = hits[0];
+  if (!t) return null;
+  const arr = (v: unknown) => (Array.isArray(v) ? v : []);
+  return {
+    id: rawStr(t, "id"),
+    productCode: code,
+    version: rawStr(t, "version"),
+    effectiveFrom: rawStr(t, "effectiveFrom", "effective_from"),
+    l1Processes: arr(t.l1Processes ?? t.l1_processes),
+    wipComponents: arr(t.wipComponents ?? t.wip_components),
+  };
+}
+
+type WipRaw = Raw & { processes?: unknown; materials?: unknown; children?: unknown };
+
+function wipList(v: unknown): WipRaw[] {
+  return Array.isArray(v) ? (v.filter((w) => !!w && typeof w === "object") as WipRaw[]) : [];
+}
+
+/**
+ * Department rows of the template, summed per department with the API's own
+ * rule (bomTotalMinutes): L1 processes once; each WIP's processes × its
+ * quantity (missing = 1); children counted on their own. So totalMinutes equals
+ * the productionTimeMinutes the API derives from this template.
+ */
+export function templateDeptRows(t: BomTemplate): { rows: DeptRow[]; totalMinutes: number } {
+  const byDept = new Map<string, Omit<DeptRow, "pct">>();
+  const add = (proc: unknown, times: number) => {
+    if (!proc || typeof proc !== "object") return;
+    const r = proc as Raw;
+    const code = rawStr(r, "deptCode", "dept_code", "departmentCode");
+    const minutes = (rawNum(r, "minutes") ?? 0) * times;
+    const key = code || rawStr(r, "dept") || "dept";
+    const cur = byDept.get(key);
+    if (cur) cur.minutes += minutes;
+    else byDept.set(key, { id: key, dept: rawStr(r, "dept") || deptLabel(code), category: "", minutes });
+  };
+  for (const p of t.l1Processes) add(p, 1);
+  const walk = (wips: WipRaw[]) => {
+    for (const w of wips) {
+      const q = rawNum(w, "quantity");
+      const times = q ?? 1;
+      for (const p of Array.isArray(w.processes) ? w.processes : []) add(p, times);
+      walk(wipList(w.children));
+    }
+  };
+  walk(wipList(t.wipComponents));
+  return withBars([...byDept.values()].map((r) => ({ ...r, minutes: r.minutes > 0 ? r.minutes : 0 })));
+}
+
+/** One row of the detail's Bill of materials (template or legacy source). */
+export type BomRow = { id: string; title: string; sub: string; qty: string | null; tone: MaterialTone };
+
+function qtyText(qty: number | null, unit: string): string | null {
+  return qty != null && qty > 0 ? `${qty}${unit ? ` ${unit}` : ""}` : null;
+}
+
+/**
+ * Materials stored on the template's WIP components (the list endpoint does
+ * not return product-level l1Materials). Quantities are shown as stored, per
+ * component — not multiplied out. Sub-line = the component they belong to.
+ */
+export function templateMaterials(t: BomTemplate): BomRow[] {
+  const out: BomRow[] = [];
+  const walk = (wips: WipRaw[]) => {
+    for (const w of wips) {
+      const comp = rawStr(w, "wipCode", "wip_code") || deptLabel(rawStr(w, "wipType", "wip_type"));
+      const mats = Array.isArray(w.materials) ? (w.materials as unknown[]) : [];
+      mats.forEach((m, i) => {
+        if (!m || typeof m !== "object") return;
+        const r = m as Raw;
+        const name = rawStr(r, "name");
+        const code = rawStr(r, "code", "inventoryCode");
+        const auto = rawStr(r, "autoDetect").toUpperCase();
+        out.push({
+          id: `${comp}-${code || name || "m"}-${i}-${out.length}`,
+          title: name || code || "Material",
+          sub: comp,
+          qty: qtyText(rawNum(r, "qty"), rawStr(r, "unit")),
+          tone: auto === "FABRIC" ? "fabric" : materialTone(`${code} ${name}`),
+        });
+      });
+      walk(wipList(w.children));
+    }
+  };
+  walk(wipList(t.wipComponents));
+  return out;
+}
+
+/**
+ * Where the detail's BOM / Production come from, decided once:
+ *   template  — the ACTIVE template for exactly this code (primary source);
+ *   none      — the read succeeded and this code has no ACTIVE template;
+ *   forbidden — 403 (a future bom read gate): not shown to this role;
+ *   error     — any other failure, incl. a 200 `{success:false}`;
+ *   loading   — nothing yet.
+ * Only `none` / `forbidden` / `error` may fall back to the SKU's legacy rows,
+ * and the screen says so. Never "nothing recorded" while unknown.
+ */
+export type BomSource =
+  | { kind: "loading" }
+  | { kind: "template"; template: BomTemplate }
+  | { kind: "none" }
+  | { kind: "forbidden" }
+  | { kind: "error" };
+
+export function bomSource(
+  resp: unknown,
+  code: string,
+  opts: { error: boolean; status: number | null },
+): BomSource {
+  const ok =
+    resp != null &&
+    typeof resp === "object" &&
+    (resp as { success?: unknown }).success !== false &&
+    Array.isArray((resp as { data?: unknown }).data);
+  if (ok) {
+    // The request filters by productCode, so a row for any other code means a
+    // stale response (e.g. the previous SKU's, mid-navigation): never use it,
+    // and never read it as "no BOM".
+    const rows = (resp as { data: unknown[] }).data;
+    if (rows.some((r) => !!r && typeof r === "object" && rawStr(r as Raw, "productCode", "product_code") !== code)) {
+      return { kind: "loading" };
+    }
+    const t = pickActiveTemplate(resp, code);
+    return t ? { kind: "template", template: t } : { kind: "none" };
+  }
+  if (resp != null || opts.error) return opts.status === 403 ? { kind: "forbidden" } : { kind: "error" };
+  return { kind: "loading" };
+}
+
+/** `BM_FABRIC` → "BM Fabric", `PLYWOOD` → "Plywood" (short codes stay upper-case). */
+export function materialLabel(category: string): string {
+  const words = (category || "").split(/[_\s]+/).filter(Boolean);
+  return words
+    .map((w) => (w.length <= 2 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
+    .join(" ");
+}
+
+/** The legacy per-SKU bom_components rows (GET /api/products/:id), as BomRows. */
+export function legacyMaterials(raw: unknown): BomRow[] {
+  const list = Array.isArray(raw) ? (raw as unknown[]) : [];
+  return list
+    .filter((b): b is Raw => !!b && typeof b === "object")
+    .map((b, i) => {
+      const category = rawStr(b, "materialCategory", "material_category");
+      const waste = rawNum(b, "wastePct", "waste_pct") ?? 0;
+      return {
+        id: rawStr(b, "id") || `bom-${i}`,
+        title: rawStr(b, "materialName", "material_name") || materialLabel(category) || "Component",
+        sub: [materialLabel(category), waste > 0 ? `+${waste}% waste` : ""].filter(Boolean).join(" · "),
+        qty: qtyText(rawNum(b, "qtyPerUnit", "qty_per_unit"), rawStr(b, "unit")),
+        tone: materialTone(category),
+      };
+    });
 }
 
 // ---- Family photos (/api/files?resourceType=modular) ---------------------------

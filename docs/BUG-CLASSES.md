@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-10-21**: branch `design/mobile-products-v2`, to `staging`, adds **C16 row 12** (the phone Product detail's "Base Price RM 0.00", BUG-2026-10-21-346). Nothing else re-checked.
 > **Last verified: 2026-10-19**: branch `fix/users-org-columns-memo`, to `staging`. C9 row added (BUG-2026-10-19-334) and the rule corrected: a promise memo cleared on failure, or `memoizeSelfApply`, still shares a pending promise across requests. Nothing else re-checked.
 > **Last verified: 2026-10-19**: branch `chore/sync-staging-from-main-1019`, staging<-main merge. Both sides kept. Main's C21 row 16 (phone Finance Dashboard) is row 19 here, after staging's rows 16 to 18. Nothing else re-checked.
 > **Last verified: 2026-10-17**: branch `fix/edit-keeps-bank-match`, to `main`, closes **C5 rows 8–10** and **C31 rows 2–5** (one shared rule each: `restoreEditedFamilyStatements`, `planEditBankCarry`) and **adds C32, a stored account code the chart later renamed** (BUG-2026-10-17-320 to -323). Nothing else re-checked.
@@ -1223,6 +1224,7 @@ narrowing has to state what it is dropping.
 | 9 | `total` / `totalSen` (the AR aging row carries five buckets and no total) | `/api/accounting/aging` | `receivablesConfig` → the phone's Receivables list | ✅ 2026-10-17 (-307) — every debtor read RM 0.00; the outstanding is now the sum of the five buckets; `tests/m-receivables-aging-total.test.mjs` imports the real config |
 | 10 | `pvKind` = `TRANSFER` (OVERWRITTEN, not dropped: the mapper wrote `isAp ? "AP" : "EXPENSE"` over the stored kind) | `GET /api/accounting/payment-vouchers` | every `pvKind === "TRANSFER"` branch in `src/pages/accounting/index.tsx` (door, print, detail, edit mode) | ✅ 2026-10-17 (-309) — a mapper written before the value existed; `tests/ap-payment-print.test.mjs` pins it |
 | 11 | `cnNo` / `creditNoteNo` / `dnNo` / `debitNoteNo` and `totalSen` (NEVER returned: the rows carry `noteNumber` / `totalAmount`) | `GET /api/credit-notes`, `GET /api/debit-notes` | `creditNotesSource` / `debitNotesSource` → the phone's Credit / Debit Notes lists | ✅ 2026-10-17 (-317) — latent (no notes on prod yet); `tests/finance-notes-post.test.mjs` pins the keys |
+| 12 | `basePriceSen` / `price1Sen` (stripped for roles without `product-pricing:read`; never present on a sofa) | `stripSellingPrice` on `GET /api/products/:id` (a PERMISSION projection, row 7's variant) | `productDetail` "Base Price" → the phone / tablet Product detail | 🟡 2026-10-21 (-346), fixed on branch `design/mobile-products-v2` — printed RM 0.00; Products now route to `ProductDetailScreen`, whose pricing card is gated on the permission and reads `priceDisplay()`; `tests/m-product-detail.test.mjs` |
 
 **Row 7 adds an axis: a projection can be narrowed by PERMISSION, not only by payload
 size, and it is the more dangerous variant.** The slim-payload kind at least drops the same

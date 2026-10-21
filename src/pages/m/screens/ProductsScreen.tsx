@@ -1,13 +1,16 @@
 // ===========================================================================
-// ProductsScreen — L1 Products (phone): SKU Master | Catalog.
+// ProductsScreen — L1 Products: SKU Master | Catalog, phone AND tablet.
 //
-// Owner 2026-10-15, PHONE ONLY (<720px). Tablet keeps the generic
-// ModuleListScreen exactly as before; the L2 detail (/m/products/:id, with
-// BOM, dept working times and files) is the unchanged DocumentDetailScreen.
+// Owner 2026-10-15 (phone), 2026-10-21 (Products Hub v2 visual refresh, and
+// tablet moved off the generic ModuleListScreen onto this hub: responsive
+// grid, one column in the split pane). The L2 detail
+// (/m/products/:id, with BOM, dept working times and files) is the unchanged
+// DocumentDetailScreen.
 //
-// Visual reference: Claude Design `Products Hub.dc.html`. Typography and
-// shared pieces follow the approved phone Sales Orders screen. Everything shown
-// is real data; the prototype's sample products, photos and prices are not used.
+// Visual reference: Claude Design `Products Hub v2.dc.html` (category tones,
+// chip dots, SKU card, featured family + photo grid). Typography follows the
+// approved phone Sales Orders screen. Everything shown is real data; the
+// prototype's sample products, photos and prices are not used.
 //   • SKUs        — GET /api/products (ACTIVE only; the API already withholds
 //                   selling prices from roles without product-pricing:read).
 //   • Families    — familyOf(code) → baseModel, as desktop Catalog.
@@ -22,7 +25,7 @@
 // Pure logic lives in ../lib/products-hub.ts (tests/m-products-hub.test.mjs).
 // ===========================================================================
 import { useCallback, useMemo, useState, type CSSProperties } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowDownUp,
   BedDouble,
@@ -45,7 +48,7 @@ import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
 import { formatCurrency } from "@/lib/utils";
 import { MobileCard, MobileHeader, Sheet } from "../components";
-import { M, M_ACCENT, SEMANTIC } from "../theme";
+import { M, SEMANTIC } from "../theme";
 import { productsConfig } from "../config/modules";
 import { useDebounced } from "../lib/use-debounced";
 import {
@@ -57,13 +60,13 @@ import {
   CHIP_ROW_CLASS,
   CHIP_COUNT,
   chip as chipStyle,
+  chipDot,
 } from "../lib/control-styles";
 import { useResponsiveLayout } from "../lib/responsive-layout";
-import { ModuleListScreen } from "./ModuleListScreen";
+import { PHOTOS_URL, PRODUCTS_URL, toneOf, usePressed, useSofaTier } from "../lib/products-ui";
 import {
   EMPTY_FILTERS,
   SOFA_TIERS,
-  SOFA_TIER_KEY,
   buildFamilies,
   categoryKeys,
   categoryLabel,
@@ -75,7 +78,6 @@ import {
   inCategory,
   passesFilters,
   priceDisplay,
-  readSofaTier,
   searchHub,
   seatPrice,
   seatRows,
@@ -91,25 +93,27 @@ import {
 
 // Prototype shadows (same values as the phone Sales Orders screen).
 const SHADOW_CONTROL = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
-const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 10px 26px -14px rgba(31,29,27,.22)";
 const SHADOW_LIST = "0 1px 2px rgba(31,29,27,.05),0 10px 28px -12px rgba(31,29,27,.20)";
-const SHADOW_CHIP = "0 1px 2px rgba(31,29,27,.06),0 3px 8px -4px rgba(31,29,27,.10)";
-const SHADOW_CHIP_ON = "0 4px 12px -6px rgba(107,92,50,.45)";
 const SHADOW_SEG = "0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)";
-const SHADOW_ON = "0 6px 14px -6px rgba(107,92,50,.6)";
 const SHADOW_PRIMARY = "0 8px 18px -8px rgba(107,92,50,.65)";
 const SHADOW_FILTER_ON = "0 8px 18px -8px rgba(107,92,50,.6)";
+// Products Hub v2 card + featured shadows (handoff item 5).
+const SHADOW_V2 = "0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.28)";
+const SHADOW_FEATURED = "0 2px 4px rgba(31,29,27,.06),0 18px 36px -18px rgba(31,29,27,.45)";
+// Frosted pill over a photo (same in both themes: it sits on the photo).
+const FROSTED: CSSProperties = {
+  backgroundColor: "rgba(255,255,255,.9)",
+  backdropFilter: "blur(8px)",
+  WebkitBackdropFilter: "blur(8px)",
+};
 // Repo label colour (v20 SoCard / DocCard; Sales Metric labels).
 const LABEL = "#A89F8D";
 const CHEVRON = "#C4BDB2";
 
-const PRODUCTS_URL = productsConfig.sources[0].url;
-const PHOTOS_URL = "/api/files?resourceType=modular";
-
 type View = "sku" | "catalog";
 
 /** Category glyph (static component, so React never sees a new type per render). */
-function CatIcon({
+export function CatIcon({
   category,
   size,
   strokeWidth,
@@ -129,22 +133,16 @@ function CatIcon({
 
 const money = (sen: number) => formatCurrency(sen);
 
-function readTierPref(): SofaTier {
-  try {
-    return readSofaTier(window.localStorage.getItem(SOFA_TIER_KEY));
-  } catch {
-    return "PRICE_2";
-  }
-}
-
-/** Phone gets the Products Hub; tablet keeps the existing config-driven list. */
+/** One Products Hub for phone and tablet (owner 2026-10-21). */
 export function ProductsScreen() {
-  const phone = useResponsiveLayout().mode === "phone";
-  return phone ? <PhoneProducts /> : <ModuleListScreen config={productsConfig} />;
-}
-
-function PhoneProducts() {
   const navigate = useNavigate();
+  const layout = useResponsiveLayout();
+  const tablet = layout.mode !== "phone";
+  // In the tablet split view this list renders beside /m/products/:id.
+  const { id: openId } = useParams();
+  const inPane = layout.canSplitDetail && !!openId;
+  const wide = tablet && !inPane;
+  const bottomPad = layout.hasBottomNavigation ? 120 : 32;
   // View, category and search live in the URL (replace), so Back from a SKU
   // detail returns to the same view instead of resetting it.
   const [params, setParams] = useSearchParams();
@@ -183,15 +181,7 @@ function PhoneProducts() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [famKey, setFamKey] = useState<string | null>(null);
   const [priceId, setPriceId] = useState<string | null>(null);
-  const [tier, setTierState] = useState<SofaTier>(readTierPref);
-  const setTier = (t: SofaTier) => {
-    setTierState(t);
-    try {
-      window.localStorage.setItem(SOFA_TIER_KEY, t);
-    } catch {
-      /* preference only */
-    }
-  };
+  const [tier, setTier] = useSofaTier();
 
   const products = useMemo<HubProduct[]>(
     () => (data ? productsConfig.sources[0].select(data).map(toHubProduct) : []),
@@ -291,7 +281,7 @@ function PhoneProducts() {
         <>
           <ListBar
             count={count}
-            word={view === "sku" ? (count === 1 ? "SKU" : "SKUS") : count === 1 ? "FAMILY" : "FAMILIES"}
+            word={view === "sku" ? (count === 1 ? "SKU" : "SKUs") : count === 1 ? "product family" : "product families"}
             fCount={fCount}
             onFilter={() => setFilterOpen(true)}
           />
@@ -315,7 +305,15 @@ function PhoneProducts() {
               onReset={products.length > 0 ? resetAll : undefined}
             />
           ) : view === "sku" ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 18px 120px" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: wide ? "repeat(auto-fill, minmax(320px, 1fr))" : "minmax(0, 1fr)",
+                gap: 12,
+                alignItems: "start",
+                padding: `8px 18px ${bottomPad}px`,
+              }}
+            >
               {skuList.map((p) => (
                 <SkuCard
                   key={p.id}
@@ -327,25 +325,14 @@ function PhoneProducts() {
               ))}
             </div>
           ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                columnGap: 12,
-                rowGap: 14,
-                padding: "8px 18px 120px",
-              }}
-            >
-              {famList.map((f) => (
-                <FamilyTile
-                  key={`${f.category}:${f.familyKey}`}
-                  f={f}
-                  coverId={covers.get(f.familyKey) ?? null}
-                  photosReady={photosReady}
-                  onOpen={() => setFamKey(f.familyKey)}
-                />
-              ))}
-            </div>
+            <CatalogGrid
+              families={famList}
+              covers={covers}
+              photosReady={photosReady}
+              wide={wide}
+              bottomPad={bottomPad}
+              onOpen={(f) => setFamKey(f.familyKey)}
+            />
           )}
         </>
       )}
@@ -366,6 +353,7 @@ function PhoneProducts() {
       <FamilySheet
         family={famRow}
         coverId={famRow ? covers.get(famRow.familyKey) ?? null : null}
+        canPrice={canPrice}
         onClose={closeFam}
         onSku={openSku}
       />
@@ -499,6 +487,16 @@ function CategoryChips({
         const on = active === c.key;
         return (
           <button key={c.key} type="button" onClick={() => onPick(c.key)} aria-pressed={on} style={chipStyle(on)}>
+            {/* Category-tone dot (Products Hub v2); none on "All". */}
+            {c.key !== "all" ? (
+              <span
+                aria-hidden="true"
+                style={{
+                  ...chipDot(toneOf(c.key).fg),
+                  boxShadow: on ? "0 0 0 1.5px rgba(255,255,255,.85)" : undefined,
+                }}
+              />
+            ) : null}
             {c.label}
             <span style={CHIP_COUNT}>{c.n}</span>
           </button>
@@ -521,20 +519,15 @@ function ListBar({
 }) {
   const active = fCount > 0;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 15px 1px 18px" }}>
-      <span
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: 1,
-          color: M.muted,
-          whiteSpace: "nowrap",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {count} {word}
-      </span>
-      <span style={{ flex: 1, minWidth: 8, height: 1, backgroundColor: M.hairline }} />
+    // Claude Design count bar (owner-approved A4): the number, then the noun.
+    // The 44px filter hit area keeps a 3px inset, so the right gutter is 15.
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 40, padding: "10px 15px 0 18px" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: 6, whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin, letterSpacing: "-0.2px", fontVariantNumeric: "tabular-nums" }}>
+          {count}
+        </span>
+        <span style={{ fontSize: 13, color: M.muted, overflow: "hidden", textOverflow: "ellipsis" }}>{word}</span>
+      </div>
       <button
         type="button"
         onClick={onFilter}
@@ -629,12 +622,11 @@ function ActiveFilters({
             padding: "0 10px 0 12px",
             borderRadius: 999,
             border: "none",
-            backgroundColor: M_ACCENT.gold.bg,
+            backgroundColor: "var(--m-gold-tint)",
             color: M.taupe,
             fontSize: 12,
             fontWeight: 600,
             whiteSpace: "nowrap",
-            boxShadow: SHADOW_CHIP_ON,
             cursor: "pointer",
             WebkitTapHighlightColor: "transparent",
           }}
@@ -658,23 +650,13 @@ function ActiveFilters({
           WebkitTapHighlightColor: "transparent",
         }}
       >
-        Clear all
+        Clear
       </button>
     </div>
   );
 }
 
 // ---- SKU Master card ---------------------------------------------------------
-
-function usePressed() {
-  const [pressed, setPressed] = useState(false);
-  const on = () => setPressed(true);
-  const off = () => setPressed(false);
-  return {
-    pressed,
-    handlers: { onPointerDown: on, onPointerUp: off, onPointerLeave: off, onPointerCancel: off },
-  };
-}
 
 function SkuCard({
   p,
@@ -688,102 +670,147 @@ function SkuCard({
   onPrices: () => void;
 }) {
   const { pressed, handlers } = usePressed();
+  const tone = toneOf(p.category);
   const vol = fmtM3(p.unitM3);
   const time = fmtMinutes(p.productionTimeMinutes);
-  const sub = [p.baseModel ? `Model ${p.baseModel}` : "", p.sizeLabel].filter(Boolean).join(" · ");
+  // Claude Design list card: "{model} · {size}" (no "Model" prefix — that is the detail's wording).
+  const subParts = [p.baseModel, p.sizeLabel].filter(Boolean);
+  const aria = [p.code, p.name, p.sizeLabel].filter(Boolean).join(", ");
 
   return (
     <div
       {...handlers}
-      style={{ transform: pressed ? "scale(.985)" : "none", transition: "transform .12s ease" }}
+      style={{ minWidth: 0, transform: pressed ? "scale(.985)" : "none", transition: "transform .12s ease" }}
     >
       <MobileCard
         onClick={onOpen}
+        ariaLabel={aria}
         padded={false}
-        radius={16}
-        style={{ border: "none", padding: "14px 16px 13px", boxShadow: SHADOW_CARD }}
+        radius={18}
+        style={{
+          position: "relative",
+          display: "flex",
+          gap: 12,
+          overflow: "hidden",
+          border: "none",
+          padding: "14px 12px 14px 14px",
+          boxShadow: SHADOW_V2,
+        }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 12,
-              fontWeight: 700,
-              color: M.taupe,
-              fontVariantNumeric: "tabular-nums",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {p.code || "—"}
-          </span>
-          <span
-            style={{
-              flex: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 11,
-              fontWeight: 600,
-              color: M.muted,
-            }}
-          >
-            <CatIcon category={p.category} size={13} strokeWidth={1.8} />
-            {categoryLabel(p.category)}
-          </span>
-        </div>
-        <div
+        {/* 3px category rail */}
+        <span
+          aria-hidden="true"
           style={{
-            marginTop: 6,
-            fontSize: 15,
-            fontWeight: 700,
-            color: M.raisin,
-            letterSpacing: "-0.2px",
-            lineHeight: 1.3,
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            overflowWrap: "anywhere",
+            position: "absolute",
+            left: 0,
+            top: 14,
+            bottom: 14,
+            width: 3,
+            borderRadius: "0 3px 3px 0",
+            backgroundColor: tone.fg,
           }}
-        >
-          {p.name || "—"}
-        </div>
-        {sub ? (
-          <div
-            style={{
-              marginTop: 2,
-              fontSize: 12.5,
-              fontWeight: 500,
-              color: M.body,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {sub}
-          </div>
-        ) : null}
-
-        <div
+        />
+        <span
+          aria-hidden="true"
           style={{
+            width: 42,
+            height: 42,
+            flex: "none",
+            borderRadius: 13,
+            backgroundColor: tone.bg,
+            color: tone.fg,
             display: "flex",
             alignItems: "center",
-            gap: 12,
-            marginTop: 12,
-            paddingTop: 11,
-            borderTop: `1px solid ${M.divider}`,
-            minHeight: 34,
+            justifyContent: "center",
           }}
         >
-          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 14, rowGap: 4 }}>
-            {vol ? <Spec icon={Box} text={vol} /> : null}
-            {time ? <Spec icon={Timer} text={time} /> : null}
-            {!vol && !time ? <span style={{ fontSize: 12, color: LABEL }}>No specs recorded</span> : null}
+          <CatIcon category={p.category} size={22} strokeWidth={1.7} />
+        </span>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: 12,
+                fontWeight: 700,
+                color: M.taupe,
+                letterSpacing: 0.2,
+                fontVariantNumeric: "tabular-nums",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {p.code || "—"}
+            </span>
+            <span
+              style={{
+                flex: "none",
+                height: 22,
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "0 9px",
+                borderRadius: 999,
+                backgroundColor: tone.bg,
+                color: tone.fg,
+                fontSize: 11,
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {categoryLabel(p.category)}
+            </span>
           </div>
-          {canPrice ? <PriceSlot p={p} onPrices={onPrices} /> : null}
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 15,
+              fontWeight: 700,
+              color: M.raisin,
+              letterSpacing: "-0.25px",
+              lineHeight: 1.3,
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {p.name || "—"}
+          </div>
+          {subParts.length ? (
+            <div
+              style={{
+                marginTop: 2,
+                fontSize: 12.5,
+                fontWeight: 500,
+                color: M.ink,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {subParts.map((t, i) => (
+                <span key={i}>
+                  {i ? <span style={{ color: CHEVRON }}> · </span> : null}
+                  {t}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginTop: 11 }}>
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {vol ? <Spec icon={Box} text={vol} /> : null}
+              {time ? <Spec icon={Timer} text={time} /> : null}
+              {!vol && !time ? (
+                <span style={{ fontSize: 12, color: LABEL, lineHeight: "26px" }}>No specs recorded</span>
+              ) : null}
+            </div>
+            {canPrice ? <PriceSlot p={p} onPrices={onPrices} /> : null}
+          </div>
         </div>
       </MobileCard>
     </div>
@@ -794,17 +821,22 @@ function Spec({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
   return (
     <span
       style={{
+        height: 26,
+        boxSizing: "border-box",
         display: "inline-flex",
         alignItems: "center",
-        gap: 5,
-        fontSize: 13,
+        gap: 4,
+        padding: "0 7px",
+        borderRadius: 8,
+        backgroundColor: "var(--m-spec-chip-bg)",
+        color: "var(--m-spec-chip-text)",
+        fontSize: 12,
         fontWeight: 600,
-        color: M.ink,
         fontVariantNumeric: "tabular-nums",
         whiteSpace: "nowrap",
       }}
     >
-      <Icon size={13} strokeWidth={1.8} color={LABEL} />
+      <Icon size={12} strokeWidth={1.9} color="var(--m-spec-chip-icon)" />
       {text}
     </span>
   );
@@ -813,7 +845,7 @@ function Spec({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
 const slotLabel: CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: LABEL,
+  color: "var(--m-price-box-label)",
   whiteSpace: "nowrap",
 };
 const slotValue: CSSProperties = {
@@ -823,11 +855,33 @@ const slotValue: CSSProperties = {
   fontVariantNumeric: "tabular-nums",
   whiteSpace: "nowrap",
 };
+// Handoff price box (#F4EFE3, radius 11). Content = the owner-approved
+// price rules (2026-10-15), unchanged: no "from" prices.
+const priceBox: CSSProperties = {
+  flex: "none",
+  boxSizing: "border-box",
+  padding: "6px 11px",
+  borderRadius: 11,
+  backgroundColor: "var(--m-price-box-bg)",
+};
 
 function PriceSlot({ p, onPrices }: { p: HubProduct; onPrices: () => void }) {
   const d = priceDisplay(p);
   if (d.kind === "none") {
-    return <div style={{ flex: "none", fontSize: 12, color: LABEL, whiteSpace: "nowrap" }}>No price</div>;
+    return (
+      <div
+        style={{
+          ...priceBox,
+          backgroundColor: "var(--m-spec-chip-bg)",
+          fontSize: 12,
+          fontWeight: 600,
+          color: M.body,
+          whiteSpace: "nowrap",
+        }}
+      >
+        No price
+      </div>
+    );
   }
   if (d.kind === "sofa") {
     return (
@@ -841,13 +895,10 @@ function PriceSlot({ p, onPrices }: { p: HubProduct; onPrices: () => void }) {
         aria-label={`View seat prices for ${p.code}`}
         aria-haspopup="dialog"
         style={{
-          flex: "none",
-          margin: "-6px -8px -6px 0",
+          ...priceBox,
           minHeight: 44,
-          padding: "4px 8px",
+          padding: "6px 8px 6px 11px",
           border: "none",
-          background: "none",
-          borderRadius: 10,
           cursor: "pointer",
           display: "flex",
           flexDirection: "column",
@@ -857,7 +908,7 @@ function PriceSlot({ p, onPrices }: { p: HubProduct; onPrices: () => void }) {
         }}
       >
         <span style={slotLabel}>SEAT PRICES</span>
-        <span style={{ ...slotValue, marginTop: 2, color: M.taupe, display: "inline-flex", alignItems: "center", gap: 2 }}>
+        <span style={{ ...slotValue, marginTop: 2, color: M.taupe, display: "inline-flex", alignItems: "center", gap: 1 }}>
           View prices
           <ChevronRight size={14} strokeWidth={2.2} />
         </span>
@@ -872,21 +923,23 @@ function PriceSlot({ p, onPrices }: { p: HubProduct; onPrices: () => void }) {
       </div>
     );
     return (
-      <div style={{ flex: "none", display: "grid", rowGap: 2 }}>
+      <div style={{ ...priceBox, display: "grid", rowGap: 2 }}>
         {row("PRICE 1", d.p1)}
         {row("PRICE 2", d.p2)}
       </div>
     );
   }
   return (
-    <div style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+    <div style={{ ...priceBox, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
       <span style={slotLabel}>PRICE</span>
       <span style={{ ...slotValue, marginTop: 2 }}>{money(d.base)}</span>
     </div>
   );
 }
 
-// ---- Catalog tile ------------------------------------------------------------
+// ---- Catalog -----------------------------------------------------------------
+
+type PhotoVariant = "featured" | "tile" | "sheet";
 
 function FamilyPhoto({
   coverId,
@@ -894,16 +947,20 @@ function FamilyPhoto({
   name,
   category,
   iconSize,
+  variant = "sheet",
 }: {
   coverId: string | null;
   photosReady: boolean;
   name: string;
   category: string;
   iconSize: number;
+  /** featured / tile = the v2 tinted placeholder; sheet = the family sheet's existing one. */
+  variant?: PhotoVariant;
 }) {
   // Keyed by cover id so a new cover resets the failed state.
   const [failedId, setFailedId] = useState<string | null>(null);
   const showImg = coverId != null && failedId !== coverId;
+  const tone = toneOf(category);
   return (
     <>
       {showImg ? (
@@ -916,7 +973,7 @@ function FamilyPhoto({
           onError={() => setFailedId(coverId)}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
         />
-      ) : photosReady ? (
+      ) : !photosReady ? null : variant === "sheet" ? (
         <span
           style={{
             position: "absolute",
@@ -944,8 +1001,227 @@ function FamilyPhoto({
           </span>
           <span style={{ fontSize: 11, fontWeight: 600, color: M.muted }}>No photo</span>
         </span>
-      ) : null}
+      ) : (
+        // v2: category-tinted gradient (on the container) + large category icon.
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            color: tone.fg,
+          }}
+        >
+          <span style={{ display: "flex", opacity: variant === "featured" ? 0.55 : 1 }}>
+            <CatIcon category={category} size={iconSize} strokeWidth={variant === "featured" ? 1.2 : 1.3} />
+          </span>
+          {variant === "tile" ? (
+            <span style={{ fontSize: 11, fontWeight: 600, color: M.ink }}>No photo yet</span>
+          ) : null}
+        </span>
+      )}
     </>
+  );
+}
+
+export function PhotoPill({
+  category,
+  small,
+  inset,
+  alpha,
+}: {
+  category: string;
+  small?: boolean;
+  /** Offset from the top-left corner (default 9 small / 12); the family sheet uses 16. */
+  inset?: number;
+  /** Frosted white opacity (default .9; the featured card uses .88, as in the HTML). */
+  alpha?: number;
+}) {
+  const c = toneOf(category).photo;
+  const at = inset ?? (small ? 9 : 12);
+  return (
+    <span
+      style={{
+        ...FROSTED,
+        ...(alpha != null ? { backgroundColor: `rgba(255,255,255,${alpha})` } : null),
+        position: "absolute",
+        top: at,
+        left: at,
+        // Leaves room for a close button on the right when inset (family sheet).
+        maxWidth: inset != null ? "calc(100% - 80px)" : "calc(100% - 24px)",
+        height: small ? 22 : 26,
+        boxSizing: "border-box",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: small ? 5 : 6,
+        padding: small ? "0 8px" : "0 10px",
+        borderRadius: 999,
+        color: c,
+        fontSize: small ? 10.5 : 11,
+        fontWeight: 600,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      <span aria-hidden="true" style={chipDot(c)} />
+      {categoryLabel(category)}
+    </span>
+  );
+}
+
+function CatalogGrid({
+  families,
+  covers,
+  photosReady,
+  wide,
+  bottomPad,
+  onOpen,
+}: {
+  families: HubFamily[];
+  covers: Map<string, string>;
+  photosReady: boolean;
+  /** Tablet without the split pane: auto-fill grid + wider featured crop. */
+  wide: boolean;
+  bottomPad: number;
+  onOpen: (f: HubFamily) => void;
+}) {
+  // Handoff: the first family (of the current sort) is featured when there
+  // are more than two results. Layout only — the order is unchanged.
+  const featured = families.length > 2 ? families[0] : null;
+  const rest = featured ? families.slice(1) : families;
+  return (
+    <div style={{ padding: `8px 18px ${bottomPad}px` }}>
+      {featured ? (
+        <FeaturedFamily
+          f={featured}
+          coverId={covers.get(featured.familyKey) ?? null}
+          photosReady={photosReady}
+          wide={wide}
+          onOpen={() => onOpen(featured)}
+        />
+      ) : null}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: wide ? "repeat(auto-fill, minmax(200px, 1fr))" : "repeat(2, minmax(0, 1fr))",
+          columnGap: 12,
+          rowGap: 14,
+          marginTop: featured ? 12 : 0,
+        }}
+      >
+        {rest.map((f) => (
+          <FamilyTile
+            key={`${f.category}:${f.familyKey}`}
+            f={f}
+            coverId={covers.get(f.familyKey) ?? null}
+            photosReady={photosReady}
+            onOpen={() => onOpen(f)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FeaturedFamily({
+  f,
+  coverId,
+  photosReady,
+  wide,
+  onOpen,
+}: {
+  f: HubFamily;
+  coverId: string | null;
+  photosReady: boolean;
+  wide: boolean;
+  onOpen: () => void;
+}) {
+  const { pressed, handlers } = usePressed();
+  return (
+    <button
+      type="button"
+      {...handlers}
+      onClick={onOpen}
+      aria-label={`${f.familyKey} ${f.name}, ${familyCounts(f)}`}
+      style={{
+        position: "relative",
+        display: "block",
+        width: "100%",
+        // Phone 16:11 (handoff); wide tablet ~21:9 capped at 360px. The photo
+        // is object-fit: cover, so the cap crops, never stretches.
+        aspectRatio: wide ? "21 / 9" : "16 / 11",
+        maxHeight: wide ? 360 : undefined,
+        border: "none",
+        padding: 0,
+        borderRadius: 22,
+        overflow: "hidden",
+        cursor: "pointer",
+        textAlign: "left",
+        background: toneOf(f.category).ph,
+        boxShadow: SHADOW_FEATURED,
+        transform: pressed ? "scale(.985)" : "none",
+        transition: "transform .12s ease",
+        WebkitTapHighlightColor: "transparent",
+      }}
+    >
+      <FamilyPhoto
+        coverId={coverId}
+        photosReady={photosReady}
+        name={f.name || f.familyKey}
+        category={f.category}
+        iconSize={64}
+        variant="featured"
+      />
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "linear-gradient(180deg, rgba(31,29,27,0) 38%, rgba(31,29,27,.78) 100%)",
+        }}
+      />
+      <PhotoPill category={f.category} alpha={0.88} />
+      <span style={{ position: "absolute", left: 16, right: 16, bottom: 14, display: "block", minWidth: 0 }}>
+        <span
+          style={{
+            display: "block",
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 1,
+            color: "#E8D9B0",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {f.familyKey}
+        </span>
+        <span
+          style={{
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            overflowWrap: "anywhere",
+            fontSize: 20,
+            fontWeight: 700,
+            letterSpacing: "-0.3px",
+            lineHeight: 1.25,
+            color: "#FFFFFF",
+            marginTop: 3,
+          }}
+        >
+          {f.name || f.familyKey}
+        </span>
+        <span style={{ display: "block", fontSize: 12.5, color: "rgba(255,255,255,.86)", marginTop: 3 }}>
+          {familyCounts(f)}
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -978,7 +1254,7 @@ function FamilyTile({
         borderRadius: 18,
         overflow: "hidden",
         cursor: "pointer",
-        boxShadow: SHADOW_CARD,
+        boxShadow: SHADOW_V2,
         transform: pressed ? "scale(.98)" : "none",
         transition: "transform .12s ease",
         WebkitTapHighlightColor: "transparent",
@@ -989,9 +1265,9 @@ function FamilyTile({
           position: "relative",
           display: "block",
           width: "100%",
-          aspectRatio: "1 / 1",
+          aspectRatio: "4 / 3.4",
           overflow: "hidden",
-          background: `linear-gradient(160deg, ${M.divider} 0%, ${M.border} 100%)`,
+          background: toneOf(f.category).ph,
         }}
       >
         <FamilyPhoto
@@ -999,23 +1275,25 @@ function FamilyTile({
           photosReady={photosReady}
           name={f.name || f.familyKey}
           category={f.category}
-          iconSize={22}
+          iconSize={34}
+          variant="tile"
         />
+        <PhotoPill category={f.category} small />
       </span>
-      <span style={{ display: "block", padding: "11px 12px 13px", minWidth: 0 }}>
+      <span style={{ display: "block", padding: "11px 12px 12px", minWidth: 0 }}>
         <span
           style={{
             display: "block",
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: 700,
-            letterSpacing: 0.6,
-            color: LABEL,
+            letterSpacing: 0.4,
+            color: M.taupe,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
           }}
         >
-          {categoryLabel(f.category).toUpperCase()} <span style={{ color: M.taupe }}>· {f.familyKey}</span>
+          {f.familyKey}
         </span>
         <span
           style={{
@@ -1029,7 +1307,7 @@ function FamilyTile({
             color: M.raisin,
             letterSpacing: "-0.2px",
             lineHeight: 1.3,
-            marginTop: 4,
+            marginTop: 3,
             minHeight: 36,
           }}
         >
@@ -1039,8 +1317,8 @@ function FamilyTile({
           style={{
             display: "block",
             fontSize: 12,
-            color: M.body,
-            marginTop: 5,
+            color: M.ink,
+            marginTop: 8,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -1148,7 +1426,7 @@ function SearchResults({
                           fontSize: 10,
                           fontWeight: 700,
                           color: M.taupe,
-                          backgroundColor: M_ACCENT.gold.bg,
+                          backgroundColor: "var(--m-gold-tint)",
                           padding: "1px 6px",
                           borderRadius: 999,
                         }}
@@ -1183,14 +1461,14 @@ function SearchResults({
                       width: 42,
                       height: 42,
                       borderRadius: 10,
-                      backgroundColor: M.divider,
+                      backgroundColor: "var(--m-segment-track)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       flex: "none",
                     }}
                   >
-                    <CatIcon category={f.category} size={18} strokeWidth={1.6} color={LABEL} />
+                    <CatIcon category={f.category} size={18} strokeWidth={1.6} color="var(--m-search-icon)" />
                   </span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={rowTitle}>
@@ -1214,84 +1492,255 @@ function SearchResults({
 
 // ---- Sheets ------------------------------------------------------------------
 
-function FamilySheet({
+export function FamilySheet({
   family,
   coverId,
+  canPrice,
   onClose,
   onSku,
 }: {
   family: HubFamily | null;
   coverId: string | null;
+  /** product-pricing:read — every SKU-row price is hidden without it. */
+  canPrice: boolean;
   onClose: () => void;
   onSku: (p: HubProduct) => void;
 }) {
+  // Claude Design `Products Hub v2` family sheet (owner 2026-10-21): photo
+  // hero, two stats (Variants / SKUs — no "From"), model tags, SKU rows.
   return (
-    <Sheet open={family != null} onClose={onClose} title={family ? family.name || family.familyKey : ""}>
-      {family ? (
-        <div style={{ display: "grid", gap: 14 }}>
-          {coverId ? (
-            <div
-              style={{
-                position: "relative",
-                borderRadius: 16,
-                overflow: "hidden",
-                aspectRatio: "16 / 9",
-                background: `linear-gradient(160deg, ${M.divider} 0%, ${M.border} 100%)`,
-              }}
-            >
-              <FamilyPhoto
-                coverId={coverId}
-                photosReady
-                name={family.name || family.familyKey}
-                category={family.category}
-                iconSize={20}
-              />
-            </div>
-          ) : null}
-          <div style={{ margin: "0 2px" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: M.taupe }}>
-              {family.familyKey} · {categoryLabel(family.category)}
-            </div>
-            <div style={{ fontSize: 12, color: M.muted, marginTop: 2 }}>{familyCounts(family)}</div>
-          </div>
-          {family.variants.map((v) => (
-            <section key={v.baseModel} aria-label={`Model ${v.baseModel}`}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "0 2px 8px" }}>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: 1,
-                    color: M.muted,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  MODEL {v.baseModel}
-                </span>
-                <span style={{ fontSize: 11, color: M.muted, flex: "none" }}>
-                  {v.products.length} SKU{v.products.length === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div style={listCard}>
-                {v.products.map((p, i) => (
-                  <button key={p.id} type="button" onClick={() => onSku(p)} style={rowBtn(i, 54)}>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={rowTitle}>{p.code}</span>
-                      {p.sizeLabel ? <span style={rowSub}>{p.sizeLabel}</span> : null}
-                    </span>
-                    <ChevronRight size={16} strokeWidth={1.9} color={CHEVRON} style={{ flexShrink: 0 }} />
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      ) : null}
+    <Sheet open={family != null} onClose={onClose} title={family ? family.name || family.familyKey : ""} bare phoneRadius={24}>
+      {family ? <FamilySheetBody family={family} coverId={coverId} canPrice={canPrice} onClose={onClose} onSku={onSku} /> : null}
     </Sheet>
   );
+}
+
+function FamilySheetBody({
+  family,
+  coverId,
+  canPrice,
+  onClose,
+  onSku,
+}: {
+  family: HubFamily;
+  coverId: string | null;
+  canPrice: boolean;
+  onClose: () => void;
+  onSku: (p: HubProduct) => void;
+}) {
+  const tone = toneOf(family.category);
+  const [failedId, setFailedId] = useState<string | null>(null);
+  const showImg = coverId != null && failedId !== coverId;
+  const name = family.name || family.familyKey;
+  const stats: [string, number][] = [
+    ["VARIANTS", family.variants.length],
+    ["SKUS", family.products.length],
+  ];
+  return (
+    <>
+      <div style={{ position: "relative", aspectRatio: "16 / 10", background: tone.ph, overflow: "hidden" }}>
+        {showImg ? (
+          <img
+            src={`/api/files/${encodeURIComponent(coverId as string)}/download`}
+            alt={name}
+            decoding="async"
+            className="m-no-invert"
+            onError={() => setFailedId(coverId)}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <span
+            aria-hidden="true"
+            style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: tone.fg, opacity: 0.5 }}
+          >
+            <CatIcon category={family.category} size={72} strokeWidth={1.1} />
+          </span>
+        )}
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "linear-gradient(180deg, rgba(31,29,27,.25) 0%, rgba(31,29,27,0) 30%, rgba(31,29,27,0) 45%, rgba(31,29,27,.8) 100%)",
+          }}
+        />
+        {/* Grabber over the photo */}
+        <div aria-hidden="true" style={{ position: "absolute", top: 8, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+          <div style={{ width: 40, height: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,.75)" }} />
+        </div>
+        {/* 36px frosted circle inside a 44px hit area */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: "absolute",
+            top: 10,
+            right: 10,
+            width: 44,
+            height: 44,
+            padding: 0,
+            border: "none",
+            background: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            WebkitTapHighlightColor: "transparent",
+          }}
+        >
+          <span
+            style={{
+              ...FROSTED,
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#1F1D1B",
+            }}
+          >
+            <X size={18} strokeWidth={2} />
+          </span>
+        </button>
+        <PhotoPill category={family.category} inset={16} />
+        <div style={{ position: "absolute", left: 18, right: 18, bottom: 14, minWidth: 0 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 1, color: "#E8D9B0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            FAMILY {family.familyKey}
+          </div>
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              letterSpacing: "-0.4px",
+              lineHeight: 1.2,
+              color: "#FFFFFF",
+              marginTop: 3,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {name}
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))`,
+          backgroundColor: M.card,
+          boxShadow: "0 10px 24px -18px rgba(31,29,27,.35)",
+        }}
+      >
+        {stats.map(([k, v], i) => (
+          <div key={k} style={{ padding: "12px 8px 12px 18px", minWidth: 0, borderLeft: i ? `1px solid ${M.divider}` : "none" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: "var(--m-spec-chip-icon)" }}>{k}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: M.raisin, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gap: 18, padding: "18px 16px 0" }}>
+        {family.variants.map((v) => (
+          <section key={v.baseModel} aria-label={`Model ${v.baseModel}`}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 2px 9px", minWidth: 0 }}>
+              <span
+                style={{
+                  height: 24,
+                  maxWidth: "70%",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "0 10px",
+                  borderRadius: 8,
+                  backgroundColor: tone.bg,
+                  color: tone.fg,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontVariantNumeric: "tabular-nums",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {v.baseModel}
+              </span>
+              <span style={{ fontSize: 12, color: M.ink, whiteSpace: "nowrap" }}>
+                {v.products.length} SKU{v.products.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div style={{ backgroundColor: M.card, borderRadius: 18, boxShadow: SHADOW_V2, overflow: "hidden" }}>
+              {v.products.map((p, i) => {
+                const sub = [p.sizeLabel, fmtM3(p.unitM3)].filter(Boolean).join(" · ");
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => onSku(p)}
+                    style={{
+                      width: "100%",
+                      minHeight: 62,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 12px 10px 14px",
+                      border: "none",
+                      borderTop: i ? `1px solid ${M.divider}` : "none",
+                      backgroundColor: M.card,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      WebkitTapHighlightColor: "transparent",
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={rowTitle}>{p.code}</span>
+                      {sub ? <span style={{ ...rowSub, color: M.ink }}>{sub}</span> : null}
+                    </span>
+                    {canPrice ? <FamilyRowPrice p={p} /> : null}
+                    <ChevronRight size={17} strokeWidth={1.9} color="var(--m-spec-chip-icon)" style={{ flexShrink: 0 }} />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+      <div style={{ padding: "16px 18px 14px", fontSize: 11, color: M.body, textAlign: "center" }}>
+        Photo is stored per family — variants share it.
+      </div>
+    </>
+  );
+}
+
+/** Family-sheet SKU-row price, by the owner-approved rules: Sofa none, Bedframe P1 + P2, Accessory its price. */
+function FamilyRowPrice({ p }: { p: HubProduct }) {
+  if (p.category === "SOFA") return null;
+  const d = priceDisplay(p);
+  if (d.kind === "none") return <span style={{ flex: "none", fontSize: 12, color: M.body, whiteSpace: "nowrap" }}>No price</span>;
+  if (d.kind === "bedframe") {
+    const row = (label: string, v: number | undefined) => (
+      <span style={{ display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: 6 }}>
+        <span style={slotLabel}>{label}</span>
+        <span style={{ ...slotValue, color: v == null ? CHEVRON : M.raisin }}>{v == null ? "—" : money(v)}</span>
+      </span>
+    );
+    return (
+      <span style={{ flex: "none", display: "grid", rowGap: 2 }}>
+        {row("PRICE 1", d.p1)}
+        {row("PRICE 2", d.p2)}
+      </span>
+    );
+  }
+  if (d.kind === "single") {
+    return (
+      <span style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+        <span style={slotLabel}>PRICE</span>
+        <span style={{ ...slotValue, marginTop: 1 }}>{money(d.base)}</span>
+      </span>
+    );
+  }
+  return null;
 }
 
 function TierSwitch({ tier, setTier }: { tier: SofaTier; setTier: (t: SofaTier) => void }) {
@@ -1307,7 +1756,7 @@ function TierSwitch({ tier, setTier }: { tier: SofaTier; setTier: (t: SofaTier) 
         boxSizing: "border-box",
         padding: 3,
         borderRadius: 10,
-        backgroundColor: M.divider,
+        backgroundColor: "var(--m-segment-track)",
       }}
     >
       {SOFA_TIERS.map((t) => {
@@ -1341,7 +1790,7 @@ function TierSwitch({ tier, setTier }: { tier: SofaTier; setTier: (t: SofaTier) 
   );
 }
 
-function PriceSheet({
+export function PriceSheet({
   product,
   heights,
   tier,
@@ -1355,66 +1804,86 @@ function PriceSheet({
   onClose: () => void;
 }) {
   const tierLabel = SOFA_TIERS.find((t) => t.value === tier)?.label ?? "P2";
+  // Claude Design header: code above the "Seat prices" title and the product
+  // name, close beside them (owner 2026-10-21). Rows / tiers / rules unchanged.
   return (
-    <Sheet open={product != null} onClose={onClose} title="Seat prices">
+    <Sheet open={product != null} onClose={onClose} title="Seat prices" bare>
       {product ? (
         <>
-          <div style={{ margin: "0 2px 10px", minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: M.taupe, fontVariantNumeric: "tabular-nums" }}>
-              {product.code}
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: M.muted,
-                marginTop: 2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {[product.name, product.sizeLabel].filter(Boolean).join(" · ")}
-            </div>
+          <div style={{ display: "flex", justifyContent: "center", paddingTop: 8 }}>
+            <div aria-hidden="true" style={{ width: 40, height: 4, borderRadius: 999, backgroundColor: M.hairline }} />
           </div>
-          <div style={listCard}>
-            <div
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px 2px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: M.taupe, fontVariantNumeric: "tabular-nums" }}>{product.code}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: M.raisin, marginTop: 1 }}>Seat prices</div>
+              <div style={{ fontSize: 12, color: M.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {product.name}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
               style={{
+                width: 44,
+                height: 44,
+                marginRight: -10,
+                padding: 0,
+                border: "none",
+                background: "none",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
-                padding: "10px 14px",
-                backgroundColor: M.paper,
+                justifyContent: "center",
+                color: M.muted,
+                cursor: "pointer",
+                WebkitTapHighlightColor: "transparent",
               }}
             >
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: M.muted }}>SEAT SIZE</span>
-              <TierSwitch tier={tier} setTier={setTier} />
-            </div>
-            {seatRows(product, heights).map((h) => {
-              const v = seatPrice(product, h, tier);
-              return (
-                <div
-                  key={h}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    minHeight: 46,
-                    padding: "0 14px",
-                    borderTop: `1px solid ${M.divider}`,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  <span style={{ fontSize: 13, fontWeight: 600, color: M.raisin }}>{sofaSeatLabel(h)}</span>
-                  <span style={{ fontSize: 13, fontWeight: v == null ? 500 : 700, color: v == null ? CHEVRON : M.raisin }}>
-                    {v == null ? "—" : money(v)}
-                  </span>
-                </div>
-              );
-            })}
+              <X size={20} strokeWidth={1.75} />
+            </button>
           </div>
-          <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.5, margin: "10px 2px 0" }}>
-            Showing {tierLabel}. “—” means no price is set for that size and tier. Sizes follow
-            Maintenance → Sofa → Sizes.
+          <div style={{ padding: "10px 16px 0" }}>
+            <div style={listCard}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 14px",
+                  backgroundColor: M.paper,
+                }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: M.muted }}>SEAT SIZE</span>
+                <TierSwitch tier={tier} setTier={setTier} />
+              </div>
+              {seatRows(product, heights).map((h) => {
+                const v = seatPrice(product, h, tier);
+                return (
+                  <div
+                    key={h}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      minHeight: 46,
+                      padding: "0 14px",
+                      borderTop: `1px solid ${M.divider}`,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600, color: M.raisin }}>{sofaSeatLabel(h)}</span>
+                    <span style={{ fontSize: 13, fontWeight: v == null ? 500 : 700, color: v == null ? CHEVRON : M.raisin }}>
+                      {v == null ? "—" : money(v)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.5, margin: "10px 2px 0" }}>
+              Showing {tierLabel}. “—” means no price is set for that size and tier. Sizes follow
+              Maintenance → Sofa → Sizes.
+            </div>
           </div>
         </>
       ) : null}
@@ -1505,7 +1974,7 @@ function FilterBody({
               boxSizing: "border-box",
               padding: 4,
               borderRadius: 14,
-              backgroundColor: M.divider,
+              backgroundColor: "var(--m-segment-track)",
             }}
           >
             {(
@@ -1562,23 +2031,17 @@ function FilterBody({
                         sizes: on ? d.sizes.filter((x) => x !== z) : [...d.sizes, z],
                       }))
                     }
+                    // Claude Design filter chip = the shared standard chip
+                    // (lib/control-styles.ts), at the HTML 36px height.
                     style={{
+                      ...chipStyle(on),
                       height: 36,
+                      padding: "0 14px",
                       maxWidth: "100%",
                       boxSizing: "border-box",
-                      padding: "0 14px",
-                      borderRadius: 999,
-                      border: "none",
-                      backgroundColor: on ? M.taupe : M.card,
-                      color: on ? M.paper : M.ink,
-                      fontSize: 12,
-                      fontWeight: on ? 700 : 500,
-                      whiteSpace: "nowrap",
+                      display: "inline-block",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
-                      boxShadow: on ? SHADOW_ON : SHADOW_CHIP,
-                      cursor: "pointer",
-                      WebkitTapHighlightColor: "transparent",
                     }}
                   >
                     {z}
@@ -1663,8 +2126,8 @@ function Msg({ text, icon, onReset }: { text: string; icon?: boolean; onReset?: 
             width: 52,
             height: 52,
             borderRadius: 16,
-            backgroundColor: M.divider,
-            color: M.taupe,
+            backgroundColor: "var(--m-segment-track)",
+            color: "var(--m-spec-chip-icon)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

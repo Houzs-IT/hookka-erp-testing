@@ -12,6 +12,8 @@ type Props = {
   /** Extra inline styles to merge. */
   style?: React.CSSProperties;
   radius?: number;
+  /** Optional accessible name for a tappable card; omitted = unchanged. */
+  ariaLabel?: string;
 };
 
 export function MobileCard({
@@ -20,12 +22,14 @@ export function MobileCard({
   onClick,
   style,
   radius = 18,
+  ariaLabel,
 }: Props) {
   const interactive = typeof onClick === "function";
   return (
     <div
       onClick={onClick}
       role={interactive ? "button" : undefined}
+      aria-label={ariaLabel}
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={
         interactive

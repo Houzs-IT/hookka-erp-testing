@@ -163,6 +163,38 @@ body:not([data-theme]) {
   --m-sev-critical: #9A3A2D;
   --m-sev-warning: #976B1C;
   --m-sev-info: #3E6570;
+  /* Product category tones — Claude Design `Products Hub v2` (owner
+     2026-10-21): fg on bg tint, plus the no-photo placeholder gradient.
+     Unknown / new categories use the neutral "other" tone. */
+  --m-cat-sofa-fg: #3E6570;
+  --m-cat-sofa-bg: #E3EEF1;
+  --m-cat-sofa-ph-from: #EAF2F4;
+  --m-cat-sofa-ph-to: #D3E3E8;
+  --m-cat-bedframe-fg: #6B4A6D;
+  --m-cat-bedframe-bg: #F1E7F0;
+  --m-cat-bedframe-ph-from: #F5EDF4;
+  --m-cat-bedframe-ph-to: #E6D6E4;
+  --m-cat-accessory-fg: #9C6F1E;
+  --m-cat-accessory-bg: #FAF0D6;
+  --m-cat-accessory-ph-from: #FBF4E2;
+  --m-cat-accessory-ph-to: #F1E2BC;
+  --m-cat-other-fg: #6B7280;
+  --m-cat-other-bg: #EEEBE6;
+  --m-cat-other-ph-from: #F4F2EE;
+  --m-cat-other-ph-to: #E4E0D9;
+  /* Products Hub v2 SKU card: spec chips + price box. */
+  --m-spec-chip-bg: #F6F2EB;
+  --m-spec-chip-text: #3A352C;
+  --m-spec-chip-icon: #8B7A4E;
+  --m-price-box-bg: #F4EFE3;
+  --m-price-box-label: #8B7A4E;
+  /* Product Detail BOM: hardware / other material icon (prototype #4B5260). */
+  --m-mat-hardware-fg: #4B5260;
+  /* Products search family-hit icon; BOM "Active" badge tint (text = success). */
+  --m-search-icon: #B5AC9C;
+  --m-pill-success-bg: #EEF3E4;
+  /* Products active-filter chips + "Exact" badge (HTML #F0EAD8). */
+  --m-gold-tint: #F0EAD8;
 }
 
 body[data-theme="dark"] {
@@ -203,6 +235,32 @@ body[data-theme="dark"] {
   --m-sev-critical: #D67B6B;
   --m-sev-warning: #D9A441;
   --m-sev-info: #6FA3B0;
+  /* Category tones, lifted fg on dark tints of the card (#2A2722). */
+  --m-cat-sofa-fg: #6FA3B0;
+  --m-cat-sofa-bg: #233438;
+  --m-cat-sofa-ph-from: #2A3B3F;
+  --m-cat-sofa-ph-to: #1F2C30;
+  --m-cat-bedframe-fg: #C49BC6;
+  --m-cat-bedframe-bg: #372A37;
+  --m-cat-bedframe-ph-from: #3D2F3D;
+  --m-cat-bedframe-ph-to: #2C222C;
+  --m-cat-accessory-fg: #D9A441;
+  --m-cat-accessory-bg: #3A3020;
+  --m-cat-accessory-ph-from: #403524;
+  --m-cat-accessory-ph-to: #2E271B;
+  --m-cat-other-fg: #B9B0A0;
+  --m-cat-other-bg: #34302A;
+  --m-cat-other-ph-from: #36322C;
+  --m-cat-other-ph-to: #26231F;
+  --m-spec-chip-bg: #34302A;
+  --m-spec-chip-text: #D4C9A8;
+  --m-spec-chip-icon: #B59A5C;
+  --m-price-box-bg: #36312A;
+  --m-price-box-label: #B59A5C;
+  --m-mat-hardware-fg: #B9B0A0;
+  --m-search-icon: #8A8170;
+  --m-pill-success-bg: #2B3324;
+  --m-gold-tint: #3A3324;
 }
 
 /* Foundation breakpoints mirror the existing /m shell: phone first, Fold /

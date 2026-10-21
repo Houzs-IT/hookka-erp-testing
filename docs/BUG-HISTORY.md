@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-346 (branch `design/mobile-products-v2`, to `staging`; 344 and 345 are taken on `design/mobile-procurement`).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-336 (branch `fix/dashboard-period-keeps-scroll`, to `staging`).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-335 (branch `fix/chart-click-focus-box`, to `staging`; 334 is taken on both branches).
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -223,6 +224,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-21-346 — Phone / tablet Product detail showed "Base Price RM 0.00" for sofas and for roles without price access `products` `mobile` 🟡
+
+🟡 **Fixed on branch** (`design/mobile-products-v2` → `staging`). Found 2026-10-21 by reading the code during the Products Hub v2 Product Detail audit, not reported by a user. Prod impact UNMEASURED (no prod read).
+
+**Symptom.** `/m/products/:id` (the generic `DocumentDetailScreen` driven by `productDetail` in `src/pages/m/config/modules.ts`) printed a "Base Price" row of **RM 0.00** for (a) every sofa — sofas are priced only by `seatHeightPrices` and carry no `basePriceSen` / `price1Sen` — and (b) every SKU opened by a role without `product-pricing:read`, because `GET /api/products/:id` strips the selling-price fields for that role (`stripSellingPrice`, `src/api/routes/products.ts`). A wrong figure, not a leak: the real price never reached the phone.
+
+**Root cause.** `fld("Base Price", (d) => money(num(d, "basePriceSen", "price1Sen")))`: `num()` turns a missing key into 0 and `money(0)` formats it (`src/pages/m/config/helpers.ts`). The row was neither permission-aware nor category-aware. Class C16 (a field the projection drops and a consumer still reads), the permission-projection variant of its row 7.
+
+**Fix.** Products now have their own L2, `src/pages/m/screens/ProductDetailScreen.tsx` (CUSTOM_L2 `products` in `MobileLayout.tsx`). Its pricing card follows the owner-approved rules (Sofa: SEAT PRICES + View prices → the seat sheet; Bedframe: Price 1 + Price 2, "—" when one is unset; Accessory: its price; none: "No price set") through `priceDisplay()`, and the whole card is hidden without `product-pricing:read`. The old `productDetail` config line is no longer routed for Products and was left untouched (the shared screen and config serve other modules).
+
+**Regression.** `tests/m-product-detail.test.mjs` (routing + permission gate + no formatting of a missing price) and the `priceDisplay` cases in `tests/m-products-hub.test.mjs`.
 
 ---
 
