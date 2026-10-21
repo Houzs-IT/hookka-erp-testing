@@ -58,13 +58,22 @@ test("the page: one list per side, chips, KPIs, double-click opens the record wh
   assert.match(tab, /`\/api\/accounting\/other-parties\?type=\$\{side\}`/);
   assert.match(tab, /`\/api\/accounting\/other-party-aging\?type=\$\{side\}`/);
   assert.match(tab, /owed\.set\(String\(\(debtor \? r\.customerId : r\.supplierId\) \?\? ""\), agingTotalSen\(r\)\);/);
-  assert.match(tab, /navigate\(`\/accounting\?tab=\$\{debtor \? "odebtor" : "ocreditor"\}&edit=\$\{encodeURIComponent\(r\.id\)\}`\)/);
+  // An other party opens in a popup right here (owner 2026-10-21 「只留 Creditor List 一个入口，用弹窗编辑」).
+  assert.match(tab, /if \(r\.kind === "other"\) setPartyPopup\(\{ party: otherById\.get\(r\.id\) \?\? null \}\);/);
+  assert.match(tab, /onClick=\{\(\) => setPartyPopup\(\{ party: null \}\)\}/);
+  assert.match(tab, /<OtherPartyFormPopup\n\s*side=\{side\}\n\s*party=\{partyPopup\.party\}/);
+  assert.doesNotMatch(tab, /tab=\$\{debtor \? "odebtor" : "ocreditor"\}/, "the list no longer sends the owner to the register page");
   assert.match(tab, /navigate\(`\/customers\?edit=\$\{encodeURIComponent\(r\.id\)\}`\)/);
   assert.match(tab, /navigate\(`\/suppliers\/\$\{encodeURIComponent\(r\.id\)\}`\)/);
   assert.match(tab, /key: "outstandingSen", label: "Outstanding", width: "140px", align: "right", type: "currency", total: "sum"/);
   assert.match(tab, /onDoubleClick=\{open\}/);
-  // Right-click: Edit only, to the same place (owner 2026-10-20 「可以加右键edit 就好」).
-  assert.match(tab, /contextMenuItems=\{\(\) => \[\{ label: "Edit", action: open \}\]\}/);
+  // Right-click: Edit, to the same place (owner 2026-10-20 「可以加右键edit 就好」); an other
+  // party also Set Inactive / Active and Delete (they lived on the register page, 2026-10-21).
+  assert.match(tab, /contextMenuItems=\{\(r\) => \(r\.kind === "other"\n\s*\? \[\n\s*\{ label: "Edit", action: open \},\n\s*\{ label: r\.active \? "Set Inactive" : "Set Active", action: \(\) => void setOtherActive\(r, !r\.active\) \},\n\s*\{ label: "Delete", danger: true, action: \(\) => void deleteOther\(r\) \},\n\s*\]\n\s*: \[\{ label: "Edit", action: open \}\]\)\}/);
+  const pop = read("src/pages/accounting/tabs/OtherPartyFormPopup.tsx");
+  assert.match(pop, /method: party \? "PUT" : "POST",/);
+  assert.match(pop, /party \? `\/api\/accounting\/other-parties\/\$\{encodeURIComponent\(party\.id\)\}` : "\/api\/accounting\/other-parties"/);
+  assert.match(pop, /<PartyFinanceFields/);
   const ui = read("src/pages/accounting/index.tsx");
   assert.match(ui, /\{tab === "debtors" && <PartyListTab side="DEBTOR" \/>\}/);
   assert.match(ui, /\{tab === "creditors" && <PartyListTab side="CREDITOR" \/>\}/);

@@ -263,9 +263,9 @@ const navigationGroups: NavGroup[] = [
           { name: "Creditor Aging", href: "/accounting?tab=ap", icon: Building2 },
           { name: "Creditor List", href: "/accounting?tab=creditors", icon: List },
           { name: "AP Invoices", href: "/accounting?tab=apinvoices", icon: BookOpen },
-          // Back in the menu (owner 2026-09-29 「other creditor maintenance 放 sidebar
-          // 旁边」): the creditor register, no longer folded under AP Invoices.
-          { name: "Other Creditors", href: "/accounting?tab=ocreditor", icon: Users },
+          // Other Creditors left the menu (owner 2026-10-21 「只留 Creditor List
+          // 一个入口」): the Creditor List adds and edits them in a popup;
+          // ?tab=ocreditor still opens the register page.
           { name: "Supplier Discount", href: "/accounting?tab=supplier-discount", icon: CreditCard },
         ],
       },
