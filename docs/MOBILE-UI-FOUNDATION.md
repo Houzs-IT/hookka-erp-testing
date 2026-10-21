@@ -1,5 +1,10 @@
 # Mobile UI Foundation
 
+> **Last verified: 2026-10-21** against `src/pages/m/lib/control-styles.ts`,
+> `src/pages/m/theme-vars.css` and `src/pages/m/components/SegmentedSwitch.tsx` on
+> branch `design/mobile-filter-chips-standardization` — the "Segmented switch and
+> filter chips" section only. The rest still carries the 2026-10-14 stamp below.
+>
 > **Last verified: 2026-10-14** against `src/pages/m/theme-vars.css`,
 > `src/pages/m/theme.ts`, `src/pages/m/MobileLayout.tsx`,
 > `src/pages/m/screens/AnnouncementsScreen.tsx`, and
@@ -139,6 +144,38 @@ roles are `--m-radius-sm`, `--m-radius-md`, `--m-radius-lg`,
 - Icons use `--m-icon-xs` through `--m-icon-xl`, Lucide's 1.75 stroke, and an
   accessible name when the icon is the only control label. Decorative icons
   are hidden from assistive technology.
+
+## Segmented switch and filter chips (shared standard, 2026-10-21)
+
+The approved Claude Design handoff for these two controls lives in one place,
+`src/pages/m/lib/control-styles.ts`, and is pinned by
+`tests/m-control-styles.test.mjs`. Colours and shadows come from `theme-vars.css`
+(light values below; dark values are set alongside):
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| `--m-segment-track` | `#F0ECE9` | `#34302A` |
+| `--m-chip-text` | `#3A352C` | `#D4C9A8` |
+| `--m-shadow-segment-on`, `--m-shadow-chip`, `--m-shadow-chip-on` | handoff shadows | same |
+
+- **Segmented switch** (`SEGMENT_WRAP`, `segmentTrack(n)`, `segmentButton(on)`,
+  `SEGMENT_ICON`): wrapper `6px 18px 0`; 46px track, 4px padding and gap, radius 14;
+  segments radius 10, no border, 13px, optional 15px Lucide icon (stroke 1.9).
+  Active = card surface, `--m-raisin`, 700, `--m-shadow-segment-on`; inactive =
+  transparent, `--m-ink`, 600.
+- **Filter chips** (`CHIP_ROW` + `CHIP_ROW_CLASS`, `chip(on)`, `CHIP_COUNT`,
+  `chipDot`): horizontal scroll with a hidden scrollbar, gap 8, padding
+  `12px 18px 4px`; 34px pill, `0 13px`, no border, 12.5px; optional 7px dot before
+  the label, count after it at opacity .8 with tabular numerals. Active = taupe
+  fill, `--m-text-on-accent`, 700, `--m-shadow-chip-on`; inactive = card,
+  `--m-chip-text`, 600, `--m-shadow-chip`.
+
+Adopted by Home (`SegmentedSwitch variant="prominent"`), Products (`ViewSwitch`,
+`CategoryChips`), Sales Orders (phone and tablet status chips; the tablet row
+keeps its 10px top spacing) and Delivery (`SectionSwitch`, stage `Chips`).
+`SegmentedSwitch`'s default variant, `ChipTabs`, `SubTabs` and other screens are
+unchanged. To adopt it on another screen, import these helpers rather than
+copying the values, and keep the screen's labels, counts and tap behaviour.
 
 ## Focus and interaction
 
