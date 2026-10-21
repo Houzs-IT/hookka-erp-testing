@@ -21,7 +21,8 @@ test("the switch renders on phones only, once, right after the Install App card"
   assert.equal((home.match(/<SegmentedSwitch/g) ?? []).length, 1);
   assert.match(
     home,
-    /<InstallAppCard dismissible \/>\s*\{\/\*[^*]*\*\/\}\s*\{isPhone && \(\s*<SegmentedSwitch options=\{HOME_VIEWS\} value=\{view\} onChange=\{setView\}/,
+    // The 6px top-padding wrapper is the handoff switch spacing (owner 2026-10-21).
+    /<InstallAppCard dismissible \/>\s*\{\/\*[^*]*\*\/\}\s*\{isPhone && \(\s*(?:<div style=\{\{ paddingTop: 6 \}\}>\s*)?<SegmentedSwitch options=\{HOME_VIEWS\} value=\{view\} onChange=\{setView\}/,
   );
   // The Install card itself is shared: never behind a view guard.
   assert.doesNotMatch(home, /show\("[a-z]+"\) && \(?\s*<InstallAppCard/);
@@ -74,7 +75,7 @@ test("KPI grid: tablets keep all four in order; phones show the view's hero inst
 test("phone: the KPI hero sits between the switch and Quick Actions", () => {
   assert.match(
     home,
-    /<SegmentedSwitch[^>]*\/>\s*\)\}\s*\{\/\*[^*]*\*\/\}\s*\{isPhone && \(\s*<PhoneHero[\s\S]*?cells=\{view === "operations" \? opsHeroCells : perfHeroCells\}[\s\S]*?\{show\("operations"\) && \(\s*isPhone \? \(\s*<PhoneQuickActions/,
+    /<SegmentedSwitch[^>]*\/>\s*(?:<\/div>\s*)?\)\}\s*\{\/\*[^*]*\*\/\}\s*\{isPhone && \(\s*<PhoneHero[\s\S]*?cells=\{view === "operations" \? opsHeroCells : perfHeroCells\}[\s\S]*?\{show\("operations"\) && \(\s*isPhone \? \(\s*<PhoneQuickActions/,
   );
 });
 

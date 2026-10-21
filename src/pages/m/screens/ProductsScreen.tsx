@@ -48,6 +48,16 @@ import { MobileCard, MobileHeader, Sheet } from "../components";
 import { M, M_ACCENT, SEMANTIC } from "../theme";
 import { productsConfig } from "../config/modules";
 import { useDebounced } from "../lib/use-debounced";
+import {
+  SEGMENT_WRAP,
+  SEGMENT_ICON,
+  segmentTrack,
+  segmentButton,
+  CHIP_ROW,
+  CHIP_ROW_CLASS,
+  CHIP_COUNT,
+  chip as chipStyle,
+} from "../lib/control-styles";
 import { useResponsiveLayout } from "../lib/responsive-layout";
 import { ModuleListScreen } from "./ModuleListScreen";
 import {
@@ -377,51 +387,15 @@ function ViewSwitch({ view, onChange }: { view: View; onChange: (v: View) => voi
     { key: "sku", label: "SKU Master", icon: List },
     { key: "catalog", label: "Catalog", icon: Images },
   ];
+  // Handoff segmented switch (lib/control-styles.ts, owner 2026-10-21).
   return (
-    <div style={{ padding: "6px 18px 0" }}>
-      <div
-        role="group"
-        aria-label="Products view"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: 4,
-          height: 42,
-          boxSizing: "border-box",
-          padding: 3,
-          borderRadius: 13,
-          backgroundColor: M.divider,
-        }}
-      >
+    <div style={SEGMENT_WRAP}>
+      <div role="group" aria-label="Products view" style={segmentTrack(opts.length)}>
         {opts.map(({ key, label, icon: Icon }) => {
           const on = view === key;
           return (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => onChange(key)}
-              style={{
-                minWidth: 0,
-                height: "100%",
-                padding: "0 8px",
-                borderRadius: 10,
-                border: "none",
-                backgroundColor: on ? M.card : "transparent",
-                boxShadow: on ? SHADOW_SEG : "none",
-                color: on ? M.raisin : M.ink,
-                fontSize: 13,
-                fontWeight: on ? 700 : 600,
-                whiteSpace: "nowrap",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 7,
-                WebkitTapHighlightColor: "transparent",
-              }}
-            >
-              <Icon size={15} strokeWidth={1.9} />
+            <button key={key} type="button" aria-pressed={on} onClick={() => onChange(key)} style={segmentButton(on)}>
+              <Icon {...SEGMENT_ICON} />
               {label}
             </button>
           );
@@ -518,47 +492,15 @@ function CategoryChips({
   active: string;
   onPick: (k: string) => void;
 }) {
+  // Handoff filter chips (lib/control-styles.ts, owner 2026-10-21).
   return (
-    <div
-      role="group"
-      aria-label="Category"
-      style={{
-        display: "flex",
-        gap: 7,
-        overflowX: "auto",
-        padding: "12px 18px 10px",
-        scrollbarWidth: "none",
-        WebkitOverflowScrolling: "touch",
-      }}
-    >
+    <div role="group" aria-label="Category" className={CHIP_ROW_CLASS} style={CHIP_ROW}>
       {chips.map((c) => {
         const on = active === c.key;
         return (
-          <button
-            key={c.key}
-            type="button"
-            onClick={() => onPick(c.key)}
-            aria-pressed={on}
-            style={{
-              height: 30,
-              padding: "0 13px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              flex: "none",
-              cursor: "pointer",
-              border: "1px solid transparent",
-              background: on ? M_ACCENT.gold.bg : M.card,
-              color: on ? M.taupe : M.muted,
-              boxShadow: on ? SHADOW_CHIP_ON : SHADOW_CHIP,
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
+          <button key={c.key} type="button" onClick={() => onPick(c.key)} aria-pressed={on} style={chipStyle(on)}>
             {c.label}
-            <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7, fontVariantNumeric: "tabular-nums" }}>
-              {c.n}
-            </span>
+            <span style={CHIP_COUNT}>{c.n}</span>
           </button>
         );
       })}

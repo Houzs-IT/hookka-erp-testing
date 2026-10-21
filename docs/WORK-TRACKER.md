@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-21**: mobile switch / chip standardisation entry added (branch `design/mobile-filter-chips-standardization`); nothing else re-checked.
 > **Last verified: 2026-10-19**: staging<-main sync (branch `chore/sync-staging-from-main-1019`): main entries staging lacked are added above staging's newest; nothing else re-checked.
 > **Last verified: 2026-09-22** — branch `feat/po-supplier-searchable-select` added below (open, pushed, no PR). NOTE: the 2026-09-22 Houzs entry below still carries committed merge-conflict markers (`<<<<<<< HEAD` … `>>>>>>> 85e58b40`) on `main`; left for its owner to resolve.
 > **Last verified: 2026-10-18**: item 9 done — part B prod-verified read-only (#984); the ranked list is finished except item 8 (paused by the owner).
@@ -334,6 +335,19 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-21 — 🟡 Mobile segmented switch + filter chips standardised (Home, Products, Sales Orders, Delivery) from the Claude Design handoff (branch `design/mobile-filter-chips-standardization` → `staging`; frontend, visual only) — PR open, awaiting the owner's review
+
+Status 2026-10-21: branch fast-forwarded to `upstream/staging` (`fd201c3f`, Delivery redesign #1070) with the uncommitted work preserved (backed up, checksums matched); code committed as `2620ffdf`. One style source `src/pages/m/lib/control-styles.ts` + tokens in `theme-vars.css` (`--m-segment-track`, `--m-chip-text`, `--m-shadow-segment-on`, `--m-shadow-chip`, `--m-shadow-chip-on`; light + dark). New `tests/m-control-styles.test.mjs`; three pin tests updated (`mobile-home-views`, `m-do-mobile`). Full suite: the same 4 failures as clean HEAD, none new. `tsc -p tsconfig.app.json`: only the two pre-existing errors (`dashboard-b/charts.tsx`, `dashboards/EmployeesView.tsx`). Docs-freshness failed on the PR (8 src, 0 docs) → `docs/MOBILE-UI-FOUNDATION.md` + `docs/CODEBASE-MAP.md` updated. 390px light/dark visual check NOT done in-session (no browser) — owner to check.
+
+Owner asks (2026-10-21):
+
+1. 🔵 Segmented switch to the handoff spec (46px #F0ECE9 track, 13px, active white / 700, inactive #4D4630 / 600): Home (`SegmentedSwitch variant="prominent"`, opt-in; default variant for Updates / Sales detail unchanged), Products `ViewSwitch` (restyled in place, no refactor), Delivery `SectionSwitch`.
+2. 🔵 Filter chips to the handoff spec (34px pill, no border, 12.5px, active taupe / white / 700, inactive white / #3A352C / 600, count at .8): Products `CategoryChips`, Sales phone + tablet chips (tablet keeps its 10px top spacing), Delivery stage `Chips` (12px / 600 → 12.5px / 700).
+3. 🔵 No new status dots on Sales; labels, counts, order and tap behaviour unchanged; no logic, data, route or API change.
+4. 🔵 Shared tokens where they fit; no global change to unrelated component defaults (`ChipTabs`, `SubTabs`, other screens untouched).
+5. 🔵 Bring in the latest Delivery from `upstream/staging` safely (fast-forward only, nothing discarded).
+6. 🟡 No commit / push / deploy without the owner's approval.
+
 ## 2026-10-20 — 🟡 Mobile Delivery redesign (/m/delivery) from Claude Design `Delivery.dc.html` (branch `design/mobile-delivery-redesign` → `staging`; frontend only) — built locally, uncommitted, awaiting the owner's review
 
 Status 2026-10-20 (fidelity pass, owner-approved): every Section B visual mismatch fixed to `Delivery.dc.html` (chips, Truck / Users switch, card metas, fixed bottom bars, confirm-line icons, pill colours, search, chain connectors, sheet styling); Sales typography kept (selected chip 600); Pending Delivery select → fixed Packing List / Create DO bar; tablet now runs the same Delivery screens (grid + split panes) instead of the broken generic path; Delivery POD sheet in the design layout, shared PodSheet back to its original look with the corrected rules. Rendered in headless Edge against fixture data (real /m shell) side by side with the prototype at 320 / 390 / 414 / 820 / 1180 + dark — no live API / DB touched.

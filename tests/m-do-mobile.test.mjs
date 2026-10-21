@@ -325,9 +325,11 @@ test("shared PodSheet keeps its original look (only the rules changed)", () => {
 });
 
 test("design fidelity pins (Delivery.dc.html)", () => {
-  // Chips: solid taupe selected, white + #3A352C unselected, prototype shadows,
-  // counts always shown; Sales type (600).
-  assert.match(SCREEN, /background: on \? M\.taupe : M\.card, color: on \? "var\(--m-text-on-accent\)" : "var\(--dl-body\)"/);
+  // Chips + section switch: the shared handoff control styles (owner
+  // 2026-10-21; values pinned in tests/m-control-styles.test.mjs).
+  assert.match(SCREEN, /style=\{chipStyle\(on\)\}/);
+  assert.match(SCREEN, /\{showCounts \? <span style=\{CHIP_COUNT\}>/);
+  assert.match(UI, /style=\{segmentButton\(on\)\}/);
   assert.match(TOKENS, /SHADOW_CHIP_ON = "0 6px 14px -6px rgba\(107,92,50,\.6\)"/);
   assert.match(TOKENS, /SHADOW_CHIP = "0 1px 2px rgba\(31,29,27,\.06\),0 4px 10px -6px rgba\(31,29,27,\.16\)"/);
   assert.match(THEME, /--dl-body: #3A352C;/);

@@ -82,6 +82,7 @@ import {
   activeFilterCount,
 } from "../config/helpers";
 import { useDebounced } from "../lib/use-debounced";
+import { CHIP_ROW, CHIP_ROW_CLASS, CHIP_COUNT, chip as chipStyle } from "../lib/control-styles";
 import { useResponsiveLayout } from "../lib/responsive-layout";
 import { activeFilterChips, soRefLine, soTotalQty } from "../lib/so-card";
 import { localToday } from "../lib/so-filter-presets";
@@ -90,7 +91,6 @@ import { SalesFilterSheet } from "./SalesFilterSheet";
 // Prototype shadows (Sales Orders.dc.html).
 const SHADOW_CONTROL = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
 const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 30px -14px rgba(31,29,27,.24)";
-const SHADOW_CHIP = "0 1px 2px rgba(31,29,27,.06),0 3px 8px -4px rgba(31,29,27,.10)";
 const SHADOW_CHIP_ON = "0 4px 12px -6px rgba(107,92,50,.45)";
 const SHADOW_PRIMARY = "0 8px 18px -8px rgba(107,92,50,.65),inset 0 1px 0 rgba(255,255,255,.18)";
 const SHADOW_FILTER_ON = "0 8px 18px -8px rgba(107,92,50,.6)";
@@ -336,42 +336,16 @@ export function SalesScreen() {
         </button>
       </div>
 
-      {/* Status chips */}
-      <div
-        style={{
-          display: "flex",
-          gap: 7,
-          overflowX: "auto",
-          padding: "10px 18px 4px",
-          WebkitOverflowScrolling: "touch",
-        }}
-      >
+      {/* Status chips — handoff chip style (lib/control-styles.ts, owner
+          2026-10-21); the tablet row keeps its own 10px top spacing. */}
+      <div className={CHIP_ROW_CLASS} style={{ ...CHIP_ROW, padding: "10px 18px 4px" }}>
         {CHIPS.map((c) => {
           const on = chip === c.key;
           const n = chipCounts[c.key] ?? 0;
           return (
-            <button
-              key={c.key}
-              onClick={() => setChip(c.key)}
-              style={{
-                height: 30,
-                padding: "0 13px",
-                borderRadius: 999,
-                fontSize: 12,
-                fontWeight: 600,
-                whiteSpace: "nowrap",
-                flex: "none",
-                cursor: "pointer",
-                border: `1px solid ${on ? M.taupe : M.hairline}`,
-                background: on ? M_ACCENT.gold.bg : M.card,
-                color: on ? M.taupe : M.muted,
-                WebkitTapHighlightColor: "transparent",
-              }}
-            >
+            <button key={c.key} type="button" onClick={() => setChip(c.key)} aria-pressed={on} style={chipStyle(on)}>
               {c.label}
-              {n > 0 ? (
-                <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}>{n}</span>
-              ) : null}
+              {n > 0 ? <span style={CHIP_COUNT}>{n}</span> : null}
             </button>
           );
         })}
@@ -660,46 +634,16 @@ function PhoneChips({
   setChip: (k: string) => void;
   counts: Record<string, number>;
 }) {
+  // Handoff filter chips (lib/control-styles.ts, owner 2026-10-21).
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 7,
-        overflowX: "auto",
-        padding: "12px 18px 10px",
-        scrollbarWidth: "none",
-        WebkitOverflowScrolling: "touch",
-      }}
-    >
+    <div className={CHIP_ROW_CLASS} style={CHIP_ROW}>
       {CHIPS.map((c) => {
         const on = chip === c.key;
         const n = counts[c.key] ?? 0;
         return (
-          <button
-            key={c.key}
-            type="button"
-            onClick={() => setChip(c.key)}
-            aria-pressed={on}
-            style={{
-              height: 30,
-              padding: "0 13px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              flex: "none",
-              cursor: "pointer",
-              border: "1px solid transparent",
-              background: on ? M_ACCENT.gold.bg : M.card,
-              color: on ? M.taupe : M.muted,
-              boxShadow: on ? SHADOW_CHIP_ON : SHADOW_CHIP,
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
+          <button key={c.key} type="button" onClick={() => setChip(c.key)} aria-pressed={on} style={chipStyle(on)}>
             {c.label}
-            {n > 0 ? (
-              <span style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.7 }}>{n}</span>
-            ) : null}
+            {n > 0 ? <span style={CHIP_COUNT}>{n}</span> : null}
           </button>
         );
       })}

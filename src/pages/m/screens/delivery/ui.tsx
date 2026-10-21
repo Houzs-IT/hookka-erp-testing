@@ -18,8 +18,9 @@ import type { CreditBlockBody } from "@/pages/delivery/credit-override";
 import type { ConfirmIcon } from "../../lib/do-mobile";
 import {
   DL, INPUT, SHADOW_BAR_TOP, SHADOW_CONTROL, SHADOW_FIELD, SHADOW_MENU, SHADOW_PRIMARY, SHADOW_RADIO_ON,
-  SHADOW_SEGMENT_ON, SHADOW_SHEET_PRIMARY, pill, sem, type Tone,
+  SHADOW_SHEET_PRIMARY, pill, sem, type Tone,
 } from "./ui-tokens";
+import { segmentTrack, segmentButton, SEGMENT_ICON } from "../../lib/control-styles";
 
 /** Prototype pill: height 22 (sm) / 26 (md), pill colours, optional dot. */
 export function TilePill({ tone, label, size = "sm", dot }: { tone: Tone; label: string; size?: "sm" | "md"; dot?: boolean }) {
@@ -132,37 +133,19 @@ export function Metric({ label, value, align, muted }: { label: string; value: s
   );
 }
 
-/** Deliveries | 3PL Providers (prototype segmented control, with icons). */
+/** Deliveries | 3PL Providers (handoff segmented switch, lib/control-styles.ts — owner 2026-10-21). */
 export function SectionSwitch({ value, onChange }: { value: "deliveries" | "3pl"; onChange: (k: "deliveries" | "3pl") => void }) {
   const opts: { key: "deliveries" | "3pl"; label: string; icon: LucideIcon }[] = [
     { key: "deliveries", label: "Deliveries", icon: Truck },
     { key: "3pl", label: "3PL Providers", icon: Users },
   ];
   return (
-    <div
-      role="group"
-      aria-label="Delivery section"
-      style={{
-        display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4, height: 46, boxSizing: "border-box",
-        padding: 4, borderRadius: 14, background: DL.track,
-      }}
-    >
+    <div role="group" aria-label="Delivery section" style={segmentTrack(opts.length)}>
       {opts.map((o) => {
         const on = o.key === value;
         return (
-          <button
-            key={o.key}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onChange(o.key)}
-            style={{
-              minWidth: 0, height: "100%", borderRadius: 10, border: "none", background: on ? M.card : "transparent",
-              boxShadow: on ? SHADOW_SEGMENT_ON : "none", color: on ? M.raisin : M.ink, fontFamily: "inherit", fontSize: 13,
-              fontWeight: on ? 700 : 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              gap: 7, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <o.icon size={15} strokeWidth={1.9} aria-hidden />
+          <button key={o.key} type="button" aria-pressed={on} onClick={() => onChange(o.key)} style={segmentButton(on)}>
+            <o.icon {...SEGMENT_ICON} aria-hidden />
             {o.label}
           </button>
         );

@@ -10,7 +10,13 @@
 // Optional per-option `badge`: a small count pill after the label, rendered
 // only when the number is > 0 (capped "99+"). Pass a REAL count or nothing.
 // An option without a badge renders exactly as before (bare label).
+//
+// `variant="prominent"` (opt-in, owner 2026-10-21): the Claude Design handoff
+// switch from lib/control-styles.ts — 46px warm track, borderless segments,
+// text-only. Used by phone Home only; the default variant (Updates, Sales
+// detail) is unchanged.
 import { M } from "../theme";
+import { segmentTrack, segmentButton } from "../lib/control-styles";
 
 type Option<K extends string> = {
   key: K;
@@ -27,14 +33,17 @@ type Props<K extends string> = {
   onChange: (key: K) => void;
   /** Accessible name of the group, e.g. "Home view". */
   ariaLabel: string;
+  /** "prominent" = the handoff switch; omitted = the original slim switch. */
+  variant?: "default" | "prominent";
 };
 
-export function SegmentedSwitch<K extends string>({ options, value, onChange, ariaLabel }: Props<K>) {
+export function SegmentedSwitch<K extends string>({ options, value, onChange, ariaLabel, variant = "default" }: Props<K>) {
+  const prominent = variant === "prominent";
   return (
     <div
       role="group"
       aria-label={ariaLabel}
-      style={{
+      style={prominent ? segmentTrack(options.length) : {
         display: "grid",
         gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))`,
         gap: 3,
@@ -56,7 +65,7 @@ export function SegmentedSwitch<K extends string>({ options, value, onChange, ar
             aria-pressed={on}
             aria-label={count > 0 ? (o.badgeLabel ?? `${o.label}, ${count}`) : undefined}
             onClick={() => onChange(o.key)}
-            style={{
+            style={prominent ? segmentButton(on) : {
               minWidth: 0,
               height: "100%",
               padding: "0 8px",

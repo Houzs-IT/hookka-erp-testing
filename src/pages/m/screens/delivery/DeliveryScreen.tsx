@@ -45,7 +45,8 @@ import { CreateDoSheet, PlFirstSheet, PlFromDosSheet } from "./DeliverySheets";
 import { ProviderDetail } from "./ProviderDetail";
 import { notifyCustomers, noticeToast, runBulk } from "./actions";
 import { BottomDock, Notice, PrimaryButton, SecondaryButton, SectionSwitch } from "./ui";
-import { SHADOW_CARD, SHADOW_CHIP, SHADOW_CHIP_ON, SHADOW_CONTROL, sem, type Tone } from "./ui-tokens";
+import { SHADOW_CARD, SHADOW_CONTROL, sem, type Tone } from "./ui-tokens";
+import { SEGMENT_WRAP, CHIP_ROW, CHIP_ROW_CLASS, CHIP_COUNT, chip as chipStyle, chipDot } from "../../lib/control-styles";
 import { useConfirmSheet, useCreditOverride, useMobileToast } from "./ui-hooks";
 
 const DEFAULT_TAB: DeliveryTab = "pending_dispatch";
@@ -331,7 +332,7 @@ export function DeliveryScreen() {
     <>
       <MobileHeader title="Delivery" onBack={() => navigate(-1)} menu />
 
-      <div style={{ padding: "6px 18px 0" }}>
+      <div style={SEGMENT_WRAP}>
         <SectionSwitch value={isDel ? "deliveries" : "3pl"} onChange={goSection} />
       </div>
 
@@ -535,31 +536,17 @@ function SearchRow({ q, setQ, placeholder }: { q: string; setQ: (v: string) => v
 }
 
 function Chips({ tab, counts, showCounts, onPick }: { tab: DeliveryTab; counts: Record<DeliveryTab, number>; showCounts: boolean; onPick: (k: DeliveryTab) => void }) {
+  // Handoff filter chips (lib/control-styles.ts, owner 2026-10-21).
   return (
-    <div
-      role="group"
-      aria-label="Delivery stage"
-      style={{ display: "flex", gap: 8, overflowX: "auto", padding: "12px 18px 4px", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
-    >
+    <div role="group" aria-label="Delivery stage" className={CHIP_ROW_CLASS} style={CHIP_ROW}>
       {DELIVERY_TABS.map((t) => {
         const on = t.key === tab;
         const dot = TAB_DOT[t.key];
         return (
-          <button
-            key={t.key}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onPick(t.key)}
-            style={{
-              flex: "none", height: 34, padding: "0 13px", borderRadius: 999, border: "none",
-              background: on ? M.taupe : M.card, color: on ? "var(--m-text-on-accent)" : "var(--dl-body)",
-              boxShadow: on ? SHADOW_CHIP_ON : SHADOW_CHIP, fontFamily: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            {dot ? <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: sem(dot) }} /> : null}
+          <button key={t.key} type="button" aria-pressed={on} onClick={() => onPick(t.key)} style={chipStyle(on)}>
+            {dot ? <span aria-hidden style={chipDot(sem(dot))} /> : null}
             {t.label}
-            {showCounts ? <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.8 }}>{counts[t.key] ?? 0}</span> : null}
+            {showCounts ? <span style={CHIP_COUNT}>{counts[t.key] ?? 0}</span> : null}
           </button>
         );
       })}
