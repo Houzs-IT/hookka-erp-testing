@@ -34,12 +34,12 @@ test("the per-line PO column is self-applied", () => {
 
 test("a line carries its own PO through normalisation", () => {
   assert.match(SRC, /poId: string \| null;/);
-  assert.match(SRC, /poId: \(it as \{ poId\?: unknown \}\)\.poId == null \? null :/);
+  assert.match(SRC, /poId: it\.poId == null \? null : String\(it\.poId\)\.trim\(\) \|\| null/);
 });
 
 test("the over-invoicing guard runs PER purchase order", () => {
-  assert.match(SRC, /const byPo = new Map<string, typeof normalizedItems\.rows>\(\)/);
-  assert.match(SRC, /const poId = r\.poId \|\| String\(body\.purchaseOrderId\)/);
+  assert.match(SRC, /const byPo = new Map<string, PoGuardRow\[\]>\(\)/);
+  assert.match(SRC, /const poId = r\.poId \|\| body\.purchaseOrderId/);
   assert.match(
     SRC,
     /for \(const \[poId, rows\] of byPo\)/,
@@ -52,7 +52,7 @@ test("the guard's ceiling and consumption are read for THAT PO", () => {
   // the running total describe different things.
   assert.match(
     SRC,
-    /SELECT material_code, materialName, quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = \?[\s\S]{0,160}\.bind\(poId\)/,
+    /SELECT id, material_code, materialName, quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = \?[\s\S]{0,160}\.bind\(poId\)/,
   );
   assert.match(SRC, /\.bind\(poId\)[\s\S]{0,80}material_code/);
 });
@@ -89,7 +89,7 @@ test("the guard still rejects, rather than silently trimming", () => {
 });
 
 test("create and update both persist the line's PO", () => {
-  const inserts = SRC.match(/grn_item_id, po_id, created_at, updated_at/g) ?? [];
+  const inserts = SRC.match(/grn_item_id, po_id, po_item_id, created_at, updated_at/g) ?? [];
   assert.equal(inserts.length, 2, "both the create and update inserts must store po_id");
   // Create takes the header from the body; update takes it from the stored
   // invoice, because a PUT does not re-declare it. A GRN-sourced line falls

@@ -131,6 +131,23 @@ export function poCeilingError(o: {
   return `Line "${o.materialCode}"${named}: requested ${o.requested} exceeds ${po} remaining ${o.remaining} — the PO allows ${o.ceiling} and ${o.invoiced} is already invoiced. Bill at most ${o.remaining} against this PO, or amend the PO.`;
 }
 
+/** T-006 R5 — the CHECK keeping grn_items.invoiced_qty in [0, accepted_qty]. */
+export const GRN_INVOICED_QTY_CHECK = "chk_grn_items_invoiced_qty";
+
+/**
+ * True when a DB error is THAT check firing (SQLSTATE 23514). Matched on the
+ * constraint name, not the code alone: every CHECK violation is 23514, and a
+ * failed PI status CHECK must not be reported as "the GRN line was taken".
+ */
+export function isGrnInvoicedQtyViolation(err: unknown): boolean {
+  const e = err as { code?: unknown; constraint_name?: unknown; message?: unknown } | null;
+  if (e?.constraint_name === GRN_INVOICED_QTY_CHECK) return true;
+  return String(e?.message ?? err ?? "").includes(GRN_INVOICED_QTY_CHECK);
+}
+
+export const GRN_INVOICED_QTY_CONFLICT =
+  "A goods-receipt line on this invoice was just billed by another invoice, so this one would bill more than was received. Refresh and try again.";
+
 /**
  * Clamp a decrement so a restore can never drive a consumed counter below 0.
  * Used by the delete / cancel restore paths: decrement by min(amount, current).

@@ -59,16 +59,17 @@ test("Balance Sheet: the design's arrangement (owner 2026-10-17) from the same c
   assert.match(bs, /if \(src\) void moveTo\(src, section\);/, "drag to reclassify kept");
 });
 
-test("Balance Sheet: toolbar with L1–L4, the check strip on the two sides, the frame", () => {
+test("Balance Sheet: toolbar with L1–L5, the check strip on the two sides, the frame", () => {
   const bar = bs.slice(bs.indexOf("<FinanceTitleActions>"), bs.indexOf("</FinanceTitleActions>"));
-  for (const c of ["<PeriodStepper", "<EditLayoutToggle", "<DownloadMenu", "levels={[1, 2, 3, 4]}"]) assert.ok(bar.includes(c), c);
+  for (const c of ["<PeriodStepper", "<EditLayoutToggle", "<DownloadMenu", "levels={[1, 2, 3, 4, 5]}"]) assert.ok(bar.includes(c), c);
   assert.match(bs, /<CheckStrip ok=\{sheetDiff === 0\} label=\{sheetDiff === 0 \? "Balanced ✓" : checkLabel\(sheetDiff\)\}>/);
   assert.match(bs, /Fixed Assets \+ Current Assets − Current Liabilities <b className="tabular-nums">\{fmtAmt\(leftTotal\)\}<\/b>/);
   assert.match(bs, /Total Equity \+ Non-Current Liabilities <b className="tabular-nums">\{fmtAmt\(rightTotal\)\}<\/b>/);
   assert.match(bs, /title=\{`Balance Sheet \$\{asAtLabel\}`\}/);
   assert.match(bs, /company=\{COMPANY\.HOOKKA\.name\}/);
   assert.match(bs, /<YearCloseCard \/>/, "the Year-End Close card stays");
-  // L1 totals only; L4 opens every account's ledger lines (a click folds one).
+  // L1 totals only; L5 opens every account's ledger lines (a click folds one) — L3 / L4 are the
+  // parent accounts folded / open since 2026-10-21 (tests/bs-groups.test.mjs).
   assert.match(bs, /if \(level < 2 && !edit\) \{/);
-  assert.match(bs, /const drilled = canDrill && \(level >= 4 \? !bsDrillOpen\.has\(drillKey\) : bsDrillOpen\.has\(drillKey\)\);/);
+  assert.match(bs, /const drilled = canDrill && \(level >= 5 \? !bsDrillOpen\.has\(drillKey\) : bsDrillOpen\.has\(drillKey\)\);/);
 });
