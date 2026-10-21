@@ -1,5 +1,7 @@
 # Procurement — Module Guide
 
+> **Last verified: 2026-10-21** (`claude/t006-idempotency-main-0d4efa`, T-006 R10): `mapPurchaseLinesToAccounts` re-anchored to `purchase-invoices.ts:191` after the PI create route gained `idempotent()`. Nothing else re-checked.
+> **Last verified: 2026-10-20** (`feat/fx-confirm-bank`, main): the `supplier-payments.ts` table anchors (POST / , /knock-off, /un-knock, `buildSupplierPaymentCreate`, `buildSupplierPaymentLifecycle`) re-derived after `CreateAllocation` gained the Confirm bank amount fields and `supplierPaymentBankAccount` was added (Currency & FX step 4).
 > **Last verified: 2026-10-20** (`feat/doc-numbering-settings`, main): the two `purchase-invoices.ts` handler anchors (PI create / edit) re-derived after `generatePiNo` became one line (Document Numbering).
 > **Last verified: 2026-10-17** (`feat/tf-repay-from-ap-payment`, main): `supplier-payments.ts` anchors re-derived after `validateTfRepayment` / `tfRepaymentStatements` were extracted above `buildSupplierPaymentCreate` (finance backlog item 17): POST `/` :149, `/knock-off` :681, `/un-knock` :842, `buildSupplierPaymentCreate` :473 (it now takes `extraLegs`, posted in the same entry chain), `buildSupplierPaymentLifecycle` :940. Nothing else re-checked.
 
@@ -102,14 +104,14 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1089` | PI create + convert-chain + GL post |
 | `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:1963` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
 | `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:711` | Ceiling on re-synced invoiced_qty |
-| `mapPurchaseLinesToAccounts` | `src/api/routes/purchase-invoices.ts:183` | PI lines → GL account buckets |
+| `mapPurchaseLinesToAccounts` | `src/api/routes/purchase-invoices.ts:191` | PI lines → GL account buckets |
 | `buildPiApprovalLegs` | `src/lib/pi-posting.ts:35` | PI AP GL legs on CONFIRMED (DR mapped buckets · CR 400-0000) |
 | `isPiEditable` / `checkGrnLineQtyEdit` | `src/lib/purchase-edit-rules.ts:34 / 135` | Shared FE+BE edit gates |
 | `checkConvertAvailability` / `clampDecrement` | `src/lib/convert-chain.ts:81 / 138` | Line-level 409 guard + floor |
 | `app.get("/by-po/:poId")` | `src/api/routes/three-way-match.ts:303` | PO-scoped variance read |
-| `app.post("/")` / `/knock-off` / `/un-knock` | `src/api/routes/supplier-payments.ts:149 / 681 / 842` | Pay PIs, apply/reverse advance |
-| `buildSupplierPaymentCreate` | `src/api/routes/supplier-payments.ts:473` | THE builder (rows + PI bumps + GL) shared by POST / and the Payment Vouchers AP road (2026-09-22) |
-| `buildSupplierPaymentLifecycle` | `src/api/routes/supplier-payments.ts:940` | Void/delete/unvoid shared core (exported — the AP voucher's cancel delegates here) |
+| `app.post("/")` / `/knock-off` / `/un-knock` | `src/api/routes/supplier-payments.ts:161 / 698 / 859` | Pay PIs, apply/reverse advance |
+| `buildSupplierPaymentCreate` | `src/api/routes/supplier-payments.ts:485` | THE builder (rows + PI bumps + GL) shared by POST / and the Payment Vouchers AP road (2026-09-22) |
+| `buildSupplierPaymentLifecycle` | `src/api/routes/supplier-payments.ts:953` | Void/delete/unvoid shared core (exported — the AP voucher's cancel delegates here) |
 
 ## Gotchas
 - **GRN Post-to-Stock is a cascade, not a label.** Crossing DRAFT/CONFIRMED→POSTED in `grn.ts` writes stock/WIP + `cost_ledger` AND flips the parent PO. Never write stock outside this boundary. `COMMITTED_STATUSES = {CONFIRMED,POSTED}`; POSTED is never born before arrival = ARRIVED (gate structurally honoured).

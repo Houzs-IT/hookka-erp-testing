@@ -8,7 +8,10 @@
 // An account qualifies when it is an operating expense, a salaries &
 // contribution line or factory overhead; it had a positive amount in each of
 // the three months before the running month; and it nets to nothing so far
-// this month. Its estimate is last month's amount. As soon as anything is
+// this month. Its estimate is last month's amount. An account ticked
+// "Estimate every month" in the Chart of Accounts (owner 2026-10-21, for
+// Director Remuneration: 「在COA 可以吗？」) needs only last month's amount,
+// whatever the months before held. As soon as anything is
 // recorded on it this month, the real figure replaces the estimate. Months
 // that have ended are never estimated. Display only — nothing is posted, so
 // the trial balance and balance sheet never carry it.
@@ -44,16 +47,23 @@ export function recurringEstimates(input: {
   current: ReadonlyMap<string, number>;
   previous: ReadonlyMap<string, number>[];
   bucketOf: (code: string) => string | null;
+  /** Accounts ticked "Estimate every month" in the Chart of Accounts: last
+   *  month's amount alone is enough. */
+  always?: ReadonlySet<string>;
 }): Map<string, number> {
   const out = new Map<string, number>();
   const months = input.previous.slice(0, ESTIMATE_LOOKBACK);
-  if (months.length < ESTIMATE_LOOKBACK) return out;
-  const [last] = months;
+  const last = months[0];
+  if (!last) return out;
+  const steady = months.length >= ESTIMATE_LOOKBACK;
   for (const [code, sen] of last) {
     const bucket = input.bucketOf(code);
     if (!bucket || !ESTIMATE_BUCKETS.has(bucket)) continue;
-    if (!months.every((m) => Math.round(m.get(code) ?? 0) > 0)) continue;
     if (Math.round(input.current.get(code) ?? 0) !== 0) continue;
+    const qualifies = input.always?.has(code)
+      ? Math.round(sen) > 0
+      : steady && months.every((m) => Math.round(m.get(code) ?? 0) > 0);
+    if (!qualifies) continue;
     out.set(code, Math.round(sen));
   }
   return out;

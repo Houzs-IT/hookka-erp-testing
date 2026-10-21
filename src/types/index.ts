@@ -719,6 +719,9 @@ export type ChartOfAccount = {
   pnlCategory?: "FIXED" | "VARIABLE" | "OTHERS";
   /** False = header/parent account; journals must post to leaf accounts. */
   isPostable?: boolean;
+  /** Ticked "Estimate every month" (owner 2026-10-21): the running month's
+   *  P&L shows it at last month's amount while nothing is recorded. */
+  estimateMonthly?: boolean;
 };
 
 export type JournalLine = {
