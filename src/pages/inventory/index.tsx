@@ -2020,6 +2020,8 @@ export default function InventoryPage() {
     { key: "itemGroup", label: "Item Group", required: true, example: "FABRIC", help: "FABRIC / PLYWOOD / FOAM etc." },
     { key: "balanceQty", label: "Balance Qty", type: "number", example: 0 },
     { key: "isActive", label: "Active", type: "boolean", example: "TRUE" },
+    { key: "notes", label: "Notes", help: "Blank keeps the stored note. Type [CLEAR] to empty it." },
+    { key: "mainSupplierCode", label: "Main Supplier Code", help: "Blank keeps the stored code. Type [CLEAR] to empty it." },
   ];
 
   const handleImportFG = async (rows: Record<string, unknown>[]) => {
@@ -2190,8 +2192,8 @@ export default function InventoryPage() {
                     baseModel: p.baseModel,
                     sizeCode: p.sizeCode,
                     sizeLabel: p.sizeLabel,
-                    basePriceSen: (p.basePriceSen ?? 0) / 100,
-                    costPriceSen: (p.costPriceSen ?? 0) / 100,
+                    basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
+                    costPriceSen: p.costPriceSen ? p.costPriceSen / 100 : "", // column is NOT NULL DEFAULT 0: 0 = never priced, exported blank
                     fabricUsage: p.fabricUsage,
                   })),
                   `fg-${new Date().toISOString().slice(0, 10)}.xlsx`,
@@ -3565,8 +3567,8 @@ export default function InventoryPage() {
           baseModel: p.baseModel,
           sizeCode: p.sizeCode,
           sizeLabel: p.sizeLabel,
-          basePriceSen: (p.basePriceSen ?? 0) / 100,
-          costPriceSen: (p.costPriceSen ?? 0) / 100,
+          basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
+          costPriceSen: p.costPriceSen ? p.costPriceSen / 100 : "", // column is NOT NULL DEFAULT 0: 0 = never priced, exported blank
           fabricUsage: p.fabricUsage,
         }))}
       />

@@ -22,7 +22,7 @@ test("seven groups, one door per job", () => {
   assert.deepEqual(groups, ["Reports", "Daily", "Monthly", "Debtors", "Creditors", "Setup"]);
   assert.ok(names.includes("e-Invoice"));
   const leaves = names.filter((n) => !groups.includes(n));
-  assert.equal(leaves.length, 35, `expected 35 menu entries (Other Creditors back 2026-09-29, Fund Transfer folded into Payment Vouchers 2026-10-01, Debtor List / Creditor List added 2026-10-17, Contra moved from Creditor Aging to Monthly 2026-10-20), saw ${leaves.length}: ${leaves.join(", ")}`);
+  assert.equal(leaves.length, 35, `expected 35 menu entries (Fund Transfer folded into Payment Vouchers 2026-10-01, Debtor List / Creditor List added 2026-10-17, Contra moved from Creditor Aging to Monthly 2026-10-20, Currency & FX added to Setup 2026-10-20, Other Creditors left for the Creditor List 2026-10-21), saw ${leaves.length}: ${leaves.join(", ")}`);
   assert.ok(!names.includes("Fund Transfer"), "a transfer is a voucher now");
 });
 
@@ -50,8 +50,10 @@ test("what stayed is filed where it belongs", () => {
   assert.equal(group("Credit Notes"), "Debtors");
   assert.equal(group("Debit Notes"), "Debtors");
   assert.equal(group("AP Invoices"), "Creditors");
-  // Owner 2026-09-29 「other creditor maintenance 放 sidebar 旁边」: the creditor register is a menu entry again.
-  assert.equal(group("Other Creditors"), "Creditors");
+  // Owner 2026-10-21 「只留 Creditor List 一个入口」: the creditor register left the menu (it was back
+  // there since 2026-09-29); the Creditor List adds and edits other creditors in a popup.
+  assert.equal(group("Creditor List"), "Creditors");
+  assert.ok(!finance.includes('name: "Other Creditors"'), "Other Creditors is no longer a menu entry");
   assert.equal(group("Receipts"), "Daily");
   assert.equal(group("Payment Vouchers"), "Daily");
   assert.equal(group("Opening Balance"), "Setup");

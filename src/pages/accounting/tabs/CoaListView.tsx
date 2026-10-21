@@ -95,6 +95,7 @@ export function CoaListView({ rows, onEdit, onAddSub, onViewLedger, onToggleActi
                         <td className="px-3 py-1.5 font-mono text-xs text-[#6B5C32]">{a.code}</td>
                         <td className={`px-3 py-1.5 ${r.isGroup ? "font-semibold text-[#1F1D1B]" : "text-[#374151]"}`} style={{ paddingLeft: 12 + (q ? 0 : r.depth * 18) }}>
                           {!q && r.depth > 0 && <span className="mr-1 text-[#C4BDB3]">└</span>}{a.name}
+                          {a.estimateMonthly && <span className="ml-2 rounded-full bg-[#FBF3E4] px-2 py-0.5 text-[10px] font-medium text-[#7A5B12]" title="Estimate every month: the running month's P&L shows last month's amount while nothing is recorded">est. monthly</span>}
                         </td>
                         <td className="px-3 py-1.5 text-[#374151]">{a.cashFlowCategory ? COA_CASH_FLOW_LABEL[a.cashFlowCategory] : <span className="text-[#C4BDB3]">-</span>}</td>
                         <td className="px-3 py-1.5">{a.specialAccountType ? tag(coaSpecialText(a.specialAccountType), "bg-[#EEF1F4] text-[#4B5563]") : <span className="text-[#C4BDB3]">-</span>}</td>
@@ -154,6 +155,9 @@ export function CoaEditModal({ account, accounts, balanceSen, onClose, onSaved, 
   const [pnlCategory, setPnlCategory] = useState<"" | "FIXED" | "VARIABLE" | "OTHERS">(account.pnlCategory ?? "");
   const [special, setSpecial] = useState(account.specialAccountType ?? "");
   const [active, setActive] = useState(account.isActive);
+  // "Estimate every month" (owner 2026-10-21): expense and cost accounts.
+  const canEstimate = account.type === "EXPENSE" || account.type === "COST";
+  const [estimate, setEstimate] = useState(!!account.estimateMonthly);
   const [saving, setSaving] = useState(false);
   // The parent: a group of the same section, never the account itself or anything under it.
   const below = useMemo(() => {
@@ -190,6 +194,7 @@ export function CoaEditModal({ account, accounts, balanceSen, onClose, onSaved, 
           specialAccountType: special || null,
           pnlCategory: pnl ? pnlCategory || null : null,
           isActive: active,
+          ...(canEstimate ? { estimateMonthly: estimate } : {}),
         }),
       });
       const j = (await res.json()) as { success?: boolean; error?: string };
@@ -244,6 +249,13 @@ export function CoaEditModal({ account, accounts, balanceSen, onClose, onSaved, 
           <div className="flex flex-wrap items-center gap-3">
             <span className="w-24 text-xs text-[#6B7280]">P&amp;L category</span>
             {seg(pnlCategory, [["", "None"], ["FIXED", "Fixed"], ["VARIABLE", "Variable"], ["OTHERS", "Others"]], setPnlCategory)}
+          </div>
+        )}
+        {canEstimate && (
+          <div className="flex flex-wrap items-center gap-3" data-coa-estimate="">
+            <span className="w-24 text-xs text-[#6B7280]">Estimate</span>
+            {seg(estimate ? "on" : "off", [["off", "Off"], ["on", "Every month"]], (v) => setEstimate(v === "on"))}
+            <span className="text-[11px] text-[#9CA3AF]">The running month&apos;s P&amp;L shows last month&apos;s amount (an amber est. row) until something is recorded.</span>
           </div>
         )}
         <div className="flex flex-wrap items-center gap-3">

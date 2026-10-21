@@ -17,7 +17,7 @@ import { Hono } from "hono";
 try { register("tsx/esm", pathToFileURL("./")); } catch { /* native type-stripping */ }
 register("./tests/_alias-loader.mjs", pathToFileURL("./"));
 const src = (p) => pathToFileURL(resolve(process.cwd(), p)).href;
-const { tfLineRoom, tfOverLimitWarning } = await import(src("src/lib/trade-finance.ts"));
+const { tfLineRoom, tfOverLimitWarning, tfLineSummary, tfPrincipalSen } = await import(src("src/lib/trade-finance.ts"));
 const { getTfSources, parseTfLimitSen } = await import(src("src/api/lib/trade-finance.ts"));
 const { default: accountingApp } = await import(src("src/api/routes/accounting.ts"));
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
@@ -131,11 +131,24 @@ test("the screens: Settings lists the lines, Creditor Aging shows the room, the 
   assert.match(card, /fetch\("\/api\/accounting\/trade-finance\/line", \{\n\s+method: "PUT",/);
   assert.match(card, /limitSen: d\.limitRm == null \? null : Math\.round\(d\.limitRm \* 100\)/);
   assert.match(card, /<MoneyInput/);
-  const blk = read("src/pages/accounting/tabs/TradeFinanceBlock.tsx");
-  assert.match(blk, /limit \{rm\(s\.limitSen\)\} · available \{rm\(s\.availableSen\)\}/);
+  // Creditor Aging: a card per line (owner 2026-10-21), the block under the list gone.
+  assert.match(ui, /<span data-tf-limit="">available · limit \{formatCurrency\(t\.limitSen \?\? 0\)\} · used \{formatCurrency\(t\.usedSen\)\} \(\{t\.pct\}%\) · \{check\}<\/span>/);
+  assert.match(ui, /\.\.\.tfCards,\n\s*\] : \[/);
+  // Setting a line up lives here now.
+  assert.match(card, /if \(lines\.length === 0\) return <div className="mb-4"><TfSetupCard existing=\{null\} onSaved=\{load\} \/><\/div>;/);
+  assert.match(card, /\{showSetup \? "Close set-up" : "\+ Set up another line"\}/);
   assert.match(ui, /const warn = editingId \? null : tfOverLimitWarning\(\{ limitSen: apTfDraw\.limitSen, usedSen: apTfDraw\.accountNetSen, drawSen: apTotalSen \+ \(apSen\(apForm\.tfInterest\) \|\| 0\)/);
   assert.match(ui, /Limit \{formatCurrency\(room\.limitSen\)\} · drawn \{formatCurrency\(room\.usedSen\)\} · available \{formatCurrency\(room\.availableSen\)\}/);
   const api = read("src/api/routes/accounting.ts");
   assert.match(api, /availableSen: tfLineRoom\(s\.limitSen, derived\.accountNetSen\)\?\.availableSen \?\? null,/);
   assert.match(api, /limitSen: sources\.find\(\(s\) => s\.accountCode === accountCode\)\?\.limitSen \?\? null \}/, "re-running setup keeps the limit");
+});
+
+test("the line's card on Creditor Aging: available under the limit, the share used, the drawdowns = account check (owner 2026-10-21)", () => {
+  const line = { limitSen: 30000000, accountNetSen: 9346560, unallocatedSen: 0, totals: { total: 9346560 } };
+  assert.deepEqual(tfLineSummary(line), { usedSen: 9346560, limitSen: 30000000, availableSen: 20653440, pct: 31, over: false, drawsSen: 9346560, ties: true });
+  assert.equal(tfLineSummary({ ...line, accountNetSen: 31000000, totals: { total: 31000000 } }).over, true, "over the limit");
+  assert.equal(tfLineSummary({ ...line, totals: { total: 9346000 } }).ties, false, "the drawdowns do not tie to the account");
+  assert.deepEqual(tfLineSummary({ ...line, limitSen: null }), { usedSen: 9346560, limitSen: null, availableSen: null, pct: null, over: false, drawsSen: 9346560, ties: true }, "no limit set");
+  assert.equal(tfPrincipalSen({ amountSen: 3140343, interestSen: 9628, bankChargeSen: 0 }), 3130715);
 });
