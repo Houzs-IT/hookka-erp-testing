@@ -2,8 +2,9 @@
 // use-resizable-tables.ts — finance tables (owner 2026-10-01, plan batch 4):
 //   · no text wrapping in any finance table;
 //   · drag a column's right edge in the header to set its width — ONLY that
-//     column changes, everything to its right moves with it (the table is
-//     exactly as wide as its columns, left-aligned, never stretched);
+//     column changes, everything to its right moves with it (a report is
+//     exactly as wide as its columns, left-aligned, never stretched; a list
+//     never ends short of its box — owner 2026-10-21);
 //   · widths remembered per table in this browser; double-click an edge to
 //     go back to the automatic widths;
 //   · reports (a table marked data-col-resize="first") resize the
@@ -81,7 +82,11 @@ function writeWidths(key: string, widths: number[] | null) {
 }
 
 // Pin every column at a width; the table is their sum (so a narrower column
-// pulls the rest left instead of stretching a neighbour). Measured widths are
+// pulls the rest left instead of stretching a neighbour). A list is at least
+// as wide as its box (owner 2026-10-21 「为什么这个没有做满？」: a dragged
+// Creditor Aging stopped short of its card) — the fixed layout shares what is
+// left over between the columns, so the dragged widths act as minimums. A
+// report keeps to its columns (2026-10-01: the month reports stop stretching). Measured widths are
 // fractional (85.3px) — rounding DOWN cut the last letter off a column that
 // fitted exactly (prod check 2026-10-01: dates showed "2026-10-…"), so up.
 export function sumWidths(widths: number[]): number {
@@ -99,7 +104,7 @@ function freeze(t: HTMLTableElement, widths: number[]) {
   widths.forEach((w, i) => { (cg!.children[i] as HTMLElement).style.width = `${Math.ceil(w)}px`; });
   t.style.tableLayout = "fixed";
   t.style.width = `${sumWidths(widths)}px`;
-  t.style.minWidth = "0";
+  t.style.minWidth = t.hasAttribute("data-fin-report") ? "0" : "100%";
   t.style.maxWidth = "none";
   t.dataset.colw = "1";
 }

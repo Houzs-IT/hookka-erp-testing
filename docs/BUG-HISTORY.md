@@ -1,5 +1,8 @@
 # Bug History
-> **Last verified: 2026-10-20**: entries BUG-2026-10-20-365 and -366 added (branch `claude/t006-cn-release-main-324fa3`, T-006 R4 port to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-350 (branch `feat/fx-confirm-bank`, to main; 347–349 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: entries BUG-2026-10-20-365 and -366 added (branch `claude/t006-cn-release-main-324fa3`, T-006 R4 port to main); 2026-10-21: its migration renumbered 0244 → 0248 after main took 0244 for `pv_fx_bank_confirmed`; a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -7,6 +10,7 @@
 > **Last verified: 2026-10-19**: BUG-2026-10-19-344 flipped to ✅ after the #1026 prod check.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-375 (branch `fix/hk0002-import-blank-keeps`, to main; renumbered from 287, then 342, on rebase; both taken on main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -161,6 +165,16 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-21-380 — A commit with 9 or more staged ts/tsx files hung in pre-commit `infrastructure` 🟡
+
+Found 2026-10-21: merges of `main` into open PR branches (about 33 staged files) hung in the pre-commit hook for 20+ minutes with no CPU. Reproduced in a worktree: 8 staged ts files lint in 5 s, 9 hang, whichever files they are.
+
+**Root cause.** lint-staged 16 starts its task with tinyexec. On Windows a bare `node_modules/.bin` name (`eslint`, from `package.json` `lint-staged`) is run as `cmd.exe /d /s /c "eslint ^^^"file^^^" …"` (the `.cmd` shim rule in tinyexec's bundled cross-spawn). cmd.exe on this machine (Windows 11 build 26200) hangs before running anything once that line holds 9 or more `^^^"…^^^"` arguments — even `echo` does; with plain `"…"` quoting it does not. No eslint process ever starts, so the hook waits forever. eslint itself lints the same 40 files in 8 s.
+
+**Fix.** The task is `node node_modules/eslint/bin/eslint.js`: `node` resolves to node.exe, which tinyexec spawns directly with no cmd.exe. Same rules, same files; an unused variable still fails the commit. 40 staged files: hung (killed at 5 min) → 5 s for lint-staged.
+
+**Regression.** `tests/lint-staged-no-cmd-shim.test.mjs` fails if any lint-staged command does not start with `node `. Class: none (tooling).
+
 ## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
 
 🟡 **Fixed on branch** (`fix/dashboard-period-keeps-scroll` → `staging`, #1008; to `main` in #1015). Reported 2026-10-19 on staging, right after the Day view (#1003).
@@ -207,13 +221,19 @@ Entries themselves stay newest-first.
 
 T-006 R4, ported from staging (plan `docs/T-006-TRANSFER-CONVERT-FIX-PLAN.md` on `staging`). Convert-to-invoice flips the CN to FULLY_SOLD and links it one-way (`consignment_notes.converted_invoice_id`); the invoice's void and DRAFT-delete only released a delivery order, so the CN stayed FULLY_SOLD, linked to a dead invoice, and could never be converted again. Staging's release restored `statusBeforeConversion ?? "PARTIALLY_SOLD"` with an UPDATE that had no status condition, so a CN that had since moved on (CLOSED, RETURNED, edited back) silently reopened, and a CN converted before the column existed got a guessed status.
 
-Fix = convert records the CN's status as read in `status_before_conversion` (migration 0244, self-applied before the convert batch; staging's 0234). Void and delete build the release in the same batch (`buildInvoiceDeathCnReleaseStatements`, `consignment-note-shared.ts`). When the CN is still FULLY_SOLD from this invoice with its prior status recorded, it is restored with `WHERE id = ? AND status = 'FULLY_SOLD' AND convertedInvoiceId = ?`, the items and units the conversion stamped are put back, and the CO is reopened after the batch. Otherwise (converted before 0244, returned / closed / edited since, or no invoice creation time to match by) the void or delete still goes ahead: the CN keeps its status, only its link is cleared, and an `audit_events` row (resource `consignment-notes`, action `unlink-invoice`) says why, in the same batch (owner YH, 2026-10-20). Never a guessed status. A row-locked guard statement re-checks the CN inside the batch and aborts it with a 409 if the CN changed between the read and the write. On DELETE the release runs before `DELETE FROM invoices` (the FK is ON DELETE SET NULL). Regression: `tests/cn-invoice-death-release.test.mjs`. Not run against Postgres: the guard SQL is checked through `translateSql` only.
+Fix = convert records the CN's status as read in `status_before_conversion` (migration 0248, self-applied before the convert batch; staging's 0234). Void and delete build the release in the same batch (`buildInvoiceDeathCnReleaseStatements`, `consignment-note-shared.ts`). When the CN is still FULLY_SOLD from this invoice with its prior status recorded, it is restored with `WHERE id = ? AND status = 'FULLY_SOLD' AND convertedInvoiceId = ?`, the items and units the conversion stamped are put back, and the CO is reopened after the batch. Otherwise (converted before 0244, returned / closed / edited since, or no invoice creation time to match by) the void or delete still goes ahead: the CN keeps its status, only its link is cleared, and an `audit_events` row (resource `consignment-notes`, action `unlink-invoice`) says why, in the same batch (owner YH, 2026-10-20). Never a guessed status. A row-locked guard statement re-checks the CN inside the batch and aborts it with a 409 if the CN changed between the read and the write. On DELETE the release runs before `DELETE FROM invoices` (the FK is ON DELETE SET NULL). Regression: `tests/cn-invoice-death-release.test.mjs`. Not run against Postgres: the guard SQL is checked through `translateSql` only.
 
 ## BUG-2026-10-20-365 — Converting a consignment note to an invoice failed on a column customers does not have `consignment` `invoices` 🟡
 
 HK-0109. `POST /api/consignment-notes/:id/convert-to-invoice` bumped the customer's A/R with `UPDATE customers SET outstandingSen = …, updated_at = ?` (since commit 7701e1aa, 2026-05-04), and `POST /:id/return` did the same on a converted CN. customers has no updated_at: not in 0001_init, not added by any later migration or self-apply, not in `tests/db-schema.json`. The write failed, so the whole convert batch rolled back (staging measured it 2026-09-24: no CN there had ever converted).
 
 Fix = both writes drop `updated_at`. Regression: `tests/cn-invoice-death-release.test.mjs` runs the real convert handler and checks every column it writes on customers, and scans every `UPDATE customers SET` in `src/api` against the schema fixture.
+
+## BUG-2026-10-20-350 — A posted AP Payment's popup said "Nothing posted yet" under Ledger entry `finance` `payments` ✅
+
+Found 2026-10-20 building Confirm bank amount (Currency & FX step 4). The Payment Vouchers popup reads its Ledger entry and bank state from `GET /doc-trail?family=payment_voucher&sourceId=<voucher id>`. An AP Payment writes no ledger legs of its own — at Approve its money posts on the settlement document (a supplier or other-creditor payment) under the voucher's number — so every posted AP Payment showed "Nothing posted yet — a voucher reaches the ledger when it is approved" and no bank state. Measured on prod read-only on one posted AP Payment: 0 legs as a voucher, 2 legs (creditors, bank) as its supplier payment. Nothing wrong was recorded; only the popup missed it.
+
+Fix = an AP voucher's popup asks for `supplier_payment` (or `other_party_payment`) under its number, keyed so it reloads after a bank amount is confirmed. Shipped in #1062; checked on prod read-only the same day — the posted AP Payment it was measured on now shows its two legs and the HLBB bank state. Regression: `tests/fx-confirm-bank.test.mjs`, `tests/pv-popup-form-transfer.test.mjs`, `tests/doc-detail-dblclick.test.mjs`.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 
@@ -266,6 +286,19 @@ Fix = every punch still open today gets its hours so far in the dashboard feed �
 **Regression.** `tests/grn-pi-edit-keeps-line-po.test.mjs`.
 
 ---
+## BUG-2026-10-19-375 — Inventory raw-material batch import wiped min / max stock, notes, item type and supplier on every row it touched; exports wrote an unpriced SKU as RM 0 `inventory` `import-export` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0002-import-blank-keeps` → `main`). IT Hub HK-0002 (reporter Lim Wei Siang, 2026-09-07). Prod occurrences UNMEASURED (no prod access this session).
+
+**Symptom.** HK-0002 says an empty cell in a batch import clears a saved value, and that an exported file cannot be imported back without damage. Re-checked against the code on `main` 2026-10-15: the products import and the "batch import never saves" half were already fixed (both inventory dialogs call `/api/products/bulk-import` and `/api/raw-materials/bulk-import`; `shapeProductBulkRow` drops blanks). What was still true: the raw-material import and the price export.
+
+**Root cause.** `POST /api/raw-materials/bulk-import` built every UPDATE from the sheet row alone: description fell back to the item code, group to "OTHERS", `minStock`/`maxStock` to 0, `notes`/`itemType`/`mainSupplierCode` to NULL, `uomCount` to 1, `stockControl` to 1. The template carries none of the last seven, so every re-import reset them on every row it touched; a blank group cell re-grouped the material to OTHERS and with it its GL accounts (BUG-2026-08-21-160). Separately, the products and inventory FG exports wrote `(basePriceSen ?? 0) / 100`, so a SKU with no price exported as 0 and re-imported as a real RM 0.
+
+**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell. Review fixes: the route's stored-value read and UPDATE/INSERT are scoped by `orgId`; `[CLEAR]` in a notes / main supplier code / item type cell sets NULL (blank still keeps; documented in the RM import template); whitespace-only notes keep; an unrecognised `stockControl` keeps. `products.basePriceSen` is nullable (`0001_init.sql:90`, so the blank export is live; `:425` is `sales_order_items`), while `products.costPriceSen` is NOT NULL DEFAULT 0 (`:89`) so a never-priced cost cannot be told from 0 and now also exports blank (imports back as keep = 0).
+
+**Not done (needs the ticket's PRD, not visible to this session).** Preview and audit row already exist (dialog diff preview; `products` bulk-import audit; RM audit only on re-group). Other modules' exports (customers, suppliers, ...) were not swept.
+
+**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix; now drives the route with two orgs).
 
 ## BUG-2026-10-19-334 — Two PO files die on every scan attempt with no error recorded `ocr` `scan-queue` 🟡
 

@@ -444,7 +444,7 @@ export const CN_VALID_TRANSITIONS: Record<string, string[]> = {
 // ---------------------------------------------------------------------------
 // T-006 R4 — when a CN-sourced invoice dies (void or DRAFT delete), hand the
 // consignment note back. convert-to-invoice has no status gate, so the status
-// to restore is recorded per conversion in status_before_conversion (mig 0244).
+// to restore is recorded per conversion in status_before_conversion (mig 0248).
 // Migrations are inert on deploy: convert awaits this self-apply before its
 // batch. The release path reads with SELECT * so it needs no DDL — a missing
 // column simply reads as "unknown prior status" and the release refuses.
@@ -480,7 +480,7 @@ export type CnReleaseResult = {
 //
 // Never guesses a status. When the CN is still FULLY_SOLD from this invoice
 // with its prior status recorded, it is restored. Otherwise (converted before
-// 0244, returned / closed / edited since, or no convert stamp to match by) the
+// 0248, returned / closed / edited since, or no convert stamp to match by) the
 // void still goes ahead, the CN keeps its status and is only unlinked, and the
 // reason is recorded (owner YH, 2026-10-20). Either way a row-locked guard
 // re-checks the CN inside the batch and aborts it (→ 409) if it changed.
@@ -512,7 +512,7 @@ export async function buildInvoiceDeathCnReleaseStatements(
     status !== "FULLY_SOLD"
       ? `the consignment note is ${status ?? "without a status"}, no longer FULLY_SOLD from this invoice`
       : !prior || !Object.hasOwn(CN_VALID_TRANSITIONS, prior)
-        ? "its status from before the conversion was never recorded (converted before migration 0244)"
+        ? "its status from before the conversion was never recorded (converted before migration 0248)"
         : !convertedAt
           ? "the invoice has no creation time to match the conversion's items and units by"
           : null;

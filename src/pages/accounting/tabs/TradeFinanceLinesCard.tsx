@@ -3,8 +3,10 @@
 // design list's "Trade Finance limit per lender line"): each line's default
 // tenor and its limit, which the owner keys himself; Used = drawn and not
 // repaid (the line's account balance), Available = limit − used. Saving
-// posts nothing. Creditor Aging's trade-finance block shows the same figures
-// and the AP Payment form warns when a drawdown goes over the limit.
+// posts nothing. Creditor Aging's trade-finance card shows the same figures
+// and the AP Payment form warns when a drawdown goes over the limit. Setting
+// up a line lives here too (TfSetupCard — it left Creditor Aging with the
+// block on 2026-10-21, owner 「可以，全部做」).
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/components/ui/toast";
 import { formatCurrency } from "@/lib/utils";
+import { TfSetupCard } from "./TradeFinanceBlock";
 
 type Line = {
   accountCode: string;
@@ -31,6 +34,7 @@ export function TradeFinanceLinesCard() {
   const [lines, setLines] = useState<Line[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
   const load = useCallback(() => {
     fetch("/api/accounting/trade-finance", { cache: "no-store" })
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: Line[] } }>)
@@ -65,8 +69,11 @@ export function TradeFinanceLinesCard() {
     }
   };
 
-  if (lines === null || lines.length === 0) return null; // no trade finance set up — nothing to configure
+  if (lines === null) return null;
+  // No line yet: setting one up is the only thing to do here.
+  if (lines.length === 0) return <div className="mb-4"><TfSetupCard existing={null} onSaved={load} /></div>;
   return (
+    <>
     <Card className="mb-4" data-tf-lines="">
       <CardContent className="p-4">
         <div className="flex items-center gap-3 mb-2">
@@ -126,7 +133,14 @@ export function TradeFinanceLinesCard() {
             </tbody>
           </table>
         </div>
+        <div className="mt-3">
+          <Button variant="outline" size="sm" onClick={() => setShowSetup((v) => !v)}>
+            {showSetup ? "Close set-up" : "+ Set up another line"}
+          </Button>
+        </div>
       </CardContent>
     </Card>
+    {showSetup && <div className="mb-4"><TfSetupCard existing={null} onSaved={() => { setShowSetup(false); load(); }} /></div>}
+    </>
   );
 }

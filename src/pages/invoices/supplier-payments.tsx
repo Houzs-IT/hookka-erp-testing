@@ -10,6 +10,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { defaultBankCode } from "@/lib/default-bank";
 import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { fmtFxRate, fxMonthOf, fxRateFor, type FxSettings } from "@/lib/fx";
 import { printVouchers } from "@/lib/print-voucher";
 import { buildSupplierPaymentVoucher } from "@/lib/supplier-payment-voucher";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
@@ -49,6 +50,8 @@ type OpenPI = {
   status: string;
   currency: string;
   fxRate: number;
+  // The invoice total in its own currency (sen of that currency).
+  foreignAmountSen?: number | null;
   supplierName: string;
   invoiceDate: string;
 };
@@ -151,6 +154,17 @@ export default function SupplierPaymentsPage() {
   );
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
+  // Currency & FX (owner 2026-10-20): the payment month's rate from Setup is
+  // the default a foreign row's rate box takes — it can be changed, and the
+  // payment keeps whatever rate it posts with.
+  const { data: fxResp } = useCachedJson<{ success?: boolean; data?: FxSettings }>("/api/fx");
+  const fxSettings = fxResp?.success ? fxResp.data ?? null : null;
+  const setupRate = (ccy: string): number | null => (fxSettings ? fxRateFor(fxSettings, ccy, date) : null);
+  const rateDefault = (pi: OpenPI, row: RowState): Partial<RowState> => {
+    if (row.rateStr.trim()) return {};
+    const r = setupRate(pi.currency);
+    return r === null ? {} : { rateStr: fmtFxRate(r) };
+  };
   const [reference, setReference] = useState("");
   // Supplier advance / prepayment (RM string). Pay a supplier BEFORE any invoice;
   // posts to Trade Creditors (400-0000) as a prepayment to knock off later.
@@ -364,7 +378,7 @@ export default function SupplierPaymentsPage() {
     const next = !row.full;
     if (next) {
       const foreignSen = pi.fxRate ? Math.round(outstandingOf(pi) / pi.fxRate) : 0;
-      setRow(pi.id, { full: true, foreignStr: (foreignSen / 100).toFixed(2) });
+      setRow(pi.id, { full: true, foreignStr: (foreignSen / 100).toFixed(2), ...rateDefault(pi, row) });
     } else {
       setRow(pi.id, { full: false });
     }
@@ -987,9 +1001,9 @@ export default function SupplierPaymentsPage() {
                         <th className="text-left px-3 py-2 font-medium text-gray-600">Supplier Inv No</th>
                         <th className="text-left px-3 py-2 font-medium text-gray-600">Date</th>
                         <th className="text-left px-3 py-2 font-medium text-gray-600">Ccy</th>
-                        <th className="text-right px-3 py-2 font-medium text-gray-600">Amount</th>
-                        <th className="text-right px-3 py-2 font-medium text-gray-600">Paid</th>
-                        <th className="text-right px-3 py-2 font-medium text-gray-600">Outstanding</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-600">Amount (RM)</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-600">Paid (RM)</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-600">Outstanding (RM)</th>
                         <th className="text-left px-3 py-2 font-medium text-gray-600">Payment</th>
                         <th className="text-center px-3 py-2 font-medium text-gray-600">Full</th>
                       </tr>
@@ -1011,10 +1025,12 @@ export default function SupplierPaymentsPage() {
                             <td className="px-3 py-2 font-mono">{pi.piNo}</td>
                             <td className="px-3 py-2 font-mono text-gray-600">{pi.supplierInvoiceNo || "—"}</td>
                             <td className="px-3 py-2 text-gray-600">{formatDateDMY(pi.invoiceDate)}</td>
-                            <td className="px-3 py-2">{ccy}</td>
-                            <td className="px-3 py-2 text-right">{formatCurrency(pi.amountSen, ccy)}</td>
-                            <td className="px-3 py-2 text-right text-gray-500">{formatCurrency(pi.paidAmountSen, ccy)}</td>
-                            <td className="px-3 py-2 text-right font-medium">{formatCurrency(outstanding, ccy)}</td>
+                            {/* The amounts are the booked RM (they used to print under the
+                                foreign code); a foreign invoice adds its own total and rate. */}
+                            <td className="px-3 py-2">{ccy}{!myr && pi.fxRate ? <div className="text-[11px] text-gray-400 tabular-nums">@{fmtFxRate(pi.fxRate)}</div> : null}</td>
+                            <td className="px-3 py-2 text-right">{formatCurrency(pi.amountSen)}{!myr && pi.foreignAmountSen ? <div className="text-[11px] text-gray-400">{formatCurrency(pi.foreignAmountSen, ccy)}</div> : null}</td>
+                            <td className="px-3 py-2 text-right text-gray-500">{formatCurrency(pi.paidAmountSen)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{formatCurrency(outstanding)}{!myr && pi.fxRate ? <div className="text-[11px] font-normal text-gray-400">≈ {formatCurrency(Math.round(outstanding / pi.fxRate), ccy)}</div> : null}</td>
                             <td className="px-3 py-2">
                               {myr ? (
                                 <div className="flex items-center gap-1">
@@ -1041,7 +1057,7 @@ export default function SupplierPaymentsPage() {
                                       disabled={row.full}
                                       className={`w-24 border rounded px-2 py-1 text-sm text-right tabular-nums disabled:bg-gray-100 ${isUnreadableMoney(row.foreignStr) ? "border-[#9A3A2D] text-[#9A3A2D]" : "border-[#E2DDD8]"}`}
                                       value={row.foreignStr}
-                                      onChange={(e) => setRow(pi.id, { foreignStr: e.target.value })}
+                                      onChange={(e) => setRow(pi.id, { foreignStr: e.target.value, ...rateDefault(pi, row) })}
                                       placeholder="0.00"
                                     />
                                   </div>
@@ -1054,10 +1070,16 @@ export default function SupplierPaymentsPage() {
                                       className="w-24 border border-[#E2DDD8] rounded px-2 py-1 text-sm text-right tabular-nums"
                                       value={row.rateStr}
                                       onChange={(e) => setRow(pi.id, { rateStr: e.target.value })}
-                                      placeholder={pi.fxRate ? String(pi.fxRate) : "0.0000"}
+                                      placeholder={setupRate(ccy) !== null ? fmtFxRate(setupRate(ccy) as number) : pi.fxRate ? String(pi.fxRate) : "0.0000"}
                                     />
                                   </div>
                                   <p className="text-xs text-[#4F7C3A]">= {formatRM(Math.round(previewRm * 100))}</p>
+                                  {(() => {
+                                    const sr = setupRate(ccy);
+                                    const ym = fxMonthOf(date);
+                                    if (sr === null) return <p className="text-[11px] text-[#9CA3AF]" data-fx-hint="">No {ym} rate in Setup › Currency &amp; FX</p>;
+                                    return <p className="text-[11px] text-[#9CA3AF]" data-fx-hint="">{parseFloat(row.rateStr) === sr ? "from Setup" : "edited"} · Setup {ym}: {fmtFxRate(sr)}</p>;
+                                  })()}
                                 </div>
                               )}
                             </td>

@@ -86,8 +86,10 @@ test("the ladder, edit and attachments stay voucher-only; batch print / export c
 test("a supplier payment's bank is read from its ledger CR leg — newest, never the AP control / FX account", () => {
   const api = readFileSync("src/api/routes/supplier-payments.ts", "utf8").replace(/\r\n/g, "\n");
   const get = api.slice(api.indexOf('app.get("/", async (c) => {'), api.indexOf("\napp.post(", api.indexOf('app.get("/", async (c) => {')));
-  assert.match(get, /SELECT sourceId, accountCode, postedAt FROM ledger_journal_entries\s*\n\s*WHERE orgId = \? AND hidden = 0 AND creditSen > 0\s*\n\s*AND sourceType LIKE 'supplier_payment%'\s*\n\s*AND accountCode NOT IN \(\?, \?\)\s*\n\s*ORDER BY postedAt DESC/);
-  assert.match(get, /\.bind\(orgId, AP_CONTROL, FX_GAIN_ACCT\)/);
+  assert.match(get, /SELECT sourceId, accountCode, postedAt FROM ledger_journal_entries\s*\n\s*WHERE orgId = \? AND hidden = 0 AND creditSen > 0\s*\n\s*AND sourceType LIKE 'supplier_payment%'\s*\n\s*AND accountCode NOT IN \(\$\{skip\.map\(\(\) => "\?"\)\.join\(", "\)\}\)\s*\n\s*ORDER BY postedAt DESC/);
+  // Never the AP control, nor any account an FX leg sits on (Setup › Currency & FX, 2026-10-20).
+  assert.match(get, /const skip = \[AP_CONTROL, \.\.\.fxLegAccounts\(await getFxSettings\(c\.var\.DB\)\)\];/);
+  assert.match(get, /\.bind\(orgId, \.\.\.skip\)/);
   // First seen per payment = newest leg (a restate re-posts; a void reverses with a DR leg, which creditSen > 0 excludes).
   assert.match(get, /if \(no && !bankByNo\.has\(no\)\) bankByNo\.set\(no, String\(l\.accountCode \?\? l\.account_code \?\? ""\)\);/);
   assert.match(get, /for \(const g of groups\) g\.bankAccount = bankByNo\.get\(g\.paymentNo\) \?\? null;/);

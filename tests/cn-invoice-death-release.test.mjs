@@ -232,7 +232,7 @@ for (const status of ["CLOSED", "RETURNED", "PARTIALLY_SOLD"]) {
   });
 }
 
-test("R4: an unrecorded prior status (converted before 0244) is unlinked, never set to PARTIALLY_SOLD", async () => {
+test("R4: an unrecorded prior status (converted before 0248) is unlinked, never set to PARTIALLY_SOLD", async () => {
   for (const prior of [null, undefined, "", "BOGUS", "constructor"]) {
     const { db } = makeDb(makeState({ cn: { statusBeforeConversion: prior } }));
     const r = await buildInvoiceDeathCnReleaseStatements(db, "inv-1");
