@@ -253,7 +253,9 @@ const navigationGroups: NavGroup[] = [
         name: "Debtors", href: "/accounting?tab=ar", icon: Users, children: [
           { name: "Debtor Aging", href: "/accounting?tab=ar", icon: Users },
           { name: "Debtor List", href: "/accounting?tab=debtors", icon: List },
-          { name: "Other Debtor Bills", href: "/accounting?tab=odebtorbills", icon: BookOpen },
+          // AR Invoices (owner 2026-10-21): sales invoices + other debtor bills in
+          // one list, like AP Invoices; ?tab=odebtorbills lands there too.
+          { name: "AR Invoices", href: "/accounting?tab=arinvoices", icon: BookOpen },
           { name: "Credit Notes", href: "/invoices/credit-notes", icon: FileX },
           { name: "Debit Notes", href: "/invoices/debit-notes", icon: FilePlus },
         ],

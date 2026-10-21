@@ -47,7 +47,9 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   apinvoices: { title: "AP Invoices", explain: "Everything owed on paper in one list: purchase invoices and other creditor bills. A supplier's statement is at the foot." },
   "supplier-discount": { title: "Supplier Discount", explain: "Discounts and credits received from suppliers." },
   odebtor: { title: "Other Debtors", explain: "Parties other than customers who owe us." },
-  odebtorbills: { title: "Other Debtor Bills", explain: "Bills raised to parties other than customers. A customer's statement is at the foot." },
+  arinvoices: { title: "AR Invoices", explain: "Everything owed to us on paper in one list: sales invoices and other debtor bills. Receive opens Receipts with the document ticked. A customer's statement is at the foot." },
+  // The old address renders AR Invoices (2026-10-21).
+  odebtorbills: { title: "AR Invoices", explain: "Everything owed to us on paper in one list: sales invoices and other debtor bills. Receive opens Receipts with the document ticked. A customer's statement is at the foot." },
   odebtorpay: { title: "Other Debtor Receipts", explain: "Money in from parties other than customers." },
   ocreditor: { title: "Other Creditors", explain: "Parties other than suppliers that we owe." },
   ocreditorbills: { title: "Other Creditor Bills", explain: "Bills from parties other than suppliers." },
