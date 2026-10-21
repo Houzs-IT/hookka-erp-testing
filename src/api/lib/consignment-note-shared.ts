@@ -10,10 +10,13 @@ import {
 // rather than a batch, so it uses the best-effort recorder — see the note on
 // recordFgStockEvents for why that trade is made HERE and nowhere else.
 import {
+  buildFgStockEventStatements,
+  ensureFgStockEventsSchema,
   loadFgUnitsForEvent,
   recordFgStockEvents,
   SYSTEM_ACTOR,
 } from "./fg-stock-events";
+import { memoizeSelfApply, runSelfApply } from "./self-apply";
 
 // ---------------------------------------------------------------------------
 // Shared row types + mappers for the consignment_notes / consignment_items
@@ -437,6 +440,171 @@ export const CN_VALID_TRANSITIONS: Record<string, string[]> = {
   CLOSED: ["CLOSED", "FULLY_SOLD"],
   RETURNED: ["RETURNED", "ACTIVE"],
 };
+
+// ---------------------------------------------------------------------------
+// T-006 R4 — when a CN-sourced invoice dies (void or DRAFT delete), hand the
+// consignment note back. convert-to-invoice has no status gate, so the status
+// to restore is recorded per conversion in status_before_conversion (mig 0248).
+// Migrations are inert on deploy: convert awaits this self-apply before its
+// batch. The release path reads with SELECT * so it needs no DDL — a missing
+// column simply reads as "unknown prior status" and the release refuses.
+// ---------------------------------------------------------------------------
+let _cnStatusBeforeConversionMig: Promise<void> | null = null;
+export function ensureCnStatusBeforeConversionColumn(db: D1Database): Promise<void> {
+  return memoizeSelfApply(
+    () => _cnStatusBeforeConversionMig,
+    (p) => (_cnStatusBeforeConversionMig = p),
+    () =>
+      runSelfApply(db, "consignment-notes", [
+        "ALTER TABLE consignment_notes ADD COLUMN IF NOT EXISTS status_before_conversion TEXT",
+      ]),
+  );
+}
+
+// Marker raised INSIDE the batch when the CN moved on between the read below
+// and the write. The route maps it to a 409; the transaction has rolled back.
+export const CN_RELEASE_CONFLICT = "CN_RELEASE_CONFLICT";
+
+export type CnReleaseResult = {
+  statements: D1PreparedStatement[];
+  consignmentOrderId: string | null;
+  // Set when the CN could only be unlinked, not restored. The caller writes it
+  // as an audit_events row (resource consignment-notes) in the same batch.
+  unlinked: { cnId: string; noteNo: string; status: string | null; reason: string } | null;
+};
+
+// Statements to undo convert-to-invoice for `invoiceId`, for the caller to put
+// in the SAME batch as the void/delete — and BEFORE a `DELETE FROM invoices`,
+// whose FK (ON DELETE SET NULL) would otherwise clear convertedInvoiceId first.
+// Not a CN-sourced invoice → no statements.
+//
+// Never guesses a status. When the CN is still FULLY_SOLD from this invoice
+// with its prior status recorded, it is restored. Otherwise (converted before
+// 0248, returned / closed / edited since, or no convert stamp to match by) the
+// void still goes ahead, the CN keeps its status and is only unlinked, and the
+// reason is recorded (owner YH, 2026-10-20). Either way a row-locked guard
+// re-checks the CN inside the batch and aborts it (→ 409) if it changed.
+export async function buildInvoiceDeathCnReleaseStatements(
+  db: D1Database,
+  invoiceId: string,
+): Promise<CnReleaseResult> {
+  const cn = await db
+    .prepare("SELECT * FROM consignment_notes WHERE convertedInvoiceId = ?")
+    .bind(invoiceId)
+    .first<Record<string, unknown>>();
+  if (!cn) return { statements: [], consignmentOrderId: null, unlinked: null };
+  const cnId = String(cn.id);
+  const noteNo = String(cn.noteNumber ?? cn.note_number ?? cnId);
+  const status = (cn.status ?? null) as string | null;
+  const prior = (cn.statusBeforeConversion ?? cn.status_before_conversion ?? null) as string | null;
+  const coId = (cn.consignmentOrderId ?? cn.consignment_order_id ?? null) as string | null;
+
+  // convert-to-invoice stamps ONE `now` on the invoice's created_at, each item
+  // it sold (soldDate), each unit it delivered (deliveredAt) and, if unset, the
+  // CN's deliveredAt — so that stamp picks out exactly what the conversion did.
+  const inv = await db
+    .prepare("SELECT created_at FROM invoices WHERE id = ?")
+    .bind(invoiceId)
+    .first<{ createdAt?: string | null; created_at?: string | null }>();
+  const convertedAt = inv?.createdAt ?? inv?.created_at ?? null;
+
+  const reason =
+    status !== "FULLY_SOLD"
+      ? `the consignment note is ${status ?? "without a status"}, no longer FULLY_SOLD from this invoice`
+      : !prior || !Object.hasOwn(CN_VALID_TRANSITIONS, prior)
+        ? "its status from before the conversion was never recorded (converted before migration 0248)"
+        : !convertedAt
+          ? "the invoice has no creation time to match the conversion's items and units by"
+          : null;
+
+  // Row-locked re-check inside the transaction: the CN must still be in the
+  // state read above. CAST of non-numeric text fails, which aborts the whole
+  // batch (void/delete included). It refers to a column so the planner cannot
+  // fold the ELSE branch away early.
+  const guard = db
+    .prepare(
+      `SELECT CASE WHEN status IS NOT DISTINCT FROM ? AND convertedInvoiceId = ? THEN 1
+                   ELSE CAST('${CN_RELEASE_CONFLICT} ' || id AS INTEGER) END AS ok
+         FROM consignment_notes WHERE id = ? FOR UPDATE`,
+    )
+    .bind(status, invoiceId, cnId);
+
+  if (reason) {
+    return {
+      statements: [
+        guard,
+        db
+          .prepare(
+            `UPDATE consignment_notes
+                SET convertedInvoiceId = NULL, status_before_conversion = NULL
+              WHERE id = ? AND convertedInvoiceId = ?`,
+          )
+          .bind(cnId, invoiceId),
+      ],
+      // The CN's status did not change, so its order has nothing to reopen.
+      consignmentOrderId: null,
+      unlinked: { cnId, noteNo, status, reason },
+    };
+  }
+
+  const statements: D1PreparedStatement[] = [
+    guard,
+    db
+      .prepare(
+        `UPDATE consignment_notes
+            SET status = ?,
+                status_before_conversion = NULL,
+                convertedInvoiceId = NULL,
+                deliveredAt = CASE WHEN deliveredAt = ? THEN NULL ELSE deliveredAt END
+          WHERE id = ? AND status = 'FULLY_SOLD' AND convertedInvoiceId = ?`,
+      )
+      .bind(prior, convertedAt, cnId, invoiceId),
+    db
+      .prepare(
+        `UPDATE consignment_items SET status = 'AT_BRANCH', soldDate = NULL
+          WHERE consignmentNoteId = ? AND status = 'SOLD' AND soldDate = ?`,
+      )
+      .bind(cnId, convertedAt),
+  ];
+  // Read the FROM side with the same predicate the UPDATE uses, so the
+  // ledger records exactly the transition that happens.
+  await ensureFgStockEventsSchema(db);
+  const unitWhere = "cnId = ? AND status = 'DELIVERED' AND deliveredAt = ?";
+  const units = await loadFgUnitsForEvent(db, unitWhere, [cnId, convertedAt]);
+  if (units.length > 0) {
+    statements.push(
+      db
+        .prepare(`UPDATE fg_units SET status = 'LOADED', deliveredAt = NULL WHERE ${unitWhere}`)
+        .bind(cnId, convertedAt),
+      ...buildFgStockEventStatements(db, units, {
+        toStatus: "LOADED",
+        doc: { docType: "CONSIGNMENT_NOTE", docId: cnId, docNo: noteNo },
+        actor: SYSTEM_ACTOR,
+        occurredAt: new Date().toISOString(),
+        note: `Invoice ${invoiceId} voided/deleted — CN conversion undone`,
+        reverses: { docType: "CONSIGNMENT_NOTE", docId: cnId },
+      }),
+    );
+  }
+  return { statements, consignmentOrderId: coId, unlinked: null };
+}
+
+// After the batch lands: a CO that convert marked complete is no longer fully
+// sold. Best-effort, like every other CO cascade in this module.
+export async function reopenConsignmentOrderAfterRelease(
+  db: D1Database,
+  consignmentOrderId: string | null,
+): Promise<void> {
+  if (!consignmentOrderId) return;
+  try {
+    await cascadeCNReversalToCO(db, consignmentOrderId);
+  } catch (err) {
+    console.error(
+      "[invoice void/delete] CO reversal cascade failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
 
 export type UpdateCNResult =
   | { ok: true; note: ConsignmentNoteRow; items: ConsignmentItemRow[] }

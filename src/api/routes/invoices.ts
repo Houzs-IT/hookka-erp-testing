@@ -2386,6 +2386,41 @@ app.get("/:id", async (c) => {
 });
 
 // PUT /api/invoices/:id — update (status transitions, payments, fields)
+// The in-batch guard in buildInvoiceDeathCnReleaseStatements fails with
+// CN_RELEASE_CONFLICT when the consignment note moved on between its read and
+// the write; the whole batch has rolled back by the time this is returned.
+const CN_MOVED_ON_MSG =
+  "The source consignment note changed while this invoice was being voided/deleted — nothing was saved. Reload and try again.";
+
+// T-006 R4 — the CN release's statements, plus the consignment note's History
+// row (audit_events, resource consignment-notes) when it could only be
+// unlinked, not restored (owner YH, 2026-10-20: void anyway, unlink, record why).
+type CnRelease = Awaited<
+  ReturnType<typeof import("../lib/consignment-note-shared").buildInvoiceDeathCnReleaseStatements>
+>;
+async function cnReleaseStatements(
+  c: Parameters<typeof buildAuditStatement>[0],
+  release: CnRelease,
+  invoiceId: string,
+  invoiceNo: string,
+  how: "voided" | "deleted",
+): Promise<D1PreparedStatement[]> {
+  const u = release.unlinked;
+  if (!u) return release.statements;
+  const audit = await buildAuditStatement(c, {
+    resource: "consignment-notes",
+    resourceId: u.cnId,
+    action: "unlink-invoice",
+    before: { status: u.status, convertedInvoiceId: invoiceId },
+    after: {
+      status: u.status,
+      convertedInvoiceId: null,
+      note: `Invoice ${invoiceNo} ${how}: consignment note ${u.noteNo} unlinked, status left as ${u.status ?? "none"} — not restored because ${u.reason}.`,
+    },
+  });
+  return audit ? [...release.statements, audit] : release.statements;
+}
+
 app.put("/:id", async (c) => {
   // RBAC gate (P3.3-followup) — base permission is invoices:update.
   // Sensitive transitions get additional row-level checks below:
@@ -2425,6 +2460,8 @@ app.put("/:id", async (c) => {
 
     // --- validate status transition (same rules as mock-data) ---
     let nextStatus: string = existing.status;
+    // T-006 R4 — set on a void when this invoice came from a consignment note.
+    let cnRelease: CnRelease | null = null;
     if (body.status && body.status !== existing.status) {
       const allowed = INV_VALID_TRANSITIONS[existing.status] || [];
       if (!allowed.includes(body.status)) {
@@ -2453,6 +2490,10 @@ app.put("/:id", async (c) => {
         if (notes.length) {
           return c.json({ success: false, error: issuedNotesLockMessage("cancel", existing.invoiceNo, notes) }, 409);
         }
+        // T-006 R4 — a CN-sourced invoice hands its consignment note back in
+        // the void's own batch (restored, or only unlinked when it cannot be).
+        const { buildInvoiceDeathCnReleaseStatements } = await import("../lib/consignment-note-shared");
+        cnRelease = await buildInvoiceDeathCnReleaseStatements(c.var.DB, id);
       }
     }
 
@@ -3276,6 +3317,12 @@ app.put("/:id", async (c) => {
           })),
         );
       }
+      // …and a CN-sourced invoice's consignment note (T-006 R4), built above.
+      if (cnRelease) {
+        statements.push(
+          ...(await cnReleaseStatements(c, cnRelease, id, existing.invoiceNo, "voided")),
+        );
+      }
 
       // Hide the cancelled invoice's GL legs (original + reversal) so the void
       // doesn't show in the GL — the same effect applyLifecycle gives the
@@ -3298,6 +3345,10 @@ app.put("/:id", async (c) => {
     }
 
     await c.var.DB.batch(statements);
+    if (cnRelease?.consignmentOrderId) {
+      const { reopenConsignmentOrderAfterRelease } = await import("../lib/consignment-note-shared");
+      await reopenConsignmentOrderAfterRelease(c.var.DB, cnRelease.consignmentOrderId);
+    }
 
     // Post-batch: success metrics for the audit / ledger writes that
     // landed atomically with the business mutation. Failures swallowed.
@@ -3313,6 +3364,9 @@ app.put("/:id", async (c) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[PUT /api/invoices/:id] failed:", msg, err);
+    if (msg.includes("CN_RELEASE_CONFLICT")) {
+      return c.json({ success: false, error: CN_MOVED_ON_MSG }, 409);
+    }
     if (err instanceof SyntaxError) {
       return c.json({ success: false, error: "Invalid JSON in request body" }, 400);
     }
@@ -3334,11 +3388,12 @@ app.delete("/:id", async (c) => {
   // also hand its source DO back for re-invoicing, so we need to know what it
   // was billing. See buildInvoiceDeathReleaseStatements below.
   const existing = await c.var.DB.prepare(
-    "SELECT id, status, customerId, totalSen, paidAmount, deliveryOrderId, salesOrderId FROM invoices WHERE id = ?",
+    "SELECT id, invoiceNo, status, customerId, totalSen, paidAmount, deliveryOrderId, salesOrderId FROM invoices WHERE id = ?",
   )
     .bind(id)
     .first<{
       id: string;
+      invoiceNo: string | null;
       status: string;
       customerId: string;
       totalSen: number;
@@ -3359,7 +3414,15 @@ app.delete("/:id", async (c) => {
   // isVoidTransition branch in this file). Done as a batch so DELETE +
   // customer adjustment either both land or both roll back.
   const unpaidSen = existing.totalSen - existing.paidAmount;
+  // T-006 R4 — convert-to-invoice creates a DRAFT, so deleting it must hand
+  // the consignment note back too. Its statements go FIRST: the CN's
+  // convertedInvoiceId FK is ON DELETE SET NULL, so after the DELETE the
+  // release's `convertedInvoiceId = ?` guard would no longer match.
+  const { buildInvoiceDeathCnReleaseStatements, reopenConsignmentOrderAfterRelease } =
+    await import("../lib/consignment-note-shared");
+  const cnRelease = await buildInvoiceDeathCnReleaseStatements(c.var.DB, id);
   const stmts: D1PreparedStatement[] = [
+    ...(await cnReleaseStatements(c, cnRelease, id, existing.invoiceNo ?? id, "deleted")),
     c.var.DB.prepare("DELETE FROM invoices WHERE id = ?").bind(id),
   ];
   if (unpaidSen > 0 && existing.customerId) {
@@ -3387,7 +3450,16 @@ app.delete("/:id", async (c) => {
       })),
     );
   }
-  await c.var.DB.batch(stmts);
+  try {
+    await c.var.DB.batch(stmts);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("CN_RELEASE_CONFLICT")) {
+      return c.json({ success: false, error: CN_MOVED_ON_MSG }, 409);
+    }
+    throw err;
+  }
+  await reopenConsignmentOrderAfterRelease(c.var.DB, cnRelease.consignmentOrderId);
 
   // Deleting an invoice also reverses the customer's outstanding balance, so
   // without this the money moved with no record of who moved it or what the

@@ -1,0 +1,15 @@
+-- 0248_consignment_notes_status_before_conversion.sql
+--
+-- T-006 R4 (ported from staging's 0234, renumbered: 0233/0234 collide on main).
+-- Voiding or deleting a CN-sourced invoice hands the consignment note back to
+-- the status it had BEFORE convert-to-invoice flipped it to FULLY_SOLD.
+-- convert-to-invoice has no status gate, so there is no single prior value to
+-- hardcode — it is recorded per conversion. NULL (converted before this
+-- column existed) means "unknown": the void/delete refuses with a 409 rather
+-- than guessing.
+--
+-- THIS FILE IS A RECORD, NOT THE MECHANISM: migrations do not auto-apply on
+-- deploy in this repo. The real application is the runtime self-apply in
+-- ensureCnStatusBeforeConversionColumn (src/api/lib/consignment-note-shared.ts),
+-- awaited by convert-to-invoice before its batch.
+ALTER TABLE consignment_notes ADD COLUMN IF NOT EXISTS status_before_conversion TEXT;

@@ -341,7 +341,8 @@ test("void and DRAFT-delete both call the release, in their own batch", () => {
   // The DELETE path could not release without knowing what it was billing.
   assert.match(
     INV,
-    /SELECT id, status, customerId, totalSen, paidAmount, deliveryOrderId, salesOrderId FROM invoices WHERE id = \?/,
+    // invoiceNo (2026-10-20): the CN unlink history row names the invoice.
+    /SELECT id, (invoiceNo, )?status, customerId, totalSen, paidAmount, deliveryOrderId, salesOrderId FROM invoices WHERE id = \?/,
   );
 });
 

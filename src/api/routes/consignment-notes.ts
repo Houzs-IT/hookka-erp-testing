@@ -24,6 +24,7 @@ import {
   updateConsignmentNoteById,
   validatePOMutex,
   CN_VALID_TRANSITIONS,
+  ensureCnStatusBeforeConversionColumn,
 } from "../lib/consignment-note-shared";
 import { cascadeCNCompletionToCO, cascadeCNReversalToCO } from "./production-orders";
 import {
@@ -1584,6 +1585,7 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
     // FG stock ledger — read the FROM side with the SAME predicate the flip
     // below uses, before anything is written.
     await ensureFgStockEventsSchema(c.var.DB);
+    await ensureCnStatusBeforeConversionColumn(c.var.DB);
     const soldUnits = await loadFgUnitsForEvent(
       c.var.DB,
       "cnId = ? AND status = 'LOADED'",
@@ -1645,14 +1647,17 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
       ),
       // Flip CN to FULLY_SOLD + link the new invoice id back. Stamp
       // deliveredAt if not already (a sale-conversion implies the goods
-      // reached the customer's hands).
+      // reached the customer's hands). status_before_conversion (T-006 R4)
+      // is what a later void/delete of this invoice restores — recorded as
+      // read, never defaulted: an unknown prior status makes the release refuse.
       c.var.DB.prepare(
         `UPDATE consignment_notes
             SET status = 'FULLY_SOLD',
+                status_before_conversion = ?,
                 deliveredAt = COALESCE(deliveredAt, ?),
                 convertedInvoiceId = ?
           WHERE id = ?`,
-      ).bind(now, invoiceId, id),
+      ).bind(cn.status ?? null, now, invoiceId, id),
       // Mark every CN item SOLD with soldDate=now. The legacy enum allows
       // AT_BRANCH / SOLD / RETURNED / DAMAGED — SOLD is the right tag for
       // the convert-to-invoice action.
