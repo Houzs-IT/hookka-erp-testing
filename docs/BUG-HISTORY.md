@@ -4,6 +4,7 @@
 > **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-350 (branch `feat/fx-confirm-bank`, to main; 347–349 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-348 (branch `fix/hk0109-cn-convert-customers-updated-at`, to main; number reserved for HK-0109); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -272,6 +273,12 @@ Found 2026-10-21: merges of `main` into open PR branches (about 33 staged files)
 Found 2026-10-20 building Confirm bank amount (Currency & FX step 4). The Payment Vouchers popup reads its Ledger entry and bank state from `GET /doc-trail?family=payment_voucher&sourceId=<voucher id>`. An AP Payment writes no ledger legs of its own — at Approve its money posts on the settlement document (a supplier or other-creditor payment) under the voucher's number — so every posted AP Payment showed "Nothing posted yet — a voucher reaches the ledger when it is approved" and no bank state. Measured on prod read-only on one posted AP Payment: 0 legs as a voucher, 2 legs (creditors, bank) as its supplier payment. Nothing wrong was recorded; only the popup missed it.
 
 Fix = an AP voucher's popup asks for `supplier_payment` (or `other_party_payment`) under its number, keyed so it reloads after a bank amount is confirmed. Shipped in #1062; checked on prod read-only the same day — the posted AP Payment it was measured on now shows its two legs and the HLBB bank state. Regression: `tests/fx-confirm-bank.test.mjs`, `tests/pv-popup-form-transfer.test.mjs`, `tests/doc-detail-dblclick.test.mjs`.
+
+## BUG-2026-10-20-348 — CN → invoice convert never worked: it wrote `customers.updated_at`, which does not exist `consignment` `data-integrity` 🟡
+
+HK-0109 (YH, 2026-10-20). Same bug as staging's BUG-2026-09-24-201, whose fix (T-006 R4, `6f242d90`) never reached `main`. Since `7701e1aa` (2026-05-04) `POST /api/consignment-notes/:id/convert-to-invoice` bumps the customer's A/R with `UPDATE customers SET outstandingSen = …, updated_at = ?`, and the CN `/return` A/R refund does the same. `customers` has no `updated_at`: not in `0001_init.sql`, no later migration adds it, and the prod schema snapshot `tests/db-schema.json` does not list it. Both writes sit in one atomic `DB.batch`, so the whole convert (invoice, CN → FULLY_SOLD, items SOLD, units DELIVERED) rolls back, and so does a return on a converted CN. Prod: 22 CNs, none with `convertedInvoiceId` (per the ticket); whether prod's live `customers` has the column is UNMEASURED.
+
+Fix = drop `updated_at` from both `UPDATE customers` in `consignment-notes.ts`, as staging did. Not brought over: staging's release of the CN when its invoice is voided or deleted (owner question on the PR). Regression: `tests/sql-columns-exist.test.mjs` checks every column an `UPDATE customers` sets against the snapshot.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 
