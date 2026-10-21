@@ -12163,6 +12163,31 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     : row.ft ? buildFundTransferVoucher(row.ft, accounts)
     : buildOtherPartyPaymentVoucher(row.ocp!, accounts, (await fetchApPrintDetail(row.ocp!.paymentNo)) ?? undefined);
   const printPayRows = async (list: PayRow[]) => { printVouchers(await Promise.all(list.map(payVoucherOf))); };
+  // Print + files for the ticked rows (owner 2026-10-21 「当我多选print时 payment
+  // voucher 的 print + files 没有按钮，只能一张一张right click print + files」):
+  // ONE print job — each row as Print prints it, a voucher with attachments
+  // followed by them. Any attachment that cannot be rendered stops the whole
+  // print (as for one voucher), and the message names the voucher.
+  const [batchBundleBusy, setBatchBundleBusy] = useState(false);
+  const printPayRowsWithFiles = async (list: PayRow[]) => {
+    setBatchBundleBusy(true);
+    try {
+      const specs: VoucherSpec[] = [];
+      for (const row of list) {
+        const spec = await payVoucherOf(row);
+        if (!row.pv || (row.pv.attachmentCount ?? 0) === 0) { specs.push(spec); continue; }
+        const files = await fetchPvAttachments(row.pv.id);
+        const appendix: { title: string; pages: string[] }[] = [];
+        try {
+          for (const a of files.rows) appendix.push({ title: a.filename, pages: await attachmentToPages(a) });
+        } catch (e) { throw new Error(`${row.no} — ${(e as Error).message}`); }
+        specs.push(appendix.length ? { ...spec, appendix } : spec);
+      }
+      printVouchers(specs);
+    } catch (e) {
+      toast.error(`Bundle not printed — ${(e as Error).message}`);
+    } finally { setBatchBundleBusy(false); }
+  };
   // A foreign row voids / restores through its own document's endpoint — the
   // same call its own page makes (the Receipts hub does exactly this).
   const handleForeignLifecycle = async (row: PayRow, action: "void" | "delete" | "unvoid") => {
@@ -13072,6 +13097,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         count={picked.length}
         onClear={clearPicked}
         onPrint={() => void printPayRows(picked)}
+        onPrintFiles={picked.some((row) => (row.pv?.attachmentCount ?? 0) > 0) ? () => void printPayRowsWithFiles(picked) : undefined}
+        printFilesBusy={batchBundleBusy}
         exportName="payment-vouchers"
         exportAoa={() => [
           ["Door", "PV No", "Date", "Pay To", "Paid From", "Status", "Remarks", "Product Line", "Voucher Total (RM)", "Account Code", "Account Name", "Line Description", "Amount (RM)"],
