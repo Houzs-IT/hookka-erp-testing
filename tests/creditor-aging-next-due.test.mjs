@@ -75,8 +75,11 @@ test("Creditor Aging: three sections in the design's order, Trade Finance by due
   assert.match(ap, /controlDriftNote\(ocControl\.balanceSen - ocTotal\)/);
   assert.match(ap, /\{ label: "Overdue", value: formatCurrency\(overdue\), tone: "err" as const, note: "past the due date" \},/);
   assert.match(ap, /\{ key: "tf", label: "Trade Finance", count: tfList\.length \},/);
-  // The block where draws are managed stays below the list (owner 2026-10-16).
-  assert.ok(ap.indexOf("<AgingListTable") < ap.indexOf("<TradeFinanceBlock />"));
+  // The block under the list left (owner 2026-10-21 「就把那些信息显示在这边」):
+  // a drawdown's figures open under its own row, the repaid ones behind a line.
+  assert.doesNotMatch(ap, /<TradeFinanceBlock \/>/);
+  assert.match(ap, /renderDetail=\{\(r\) => \{\n\s*const d = r\.kind === "tf" \? tfDrawByKey\.get\(r\.key\) : undefined;\n\s*return d \? <TfDrawDetail d=\{d\} editable=\{!at\.isPast\} onSaved=\{reloadTf\} \/> : null;/);
+  assert.match(ap, /groupExtra=\{\(g, cols\) => \(g\.key === "tf" \? <TfRepaidRows draws=\{tfRepaid\} colSpan=\{cols\} editable=\{!at\.isPast\} onSaved=\{reloadTf\} \/> : null\)\}/);
 });
 
 test("the phone's Creditor Aging lists other creditors and the open draws with their next due", () => {
