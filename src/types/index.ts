@@ -1607,6 +1607,9 @@ export type BalanceSheetEntry = {
   category: "CURRENT_ASSET" | "FIXED_ASSET" | "CURRENT_LIABILITY" | "LONG_TERM_LIABILITY" | "EQUITY";
   balance: number;
   asOfDate: string;
+  /** Its Chart of Accounts parent, for the sheet's parent rows (2026-10-21; src/lib/bs-groups.ts). */
+  parentCode?: string | null;
+  parentName?: string | null;
 };
 
 // --- GRN & 3-Way Matching ---

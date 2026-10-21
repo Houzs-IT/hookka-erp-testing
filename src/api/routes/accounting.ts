@@ -9444,7 +9444,8 @@ type AccountingCtx = Context<Env>;
 const REPORT_SNAPSHOT_TABLE = "accounting_report_snapshot";
 // Bump when a view's response SHAPE (or what its figures mean) changes — the
 // freshness probe watches tables, so a code change alone retires no copy.
-const REPORT_SNAPSHOT_V = "v1";
+// v2: the Balance Sheet's accounts carry their Chart of Accounts parent (2026-10-21).
+const REPORT_SNAPSHOT_V = "v2";
 const REPORT_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
 // The P&L replay's tables plus what the statements, the Balance Sheet and the
 // material replay read besides (a table with no timestamp column is skipped by
@@ -11365,13 +11366,14 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
 
   // --- chart of accounts lookup ---
   const coaRes = await c.var.DB.prepare(
-    "SELECT code, name, type, specialAccountType, cashFlowCategory FROM chart_of_accounts",
+    "SELECT code, name, type, specialAccountType, cashFlowCategory, parentCode FROM chart_of_accounts",
   ).all<{
     code: string;
     name: string;
     type: CoaRow["type"];
     specialAccountType: string | null;
     cashFlowCategory: string | null;
+    parentCode: string | null;
   }>();
   const coa = new Map<
     string,
@@ -11380,6 +11382,7 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
       type: CoaRow["type"];
       sat: string | null;
       cf: string | null;
+      parent: string | null;
     }
   >();
   for (const a of coaRes.results ?? [])
@@ -11388,6 +11391,7 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
       type: a.type,
       sat: a.specialAccountType ?? null,
       cf: a.cashFlowCategory ?? null,
+      parent: a.parentCode ?? (a as { parent_code?: string | null }).parent_code ?? null,
     });
 
   // --- ledger legs ---
@@ -11646,6 +11650,10 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
     category: BsSection;
     balance: number;
     asOfDate: string;
+    // The account's Chart of Accounts parent: the sheet nests the accounts
+    // that share one under it (owner 2026-10-21; src/lib/bs-groups.ts).
+    parentCode?: string | null;
+    parentName?: string | null;
   }[] = [];
   const asOf = endYm ? `${endYm}-28` : new Date().toISOString().slice(0, 10);
   const bsOverride = await getBsSectionMap(c.var.DB);
@@ -11678,6 +11686,8 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
     const stockSen = sheetStock?.balances.get(code);
     const shown = stockSen === undefined ? bal : bsSectionClass(section) === "asset" ? stockSen : -stockSen;
     if (shown === 0) continue;
+    const parent = acct.parent ? resolveAcct(acct.parent) : null;
+    const parentCode = parent && parent !== code ? parent : null;
     balanceSheet.push({
       id: code,
       accountCode: code,
@@ -11685,6 +11695,8 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
       category: section,
       balance: shown,
       asOfDate: asOf,
+      parentCode,
+      parentName: parentCode ? coa.get(parentCode)?.name ?? null : null,
     });
   }
   // Account-code order within every section (owner 2026-10-13 「排序按科目编号」);

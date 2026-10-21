@@ -67,7 +67,8 @@ export async function exportReportXlsx(
 
 // Optional per-row styling for the PDF (owner 2026-07-09: doc rows and
 // subtotal rows looked identical, party sections had no visible boundary).
-export type PdfRowKind = "section" | "subtotal" | "grand" | undefined;
+// "group": a parent account's row with its subtotal (the Balance Sheet, 2026-10-21) — bold, no band.
+export type PdfRowKind = "section" | "subtotal" | "grand" | "group" | undefined;
 export type PdfExportOpts = {
   /** Format numeric cells as 1,392.50 (default true — these are money reports). */
   formatNumbers?: boolean;
@@ -146,6 +147,8 @@ export async function exportReportPdf(
       } else if (k === "grand") {
         d.cell.styles.fillColor = [107, 92, 50];
         d.cell.styles.textColor = 255;
+        d.cell.styles.fontStyle = "bold";
+      } else if (k === "group") {
         d.cell.styles.fontStyle = "bold";
       }
     },
