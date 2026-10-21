@@ -96,3 +96,23 @@ test("print bundle: every attachment or nothing; the window waits for images", (
   assert.match(pv, /const pending = imgs\.filter\(\(im\) => !im\.complete\);/);
   assert.match(pv, /w\.setTimeout\(go, 8000\);/);
 });
+
+test("print + files for the ticked vouchers: one print job, each voucher followed by its files (owner 2026-10-21)", () => {
+  const bar = read("src/components/accounting/batch-actions-bar.tsx");
+  assert.match(bar, /onPrintFiles\?: \(\) => void;/);
+  assert.match(bar, /\{props\.onPrintFiles && \(/, "no handler, no button");
+  assert.match(bar, /\{props\.printFilesBusy \? "Preparing…" : "Print \+ files"\}/);
+  // The button shows when a ticked row is a voucher with attachments.
+  assert.match(ui, /onPrintFiles=\{picked\.some\(\(row\) => \(row\.pv\?\.attachmentCount \?\? 0\) > 0\) \? \(\) => void printPayRowsWithFiles\(picked\) : undefined\}/);
+  const fn = ui.slice(ui.indexOf("const printPayRowsWithFiles = async"), ui.indexOf("const handleForeignLifecycle = async"));
+  // Each row prints as Print prints it; only a voucher with files gets an appendix.
+  assert.match(fn, /const spec = await payVoucherOf\(row\);/);
+  assert.match(fn, /if \(!row\.pv \|\| \(row\.pv\.attachmentCount \?\? 0\) === 0\) \{ specs\.push\(spec\); continue; \}/);
+  assert.match(fn, /for \(const a of files\.rows\) appendix\.push\(\{ title: a\.filename, pages: await attachmentToPages\(a\) \}\);/);
+  // Every file or nothing, and the message names the voucher.
+  assert.match(fn, /catch \(e\) \{ throw new Error\(`\$\{row\.no\} — \$\{\(e as Error\)\.message\}`\); \}/);
+  assert.match(fn, /toast\.error\(`Bundle not printed — /);
+  // One print job for all of them.
+  assert.equal(fn.match(/printVouchers\(/g)?.length, 1);
+  assert.match(fn, /printVouchers\(specs\);/);
+});
