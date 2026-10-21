@@ -1,0 +1,15 @@
+-- T-006 R8 — which purchase ORDER LINE a purchase-invoice line bills
+-- (BUG-2026-10-20-356).
+--
+-- The PO invoicing ceiling matched an invoice line to a PO line by
+-- material_code only. A PO line with a blank material code therefore matched
+-- nothing, and an invoice line billing it skipped the ceiling entirely. A line
+-- now carries the PO line id it bills (from the picker, or from the GRN line it
+-- was received on), and the ceiling buckets by it first, material code second.
+--
+-- TEXT, like grn_items.po_item_id. Nullable: fee / tax / manual lines and every
+-- existing row have no PO line.
+--
+-- RECORD ONLY. Migrations do not auto-apply on deploy. The live change is the
+-- runtime self-apply in ensurePiMigrations() (src/api/routes/purchase-invoices.ts).
+ALTER TABLE purchase_invoice_items ADD COLUMN IF NOT EXISTS po_item_id TEXT;

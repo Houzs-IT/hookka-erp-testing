@@ -88,6 +88,8 @@ export type PickedPILine = {
   unitPriceRM: number;
   /** Present ONLY for GRN-source lines. Drives invoiced_qty + line guard. */
   grnItemId: string | null;
+  /** PO-source lines only: the PO LINE billed (T-006 R8). A GRN line's is resolved server-side. */
+  poItemId: string | null;
 };
 
 export type ConvertToPIResult = {
@@ -335,6 +337,7 @@ export function ConvertToPIModal({ open, onClose, onConfirm }: Props) {
           qty: want,
           unitPriceRM: (Number(l.unitPrice) || 0) / 100,
           grnItemId: l.id,
+          poItemId: null,
         });
       }
       if (lines.length === 0) return;
@@ -362,6 +365,7 @@ export function ConvertToPIModal({ open, onClose, onConfirm }: Props) {
           qty: want,
           unitPriceRM: (Number(l.unitPriceSen) || 0) / 100,
           grnItemId: null,
+          poItemId: l.id,
         });
       }
       if (lines.length === 0) return;
