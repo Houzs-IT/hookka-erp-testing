@@ -163,7 +163,7 @@ function CompanySelect({
 
 // =============== TYPES ===============
 
-type TabKey = "overview" | "coa" | "fx" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "contra" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
+type TabKey = "overview" | "coa" | "fx" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "arinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "contra" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
 
 // =============== VOUCHER PRINTING (PV / OR / JV) ===============
 //
@@ -646,6 +646,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "apinvoices", label: "AP Invoices", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "supplier-discount", label: "Supplier Discount", icon: <CreditCard className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtor", label: "Other Debtor", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
+  { key: "arinvoices", label: "AR Invoices", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtorbills", label: "Other Debtor Bills", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtorpay", label: "Other Debtor Receipts", icon: <Wallet className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "ocreditor", label: "Other Creditor", icon: <Building2 className="h-4 w-4" />, group: "Debtor / Creditor" },
@@ -669,7 +670,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
 // The tabs handed the chart of accounts — they wait for it; every other tab
 // fetches its own data and opens at once.
 const TABS_WITH_ACCOUNTS = new Set<TabKey>([
-  "coa", "journals", "gl", "odebtorbills", "odebtorpay", "ocreditorbills", "apinvoices", "ocreditorpay",
+  "coa", "journals", "gl", "odebtorbills", "odebtorpay", "ocreditorbills", "apinvoices", "arinvoices", "ocreditorpay",
   "payments", "receipts", "transfer", "cashbook", "assets", "labor", "opening", "stockmap", "maint", "fx",
 ]);
 
@@ -769,10 +770,18 @@ export default function AccountingPage() {
           {tab === "debtors" && <PartyListTab side="DEBTOR" />}
           {tab === "creditors" && <PartyListTab side="CREDITOR" />}
           {tab === "odebtor" && <OtherPartiesTab side="DEBTOR" />}
-          {/* The customer statement moved here from Debtor Aging (owner 2026-10-20 「customer 放去ar other debtor bill」). */}
+          {/* AR Invoices (owner 2026-10-21): sales invoices + other debtor bills,
+              the customer statement at the foot (it moved here from Debtor Aging
+              on 2026-10-20). The old Other Debtor Bills address lands here too. */}
+          {tab === "arinvoices" && (
+            <div className="space-y-4">
+              <ArInvoicesTab accounts={accounts} />
+              <CustomerStatementCard />
+            </div>
+          )}
           {tab === "odebtorbills" && (
             <div className="space-y-4">
-              <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />
+              <ArInvoicesTab accounts={accounts} />
               <CustomerStatementCard />
             </div>
           )}
@@ -7307,7 +7316,7 @@ type ScanFinanceResult = ScanFinanceDoc & { extraDocs: number; docs?: ScanFinanc
 // `onResult` also receives the scanned file so the caller can keep it as the
 // document's attachment once the form is saved. `allDocs`: the caller uses
 // every receipt in the file (a payment voucher), so there is nothing to warn.
-function ScanPrefillButton({ label, onResult, allDocs }: { label: string; onResult: (d: ScanFinanceResult, file: File) => void | Promise<void>; allDocs?: boolean }) {
+function ScanPrefillButton({ label, onResult, allDocs, startOpen }: { label: string; onResult: (d: ScanFinanceResult, file: File) => void | Promise<void>; allDocs?: boolean; startOpen?: boolean }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -7337,7 +7346,8 @@ function ScanPrefillButton({ label, onResult, allDocs }: { label: string; onResu
   // 2026-07-08: 「我希望是这样点了打开 upload」— same pattern as the PI scan
   // wizard). Drop a PDF/photo into the zone or click it to browse; the modal
   // shows the scanning state and closes itself when the form is prefilled.
-  const [open, setOpen] = useState(false);
+  // startOpen: a page's own Scan Bill button opened this form to scan (AR Invoices).
+  const [open, setOpen] = useState(!!startOpen);
   useEscapeClose(() => { if (!busy) setOpen(false); }, open);
   const startFile = (f: File | undefined) => {
     void onFile(f).then(() => setOpen(false));
@@ -8579,6 +8589,323 @@ function FoldSection({ title, hint, children, defaultOpen = false }: { title: st
   );
 }
 
+// ── AR Invoices (owner 2026-10-21 「我没发现ar invoice 在我的debtor part」 and
+// 「这个other debtor bill 里面…我希望只有bill，然后…ar invoice 一起放进来，像
+// creditor 的ap invoice」 → 「可以」): the debtor twin of AP Invoices — sales
+// invoices (INV, a read-only mirror: double-click opens the invoice's own
+// page, where it is edited or cancelled) and other-debtor bills (OD: New Bill
+// / Scan Bill open the form in a popup; double-click or right-click to print,
+// edit, copy or void). Receive opens Receipts with the document ticked. An
+// invoice dated before the books opened is Before opening — its balance is in
+// the opening balance, as on Debtor Aging. The customer statement is at the
+// foot (the page's render branch).
+type ArInvRow = {
+  kind: "INV" | "OD"; id: string; no: string; customer: string; partyId: string; ref: string; date: string; dueDate: string | null;
+  description: string; totalSen: number; receivedSen: number; outstandingSen: number;
+  status: "OPEN" | "PAID" | "CANCELLED" | "BEFORE_OPENING"; opening: boolean;
+};
+const AR_KIND_CHIPS: { key: "ALL" | "INV" | "OD"; label: string }[] = [
+  { key: "ALL", label: "All" }, { key: "INV", label: "Sales invoices" }, { key: "OD", label: "Other debtor bills" },
+];
+const AR_STATUS_CHIPS: { key: "ALL" | ArInvRow["status"]; label: string }[] = [
+  { key: "ALL", label: "All" }, { key: "OPEN", label: "Open" }, { key: "PAID", label: "Paid" }, { key: "CANCELLED", label: "Cancelled" }, { key: "BEFORE_OPENING", label: "Before opening" },
+];
+const AR_STATUS_LABEL: Record<ArInvRow["status"], string> = { OPEN: "OPEN", PAID: "PAID", CANCELLED: "CANCELLED", BEFORE_OPENING: "BEFORE OPENING" };
+function ArInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
+  const navigate = useNavigate();
+  const parties = useOtherPartiesList();
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  const [ver, setVer] = useState(0);
+  const [billPopup, setBillPopup] = useState<{ mode: "new" | "edit" | "copy"; bill?: OtherPartyBill; scan?: boolean } | null>(null);
+  const [detailBillNo, setDetailBillNo] = useState<string | null>(null);
+  const [bills, setBills] = useState<OtherPartyBill[]>([]);
+  useEffect(() => {
+    let dead = false;
+    fetch("/api/accounting/other-party-bills?type=DEBTOR")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: OtherPartyBill[] }>)
+      .then((j) => { if (!dead && j?.success) setBills(j.data ?? []); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [ver]);
+  const billLifecycle = async (b: OtherPartyBill, action: "void" | "unvoid") => {
+    const verb = action === "unvoid" ? "Restore" : "Void";
+    if (!(await confirm({ title: `${verb} bill?`, message: `${verb} ${b.billNo}?${action === "void" ? " A reversal entry will be posted (nothing is deleted)." : ""}`, danger: true }))) return;
+    const res = await fetch(`/api/accounting/other-party-bills/${encodeURIComponent(b.billNo)}/lifecycle`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+    });
+    const j = asMutationResponse(await res.json());
+    if (j?.success) { toast.success(`${b.billNo} ${action === "void" ? "voided" : "restored"}`); setVer((v) => v + 1); }
+    else toast.error(j?.error || `${verb} failed`);
+  };
+  const [data, setData] = useState<{ rows: ArInvRow[]; totals: { openSen: number; openCount: number; invOpenSen: number; odOpenSen: number } } | null>(null);
+  const [kind, setKind] = useState<"ALL" | "INV" | "OD">("ALL");
+  const [status, setStatus] = useState<"ALL" | ArInvRow["status"]>("ALL");
+  // One load of everything; every filter is client-side (chips carry counts).
+  const [customer, setCustomer] = useState("");
+  useEffect(() => {
+    let dead = false;
+    fetch("/api/accounting/ar-invoices")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: typeof data }>)
+      .then((j) => { if (!dead && j?.success && j.data) setData(j.data); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [ver]);
+  const all = data?.rows ?? [];
+  const passes = (r: ArInvRow, skip?: "kind" | "status") => {
+    if (skip !== "kind" && kind !== "ALL" && r.kind !== kind) return false;
+    if (skip !== "status" && status !== "ALL" && r.status !== status) return false;
+    if (customer && r.customer !== customer) return false;
+    return true;
+  };
+  const rows = useMemo(() => all.filter((r) => passes(r)).map((r) => ({ ...r, key: `${r.kind}-${r.id}` })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads exactly these
+    [all, kind, status, customer]);
+  const kindCount = (k: typeof kind) => all.filter((r) => passes(r, "kind") && (k === "ALL" || r.kind === k)).length;
+  const statusCount = (s: typeof status) => all.filter((r) => passes(r, "status") && (s === "ALL" || r.status === s)).length;
+  const customerOpts = [...new Set(all.map((r) => r.customer).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((s) => ({ value: s, label: s }));
+  const chip = (r: ArInvRow) =>
+    r.status === "PAID" ? "bg-[#EAF3DE] text-[#27500A]" : r.status === "CANCELLED" || r.status === "BEFORE_OPENING" ? "bg-[#F0ECE9] text-[#9CA3AF]" : "bg-[#FBF3E4] text-[#7A5B12]";
+  const openArInv = (r: ArInvRow) => { if (r.kind === "INV") navigate(`/invoices/${encodeURIComponent(r.id)}`); else setDetailBillNo(r.no); };
+  const receiveHref = (r: ArInvRow) => `/accounting?tab=receipts&receive=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId)}`;
+  const billOf = (r: ArInvRow) => (r.kind === "OD" ? bills.find((b) => b.billNo === r.no) : undefined);
+  // Print: a bill as its voucher, a sales invoice as its own PDF (several →
+  // one combined PDF) — the same build the Sales list's Download PDF uses;
+  // anything that could not be loaded is named, not dropped.
+  const printArRows = async (list: ArInvRow[]) => {
+    const odBills = list.map(billOf).filter((b): b is OtherPartyBill => !!b);
+    const unloaded = list.filter((r) => r.kind === "OD" && !billOf(r)).map((r) => r.no);
+    if (odBills.length) printVouchers(odBills.map((b) => buildOtherPartyBillVoucher(b, accounts)));
+    const invs = list.filter((r) => r.kind === "INV");
+    if (invs.length) {
+      type CombinedItem = Parameters<typeof import("@/lib/unified-doc-download").downloadCombinedUnifiedInvoicePdf>[0][number];
+      const loaded = await Promise.all(invs.map(async (r) => {
+        try {
+          const [invRes, exRes] = await Promise.all([
+            fetch(`/api/invoices/${encodeURIComponent(r.id)}`),
+            fetch(`/api/invoices/${encodeURIComponent(r.id)}/print-extras`),
+          ]);
+          const invoice = ((await invRes.json()) as { data?: CombinedItem["invoice"] })?.data ?? null;
+          let extras: CombinedItem["extras"] = undefined;
+          try {
+            const ej = (await exRes.json()) as { success?: boolean; data?: CombinedItem["extras"] };
+            if (ej?.success && ej.data) extras = ej.data;
+          } catch { /* extras are optional — the PDF renders without them */ }
+          return { r, item: invoice ? { invoice, extras } : null };
+        } catch {
+          return { r, item: null };
+        }
+      }));
+      const items = loaded.flatMap((x) => (x.item ? [x.item] : []));
+      unloaded.push(...loaded.filter((x) => !x.item).map((x) => x.r.no));
+      if (items.length) {
+        const { downloadCombinedUnifiedInvoicePdf } = await import("@/lib/unified-doc-download");
+        await downloadCombinedUnifiedInvoicePdf(items, items.length === 1 ? `${invs[0].no}.pdf` : `Invoices-${items.length}.pdf`);
+      }
+    }
+    if (unloaded.length) toast.error(`Not printed — ${unloaded.length} could not be loaded (${unloaded.slice(0, 3).join(", ")}).`);
+  };
+  const [selectedArRows, setSelectedArRows] = useState<(ArInvRow & { key: string })[]>([]);
+  const arInvRowMenu = (r: ArInvRow): RowMenuGroups => {
+    const b = billOf(r);
+    const voided = !!b && ((b.lifecycleState ?? "ACTIVE") !== "ACTIVE" || b.status === "VOID");
+    return [
+      [
+        { label: r.kind === "INV" ? "Open the invoice" : "Open the bill", action: () => openArInv(r) },
+        { label: "Print", action: () => void printArRows([r]) },
+      ],
+      b
+        ? [
+            ...(!voided ? [{ label: "Edit", action: () => setBillPopup({ mode: "edit", bill: b }) }] : []),
+            { label: "Copy", action: () => setBillPopup({ mode: "copy", bill: b }) },
+            voided
+              ? { label: "Unvoid", action: () => void billLifecycle(b, "unvoid") }
+              : { label: "Void", danger: true, action: () => void billLifecycle(b, "void") },
+          ]
+        : [],
+      r.status === "OPEN" && r.partyId ? [{ label: "Receive", action: () => navigate(receiveHref(r)) }] : [],
+    ];
+  };
+  const liveSum = (list: ArInvRow[], pick: (r: ArInvRow) => number) => list.filter((r) => r.status !== "CANCELLED").reduce((t, r) => t + pick(r), 0);
+  const arInvColumns = useMemo<Column<ArInvRow & { key: string }>[]>(() => [
+    {
+      key: "kind", label: "Kind", width: "90px",
+      render: (_v, r) => <><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${r.kind === "INV" ? "bg-[#EEF2FB] text-[#2C4170]" : "bg-[#F6F1E7] text-[#6B5C32]"}`}>{r.kind}</span>{r.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}</>,
+    },
+    {
+      key: "no", label: "No.", type: "docno", width: "130px", noFilter: true,
+      render: (_v, r) => (r.kind === "INV"
+        ? <Link to={`/invoices/${encodeURIComponent(r.id)}`} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32]" title="Open this invoice">{r.no}</Link>
+        : <button type="button" onClick={() => setDetailBillNo(r.no)} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32] cursor-pointer" title="Open this bill">{r.no}</button>),
+    },
+    { key: "customer", label: "Customer / debtor", width: "220px" },
+    { key: "ref", label: "DO / Ref", width: "140px", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.ref}</span> },
+    { key: "date", label: "Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.date}</span> },
+    { key: "dueDate", label: "Due", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.totalSen) },
+    { key: "receivedSen", label: "Received", type: "currency", align: "right", width: "120px", total: (list) => liveSum(list, (r) => r.receivedSen), render: (_v, r) => <span className="tabular-nums text-[#6B7280]">{r.receivedSen ? formatCurrency(r.receivedSen) : "—"}</span> },
+    { key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.outstandingSen), render: (_v, r) => <span className="tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</span> },
+    {
+      key: "status", label: "Status", width: "150px",
+      filterAccessor: (r) => AR_STATUS_LABEL[r.status], exportValue: (r) => AR_STATUS_LABEL[r.status],
+      render: (_v, r) => (
+        <span className="whitespace-nowrap" title={r.status === "BEFORE_OPENING" ? "Dated before the books opened — its balance is in the opening balance, not here" : undefined}>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{AR_STATUS_LABEL[r.status]}</span>
+          {r.status === "OPEN" && r.partyId && (
+            // Receive: opens Receipts with this document ticked.
+            <Link to={receiveHref(r)} className="ml-2 text-[11px] underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B]">receive</Link>
+          )}
+        </span>
+      ),
+    },
+  ], []);
+  return (
+    <div className="space-y-4" data-ar-invoices="">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="outline" size="sm" onClick={() => setBillPopup({ mode: "new", scan: true })} title="Scan a bill — AI prefills the form for your review"><Upload className="h-4 w-4 mr-1.5" /> Scan Bill</Button>
+          <Button variant="outline" size="sm" onClick={() => setBillPopup({ mode: "new" })}><Plus className="h-4 w-4" /> New Bill</Button>
+          <Link to="/accounting?tab=receipts"><Button variant="primary" size="sm">New Receipt</Button></Link>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-[11px] text-[#9CA3AF]">Everything owed to us on paper in one list. <b>INV</b> = sales invoices, a read-only mirror — double-click opens the invoice on Sales&apos; page, where it is edited or cancelled; <b>OD</b> = other-debtor bills (New Bill / Scan Bill open the form; double-click or right-click a bill to print / edit / copy / void it). Receive opens Receipts with it ticked. An invoice dated before the books opened is <b>Before opening</b>: its balance is in the opening balance, as on Debtor Aging. Tick rows to print them or take them to Excel.</p>
+      {data && (
+        <KpiCards
+          items={[
+            { label: "Open · all", value: formatCurrency(data.totals.openSen), note: `${data.totals.openCount} document${data.totals.openCount === 1 ? "" : "s"}` },
+            { label: "Open · sales invoices", value: formatCurrency(data.totals.invOpenSen) },
+            { label: "Open · other debtor bills", value: formatCurrency(data.totals.odOpenSen) },
+          ]}
+        />
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <SegmentedChips
+          options={AR_KIND_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: kindCount(ch.key) }))}
+          value={kind}
+          onChange={setKind}
+        />
+        <SegmentedChips
+          options={AR_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+          value={status}
+          onChange={setStatus}
+        />
+        <div className="w-64">
+          <SearchableSelect value={customer} onChange={setCustomer} options={customerOpts} placeholder="All customers / debtors" allowClear />
+        </div>
+      </div>
+      {/* Tick rows → print them (bills as vouchers, invoices as their PDF) or take them to Excel. */}
+      <BatchActionsBar
+        count={selectedArRows.length}
+        onPrint={() => void printArRows(selectedArRows)}
+        exportName="ar-invoices"
+        exportAoa={() => [
+          ["Kind", "No.", "Customer / debtor", "DO / Ref", "Date", "Due", "Description", "Total (RM)", "Received (RM)", "Outstanding (RM)", "Status"],
+          ...selectedArRows.map((r) => [
+            r.kind, r.no, r.customer, r.ref, r.date, r.dueDate ?? "", r.description,
+            r.totalSen / 100, r.receivedSen / 100, r.outstandingSen / 100, AR_STATUS_LABEL[r.status],
+          ]),
+        ]}
+      />
+      <Card>
+        <CardContent className="p-0">
+          <DataGrid
+            columns={arInvColumns}
+            data={rows}
+            keyField="key"
+            gridId="accounting-ar-invoices"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setSelectedArRows}
+            onDoubleClick={openArInv}
+            contextMenuItems={(r) => rowMenuItems(arInvRowMenu(r))}
+            rowClassName={(r) => (r.status === "CANCELLED" || r.status === "BEFORE_OPENING" ? "opacity-50" : "")}
+            searchPlaceholder="Search no / customer / ref / description"
+            alwaysSearchKeys={["no", "customer", "ref", "description"]}
+            headerMenu
+            reorderableHeaders
+            exportName="AR Invoices"
+            footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">of {all.length} · cancelled not counted</span></>}
+            emptyMessage="Nothing matches"
+            loading={data === null}
+            maxHeight="calc(100vh - 320px)"
+          />
+        </CardContent>
+      </Card>
+
+      {detailBillNo && (() => {
+        const b = bills.find((x) => x.billNo === detailBillNo);
+        if (!b) return null;
+        const close = () => setDetailBillNo(null);
+        const voided = (b.lifecycleState ?? "ACTIVE") !== "ACTIVE" || b.status === "VOID";
+        return (
+          <DocDetailModal
+            title={`Other debtor bill ${b.billNo}`}
+            badges={<span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${voided ? "bg-[#F0ECE9] text-[#9CA3AF]" : b.outstandingSen > 0 ? "bg-[#FBF3E4] text-[#7A5B12]" : "bg-[#EAF3DE] text-[#27500A]"}`}>{voided ? "VOID" : b.outstandingSen > 0 ? "OPEN" : "PAID"}</span>}
+            onClose={close}
+            wide
+            actions={<>
+              <Button variant="outline" size="sm" onClick={() => printVoucher(buildOtherPartyBillVoucher(b, accounts))}><Printer className="h-4 w-4" /> Print</Button>
+              {(b.attachmentCount ?? 0) > 0 && (
+                <Button variant="outline" size="sm" onClick={() => void printBillWithFiles(b, accounts).catch((e: Error) => toast.error(`Not printed — ${e.message}`))}><Printer className="h-4 w-4" /> Print + files</Button>
+              )}
+              {!voided && <Button variant="outline" size="sm" onClick={() => { close(); setBillPopup({ mode: "edit", bill: b }); }}>Edit</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); setBillPopup({ mode: "copy", bill: b }); }}>Copy</Button>
+              {!voided && b.outstandingSen > 0 && <Button variant="outline" size="sm" onClick={() => { close(); navigate(`/accounting?tab=receipts&receive=OD:${encodeURIComponent(b.id)}:${encodeURIComponent(b.partyId)}`); }}>Receive</Button>}
+              {!voided
+                ? <Button variant="outline" size="sm" onClick={() => { close(); void billLifecycle(b, "void"); }}>Void</Button>
+                : <Button variant="outline" size="sm" onClick={() => { close(); void billLifecycle(b, "unvoid"); }}>Unvoid</Button>}
+            </>}
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <DetailField label="Debtor" span={2}>{b.partyName || "—"}</DetailField>
+              <DetailField label="Bill date">{fmtDocDate(b.billDate) || "—"}</DetailField>
+              <DetailField label="Reference">{b.referenceNo || "—"}</DetailField>
+              <DetailField label="Description" span={4}>{b.description || "—"}</DetailField>
+              <DetailField label="Total"><span className="tabular-nums">{formatCurrency(b.totalSen)}</span></DetailField>
+              <DetailField label="Received"><span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span></DetailField>
+              <DetailField label="Outstanding"><span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span></DetailField>
+              {b.isOpening && <DetailField label="Kind">Opening balance</DetailField>}
+            </div>
+            <div className="border border-[#E2DDD8] rounded-md overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Account</th><th className="text-left px-3 py-1.5 font-medium">Description</th><th className="text-right px-3 py-1.5 font-medium">Amount</th></tr></thead>
+                <tbody>
+                  {b.items.map((it, i) => (
+                    <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap">{accountLabel(accounts, it.counterAccount)}</td><td className="px-3 py-1.5 text-[#6B7280]">{it.description || "—"}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(it.amountSen)}</td></tr>
+                  ))}
+                  {b.taxSen ? <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5" colSpan={2}>Tax / SST</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(b.taxSen)}</td></tr> : null}
+                  <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(b.totalSen)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <BillAttachmentsBlock bill={b} onChanged={() => setVer((v) => v + 1)} />
+          </DocDetailModal>
+        );
+      })()}
+
+      {billPopup && (
+        // Deliberately NOT closed by a click outside — a half-filled bill must
+        // not vanish; ✕ or Cancel closes it.
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-start justify-center overflow-y-auto p-4">
+          <div className="bg-[#F7F5F2] rounded-lg shadow-xl w-full max-w-5xl my-8 p-4 space-y-3" role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-[#1F1D1B]">{billPopup.mode === "new" ? "New other debtor bill" : billPopup.mode === "edit" ? `Edit ${billPopup.bill?.billNo ?? ""}` : `Copy of ${billPopup.bill?.billNo ?? ""}`}</h2>
+              <button onClick={() => setBillPopup(null)} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none" aria-label="Close">✕</button>
+            </div>
+            <OtherPartyBillsManager
+              key={`${billPopup.mode}:${billPopup.bill?.billNo ?? "new"}:${billPopup.scan ? "scan" : ""}`}
+              parties={parties}
+              accounts={accounts}
+              side="DEBTOR"
+              formOnly={{ mode: billPopup.mode, bill: billPopup.bill, scan: billPopup.scan, onDone: () => { setBillPopup(null); setVer((v) => v + 1); } }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OtherPartyBillsTab({ accounts, side }: { accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR" }) {
   const parties = useOtherPartiesList();
   return (
@@ -8619,7 +8946,7 @@ type OtherPartyBill = {
 // pop out 出来给我填」): AP Invoices hosts the manager in formOnly mode — no
 // list, no toolbar toggle, the form open from the first render; onDone closes
 // the popup (after a save or on Cancel).
-type BillPopupSpec = { mode: "new" | "edit" | "copy"; bill?: OtherPartyBill; onDone: () => void };
+type BillPopupSpec = { mode: "new" | "edit" | "copy"; bill?: OtherPartyBill; onDone: () => void; scan?: boolean };
 // One builder for the Edit / Copy prefill (and the popup's first render).
 // Copy starts a fresh bill: today's date, no reference, never an opening.
 function billFormFrom(b: OtherPartyBill, mode: "edit" | "copy", today: string) {
@@ -9018,7 +9345,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} />}
+        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} startOpen={!!formOnly?.scan} />}
         {!formOnly && <Button variant="primary" size="sm" onClick={() => {
           if (editingBillNo) {
             setEditingBillNo(null);
@@ -9405,17 +9732,19 @@ type PaymentGroup = {
 // payment in place (same number) — remount with a key so the state seeds
 // once; the bills it paid come back into the list at their pre-payment
 // outstanding so they stay re-allocatable.
-function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCancelEdit, copyFrom = null }: {
+function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCancelEdit, copyFrom = null, receiveFor = null }: {
   parties: OtherParty[]; accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR";
   editing: PaymentGroup | null; onSaved: () => void; onCancelEdit: () => void;
   /** Duplicate (owner 2026-10-20): a NEW one for the same party and bank —
    *  never its knock-offs (the bills are ticked again). Saving it closes the form. */
   copyFrom?: PaymentGroup | null;
+  /** Receive (owner 2026-10-21, AR Invoices): a NEW one for this party with this bill ticked in full. */
+  receiveFor?: { partyId: string; billId: string } | null;
 }) {
   const { toast } = useToast();
   const today = new Date().toISOString().slice(0, 10);
   const banks = accounts.filter((a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH");
-  const [partyId, setPartyId] = useState(editing?.partyId ?? copyFrom?.partyId ?? "");
+  const [partyId, setPartyId] = useState(editing?.partyId ?? copyFrom?.partyId ?? receiveFor?.partyId ?? "");
   const [bankAccountSel, setBankAccountSel] = useState(editing?.bankAccount ?? copyFrom?.bankAccount ?? "");
   const bankAccount = bankAccountSel || defaultBankCode(banks);
   const [date, setDate] = useState(editing?.date || today);
@@ -9428,6 +9757,7 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
   const [rows, setRows] = useState<Record<string, { amountStr: string; full: boolean }>>(() => {
     const seeded: Record<string, { amountStr: string; full: boolean }> = {};
     for (const l of editing?.lines ?? []) if (l.amountSen > 0) seeded[l.billId] = { amountStr: (l.amountSen / 100).toFixed(2), full: false };
+    if (!editing && receiveFor) seeded[receiveFor.billId] = { amountStr: "", full: true };
     return seeded;
   });
   const [posting, setPosting] = useState(false);
@@ -11226,6 +11556,15 @@ function DocAttachmentsBlock({ base, docNo, voided, lockedNote, onChanged }: {
 }
 
 // ?pay=<PI|AP>:<docId>:<partyId> — the "Pay" deep-link from AP Invoices.
+// Receive (owner 2026-10-21, AR Invoices): ?receive=INV:<invoiceId>:<customerId>
+// or OD:<billId>:<partyId> opens Receipts with that document ticked.
+function parseReceiveLink(raw: string | null): { kind: "INV" | "OD"; docId: string; partyId: string } | null {
+  if (!raw) return null;
+  const [kind, docId, partyId] = raw.split(":");
+  if ((kind !== "INV" && kind !== "OD") || !docId || !partyId) return null;
+  return { kind, docId, partyId };
+}
+
 function parsePayLink(raw: string | null): { docKind: "PI" | "AP"; docId: string; partyId: string } | null {
   if (!raw) return null;
   const [docKind, docId, partyId] = raw.split(":");
@@ -13251,8 +13590,12 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     return () => { dead = true; };
   }, [ver]);
 
+  // Receive from AR Invoices (2026-10-21): the door opens on that document. Read once.
+  const [receiveLink] = useState(() => parseReceiveLink(new URLSearchParams(window.location.search).get("receive")));
+  const [custReceive, setCustReceive] = useState(receiveLink?.kind === "INV" ? { customerId: receiveLink.partyId, invoiceId: receiveLink.docId } : null);
+  const [odReceive, setOdReceive] = useState(receiveLink?.kind === "OD" ? { partyId: receiveLink.partyId, billId: receiveLink.docId } : null);
   // Which form is open: one at a time, like the Payment Vouchers page.
-  const [door, setDoor] = useState<ReceiptKind | null>(null);
+  const [door, setDoor] = useState<ReceiptKind | null>(receiveLink ? (receiveLink.kind === "INV" ? "CUSTOMER" : "OTHER") : null);
   const [custEditing, setCustEditing] = useState<PaymentRecord | null>(null);
   const [odEditing, setOdEditing] = useState<PaymentGroup | null>(null);
   const [orEditing, setOrEditing] = useState<OrRow | null>(null);
@@ -13262,7 +13605,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [custCopy, setCustCopy] = useState<PaymentRecord | null>(null);
   const [odCopy, setOdCopy] = useState<PaymentGroup | null>(null);
   const [orCopy, setOrCopy] = useState<OrRow | null>(null);
-  const clearForms = () => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setCustCopy(null); setOdCopy(null); setOrCopy(null); };
+  const clearForms = () => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setCustCopy(null); setOdCopy(null); setOrCopy(null); setCustReceive(null); setOdReceive(null); };
   const openDoor = (k: ReceiptKind) => { clearForms(); setDoor(door === k ? null : k); };
   const closeDoor = () => { setDoor(null); clearForms(); };
 
@@ -13435,10 +13778,10 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       </FinanceTitleActions>
 
       {door === "CUSTOMER" && (
-        <CustomerReceiptForm key={custEditing?.id ?? (custCopy ? `copy:${custCopy.id}` : "new")} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={custCopy} />
+        <CustomerReceiptForm key={custEditing?.id ?? (custCopy ? `copy:${custCopy.id}` : custReceive ? `receive:${custReceive.invoiceId}` : "new")} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={custCopy} receiveFor={custReceive} />
       )}
       {door === "OTHER" && (
-        <OtherPartyPaymentForm key={odEditing?.paymentNo ?? (odCopy ? `copy:${odCopy.paymentNo}` : "new")} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={odCopy} />
+        <OtherPartyPaymentForm key={odEditing?.paymentNo ?? (odCopy ? `copy:${odCopy.paymentNo}` : odReceive ? `receive:${odReceive.billId}` : "new")} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={odCopy} receiveFor={odReceive} />
       )}
       {door === "OFFICIAL" && (
         <OfficialReceiptForm key={orEditing?.id ?? (orCopy ? `copy:${orCopy.id}` : "new")} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} copyFrom={orCopy} />

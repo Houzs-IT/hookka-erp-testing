@@ -113,7 +113,9 @@ test("statements: same reads and print; v2 list look with the closing balance as
   // The statements moved (owner 2026-10-20): customer → Other Debtor Bills, supplier → AP Invoices.
   assert.doesNotMatch(ar, /<CustomerStatementCard \/>/);
   assert.doesNotMatch(ap, /<SupplierStatementCard \/>/);
-  assert.match(ui, /\{tab === "odebtorbills" && \(\n\s+<div className="space-y-4">\n\s+<OtherPartyBillsTab accounts=\{accounts\} side="DEBTOR" \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  // Since 2026-10-21 the customer statement is at the foot of AR Invoices (the old Other Debtor Bills address lands there).
+  assert.match(ui, /\{tab === "arinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ArInvoicesTab accounts=\{accounts\} \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  assert.match(ui, /\{tab === "odebtorbills" && \(\n\s+<div className="space-y-4">\n\s+<ArInvoicesTab accounts=\{accounts\} \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
   assert.match(ui, /\{tab === "apinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ApInvoicesTab accounts=\{accounts\} \/>\n\s+<SupplierStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
 });
 
