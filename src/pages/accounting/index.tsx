@@ -99,7 +99,8 @@ import { AuditLogTab } from "./tabs/AuditLogTab";
 import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
 import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
-import { TfDrawDetail, TfRepaidRows, type TfDrawRow, type TfSourceRow } from "./tabs/TradeFinanceBlock";
+import { TfDrawDetail, TfRepaidRows, type TfDrawRow, type TfRepaidDraw, type TfSourceRow } from "./tabs/TradeFinanceBlock";
+import { groupBsEntries } from "@/lib/bs-groups";
 import { tfLineSummary } from "@/lib/trade-finance";
 import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
 import { FxTab } from "./tabs/FxTab";
@@ -5588,7 +5589,9 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
     }))
     .sort((a, b) => (a.nextDue ?? "").localeCompare(b.nextDue ?? ""));
   const tfDrawByKey = new Map<string, TfDrawRow>((tfSources ?? []).flatMap((src) => src.draws.map((d) => [`f:${d.drawSourceId}`, d] as const)));
-  const tfRepaid = (tfSources ?? []).flatMap((src) => src.draws.filter((d) => d.outstandingSen <= 0)).sort((a, b) => b.drawDate.localeCompare(a.drawDate));
+  const tfRepaid: TfRepaidDraw[] = (tfSources ?? [])
+    .flatMap((src) => src.draws.filter((d) => d.outstandingSen <= 0).map((d) => ({ ...d, accountCode: src.accountCode, lenderName: src.lenderName })))
+    .sort((a, b) => b.drawDate.localeCompare(a.drawDate));
   // One card per trade-finance line (owner 2026-10-21): what is available
   // under its limit, the limit, what is used and the drawdowns = account check.
   const tfCards = (tfSources ?? []).map((src) => {
@@ -18391,11 +18394,14 @@ function BalanceSheetTab() {
   // Accounts opened in the inline drill, keyed by period + company + account
   // so a new month starts with everything closed.
   const [bsDrillOpen, setBsDrillOpen] = useState<Set<string>>(new Set());
-  // Finance v2 (owner 2026-10-17): DETAIL L1 totals only, L2 sections, L3 every
-  // account (the default), L4 every account with its ledger lines; a heading
-  // click folds or opens one section.
-  const [level, setLevel] = useState(3);
+  // Finance v2 (owner 2026-10-17): DETAIL L1 totals only, L2 sections, then
+  // (parent accounts, owner 2026-10-21) L3 the parents folded to their
+  // subtotals, L4 every account (the default), L5 every account with its
+  // ledger lines; a heading click folds or opens one section, a parent's row
+  // one parent.
+  const [level, setLevel] = useState(4);
   const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
+  const [openGrp, setOpenGrp] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (!edit) return;
     fetch("/api/accounting/bs/section-map")
@@ -18443,7 +18449,11 @@ function BalanceSheetTab() {
   const sheetDiff = leftTotal - rightTotal;
 
   // A section: its heading (folds; a drop target while editing), its accounts,
-  // its total. At L1 only the total shows.
+  // its total. At L1 only the total shows. Accounts that share a Chart of
+  // Accounts parent sit under it (owner 2026-10-21 「这个balance sheet 没有分父子
+  // account？」 → 「可以，做」; groupBsEntries, the Cash Flow's rule): the parent a
+  // row of its own with their subtotal that folds like a section — folded at
+  // L3, open from L4. Edit Layout lists every account on its own.
   const renderBSSection = (
     key: string,
     title: string,
@@ -18462,6 +18472,37 @@ function BalanceSheetTab() {
       );
     }
     const open = edit || (openSec[key] !== undefined ? openSec[key] : level >= 3);
+    // One account (and its ledger lines when opened); under a parent it sits further in.
+    const accountRow = (e: BalanceSheetEntry, underParent: boolean) => {
+      const draggable = edit && e.accountCode !== "NP-CURRENT";
+      // The unclosed-earnings line is the P&L's result, not an account.
+      const canDrill = !edit && e.accountCode !== "NP-CURRENT";
+      const drillKey = `${period}|${company}|${e.accountCode}`;
+      // L5 opens every account's ledger lines; a click then folds one.
+      const drilled = canDrill && (level >= 5 ? !bsDrillOpen.has(drillKey) : bsDrillOpen.has(drillKey));
+      return (
+        <Fragment key={e.id}>
+        <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
+          draggable={draggable}
+          onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
+          onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
+          <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
+          <td style={{ paddingLeft: underParent ? 52 : 32 }}>
+            {canDrill ? (
+              <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
+                onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
+              </button>
+            ) : e.accountName}
+          </td>
+          <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
+        </tr>
+        {drilled && (
+          <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
+        )}
+        </Fragment>
+      );
+    };
     return (
       <>
         <tr data-row="grp" data-fin-drop={edit && dragCode && dragOverSec === section ? "" : undefined}
@@ -18477,36 +18518,24 @@ function BalanceSheetTab() {
           </td>
           <td data-cell="num split" data-neg={!open && total < 0 ? "" : undefined}>{open ? "" : fmtAmt(total)}</td>
         </tr>
-        {open && entries.map((e) => {
-          const draggable = edit && e.accountCode !== "NP-CURRENT";
-          // The unclosed-earnings line is the P&L's result, not an account.
-          const canDrill = !edit && e.accountCode !== "NP-CURRENT";
-          const drillKey = `${period}|${company}|${e.accountCode}`;
-          // L4 opens every account's ledger lines; a click then folds one.
-          const drilled = canDrill && (level >= 4 ? !bsDrillOpen.has(drillKey) : bsDrillOpen.has(drillKey));
+        {open && (edit ? entries.map((e) => accountRow(e, false)) : groupBsEntries(entries).map((it) => {
+          if (it.kind === "line") return accountRow(it.entry, false);
+          const gKey = `${key}>${it.code}`;
+          const gOpen = openGrp[gKey] !== undefined ? openGrp[gKey] : level >= 4;
           return (
-            <Fragment key={e.id}>
-            <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
-              draggable={draggable}
-              onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
-              onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
-              <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
-              <td style={{ paddingLeft: 32 }}>
-                {canDrill ? (
-                  <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
-                    onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                    <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
-                  </button>
-                ) : e.accountName}
-              </td>
-              <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
-            </tr>
-            {drilled && (
-              <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
-            )}
+            <Fragment key={gKey}>
+              <tr data-row="grp" data-bs-parent={it.code} className="cursor-pointer select-none" title={gOpen ? "Click to fold" : "Click to open"}
+                onClick={() => setOpenGrp({ ...openGrp, [gKey]: !gOpen })}>
+                <td data-cell="code">{it.code}</td>
+                <td style={{ paddingLeft: 32 }}>
+                  <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{gOpen ? "▾" : "▸"}</span>{it.name}
+                </td>
+                <td data-cell="num split" data-neg={it.totalSen < 0 ? "" : undefined}>{fmtAmt(it.totalSen)}</td>
+              </tr>
+              {gOpen && it.members.map((e) => accountRow(e, true))}
             </Fragment>
           );
-        })}
+        }))}
         {open && (
           <tr data-row="sub">
             <td />
@@ -18518,14 +18547,23 @@ function BalanceSheetTab() {
     );
   };
 
-  // The download carries the sheet in the same arrangement, every account.
+  // The download carries the sheet in the same arrangement, every account —
+  // a parent's row with its subtotal, its accounts under it (as on screen at L4).
   const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
     const aoa: Aoa = [["Code", "Account", "Amount (RM)"]];
     const kinds: PdfRowKind[] = [];
     const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
     const sec = (title: string, entries: BalanceSheetEntry[], total: number) => {
       push(["", title, ""], "section");
-      for (const e of entries) push([e.accountCode === "NP-CURRENT" ? "" : e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+      for (const it of groupBsEntries(entries)) {
+        if (it.kind === "line") {
+          const e = it.entry;
+          push([e.accountCode === "NP-CURRENT" ? "" : e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+          continue;
+        }
+        push([it.code, `  ${it.name}`, it.totalSen / 100], "group");
+        for (const e of it.members) push([e.accountCode, `      ${e.accountName}`, e.balance / 100], undefined);
+      }
       push(["", `Total ${title.replace("Less: ", "")}`, total / 100], "subtotal");
     };
     sec("Fixed Assets (Net)", fixedAssets, totalFixedAssets);
@@ -18562,10 +18600,10 @@ function BalanceSheetTab() {
           <EditLayoutToggle on={edit} onToggle={() => setEdit((v) => !v)} />
           {!edit && (
             <DetailLevels
-              levels={[1, 2, 3, 4]}
+              levels={[1, 2, 3, 4, 5]}
               value={level}
-              onChange={(L) => { setLevel(L); setOpenSec({}); setBsDrillOpen(new Set()); }}
-              tips={{ 1: "Totals only", 2: "Sections", 3: "Every account", 4: "Every account with its ledger lines" }}
+              onChange={(L) => { setLevel(L); setOpenSec({}); setOpenGrp({}); setBsDrillOpen(new Set()); }}
+              tips={{ 1: "Totals only", 2: "Sections", 3: "Parent accounts", 4: "Every account", 5: "Every account with its ledger lines" }}
             />
           )}
           <DownloadMenu items={downloads} />
@@ -18590,7 +18628,7 @@ function BalanceSheetTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={`Balance Sheet ${asAtLabel}`}
-        note="All figures RM · brackets = negative · stock = the P&L's closing stock · click an account to see the ledger lines behind it"
+        note="All figures RM · brackets = negative · stock = the P&L's closing stock · click an account to see the ledger lines behind it, a parent account to fold its accounts"
       >
         <table data-col-resize="first" data-fin-report className="min-w-[560px]">
           <thead>

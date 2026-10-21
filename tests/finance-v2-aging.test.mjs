@@ -148,8 +148,44 @@ test("Trade Finance in the list: a drawdown's figures open under its row, the re
   assert.match(tf, /export function TfDrawDetail\(\{ d, editable, onSaved \}/);
   assert.match(list, /\{detail != null && \(\n\s*<tr data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">\n\s*<td colSpan=\{cols\} className="py-2\.5 px-4 pl-10">\{detail\}<\/td>/);
   assert.match(tf, /\{open \? "Hide" : "Show"\} \{draws\.length\} repaid drawdown\{draws\.length === 1 \? "" : "s"\}/);
-  assert.match(tf, /<tr key=\{d\.drawSourceId\} data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">/);
+  // Since 2026-10-21 (owner 「这个点开可以优化一下，不好看」) a repaid drawdown is a row like an open one,
+  // with the line's code and lender, opening to the same card.
+  assert.match(tf, /<tr data-tf-repaid-row="" data-fin-nolift=\{isOpen \? "" : undefined\} className="border-b border-\[#F0ECE9\] text-\[#6B7280\]">/);
+  assert.match(tf, /<td className="py-3 px-4 font-mono text-xs whitespace-nowrap">\{d\.accountCode\}<\/td>/);
+  assert.match(tf, /\{isOpen && \(\n\s*<tr data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">\n\s*<td colSpan=\{colSpan\} className="py-2\.5 px-4 pl-10"><TfDrawDetail d=\{d\} editable=\{editable\} onSaved=\{onSaved\} \/><\/td>/);
+  assert.match(ap, /\.flatMap\(\(src\) => src\.draws\.filter\(\(d\) => d\.outstandingSen <= 0\)\.map\(\(d\) => \(\{ \.\.\.d, accountCode: src\.accountCode, lenderName: src\.lenderName \}\)\)\)/);
   assert.match(tf, /fetch\("\/api\/accounting\/trade-finance\/draw-due", \{\n\s*method: "PUT"/);
   assert.match(tf, /`\/api\/accounting\/trade-finance\/\$\{kind === "interest" \? "draw-interest" : "draw-bank-charge"\}`/);
   assert.match(tf, /fetch\("\/api\/accounting\/trade-finance\/setup", \{\n\s*method: "POST"/);
+});
+
+test("the drawdown card (owner 2026-10-21 「这个点开可以优化一下，不好看」): the drawdown on the left, the amount worked as a sum on the right, the due date day-first", () => {
+  const card = tf.slice(tf.indexOf("export function TfDrawDetail("), tf.indexOf("export type TfRepaidDraw"));
+  assert.match(card, /<div className=\{headCls\}>Drawdown<\/div>/);
+  assert.match(card, /<div className=\{headCls\}>Amount \(RM\)<\/div>/);
+  // principal + interest + bank charges − repaid = outstanding, in that order
+  let at = -1;
+  for (const label of ["Principal", "Interest", "Bank charges", "Repaid", "Outstanding"]) {
+    const i = card.indexOf(">" + label + "</span>", at + 1);
+    assert.ok(i > at, label + " in order");
+    at = i;
+  }
+  assert.match(card, /<span className=\{opCls\}>\+<\/span>\n\s*<span className=\{termCls\}>Interest<\/span>/);
+  assert.match(card, /<span className=\{opCls\}>−<\/span>\n\s*<span className=\{termCls\}>Repaid<\/span>/);
+  assert.match(card, /<span className="col-span-3 border-t border-\[#CBD5E1\]" \/>/, "a rule above Outstanding");
+  // The money boxes: text (no spinner), a comma figure reads through the shared parser.
+  assert.equal(card.match(/type="text"\n\s*inputMode="decimal"/g)?.length, 2);
+  assert.doesNotMatch(card, /type="number"/);
+  assert.match(card, /defaultValue=\{moneyText\(d\.interestSen\)\}/);
+  assert.match(card, /if \(e\.target\.value !== moneyText\(d\.interestSen\) && e\.target\.value !== ""\) void saveCharge\("interest", d\.drawSourceId, e\.target\.value, d\.drawDate\);/);
+  // The due date: day-first text over the browser's date box, the calendar on click, saved on leaving.
+  const due = tf.slice(tf.indexOf("function DueDateBox("), tf.indexOf("export function TfDrawDetail("));
+  assert.match(due, /<span>\{value \? formatDateDMY\(value\) : "-"\}<\/span>/);
+  assert.match(due, /onClick=\{\(e\) => \{ try \{ e\.currentTarget\.showPicker\(\); \} catch \{/);
+  assert.match(due, /if \(e\.target\.value !== d\.dueDate\) onSave\(e\.target\.value\);/);
+  assert.match(due, /className="absolute inset-0 h-full w-full cursor-pointer opacity-0"/);
+  assert.match(card, /<DueDateBox key=\{`\$\{d\.drawSourceId\}:due:\$\{d\.dueDate\}`\} d=\{d\} onSave=\{\(ymd\) => \{ void saveDue\(d\.drawSourceId, ymd\); \}\} \/>/);
+  // As at a past date: plain figures, no boxes.
+  assert.match(card, /\) : <span className="tabular-nums">\{d\.dueDate \? formatDateDMY\(d\.dueDate\) : "-"\}<\/span>\}/);
+  assert.match(card, /\) : <span className=\{figCls\}>\{rm\(d\.interestSen\)\}<\/span>\}/);
 });

@@ -77,6 +77,30 @@ test("every SELECTed column exists on the table it is read from", () => {
   assert.deepEqual(bad, [], `\n${bad.join("\n")}\n`);
 });
 
+// HK-0109 / BUG-2026-10-20-348: CN convert-to-invoice and CN /return both set
+// customers.updated_at, a column customers has never had. The write sits in an
+// atomic DB.batch, so the whole convert rolled back. Checked for customers only:
+// every `UPDATE customers SET a = …, b = …` column must exist, either in the
+// snapshot or via a route's own `ALTER TABLE customers ADD COLUMN IF NOT EXISTS`.
+test("every column an UPDATE customers sets exists on customers", () => {
+  const files = walk("src/api").map((f) => [f, readFileSync(f, "utf8")]);
+  const known = new Set(SCHEMA.customers);
+  for (const [, src] of files) {
+    for (const [, col] of src.matchAll(/ALTER TABLE customers ADD COLUMN IF NOT EXISTS (\w+)/gi)) known.add(col);
+  }
+  const bad = [];
+  for (const [file, src] of files) {
+    for (const m of src.matchAll(/UPDATE\s+customers\s+SET\s+([\s\S]+?)\s+WHERE\b/gi)) {
+      for (const [, col] of m[1].matchAll(/(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
+        if (!known.has(physical(col))) {
+          bad.push(`${file}: UPDATE customers SET ${col} → "${physical(col)}" does not exist`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, [], `\n${bad.join("\n")}\n`);
+});
+
 test("the schema snapshot is present and plausible", () => {
   // A truncated or empty snapshot would make the test above pass vacuously.
   const tables = Object.keys(SCHEMA);
