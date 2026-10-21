@@ -37,7 +37,7 @@ test("widths are kept per page/tab and header; a report by its description colum
 });
 
 test("the enhancer: one column changes, the table is the sum of its columns, a colgroup pins them", () => {
-  assert.match(lib, /t\.style\.tableLayout = "fixed";\n  t\.style\.width = `\$\{sumWidths\(widths\)\}px`;\n  t\.style\.minWidth = "0";/);
+  assert.match(lib, /t\.style\.tableLayout = "fixed";\n  t\.style\.width = `\$\{sumWidths\(widths\)\}px`;\n  t\.style\.minWidth = t\.hasAttribute\("data-fin-report"\) \? "0" : "100%";/, "a list never ends short of its box (owner 2026-10-21); a report keeps to its columns");
   assert.match(lib, /widths\[col\] = Math\.max\(MIN_W, startW \+ ev\.clientX - startX\);/);
   assert.match(lib, /style\.width = `\$\{Math\.ceil\(w\)\}px`/, "pinned widths round up");
   assert.doesNotMatch(lib, /requestAnimationFrame\(/, "a background tab still gets its handles");
@@ -91,4 +91,10 @@ test("the General Ledger opens from a drill's link with the account and dates pi
   assert.match(ui, /const glHref = \(account: string, fromYm: string, toYm: string\) =>\n  glLink\(\{ account, fromYm, toDate: monthEnd\(toYm\) \}\);/);
   const lib = read("src/lib/finance-reports.ts");
   assert.match(lib, /return `\/accounting\?tab=gl&account=\$\{encodeURIComponent\(o\.account\)\}&from=\$\{o\.fromYm\}-01&to=\$\{o\.toDate\}`;/);
+});
+
+test("a report narrower than its card closes on the right; a list fills its box (owner 2026-10-21)", () => {
+  const css = read("src/styles/finance-v2.css");
+  assert.match(css, /table\[data-fin-report\]\[data-fin-fit\] > thead > tr > th:last-child,\n\[data-fin-ui\] table\[data-fin-report\]\[data-colw\] > thead > tr > th:last-child \{\n  border-right: 1px solid #CBD5E1;/);
+  assert.match(css, /table\[data-fin-report\]\[data-colw\] > tfoot > tr > td:last-child \{\n  border-right: 1px solid #E7E1D8;/);
 });
