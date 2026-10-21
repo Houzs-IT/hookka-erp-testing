@@ -4797,7 +4797,7 @@ export type SupplierMaterialBinding = {
   materialName: string;
   supplierSku: string;
   unitPrice: number; // sen
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   leadTimeDays: number;
   paymentTerms: string;
   moq: number;
@@ -4813,7 +4813,7 @@ export type PriceHistory = {
   materialCode: string;
   oldPrice: number; // sen
   newPrice: number; // sen
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   changedDate: string;
   changedBy: string;
   reason: string;
@@ -5091,7 +5091,7 @@ export type GoodsInTransit = {
   actualArrival: string | null;
   customsClearanceDate: string | null;
   customsStatus: "N/A" | "PENDING" | "CLEARED" | "HELD";
-  currency: "MYR" | "RMB";
+  currency: "MYR" | "CNY";
   productCost: number;
   shippingCost: number;
   customsDuty: number;
@@ -5148,7 +5148,7 @@ export const goodsInTransit: GoodsInTransit[] = [
     actualArrival: null,
     customsClearanceDate: null,
     customsStatus: "PENDING",
-    currency: "RMB",
+    currency: "CNY",
     productCost: 4500000,
     shippingCost: 350000,
     customsDuty: 225000,
@@ -5236,7 +5236,7 @@ export const goodsInTransit: GoodsInTransit[] = [
     actualArrival: null,
     customsClearanceDate: null,
     customsStatus: "N/A",
-    currency: "RMB",
+    currency: "CNY",
     productCost: 8200000,
     shippingCost: 620000,
     customsDuty: 410000,
@@ -5294,7 +5294,7 @@ export const goodsInTransit: GoodsInTransit[] = [
     actualArrival: null,
     customsClearanceDate: null,
     customsStatus: "HELD",
-    currency: "RMB",
+    currency: "CNY",
     productCost: 1800000,
     shippingCost: 280000,
     customsDuty: 180000,
