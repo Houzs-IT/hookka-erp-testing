@@ -11,9 +11,19 @@ type Props = {
   onClose: () => void;
   title?: string;
   children: ReactNode;
+  /**
+   * Optional (Products Hub v2, 2026-10-21): render no drag handle, no title
+   * row and no content padding, so the caller draws its own header (e.g. an
+   * edge-to-edge photo). `title` still names the dialog for screen readers.
+   * Focus trap, Esc, backdrop close and scroll lock are unchanged.
+   * Omitted = the standard sheet, exactly as before.
+   */
+  bare?: boolean;
+  /** Optional phone top-corner radius; omitted = 20, as before. */
+  phoneRadius?: number;
 };
 
-export function Sheet({ open, onClose, title, children }: Props) {
+export function Sheet({ open, onClose, title, children, bare = false, phoneRadius = 20 }: Props) {
   const { mode, railWidth } = useResponsiveLayout();
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -93,7 +103,7 @@ export function Sheet({ open, onClose, title, children }: Props) {
           width: "100%",
           maxWidth: phone ? M_MAX_WIDTH : mode === "tablet-portrait" ? 560 : 640,
           backgroundColor: M.paper,
-          borderRadius: phone ? "20px 20px 0 0" : 20,
+          borderRadius: phone ? `${phoneRadius}px ${phoneRadius}px 0 0` : 20,
           maxHeight: phone ? "85dvh" : "min(760px, calc(100dvh - 48px))",
           overflowY: "auto",
           paddingBottom: "max(16px, env(safe-area-inset-bottom))",
@@ -101,7 +111,7 @@ export function Sheet({ open, onClose, title, children }: Props) {
         }}
       >
         {/* Drag handle */}
-        <div style={{ display: "flex", justifyContent: "center", paddingTop: 8 }}>
+        {bare ? null : <div style={{ display: "flex", justifyContent: "center", paddingTop: 8 }}>
           <div
             style={{
               width: 40,
@@ -110,9 +120,9 @@ export function Sheet({ open, onClose, title, children }: Props) {
               backgroundColor: M.border,
             }}
           />
-        </div>
+        </div>}
 
-        {title ? (
+        {title && !bare ? (
           <div
             style={{
               display: "flex",
@@ -140,7 +150,7 @@ export function Sheet({ open, onClose, title, children }: Props) {
           </div>
         ) : null}
 
-        <div style={{ padding: "8px 16px 16px" }}>{children}</div>
+        {bare ? children : <div style={{ padding: "8px 16px 16px" }}>{children}</div>}
       </div>
     </div>
   );

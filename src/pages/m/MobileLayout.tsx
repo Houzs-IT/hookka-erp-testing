@@ -36,6 +36,7 @@ import { WarehouseScreen } from "./screens/WarehouseScreen";
 import { ProductionScreen } from "./screens/ProductionScreen";
 import { SalesScreen } from "./screens/SalesScreen";
 import { ProductsScreen } from "./screens/ProductsScreen";
+import { ProductDetailScreen } from "./screens/ProductDetailScreen";
 import { SalesDetailScreen } from "./screens/SalesDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
@@ -160,8 +161,8 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // design v12) — the generic list flattens that signal. Detail route stays
   // generic via productionConfig.detail.
   production: ProductionScreen,
-  // Phone: SKU Master | Catalog hub. Tablet: ProductsScreen renders the
-  // generic ModuleListScreen itself, so tablet is unchanged.
+  // SKU Master | Catalog hub (Products Hub v2) on phone AND tablet; in the
+  // tablet split pane it renders one column beside /m/products/:id.
   products: ProductsScreen,
   // Claude Design `Delivery.dc.html` on phone AND tablet (tabs, cards, Create
   // DO / Packing List, bulk moves); the screen adapts to tablet widths and to
@@ -180,6 +181,8 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   "mail-center": MailThreadScreen,
   // The DO detail with desktop's per-status actions, phone and tablet.
   delivery: DeliveryDetailRoute,
+  // Products Hub v2 SKU detail, phone AND tablet (owner 2026-10-21).
+  products: ProductDetailScreen,
   // PO / GRN / PI detail with desktop's per-status actions.
   procurement: ProcurementDetailRoute,
 };

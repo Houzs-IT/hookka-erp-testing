@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import {
   toHubProduct, buildFamilies, familyCounts, categoryKeys, priceDisplay, seatPrice, seatRows,
   readSofaTier, searchHub, passesFilters, familyPasses, sizeOptions, sortProducts, coverByFamily,
-  fmtMinutes, fmtM3,
+  fmtMinutes, fmtM3, categoryTone, familyKeyOf, familyOfProduct, materialTone, deptLabel, deptRows,
+  pickActiveTemplate, templateDeptRows, templateMaterials, materialLabel, legacyMaterials, bomSource,
 } from "../src/pages/m/lib/products-hub.ts";
 
 const rows = [
@@ -114,4 +115,132 @@ test("spec formatting hides missing values", () => {
   assert.equal(fmtMinutes(0), null);
   assert.equal(fmtM3(1.624), "1.62 m³");
   assert.equal(fmtM3(null), null);
+});
+
+test("Products Hub v2: category tone, unknown categories fall back to neutral", () => {
+  assert.equal(categoryTone("SOFA"), "sofa");
+  assert.equal(categoryTone("BEDFRAME"), "bedframe");
+  assert.equal(categoryTone("ACCESSORY"), "accessory");
+  assert.equal(categoryTone("MATTRESS"), "other");
+  assert.equal(categoryTone(""), "other");
+});
+
+test("Products Hub v2 keeps the price rules: no 'from' price, missing price stays 'none'", () => {
+  // Bedframe keeps both tiers (no minimum collapsed into one), sofa stays the sheet link.
+  assert.deepEqual(priceDisplay(byId("prod-3")), { kind: "bedframe", p1: 129900, p2: 149900 });
+  assert.deepEqual(priceDisplay(byId("prod-1")), { kind: "sofa" });
+  assert.deepEqual(priceDisplay(byId("prod-4")), { kind: "none" });
+  assert.deepEqual(priceDisplay(byId("prod-6")), { kind: "none" });
+});
+
+test("Product Detail: family lookup by id, else by family key", () => {
+  const fams = buildFamilies(products);
+  assert.equal(familyKeyOf("1003(A)-(2S)"), "1003");
+  assert.equal(familyOfProduct(fams, byId("prod-2")).familyKey, "1003");
+  // Deep link before the list holds this SKU: falls back to the family key.
+  assert.equal(familyOfProduct(fams, { id: "prod-x", code: "1052-(SK)" }).familyKey, "1052");
+  assert.equal(familyOfProduct([], byId("prod-1")), null);
+});
+
+test("Product Detail: BOM material tones (fabric / foam / wood / hardware)", () => {
+  assert.equal(materialTone("BM_FABRIC"), "fabric");
+  assert.equal(materialTone("SM_FABRIC"), "fabric");
+  assert.equal(materialTone("B_FILLER"), "foam");
+  assert.equal(materialTone("PLYWOOD"), "wood");
+  assert.equal(materialTone("WD_STRIP"), "wood");
+  assert.equal(materialTone("ACCESSORIES"), "hardware");
+  assert.equal(materialTone("WEBBING"), "hardware");
+  assert.equal(materialTone(""), "hardware");
+});
+
+test("Product Detail: dept rows — labels, bars, and Department Time Total = sum of the rows", () => {
+  assert.equal(deptLabel("FABRIC_SEWING"), "Fabric Sewing");
+  assert.equal(deptLabel(""), "Department");
+  const { rows, totalMinutes } = deptRows([
+    { id: "a", departmentCode: "FRAMING", minutes: 90, category: "" },
+    { id: "b", departmentCode: "UPHOLSTERY", minutes: 120, category: "SOFA" },
+    { departmentCode: "PACKING", minutes: "30" },
+    { departmentCode: "QC", minutes: null },
+  ]);
+  assert.equal(totalMinutes, 240);
+  assert.deepEqual(rows.map((r) => [r.dept, r.minutes, r.pct]), [
+    ["Framing", 90, 75], ["Upholstery", 120, 100], ["Packing", 30, 25], ["Qc", 0, 0],
+  ]);
+  assert.equal(rows[2].id, "PACKING-2");
+  assert.deepEqual(deptRows(undefined), { rows: [], totalMinutes: 0 });
+});
+
+// ---- Active BOM template (GET /api/bom/templates) -----------------------------
+
+const tplResp = (rows) => ({ success: true, data: rows });
+const T = (o) => ({ id: "t", productCode: "1003-(3S)", version: "1", versionStatus: "ACTIVE", effectiveFrom: "2026-01-01", l1Processes: [], wipComponents: [], ...o });
+
+test("BOM template: exact code + ACTIVE, newest effectiveFrom first (empty last) — as the API picks", () => {
+  const resp = tplResp([
+    T({ id: "old", version: "1", effectiveFrom: "2026-01-01" }),
+    T({ id: "new", version: "2", effectiveFrom: "2026-06-01" }),
+    T({ id: "nodate", version: "3", effectiveFrom: "" }),
+    T({ id: "draft", version: "9", versionStatus: "DRAFT", effectiveFrom: "2027-01-01" }),
+    T({ id: "nostatus", version: "8", versionStatus: null, effectiveFrom: "2027-02-01" }),
+  ]);
+  assert.equal(pickActiveTemplate(resp, "1003-(3S)").id, "new");
+  assert.equal(pickActiveTemplate(resp, "1003-(2S)"), null, "never another product's template");
+  assert.equal(pickActiveTemplate(tplResp([T({ productCode: "1003-(3s)" })]), "1003-(3S)"), null, "exact, case-sensitive match");
+  assert.equal(pickActiveTemplate(tplResp([T({ versionStatus: "active" })]), "1003-(3S)").id, "t", "status compared upper-case");
+});
+
+test("BOM template: dept minutes use the API rule (L1 once, WIP × quantity, children on their own) — total = productionTimeMinutes", () => {
+  const t = pickActiveTemplate(tplResp([T({
+    l1Processes: [{ deptCode: "PACKING", dept: "Packing", minutes: 10 }],
+    wipComponents: [
+      { wipCode: "BASE", quantity: 2, processes: [{ deptCode: "FRAMING", minutes: 30 }, { deptCode: "UPHOLSTERY", minutes: 20 }],
+        children: [{ wipCode: "CUSHION", quantity: 3, processes: [{ deptCode: "FOAM", minutes: 5 }, { deptCode: "UPHOLSTERY", minutes: 4 }] }] },
+      { wipCode: "ARM", processes: [{ deptCode: "FRAMING", minutes: 7 }] },
+    ],
+  })]), "1003-(3S)");
+  const { rows, totalMinutes } = templateDeptRows(t);
+  // API: 10 + (30+20)*2 + (5+4)*3 + 7*1 = 144
+  assert.equal(totalMinutes, 144);
+  assert.deepEqual(rows.map((r) => [r.dept, r.minutes]), [["Packing", 10], ["Framing", 67], ["Upholstery", 52], ["Foam", 15]]);
+});
+
+test("BOM template: materials from the WIP components, as stored (not multiplied), with the component as sub-line", () => {
+  const t = pickActiveTemplate(tplResp([T({
+    wipComponents: [{ wipCode: "BASE", quantity: 2, materials: [
+      { name: "Velvet Charcoal", qty: 4.5, unit: "m", autoDetect: "FABRIC" },
+      { code: "PLY-18", name: "Plywood 18mm", qty: 2, unit: "sht" },
+      { name: "Bolt set", qty: 0, unit: "set" },
+    ], children: [{ wipCode: "CUSHION", materials: [{ name: "HD Foam 32kg", qty: 3, unit: "sht" }] }] }],
+  })]), "1003-(3S)");
+  assert.deepEqual(templateMaterials(t).map((m) => [m.title, m.sub, m.qty, m.tone]), [
+    ["Velvet Charcoal", "BASE", "4.5 m", "fabric"],
+    ["Plywood 18mm", "BASE", "2 sht", "wood"],
+    ["Bolt set", "BASE", null, "hardware"],
+    ["HD Foam 32kg", "CUSHION", "3 sht", "foam"],
+  ]);
+});
+
+test("BOM legacy rows: readable category labels, waste, qty; never invented", () => {
+  assert.equal(materialLabel("BM_FABRIC"), "BM Fabric");
+  assert.equal(materialLabel("WD_STRIP"), "WD Strip");
+  assert.equal(materialLabel("PLYWOOD"), "Plywood");
+  assert.deepEqual(
+    legacyMaterials([{ id: "b1", materialCategory: "PLYWOOD", materialName: "Ply 18", qtyPerUnit: 2, unit: "sht", wastePct: 3 }, { materialCategory: "ACCESSORIES" }])
+      .map((r) => [r.title, r.sub, r.qty, r.tone]),
+    [["Ply 18", "Plywood · +3% waste", "2 sht", "wood"], ["Accessories", "Accessories", null, "hardware"]],
+  );
+  assert.deepEqual(legacyMaterials(undefined), []);
+});
+
+test("BOM source: template / none / forbidden (403) / error / loading — never 'none' while unknown", () => {
+  const ok = tplResp([T({})]);
+  assert.equal(bomSource(ok, "1003-(3S)", { error: false, status: null }).kind, "template");
+  assert.equal(bomSource(tplResp([]), "1003-(3S)", { error: false, status: null }).kind, "none");
+  assert.equal(bomSource(tplResp([T({ versionStatus: "DRAFT" })]), "1003-(3S)", { error: false, status: null }).kind, "none");
+  // A stale response for another SKU (mid-navigation) is not "no BOM".
+  assert.equal(bomSource(ok, "1052-(Q)", { error: false, status: null }).kind, "loading");
+  assert.equal(bomSource(undefined, "1003-(3S)", { error: false, status: null }).kind, "loading");
+  assert.equal(bomSource(undefined, "1003-(3S)", { error: true, status: 403 }).kind, "forbidden");
+  assert.equal(bomSource(undefined, "1003-(3S)", { error: true, status: 500 }).kind, "error");
+  assert.equal(bomSource({ success: false, error: "x" }, "1003-(3S)", { error: false, status: null }).kind, "error");
 });

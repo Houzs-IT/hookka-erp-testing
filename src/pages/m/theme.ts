@@ -69,6 +69,43 @@ export const M_ACCENT = {
   plum: { bg: "#F1E6F0", fg: "#6B4A6D" },
 } as const;
 
+/**
+ * Product category tones (Claude Design `Products Hub v2`, owner 2026-10-21).
+ * Theme-aware CSS vars from theme-vars.css: `fg` on `bg` for icon tiles /
+ * pills / rails, `ph` = the no-photo placeholder gradient. `photo` is the
+ * light tone kept in BOTH themes — it sits on a frosted white pill over a
+ * photo, which does not change with the theme.
+ */
+export type CatTone = "sofa" | "bedframe" | "accessory" | "other";
+
+function catTone(k: CatTone, photo: string) {
+  return {
+    fg: `var(--m-cat-${k}-fg)`,
+    bg: `var(--m-cat-${k}-bg)`,
+    ph: `linear-gradient(150deg, var(--m-cat-${k}-ph-from), var(--m-cat-${k}-ph-to))`,
+    photo,
+  };
+}
+
+export const M_CAT: Record<CatTone, { fg: string; bg: string; ph: string; photo: string }> = {
+  sofa: catTone("sofa", "#3E6570"),
+  bedframe: catTone("bedframe", "#6B4A6D"),
+  accessory: catTone("accessory", "#9C6F1E"),
+  other: catTone("other", "#6B7280"),
+};
+
+/**
+ * Product Detail BOM icon tiles (Claude Design `Products Hub v2`): fabric =
+ * plum, foam = teal, wood = ochre — the same hex as the category tones —
+ * hardware / other = neutral tile with the prototype's #4B5260 icon.
+ */
+export const M_MAT = {
+  fabric: { fg: M_CAT.bedframe.fg, bg: M_CAT.bedframe.bg },
+  foam: { fg: M_CAT.sofa.fg, bg: M_CAT.sofa.bg },
+  wood: { fg: M_CAT.accessory.fg, bg: M_CAT.accessory.bg },
+  hardware: { fg: "var(--m-mat-hardware-fg)", bg: M_CAT.other.bg },
+} as const;
+
 /** Positive (up) / negative (down) delta text colours. */
 export const M_DELTA = { up: "#4F7C3A", down: "#9A3A2D" } as const;
 
