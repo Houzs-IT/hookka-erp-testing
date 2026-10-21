@@ -199,8 +199,13 @@ interface DoItem {
   // these, and without them two identical lines are indistinguishable.
   customerPO?: string;
   reference?: string;
+  // HK-0110: delivered minus earlier non-cancelled returns (from do-items).
+  returnableQty?: number;
 }
-type TickState = Record<string, { on: boolean; problem: string }>;
+// qty: how many of the line come back (partial returns); defaults to all
+// that is still returnable. The server cap stays the authority.
+type TickState = Record<string, { on: boolean; problem: string; qty?: number }>;
+const returnableOf = (it: DoItem) => it.returnableQty ?? it.quantity;
 
 function CreateReturnModal({
   initialDoId,
@@ -254,20 +259,26 @@ function CreateReturnModal({
         );
         const j2 = (await r2.json()) as {
           data?: Array<{
+            doItemId?: string;
             productionOrderId?: string;
             customerPO?: string;
             reference?: string;
+            returnableQty?: number;
           }>;
         };
         const refs = new Map(
           (j2?.data ?? []).map((x) => [x.productionOrderId ?? "", x]),
         );
+        const byLine = new Map((j2?.data ?? []).map((x) => [x.doItemId ?? "", x]));
         setItems(
           base.map((it) => {
             const hit = refs.get(it.productionOrderId ?? "");
-            return hit
-              ? { ...it, customerPO: hit.customerPO ?? "", reference: hit.reference ?? "" }
-              : it;
+            const line = byLine.get(it.id);
+            return {
+              ...it,
+              ...(hit ? { customerPO: hit.customerPO ?? "", reference: hit.reference ?? "" } : {}),
+              ...(line && typeof line.returnableQty === "number" ? { returnableQty: line.returnableQty } : {}),
+            };
           }),
         );
       } catch {
@@ -295,6 +306,15 @@ function CreateReturnModal({
       toast.error("Pick a delivered DO and tick at least one problem item.");
       return;
     }
+    const qtyOf = (it: DoItem) => ticked[it.id]?.qty ?? returnableOf(it);
+    const badQty = chosen.find((it) => {
+      const q = qtyOf(it);
+      return !(Number.isFinite(q) && q > 0 && q <= returnableOf(it));
+    });
+    if (badQty) {
+      toast.error(`${badQty.productCode}: return between 1 and ${returnableOf(badQty)}.`);
+      return;
+    }
     // Stamp each returned line "already invoiced?" from the source DO status so
     // the detail page shows it correctly and the office knows a Credit Note is
     // needed (an INVOICED DO's returned line was already billed).
@@ -313,7 +333,7 @@ function CreateReturnModal({
             poNo: it.poNo,
             productCode: it.productCode,
             productName: it.productName,
-            quantity: it.quantity,
+            quantity: qtyOf(it),
             problem: ticked[it.id]?.problem ?? "",
             wasInvoiced,
             sizeLabel: it.sizeLabel ?? "",
@@ -386,10 +406,13 @@ function CreateReturnModal({
                       <input
                         type="checkbox"
                         checked={t.on}
+                        disabled={returnableOf(it) <= 0}
                         onChange={(e) => setTicked((p) => ({ ...p, [it.id]: { ...t, on: e.target.checked } }))}
                       />
                       <b>{it.productCode}</b> <span className="text-[#6B7280]">{it.productName}</span>
-                      <span className="text-gray-400 ml-auto">×{it.quantity}</span>
+                      <span className="text-gray-400 ml-auto">
+                        {returnableOf(it) < it.quantity ? `${returnableOf(it)} of ×${it.quantity} returnable` : `×${it.quantity}`}
+                      </span>
                     </label>
                     {/* Which line IS this? Two identical products on one DO are
                         otherwise the same row twice (owner 2026-07-16: "要不然
@@ -407,6 +430,21 @@ function CreateReturnModal({
                           .filter(Boolean)
                           .join(" · ")}
                       </div>
+                    )}
+                    {t.on && (
+                      <label className="mt-2 flex items-center gap-2 text-xs text-[#6B7280]">
+                        Qty returned
+                        <input
+                          type="number"
+                          min={1}
+                          max={returnableOf(it)}
+                          step={1}
+                          value={t.qty ?? returnableOf(it)}
+                          onChange={(e) => setTicked((p) => ({ ...p, [it.id]: { ...t, qty: Number(e.target.value) } }))}
+                          className="w-20 rounded border border-[#E2DDD8] px-2 py-1 text-sm focus:outline-none focus:border-[#6B5C32]"
+                        />
+                        <span>of {returnableOf(it)}</span>
+                      </label>
                     )}
                     {t.on && (
                       <input
