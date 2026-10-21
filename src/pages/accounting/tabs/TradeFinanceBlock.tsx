@@ -15,13 +15,14 @@
 // line's setup lives in Settings › Trade Finance Lines (TfSetupCard).
 // Amounts are ledger-derived server-side (loadTfDraws).
 // ---------------------------------------------------------------------------
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { moneyFieldToRinggit, firstMoneyFieldError } from "@/lib/money-field";
-import { Landmark } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronRight, Landmark } from "lucide-react";
 import { tfPrincipalSen } from "@/lib/trade-finance";
+import { formatDateDMY } from "@/lib/utils";
 
 export type TfDrawRow = {
   drawSourceId: string;
@@ -99,101 +100,172 @@ function useTfDrawSave(onSaved: () => void) {
   return { saveDue, saveCharge };
 }
 
-const fieldLabel = "block text-[10px] font-semibold uppercase tracking-[.4px] text-[#9CA3AF]";
-const inputCls = "rounded border border-[#E2DDD8] px-1.5 py-0.5 text-[12px] bg-white";
+// The card under an opened drawdown (owner 2026-10-21 「这个点开可以优化一下，
+// 不好看」): the drawdown on the left — paid to, drawn, due date — and the
+// amount on the right worked as a sum, one figure under another: principal +
+// interest + bank charges − repaid = outstanding.
+const headCls = "mb-2.5 text-[10.5px] font-semibold uppercase tracking-[.5px] text-[#9CA3AF]";
+const termCls = "text-[#6B7280]";
+const opCls = "text-center text-[#9CA3AF]";
+// A plain figure sits where an input's text does (1px border + 8px padding).
+const figCls = "pr-[9px] text-right tabular-nums";
+const boxCls = "h-7 rounded-md border border-[#D9D3CA] bg-white text-[12.5px] focus:border-[#6B5C32] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/20";
+const moneyText = (sen: number) => (sen ? rm(sen) : "");
 
-/** One drawdown's figures under its aging row (or a repaid one's): principal,
- *  interest, bank charges, repaid, outstanding, due date — the due date,
- *  interest and bank charges typed in place unless the list is as at a past
- *  date. */
+/** The due date day-first like the rest of the page — the browser's own date
+ *  box follows its language (12/03/2026 for 3 December in an English-US
+ *  Chrome) — with the browser's calendar on click. Saved when it loses focus. */
+function DueDateBox({ d, onSave }: { d: TfDrawRow; onSave: (ymd: string) => void }) {
+  const [value, setValue] = useState(d.dueDate);
+  return (
+    <span data-tf-due="" className="relative inline-flex h-7 w-[136px] items-center justify-between rounded-md border border-[#D9D3CA] bg-white px-2 text-[12.5px] tabular-nums focus-within:border-[#6B5C32] focus-within:ring-2 focus-within:ring-[#6B5C32]/20">
+      <span>{value ? formatDateDMY(value) : "-"}</span>
+      <CalendarDays className="h-3.5 w-3.5 text-[#9CA3AF]" aria-hidden="true" />
+      <input
+        type="date"
+        aria-label="Due date"
+        defaultValue={d.dueDate}
+        onClick={(e) => { try { e.currentTarget.showPicker(); } catch { /* the box still takes typing */ } }}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={(e) => {
+          if (!e.target.value) { e.target.value = d.dueDate; setValue(d.dueDate); return; }
+          if (e.target.value !== d.dueDate) onSave(e.target.value);
+        }}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+      />
+    </span>
+  );
+}
+
+/** One drawdown's figures under its aging row (or a repaid one's): paid to,
+ *  drawn, due date; principal + interest + bank charges − repaid =
+ *  outstanding — the due date, interest and bank charges typed in place
+ *  unless the list is as at a past date. */
 export function TfDrawDetail({ d, editable, onSaved }: { d: TfDrawRow; editable: boolean; onSaved: () => void }) {
   const { saveDue, saveCharge } = useTfDrawSave(onSaved);
   return (
-    <div data-tf-draw={d.drawSourceId} className="flex flex-wrap items-end gap-x-7 gap-y-2 text-xs text-[#374151]">
-      <div><span className={fieldLabel}>Paid supplier</span>{d.paidSupplier || "-"}</div>
-      <div className="text-right"><span className={fieldLabel}>Principal</span><span className="tabular-nums">{rm(tfPrincipalSen(d))}</span></div>
-      <div className="text-right">
-        <span className={fieldLabel}>Interest (RM)</span>
-        {editable ? (
-          // The bank's charged interest — posts to the dedicated INTEREST ON
-          // TRADE FINANCE account and joins the balance.
-          <input
-            key={`${d.drawSourceId}:${d.interestSen}`}
-            type="number"
-            step="0.01"
-            min="0"
-            defaultValue={d.interestSen ? (d.interestSen / 100).toFixed(2) : ""}
-            placeholder="0.00"
-            onBlur={(e) => {
-              const cur = d.interestSen ? (d.interestSen / 100).toFixed(2) : "";
-              if (e.target.value !== cur && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value, d.drawDate);
-            }}
-            className={`w-24 text-right tabular-nums ${inputCls}`}
-          />
-        ) : <span className="tabular-nums">{rm(d.interestSen)}</span>}
-      </div>
-      <div className="text-right">
-        <span className={fieldLabel}>Bank charges (RM)</span>
-        {editable ? (
-          // The bank's charges on the draw — posts to BANK CHARGES and joins the balance.
-          <input
-            key={`${d.drawSourceId}:bc:${d.bankChargeSen}`}
-            type="number"
-            step="0.01"
-            min="0"
-            defaultValue={d.bankChargeSen ? (d.bankChargeSen / 100).toFixed(2) : ""}
-            placeholder="0.00"
-            onBlur={(e) => {
-              const cur = d.bankChargeSen ? (d.bankChargeSen / 100).toFixed(2) : "";
-              if (e.target.value !== cur && e.target.value !== "") void saveCharge("bankCharge", d.drawSourceId, e.target.value);
-            }}
-            className={`w-24 text-right tabular-nums ${inputCls}`}
-          />
-        ) : <span className="tabular-nums">{rm(d.bankChargeSen)}</span>}
-      </div>
-      <div className="text-right"><span className={fieldLabel}>Repaid</span><span className="tabular-nums">{d.repaidSen ? rm(d.repaidSen) : "-"}</span></div>
-      <div className="text-right"><span className={fieldLabel}>Outstanding</span><span className="tabular-nums font-semibold">{rm(d.outstandingSen)}</span></div>
+    <div data-tf-draw={d.drawSourceId} className="inline-flex flex-wrap items-start gap-x-8 gap-y-4 rounded-lg border border-[#E7E1D8] bg-white px-5 py-4 text-[12.5px] text-[#1F2937] shadow-[0_1px_2px_rgba(31,29,27,.06)]">
       <div>
-        <span className={fieldLabel}>Due date</span>
-        {editable ? (
-          // The bank's real maturity date.
-          <input
-            key={`${d.drawSourceId}:due:${d.dueDate}`}
-            type="date"
-            defaultValue={d.dueDate}
-            onBlur={(e) => { if (e.target.value && e.target.value !== d.dueDate) void saveDue(d.drawSourceId, e.target.value); }}
-            className={inputCls}
-          />
-        ) : <span className="tabular-nums">{d.dueDate || "-"}</span>}
+        <div className={headCls}>Drawdown</div>
+        <dl className="grid grid-cols-[auto_auto] items-center gap-x-6 gap-y-2.5">
+          <dt className={termCls}>Paid to</dt>
+          <dd className="font-medium text-[#1F1D1B]">{d.paidSupplier || "-"}</dd>
+          <dt className={termCls}>Drawn</dt>
+          <dd className="tabular-nums">{d.drawDate ? formatDateDMY(d.drawDate) : "-"}<span className="text-[#9CA3AF]"> · {d.drawSourceId}</span></dd>
+          <dt className={termCls}>Due date</dt>
+          <dd>
+            {editable ? (
+              // The bank's real maturity date.
+              <DueDateBox key={`${d.drawSourceId}:due:${d.dueDate}`} d={d} onSave={(ymd) => { void saveDue(d.drawSourceId, ymd); }} />
+            ) : <span className="tabular-nums">{d.dueDate ? formatDateDMY(d.dueDate) : "-"}</span>}
+          </dd>
+        </dl>
+      </div>
+      <div className="border-l border-[#EDE8E1] pl-8">
+        <div className={headCls}>Amount (RM)</div>
+        <div data-tf-sum="" className="grid grid-cols-[10px_auto_124px] items-center gap-x-3 gap-y-2">
+          <span />
+          <span className={termCls}>Principal</span>
+          <span className={figCls}>{rm(tfPrincipalSen(d))}</span>
+          <span className={opCls}>+</span>
+          <span className={termCls}>Interest</span>
+          {editable ? (
+            // The bank's charged interest — posts to the dedicated INTEREST ON
+            // TRADE FINANCE account and joins the balance.
+            <input
+              key={`${d.drawSourceId}:${d.interestSen}`}
+              type="text"
+              inputMode="decimal"
+              aria-label="Interest (RM)"
+              defaultValue={moneyText(d.interestSen)}
+              placeholder="0.00"
+              onBlur={(e) => {
+                if (e.target.value !== moneyText(d.interestSen) && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value, d.drawDate);
+              }}
+              className={`w-full px-2 text-right tabular-nums ${boxCls}`}
+            />
+          ) : <span className={figCls}>{rm(d.interestSen)}</span>}
+          <span className={opCls}>+</span>
+          <span className={termCls}>Bank charges</span>
+          {editable ? (
+            // The bank's charges on the draw — posts to BANK CHARGES and joins the balance.
+            <input
+              key={`${d.drawSourceId}:bc:${d.bankChargeSen}`}
+              type="text"
+              inputMode="decimal"
+              aria-label="Bank charges (RM)"
+              defaultValue={moneyText(d.bankChargeSen)}
+              placeholder="0.00"
+              onBlur={(e) => {
+                if (e.target.value !== moneyText(d.bankChargeSen) && e.target.value !== "") void saveCharge("bankCharge", d.drawSourceId, e.target.value);
+              }}
+              className={`w-full px-2 text-right tabular-nums ${boxCls}`}
+            />
+          ) : <span className={figCls}>{rm(d.bankChargeSen)}</span>}
+          <span className={opCls}>−</span>
+          <span className={termCls}>Repaid</span>
+          <span className={figCls}>{d.repaidSen ? rm(d.repaidSen) : "-"}</span>
+          <span className="col-span-3 border-t border-[#CBD5E1]" />
+          <span />
+          <span className="font-semibold text-[#1F1D1B]">Outstanding</span>
+          <span className={`${figCls} font-semibold text-[#1F1D1B]`}>{rm(d.outstandingSen)}</span>
+        </div>
       </div>
     </div>
   );
 }
 
+/** A repaid drawdown with the line it was drawn on (the row's code and name). */
+export type TfRepaidDraw = TfDrawRow & { accountCode: string; lenderName: string };
+
 /** The drawdowns already repaid, behind one line at the end of the Trade
- *  finance section (rows of a table with `colSpan` columns). */
-export function TfRepaidRows({ draws, colSpan, editable, onSaved }: { draws: TfDrawRow[]; colSpan: number; editable: boolean; onSaved: () => void }) {
+ *  finance section: each a row like an open one with nothing outstanding,
+ *  opening (›) to the same card. `colSpan` = the table's columns (10 with
+ *  Next Due). */
+export function TfRepaidRows({ draws, colSpan, editable, onSaved }: { draws: TfRepaidDraw[]; colSpan: number; editable: boolean; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   if (draws.length === 0) return null;
+  const withDue = colSpan >= 10;
+  const toggle = (id: string) => setOpenRows((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return (
     <>
       <tr data-fin-nolift="" data-tf-repaid="" className="border-b border-[#F0ECE9]">
-        <td colSpan={colSpan} className="py-1.5 px-4">
-          <button type="button" onClick={() => setOpen((v) => !v)} className="text-[12px] text-[#6B5C32] underline decoration-dotted">
+        <td colSpan={colSpan} className="py-2 px-4">
+          <button type="button" onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B5C32] hover:underline">
+            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
             {open ? "Hide" : "Show"} {draws.length} repaid drawdown{draws.length === 1 ? "" : "s"}
           </button>
         </td>
       </tr>
-      {open && draws.map((d) => (
-        <tr key={d.drawSourceId} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6]">
-          <td colSpan={colSpan} className="py-2 px-4 pl-10">
-            <div className="mb-1 text-[11px] text-[#6B7280]">
-              <span className="tabular-nums">{d.drawSourceId}</span> · drawn {d.drawDate} · repaid
-            </div>
-            <TfDrawDetail d={d} editable={editable} onSaved={onSaved} />
-          </td>
-        </tr>
-      ))}
+      {open && draws.map((d) => {
+        const isOpen = openRows.has(d.drawSourceId);
+        return (
+          <Fragment key={d.drawSourceId}>
+            <tr data-tf-repaid-row="" data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] text-[#6B7280]">
+              <td className="py-3 px-4 font-mono text-xs whitespace-nowrap">{d.accountCode}</td>
+              <td className="py-3 px-4">
+                <button type="button" className="inline-flex items-start gap-1.5 text-left" onClick={() => toggle(d.drawSourceId)} title="Show this drawdown's figures">
+                  {isOpen ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
+                  <span className="font-medium">
+                    {d.lenderName}
+                    <span className="block text-[11px] font-normal">{[d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`].filter(Boolean).join(" · ")}</span>
+                  </span>
+                </button>
+              </td>
+              <td className="py-3 px-4"><span className="inline-flex rounded-full bg-[#EAF2EC] px-2 py-0.5 text-[11px] font-medium text-[#3F6B4E]">Repaid</span></td>
+              {withDue ? <td className="py-3 px-4 whitespace-nowrap tabular-nums">{d.dueDate ? formatDateDMY(d.dueDate) : "-"}</td> : null}
+              {[0, 1, 2, 3, 4].map((b) => <td key={b} className="py-3 px-4 text-right">-</td>)}
+              <td className="py-3 px-4 text-right">-</td>
+            </tr>
+            {isOpen && (
+              <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6]">
+                <td colSpan={colSpan} className="py-2.5 px-4 pl-10"><TfDrawDetail d={d} editable={editable} onSaved={onSaved} /></td>
+              </tr>
+            )}
+          </Fragment>
+        );
+      })}
     </>
   );
 }

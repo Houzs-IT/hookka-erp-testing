@@ -99,7 +99,7 @@ import { AuditLogTab } from "./tabs/AuditLogTab";
 import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
 import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
-import { TfDrawDetail, TfRepaidRows, type TfDrawRow, type TfSourceRow } from "./tabs/TradeFinanceBlock";
+import { TfDrawDetail, TfRepaidRows, type TfDrawRow, type TfRepaidDraw, type TfSourceRow } from "./tabs/TradeFinanceBlock";
 import { tfLineSummary } from "@/lib/trade-finance";
 import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
 import { FxTab } from "./tabs/FxTab";
@@ -5588,7 +5588,9 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
     }))
     .sort((a, b) => (a.nextDue ?? "").localeCompare(b.nextDue ?? ""));
   const tfDrawByKey = new Map<string, TfDrawRow>((tfSources ?? []).flatMap((src) => src.draws.map((d) => [`f:${d.drawSourceId}`, d] as const)));
-  const tfRepaid = (tfSources ?? []).flatMap((src) => src.draws.filter((d) => d.outstandingSen <= 0)).sort((a, b) => b.drawDate.localeCompare(a.drawDate));
+  const tfRepaid: TfRepaidDraw[] = (tfSources ?? [])
+    .flatMap((src) => src.draws.filter((d) => d.outstandingSen <= 0).map((d) => ({ ...d, accountCode: src.accountCode, lenderName: src.lenderName })))
+    .sort((a, b) => b.drawDate.localeCompare(a.drawDate));
   // One card per trade-finance line (owner 2026-10-21): what is available
   // under its limit, the limit, what is used and the drawdowns = account check.
   const tfCards = (tfSources ?? []).map((src) => {
