@@ -39,6 +39,7 @@ import {
 
 // ── Source-doc shapes (minimal fields we need for pre-fill) ────────────────
 type POItemShape = {
+  id: string;
   materialCode?: string | null;
   materialName: string;
   supplierSKU?: string | null;
@@ -95,6 +96,11 @@ type PILineDraft = {
    * null = manual line with no PO behind it.
    */
   poId?: string | null;
+  /**
+   * The PO LINE it bills (T-006 R8) — set only when picked off a PO. Lets the
+   * backend cap a line whose material code is blank.
+   */
+  poItemId?: string | null;
 };
 
 function emptyPILine(): PILineDraft {
@@ -107,6 +113,7 @@ function emptyPILine(): PILineDraft {
     taxRM: 0,
     grnItemId: null,
     poId: null,
+    poItemId: null,
   };
 }
 
@@ -254,6 +261,7 @@ function CreatePurchaseInvoicePage() {
             taxRM: 0,
             grnItemId: null,
             poId: po.id,
+            poItemId: it.id,
           }));
           setLines(prefilled.length > 0 ? prefilled : [emptyPILine()]);
         })
@@ -434,16 +442,20 @@ function CreatePurchaseInvoicePage() {
       taxRM: 0,
       grnItemId: l.grnItemId,
       poId: res.purchaseOrderId,
+      poItemId: l.poItemId,
     }));
     setLines((prev) => {
       if (!append) return incoming.length > 0 ? incoming : [emptyPILine()];
       // Drop the blank starter row, and skip a (PO, material) already billed on
       // this invoice so re-picking the same PO cannot double-count it.
       const kept = prev.filter((l) => l.materialName.trim() || l.qty > 0);
-      const seen = new Set(kept.map((l) => `${l.poId ?? ""}:${l.materialCode}`));
+      // Keyed by the PO LINE when known: two blank-code lines are not one line.
+      const lineKey = (l: PILineDraft) =>
+        l.poItemId ? `item:${l.poItemId}` : `${l.poId ?? ""}:${l.materialCode}`;
+      const seen = new Set(kept.map(lineKey));
       return [
         ...kept,
-        ...incoming.filter((l) => !seen.has(`${l.poId ?? ""}:${l.materialCode}`)),
+        ...incoming.filter((l) => !seen.has(lineKey(l))),
       ];
     });
   };
@@ -551,7 +563,13 @@ function CreatePurchaseInvoicePage() {
               // Which PO this line bills — the guard checks each purchase
               // order against its own ceiling, so pooling them would both
               // over-invoice one and wrongly reject another.
-              poId: l.poId ?? sourcePurchaseOrderId ?? null,
+              //
+              // Only a line that really came off a PO says so. A hand-added line
+              // used to be stamped with the source PO too; the backend files it
+              // under the header PO anyway, but would now refuse it as a PO line
+              // with no material code (T-006 R8).
+              poId: l.poId ?? null,
+              poItemId: l.poItemId ?? null,
             };
           });
         })(),

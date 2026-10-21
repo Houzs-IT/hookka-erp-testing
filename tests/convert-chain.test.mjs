@@ -160,3 +160,24 @@ test("story: consume 6, available drops to 4; consume 4, drops to 0; restore 4, 
   consumed -= clampDecrement(consumed, 4);
   assert.equal(availableQty(ordered, consumed), 4);
 });
+
+// T-006 R5 (BUG-2026-10-20-355): only THE invoiced-qty CHECK maps to the
+// "taken by another invoice" 409 — not every 23514.
+test("isGrnInvoicedQtyViolation matches the GRN invoiced-qty CHECK and nothing else", async () => {
+  const { isGrnInvoicedQtyViolation } = await import(
+    pathToFileURL(resolve(process.cwd(), "src/lib/convert-chain.ts")).href
+  );
+  const ours = Object.assign(
+    new Error('new row for relation "grn_items" violates check constraint "chk_grn_items_invoiced_qty"'),
+    { code: "23514" },
+  );
+  assert.equal(isGrnInvoicedQtyViolation(ours), true);
+  assert.equal(isGrnInvoicedQtyViolation({ code: "23514", constraint_name: "chk_grn_items_invoiced_qty", message: "" }), true);
+  const statusCheck = Object.assign(
+    new Error('new row for relation "purchase_invoices" violates check constraint "purchase_invoices_status_check"'),
+    { code: "23514" },
+  );
+  assert.equal(isGrnInvoicedQtyViolation(statusCheck), false, "another CHECK is not a lost GRN race");
+  assert.equal(isGrnInvoicedQtyViolation(new Error("connection reset")), false);
+  assert.equal(isGrnInvoicedQtyViolation(null), false);
+});
