@@ -11,6 +11,8 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { ensureCnyCurrency } from "../lib/currency-checks";
+import { normaliseCurrencyCode } from "../../lib/currency-code";
 
 const app = new Hono<Env>();
 
@@ -21,7 +23,8 @@ type PriceHistoryRow = {
   materialCode: string;
   oldPrice: number;
   newPrice: number;
-  currency: "MYR" | "RMB" | null;
+  // MYR or CNY (the yuan, owner 2026-10-20); an old RMB reads as CNY.
+  currency: string | null;
   changedDate: string;
   // The date the price takes effect (effective-dated model). Older rows
   // predate the column → fall back to changedDate so the log never blanks.
@@ -39,7 +42,7 @@ function rowToHistory(r: PriceHistoryRow) {
     materialCode: r.materialCode,
     oldPrice: r.oldPrice,
     newPrice: r.newPrice,
-    currency: r.currency ?? "MYR",
+    currency: normaliseCurrencyCode(r.currency),
     changedDate: r.changedDate,
     effectiveFrom: r.effectiveFrom ?? r.changedDate,
     changedBy: r.changedBy,
@@ -128,7 +131,7 @@ app.post("/", async (c) => {
       materialCode: String(materialCode),
       oldPrice: Number(oldPrice),
       newPrice: Number(newPrice),
-      currency: body.currency === "RMB" ? "RMB" : "MYR",
+      currency: normaliseCurrencyCode(body.currency) === "CNY" ? "CNY" : "MYR",
       changedDate,
       // Effective date this price takes effect; default to the change date.
       effectiveFrom: body.effectiveFrom ?? changedDate,
@@ -140,6 +143,7 @@ app.post("/", async (c) => {
           ? body.approvalStatus
           : "PENDING",
     };
+    if (row.currency === "CNY") await ensureCnyCurrency(c.var.DB, "price_histories");
     await c.var.DB.prepare(
       `INSERT INTO price_histories (id, bindingId, supplierId, materialCode,
          oldPrice, newPrice, currency, changedDate, effectiveFrom, changedBy,

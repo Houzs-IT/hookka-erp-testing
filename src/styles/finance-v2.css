@@ -420,6 +420,22 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   width: auto;
 }
 
+/* A report narrower than its card closes on the right (owner 2026-10-21
+   「sep2026 旁边没有线条？」): its columns draw only their left line, so the
+   last one had none. A report that fills its card needs none — the card's
+   own border is there. */
+[data-fin-ui] table[data-fin-report][data-fin-fit] > thead > tr > th:last-child,
+[data-fin-ui] table[data-fin-report][data-colw] > thead > tr > th:last-child {
+  border-right: 1px solid #CBD5E1;
+}
+
+[data-fin-ui] table[data-fin-report][data-fin-fit] > tbody > tr > td:last-child,
+[data-fin-ui] table[data-fin-report][data-colw] > tbody > tr > td:last-child,
+[data-fin-ui] table[data-fin-report][data-fin-fit] > tfoot > tr > td:last-child,
+[data-fin-ui] table[data-fin-report][data-colw] > tfoot > tr > td:last-child {
+  border-right: 1px solid #E7E1D8;
+}
+
 /* A zero ("-") reads pale, so the figures stand out. */
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-zero] {
   color: #C4BDB3;

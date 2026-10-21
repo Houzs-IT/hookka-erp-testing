@@ -8,6 +8,8 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { ensureCnyCurrency } from "../lib/currency-checks";
+import { normaliseCurrencyCode } from "../../lib/currency-code";
 
 const app = new Hono<Env>();
 
@@ -28,7 +30,8 @@ type GoodsInTransitRow = {
   actualArrival: string | null;
   customsClearanceDate: string | null;
   customsStatus: "N/A" | "PENDING" | "CLEARED" | "HELD" | null;
-  currency: "MYR" | "RMB" | null;
+  // MYR or CNY (the yuan, owner 2026-10-20); an old RMB reads as CNY.
+  currency: string | null;
   productCost: number;
   shippingCost: number;
   customsDuty: number;
@@ -73,7 +76,7 @@ function rowToGIT(r: GoodsInTransitRow) {
     actualArrival: r.actualArrival,
     customsClearanceDate: r.customsClearanceDate,
     customsStatus: r.customsStatus ?? "N/A",
-    currency: r.currency ?? "MYR",
+    currency: normaliseCurrencyCode(r.currency),
     productCost: r.productCost,
     shippingCost: r.shippingCost,
     customsDuty: r.customsDuty,
@@ -173,7 +176,7 @@ app.post("/", async (c) => {
       actualArrival: body.actualArrival ?? null,
       customsClearanceDate: body.customsClearanceDate ?? null,
       customsStatus: body.customsStatus ?? "N/A",
-      currency: body.currency ?? "MYR",
+      currency: normaliseCurrencyCode(body.currency),
       productCost,
       shippingCost,
       customsDuty,
@@ -183,6 +186,7 @@ app.post("/", async (c) => {
       notes: body.notes ?? "",
     };
 
+    if (row.currency === "CNY") await ensureCnyCurrency(c.var.DB, "goods_in_transit");
     await c.var.DB.prepare(
       `INSERT INTO goods_in_transit (id, poId, poNumber, supplierId, supplierName,
          shippingMethod, containerNumber, trackingNumber, carrierName, status,

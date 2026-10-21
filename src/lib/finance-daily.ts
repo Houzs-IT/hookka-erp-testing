@@ -46,8 +46,8 @@ export function activeTotalSen(rows: { state: string; totalSen: number }[]): num
 }
 
 /** A payment voucher's status pill: the approval ladder, then what an approved
- *  voucher still owes (an open advance, an accrual not yet paid). A legacy row
- *  with no ladder state was posted. */
+ *  voucher still owes (a bank amount to confirm, an open advance, an accrual
+ *  not yet paid). A legacy row with no ladder state was posted. */
 export function pvStatus(v: {
   status?: string | null;
   approvalState?: string | null;
@@ -56,6 +56,9 @@ export function pvStatus(v: {
   settledAt?: string | null;
   rejectReason?: string | null;
   pvNo?: string | null;
+  /** A foreign-currency AP payment posted at the estimated rate whose bank
+   *  amount is not confirmed yet (Currency & FX step 4). */
+  fxPending?: boolean | null;
 }): FinStatus {
   if (v.status === "VOID") return { label: "VOID", tone: "faint" };
   const st = v.approvalState ?? "APPROVED";
@@ -65,6 +68,9 @@ export function pvStatus(v: {
   if (st === "PREPARED") return { label: "Prepared", tone: "info" };
   if (st === "CHECKED") {
     return { label: "Checked · awaiting approval", tone: "warn", title: `Formal No. ${v.pvNo ?? ""} — pending in Daily Cash Position` };
+  }
+  if (v.fxPending) {
+    return { label: "Approved · bank amount pending", tone: "warn", title: "Posted at the payment's rate — confirm the RM the bank debited (right-click → Confirm bank amount)" };
   }
   if ((v.advanceOpenSen ?? 0) > 0) {
     return { label: `${ADVANCE_OPEN} ${formatCurrency(v.advanceOpenSen ?? 0)}`, tone: "warn", group: ADVANCE_OPEN };

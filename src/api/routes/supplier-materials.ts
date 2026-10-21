@@ -12,6 +12,8 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
+import { ensureCnyCurrency } from "../lib/currency-checks";
+import { normaliseCurrencyCode } from "../../lib/currency-code";
 import { getOrgId } from "../lib/tenant";
 
 const app = new Hono<Env>();
@@ -28,7 +30,8 @@ type BindingRow = {
   // Wei Siang 2026-05-10: needed alongside Internal/Supplier code pair.
   supplierDescription: string | null;
   unitPrice: number;
-  currency: "MYR" | "RMB" | null;
+  // MYR or CNY (the yuan, owner 2026-10-20); an old RMB reads as CNY.
+  currency: string | null;
   leadTimeDays: number;
   paymentTerms: string | null;
   moq: number;
@@ -57,7 +60,7 @@ function rowToBinding(r: BindingRow) {
     supplierSku: r.supplierSku,
     supplierDescription: r.supplierDescription ?? "",
     unitPrice: r.unitPrice,
-    currency: r.currency ?? "MYR",
+    currency: normaliseCurrencyCode(r.currency),
     leadTimeDays: r.leadTimeDays,
     paymentTerms: r.paymentTerms ?? "NET30",
     moq: r.moq,
@@ -205,7 +208,7 @@ app.post("/", async (c) => {
       supplierDescription:
         body.supplierDescription != null ? String(body.supplierDescription) : "",
       unitPrice: Number(unitPrice),
-      currency: body.currency === "RMB" ? "RMB" : "MYR",
+      currency: normaliseCurrencyCode(body.currency) === "CNY" ? "CNY" : "MYR",
       // BUG-2026-08-13-154. These were `|| 7` and `|| 1`: leaving the fields
       // blank on the create form stored a lead time and an MOQ the supplier
       // never gave, and `/planning/mrp` then printed them UNDER THE SUPPLIER'S
@@ -226,6 +229,11 @@ app.post("/", async (c) => {
     // Write both effectiveFrom (new) and priceValidFrom (legacy mirror) so the
     // column is populated either way and old reads still resolve. priceValidTo
     // is no longer collected; we leave it NULL going forward.
+    // A CNY price first widens both tables' old ('MYR','RMB') CHECK.
+    if (row.currency === "CNY") {
+      await ensureCnyCurrency(c.var.DB, "supplier_material_bindings");
+      await ensureCnyCurrency(c.var.DB, "price_histories");
+    }
     await c.var.DB.prepare(
       `INSERT INTO supplier_material_bindings (id, supplierId, materialCode,
          materialName, supplierSku, supplierDescription, unitPrice, currency, leadTimeDays,
@@ -344,10 +352,10 @@ app.put("/:id", async (c) => {
           : existing.supplierDescription ?? "",
       unitPrice:
         body.unitPrice !== undefined ? Number(body.unitPrice) : existing.unitPrice,
-      currency:
-        body.currency === "RMB" || body.currency === "MYR"
-          ? body.currency
-          : existing.currency ?? "MYR",
+      currency: (() => {
+        const typed = body.currency === undefined ? "" : normaliseCurrencyCode(body.currency, "");
+        return typed === "MYR" || typed === "CNY" ? typed : normaliseCurrencyCode(existing.currency);
+      })(),
       leadTimeDays:
         body.leadTimeDays !== undefined
           ? Number(body.leadTimeDays)
@@ -362,6 +370,10 @@ app.put("/:id", async (c) => {
             ? 1
             : 0,
     };
+    if (merged.currency === "CNY") {
+      await ensureCnyCurrency(c.var.DB, "supplier_material_bindings");
+      await ensureCnyCurrency(c.var.DB, "price_histories");
+    }
     // Write effectiveFrom (new) and mirror into priceValidFrom (legacy) so the
     // current price record always carries the effective date in both columns.
     await c.var.DB.prepare(

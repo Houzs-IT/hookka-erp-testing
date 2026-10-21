@@ -273,6 +273,7 @@ const navigationGroups: NavGroup[] = [
       {
         name: "Setup", href: "/accounting?tab=coa", icon: Settings, children: [
           { name: "Chart of Accounts", href: "/accounting?tab=coa", icon: List },
+          { name: "Currency & FX", href: "/accounting?tab=fx", icon: Wallet },
           { name: "Stock Mapping", href: "/accounting?tab=stockmap", icon: Boxes },
           { name: "Opening Stock", href: "/accounting?tab=openstock", icon: Scale },
           { name: "Opening Balance", href: "/accounting?tab=opening", icon: Scale },

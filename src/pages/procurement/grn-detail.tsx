@@ -34,6 +34,8 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useCachedJson, invalidateCachePrefix, isUnknownOutcome } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { fetchFxRate } from "@/lib/fx-client";
+import { fmtFxRate } from "@/lib/fx";
 import {
   isGrnLineEditable,
   isGrnLineLockedByPi,
@@ -541,8 +543,11 @@ export default function GRNDetailPage() {
     if (!currency) return;
     let fxRate: number | undefined;
     if (currency !== "MYR") {
+      // The box opens on this month's rate from Setup › Currency & FX (owner
+      // 2026-10-20: a default only — the invoice keeps what is typed).
+      const setup = await fetchFxRate(currency, new Date().toISOString().split("T")[0]);
       const r = parseFloat(
-        window.prompt(`Booking exchange rate — MYR per 1 ${currency} (invoice-date rate):`, "") || "",
+        window.prompt(`Booking exchange rate — MYR per 1 ${currency} (invoice-date rate):`, setup !== null ? fmtFxRate(setup) : "") || "",
       );
       if (!Number.isFinite(r) || r <= 0) {
         toast.error("A positive exchange rate is required for a foreign invoice");
@@ -1264,7 +1269,7 @@ export default function GRNDetailPage() {
                         className="flex h-10 w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/20 focus:border-[#6B5C32]"
                       >
                         <option value="">MYR (default)</option>
-                        <option value="RMB">RMB</option>
+                        <option value="CNY">CNY</option>
                         <option value="USD">USD</option>
                         <option value="EUR">EUR</option>
                       </select>
