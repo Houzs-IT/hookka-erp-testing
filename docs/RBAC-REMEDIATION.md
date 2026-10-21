@@ -1,5 +1,6 @@
 # RBAC Remediation — current state and the way through
 
+> **Last verified: 2026-10-21** (branch `design/mobile-procurement`, to `staging`): batch item 3's `purchase-invoices` ×2 re-read in `src/api/routes/purchase-invoices.ts` — still ungated (BUG-2026-10-21-345). Nothing else re-checked.
 > **Last verified: 2026-10-12** (branch `feat/it-support`, to `staging`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
 > **Last verified: 2026-09-30** (branch `feat/account-permissions-tab`) — added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
 > **Last verified: 2026-10-13** (branch `feat/it-support-to-main`, staging to `main`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
@@ -260,7 +261,7 @@ R_AND_D through the app if needed.
    routes with no mapping at all (see below).**
 1. `files.ts` — needs the `resourceType` design first.
 2. `working-hour-entries.ts` ×4, `rd-projects/:id/labour-hours`.
-3. `cash-flow`, `stock-value` ×2, `forecasts`, `purchase-invoices` ×2.
+3. `cash-flow`, `stock-value` ×2, `forecasts`, `purchase-invoices` ×2 (re-confirmed open 2026-10-21 by the mobile Procurement audit, BUG-2026-10-21-345: `GET /` L821 and `GET /:id` L874 still ungated; `/m/procurement` hides its Invoices segment without `purchase-invoices:read`, a screen-level hide until this lands).
 4. Pricing, `customers`, `suppliers`, `supplier-materials`.
 5. `dashboard-overview`, `organisations`, `departments`, `kv-config/:key`.
 6. Operational bulk (BOM, production orders, QC, scheduling, warehouse, 3PL) + the
