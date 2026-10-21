@@ -25,6 +25,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { execPoReceiptSql, runAtomic } from "./_po-receipt-mock.mjs";
 
 try {
   register("tsx/esm", pathToFileURL("./"));
@@ -95,27 +96,15 @@ function makeDb() {
   }
 
   async function batch(stmts) {
-    // stmts are the prepared-statement objects from prepare().bind(); each
-    // carries its own captured SQL+binds via the closure. We re-run them.
     // T-006 R5: `db.beforeBatch` stands in for another invoice committing
-    // between a route's check and its write. A batch is one transaction on
-    // prod, so a throw rolls every table back.
+    // between a route's check and its write.
     if (db.beforeBatch) {
       const hook = db.beforeBatch;
       db.beforeBatch = null;
       hook(tables);
     }
-    const snapshot = JSON.stringify(tables);
-    const out = [];
-    try {
-      for (const s of stmts) out.push(await s.run());
-    } catch (e) {
-      const restored = JSON.parse(snapshot);
-      for (const k of Object.keys(tables)) delete tables[k];
-      Object.assign(tables, restored);
-      throw e;
-    }
-    return out;
+    // One transaction, as on Postgres: a raising statement rolls back all.
+    return runAtomic(tables, stmts);
   }
 
   // Prod's chk_grn_items_invoiced_qty (migration 0246): the error postgres.js
@@ -134,6 +123,7 @@ function makeDb() {
 
   // ---- write side -----------------------------------------------------------
   function exec(sql, binds) {
+    if (execPoReceiptSql(sql, binds, tables)) return;
     // ALTER / CREATE INDEX — no-op in the mock (all columns already present).
     if (/^ALTER TABLE/i.test(sql) || /^CREATE (UNIQUE )?INDEX/i.test(sql) || /^CREATE TABLE/i.test(sql)) {
       return;

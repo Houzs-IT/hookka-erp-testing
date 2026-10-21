@@ -21,6 +21,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { execPoReceiptSql, runAtomic } from "./_po-receipt-mock.mjs";
 
 try {
   register("tsx/esm", pathToFileURL("./"));
@@ -84,9 +85,8 @@ function makeDb() {
   }
 
   async function batch(stmts) {
-    const out = [];
-    for (const s of stmts) out.push(await s.run());
-    return out;
+    // One transaction, as on Postgres: a raising statement rolls back all.
+    return runAtomic(tables, stmts);
   }
 
   function getCol(row, col) {
@@ -129,6 +129,7 @@ function makeDb() {
   }
 
   function exec(sql, binds) {
+    if (execPoReceiptSql(sql, binds, tables)) return;
     if (/^ALTER TABLE/i.test(sql) || /^CREATE /i.test(sql) || /pg_advisory_xact_lock/i.test(sql)) {
       return;
     }
