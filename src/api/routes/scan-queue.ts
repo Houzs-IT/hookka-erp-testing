@@ -71,6 +71,15 @@ const STUCK_MS = 5 * 60 * 1000;
 // `attempts`); only after this many misses does it surface as failed so a
 // genuinely-bad page stops re-running (and re-billing the AI) forever.
 const MAX_OCR_ATTEMPTS = 3;
+// Failure text for a row whose worker was killed mid-OCR. Nothing runs when the
+// isolate dies, so the sweeper builds this from the row itself: which attempt,
+// when it started, the file, and any error caught on an earlier attempt.
+const WORKER_DIED_ERROR = `CONCAT(
+  'worker died before completing OCR: attempt ', COALESCE(attempts, 0), ' of ${MAX_OCR_ATTEMPTS}',
+  ' started ', COALESCE(started_at::text, 'unknown'),
+  ' gave no result within ${STUCK_MS / 60000} min (driving request was cut off, e.g. tab closed or request timed out).',
+  ' File: ', file_name, ' (', COALESCE(file_size, 0), ' bytes, ', COALESCE(mime_type, 'unknown type'), ').',
+  CASE WHEN error IS NOT NULL THEN ' Earlier error: ' || error ELSE '' END)`;
 
 // ---------- IDs --------------------------------------------------------
 function genBatchId(): string {
@@ -394,6 +403,7 @@ async function processOneRow(
     // counter; `next` was read pre-bump, so add 1. Drives the retry-vs-fail
     // decision in the result writer below.
     const attemptNo = (next.attempts ?? 0) + 1;
+    console.log(`[scan-queue] ${next.id} claimed attempt=${attemptNo} file=${next.fileName} bytes=${next.fileSize}`);
 
     // `sampleId` rides along so the completion UPDATE can persist it — the
     // wizards need a REAL scan-sample id to confirm against (see the sample_id
@@ -610,6 +620,7 @@ async function processOneRow(
     } catch (e) {
       result = { ok: false, error: (e as Error).message };
     }
+    console.log(`[scan-queue] ${next.id} extract returned ok=${result.ok} split=${!!splitMarker}`);
 
     const completedAt = new Date().toISOString();
     try {
@@ -708,6 +719,7 @@ async function processOneRow(
       console.error("[scan-queue] result write failed:", (e as Error).message);
       return { kind: "error", error: `Result write failed: ${(e as Error).message}` };
     }
+    console.log(`[scan-queue] ${next.id} row written`);
     return { kind: "processed", id: next.id };
   }
 }
@@ -1542,7 +1554,7 @@ export async function sweepStuckScans(
         `UPDATE scan_queue
             SET status = 'failed',
                 completed_at = ?,
-                error = COALESCE(error, 'worker died before completing OCR')
+                error = ${WORKER_DIED_ERROR}
           WHERE status = 'processing'
             AND (started_at IS NULL OR started_at < ?)
             AND COALESCE(attempts, 0) >= ?`,
@@ -1620,7 +1632,7 @@ async function sweepStuckBatch(
         `UPDATE scan_queue
             SET status = 'failed',
                 completed_at = ?,
-                error = COALESCE(error, 'worker died before completing OCR')
+                error = ${WORKER_DIED_ERROR}
           WHERE batch_id = ?
             AND status = 'processing'
             AND (started_at IS NULL OR started_at < ?)

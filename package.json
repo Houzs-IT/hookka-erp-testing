@@ -30,7 +30,7 @@
     "trust": "node scripts/trust-report.mjs"
   },
   "lint-staged": {
-    "*.{ts,tsx}": "eslint"
+    "*.{ts,tsx}": "node node_modules/eslint/bin/eslint.js"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "5.3.0",

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { KpiCards } from "@/components/finance/report-shell";
@@ -25,6 +25,7 @@ import { parseMoneyInput } from "@/lib/parse-money";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
+import { NotePopup } from "@/components/finance/note-popup";
 
 const DNMutationSchema = mutationWithData(DebitNoteSchema);
 
@@ -94,16 +95,36 @@ export default function DebitNotesPage() {
   );
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  // #5: pick the customer first, then list only their not-yet-settled invoices.
+  // Edit / Duplicate (owner 2026-10-20 「edit, duplicate, delete 可以做， approve
+  // 不需要」), as on the credit-note page: the same form, filled from a note.
+  // Edit saves over the draft (PUT /:id/edit); Duplicate saves a new draft.
+  // Double-click opens the note (viewNote).
+  const [editingNote, setEditingNote] = useState<DebitNote | null>(null);
+  const [copyOf, setCopyOf] = useState("");
+  const [viewNote, setViewNote] = useState<DebitNote | null>(null);
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
+  // #5: pick the customer first, then list only their not-yet-settled invoices
+  // (and, on Edit, the draft's own invoice, so it never drops out of the pick).
   const dnCustomers = useMemo(() => {
     const m = new Map<string, string>();
     for (const inv of invoices) if (inv.customerId) m.set(inv.customerId, inv.customerName);
     return [...m].map(([id, name]) => ({ value: id, label: name })).sort((a, b) => a.label.localeCompare(b.label));
   }, [invoices]);
+  const keepInvoiceId = editingNote?.invoiceId ?? "";
   const dnInvoices = useMemo(
-    () => invoices.filter((inv) => inv.customerId === selectedCustomerId && inv.status !== "PAID" && inv.status !== "CANCELLED"),
-    [invoices, selectedCustomerId],
+    () => invoices.filter((inv) => inv.customerId === selectedCustomerId && ((inv.status !== "PAID" && inv.status !== "CANCELLED") || inv.id === keepInvoiceId)),
+    [invoices, selectedCustomerId, keepInvoiceId],
   );
+  // A note's invoice is applied once the invoices list has loaded (it loads
+  // lazily when the form opens), as on the credit-note page.
+  const pendingInvoiceId = useRef<string>("");
+  useEffect(() => {
+    const id = pendingInvoiceId.current;
+    if (!id || invoices.length === 0) return;
+    if (invoices.some((i) => i.id === id)) setSelectedInvoiceId(id);
+    pendingInvoiceId.current = "";
+  }, [invoices]);
   const [reason, setReason] = useState<DebitNote["reason"]>("UNDERCHARGE");
   const [reasonDetail, setReasonDetail] = useState("");
   // Editor rows carry a client-only `_uid` so React keys stay stable across
@@ -131,6 +152,37 @@ export default function DebitNotesPage() {
     setShowCreateModal(true);
   };
 
+  const fillFromNote = (dn: DebitNote) => {
+    setSelectedCustomerId(dn.customerId);
+    pendingInvoiceId.current = dn.invoiceId;
+    setSelectedInvoiceId(dn.invoiceId);
+    setReason(dn.reason);
+    setReasonDetail(dn.reasonDetail);
+    setItems(dn.items.length
+      ? dn.items.map((it) => {
+          const sen = it.unitPriceSen ?? it.unitPrice ?? 0;
+          return { _uid: crypto.randomUUID(), description: it.description, quantity: it.quantity, unitPriceSen: sen, priceStr: (sen / 100).toFixed(2) };
+        })
+      : [newDNItem()]);
+    openCreate();
+  };
+  const openEdit = (dn: DebitNote) => { setEditingNote(dn); setCopyOf(""); fillFromNote(dn); };
+  const openDuplicate = (dn: DebitNote) => { setEditingNote(null); setCopyOf(dn.noteNumber); fillFromNote(dn); };
+  const resetForm = () => {
+    setEditingNote(null);
+    setCopyOf("");
+    setSelectedCustomerId("");
+    setSelectedInvoiceId("");
+    setReason("UNDERCHARGE");
+    setReasonDetail("");
+    setItems([newDNItem()]);
+  };
+  // A cancelled Edit / Duplicate leaves nothing behind for the next New.
+  const closeForm = () => {
+    setShowCreateModal(false);
+    if (editingNote || copyOf) resetForm();
+  };
+
   const addItem = () => {
     setItems([...items, newDNItem()]);
   };
@@ -155,27 +207,27 @@ export default function DebitNotesPage() {
       const payloadItems = items
         .filter((i) => i.description && i.unitPriceSen > 0)
         .map((i) => ({ description: i.description, quantity: i.quantity, unitPriceSen: i.unitPriceSen }));
-      const data = await fetchJson("/api/debit-notes", DNMutationSchema, {
-        method: "POST",
-        body: {
-          invoiceId: selectedInvoiceId,
-          reason,
-          reasonDetail,
-          items: payloadItems,
-        },
-      });
+      const body = { invoiceId: selectedInvoiceId, reason, reasonDetail, items: payloadItems };
+      const data = editingNote
+        ? await fetchJson(`/api/debit-notes/${encodeURIComponent(editingNote.id)}/edit`, DNMutationSchema, { method: "PUT", body })
+        : await fetchJson("/api/debit-notes", DNMutationSchema, { method: "POST", body });
       if (data.success) {
+        const no = data.data?.noteNumber ?? editingNote?.noteNumber ?? "The debit note";
+        toast.success(editingNote ? `${no} saved` : `${no} created${copyOf ? ` from ${copyOf}` : ""}`);
         setShowCreateModal(false);
-        setSelectedInvoiceId("");
-        setReason("UNDERCHARGE");
-        setReasonDetail("");
-        setItems([newDNItem()]);
+        if (editingNote || copyOf) resetForm();
+        else {
+          setSelectedInvoiceId("");
+          setReason("UNDERCHARGE");
+          setReasonDetail("");
+          setItems([newDNItem()]);
+        }
         invalidateCachePrefix("/api/debit-notes");
         invalidateCachePrefix("/api/invoices");
         refreshDebitNotes();
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : "Could not save the debit note");
     }
     setCreating(false);
   };
@@ -239,8 +291,6 @@ export default function DebitNotesPage() {
   // Post / Back to Draft (owner 2026-10-17, Finance v2), the mirror of the
   // credit-note page: posting adds the note to the invoice and to what the
   // customer owes and books it; Back to Draft takes all three off again.
-  const { confirm } = useConfirm();
-  const { toast } = useToast();
   const afterNoteChange = () => {
     invalidateCachePrefix("/api/debit-notes");
     invalidateCachePrefix("/api/invoices");
@@ -283,21 +333,35 @@ export default function DebitNotesPage() {
     await sendNote(`/api/debit-notes/${encodeURIComponent(dn.id)}/unpost`, { method: "POST" },
       `${dn.noteNumber} is a draft again`, "Could not put the debit note back to draft");
   };
+  // Delete (owner 2026-10-20): a draft only — it is hidden, the record kept.
+  const deleteNote = async (dn: DebitNote) => {
+    if (!(await confirm({
+      title: `Delete ${dn.noteNumber}?`,
+      message: "The draft goes from the list. It was never posted, so nothing else changes. Its number is not used again.",
+      confirmLabel: "Delete",
+      danger: true,
+    }))) return;
+    await sendNote(`/api/debit-notes/${encodeURIComponent(dn.id)}`, { method: "DELETE" },
+      `${dn.noteNumber} deleted`, "Could not delete the debit note");
+  };
+  const printNote = async (dn: DebitNote) => {
+    try {
+      const { generateDebitNotePdf } = await import("@/lib/generate-debit-note-pdf");
+      generateDebitNotePdf(dn);
+    } catch {
+      /* generator draws/saves itself */
+    }
+  };
 
+  // Edit and Delete only on a draft; Duplicate on any note. No Approve step
+  // (owner 2026-10-20 「approve 不需要」) — a draft is posted straight.
   const contextMenuItems = (row: DebitNote): ContextMenuItem[] => [
-    {
-      label: "Print PDF",
-      action: async (r: DebitNote) => {
-        try {
-          const { generateDebitNotePdf } = await import("@/lib/generate-debit-note-pdf");
-          generateDebitNotePdf(r);
-        } catch {
-          /* generator draws/saves itself */
-        }
-      },
-    },
+    { label: "Print PDF", action: (r: DebitNote) => void printNote(r) },
+    ...(row.status === "DRAFT" ? [{ label: "Edit", action: (r: DebitNote) => openEdit(r) }] : []),
+    { label: "Duplicate", action: (r: DebitNote) => openDuplicate(r) },
     ...(row.status !== "POSTED" ? [{ label: "Post", action: (r: DebitNote) => void postNote(r) }] : []),
     ...(row.status !== "DRAFT" ? [{ label: "Back to Draft", danger: true, action: (r: DebitNote) => void unpostNote(r) }] : []),
+    ...(row.status === "DRAFT" ? [{ label: "Delete", danger: true, action: (r: DebitNote) => void deleteNote(r) }] : []),
     {
       label: "Refresh",
       separator: true,
@@ -328,7 +392,7 @@ export default function DebitNotesPage() {
         title="Debit Notes"
         explain="Debit notes for undercharges and additional charges."
         actions={
-          <Button onClick={openCreate}>
+          <Button onClick={() => { if (editingNote || copyOf) resetForm(); openCreate(); }}>
             <Plus className="h-4 w-4 mr-2" /> New Debit Note
           </Button>
         }
@@ -386,18 +450,47 @@ export default function DebitNotesPage() {
               headerMenu
               reorderableHeaders
               exportName="Debit Notes"
+              onDoubleClick={setViewNote}
             />
           </CardContent>
         </Card>
       </div>
+
+      {/* Double-click: the note, with the row's actions. */}
+      {viewNote && (
+        <NotePopup
+          kind="debit"
+          note={viewNote}
+          onClose={() => setViewNote(null)}
+          actions={<>
+            <Button variant="outline" size="sm" onClick={() => void printNote(viewNote)}>Print PDF</Button>
+            <Button variant="outline" size="sm" onClick={() => { setViewNote(null); openDuplicate(viewNote); }}>Duplicate</Button>
+            {viewNote.status === "DRAFT" && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => { setViewNote(null); void deleteNote(viewNote); }}>Delete</Button>
+                <Button variant="outline" size="sm" onClick={() => { setViewNote(null); openEdit(viewNote); }}>Edit</Button>
+              </>
+            )}
+            {viewNote.status !== "DRAFT" && (
+              <Button variant="outline" size="sm" onClick={() => { setViewNote(null); void unpostNote(viewNote); }}>Back to Draft</Button>
+            )}
+            {viewNote.status !== "POSTED" && (
+              <Button size="sm" onClick={() => { setViewNote(null); void postNote(viewNote); }}>Post</Button>
+            )}
+          </>}
+        />
+      )}
 
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-lg font-semibold">Create Debit Note</h2>
-              <button onClick={() => setShowCreateModal(false)}>
+              <h2 className="text-lg font-semibold">
+                {editingNote ? `Edit Debit Note ${editingNote.noteNumber}` : "Create Debit Note"}
+                {copyOf ? <span className="ml-2 text-sm font-normal text-[#6B7280]">copy of {copyOf}</span> : null}
+              </h2>
+              <button onClick={closeForm} aria-label="Close">
                 <X className="h-5 w-5 text-gray-400" />
               </button>
             </div>
@@ -493,14 +586,18 @@ export default function DebitNotesPage() {
                         step="0.01"
                         inputMode="decimal"
                         placeholder="Unit Price (RM)"
-                        value={item.unitPriceSen ? (item.unitPriceSen / 100).toFixed(2) : ""}
+                        // Keep the raw text being typed (as the credit-note
+                        // page since 2026-06-12): re-formatting on every key
+                        // mangled "127" mid-entry. Sen derives from the text.
+                        value={item.priceStr ?? (item.unitPriceSen ? (item.unitPriceSen / 100).toFixed(2) : "")}
                         onChange={(e) => {
+                          const txt = e.target.value;
                           // `type="number"` - the browser refuses a comma before
                           // this runs, so this was never the truncation bug.
                           // Converted so the guard survives an input-type change.
-                          const rm = parseMoneyInput(e.target.value);
+                          const rm = parseMoneyInput(txt);
                           const sen = rm !== null && rm >= 0 ? Math.round(rm * 100) : 0;
-                          updateItem(idx, "unitPriceSen", sen);
+                          setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, priceStr: txt, unitPriceSen: sen } : it)));
                         }}
                       />
                       <span className="text-sm text-gray-500 py-2 w-28 text-right">
@@ -520,12 +617,12 @@ export default function DebitNotesPage() {
               </div>
             </div>
             <div className="flex justify-end gap-2 p-6 border-t">
-              <Button variant="ghost" onClick={() => setShowCreateModal(false)}>Cancel</Button>
+              <Button variant="ghost" onClick={closeForm}>Cancel</Button>
               <Button
                 onClick={handleCreate}
                 disabled={creating || !selectedInvoiceId || items.every((i) => !i.description)}
               >
-                {creating ? "Creating..." : "Create Debit Note"}
+                {editingNote ? (creating ? "Saving..." : "Save Changes") : creating ? "Creating..." : "Create Debit Note"}
               </Button>
             </div>
           </div>

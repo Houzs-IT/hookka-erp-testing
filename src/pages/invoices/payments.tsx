@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,10 +40,17 @@ type CustomerOption = {
 // same form + its own list. `editing` = re-state that receipt in place (same
 // number); remount with a key to switch receipts (state seeds once).
 // ---------------------------------------------------------------------------
-export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
+export function CustomerReceiptForm({ editing, onSaved, onCancelEdit, copyFrom = null, receiveFor = null }: {
   editing: PaymentRecord | null;
   onSaved: () => void;
   onCancelEdit: () => void;
+  /** Duplicate (owner 2026-10-20 「duplicate 可以做」): a NEW receipt seeded
+   *  from this one — customer, method and amount; never its knock-offs, its
+   *  reference or its date. Saving it closes the form. */
+  copyFrom?: PaymentRecord | null;
+  /** Receive (owner 2026-10-21, AR Invoices): a NEW receipt for this customer
+   *  with this invoice ticked at what is still owed on it. */
+  receiveFor?: { customerId: string; invoiceId: string } | null;
 }) {
   const { data: custResp } = useCachedJson<{ success?: boolean; data?: { id: string; name: string }[] }>("/api/customers");
   const { data: invResp, refresh: refreshInvoices } = useCachedJson<{ success?: boolean; data?: Invoice[] }>("/api/invoices");
@@ -57,8 +64,8 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
   );
 
   // Create form state — seeded from the receipt being edited, if any.
-  const [selectedCustomerId, setSelectedCustomerId] = useState(editing?.customerId ?? "");
-  const [method, setMethod] = useState<PaymentRecord["method"]>(editing?.method ?? "BANK_TRANSFER");
+  const [selectedCustomerId, setSelectedCustomerId] = useState(editing?.customerId ?? copyFrom?.customerId ?? receiveFor?.customerId ?? "");
+  const [method, setMethod] = useState<PaymentRecord["method"]>(editing?.method ?? copyFrom?.method ?? "BANK_TRANSFER");
   const [reference, setReference] = useState(editing?.reference ?? "");
   // Document date (owner 2026-07-07): receipts are often keyed in days after
   // the money landed — the operator picks the real date; defaults to today.
@@ -131,6 +138,17 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
       editBaseline[inv.id] === undefined
   ).length;
 
+  // Receive: tick the invoice at what is still owed once the list is here.
+  const pendingReceive = useRef(editing ? null : receiveFor?.invoiceId ?? null);
+  useEffect(() => {
+    const invId = pendingReceive.current;
+    if (!invId || invoices.length === 0) return;
+    pendingReceive.current = null;
+    const inv = invoices.find((x) => x.id === invId);
+    const owed = inv ? Math.round(Number(inv.totalSen) || 0) - Math.round(Number(inv.paidAmount) || 0) : 0;
+    if (owed > 0) setAllocations([{ invoiceId: invId, amount: owed }]);
+  }, [invoices]);
+
   const handleCustomerChange = (custId: string) => {
     setSelectedCustomerId(custId);
     setAllocations([]);
@@ -156,8 +174,9 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
   // That keeps the old behaviour exactly for anyone who just ticks invoices.
   // Editing seeds the receipt's OWN amount, not the allocation sum — editing
   // an advance must not silently shrink it to whatever is knocked off so far.
-  const [amountStr, setAmountStr] = useState(editing ? ((Number(editing.amount) || 0) / 100).toFixed(2) : "");
-  const [amountTouched, setAmountTouched] = useState(!!editing);
+  const amountSeed = editing ?? copyFrom;
+  const [amountStr, setAmountStr] = useState(amountSeed ? ((Number(amountSeed.amount) || 0) / 100).toFixed(2) : "");
+  const [amountTouched, setAmountTouched] = useState(!!amountSeed);
   // BUG-2026-08-13-095 - the Received box is `type="text"`, so a receipt typed
   // "12,000" was recorded as RM 12.00 against the customer. `canSubmit` below
   // now refuses while the box is unreadable, so this 0 is never posted.
@@ -211,6 +230,7 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
         setAmountTouched(false);
         setAmountStr("");
         afterWrite();
+        if (copyFrom) onCancelEdit();
       }
     } catch {
       // ignore
@@ -250,9 +270,9 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit }: {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>{editingId ? `Edit Receipt ${editing?.receiptNumber ?? ""}` : "Record Payment"}</CardTitle>
+          <CardTitle>{editingId ? `Edit Receipt ${editing?.receiptNumber ?? ""}` : copyFrom ? `Record Payment · copy of ${copyFrom.receiptNumber ?? ""}` : "Record Payment"}</CardTitle>
           <div className="flex items-center gap-2">
-            {editingId && (
+            {(editingId || copyFrom) && (
               <Button variant="outline" size="sm" onClick={cancelEdit}>Cancel</Button>
             )}
             <Button onClick={handleSave} disabled={creating || !canSubmit} size="sm">

@@ -119,8 +119,58 @@ export function tfTotals(draws: TfDraw[], todayIso: string) {
   return t;
 }
 
+// A line's limit (owner 2026-10-20 「暂时rm300,000」, Settings › Trade Finance
+// Lines): what is drawn and not repaid — the line's account balance — against
+// the limit the owner keys. No limit set → no figure, no warning.
+export function tfLineRoom(limitSen: number | null | undefined, usedSen: number): { limitSen: number; usedSen: number; availableSen: number } | null {
+  if (limitSen == null || !Number.isFinite(limitSen)) return null;
+  return { limitSen, usedSen, availableSen: limitSen - usedSen };
+}
+
+/** The warning a drawdown gets when it takes the line over its limit — null
+ *  when it fits, or when the line has no limit. A warning, never a block: the
+ *  bank decides what it lends. */
+export function tfOverLimitWarning(o: {
+  limitSen: number | null | undefined; usedSen: number; drawSen: number; lenderName: string; fmt: (sen: number) => string;
+}): string | null {
+  const room = tfLineRoom(o.limitSen, o.usedSen);
+  if (!room || !(o.drawSen > 0) || o.usedSen + o.drawSen <= room.limitSen) return null;
+  return `Over the ${o.lenderName} limit of ${o.fmt(room.limitSen)}: ${o.fmt(Math.max(0, room.availableSen))} is left and this drawdown is ${o.fmt(o.drawSen)}.`;
+}
+
 export function clampRepayAlloc(outstandingSen: number, paySen: number): { ok: boolean; error?: string } {
   if (!(paySen > 0)) return { ok: false, error: "allocation must be positive" };
   if (paySen > outstandingSen) return { ok: false, error: "allocation exceeds the draw's outstanding balance" };
   return { ok: true };
+}
+
+/** What a drawdown paid the supplier: the drawdown less the interest and bank
+ *  charges recorded on it. */
+export function tfPrincipalSen(d: { amountSen: number; interestSen: number; bankChargeSen: number }): number {
+  return d.amountSen - d.interestSen - d.bankChargeSen;
+}
+
+/** A line's card on Creditor Aging (owner 2026-10-21 「我希望在creditor aging
+ *  那边有card 可以看到」): used = the line's balance (drawn and not repaid,
+ *  interest and charges included — as Settings › Trade Finance Lines shows it),
+ *  what is still available under its limit (null = no limit set), the share
+ *  used, and the check the owner reads at a glance — Σ drawdown outstanding +
+ *  unallocated = the line's account balance. */
+export function tfLineSummary(s: {
+  limitSen?: number | null;
+  accountNetSen: number;
+  unallocatedSen: number;
+  totals: { total: number };
+}): { usedSen: number; limitSen: number | null; availableSen: number | null; pct: number | null; over: boolean; drawsSen: number; ties: boolean } {
+  const room = tfLineRoom(s.limitSen ?? null, s.accountNetSen);
+  const drawsSen = s.totals.total + s.unallocatedSen;
+  return {
+    usedSen: s.accountNetSen,
+    limitSen: room?.limitSen ?? null,
+    availableSen: room?.availableSen ?? null,
+    pct: room && room.limitSen > 0 ? Math.round((room.usedSen / room.limitSen) * 100) : null,
+    over: !!room && room.availableSen < 0,
+    drawsSen,
+    ties: drawsSen === s.accountNetSen,
+  };
 }

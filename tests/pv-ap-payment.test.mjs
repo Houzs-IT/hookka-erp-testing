@@ -108,10 +108,12 @@ test("create: AP kind writes allocs (no lines); Post now adds the settlement in 
   assert.match(ap, /pv_kind, party_kind, party_id, advance_sen/);
 });
 
-test("validation: reservations, foreign refusal, supplier-only advance", () => {
+test("validation: reservations, a foreign bill in its own currency at the payment's rate, supplier-only advance", () => {
   const v = fn(acc, "async function validatePvAp(");
   assert.match(v, /pvOpenBillsFor\(db, orgId, partyKind, partyId, exclude\)/, "the voucher being edited is excluded from reservations");
-  assert.match(v, /if \(bill\.foreign\) return \{ ok: false/);
+  // Currency & FX step 3 (owner 2026-10-20): foreign bills are paid here now — one currency per payment, a rate required.
+  assert.match(v, /One currency per payment/);
+  assert.match(v, /const r = apForeignPay\(\{ availableSen: bill\.availableSen, reservedSen: bill\.reservedSen, bookingRate: bill\.fxRate \?\? 0, foreignSen: typed, payRate \}\);/);
   assert.match(v, /amountSen > bill\.availableSen/);
   assert.match(v, /advanceSen > 0 && partyKind !== "SUPPLIER"/);
   const r = fn(acc, "async function pvReservedByDoc(");
@@ -154,7 +156,8 @@ test("self-apply covers the four columns and the allocs table (records 0235/0216
   assert.match(readFileSync("migrations/0216_pv_ap_payment.sql", "utf8"), /payment_voucher_allocs/);
   const schema = JSON.parse(readFileSync("tests/db-schema.json", "utf8"));
   for (const col of ["pv_kind", "party_kind", "party_id", "advance_sen"]) assert.ok(schema.payment_vouchers.includes(col), `fixture lacks payment_vouchers.${col}`);
-  assert.deepEqual(schema.payment_voucher_allocs, ["amount_sen", "doc_id", "doc_kind", "id", "line_order", "voucher_id"]);
+  // foreign_sen / full_pay: a foreign-currency bill (Currency & FX step 3, record 0243).
+  assert.deepEqual(schema.payment_voucher_allocs, ["amount_sen", "doc_id", "doc_kind", "foreign_sen", "full_pay", "id", "line_order", "voucher_id"]);
 });
 
 test("UI: two doors (New AP Payment / New Payment Voucher) and the Houzs status chips", () => {
@@ -163,8 +166,10 @@ test("UI: two doors (New AP Payment / New Payment Voucher) and the Houzs status 
   for (const k of ['"DRAFT"', '"PREPARED"', '"CHECKED"', '"APPROVED"', '"ADVANCE_OPEN"', '"CANCELLED"']) {
     assert.match(ui, new RegExp(`\\{ key: ${k}, label:`), `chip ${k} missing`);
   }
-  // Foreign invoices cannot be ticked; a posted AP voucher has no in-place edit.
-  assert.match(ui, /disabled=\{b\.foreign \|\| b\.availableSen <= 0\}/);
+  // A foreign bill is ticked and paid in its own currency now (Currency & FX step 3); one currency per
+  // payment — a bill in another currency waits; a posted AP voucher has no in-place edit.
+  assert.match(ui, /disabled=\{payable <= 0 \|\| otherCcy\}/);
+  assert.match(ui, /const payable = b\.foreign \? \(b\.foreignAvailableSen \?\? 0\) : b\.availableSen;/);
   // (2026-10-02: the row's actions moved to its right-click menu; the popup keeps the button.)
   assert.match(ui, /\.\.\.\(isPosted\(r\) && r\.pvKind !== "AP" \? \[\{ label: "Edit", action: \(\) => startEdit\(r\) \}\] : \[\]\),/);
   assert.match(ui, /\{isPosted\(r\) && r\.pvKind !== "AP" && <Button variant="outline" size="sm" onClick=\{\(\) => \{ close\(\); startEdit\(r\); \}\}>Edit<\/Button>\}/);
@@ -172,6 +177,6 @@ test("UI: two doors (New AP Payment / New Payment Voucher) and the Houzs status 
   const apStart = ui.indexOf("const handleSaveAp = async");
   const save = ui.slice(apStart, ui.indexOf("const handleSave = async", apStart));
   assert.match(save, /kind: "AP",/);
-  assert.match(save, /allocations: apTicked\.map/);
+  assert.match(save, /allocations: apTicked\n\s+\.map/);
   assert.doesNotMatch(save, /lines:/);
 });

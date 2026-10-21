@@ -62,7 +62,9 @@ test("the dashboard carries production revenue per period and retires the old ca
   assert.match(API, /productionRevenue: prodRevByMonth \? sumProductionRevenue\(prodRevByMonth, b\.months, nowYm\) : null,/);
   // v15 introduced the field; any later bump keeps it retired.
   assert.match(API, /const DASH_PAYLOAD_V = "v(1[5-9]|[2-9]\d)";/);
-  assert.match(API, /sourceTables: \[[\s\S]{0,1800}"job_cards",/, "a completed upholstery card must refresh the snapshot");
+  // The source tables are one list since 2026-10-19, shared with /overview-trend.
+  assert.match(API, /sourceTables: PNL_REPLAY_SOURCE_TABLES,/);
+  assert.match(API, /const PNL_REPLAY_SOURCE_TABLES: readonly string\[\] = \[[\s\S]{0,1800}"job_cards",/, "a completed upholstery card must refresh the snapshot");
 });
 
 test("cost structure: SALES REVENUE, then PRODUCTION REVENUE, then the materials, then TOTAL", () => {
@@ -70,7 +72,9 @@ test("cost structure: SALES REVENUE, then PRODUCTION REVENUE, then the materials
   // sales revenue, with production revenue right under it.
   assert.equal((UI.match(/>SALES REVENUE<\/td>[\s\S]{0,1200}?>PRODUCTION REVENUE<\/td>/g) ?? []).length, 2);
   // Sofa takes the accessories, like the sales side (only bedframe sales are their own account).
-  assert.match(UI, /csLine === "bedframe" \? p\.bedframe : p\.sofa \+ p\.accessory/);
+  // (in the module the page and the phone share since 2026-10-19)
+  assert.match(UI, /const csLineProdRev = \(r: Row\): number \| null => csLineProdRevOf\(r, csLine\);/);
+  assert.match(read("src/lib/finance-dashboard-calc.ts"), /line === "bedframe" \? p\.bedframe : p\.sofa \+ p\.accessory/);
   assert.match(UI, /point\[`__ppct__\$\{cat\}`\] = pctOf\(amt, prod\);/);
   // The total sums every material in the table, not just the ones drawn.
   assert.match(UI, /for \(const cat of csCats\) \{\n\s*sum \+= point\[cat\] as number;/);

@@ -55,7 +55,7 @@ test("month label as the P&L names months", () => {
 });
 
 test("the statement's own pass does the tracing, so the drill sums to the line", () => {
-  const gw = slice(api, "async function glWindowSigned(", "// loadMaterialCost (F6 T4b)");
+  const gw = slice(api, "async function glWindowSignedUntimed(", "// loadMaterialCost (F6 T4b)");
   assert.match(gw, /\n  trace\?: PnlTrace,\n\): Promise</);
   assert.match(gw, /const cached = trace \? undefined : dc\.glMemo\?\.get\(memoKey\);/, "a traced call never reads the memo");
   assert.match(gw, /if \(!trace\) dc\.glMemo\?\.set\(memoKey, out\);/, "…nor writes it");

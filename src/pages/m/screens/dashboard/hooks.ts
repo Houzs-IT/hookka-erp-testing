@@ -35,7 +35,7 @@ export function useDashboardPeriod(months: string[], tab?: string) {
   const raw = useMemo(() => readPeriod(params), [params]);
   const period = useMemo(() => resolvePeriod(raw, months, ymd(new Date()), opensOnToday(tab)), [raw, months, tab]);
   const setPeriod = useCallback(
-    (p: Period) => setParams((prev) => writePeriod(prev, p), { replace: true }),
+    (p: Period) => setParams((prev) => writePeriod(prev, p), { replace: true, preventScrollReset: true }),
     [setParams],
   );
   return { period, setPeriod };

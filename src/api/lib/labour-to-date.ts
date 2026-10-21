@@ -9,6 +9,7 @@ import { effectiveSalarySenForMonth } from "../../lib/labor-engine";
 import { computeLabourToDate, type LabourToDate, type TdEntry, type TdPayslip, type TdWorker } from "../../lib/labour-to-date";
 import { loadPayRuleVersions } from "./pay-rules-store";
 import { projectedPayslipsForMonth } from "./labour-projection";
+import { requestMemo, timed } from "./step-timing";
 
 export { runningMonthYm } from "../../lib/labour-to-date";
 
@@ -28,7 +29,7 @@ const pick = (r: Record<string, unknown>, camel: string, snake: string) => r[cam
 // their effective salary, the month's payslips (stored, else the live
 // estimate), the docks, the holidays, the pay rules and the department master —
 // and computes the month's labour to date.
-export async function loadLabourToDate(
+async function loadLabourToDateUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   ym: string,
@@ -132,4 +133,9 @@ export async function loadLabourToDate(
   const payRuleVersions = await loadPayRuleVersions(db);
   return computeLabourToDate({ ym, entries, workers, payslips, deductions, holidays, payRuleVersions, factoryDeptCodes });
 }
+// Once per month per read request (2026-10-19, 「优化加载速度」): the P&L
+// statement's period and year-to-date windows both reach the running month and
+// asked for it at the same time — two identical loads.
+export const loadLabourToDate = (db: Env["Variables"]["DB"], orgId: string, ym: string): Promise<LabourToDate | null> =>
+  requestMemo(`labour-to-date:${orgId}:${ym}`, () => timed("labour-to-date", () => loadLabourToDateUntimed(db, orgId, ym)));
 

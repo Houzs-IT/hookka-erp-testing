@@ -13,6 +13,7 @@
 // and are remapped to camelCase in the response.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
@@ -27,7 +28,9 @@ import {
 import { ClosedYearError, FYE_CHANGES_KV_KEY, FY_LOCKED_KV_KEY, closedYearError, getFyLockedEnds, getFySchedule, fyWindowAt } from "../lib/fiscal";
 import { addMonths as addFyMonths, fyFor, fyPeriods, isYm, parseFyKey, withYearEndChange, yearEndChangeError, type FySchedule } from "../../lib/fiscal-year";
 import { emitAudit } from "../lib/audit";
+import { requestMemo, timed, timedFn } from "../lib/step-timing";
 import { parseDebtorCode } from "../../lib/debtor";
+import { depreciationUndoBlock, depreciationUndoLegs } from "../../lib/fixed-asset-undo";
 import { invoiceIssuedSen, splitOutstandingByNotes, sumIssuedNotesByInvoice } from "../../lib/invoice-notes";
 import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, receiptsAheadOf, supplierPaymentsAfter, supplierPaymentsAheadOf } from "../lib/aging-as-at";
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
@@ -35,7 +38,8 @@ import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
 import { buildStatement, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
 import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection } from "../../lib/cashflow-engine";
-import { getDocNumberPrefixes, issueDocNumber, issueDocNumberWithPrefix } from "../lib/doc-number-service";
+import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
+import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
 import { ensurePartialPaymentColumns } from "../lib/ensure-partial-payment";
 import { ensureFinanceOrgColumns } from "../lib/ensure-finance-org";
@@ -46,6 +50,8 @@ import { applyOpeningSlice, windowCoversMonth } from "../../lib/opening-slice";
 import { docNoFromDescription, drillVariant, otherSideCodes, ownDescription, tidyDescription } from "../../lib/ledger-drill";
 import { actionLabel, auditEvents, changeSummary, docTypeLabel, fieldChanges, inWindow, ladderEvents, ledgerEvents, lifecycleEvents, mergeEvents, monthWindowMy, payloadRef, sqlDayBounds, type ChangeEvent } from "../../lib/change-log";
 import { PV_KIND_TRANSFER, validatePvTransfer } from "../../lib/pv-transfer";
+import { normaliseReference, settlementReference } from "../../lib/doc-reference";
+import { prepareLedger, windowNet } from "../../lib/ledger-window";
 import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
@@ -58,9 +64,12 @@ import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDri
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
-import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt } from "../lib/trade-finance";
+import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt, parseTfLimitSen } from "../lib/trade-finance";
+import { apForeignPay, confirmBankPlan, foreignAvailableSen } from "../../lib/ap-fx";
+import { parseFxRate } from "../../lib/fx";
+import { normaliseCurrencyCode } from "../../lib/currency-code";
 import type { TfSource } from "../lib/trade-finance";
-import { addDays, tfChargeKind, tfInterestDrawId, tfTotals } from "../../lib/trade-finance";
+import { addDays, tfChargeKind, tfInterestDrawId, tfLineRoom, tfTotals } from "../../lib/trade-finance";
 import { buildDeliveredAsOf, fgClosingSen } from "../../lib/fg-closing";
 import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
@@ -111,12 +120,31 @@ import {
 // The Payment Vouchers "AP Payment" road posts a supplier payment at APPROVE
 // through the SAME builders the Supplier Payment page uses (owner 2026-09-22,
 // Houzs adoption: 「ap payment 和 payment voucher 一起」).
-import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, tfRepaymentStatements, validateTfRepayment } from "./supplier-payments";
+import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, buildSupplierPaymentRestate, supplierPaymentBankAccount, tfRepaymentStatements, validateTfRepayment, type CreateAllocation } from "./supplier-payments";
 // PV attachments ride the generic file store (Supabase Storage + file_assets)
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
 
 const app = new Hono<Env>();
+
+// A change to the reports' own settings — the P&L / BS layouts, the chart of
+// accounts, the Stock Take, the valuation modes, the opening balances, the
+// financial years, the closing-stock post — clears the stored P&L / BS copies
+// (reportSnapshot below), so the next open shows it. Day-to-day postings keep
+// the owner's trade-off (2026-10-19): the first open after one can show the
+// previous copy, refreshed in the background.
+const REPORT_SETTING_WRITES: readonly RegExp[] = [
+  /^\/pnl\/section-map$/, /^\/bs\/section-map$/, /^\/coa(\/rename)?$/,
+  /^\/stock-take$/, /^\/fg-valuation-mode$/, /^\/rm-valuation-mode$/, /^\/material-opening-stock$/,
+  /^\/opening-balance(\/.*)?$/, /^\/opening-date$/,
+  /^\/year-close$/, /^\/fiscal-years\/.+$/, /^\/stock\/close-post$/,
+];
+app.use("*", async (c, next) => {
+  await next();
+  if (c.req.method === "GET" || c.res.status >= 400) return;
+  const sub = new URL(c.req.url).pathname.replace(/^.*\/api\/accounting/, "");
+  if (REPORT_SETTING_WRITES.some((re) => re.test(sub))) await clearReportSnapshots(c.var.DB, getOrgId(c));
+});
 
 // ---------------------------------------------------------------------------
 // Row types
@@ -135,6 +163,9 @@ type CoaRow = {
   // Phase 1 (migration 0154): 0 = header/parent account, journals and
   // auto-postings must hit postable (leaf) accounts only.
   isPostable: number;
+  // "Estimate every month" (record 0245, self-applied; absent before).
+  estimateMonthly?: number | null;
+  estimate_monthly?: number | null;
   created_at: string;
 };
 
@@ -143,6 +174,9 @@ type JournalEntryRow = {
   entryNo: string;
   date: string;
   description: string;
+  // Optional (owner 2026-10-19 「先做 Reference 栏」); absent until the column
+  // is self-applied by the first journal save.
+  reference?: string | null;
   status: "DRAFT" | "POSTED" | "REVERSED";
   createdBy: string;
   // Postgres hands this back as `createdAt` (see rowToJournal). `created_at`
@@ -215,7 +249,38 @@ function rowToCoa(r: CoaRow) {
     pnlCategory: r.pnlCategory ?? undefined,
     // Default 1 — rows predating migration 0154 stay postable.
     isPostable: (r.isPostable ?? 1) === 1,
+    // The "Estimate every month" tick (record 0245, self-applied).
+    estimateMonthly: Number(r.estimateMonthly ?? r.estimate_monthly ?? 0) === 1,
   };
+}
+
+// "Estimate every month" (owner 2026-10-21 「别在setting，在COA 可以吗？」 →
+// 「可以，全部做」): a tick on an expense or cost account in the Chart of
+// Accounts; the running month's P&L shows it at last month's amount while
+// nothing is recorded (src/lib/expense-estimates.ts). Record 0245; this
+// self-apply is the mechanism, awaited before a read or write that names it.
+let _pendingCoaEstimateCol: Promise<void> | null = null;
+function ensureCoaEstimateColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingCoaEstimateCol) {
+    _pendingCoaEstimateCol = db
+      .prepare("ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS estimate_monthly INTEGER DEFAULT 0")
+      .run()
+      .then(() => undefined)
+      .catch((e) => {
+        _pendingCoaEstimateCol = null;
+        throw e;
+      });
+  }
+  return _pendingCoaEstimateCol;
+}
+async function estimateMonthlyCodes(db: Env["Variables"]["DB"]): Promise<Set<string>> {
+  try {
+    await ensureCoaEstimateColumn(db);
+    const res = await db.prepare("SELECT code FROM chart_of_accounts WHERE estimate_monthly = 1").all<{ code: string }>();
+    return new Set((res.results ?? []).map((r) => String(r.code)));
+  } catch {
+    return new Set(); // unreadable → the three-month rule alone, as before
+  }
 }
 
 function rowToJournal(e: JournalEntryRow, lines: JournalLineRow[]) {
@@ -224,6 +289,7 @@ function rowToJournal(e: JournalEntryRow, lines: JournalLineRow[]) {
     entryNo: e.entryNo,
     date: e.date,
     description: e.description,
+    reference: e.reference ?? null,
     status: e.status,
     createdBy: e.createdBy,
     // Dual-keyed. `created_at` alone was ALWAYS undefined: db-pg.ts installs
@@ -250,17 +316,10 @@ function genId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+// JE-YYMM-NNNN — the prefix is Settings' (Document Numbering), the run the
+// month's count + 1 as always (nextSelfNumber).
 async function nextJeNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const res = await db
-    .prepare(
-      "SELECT COUNT(*) AS c FROM journal_entries WHERE entryNo LIKE ?",
-    )
-    .bind(`JE-${yymm}-%`)
-    .first<{ c: number }>();
-  const seq = (res?.c ?? 0) + 1;
-  return `JE-${yymm}-${String(seq).padStart(4, "0")}`;
+  return nextSelfNumber(db, "JE");
 }
 
 // Account-code rename aliases: loadAccountResolver, src/api/lib/account-resolver.ts.
@@ -411,7 +470,7 @@ function addToBucket(
 // advance kept its −row in both agings while its GL was correctly hidden,
 // skewing the drift card by exactly that amount) — same NOT-EXISTS shape as
 // buildPiPaidTruthStatement, pure snake_case so the adapter passes it through.
-async function loadUnappliedSupplierAdvances(
+async function loadUnappliedSupplierAdvancesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
 ): Promise<Map<string, { supplierName: string; sen: number; items: { paymentNo: string; date: string; sen: number }[] }>> {
@@ -448,6 +507,7 @@ async function loadUnappliedSupplierAdvances(
   }
   return out;
 }
+const loadUnappliedSupplierAdvances = timedFn("supplier-advances", loadUnappliedSupplierAdvancesUntimed);
 
 // The customer mirror. A receipt whose allocations don't add up to it is
 // holding money on account (owner 2026-08-06 asked to be able to record one:
@@ -456,7 +516,7 @@ async function loadUnappliedSupplierAdvances(
 // reports a drift for every advance — the same false alarm the supplier side
 // carried until BUG-2026-07-08-003. Voided / deleted receipts are excluded for
 // the same reason they are on the supplier side: they hold nothing.
-async function loadUnappliedCustomerAdvances(
+async function loadUnappliedCustomerAdvancesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
 ): Promise<Map<string, { customerName: string; sen: number; items: { receiptNumber: string; date: string; sen: number }[] }>> {
@@ -497,6 +557,7 @@ async function loadUnappliedCustomerAdvances(
   void orgId; // payment_records is not org-scoped; kept for signature symmetry
   return out;
 }
+const loadUnappliedCustomerAdvances = timedFn("customer-advances", loadUnappliedCustomerAdvancesUntimed);
 
 app.get("/aging", async (c) => {
   // RBAC gate (P3.3-followup) — accounting:read.
@@ -961,8 +1022,11 @@ app.post("/aging", async (c) => {
 app.get("/coa", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
+  // ?includeInactive=1: the Chart of Accounts list (2026-10-20) shows the
+  // inactive ones too, to set them active again. Every picker keeps the default.
+  const includeInactive = c.req.query("includeInactive") === "1";
   const res = await c.var.DB.prepare(
-    "SELECT * FROM chart_of_accounts WHERE isActive = 1 ORDER BY code",
+    `SELECT * FROM chart_of_accounts${includeInactive ? "" : " WHERE isActive = 1"} ORDER BY code`,
   ).all<CoaRow>();
   // A parent is never postable (see EFFECTIVE_POSTABLE_SQL) — every account
   // picker filters on isPostable, so a header can no longer be chosen.
@@ -1116,6 +1180,11 @@ app.put("/coa", async (c) => {
       }
       merged.isPostable = 0;
     }
+    // "Estimate every month" — only where an estimate can show.
+    const estimateTick = body.estimateMonthly === undefined ? null : body.estimateMonthly ? 1 : 0;
+    if (estimateTick === 1 && existing.type !== "EXPENSE" && existing.type !== "COST") {
+      return c.json({ success: false, error: "Only an expense or cost account can be estimated every month" }, 400);
+    }
     if (
       merged.cashFlowCategory &&
       !["O", "I", "F"].includes(merged.cashFlowCategory)
@@ -1166,10 +1235,10 @@ app.put("/coa", async (c) => {
         return c.json({ success: false, error: promoErr }, 400);
       }
     }
-    await c.var.DB.prepare(
-      `UPDATE chart_of_accounts SET name = ?, parentCode = ?, isActive = ?, cashFlowCategory = ?, specialAccountType = ?, pnlCategory = ?, isPostable = ? WHERE code = ?`,
-    )
-      .bind(
+    const coaStmts = [
+      c.var.DB.prepare(
+        `UPDATE chart_of_accounts SET name = ?, parentCode = ?, isActive = ?, cashFlowCategory = ?, specialAccountType = ?, pnlCategory = ?, isPostable = ? WHERE code = ?`,
+      ).bind(
         merged.name,
         merged.parentCode,
         merged.isActive,
@@ -1178,8 +1247,13 @@ app.put("/coa", async (c) => {
         merged.pnlCategory,
         merged.isPostable,
         code,
-      )
-      .run();
+      ),
+    ];
+    if (estimateTick !== null) {
+      await ensureCoaEstimateColumn(c.var.DB);
+      coaStmts.push(c.var.DB.prepare("UPDATE chart_of_accounts SET estimate_monthly = ? WHERE code = ?").bind(estimateTick, code));
+    }
+    await c.var.DB.batch(coaStmts);
     const updated = await c.var.DB.prepare(
       "SELECT * FROM chart_of_accounts WHERE code = ?",
     )
@@ -1275,6 +1349,10 @@ app.post("/coa/rename", async (c) => {
         existing.pnlCategory,
         existing.isPostable ?? 1,
       ),
+      // The "Estimate every month" tick follows the account (owner 2026-10-21).
+      ...(Number(existing.estimateMonthly ?? existing.estimate_monthly ?? 0) === 1
+        ? [c.var.DB.prepare("UPDATE chart_of_accounts SET estimate_monthly = 1 WHERE code = ?").bind(newCode)]
+        : []),
       c.var.DB.prepare(
         "UPDATE chart_of_accounts SET parentCode = ? WHERE parentCode = ?",
       ).bind(newCode, oldCode),
@@ -1373,12 +1451,25 @@ app.get("/system-journals", async (c) => {
   return c.json({ success: true, data, total: data.length });
 });
 
+// A journal's Reference column (owner 2026-10-19 「先做 Reference 栏」) —
+// self-applied, awaited before the first write that names it.
+let _pendingJournalRefCol: Promise<void> | null = null;
+function ensureJournalReferenceColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingJournalRefCol) {
+    _pendingJournalRefCol = db.prepare("ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT").run()
+      .then(() => undefined)
+      .catch((e) => { _pendingJournalRefCol = null; throw e; });
+  }
+  return _pendingJournalRefCol;
+}
+
 app.post("/journals", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
   try {
     const body = await c.req.json();
     const { date, description, lines } = body;
+    await ensureJournalReferenceColumn(c.var.DB);
     if (!date || !description || !lines || !Array.isArray(lines) || lines.length === 0) {
       return c.json(
         { success: false, error: "date, description, and lines are required" },
@@ -1413,10 +1504,10 @@ app.post("/journals", async (c) => {
     // tenant's journals would land labelled 'hookka' and then be hidden from
     // the tenant that created them.
     await c.var.DB.prepare(
-      `INSERT INTO journal_entries (id, entryNo, date, description, status, createdBy, orgId)
-       VALUES (?, ?, ?, ?, 'DRAFT', ?, ?)`,
+      `INSERT INTO journal_entries (id, entryNo, date, description, reference, status, createdBy, orgId)
+       VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?)`,
     )
-      .bind(id, entryNo, date, description, createdBy, orgId)
+      .bind(id, entryNo, date, description, normaliseReference(body.reference), createdBy, orgId)
       .run();
 
     const inserts = lines.map(
@@ -1710,11 +1801,12 @@ app.put("/journals/:id", async (c) => {
       await c.var.DB.batch(statements);
     } else if (entry.status === "DRAFT") {
       // Draft-only edits of header + lines.
-      if (body.date !== undefined || body.description !== undefined) {
+      if (body.date !== undefined || body.description !== undefined || body.reference !== undefined) {
+        await ensureJournalReferenceColumn(c.var.DB);
         await c.var.DB.prepare(
-          "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
+          "UPDATE journal_entries SET date = ?, description = ?, reference = ? WHERE id = ?",
         )
-          .bind(body.date ?? entry.date, body.description ?? entry.description, id)
+          .bind(body.date ?? entry.date, body.description ?? entry.description, body.reference !== undefined ? normaliseReference(body.reference) : (entry.reference ?? null), id)
           .run();
       }
       if (body.lines !== undefined && Array.isArray(body.lines)) {
@@ -2216,20 +2308,9 @@ function rowToPcn(r: PcnRow) {
   };
 }
 
+// PCN-YYMM-NNN — Settings' prefix, highest + 1 (nextSelfNumber).
 async function nextPcnNo(db: Env["Variables"]["DB"]): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const prefix = `PCN-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT noteNumber FROM purchase_credit_notes WHERE noteNumber LIKE ? ORDER BY noteNumber DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ noteNumber: string }>();
-  if (!res) return `${prefix}001`;
-  const seq = parseInt(res.noteNumber.replace(prefix, ""), 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  return nextSelfNumber(db, "PCN");
 }
 
 app.get("/purchase-credit-notes", async (c) => {
@@ -2851,31 +2932,34 @@ app.post("/purchase-credit-notes/:id/void", async (c) => {
       "UPDATE suppliers SET outstandingSen = outstandingSen + ? WHERE id = ?",
     ).bind(gross, existing.supplierId),
   ];
-  // Reverse the GL once: read whichever legs are CURRENTLY visible (the
-  // original post, or — if this note was edited via /restate first — the
-  // latest restate; `hidden = 0` always names exactly one live set) and post
-  // their mirror, then hide the lot (both cancel, so nothing of this note's
-  // GL impact stays visible — matches the void/delete convention used
-  // elsewhere, e.g. lifecycle-machine.ts's `hiddenTargets`).
-  if (
-    (await ledgerHasSource(c.var.DB, orgId, "purchase_credit_note", id)) &&
-    !(await ledgerHasSource(c.var.DB, orgId, "purchase_credit_note_void", id))
-  ) {
-    const orig =
-      (
-        await c.var.DB.prepare(
-          "SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE hidden = 0 AND sourceType LIKE 'purchase_credit_note%' AND sourceId = ? AND orgId = ?",
-        )
-          .bind(id, orgId)
-          .all<Record<string, unknown>>()
-      ).results ?? [];
+  // Reverse the GL: read whichever legs are CURRENTLY visible (the original
+  // post, or — if this note was edited via /restate, or brought back via
+  // /restore — the latest one; `hidden = 0` always names exactly one live
+  // set) and post their mirror, then hide the lot (both cancel, so nothing of
+  // this note's GL impact stays visible — matches the void/delete convention
+  // used elsewhere, e.g. lifecycle-machine.ts's `hiddenTargets`). The first
+  // cancel's mirror is purchase_credit_note_void; a later one (a note restored
+  // and cancelled again, 2026-10-20) takes a stamped restate reversal, since a
+  // source's leg numbers are unique. Nothing live → nothing to reverse.
+  const orig =
+    (
+      await c.var.DB.prepare(
+        "SELECT accountCode, debitSen, creditSen FROM ledger_journal_entries WHERE hidden = 0 AND sourceType LIKE 'purchase_credit_note%' AND sourceId = ? AND orgId = ?",
+      )
+        .bind(id, orgId)
+        .all<Record<string, unknown>>()
+    ).results ?? [];
+  if (orig.length) {
+    const revType = (await ledgerHasSource(c.var.DB, orgId, "purchase_credit_note_void", id))
+      ? `purchase_credit_note_restate_rev:${Date.now()}`
+      : "purchase_credit_note_void";
     const actorUserId =
       (c as unknown as { get: (k: string) => string | undefined }).get(
         "userId",
       ) ?? null;
     const revLegs: LedgerEntryInput[] = orig.map((l, i) => ({
       id: `lje-${crypto.randomUUID().slice(0, 12)}`,
-      sourceType: "purchase_credit_note_void",
+      sourceType: revType,
       sourceId: id,
       legNo: i + 1,
       accountCode: String(l.accountCode ?? l.account_code ?? ""),
@@ -2937,6 +3021,100 @@ app.post("/purchase-credit-notes/:id/void", async (c) => {
     .bind(id)
     .first<PcnRow>();
   return c.json({ success: true, data: rowToPcn(updated!) });
+});
+
+// POST /purchase-credit-notes/:id/restore — bring a CANCELLED supplier
+// discount back (owner 2026-10-20, from the design list 「要」). It is posted
+// again as it stood: the supplier owes its amount less again and its legs are
+// posted afresh under a stamped restate source (DR 400-0000 / CR the purchase
+// accounts its lines map to — the same as when it was first posted); the
+// cancelled set stays hidden. Its earlier knock-offs against bills are NOT put
+// back — the cancel re-opened those bills and they may have been paid since.
+// Cancel it again and it reverses as usual.
+app.post("/purchase-credit-notes/:id/restore", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  await ensurePcnCancellable(c.var.DB);
+  const id = c.req.param("id");
+  const existing = await c.var.DB.prepare(
+    "SELECT * FROM purchase_credit_notes WHERE id = ?",
+  )
+    .bind(id)
+    .first<PcnRow>();
+  if (!existing) {
+    return c.json({ success: false, error: "Purchase CN not found" }, 404);
+  }
+  if (existing.status !== "CANCELLED") {
+    return c.json({ success: false, error: `Only a cancelled supplier discount can be restored (${existing.noteNumber} is ${existing.status}).` }, 409);
+  }
+  const orgId = getOrgId(c);
+  const gross = Number(existing.totalAmount) || 0;
+  try {
+    let items: PcnItem[] = [];
+    try {
+      items = JSON.parse(existing.items ?? "[]") as PcnItem[];
+    } catch {
+      items = [];
+    }
+    const { mapPurchaseLinesToAccounts } = await import("./purchase-invoices");
+    const { bucket, pdefault } = await mapPurchaseLinesToAccounts(
+      c.var.DB,
+      items.map((it) => ({ mc: it.materialCode ?? null, amt: Math.round(it.quantity * it.unitPriceSen), lt: it.lineType })),
+    );
+    const sumLines = Object.values(bucket).reduce((s, v) => s + v, 0);
+    if (sumLines !== gross) bucket[pdefault] = (bucket[pdefault] ?? 0) + (gross - sumLines);
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const postSource = `purchase_credit_note_restate_post:${Date.now()}`;
+    let legNo = 1;
+    const legs: LedgerEntryInput[] = [{
+      id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+      sourceType: postSource,
+      sourceId: id,
+      legNo: legNo++,
+      accountCode: "400-0000",
+      debitSen: gross,
+      creditSen: 0,
+      description: `Purchase CN ${existing.noteNumber} · ${existing.supplierName} (restored)`,
+      actorUserId,
+      orgId,
+    }];
+    for (const [acct, amt] of Object.entries(bucket)) {
+      if (amt === 0) continue;
+      legs.push({
+        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+        sourceType: postSource,
+        sourceId: id,
+        legNo: legNo++,
+        accountCode: acct,
+        debitSen: 0,
+        creditSen: amt,
+        description: `Purchase CN ${existing.noteNumber} · return/credit (restored)`,
+        actorUserId,
+        orgId,
+      });
+    }
+    const { statements: ledgerStmts } = gross > 0
+      ? await buildJournalEntryStatements(c.var.DB, orgId, legs, { docDate: existing.date ?? null })
+      : { statements: [] as D1PreparedStatement[] };
+    await c.var.DB.batch([
+      c.var.DB.prepare("UPDATE purchase_credit_notes SET status = 'POSTED', updatedAt = ? WHERE id = ?")
+        .bind(new Date().toISOString(), id),
+      c.var.DB.prepare("UPDATE suppliers SET outstandingSen = GREATEST(0, outstandingSen - ?) WHERE id = ?")
+        .bind(gross, existing.supplierId),
+      ...ledgerStmts,
+      c.var.DB.prepare(
+        `UPDATE ledger_journal_entries SET hidden = 1
+          WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'purchase_credit_note%' AND sourceType <> ?`,
+      ).bind(id, orgId, postSource),
+    ]);
+    const updated = await c.var.DB.prepare("SELECT * FROM purchase_credit_notes WHERE id = ?").bind(id).first<PcnRow>();
+    await emitAudit(c, { resource: "accounting", resourceId: id, action: "restore", before: rowToPcn(existing), after: updated ? rowToPcn(updated) : null });
+    return c.json({ success: true, data: rowToPcn(updated!) });
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
+    console.error(`[ledger] PCN ${id} restore failed:`, e);
+    return c.json({ success: false, error: "Failed to restore the supplier discount — nothing was changed. Retry, and report if it persists." }, 500);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -4260,9 +4438,10 @@ app.post("/other-party-bills", async (c) => {
 
     const partyType = party.type as PartyType;
     const { subtotalSen, totalSen } = computeBillTotals(items, taxSen);
+    // OCB / ODB, or the prefix Settings gave them (Document Numbering).
     const billNo = await issueDocNumberWithPrefix(
       c.var.DB,
-      prefixForPartyType(partyType),
+      await docTypePrefix(c.var.DB, prefixForPartyType(partyType) === "OCB" ? "OCB" : "ODB"),
       billDate,
     );
     const billId = `opb-${crypto.randomUUID().slice(0, 10)}`;
@@ -4899,6 +5078,81 @@ app.get("/ap-invoices", async (c) => {
   return c.json({ success: true, data: { rows: filtered, totals } });
 });
 
+// ---------------------------------------------------------------------------
+// GET /ar-invoices — everything owed to us on paper in one list (owner
+// 2026-10-21 「我没发现ar invoice 在我的debtor part」 / 「这个other debtor bill
+// 里面…我希望只有bill，然后…ar invoice 一起放进来，像creditor 的ap invoice」 →
+// 「可以」): sales invoices (INV) and other-debtor bills (OD), the debtor twin of
+// /ap-invoices. An invoice dated before the books opened and not keyed as an
+// opening invoice is BEFORE_OPENING: its balance is in the opening balance, so
+// it owes nothing here — the open figures match Debtor Aging's.
+// ---------------------------------------------------------------------------
+app.get("/ar-invoices", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const [odRes, invRes, openingDate] = await Promise.all([
+    c.var.DB.prepare(
+      `SELECT b.id, b.billNo, b.partyId, b.partyName, b.billDate, b.referenceNo, b.description, b.totalSen, b.paidAmountSen, b.status,
+              dl.state AS lifecycleState
+         FROM other_party_bills b
+         LEFT JOIN document_lifecycle dl ON dl.orgId = b.orgId AND dl.sourceType = 'other_party_bill' AND dl.sourceId = b.billNo
+        WHERE b.orgId = ? AND b.partyType = 'DEBTOR' AND (dl.state IS NULL OR dl.state <> 'DELETED')`,
+    ).bind(orgId).all<Record<string, unknown>>(),
+    c.var.DB.prepare(
+      `SELECT id, invoiceNo, customerId, customerName, doNo, invoiceDate, dueDate, totalSen, paidAmount, status, isOpening
+         FROM invoices
+        WHERE status <> 'DRAFT'`,
+    ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
+    getOpeningDate(c.var.DB),
+  ]);
+  type ArRow = {
+    kind: "OD" | "INV"; id: string; no: string; customer: string; partyId: string; ref: string; date: string; dueDate: string | null;
+    description: string; totalSen: number; receivedSen: number; outstandingSen: number;
+    status: "OPEN" | "PAID" | "CANCELLED" | "BEFORE_OPENING"; opening: boolean;
+  };
+  const rows: ArRow[] = [];
+  for (const b of odRes.results ?? []) {
+    const total = Math.round(Number(b.totalSen ?? b.total_sen) || 0);
+    const paid = Math.round(Number(b.paidAmountSen ?? b.paid_amount_sen) || 0);
+    const lc = String(b.lifecycleState ?? b.lifecycle_state ?? "ACTIVE");
+    const st = String(b.status ?? "");
+    const rowStatus = lc !== "ACTIVE" || st === "CANCELLED" || st === "VOID" ? "CANCELLED" : total - paid <= 0 ? "PAID" : "OPEN";
+    rows.push({
+      kind: "OD", id: String(b.id), no: String(b.billNo ?? b.bill_no ?? ""), customer: String(b.partyName ?? b.party_name ?? ""),
+      partyId: String(b.partyId ?? b.party_id ?? ""), ref: String(b.referenceNo ?? b.reference_no ?? ""),
+      date: String(b.billDate ?? b.bill_date ?? "").slice(0, 10), dueDate: null, description: String(b.description ?? ""),
+      totalSen: total, receivedSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0, status: rowStatus, opening: false,
+    });
+  }
+  for (const i of invRes.results ?? []) {
+    const total = Math.round(Number(i.totalSen ?? i.total_sen) || 0);
+    const paid = Math.round(Number(i.paidAmount ?? i.paid_amount) || 0);
+    const st = String(i.status ?? "");
+    const date = String(i.invoiceDate ?? i.invoice_date ?? "").slice(0, 10);
+    const isOpening = !!Number(i.isOpening ?? i.is_opening ?? 0);
+    const rowStatus = st === "CANCELLED" || st === "VOID" ? "CANCELLED"
+      : st === "PAID" || total - paid <= 0 ? "PAID"
+      : rowBeforeOpening(date, openingDate, isOpening) ? "BEFORE_OPENING"
+      : "OPEN";
+    rows.push({
+      kind: "INV", id: String(i.id), no: String(i.invoiceNo ?? i.invoice_no ?? ""), customer: String(i.customerName ?? i.customer_name ?? ""),
+      partyId: String(i.customerId ?? i.customer_id ?? ""), ref: String(i.doNo ?? i.do_no ?? ""),
+      date, dueDate: (i.dueDate ?? i.due_date) ? String(i.dueDate ?? i.due_date).slice(0, 10) : null, description: "",
+      totalSen: total, receivedSen: paid, outstandingSen: rowStatus === "OPEN" ? total - paid : 0, status: rowStatus, opening: isOpening,
+    });
+  }
+  rows.sort((a, b) => b.date.localeCompare(a.date) || b.no.localeCompare(a.no));
+  const open = rows.filter((r) => r.status === "OPEN");
+  const totals = {
+    openSen: open.reduce((s, r) => s + r.outstandingSen, 0),
+    openCount: open.length,
+    invOpenSen: open.filter((r) => r.kind === "INV").reduce((s, r) => s + r.outstandingSen, 0),
+    odOpenSen: open.filter((r) => r.kind === "OD").reduce((s, r) => s + r.outstandingSen, 0),
+  };
+  return c.json({ success: true, data: { rows, totals, openingDate } });
+});
+
 app.delete("/other-party-bills/:billNo", async (c) => {
   const denied = await requirePermission(c, "accounting", "delete");
   if (denied) return denied;
@@ -5269,7 +5523,7 @@ app.get("/audit-log", async (c) => {
 // (finance backlog item 10 part 2): header and lines ("account amount; …").
 async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<Record<string, unknown> | null> {
   try {
-    const h = await db.prepare("SELECT date, payee, description, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+    const h = await db.prepare("SELECT date, payee, description, reference, payFrom, totalSen FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
     if (!h) return null;
     const ls = await db.prepare("SELECT accountCode, amountSen FROM payment_voucher_lines WHERE voucherId = ? ORDER BY lineOrder").bind(id).all<Record<string, unknown>>();
     const sen = (v: unknown) => ((Number(v) || 0) / 100).toFixed(2);
@@ -5277,6 +5531,7 @@ async function pvAuditSnapshot(db: Env["Variables"]["DB"], id: string): Promise<
       date: h.date ?? null,
       payee: h.payee ?? null,
       description: h.description ?? null,
+      reference: h.reference ?? null,
       payFrom: h.payFrom ?? h.pay_from ?? null,
       total: sen(h.totalSen ?? h.total_sen),
       lines: (ls.results ?? []).map((l) => `${String(l.accountCode ?? l.account_code ?? "")} ${sen(l.amountSen ?? l.amount_sen)}`).join("; "),
@@ -5313,6 +5568,8 @@ const CHANGE_LOG_RESOURCES = [
   // Recorded since item 10 part 2.
   "chart-of-accounts", "journals", "other-parties", "other-party-bills", "payment-vouchers", "official-receipts", "fund-transfers", "finance-settings",
   "fixed-assets", "bank-reco", "cash-position", "opening-balance", "stock-take", "material-opening-stock",
+  // Setup › Currency & FX (2026-10-20): rates, currencies, the FX accounts.
+  "fx-settings",
 ];
 // An audit resource → the ledger's name for the same document.
 const AUDIT_DOC_TYPE: Record<string, string> = {
@@ -6786,7 +7043,7 @@ const GROUP_DESCRIPTIONS: Record<string, string> = {
 // The effective stock map = built-in defaults overlaid with the owner's
 // kv_config `coa_stock_map` override (same shape). Single reader so the
 // P&L, stock summary and closing-stock posting all see one truth.
-async function getStockMap(
+async function getStockMapUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<typeof DEFAULT_STOCK_MAP> {
   try {
@@ -6806,6 +7063,7 @@ async function getStockMap(
   }
   return DEFAULT_STOCK_MAP;
 }
+const getStockMap = timedFn("stock-map", getStockMapUntimed);
 
 async function liveInventory(
   db: Env["Variables"]["DB"],
@@ -6816,8 +7074,10 @@ async function liveInventory(
   fg: number;
   total: number;
 }> {
+  // Both loads once per read request (requestMemo, 2026-10-19): /pl values the
+  // opening and the closing month together — two full reads of the same rows.
   const [clRes, rmRes] = await Promise.all([
-    db
+    requestMemo("cost-ledger:live-inventory", () => db
       .prepare(
         "SELECT type, itemType, itemId, direction, totalCostSen, date FROM cost_ledger",
       )
@@ -6828,10 +7088,10 @@ async function liveInventory(
         direction: string;
         totalCostSen: number;
         date: string;
-      }>(),
-    db
+      }>()),
+    requestMemo("raw-materials:groups", () => db
       .prepare("SELECT id, itemGroup FROM raw_materials")
-      .all<{ id: string; itemGroup: string }>(),
+      .all<{ id: string; itemGroup: string }>()),
   ]);
   const grp = new Map<string, string>();
   for (const r of rmRes.results ?? []) grp.set(r.id, r.itemGroup || "OTHER");
@@ -7567,7 +7827,7 @@ type PnlTrace = {
   extra: { kind: "payroll" | "opening_slice" | "estimate"; ym: string; sen: number; fromYm?: string }[];
 };
 
-async function glWindowSigned(
+async function glWindowSignedUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
@@ -7578,17 +7838,20 @@ async function glWindowSigned(
   const memoKey = `${startYm ?? ""}|${endYm ?? ""}`;
   const cached = trace ? undefined : dc.glMemo?.get(memoKey);
   if (cached) return cached;
+  // Every window of a read request reads the same live legs and chart — loaded
+  // once (requestMemo; 2026-10-19 「优化加载速度」: the P&L statement asked for
+  // eight windows, eight full loads of the ledger). Shared rows: read-only here.
   const [legRes, coaRes] = await Promise.all([
-    db.prepare(trace
+    requestMemo(trace ? "ledger-legs:trace" : "ledger-legs", () => db.prepare(trace
       ? "SELECT id, accountCode, sourceId, debitSen, creditSen, postedAt, sourceType, description FROM ledger_journal_entries WHERE hidden = 0"
       : "SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0")
-      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>(),
-    db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>(),
+      .all<{ id?: string; accountCode: string; sourceId: string; debitSen: number; creditSen: number; postedAt: string; sourceType: string; description?: string }>()),
+    requestMemo("coa-name-type", () => db.prepare("SELECT code, name, type FROM chart_of_accounts").all<{ code: string; name: string; type: CoaRow["type"] }>()),
   ]);
   const resolve = await loadAccountResolver(db);
   const { docDate, openingDate: obDate } = dc;
-  const net: GlWindow = new Map();
-  const openingNet: GlWindow = new Map(); // opening_balance(+reversal) legs, netted
+  let net: GlWindow = new Map();
+  let openingNet: GlWindow = new Map(); // opening_balance(+reversal) legs, netted
   // Salary accruals ALREADY in the GL, per month and ACCOUNT: any entry that
   // credits 410-0010 (a Labour-tab post OR a manual JV) marks the accounts its
   // debit legs touched. Those (month, account) pairs keep the owner's figures;
@@ -7598,8 +7861,26 @@ async function glWindowSigned(
   // WHOLE month, wiping the production 750-x auto-extract with it. Net of any
   // undo (BUG-2026-10-09-275): a Labour post that was unposted, or a voided JV,
   // records nothing — see src/lib/recorded-salary.ts.
-  const recordedSalaryAccts = recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT);
-  for (const l of legRes.results ?? []) {
+  // Window-independent — once per read request (requestMemo; the drill's own legs walk it fresh).
+  const recordedSalaryAccts = trace
+    ? recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT)
+    : await requestMemo("ledger-recorded-salary", async () => recordedSalaryAccounts(salaryLegsIn(legRes.results ?? [], resolve, docDate, obDate), LABOUR_ACCRUAL_ACCT));
+  if (!trace) {
+    // The legs dated and resolved ONCE per read request (src/lib/ledger-window.ts;
+    // 2026-10-19 「优化加载速度」: the P&L statement's eight windows walked every
+    // leg eight times); the window adds up the months it covers. Same figures,
+    // same account order as the loop below, which a drill still runs because it
+    // lists the legs one by one.
+    const prep = await requestMemo("ledger-prepared", async () => prepareLedger(legRes.results ?? [], {
+      docDate,
+      resolve,
+      isBeforeOpening: (sourceType, dd) => legBeforeOpening(sourceType, dd, obDate),
+      isOpening: isOpeningSource,
+    }));
+    net = windowNet(prep, startYm, endYm);
+    openingNet = prep.openingNet;
+  }
+  if (trace) for (const l of legRes.results ?? []) {
     const dd = docDate(l.sourceType, l.sourceId, l.postedAt); // by document date
     if (legBeforeOpening(l.sourceType, dd, obDate)) continue; // pre-opening: not extracted
     // Opening-balance legs carry the CUMULATIVE-to-opening P&L balances — they
@@ -7675,6 +7956,7 @@ async function glWindowSigned(
   if (!trace) dc.glMemo?.set(memoKey, out);
   return out;
 }
+const glWindowSigned = timedFn("gl-window", glWindowSignedUntimed);
 
 // ---------------------------------------------------------------------------
 // loadMaterialCost (F6 T4b) — read-only FIFO material cost for a P&L window.
@@ -7799,7 +8081,7 @@ type MaterialCostData = {
   };
 };
 
-async function loadMaterialCostData(
+async function loadMaterialCostDataUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   lastYm: string,
@@ -7809,9 +8091,11 @@ async function loadMaterialCostData(
   // any window ending <= lastYm, so they're dropped while assembling.
   const matEndIso = monthEndIso(lastYm);
   // 0. Ensure the opening-stock tables exist (deploys don't run migrations).
-  await ensureMaterialOpeningStock(db);
-  await ensureInventoryOpening(db);
-  await ensureStockTake(db);
+  await timed("mat-ensure", async () => {
+    await ensureMaterialOpeningStock(db);
+    await ensureInventoryOpening(db);
+    await ensureStockTake(db);
+  });
 
   // 0a. Cutover day: global kv `material_opening_date`, else the earliest
   //     as_of_date on file. Only GRN/issue movements strictly AFTER the cutover
@@ -7869,7 +8153,7 @@ async function loadMaterialCostData(
   //      and the cost_ledger RM_ISSUE / ADJUSTMENT rows. Loaded in parallel.
   //      (cost_ledger is read whole — same pattern as stockSummaryRange — and
   //      filtered in JS; LABOR / FG rows are reused for WIP / FG below.)
-  const [grnRes, piRes, clRes, poRes, fgbRes, fguRes] = await Promise.all([
+  const [grnRes, piRes, clRes, poRes, fgbRes, fguRes] = await timed("mat-sources", () => Promise.all([
     db
       .prepare(
         `SELECT g.poId AS poId, g.receiveDate AS receiveDate, g.status AS status,
@@ -7925,7 +8209,7 @@ async function loadMaterialCostData(
       )
       .bind(orgId)
       .all<{ batchId: string | null; date: string | null; qty: number | null }>(),
-  ]);
+  ]));
 
   // 3. PI-weighted-average layer cost, batched into one map keyed PO+material.
   //    round(Σ line_total_sen / Σ qty) over all APPROVED-PI STOCKED lines for
@@ -8288,6 +8572,7 @@ async function loadMaterialCostData(
     warnings: { negatives, unresolved },
   };
 }
+const loadMaterialCostData = timedFn("material-replay", loadMaterialCostDataUntimed);
 
 // Derive one P&L window (the old per-window loadMaterialCost shape) from the
 // precomputed data — pure arithmetic, no replay. opening = closing at the end of
@@ -8531,7 +8816,7 @@ function ensureOtherPartyBillOpening(db: D1Database): Promise<void> {
 }
 
 /** Load all historical P&L rows for an org, grouped by ym. */
-async function loadHistoricalPnl(
+async function loadHistoricalPnlUntimed(
   db: D1Database,
   orgId: string,
 ): Promise<Map<string, Partial<Record<"all" | "sofa" | "bedframe", PnlWindow>>>> {
@@ -8573,6 +8858,7 @@ async function loadHistoricalPnl(
   }
   return map;
 }
+const loadHistoricalPnl = timedFn("pnl-history", loadHistoricalPnlUntimed);
 
 // A "purchase account" = COST-type account that is not one of the dedicated
 // account-driven lines (carriage 700-1015 / SST 706-0000 / labour 750 /
@@ -8684,7 +8970,7 @@ function productionValuedMonth(
 // The month-end FG / WIP to use at `ym` where the Stock Take is blank — the
 // production-order valuation (liveStockFor). null = leave the material
 // window's figure.
-async function blankMonthStock(
+async function blankMonthStockUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   ym: string | null,
@@ -8702,6 +8988,7 @@ async function blankMonthStock(
     return null; // unreadable → the material window's figures, as before
   }
 }
+const blankMonthStock = timedFn("blank-month-stock", blankMonthStockUntimed);
 
 // The closing stock the P&L carries at month-end `ym` — the material window's
 // close, with a blank month's FG / WIP from the production orders — in the
@@ -8760,10 +9047,11 @@ async function sheetStockAt(
 // at last month's amount (owner 2026-10-13 「这个月的 amount 还没有但每个月都
 // 有的…根据上个月的 amount 出现」; src/lib/expense-estimates.ts): operating
 // expenses, salaries & contribution and factory overhead with an amount in each
-// of the last three months and nothing so far this month. Read from the same
+// of the last three months — or ticked "Estimate every month" in the Chart of
+// Accounts (owner 2026-10-21) — and nothing so far this month. Read from the same
 // one-month ledger windows the statement shows for those months (before any
 // estimate). Display only — nothing is posted. Memoised per request.
-async function runningMonthEstimates(
+async function runningMonthEstimatesUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   dc: DocDateCtx,
@@ -8780,15 +9068,17 @@ async function runningMonthEstimates(
         const meta = cur.coa.get(code);
         return meta ? pnlBucketFor(code, meta.type, override) : null;
       };
-      const est = recurringEstimates({ current: cur.net, previous: prev.map((w) => w.net), bucketOf });
+      const always = await estimateMonthlyCodes(db);
+      const est = recurringEstimates({ current: cur.net, previous: prev.map((w) => w.net), bucketOf, always });
       return new Map([...est].map(([code, sen]) => [code, { sen, fromYm: prevYms[0] }] as const));
     })();
     dc.estimateMemo.set(runYm, hit);
   }
   return hit;
 }
+const runningMonthEstimates = timedFn("running-estimates", runningMonthEstimatesUntimed);
 
-async function computePnlWindow(
+async function computePnlWindowUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   startYm: string | null,
@@ -9021,10 +9311,11 @@ async function computePnlWindow(
     materialWarnings: mat.warnings,
   };
 }
+const computePnlWindow = timedFn("pnl-window", computePnlWindowUntimed);
 
 // Window form of costByLine for sales ratio (period-string version exists
 // for the public endpoint; this one takes an explicit window).
-async function costByLineWindow(
+async function costByLineWindowUntimed(
   db: Env["Variables"]["DB"],
   startYm: string | null,
   endYm: string | null,
@@ -9057,6 +9348,7 @@ async function costByLineWindow(
   const tot = sofaSales + bedSales;
   return { salesRatio: tot > 0 ? { sofa: sofaSales / tot, bedframe: bedSales / tot } : { sofa: 0.5, bedframe: 0.5 } };
 }
+const costByLineWindow = timedFn("cost-by-line", costByLineWindowUntimed);
 
 // Assemble the statement row tree from a period window + the FY-YTD window.
 function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
@@ -9137,7 +9429,108 @@ function buildPnlRows(p: PnlWindow, y: PnlWindow, editable = false) {
 // (consumed = opening + purchase − closing), with the line's monthly sales
 // and cost-spend % of sales. Opening carries across months (and from the
 // prior FY). One pass over the cost ledger.
-app.get("/cost-structure", async (c) => {
+// ---------------------------------------------------------------------------
+// The P&L hub's views (statement, Monthly P&L, Cost Structure) and the Balance
+// Sheet (GET /pl), kept in a snapshot like the Overview — owner 2026-10-19,
+// asked whether to 「也像 Overview 那样存结果」: 「要」. The last computed copy is
+// served at once and refreshed in the background when a source table changes
+// or the copy is older than REPORT_SNAPSHOT_MAX_AGE_MS; the first open after a
+// change can show the previous copy (the owner's trade-off). Each view's own
+// handler is unchanged (…Response below): a 4xx / {success:false} is passed
+// through and never stored. Edit Layout stays live; a report-setting write
+// clears the copies (REPORT_SETTING_WRITES). Daily Cash Position stays live.
+// ---------------------------------------------------------------------------
+type AccountingCtx = Context<Env>;
+const REPORT_SNAPSHOT_TABLE = "accounting_report_snapshot";
+// Bump when a view's response SHAPE (or what its figures mean) changes — the
+// freshness probe watches tables, so a code change alone retires no copy.
+// v2: the Balance Sheet's accounts carry their Chart of Accounts parent (2026-10-21).
+const REPORT_SNAPSHOT_V = "v2";
+const REPORT_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
+// The P&L replay's tables plus what the statements, the Balance Sheet and the
+// material replay read besides (a table with no timestamp column is skipped by
+// the probe; the age limit covers it). A function: the replay list is declared
+// further down this module.
+const reportSnapshotSourceTables = (): readonly string[] => [
+  ...PNL_REPLAY_SOURCE_TABLES,
+  "chart_of_accounts", "account_aliases", "invoice_items", "sales_orders",
+  "purchase_invoice_items", "purchase_orders", "grns", "raw_materials",
+  "material_opening_stock", "inventory_opening", "fixed_assets",
+];
+class ReportNotStored extends Error {
+  status: number;
+  body: string;
+  constructor(status: number, body: string) {
+    super(`report not stored (${status})`);
+    this.status = status;
+    this.body = body;
+  }
+}
+async function reportSnapshot(
+  c: AccountingCtx,
+  view: string,
+  respond: (c: AccountingCtx) => Promise<Response>,
+  live = false,
+): Promise<Response> {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  if (live) return respond(c);
+  const db = c.var.DB;
+  const { withSnapshot } = await import("../lib/snapshot");
+  // The table must exist before withSnapshot reads it (readSnapshot is not
+  // guarded) — the shape of the other accounting snapshots.
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS ${REPORT_SNAPSHOT_TABLE} (
+       org_id TEXT NOT NULL,
+       cache_key TEXT NOT NULL DEFAULT '',
+       data TEXT NOT NULL,
+       built_from TEXT NOT NULL,
+       built_at TEXT NOT NULL DEFAULT '',
+       refresh_count INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (org_id, cache_key)
+     )`,
+  ).run();
+  const orgId = getOrgId(c);
+  // Every query parameter is part of the copy's identity (period, line, fy,
+  // anchor, the company filter…), and the running month — a new month is a
+  // new window.
+  const params = [...new URL(c.req.url).searchParams.entries()]
+    .sort(([a, av], [b, bv]) => a.localeCompare(b) || av.localeCompare(bv))
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+  const key = `${REPORT_SNAPSHOT_V}:${view}:${runningMonthYm()}:${params}:${orgId}`;
+  try {
+    const payload = await withSnapshot(
+      db,
+      { tableName: REPORT_SNAPSHOT_TABLE, sourceTables: reportSnapshotSourceTables() },
+      orgId,
+      async () => {
+        const res = await respond(c);
+        const text = await res.text();
+        if (res.status !== 200) throw new ReportNotStored(res.status, text);
+        const json = JSON.parse(text) as Record<string, unknown>;
+        if (json.success === false) throw new ReportNotStored(res.status, text);
+        return json;
+      },
+      key,
+      c,
+      { staleWhileRevalidate: true, maxAgeMs: REPORT_SNAPSHOT_MAX_AGE_MS },
+    );
+    return c.json(payload);
+  } catch (e) {
+    if (e instanceof ReportNotStored) {
+      return new Response(e.body, { status: e.status, headers: { "Content-Type": "application/json; charset=UTF-8" } });
+    }
+    throw e;
+  }
+}
+// The next open computes afresh (a missing table = nothing stored yet).
+async function clearReportSnapshots(db: Env["Variables"]["DB"], orgId: string): Promise<void> {
+  await db.prepare(`DELETE FROM ${REPORT_SNAPSHOT_TABLE} WHERE org_id = ?`).bind(orgId).run().catch(() => {});
+}
+
+app.get("/cost-structure", (c) => reportSnapshot(c, "cost-structure", costStructureResponse));
+async function costStructureResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const db = c.var.DB;
@@ -9209,7 +9602,7 @@ app.get("/cost-structure", async (c) => {
     success: true,
     data: { fyLabel: fyWin.label, cols, groups: out, salesSofa, salesBed, salesAll: cols.map((_, i) => salesSofa[i] + salesBed[i]) },
   });
-});
+}
 
 // Phase 5.9 — Cost & Expense classes: for a financial year, COST (mfg) and
 // EXPENSE (operating) accounts laid out months-as-columns, grouped by
@@ -9366,7 +9759,8 @@ app.get("/pl-trend", async (c) => {
   return c.json({ success: true, data: { line, months, cols } });
 });
 
-app.get("/pl-statement", async (c) => {
+app.get("/pl-statement", (c) => reportSnapshot(c, "pl-statement", plStatementResponse, c.req.query("editable") === "1"));
+async function plStatementResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   // Task 3.1 — ensure table exists before first read.
@@ -9433,7 +9827,7 @@ app.get("/pl-statement", async (c) => {
       materialWarnings,
     },
   });
-});
+}
 
 // An official receipt's payer and description, for the drills: its header
 // note when it has one, else its lines' text (the receipt popup shows both;
@@ -9900,7 +10294,8 @@ app.get("/bs-drill", async (c) => {
   });
 });
 
-app.get("/pl-monthly", async (c) => {
+app.get("/pl-monthly", (c) => reportSnapshot(c, "pl-monthly", plMonthlyResponse));
+async function plMonthlyResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   // Task 3.1 — ensure table exists before first read.
@@ -9966,7 +10361,7 @@ app.get("/pl-monthly", async (c) => {
 
   const matrix = buildPnlMatrix(cols);
   return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, columns: matrix.columns, rows: matrix.rows } });
-});
+}
 
 // Finance Overview, month by month (owner 2026-10-14 「overview 主要显示…」→「做」;
 // src/lib/overview-trend.ts). The last 3 / 6 / 12 months up to the running
@@ -9979,6 +10374,52 @@ app.get("/pl-monthly", async (c) => {
 //   • the most-produced models — production orders completed in the month,
 //     quantities per model series, Sofa and Bedframe apart, top 5 each.
 // Read-only.
+// Every table the P&L replay reads — /dashboard and /overview-trend keep a
+// snapshot of replayed P&L figures, and a write to any of these must rebuild
+// it. kv_config carries the opening date and the section map; pnl_historical
+// the owner-keyed months before the books opened.
+const PNL_REPLAY_SOURCE_TABLES: readonly string[] = [
+  "ledger_journal_entries",
+  "invoices",
+  "purchase_invoices",
+  "cost_ledger",
+  "grn_items",
+  "production_orders",
+  "delivery_orders",
+  "kv_config",
+  // Production Salary per head / per unit reads these two — without them
+  // hiring someone or completing a batch would leave the card stale.
+  "workers",
+  "fg_batches",
+  // salaryByDept reads payslips — without it a payroll edit leaves the
+  // department stacks stale.
+  "payslips",
+  // Report-layer labour injection (2026-08-31) dry-runs payroll from
+  // these when a month has no payslips yet — new clock entries, docks
+  // or a raise must refresh the injected P&L figures.
+  "working_hour_entries",
+  "payroll_hour_deductions",
+  "worker_salary_history",
+  // Production Revenue (2026-10-12) books a PO when its last upholstery
+  // card completes, priced from its SO / CO line or the product master.
+  "job_cards",
+  "sales_order_items",
+  "consignment_order_items",
+  "products",
+  // The running month's labour to date (2026-10-12) also reads the
+  // department master (which departments log factory hours) and the
+  // effective-dated pay rules.
+  "departments",
+  "pay_rule_versions",
+  // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
+  // delivery order or consignment note.
+  "delivery_order_items",
+  "consignment_notes",
+  "consignment_items",
+  "stock_take",
+  "pnl_historical",
+];
+
 app.get("/overview-trend", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -9987,6 +10428,52 @@ app.get("/overview-trend", async (c) => {
   const n = asked === 6 || asked === 12 ? asked : 3;
   const runYm = runningMonthYm();
   const months = lastMonths(runYm, n);
+  // Cache-aside + serve-stale-while-revalidate (owner 2026-10-19 「优化加载
+  // 速度…尤其是overview」): the trend replays the P&L month by month and
+  // measured 5.6–7.8 s (84–107 queries) on EVERY call, phone and desktop. The
+  // same pattern as /dashboard: the last computed copy is served at once and
+  // refreshed in the background whenever a source table changes. The key
+  // carries the range and the running month (a new month = a new window).
+  const { withSnapshot } = await import("../lib/snapshot");
+  // The snapshot table must exist before withSnapshot reads it (readSnapshot
+  // is not guarded) — the exact shape of the /dashboard snapshot table.
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS accounting_overview_snapshot (
+       org_id TEXT NOT NULL,
+       cache_key TEXT NOT NULL DEFAULT '',
+       data TEXT NOT NULL,
+       built_from TEXT NOT NULL,
+       built_at TEXT NOT NULL DEFAULT '',
+       refresh_count INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (org_id, cache_key)
+     )`,
+  ).run();
+  const snapOrgId = getOrgId(c);
+  // PAYLOAD VERSION — bump whenever the response SHAPE (or what a month's
+  // figures mean) changes: the freshness probe watches the source TABLES, so a
+  // code change alone never retires a stored copy.
+  const OVERVIEW_PAYLOAD_V = "v1";
+  const payload = await withSnapshot(
+    db,
+    { tableName: "accounting_overview_snapshot", sourceTables: [...PNL_REPLAY_SOURCE_TABLES, "sales_orders"] },
+    snapOrgId,
+    () => computeOverviewTrend(db, snapOrgId, runYm, months),
+    `${OVERVIEW_PAYLOAD_V}:${n}:${runYm}:${snapOrgId}`,
+    c,
+    { staleWhileRevalidate: true },
+  );
+  return c.json({ success: true, data: payload });
+});
+
+// The Overview's figures, month by month (computed fresh; /overview-trend
+// keeps the last copy): sales orders vs invoices, the P&L's own month windows,
+// the most-produced models.
+async function computeOverviewTrend(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  runYm: string,
+  months: string[],
+): Promise<{ months: OverviewMonth[]; runningYm: string }> {
 
   const pick = (r: Record<string, unknown>, ...keys: string[]) => {
     for (const k of keys) if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k];
@@ -10033,7 +10520,6 @@ app.get("/overview-trend", async (c) => {
 
   // The P&L, month by month — /pl-monthly's own loop.
   await ensurePnlHistorical(db);
-  const orgId = getOrgId(c);
   const override = await getPnlSectionMap(db);
   const matData = await loadMaterialCostData(db, orgId, runYm);
   const dc = await loadDocDateResolver(db);
@@ -10053,8 +10539,8 @@ app.get("/overview-trend", async (c) => {
       top: topBy.get(ym) ?? { SOFA: [], BEDFRAME: [] },
     });
   }
-  return c.json({ success: true, data: { months: out, runningYm: runYm } });
-});
+  return { months: out, runningYm: runYm };
+}
 
 // Finance dashboard tab feed (routes/dashboard-finance.ts → lib/dashboard-finance.ts).
 // Per month: the P&L's own figures (same per-month window logic as `/pl-monthly`:
@@ -10863,7 +11349,8 @@ app.get("/cashflow-drill", async (c) => {
 // product/customer revenue cuts stay operational (sourced from invoices),
 // per the owner's choice — the GL has no such dimensions. Response shape
 // is unchanged so the PL/BS UI tabs render as-is.
-app.get("/pl", async (c) => {
+app.get("/pl", (c) => reportSnapshot(c, "pl", plBalanceSheetResponse));
+async function plBalanceSheetResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const period = c.req.query("period");
@@ -10879,13 +11366,14 @@ app.get("/pl", async (c) => {
 
   // --- chart of accounts lookup ---
   const coaRes = await c.var.DB.prepare(
-    "SELECT code, name, type, specialAccountType, cashFlowCategory FROM chart_of_accounts",
+    "SELECT code, name, type, specialAccountType, cashFlowCategory, parentCode FROM chart_of_accounts",
   ).all<{
     code: string;
     name: string;
     type: CoaRow["type"];
     specialAccountType: string | null;
     cashFlowCategory: string | null;
+    parentCode: string | null;
   }>();
   const coa = new Map<
     string,
@@ -10894,6 +11382,7 @@ app.get("/pl", async (c) => {
       type: CoaRow["type"];
       sat: string | null;
       cf: string | null;
+      parent: string | null;
     }
   >();
   for (const a of coaRes.results ?? [])
@@ -10902,10 +11391,13 @@ app.get("/pl", async (c) => {
       type: a.type,
       sat: a.specialAccountType ?? null,
       cf: a.cashFlowCategory ?? null,
+      parent: a.parentCode ?? (a as { parent_code?: string | null }).parent_code ?? null,
     });
 
   // --- ledger legs ---
-  const legRes = await c.var.DB.prepare(
+  // Without a company filter this is the very query every ledger window of the
+  // request reads — loaded once (requestMemo "ledger-legs", 2026-10-19).
+  const legQuery = () => c.var.DB.prepare(
     `SELECT accountCode, sourceId, debitSen, creditSen, postedAt, sourceType FROM ledger_journal_entries WHERE hidden = 0${legWhere}`,
   )
     .bind(...(coFilter.active ? [coFilter.param] : []))
@@ -10917,6 +11409,7 @@ app.get("/pl", async (c) => {
     postedAt: string;
     sourceType: string;
   }>();
+  const legRes = await (coFilter.active ? legQuery() : requestMemo("ledger-legs", legQuery));
   const endYm = periodEndYm(period);
   // Per-account net for the P&L period and cumulative-as-of for the BS.
   // Phase 1 (2026-06): year-close legs zero the P&L accounts into 150-0000
@@ -11157,6 +11650,10 @@ app.get("/pl", async (c) => {
     category: BsSection;
     balance: number;
     asOfDate: string;
+    // The account's Chart of Accounts parent: the sheet nests the accounts
+    // that share one under it (owner 2026-10-21; src/lib/bs-groups.ts).
+    parentCode?: string | null;
+    parentName?: string | null;
   }[] = [];
   const asOf = endYm ? `${endYm}-28` : new Date().toISOString().slice(0, 10);
   const bsOverride = await getBsSectionMap(c.var.DB);
@@ -11189,6 +11686,8 @@ app.get("/pl", async (c) => {
     const stockSen = sheetStock?.balances.get(code);
     const shown = stockSen === undefined ? bal : bsSectionClass(section) === "asset" ? stockSen : -stockSen;
     if (shown === 0) continue;
+    const parent = acct.parent ? resolveAcct(acct.parent) : null;
+    const parentCode = parent && parent !== code ? parent : null;
     balanceSheet.push({
       id: code,
       accountCode: code,
@@ -11196,6 +11695,8 @@ app.get("/pl", async (c) => {
       category: section,
       balance: shown,
       asOfDate: asOf,
+      parentCode,
+      parentName: parentCode ? coa.get(parentCode)?.name ?? null : null,
     });
   }
   // Account-code order within every section (owner 2026-10-13 「排序按科目编号」);
@@ -11267,7 +11768,7 @@ app.get("/pl", async (c) => {
       },
     },
   });
-});
+}
 
 // ---------------------------------------------------------------------------
 // PAYMENT / EXPENSE VOUCHERS + OFFICIAL RECEIPTS (Phase 3.2/3.3, 2026-06)
@@ -11449,7 +11950,13 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
       // finance carries the drawdown's due date and the interest recorded at
       // drawdown (finance backlog item 17, owner 「提款时就记」).
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER"]) {
+      // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
+      // its own field — the description stays the printed text.
+      // fx_currency / fx_rate: an AP Payment of foreign-currency bills pays in
+      // that currency at this rate (Currency & FX step 3, owner 2026-10-20);
+      // fx_bank_confirmed_at / _by: when Finance keyed the RM the bank actually
+      // debited, and who (step 4 — the rate is then the actual one).
+      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"]) {
         await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
       }
       await db.prepare(
@@ -11464,6 +11971,11 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
       ).run();
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)").run().catch(() => {});
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)").run().catch(() => {});
+      // A foreign-currency bill: the amount paid in its own currency and
+      // whether it settles all that is left (amount_sen = the booked RM).
+      for (const col of ["foreign_sen INTEGER", "full_pay INTEGER"]) {
+        await db.prepare(`ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
+      }
     })().catch((e) => {
       _pendingPvApCols = null;
       throw e;
@@ -11475,28 +11987,36 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
 const PV_KIND_AP = "AP";
 
 // The voucher form's own fields (owner 2026-10-01): internal notes (never
-// printed), the supplier's bill number and date.
-function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null } {
+// printed), the supplier's bill number and date — and (2026-10-19) the
+// Reference, the TT / cheque no., printed on the voucher.
+function pvExtraFields(body: Record<string, unknown>): { notes: string | null; billNo: string | null; billDate: string | null; reference: string | null } {
   const notes = String(body.notes ?? "").trim();
   const billNo = String(body.billNo ?? "").trim();
   const billDate = String(body.billDate ?? "").trim();
-  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null };
+  return { notes: notes || null, billNo: billNo || null, billDate: /^\d{4}-\d{2}-\d{2}$/.test(billDate) ? billDate : null, reference: normaliseReference(body.reference) };
 }
 type PvPartyKind = "SUPPLIER" | "OTHER";
 // TF = a trade-finance drawdown, repaid by an AP Payment to the lender
 // (finance backlog item 17); docId = the drawdown's payment no.
 type PvAllocDocKind = "PI" | "AP" | "TF";
-type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number };
+// amountSen = the RM the bill is cleared by (its booked RM for a foreign
+// bill); foreignSen = what was paid in the bill's own currency (Currency & FX
+// step 3); full = it settles all that is left of the bill.
+type PvAlloc = { docKind: PvAllocDocKind; docId: string; amountSen: number; foreignSen?: number | null; full?: boolean };
 
 async function loadPvAllocs(db: Env["Variables"]["DB"], voucherId: string): Promise<PvAlloc[]> {
   const res = await db.prepare(
-    "SELECT doc_kind, doc_id, amount_sen FROM payment_voucher_allocs WHERE voucher_id = ? ORDER BY line_order",
+    "SELECT doc_kind, doc_id, amount_sen, foreign_sen, full_pay FROM payment_voucher_allocs WHERE voucher_id = ? ORDER BY line_order",
   ).bind(voucherId).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
-  return (res.results ?? []).map((r) => ({
-    docKind: String(r.docKind ?? r.doc_kind) as PvAllocDocKind,
-    docId: String(r.docId ?? r.doc_id),
-    amountSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
-  }));
+  return (res.results ?? []).map((r) => {
+    const foreignSen = Math.round(Number(r.foreignSen ?? r.foreign_sen) || 0);
+    return {
+      docKind: String(r.docKind ?? r.doc_kind) as PvAllocDocKind,
+      docId: String(r.docId ?? r.doc_id),
+      amountSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
+      ...(foreignSen > 0 ? { foreignSen, full: Number(r.fullPay ?? r.full_pay) === 1 } : {}),
+    };
+  });
 }
 
 // Amounts already ticked on OTHER unposted, live AP vouchers (Houzs: 「已被别
@@ -11531,6 +12051,9 @@ type PvOpenBill = {
   currency: string; foreign: boolean; opening: boolean;
   /** A drawdown (docKind TF): the interest in its balance (recorded at drawdown). */
   interestSen?: number;
+  /** A foreign-currency bill: its booking rate and what is still payable in its own currency. */
+  fxRate?: number | null;
+  foreignAvailableSen?: number | null;
 };
 // The lender of a trade-finance line, when the supplier picked is one.
 type PvTfLender = { accountCode: string; lenderName: string };
@@ -11583,7 +12106,7 @@ async function pvOpenBillsFor(
       return { partyName: sup.name, bills, advanceOpenSen: 0, tfLender: { accountCode: lender.accountCode, lenderName: lender.lenderName } };
     }
     const res = await db.prepare(
-      `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening
+      `SELECT id, pi_no, supplier_invoice_no, invoice_date, due_date, amount_sen, paid_amount_sen, status, currency, is_opening, fx_rate
          FROM purchase_invoices
         WHERE supplier_id = ? AND status IN ('CONFIRMED','APPROVED','PARTIAL_PAID')
         ORDER BY invoice_date ASC, pi_no ASC`,
@@ -11596,14 +12119,18 @@ async function pvOpenBillsFor(
       if (outstanding <= 0) continue;
       const id = String(p.id);
       const rsv = reserved.get(`PI|${id}`);
-      const currency = String(p.currency ?? "MYR") || "MYR";
+      const currency = normaliseCurrencyCode(p.currency);
+      const foreign = currency !== "MYR";
+      const availableSen = Math.max(0, outstanding - (rsv?.sen ?? 0));
+      const fxRate = foreign ? Number(p.fxRate ?? p.fx_rate) || null : null;
       bills.push({
         docKind: "PI", id, no: String(p.piNo ?? p.pi_no ?? ""), ref: String(p.supplierInvoiceNo ?? p.supplier_invoice_no ?? ""),
         date: String(p.invoiceDate ?? p.invoice_date ?? "").slice(0, 10),
         dueDate: (p.dueDate ?? p.due_date) ? String(p.dueDate ?? p.due_date).slice(0, 10) : null,
         totalSen: total, paidSen: paid, outstandingSen: outstanding,
-        reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen: Math.max(0, outstanding - (rsv?.sen ?? 0)),
-        currency, foreign: currency.toUpperCase() !== "MYR", opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
+        reservedSen: rsv?.sen ?? 0, reservedBy: rsv?.vouchers ?? [], availableSen,
+        currency, foreign, opening: !!Number(p.isOpening ?? p.is_opening ?? 0),
+        ...(foreign ? { fxRate, foreignAvailableSen: fxRate ? foreignAvailableSen(availableSen, fxRate) : null } : {}),
       });
     }
     // Unapplied advance this supplier already holds (knock-off lives on the
@@ -11650,6 +12177,8 @@ async function pvOpenBillsFor(
 type PvApValidated = {
   partyKind: PvPartyKind; partyId: string; partyName: string; payFrom: string;
   allocs: PvAlloc[]; advanceSen: number; totalSen: number;
+  /** Foreign-currency bills: their currency and the payment's rate (RM per 1 unit); null for RM. */
+  fxCurrency: string | null; fxRate: number | null;
   /** Paid from a trade-finance line = a drawdown: its due date and the
       interest recorded at drawdown (null for a bank / cash payment). */
   tf: { dueDate: string; interestSen: number } | null;
@@ -11700,23 +12229,50 @@ export async function validatePvAp(
   const byId = new Map(open.bills.map((b) => [b.id, b] as const));
   const allocs: PvAlloc[] = [];
   const seen = new Set<string>();
+  // Foreign-currency bills (Currency & FX step 3, owner 2026-10-20): one
+  // currency per payment, typed in that currency, priced at the payment's
+  // rate (the form fills in the month's rate from Setup); AP is cleared at
+  // the booked RM, the bank pays foreign × rate (apForeignPay).
+  const payRate = body.fxRate === undefined || body.fxRate === null || body.fxRate === "" ? null : parseFxRate(body.fxRate);
+  let fxCurrency: string | null = null;
+  let anyRm = false;
+  let foreignBankSen = 0;
   for (const a of rawAllocs) {
     const docId = String(a.docId ?? "");
-    const amountSen = Math.round(Number(a.amountSen) || 0);
-    if (!docId || amountSen === 0) continue;
-    if (amountSen < 0) return { ok: false, error: "Allocation amounts must be positive" };
+    const bill = docId ? byId.get(docId) : undefined;
+    const typed = Math.round(Number(bill?.foreign ? a.foreignSen : a.amountSen) || 0);
+    if (!docId || typed === 0) continue;
+    if (typed < 0) return { ok: false, error: "Allocation amounts must be positive" };
     if (seen.has(docId)) return { ok: false, error: "The same bill is listed twice" };
     seen.add(docId);
-    const bill = byId.get(docId);
     if (!bill) return { ok: false, error: `Bill ${docId} is not an open bill of this creditor` };
-    if (bill.foreign) return { ok: false, error: `${bill.no} is in ${bill.currency} — pay foreign-currency invoices on the Supplier Payment page (payment-day rate needed)` };
+    if (bill.foreign) {
+      if (anyRm || (fxCurrency && fxCurrency !== bill.currency)) {
+        return { ok: false, error: `One currency per payment — ${bill.no} is in ${bill.currency}; pay it on its own AP payment` };
+      }
+      fxCurrency = bill.currency;
+      if (payRate === null) return { ok: false, error: `Enter this payment's ${bill.currency} rate (RM per 1 ${bill.currency})` };
+      const r = apForeignPay({ availableSen: bill.availableSen, reservedSen: bill.reservedSen, bookingRate: bill.fxRate ?? 0, foreignSen: typed, payRate });
+      if (!r.ok) {
+        const why = bill.reservedSen > 0 ? ` (RM ${(bill.reservedSen / 100).toFixed(2)} already ticked on ${bill.reservedBy.join(", ")})` : "";
+        return { ok: false, error: `${bill.no}: ${r.error}${r.error === "more than is still payable" ? ` — ${bill.currency} ${((bill.foreignAvailableSen ?? 0) / 100).toFixed(2)}${why}` : ""}` };
+      }
+      allocs.push({ docKind: bill.docKind, docId, amountSen: r.bookedSen, foreignSen: typed, full: r.full });
+      foreignBankSen += r.bankSen;
+      continue;
+    }
+    if (fxCurrency) return { ok: false, error: `One currency per payment — ${bill.no} is in RM; pay it on its own AP payment` };
+    anyRm = true;
+    const amountSen = typed;
     if (amountSen > bill.availableSen) {
       const why = bill.reservedSen > 0 ? ` (RM ${(bill.reservedSen / 100).toFixed(2)} already ticked on ${bill.reservedBy.join(", ")})` : "";
       return { ok: false, error: `${bill.no}: RM ${(amountSen / 100).toFixed(2)} exceeds the RM ${(bill.availableSen / 100).toFixed(2)} still payable${why}` };
     }
     allocs.push({ docKind: bill.docKind, docId, amountSen });
   }
+  if (fxCurrency && tf) return { ok: false, error: "A trade-finance drawdown is in RM — pay foreign-currency bills from a bank account" };
   const advanceSen = Math.max(0, Math.round(Number(body.advanceSen) || 0));
+  if (fxCurrency && advanceSen > 0) return { ok: false, error: "A foreign-currency payment has no advance — pay the bills (an RM advance goes on its own payment)" };
   if (advanceSen > 0 && partyKind !== "SUPPLIER") return { ok: false, error: "An advance is only for suppliers — other creditors are paid against their bills" };
   if (open.tfLender) {
     // A repayment of trade finance: drawdowns only, no advance.
@@ -11724,8 +12280,9 @@ export async function validatePvAp(
     if (allocs.length === 0) return { ok: false, error: "Tick at least one drawdown to repay" };
   }
   if (allocs.length === 0 && advanceSen <= 0) return { ok: false, error: "Tick at least one bill (or enter an advance)" };
-  const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
-  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen, tf } };
+  // The money out: RM as typed, or — foreign — what the bank pays (foreign × rate).
+  const totalSen = fxCurrency ? foreignBankSen : allocs.reduce((s, a) => s + a.amountSen, 0) + advanceSen;
+  return { ok: true, v: { partyKind, partyId, partyName: open.partyName, payFrom, allocs, advanceSen, totalSen, tf, fxCurrency, fxRate: fxCurrency ? payRate : null } };
 }
 
 type PvApHeader = {
@@ -11733,6 +12290,8 @@ type PvApHeader = {
   reference: string | null; advanceSen: number;
   /** A drawdown (Paid from a trade-finance line): due date + interest at drawdown. */
   tfDueDate?: string | null; tfInterestSen?: number;
+  /** Foreign-currency bills: the payment's rate (RM per 1 unit). */
+  fxRate?: number | null;
 };
 // The posting moment of an AP voucher — the settlement document is built by the
 // page-native builders under paymentNo = pvNo. Returns the statements to batch;
@@ -11774,9 +12333,14 @@ export async function pvApSettlementStatements(
       if (acctErr) return { ok: false, error: acctErr };
       extraLegs = tfInterestLegs({ drawSourceId: pv.pvNo, accountCode: drawSrc.accountCode, chargeDate: pv.date, deltaSen: pv.tfInterestSen ?? 0, legNoBase: 1, actorUserId, orgId });
     }
+    // A foreign bill is paid in its currency at the voucher's rate; the
+    // builder clears AP at the booked RM and posts the FX difference.
+    if (allocs.some((a) => (a.foreignSen ?? 0) > 0) && !((pv.fxRate ?? 0) > 0)) return { ok: false, error: "This payment has foreign-currency bills but no rate" };
     const built = await buildSupplierPaymentCreate(db, {
       orgId, actorUserId, supplierId: pv.partyId, payFrom: pv.payFrom, date: pv.date, reference: pv.reference ?? "",
-      allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ({ piId: a.docId, payMyrSen: a.amountSen })),
+      allocations: allocs.filter((a) => a.docKind === "PI").map((a) => ((a.foreignSen ?? 0) > 0
+        ? { piId: a.docId, foreignSen: a.foreignSen ?? 0, payRate: pv.fxRate ?? 0, full: !!a.full }
+        : { piId: a.docId, payMyrSen: a.amountSen })),
       advanceSen: pv.advanceSen, paymentNo: pv.pvNo, extraLegs,
     });
     if (!built.ok) return built;
@@ -11807,9 +12371,117 @@ export async function pvApSettlementStatements(
 function pvAllocStatements(db: Env["Variables"]["DB"], voucherId: string, allocs: PvAlloc[]): D1PreparedStatement[] {
   return allocs.map((a, idx) =>
     db.prepare(
-      "INSERT INTO payment_voucher_allocs (id, voucher_id, doc_kind, doc_id, amount_sen, line_order) VALUES (?, ?, ?, ?, ?, ?)",
-    ).bind(`pva-${crypto.randomUUID().slice(0, 8)}`, voucherId, a.docKind, a.docId, a.amountSen, idx),
+      "INSERT INTO payment_voucher_allocs (id, voucher_id, doc_kind, doc_id, amount_sen, line_order, foreign_sen, full_pay) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(`pva-${crypto.randomUUID().slice(0, 8)}`, voucherId, a.docKind, a.docId, a.amountSen, idx, (a.foreignSen ?? 0) > 0 ? a.foreignSen : null, (a.foreignSen ?? 0) > 0 ? (a.full ? 1 : 0) : null),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Confirm bank amount (Currency & FX step 4, owner 2026-10-20 「三步都做」;
+// plan docs/superpowers/plans/2026-10-20-currency-fx.md). A foreign-currency
+// AP payment posts at approval at the payment's rate — an estimate until the
+// bank statement shows the RM actually debited. Keying that RM re-states the
+// settlement under the same number with the Supplier Payment page's own edit
+// (buildSupplierPaymentRestate): each bill still clears the booked RM it
+// cleared, the bank leg becomes exactly the bank's RM (shared over the bills by
+// what each paid in the currency — confirmBankPlan), and the difference is the
+// realised FX on the Setup accounts. The voucher keeps the actual rate and RM
+// and who confirmed it. A bank leg already matched in Cash Book refuses
+// (unmatch it first — class C31); the RM the estimate already had re-posts
+// nothing. Keying it again later corrects it the same way.
+// ---------------------------------------------------------------------------
+type PvConfirmBank =
+  | { ok: true; pvNo: string; statements: D1PreparedStatement[]; bankSen: number; rate: number; fxSen: number; reposted: boolean; before: Record<string, unknown> }
+  | { ok: false; status: 400 | 404 | 409; error: string };
+
+export async function pvConfirmBankStatements(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  actorUserId: string | null,
+  id: string,
+  bankSenIn: unknown,
+  stamp: number,
+): Promise<PvConfirmBank> {
+  await ensurePvApColumns(db);
+  const pv = await db.prepare("SELECT * FROM payment_vouchers WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  if (!pv) return { ok: false, status: 404, error: "Voucher not found" };
+  const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
+  const currency = String(pv.fxCurrency ?? pv.fx_currency ?? "").trim();
+  if (String(pv.pvKind ?? pv.pv_kind ?? "") !== PV_KIND_AP || String(pv.partyKind ?? pv.party_kind ?? "") !== "SUPPLIER" || !currency) {
+    return { ok: false, status: 400, error: "Only a foreign-currency AP payment has a bank amount to confirm" };
+  }
+  if (String(pv.status ?? "") === "VOID") return { ok: false, status: 400, error: "This payment is cancelled" };
+  if (String((pv.approvalState ?? pv.approval_state) ?? "APPROVED") !== "APPROVED") {
+    return { ok: false, status: 400, error: "Not posted yet — confirm the bank amount once the payment is approved" };
+  }
+  if ((await getDocState(db, orgId, "supplier_payment", pvNo)) !== "ACTIVE") {
+    return { ok: false, status: 400, error: `${pvNo} is voided — restore it first` };
+  }
+  const bankSen = Number(bankSenIn);
+  if (!Number.isInteger(bankSen) || bankSen <= 0) return { ok: false, status: 400, error: "Enter the RM the bank debited" };
+  // The settlement as it stands (the Supplier Payment page may have edited it
+  // since approval): each bill, what it cleared and what the bank paid for it,
+  // in RM and in the currency. An RM bill or an advance is not re-priced.
+  const rows = ((await db.prepare(
+    "SELECT purchaseInvoiceId, booked_sen, amount_sen, foreign_sen, date, reference FROM supplier_payments WHERE payment_no = ? AND COALESCE(method,'') <> 'CREDIT_NOTE'",
+  ).bind(pvNo).all<Record<string, unknown>>()).results ?? []).map((r) => ({
+    piId: (r.purchaseInvoiceId ?? r.purchase_invoice_id ?? null) as string | null,
+    bookedSen: Math.round(Number(r.bookedSen ?? r.booked_sen) || 0),
+    bankSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
+    foreignSen: Math.round(Number(r.foreignSen ?? r.foreign_sen) || 0),
+    date: String(r.date ?? "").slice(0, 10),
+    reference: String(r.reference ?? ""),
+  }));
+  if (rows.length === 0) return { ok: false, status: 400, error: `No settlement found under ${pvNo} — it was never posted` };
+  const isForeignRow = (r: (typeof rows)[number]) => !!r.piId && r.foreignSen > 0;
+  const foreignRows = rows.filter(isForeignRow);
+  const fixedSen = rows.filter((r) => !isForeignRow(r)).reduce((s, r) => s + r.bankSen, 0);
+  const plan = confirmBankPlan({ bankSen, fixedSen, foreignSens: foreignRows.map((r) => r.foreignSen) });
+  if (!plan.ok) return { ok: false, status: 400, error: plan.error };
+  const fxSen = foreignRows.reduce((s, r) => s + r.bookedSen, 0) - plan.foreignBankSen;
+  const estRate = Number(pv.fxRate ?? pv.fx_rate) || null;
+  const before = { totalSen: Math.round(Number(pv.totalSen ?? pv.total_sen) || 0), fxRate: estRate, rows };
+  const now = new Date().toISOString();
+  // The estimate was right to the sen: nothing to re-post, only the stamp.
+  if (bankSen === rows.reduce((s, r) => s + r.bankSen, 0)) {
+    return {
+      ok: true, pvNo, bankSen, rate: estRate ?? plan.rate, fxSen, reposted: false, before,
+      statements: [db.prepare("UPDATE payment_vouchers SET fx_bank_confirmed_at = ?, fx_bank_confirmed_by = ?, updated_at = ? WHERE id = ?").bind(now, actorUserId, now, id)],
+    };
+  }
+  const allocations: CreateAllocation[] = [];
+  let k = 0;
+  for (const r of rows) {
+    if (!r.piId) continue; // an advance stays as it is (the restate keeps it)
+    if (isForeignRow(r)) {
+      allocations.push({ piId: r.piId, foreignSen: r.foreignSen, payRate: plan.rate, bankSen: plan.parts[k], bookedSen: r.bookedSen });
+      k += 1;
+    } else {
+      allocations.push({ piId: r.piId, payMyrSen: r.bookedSen });
+    }
+  }
+  // The bank it left from, as the ledger has it now (the voucher's own Pay
+  // From is the fallback).
+  const payFrom = (await supplierPaymentBankAccount(db, orgId, pvNo)) ?? String(pv.payFrom ?? pv.pay_from ?? "");
+  let statements: D1PreparedStatement[];
+  try {
+    statements = await buildSupplierPaymentRestate(db, orgId, pvNo, {
+      supplierId: String(pv.partyId ?? pv.party_id ?? ""),
+      payFrom,
+      date: rows[0].date || String(pv.date ?? "").slice(0, 10),
+      reference: rows.find((r) => r.reference.trim())?.reference ?? "",
+      allocations,
+    }, actorUserId, stamp);
+  } catch (e) {
+    if (e instanceof BankMatchedEditRefused) return { ok: false, status: 409, error: e.message };
+    return { ok: false, status: 400, error: (e as Error).message || "Could not re-post the payment" };
+  }
+  statements.push(
+    db.prepare(
+      "UPDATE payment_vouchers SET fx_rate = ?, totalSen = ?, fx_bank_confirmed_at = ?, fx_bank_confirmed_by = ?, updated_at = ? WHERE id = ?",
+    ).bind(plan.rate, bankSen, now, actorUserId, now, id),
+  );
+  return { ok: true, pvNo, statements, bankSen, rate: plan.rate, fxSen, reposted: true, before };
 }
 
 // What the "New AP Payment" form lists once a creditor is picked.
@@ -11856,15 +12528,17 @@ type ApPrintSource = {
   partyKind: PvPartyKind;
   partyId: string;
   date: string;
-  allocs: { docKind: PvAllocDocKind; docId: string; paidSen: number }[];
+  allocs: { docKind: PvAllocDocKind; docId: string; paidSen: number; foreignSen?: number }[];
   advanceSen: number;
   tfRepaySen: number;
+  /** An AP voucher of foreign-currency bills (Currency & FX step 3). */
+  fx?: { currency: string; rate: number } | null;
 };
 
 async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentNo: string): Promise<ApPrintSource | null> {
   await ensurePvApColumns(db).catch(() => {});
   const pv = await db.prepare(
-    "SELECT id, date, pv_kind, party_kind, party_id, advance_sen FROM payment_vouchers WHERE pvNo = ?",
+    "SELECT id, date, pv_kind, party_kind, party_id, advance_sen, fx_currency, fx_rate FROM payment_vouchers WHERE pvNo = ?",
   ).bind(paymentNo).first<Record<string, unknown>>().catch(() => null);
   if (pv && String(pv.pvKind ?? pv.pv_kind ?? "") === PV_KIND_AP) {
     const allocs = await loadPvAllocs(db, String(pv.id));
@@ -11874,9 +12548,14 @@ async function apPrintSource(db: Env["Variables"]["DB"], orgId: string, paymentN
       date: String(pv.date ?? "").slice(0, 10),
       // A repayment of trade finance prints as its total (like the Supplier
       // Payment page's TF_REPAYMENT), not as bill rows.
-      allocs: allocs.filter((a) => a.docKind !== "TF").map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen })),
+      allocs: allocs.filter((a) => a.docKind !== "TF").map((a) => ({ docKind: a.docKind, docId: a.docId, paidSen: a.amountSen, ...((a.foreignSen ?? 0) > 0 ? { foreignSen: a.foreignSen ?? 0 } : {}) })),
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
       tfRepaySen: allocs.filter((a) => a.docKind === "TF").reduce((s, a) => s + a.amountSen, 0),
+      fx: (() => {
+        const currency = String(pv.fxCurrency ?? pv.fx_currency ?? "");
+        const rate = Number(pv.fxRate ?? pv.fx_rate) || 0;
+        return currency && rate > 0 ? { currency, rate } : null;
+      })(),
     };
   }
   const sp = await db.prepare(
@@ -11927,7 +12606,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
                FROM purchase_invoices WHERE id IN (${inList(piIds.length)})`,
           ).bind(...piIds).all<Record<string, unknown>>(),
           db.prepare(
-            `SELECT payment_no, purchase_invoice_id, date, COALESCE(booked_sen, amount_sen) AS sen FROM supplier_payments
+            `SELECT payment_no, purchase_invoice_id, date, COALESCE(booked_sen, amount_sen) AS sen, amount_sen AS bank_sen FROM supplier_payments
               WHERE purchase_invoice_id IN (${inList(piIds.length)}) AND org_id = ?
                 AND payment_no NOT IN (SELECT sourceId FROM document_lifecycle WHERE sourceType = 'supplier_payment' AND state IN ('VOID','DELETED'))`,
           ).bind(...piIds, orgId).all<Record<string, unknown>>(),
@@ -11935,11 +12614,15 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
       : [{ results: [] as Record<string, unknown>[] }, { results: [] as Record<string, unknown>[] }];
     const piById = new Map((piRes.results ?? []).map((p) => [String(p.id), p]));
     const setsByPi = new Map<string, BillSettlement[]>();
+    // What the bank paid on each bill for THIS payment — a foreign bill prints
+    // the RM it actually cost (after Confirm bank amount, the bank's own RM).
+    const bankByPi = new Map<string, number>();
     for (const r of setRes.results ?? []) {
       const k = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? "");
       const list = setsByPi.get(k) ?? [];
       list.push({ paymentNo: String(r.paymentNo ?? r.payment_no ?? ""), date: String(r.date ?? "").slice(0, 10), sen: Math.round(Number(r.sen) || 0) });
       setsByPi.set(k, list);
+      if (String(r.paymentNo ?? r.payment_no ?? "") === paymentNo) bankByPi.set(k, (bankByPi.get(k) ?? 0) + Math.round(Number(r.bankSen ?? r.bank_sen) || 0));
     }
     for (const a of src.allocs) {
       const p = piById.get(a.docId);
@@ -11954,6 +12637,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
           setsByPi.get(a.docId) ?? [], paymentNo, src.date,
         ),
         paidSen: a.paidSen,
+        ...((a.foreignSen ?? 0) > 0 ? { foreignPaidSen: a.foreignSen, ...(bankByPi.has(a.docId) ? { bankPaidSen: bankByPi.get(a.docId) } : {}) } : {}),
       });
     }
     if (src.partyId) {
@@ -12020,6 +12704,7 @@ async function loadApPaymentPrint(db: Env["Variables"]["DB"], orgId: string, pay
   return {
     paymentNo, partyKind: src.partyKind, partyId: src.partyId, date: src.date,
     bills, advanceSen: src.advanceSen, tfRepaySen: src.tfRepaySen, balanceBeforeSen, payeeBank,
+    fx: src.fx ?? null,
   };
 }
 
@@ -12138,7 +12823,7 @@ app.get("/payment-vouchers", async (c) => {
         `SELECT * FROM payment_voucher_lines ORDER BY lineOrder`,
       ).all(),
       c.var.DB.prepare(
-        `SELECT a.voucher_id, a.doc_kind, a.doc_id, a.amount_sen, a.line_order,
+        `SELECT a.voucher_id, a.doc_kind, a.doc_id, a.amount_sen, a.line_order, a.foreign_sen,
                 pi.pi_no AS pi_no, pi.supplier_invoice_no AS pi_ref, b.billNo AS bill_no, b.referenceNo AS bill_ref
            FROM payment_voucher_allocs a
            LEFT JOIN purchase_invoices pi ON a.doc_kind = 'PI' AND pi.id = a.doc_id
@@ -12147,7 +12832,7 @@ app.get("/payment-vouchers", async (c) => {
       ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
     ]);
     const lines = (lineRes.results ?? []) as { voucherId: string }[];
-    type AllocOut = { docKind: string; docId: string; docNo: string; docRef: string; amountSen: number };
+    type AllocOut = { docKind: string; docId: string; docNo: string; docRef: string; amountSen: number; foreignSen?: number };
     const allocsByVoucher = new Map<string, AllocOut[]>();
     for (const a of allocRes.results ?? []) {
       const vid = String(a.voucherId ?? a.voucher_id ?? "");
@@ -12159,6 +12844,7 @@ app.get("/payment-vouchers", async (c) => {
         docNo: String((kind === "PI" ? (a.piNo ?? a.pi_no) : kind === "TF" ? (a.docId ?? a.doc_id) : (a.billNo ?? a.bill_no)) ?? ""),
         docRef: String((kind === "PI" ? (a.piRef ?? a.pi_ref) : (a.billRef ?? a.bill_ref)) ?? ""),
         amountSen: Math.round(Number(a.amountSen ?? a.amount_sen) || 0),
+        ...(Number(a.foreignSen ?? a.foreign_sen) > 0 ? { foreignSen: Math.round(Number(a.foreignSen ?? a.foreign_sen)) } : {}),
       });
       allocsByVoucher.set(vid, list);
     }
@@ -12192,7 +12878,7 @@ app.get("/payment-vouchers", async (c) => {
     const actorIds = new Set<string>();
     for (const v of pvRes.results ?? []) {
       const r = v as Record<string, unknown>;
-      for (const k of ["preparedBy", "prepared_by", "checkedBy", "checked_by", "approvedBy", "approved_by", "createdBy", "created_by"]) {
+      for (const k of ["preparedBy", "prepared_by", "checkedBy", "checked_by", "approvedBy", "approved_by", "createdBy", "created_by", "fxBankConfirmedBy", "fx_bank_confirmed_by"]) {
         const id = r[k]; if (typeof id === "string" && id) actorIds.add(id);
       }
     }
@@ -12236,6 +12922,7 @@ app.get("/payment-vouchers", async (c) => {
         checkedByName: nm(r, "checkedBy", "checked_by"),
         approvedByName: nm(r, "approvedBy", "approved_by"),
         createdByName: nm(r, "createdBy", "created_by"),
+        fxBankConfirmedByName: nm(r, "fxBankConfirmedBy", "fx_bank_confirmed_by"),
       };
     });
     return c.json({ success: true, data });
@@ -12279,7 +12966,8 @@ app.post("/payment-vouchers", async (c) => {
       const pvNo = asDraft
         ? `${PV_DRAFT_PREFIX}${id.slice(3)}`
         : await issueDocNumber(c.var.DB, { bankAccountCode: ap.v.payFrom, direction: "out", dateIso: date });
-      const reference = String(body.description ?? body.reference ?? "");
+      const description = String(body.description ?? body.reference ?? "");
+      const { reference } = pvExtraFields(body as Record<string, unknown>);
       const statements: D1PreparedStatement[] = [
         c.var.DB.prepare(
           `INSERT INTO payment_vouchers (
@@ -12287,16 +12975,16 @@ app.post("/payment-vouchers", async (c) => {
              accrualAccount, settledAt, productLine, totalSen, status,
              approval_state, approved_at, approved_by,
              createdBy, created_at, updated_at,
-             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             pv_kind, party_kind, party_id, advance_sen, tf_due_date, tf_interest_sen, reference, fx_currency, fx_rate
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
-          id, pvNo, date, ap.v.partyName, reference, ap.v.payFrom,
+          id, pvNo, date, ap.v.partyName, description, ap.v.payFrom,
           ap.v.totalSen, asDraft ? "DRAFT" : "POSTED",
           asDraft ? "DRAFT" : "APPROVED",
           asDraft ? null : now, asDraft ? null : actorUserId,
           actorUserId, now, now,
           PV_KIND_AP, ap.v.partyKind, ap.v.partyId, ap.v.advanceSen,
-          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
+          ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, reference, ap.v.fxCurrency, ap.v.fxRate,
         ),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ];
@@ -12305,8 +12993,8 @@ app.post("/payment-vouchers", async (c) => {
         // this voucher's number (same builders as the payment pages).
         const built = await pvApSettlementStatements(c.var.DB, orgId, actorUserId, {
           id, pvNo, date, payFrom: ap.v.payFrom, partyKind: ap.v.partyKind, partyId: ap.v.partyId,
-          reference: reference || null, advanceSen: ap.v.advanceSen,
-          tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0,
+          reference: settlementReference(reference, description), advanceSen: ap.v.advanceSen,
+          tfDueDate: ap.v.tf?.dueDate ?? null, tfInterestSen: ap.v.tf?.interestSen ?? 0, fxRate: ap.v.fxRate,
         }, ap.v.allocs);
         if (!built.ok) return c.json({ success: false, error: built.error }, 400);
         statements.push(...built.statements);
@@ -12352,8 +13040,8 @@ app.post("/payment-vouchers", async (c) => {
            accrualAccount, settledAt, productLine, totalSen, status,
            approval_state, approved_at, approved_by,
            createdBy, created_at, updated_at,
-           pv_kind, notes, bill_no, bill_date
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           pv_kind, notes, bill_no, bill_date, reference
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id, pvNo, date,
         isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""),
@@ -12362,7 +13050,7 @@ app.post("/payment-vouchers", async (c) => {
         asDraft ? "DRAFT" : "APPROVED",
         asDraft ? null : now, asDraft ? null : actorUserId,
         actorUserId, now, now,
-        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate,
+        isTransfer ? PV_KIND_TRANSFER : null, extra.notes, extra.billNo, extra.billDate, extra.reference,
       ),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12428,9 +13116,10 @@ app.put("/payment-vouchers/:id", async (c) => {
       await c.var.DB.batch([
         c.var.DB.prepare(
           `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, totalSen = ?,
-                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, updated_at = ? WHERE id = ?`,
+                  party_kind = ?, party_id = ?, advance_sen = ?, tf_due_date = ?, tf_interest_sen = ?, reference = ?, fx_currency = ?, fx_rate = ?, updated_at = ? WHERE id = ?`,
         ).bind(date, ap.v.partyName, String(body.description ?? body.reference ?? ""), ap.v.payFrom, ap.v.totalSen,
-          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null, now, id),
+          ap.v.partyKind, ap.v.partyId, ap.v.advanceSen, ap.v.tf?.dueDate ?? null, ap.v.tf ? ap.v.tf.interestSen : null,
+          pvExtraFields(body as Record<string, unknown>).reference, ap.v.fxCurrency, ap.v.fxRate, now, id),
         c.var.DB.prepare("DELETE FROM payment_voucher_allocs WHERE voucher_id = ?").bind(id),
         ...pvAllocStatements(c.var.DB, id, ap.v.allocs),
       ]);
@@ -12458,8 +13147,8 @@ app.put("/payment-vouchers/:id", async (c) => {
     await c.var.DB.batch([
       c.var.DB.prepare(
         `UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?,
-                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, updated_at = ? WHERE id = ?`,
-      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id),
+                accrualAccount = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, reference = ?, updated_at = ? WHERE id = ?`,
+      ).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), h.payFrom, h.accrued ? 1 : 0, h.accrualAccount, v.totalSen, extra.notes, extra.billNo, extra.billDate, extra.reference, now, id),
       c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id),
       ...v.lines.map((l, idx) =>
         c.var.DB.prepare(
@@ -12557,10 +13246,11 @@ async function pvApprovalCore(
       id, pvNo, date: String(pv.date ?? "").slice(0, 10),
       payFrom: String(pv.payFrom ?? pv.pay_from ?? ""), partyKind,
       partyId: String(pv.partyId ?? pv.party_id ?? ""),
-      reference: String(pv.description ?? "") || null,
+      reference: settlementReference(pv.reference, pv.description),
       advanceSen: Math.round(Number(pv.advanceSen ?? pv.advance_sen) || 0),
       tfDueDate: (pv.tfDueDate ?? pv.tf_due_date ?? null) as string | null,
       tfInterestSen: Math.round(Number(pv.tfInterestSen ?? pv.tf_interest_sen) || 0),
+      fxRate: Number(pv.fxRate ?? pv.fx_rate) || null,
     }, allocs);
     if (!built.ok) return fail(built.error);
     await db.batch([
@@ -12843,6 +13533,26 @@ app.post("/payment-vouchers/:id/lifecycle", async (c) => {
   return c.json({ success: true, data: { state: lc.newState } });
 });
 
+// Confirm bank amount (Currency & FX step 4): the RM the bank actually debited
+// for a foreign-currency AP payment — see pvConfirmBankStatements.
+app.post("/payment-vouchers/:id/confirm-bank", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  let bankSen: unknown;
+  try { bankSen = ((await c.req.json()) as { bankSen?: unknown }).bankSen; } catch { return c.json({ success: false, error: "Invalid body" }, 400); }
+  const id = c.req.param("id");
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  const r = await pvConfirmBankStatements(c.var.DB, getOrgId(c), actorUserId, id, bankSen, Date.now());
+  if (!r.ok) return c.json({ success: false, error: r.error }, r.status);
+  await c.var.DB.batch(r.statements);
+  await emitAudit(c, {
+    resource: "payment-vouchers", resourceId: id, action: "confirm-bank",
+    before: r.before,
+    after: { pvNo: r.pvNo, totalSen: r.bankSen, fxRate: r.rate, fxSen: r.fxSen, reposted: r.reposted },
+  });
+  return c.json({ success: true, data: { pvNo: r.pvNo, bankSen: r.bankSen, rate: r.rate, fxSen: r.fxSen, reposted: r.reposted } });
+});
+
 // Edit a payment voucher IN PLACE — same PV number; reverses the live legs and
 // re-posts the corrected ones (payment_voucher_restate_rev/post:<stamp>), then
 // collapses to the newest post. Mirrors the customer-receipt restate. A settled
@@ -12923,7 +13633,7 @@ app.post("/payment-vouchers/:id/restate", async (c) => {
     statements.push(c.var.DB.prepare(`UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceId = ? AND orgId = ? AND sourceType LIKE 'payment_voucher%' AND sourceType <> ?`).bind(id, orgId, postSource));
     // 3. Update the voucher row + replace its lines (same id + pvNo); un-settle.
     const extra = pvExtraFields(body as Record<string, unknown>);
-    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, now, id));
+    statements.push(c.var.DB.prepare(`UPDATE payment_vouchers SET date = ?, payee = ?, description = ?, payFrom = ?, accrued = ?, accrualAccount = ?, settledAt = NULL, productLine = ?, totalSen = ?, notes = ?, bill_no = ?, bill_date = ?, reference = ?, status = 'POSTED', updated_at = ? WHERE id = ?`).bind(date, isTransfer ? "" : String(body.payee ?? ""), String(body.description ?? ""), payFrom, accrued ? 1 : 0, accrualAccount, isTransfer ? null : productLine, v.totalSen, extra.notes, extra.billNo, extra.billDate, extra.reference, now, id));
     statements.push(c.var.DB.prepare("DELETE FROM payment_voucher_lines WHERE voucherId = ?").bind(id));
     v.lines.forEach((l, idx) => {
       statements.push(c.var.DB.prepare(`INSERT INTO payment_voucher_lines (id, voucherId, accountCode, description, amountSen, lineOrder) VALUES (?, ?, ?, ?, ?, ?)`).bind(`pvl-${crypto.randomUUID().slice(0, 8)}`, id, l.accountCode, l.description, l.amountSen, idx));
@@ -14522,33 +15232,79 @@ app.put("/cashflow/map", async (c) => {
   }
 });
 
+// Document Numbering (Settings). `map` = the payment / receipt prefix per bank
+// (kv doc_number_prefixes); `types` = the prefix per self-numbering document
+// (kv doc_type_prefixes, owner 2026-10-20); `preview` = what each next number
+// will look like. Reads only.
 app.get("/doc-number-prefixes", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const map = await getDocNumberPrefixes(c.var.DB);
-  return c.json({ success: true, data: { map } });
+  const [map, types, preview] = await Promise.all([
+    getDocNumberPrefixes(c.var.DB),
+    getDocTypePrefixes(c.var.DB),
+    docNumberPreview(c.var.DB),
+  ]);
+  return c.json({ success: true, data: { map, types, preview } });
 });
 
+// Save either half (or both). A changed prefix applies from the next document:
+// numbers already issued never change. Every prefix is 1–8 letters / digits,
+// and no document type may share a prefix with another type or with a bank's
+// payments / receipts (banks may share one between them — a shared book).
 app.put("/doc-number-prefixes", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
-  const kvBefore = await kvSnapshot(c.var.DB, ["doc_number_prefixes"]);
+  const kvBefore = await kvSnapshot(c.var.DB, ["doc_number_prefixes", "doc_type_prefixes"]);
   try {
-    const body = (await c.req.json()) as { map?: Record<string, { out?: string; in?: string }> };
-    if (body.map === undefined) return c.json({ success: false, error: "map required" }, 400);
-    const map: Record<string, { out: string; in: string }> = {};
-    for (const [code, v] of Object.entries(body.map)) {
-      if (!v) continue;
-      const out = typeof v.out === "string" ? v.out.trim() : "";
-      const inp = typeof v.in === "string" ? v.in.trim() : "";
-      if (out || inp) map[code] = { out, in: inp };
+    const body = (await c.req.json()) as { map?: Record<string, { out?: string; in?: string }>; types?: Record<string, unknown> };
+    if (body.map === undefined && body.types === undefined) return c.json({ success: false, error: "map or types required" }, 400);
+
+    let map: Record<string, { out: string; in: string }> | null = null;
+    if (body.map !== undefined) {
+      map = {};
+      for (const [code, v] of Object.entries(body.map ?? {})) {
+        if (!v) continue;
+        const out = normalisePrefix(v.out);
+        const inp = normalisePrefix(v.in);
+        for (const p of [out, inp]) {
+          const problem = p ? prefixProblem(p) : null;
+          if (problem) return c.json({ success: false, error: `${code}: ${problem}` }, 400);
+        }
+        if (out || inp) map[code] = { out, in: inp };
+      }
     }
-    await c.var.DB.prepare(
-      `INSERT INTO kv_config (key, value, updated_at) VALUES ('doc_number_prefixes', ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    ).bind(JSON.stringify(map), new Date().toISOString()).run();
-    await emitAudit(c, { resource: "finance-settings", resourceId: "doc_number_prefixes", action: "update", before: kvBefore["doc_number_prefixes"] ?? null, after: map });
-    return c.json({ success: true, data: { map } });
+
+    let types: DocTypePrefixMap | null = null;
+    if (body.types !== undefined) {
+      types = {};
+      for (const t of DOC_TYPES) {
+        if (!t.editable) continue;
+        const p = normalisePrefix((body.types ?? {})[t.key]);
+        if (!p || p === t.defaultPrefix) continue;
+        const problem = prefixProblem(p);
+        if (problem) return c.json({ success: false, error: `${t.label}: ${problem}` }, 400);
+        types[t.key] = p;
+      }
+    }
+
+    const clash = findPrefixClash(map ?? (await getDocNumberPrefixes(c.var.DB)), types ?? (await getDocTypePrefixes(c.var.DB)));
+    if (clash) return c.json({ success: false, error: clash }, 400);
+
+    const now = new Date().toISOString();
+    const put = (key: string, value: unknown) =>
+      c.var.DB.prepare(
+        `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      ).bind(key, JSON.stringify(value), now).run();
+    if (map) {
+      await put("doc_number_prefixes", map);
+      await emitAudit(c, { resource: "finance-settings", resourceId: "doc_number_prefixes", action: "update", before: kvBefore["doc_number_prefixes"] ?? null, after: map });
+    }
+    if (types) {
+      await put("doc_type_prefixes", types);
+      await emitAudit(c, { resource: "finance-settings", resourceId: "doc_type_prefixes", action: "update", before: kvBefore["doc_type_prefixes"] ?? null, after: types });
+    }
+    return c.json({ success: true, data: { map: map ?? (await getDocNumberPrefixes(c.var.DB)), types: types ?? (await getDocTypePrefixes(c.var.DB)), preview: await docNumberPreview(c.var.DB) } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -14670,7 +15426,7 @@ app.post("/trade-finance/setup", async (c) => {
     const sources = await getTfSources(c.var.DB);
     const next: TfSource[] = [
       ...sources.filter((s) => s.accountCode !== accountCode),
-      { accountCode, lenderSupplierId, lenderName: sup.name, tenorDays },
+      { accountCode, lenderSupplierId, lenderName: sup.name, tenorDays, limitSen: sources.find((s) => s.accountCode === accountCode)?.limitSen ?? null },
     ];
     await saveTfSources(c.var.DB, next);
     await emitAudit(c, {
@@ -14684,6 +15440,38 @@ app.post("/trade-finance/setup", async (c) => {
   } catch (err) {
     console.error("[POST /trade-finance/setup] failed:", err instanceof Error ? err.message : err);
     return c.json({ success: false, error: "Setup failed" }, 400);
+  }
+});
+
+// PUT /trade-finance/line { accountCode, tenorDays, limitSen } — Settings ›
+// Trade Finance Lines (owner 2026-10-20 「暂时rm300,000」): a line's default
+// tenor and its limit, keyed by the owner (limitSen null = no limit). Nothing
+// posts; Creditor Aging and the AP Payment form read it (available = limit −
+// what is drawn and not repaid; a drawdown past it gets a warning).
+app.put("/trade-finance/line", async (c) => {
+  const denied = requireFinance(c);
+  if (denied) return denied;
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as { accountCode?: unknown; tenorDays?: unknown; limitSen?: unknown };
+    const accountCode = String(body.accountCode ?? "").trim();
+    const tenorDays = Math.round(Number(body.tenorDays) || 0);
+    if (tenorDays < 1 || tenorDays > 365) {
+      return c.json({ success: false, error: "tenorDays must be between 1 and 365" }, 400);
+    }
+    const limitSen = parseTfLimitSen(body.limitSen);
+    if (body.limitSen !== null && body.limitSen !== undefined && body.limitSen !== "" && limitSen === null) {
+      return c.json({ success: false, error: "limitSen must be a whole, non-negative number of sen (or null for no limit)" }, 400);
+    }
+    const sources = await getTfSources(c.var.DB);
+    const before = sources.find((s) => s.accountCode === accountCode);
+    if (!before) return c.json({ success: false, error: `${accountCode || "That account"} is not a trade-finance line` }, 404);
+    const after: TfSource = { ...before, tenorDays, limitSen };
+    await saveTfSources(c.var.DB, sources.map((s) => (s.accountCode === accountCode ? after : s)));
+    await emitAudit(c, { resource: "trade-finance", resourceId: accountCode, action: "update", before, after });
+    return c.json({ success: true, data: { source: after } });
+  } catch (err) {
+    console.error("[PUT /trade-finance/line] failed:", err instanceof Error ? err.message : err);
+    return c.json({ success: false, error: "Save failed" }, 400);
   }
 });
 
@@ -14720,6 +15508,8 @@ app.get("/trade-finance", async (c) => {
         accountName: acct?.name ?? "",
         accountNetSen: derived.accountNetSen,
         unallocatedSen: derived.unallocatedSen,
+        // Used = drawn and not repaid (the line's balance); available = limit − used.
+        availableSen: tfLineRoom(s.limitSen, derived.accountNetSen)?.availableSen ?? null,
         totals: tfTotals(derived.draws, todayIso),
         draws,
       });
@@ -15052,7 +15842,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v19"; // v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v20"; // v20: equity = net assets, the un-closed current-year earnings included (BUG-2026-10-19-344); v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -15061,48 +15851,10 @@ app.get("/dashboard", async (c) => {
     c.var.DB,
     {
       tableName: "accounting_dashboard_snapshot",
-      // Every table the P&L + cost-structure replay reads. kv_config carries
-      // the opening date; a change to any of these must rebuild the snapshot.
-      sourceTables: [
-        "ledger_journal_entries",
-        "invoices",
-        "purchase_invoices",
-        "cost_ledger",
-        "grn_items",
-        "production_orders",
-        "delivery_orders",
-        "kv_config",
-        // Production Salary per head / per unit reads these two — without them
-        // hiring someone or completing a batch would leave the card stale.
-        "workers",
-        "fg_batches",
-        // salaryByDept reads payslips — without it a payroll edit leaves the
-        // department stacks stale.
-        "payslips",
-        // Report-layer labour injection (2026-08-31) dry-runs payroll from
-        // these when a month has no payslips yet — new clock entries, docks
-        // or a raise must refresh the injected P&L figures.
-        "working_hour_entries",
-        "payroll_hour_deductions",
-        "worker_salary_history",
-        // Production Revenue (2026-10-12) books a PO when its last upholstery
-        // card completes, priced from its SO / CO line or the product master.
-        "job_cards",
-        "sales_order_items",
-        "consignment_order_items",
-        "products",
-        // The running month's labour to date (2026-10-12) also reads the
-        // department master (which departments log factory hours) and the
-        // effective-dated pay rules.
-        "departments",
-        "pay_rule_versions",
-        // FG / WIP of a blank Stock Take month (2026-10-13) — orders leave by
-        // delivery order or consignment note.
-        "delivery_order_items",
-        "consignment_notes",
-        "consignment_items",
-        "stock_take",
-      ],
+      // Every table the P&L + cost-structure replay reads (shared with
+      // /overview-trend). kv_config carries the opening date; a change to any
+      // of these must rebuild the snapshot.
+      sourceTables: PNL_REPLAY_SOURCE_TABLES,
     },
     dashOrgId,
     async () => {
@@ -15516,6 +16268,13 @@ app.get("/dashboard", async (c) => {
           if (sec === "CURRENT_LIABILITY") curL += -net;
         }
       }
+      // Equity as the Balance Sheet tab adds it up (BUG-2026-10-19-344): the
+      // equity accounts PLUS the un-closed current-year earnings — i.e. net
+      // assets. The P&L accounts carry those earnings until a year close, and
+      // they have no balance-sheet section, so the sum above left them out: on a
+      // book whose equity is all this year's earnings it read 0 every month and
+      // ROE (which divides by it) never showed.
+      equity = assets - liabilities;
       bsByBucket.set(b.key, { assets, liabilities, equity, currentAssets: curA, currentLiabilities: curL, inventory: inv });
     }
   }
@@ -16340,6 +17099,19 @@ app.put("/fixed-assets/:id", async (c) => {
       await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "dispose", before: row });
       return c.json({ success: true });
     }
+    // Restore a disposed asset (owner 2026-10-20, design list 「这个要做」): it
+    // is in use again and depreciation picks up from where it stopped. A
+    // dispose posts nothing, so neither does its undo.
+    if (b.restore === true) {
+      if (!row.disposedAt) return c.json({ success: false, error: `${row.name} is not disposed.` }, 409);
+      await c.var.DB.prepare(
+        "UPDATE fixed_assets SET disposedAt = NULL, updated_at = ? WHERE id = ?",
+      )
+        .bind(new Date().toISOString(), id)
+        .run();
+      await emitAudit(c, { resource: "fixed-assets", resourceId: id, action: "restore", before: row });
+      return c.json({ success: true });
+    }
     const name = b.name === undefined ? row.name : String(b.name).trim();
     const life = b.usefulLifeMonths === undefined ? row.usefulLifeMonths : Math.round(Number(b.usefulLifeMonths) || 0);
     const residualSen = b.residualSen === undefined ? row.residualSen : Math.round(Number(b.residualSen) || 0);
@@ -16411,6 +17183,27 @@ app.get("/fixed-assets/depreciation-preview", async (c) => {
         amountSen: monthlyDepSen(a, a.accumSen),
       }))
       .filter((r) => r.amountSen > 0);
+    // What is already posted for the month (the list the owner exports, and
+    // what Undo would take back) and the latest month with any posting.
+    const [postedRes, latestRow] = await Promise.all([
+      c.var.DB.prepare("SELECT assetId, amountSen, postedAt FROM fixed_asset_depreciation WHERE month = ?")
+        .bind(month)
+        .all<{ assetId: string; amountSen: number; postedAt: string | null }>(),
+      c.var.DB.prepare("SELECT MAX(month) AS m FROM fixed_asset_depreciation").first<{ m: string | null }>(),
+    ]);
+    const byId = new Map(assets.map((a) => [a.id, a] as const));
+    const posted = (postedRes.results ?? []).map((p) => {
+      const a = byId.get(p.assetId);
+      return {
+        assetId: p.assetId,
+        name: a?.name ?? p.assetId,
+        assetAccount: a?.assetAccount ?? "",
+        expenseAccount: a?.expenseAccount ?? "",
+        accumAccount: a?.accumAccount ?? "",
+        amountSen: Number(p.amountSen) || 0,
+        postedAt: p.postedAt,
+      };
+    });
     return c.json({
       success: true,
       data: {
@@ -16418,10 +17211,99 @@ app.get("/fixed-assets/depreciation-preview", async (c) => {
         rows,
         totalSen: rows.reduce((s, r) => s + r.amountSen, 0),
         alreadyRun: done.size > 0,
+        posted,
+        postedTotalSen: posted.reduce((s, r) => s + r.amountSen, 0),
+        latestPostedMonth: latestRow?.m ?? null,
       },
     });
   } catch {
     return c.json({ success: false, error: "Preview failed — is migration 0161 applied?" }, 400);
+  }
+});
+
+// POST /api/accounting/fixed-assets/depreciation-undo { month } — undo a
+// month's depreciation (owner 2026-10-20, design list 「这个要做」). The
+// latest posted month only. Each of its runs is reversed leg by leg under
+// depreciation_reversal (the labour undo's shape — the Journal list folds the
+// pair into one REVERSED · UNDONE row) and the month's register rows go, so
+// the assets' accumulated depreciation steps back and the month can be run
+// again. The trail stays in the ledger and the audit log.
+app.post("/fixed-assets/depreciation-undo", async (c) => {
+  const denied = await requirePermission(c, "accounting", "create");
+  if (denied) return denied;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const month = String((body as { month?: unknown }).month || "");
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return c.json({ success: false, error: "month must be YYYY-MM" }, 400);
+    }
+    const db = c.var.DB;
+    const orgId = getOrgId(c);
+    const [rowsRes, latestRow] = await Promise.all([
+      db.prepare("SELECT id, assetId, amountSen FROM fixed_asset_depreciation WHERE month = ?").bind(month)
+        .all<{ id: string; assetId: string; amountSen: number }>(),
+      db.prepare("SELECT MAX(month) AS m FROM fixed_asset_depreciation").first<{ m: string | null }>(),
+    ]);
+    const monthRows = rowsRes.results ?? [];
+    const block = depreciationUndoBlock(month, latestRow?.m ?? null, monthRows.length > 0);
+    if (block) return c.json({ success: false, error: block }, 409);
+    const legRes = await db
+      .prepare(
+        `SELECT sourceType, sourceId, accountCode, debitSen, creditSen, description FROM ledger_journal_entries
+          WHERE orgId = ? AND sourceType IN ('depreciation', 'depreciation_reversal') AND sourceId LIKE ? AND hidden = 0`,
+      )
+      .bind(orgId, `dep-${month}-%`)
+      .all<Record<string, unknown>>();
+    const undo = depreciationUndoLegs(
+      (legRes.results ?? []).map((l) => ({
+        sourceType: String(l.sourceType ?? l.source_type ?? ""),
+        sourceId: String(l.sourceId ?? l.source_id ?? ""),
+        accountCode: String(l.accountCode ?? l.account_code ?? ""),
+        debitSen: Number(l.debitSen ?? l.debit_sen) || 0,
+        creditSen: Number(l.creditSen ?? l.credit_sen) || 0,
+        description: (l.description as string | null) ?? null,
+      })),
+      month,
+    );
+    const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+    const legs: LedgerEntryInput[] = [];
+    const nextNo = new Map<string, number>();
+    for (const u of undo) {
+      let n = nextNo.get(u.sourceId);
+      if (n === undefined) n = await nextLegNo(db, orgId, "depreciation_reversal", u.sourceId);
+      nextNo.set(u.sourceId, n + 1);
+      legs.push({
+        id: `lje-${crypto.randomUUID().slice(0, 12)}`,
+        sourceType: "depreciation_reversal",
+        sourceId: u.sourceId,
+        legNo: n,
+        accountCode: u.accountCode,
+        debitSen: u.debitSen,
+        creditSen: u.creditSen,
+        description: u.description,
+        actorUserId,
+        orgId,
+      });
+    }
+    const { statements } = legs.length
+      ? await buildJournalEntryStatements(db, orgId, legs, { docDate: month })
+      : { statements: [] as D1PreparedStatement[] };
+    await db.batch([
+      ...statements,
+      db.prepare("DELETE FROM fixed_asset_depreciation WHERE month = ?").bind(month),
+    ]);
+    const totalSen = monthRows.reduce((s, r) => s + (Number(r.amountSen) || 0), 0);
+    await emitAudit(c, {
+      resource: "fixed-assets",
+      resourceId: `dep-${month}`,
+      action: "unpost",
+      before: { month, assets: monthRows.length, totalSen, rows: monthRows },
+      after: { month, reversedLegs: legs.length },
+    });
+    return c.json({ success: true, data: { month, assets: monthRows.length, totalSen, reversedLegs: legs.length } });
+  } catch (e) {
+    if (e instanceof ClosedYearError) return c.json({ success: false, error: e.message }, 400);
+    return c.json({ success: false, error: "Undo failed — nothing was changed. Retry, and report if it persists." }, 400);
   }
 });
 
@@ -17476,7 +18358,7 @@ async function attachSupplierNames(
   }
 }
 
-async function loadBankRecoState(
+async function loadBankRecoStateUntimed(
   db: Env["Variables"]["DB"],
   account: string,
 ): Promise<BankRecoLegState> {
@@ -17543,6 +18425,7 @@ async function loadBankRecoState(
   }
   return { legs, clearedOn, openingDate };
 }
+const loadBankRecoState = timedFn("bank-reco-state", loadBankRecoStateUntimed);
 
 // One walk, used by BOTH the live report and the finalise snapshot.
 async function computeBankRecoReport(
@@ -17861,7 +18744,11 @@ app.get("/cash-position", async (c) => {
     pending: { legId: string; day: string; sourceId: string; description: string; amountSen: number; ticked: boolean }[];
   }[] = [];
   const tickWarnings: { account: string; day: string; sourceId: string; description: string; amountSen: number }[] = [];
-  for (const a of bankAccounts) {
+  // Every bank account at once (2026-10-19, 「优化加载速度」): the accounts are
+  // independent, so their loads go out together instead of one account after
+  // another. Same rows, same order; each account's tick warnings stay in its turn.
+  const perAccount = await timed("cp-accounts", () => Promise.all(bankAccounts.map(async (a) => {
+    const warnings: typeof tickWarnings = [];
     const { legs, clearedOn, openingDate } = await loadBankRecoState(c.var.DB, a.code);
     // The pending LIST only itemises vouchers after this account's last
     // FINALISED month — earlier leftovers are reconciliation debt, collapsed
@@ -17928,7 +18815,7 @@ app.get("/cash-position", async (c) => {
         // The bank's own statement is the referee: month imported + still
         // unmatched means the tick claimed something the paper never showed.
         if (!matchedOn && importedMonths.has(l.day.slice(0, 7))) {
-          tickWarnings.push({ account: a.code, day: l.day, sourceId: l.sourceId, description: l.description, amountSen: l.amountSen });
+          warnings.push({ account: a.code, day: l.day, sourceId: l.sourceId, description: l.description, amountSen: l.amountSen });
         }
       }
     }
@@ -17950,7 +18837,11 @@ app.get("/cash-position", async (c) => {
     }
     const bankEstSen = bookSen - pendingSen + unbookedSen;
     const availableSen = bankEstSen + pendingSen; // = bookSen + unbookedSen
-    accounts.push({ code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending });
+    return { row: { code: a.code, name: a.name, reconciled, bookSen, pendingSen, unbookedSen, unbookedCount, bankEstSen, availableSen, oldPendingSen, oldPendingCount, pending }, warnings };
+  })));
+  for (const p of perAccount) {
+    accounts.push(p.row);
+    tickWarnings.push(...p.warnings);
   }
   const totalBankEstSen = accounts.reduce((s, x) => s + x.bankEstSen, 0);
   const totalAvailableSen = accounts.reduce((s, x) => s + x.availableSen, 0);
@@ -17962,7 +18853,7 @@ app.get("/cash-position", async (c) => {
   // customer's terms) for the board's default "due now" scope.
   const obDateCp = await getOpeningDate(c.var.DB);
   const apExclCp = await loadOpeningApExcludes(c.var.DB);
-  const [piRes2, invRes2, ocbRes2, plannedRes] = await Promise.all([
+  const [piRes2, invRes2, ocbRes2, plannedRes] = await timed("cp-open-docs", () => Promise.all([
     c.var.DB.prepare(
       "SELECT id, supplierName, amountSen, paidAmountSen, status, invoiceDate, isOpening FROM purchase_invoices",
     ).all<{ id: string; supplierName: string; amountSen: number; paidAmountSen?: number | null; paid_amount_sen?: number | null; status: string; invoiceDate: string | null; isOpening: number | null }>(),
@@ -17979,7 +18870,7 @@ app.get("/cash-position", async (c) => {
     c.var.DB.prepare(
       "SELECT id, party_name, ref, expected_date, amount_sen FROM planned_payments WHERE done_at IS NULL ORDER BY expected_date",
     ).all<{ id: string; party_name?: string; partyName?: string; ref: string | null; expected_date?: string; expectedDate?: string; amount_sen?: number; amountSen?: number }>().catch(() => ({ results: [] as never[] })),
-  ]);
+  ]));
   const repayAgg = new Map<string, number>();
   for (const p of piRes2.results ?? []) {
     if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateCp, apExclCp)) continue;
@@ -18074,31 +18965,72 @@ app.get("/cash-position", async (c) => {
     state: String(v.approvalState ?? v.approval_state ?? "DRAFT") as "DRAFT" | "PREPARED" | "CHECKED",
   }));
   const awaitingCheckedSen = awaitingApproval.filter((v) => v.state === "CHECKED").reduce((s, v) => s + v.amountSen, 0);
+  // Foreign-currency AP payments posted at the payment's estimated rate whose
+  // bank amount is not confirmed yet (Currency & FX step 4): their bank leg in
+  // the pending list above is the estimate until Finance keys what the bank
+  // debited (Payment Vouchers → Confirm bank amount).
+  await ensurePvApColumns(c.var.DB).catch(() => {});
+  const fxPendRes = await c.var.DB.prepare(
+    `SELECT v.id, v.pv_no, v.date, v.payee, v.pay_from, v.total_sen, v.fx_currency, v.fx_rate,
+            (SELECT COALESCE(SUM(a.foreign_sen), 0) FROM payment_voucher_allocs a WHERE a.voucher_id = v.id) AS foreign_total_sen
+       FROM payment_vouchers v
+      WHERE v.pv_kind = 'AP' AND v.fx_currency IS NOT NULL AND v.fx_bank_confirmed_at IS NULL
+        AND v.status <> 'VOID' AND COALESCE(v.approval_state, 'APPROVED') = 'APPROVED'
+        AND NOT EXISTS (SELECT 1 FROM document_lifecycle dl WHERE dl.source_type = 'supplier_payment' AND dl.source_id = v.pv_no AND dl.state <> 'ACTIVE')
+      ORDER BY v.date ASC, v.pv_no ASC`,
+  ).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const fxBankPending = (fxPendRes.results ?? []).map((v) => ({
+    id: String(v.id),
+    pvNo: String(v.pvNo ?? v.pv_no ?? ""),
+    date: String(v.date ?? "").slice(0, 10),
+    payee: String(v.payee ?? ""),
+    payFrom: String(v.payFrom ?? v.pay_from ?? ""),
+    currency: String(v.fxCurrency ?? v.fx_currency ?? ""),
+    foreignSen: Math.round(Number(v.foreignTotalSen ?? v.foreign_total_sen) || 0),
+    rate: Number(v.fxRate ?? v.fx_rate) || 0,
+    amountSen: Math.round(Number(v.totalSen ?? v.total_sen) || 0),
+  }));
   // Trade finance to repay, by due date (owner 2026-10-17, Finance v2): every
   // draw still owed — the same draws Creditor Aging's Trade Finance section
   // lists (getTfSources / loadTfDraws), with the supplier the draw paid.
   const tradeFinance: { dueDate: string; drawDate: string; lender: string; ref: string; paidFor: string; outstandingSen: number }[] = [];
-  try {
-    for (const s of await getTfSources(c.var.DB)) {
-      const derived = await loadTfDraws(c.var.DB, s);
-      for (const d of derived.draws) {
-        if (d.outstandingSen <= 0) continue;
-        let paidFor = "";
-        try {
-          const rs = await c.var.DB.prepare("SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?")
-            .bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
-          paidFor = [...new Set((rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean))].join(", ");
-        } catch { /* leave blank */ }
-        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender: s.lenderName, ref: d.drawSourceId, paidFor, outstandingSen: d.outstandingSen });
+  await timed("cp-trade-finance", async () => {
+    try {
+      const open: { lender: string; d: { dueDate: string; drawDate: string; drawSourceId: string; outstandingSen: number } }[] = [];
+      for (const s of await getTfSources(c.var.DB)) {
+        const derived = await loadTfDraws(c.var.DB, s);
+        for (const d of derived.draws) if (d.outstandingSen > 0) open.push({ lender: s.lenderName, d });
       }
+      // The supplier each draw paid — one query for all the draws (it was one
+      // per draw, in a row; 2026-10-19 「优化加载速度」).
+      const paidFor = new Map<string, Set<string>>();
+      const nos = [...new Set(open.map((o) => o.d.drawSourceId))];
+      for (let i = 0; i < nos.length; i += 200) {
+        const part = nos.slice(i, i + 200);
+        try {
+          const rs = await c.var.DB.prepare(`SELECT DISTINCT paymentNo, supplierName FROM supplier_payments WHERE paymentNo IN (${part.map(() => "?").join(",")})`)
+            .bind(...part).all<{ paymentNo?: string | null; payment_no?: string | null; supplierName: string | null; supplier_name: string | null }>();
+          for (const r of rs.results ?? []) {
+            const no = String(r.paymentNo ?? r.payment_no ?? "");
+            const name = String(r.supplierName ?? r.supplier_name ?? "").trim();
+            if (!no || !name) continue;
+            let set = paidFor.get(no);
+            if (!set) { set = new Set(); paidFor.set(no, set); }
+            set.add(name);
+          }
+        } catch { /* leave blank */ }
+      }
+      for (const { lender, d } of open) {
+        tradeFinance.push({ dueDate: d.dueDate, drawDate: d.drawDate, lender, ref: d.drawSourceId, paidFor: [...(paidFor.get(d.drawSourceId) ?? [])].join(", "), outstandingSen: d.outstandingSen });
+      }
+    } catch {
+      /* trade finance not set up → nothing to repay there */
     }
-  } catch {
-    /* trade finance not set up → nothing to repay there */
-  }
+  });
   tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, tradeFinance },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, fxBankPending, tradeFinance },
   });
 });
 
@@ -18317,30 +19249,36 @@ async function ensureFundTransfersTable(
 // Each family load is try/caught so a missing table/column just degrades that
 // family to the postedAt fallback. Keyed by BOTH id and human number because
 // posters set sourceId inconsistently (some the UUID, some the doc number).
-async function loadDocDateResolver(
+async function loadDocDateResolverUntimed(
   db: Env["Variables"]["DB"],
 ): Promise<DocDateCtx> {
-  const openingDate = await getOpeningDate(db);
   const maps = new Map<string, Map<string, string>>(); // family → (id|no → 'YYYY-MM-DD')
-  for (const [fam, cfg] of Object.entries(DOC_DATE_FAMILIES)) {
-    const m = new Map<string, string>();
-    try {
-      const res = await db
+  // All families at once (2026-10-19, 「优化加载速度」): one awaited query per
+  // family in a row was 14 round trips before every report could start; sent
+  // together they share the request's connection. Same maps, same order.
+  const families = Object.entries(DOC_DATE_FAMILIES);
+  const [openingDate, famRows] = await Promise.all([
+    getOpeningDate(db),
+    Promise.all(families.map(([, cfg]) =>
+      db
         .prepare(
           `SELECT id AS rid, ${cfg.noCol} AS rno, ${cfg.dateCol} AS rdt FROM ${cfg.table}`,
         )
-        .all<{ rid: string | null; rno: string | null; rdt: string | null }>();
-      for (const r of res.results ?? []) {
-        const d = String(r.rdt ?? "").slice(0, 10);
-        if (!d) continue;
-        if (r.rid) m.set(String(r.rid), d);
-        if (r.rno) m.set(String(r.rno), d);
-      }
-    } catch {
-      /* table/column absent → this family falls back to postedAt */
+        .all<{ rid: string | null; rno: string | null; rdt: string | null }>()
+        // table/column absent → this family falls back to postedAt
+        .catch(() => null),
+    )),
+  ]);
+  families.forEach(([fam], i) => {
+    const m = new Map<string, string>();
+    for (const r of famRows[i]?.results ?? []) {
+      const d = String(r.rdt ?? "").slice(0, 10);
+      if (!d) continue;
+      if (r.rid) m.set(String(r.rid), d);
+      if (r.rno) m.set(String(r.rno), d);
     }
     maps.set(fam, m);
-  }
+  });
   const docDate = (
     sourceType: string,
     sourceId: string,
@@ -18363,6 +19301,13 @@ async function loadDocDateResolver(
   };
   return { docDate, openingDate, glMemo: new Map() };
 }
+// One load per read request (2026-10-19, 「优化加载速度」): Daily Cash Position
+// loaded every document date once PER BANK ACCOUNT (14 tables each time), and
+// a report's helpers each loaded their own. The context's own memos (ledger
+// windows, labour, stock, estimates) are per-request by design, so sharing it
+// only shares them further.
+const loadDocDateResolver = (db: Env["Variables"]["DB"]): Promise<DocDateCtx> =>
+  requestMemo("doc-dates", () => timed("doc-dates", () => loadDocDateResolverUntimed(db)));
 
 // Per-control-account sums of the opening invoices: AR per parseDebtorCode
 // control (300-x / 305-x), AP all into 400-0000. These become the locked

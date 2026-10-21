@@ -49,11 +49,11 @@ test("the items come from headerMenuItems and each one does its job", () => {
 test("the menu reuses the grid's context menu (Esc, outside click, arrow keys) with a heading", () => {
   assert.match(src, /heading\?: \{ title: string; sub\?: string \};/, "ContextMenu heading prop");
   assert.match(src, /\{hdrMenu && \(\s*<ContextMenu/);
-  assert.match(src, /sub: sortKey === hdrMenu\.key \? \(sortDir === "desc" \? "sorted Z → A" : "sorted A → Z"\) : "column"/);
+  assert.match(src, /sub: userGroupKey === hdrMenu\.key \? "grouped" : sortKey === hdrMenu\.key \? \(sortDir === "desc" \? "sorted Z → A" : "sorted A → Z"\) : "column"/);
 });
 
 test("exports carry the total row; Print opens the PDF for printing instead of saving it", () => {
-  assert.match(src, /const exportAoa = \(\): Aoa => \{/);
+  assert.match(src, /const exportSheet = \(\): \{ aoa: Aoa; subtotalRows: number\[\] \} => \{/);
   assert.match(src, /if \(showFooter\) aoa\.push\(/, "the total row goes into the file too");
   assert.match(src, /void exportReportXlsx\(exportFilename\(exportBase, "listing", "xlsx", today\), exportTitle, aoa\)/);
   assert.match(src, /void exportReportPdf\(exportFilename\(exportBase, "listing", "pdf", today\), exportTitle, `As at \$\{formatDateDMY\(today\)\}`, aoa, \{/);

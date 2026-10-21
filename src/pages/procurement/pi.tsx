@@ -11,10 +11,13 @@ import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
+import { fetchFxRate } from "@/lib/fx-client";
+import { fmtFxRate } from "@/lib/fx";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { buildPiDetailRows } from "@/lib/invoice-detail-export";
 import { DocImportDialog } from "@/components/doc-import-dialog";
+import { loadPiForPrint as loadPiPrint } from "@/lib/pi-print-load";
 import { useUrlState } from "@/lib/use-url-state";
 import type { Supplier } from "@/types";
 import {
@@ -442,35 +445,12 @@ export default function PurchaseInvoicesPage() {
 
   // One printable PI. List rows are lean (rowToPI ships no items[]), so the
   // full invoice is fetched before printing. Shared by the row menu's
-  // "Print PI" and the bulk print below, so a single print and a bulk print
-  // can never render the document differently (letterhead, supplier block).
-  // Returns null on any failure; the caller decides how loudly to complain.
+  // "Print PI" and the bulk print below — and, through src/lib/pi-print-load.ts,
+  // by Finance › AP Invoices — so a PI can never print differently from one
+  // place to another (letterhead, supplier block). Returns null on any
+  // failure; the caller decides how loudly to complain.
   const loadPiForPrint = useCallback(
-    async (id: string) => {
-      const [{ letterheadForPurchaseOrg }] = await Promise.all([
-        import("@/lib/generate-purchase-order-pdf"),
-      ]);
-      const res = await fetch(`/api/purchase-invoices/${id}`);
-      const j = (await res.json().catch(() => null)) as
-        | { success?: boolean; data?: Record<string, unknown> }
-        | null;
-      if (!res.ok || !j?.success || !j.data) return null;
-      const supId = (j.data as { supplierId?: string }).supplierId;
-      const sup = suppliers.find((s) => s.id === supId);
-      return {
-        pi: {
-          ...(j.data as Record<string, unknown>),
-          supplierAddress: sup?.address,
-          supplierContact: sup?.contactPerson,
-          supplierPhone: sup?.phone,
-          supplierEmail: sup?.email,
-        },
-        letterhead: letterheadForPurchaseOrg(
-          sup?.purchaseOrgCode || "HOOKKA",
-          orgsResp?.organisations,
-        ),
-      };
-    },
+    (id: string) => loadPiPrint(id, suppliers, orgsResp?.organisations),
     [suppliers, orgsResp],
   );
 
@@ -517,15 +497,21 @@ export default function PurchaseInvoicesPage() {
         icon: <DollarSign className="h-3.5 w-3.5" />,
         action: () => {
           // Phase 3.6 — a foreign PI settles at the PAYMENT-DAY rate; the
-          // realised difference vs the booking rate posts to 530-0000.
+          // realised difference vs the booking rate posts to the FX accounts
+          // (Setup › Currency & FX). The box opens on this month's Setup rate
+          // (owner 2026-10-20: a default only), else the booking rate.
           const fx = row as unknown as { currency?: string; fxRate?: number | null };
           if (fx.currency && fx.currency !== "MYR") {
-            const r = parseFloat(window.prompt(
-              `${fx.currency} invoice — payment-day rate (MYR per 1 ${fx.currency}; booked at ${fx.fxRate ?? "?"}):`,
-              String(fx.fxRate ?? ""),
-            ) || "");
-            if (!Number.isFinite(r) || r <= 0) return;
-            updateStatus(row.id, "PAID", { payFxRate: r });
+            const ccy = fx.currency;
+            void (async () => {
+              const setup = await fetchFxRate(ccy, todayYmdMY());
+              const r = parseFloat(window.prompt(
+                `${ccy} invoice — payment-day rate (MYR per 1 ${ccy}; booked at ${fx.fxRate ?? "?"}${setup !== null ? `; this month in Setup: ${fmtFxRate(setup)}` : ""}):`,
+                setup !== null ? fmtFxRate(setup) : String(fx.fxRate ?? ""),
+              ) || "");
+              if (!Number.isFinite(r) || r <= 0) return;
+              updateStatus(row.id, "PAID", { payFxRate: r });
+            })();
           } else {
             updateStatus(row.id, "PAID");
           }

@@ -11,6 +11,7 @@ import { PurchasingPanel } from "./PurchasingPanel";
 import { DashModal } from "./DashModal";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { OverdueOrdersList } from "./OverdueOrdersList";
+import { DailyProductionRevenueCard } from "./DailyProductionRevenueCard";
 
 // Operations tab: the shop-floor report checklist (handed over on paper,
 // 2026-09-17), redesigned 2026-09-18 for density: a single KPI strip, a 2-column chart split
@@ -110,7 +111,8 @@ export function OperationsView({
                 Plant Load beside it instead of stretched across the page.
                 The overdue / due-soon counts live in "Today's problems" up
                 top; its tiles scroll down to these two lists. */}
-            <CommandCenterSections period={period} sections={["dailyReport", "deptRevenue"]} />
+            <CommandCenterSections period={period} sections={["dailyReport", "deptRevenue"]} onPeriodChange={onPeriodChange} />
+            <DailyProductionRevenueCard period={period} onPeriodChange={onPeriodChange} />
             {/* Stretch both to the taller one (owner 2026-10-17: the backlog
                 card left a gap under it beside Plant Load). */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">

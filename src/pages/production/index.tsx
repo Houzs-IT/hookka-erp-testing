@@ -1308,8 +1308,8 @@ export default function ProductionPage({
     [overviewStages],
   );
   // Cards (header bar + stage pipeline per order, no sideways scroll) or the
-  // original Grid matrix. Always opens on Cards; the choice isn't persisted.
-  const [overviewView, setOverviewView] = useState<"cards" | "grid">("cards");
+  // original Grid matrix. Always opens on Grid; the choice isn't persisted.
+  const [overviewView, setOverviewView] = useState<"cards" | "grid">("grid");
 
   // ── Overview matrix: user-resizable column widths ──
   // colKey -> px. Empty = use OVERVIEW_DEFAULT_WIDTHS. Persisted per-browser.

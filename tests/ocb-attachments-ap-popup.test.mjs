@@ -68,8 +68,12 @@ test("New AP Payment is a popup like the voucher form; fields and rules unchange
   assert.match(ap, /<div className=\{sectionHead\}><span>Header<\/span><\/div>/);
   // "Drawdowns to repay" for a trade-finance lender (2026-10-17, backlog item 17).
   assert.match(ap, /<span>\{apTfLender \? "Drawdowns to repay" : "Bills to pay"\}\{apBills\?\.partyName \?/);
-  for (const label of ["PV #", "Payment date *", "Paid from (credit) *", "Reference / remarks"]) assert.ok(ap.includes(`>${label}</label>`), `field ${label}`);
-  assert.match(ap, /const cannot = saving \|\| apTotalSen <= 0 \|\| !!apMoneyError \|\| !!apOverAlloc \|\| !apForm\.partyId/, "the same save rule");
+  for (const label of ["PV #", "Payment date *", "Paid from (credit) *"]) assert.ok(ap.includes(`>${label}</label>`), `field ${label}`);
+  // "Reference / remarks" became two fields on 2026-10-19 — the Reference (TT /
+  // cheque no.) and the printed Description (tests/finance-reference-fields.test.mjs).
+  assert.match(ap, /\{apTfDraw \? "Reference \(drawdown no\.\)" : "Reference"\}/);
+  assert.match(ap, />Description <span className="normal-case font-normal text-\[#9CA3AF\]">\(printed on the voucher\)<\/span><\/label>/);
+  assert.match(ap, /const cannot = saving \|\| apTotalSen <= 0 \|\| !!apMoneyError \|\| !!apOverAlloc \|\| !!apFxError \|\| !apForm\.partyId/, "the same save rule");
   assert.match(ap, /onClick=\{\(\) => void handleSaveAp\("draft"\)\}/);
   assert.doesNotMatch(ap, /<Card>/, "no longer an inline card");
 });

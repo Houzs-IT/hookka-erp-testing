@@ -27,6 +27,7 @@ import { bindContextMenuRow } from "@/lib/context-menu-bind";
 import {
   columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
+import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -193,6 +194,10 @@ export type Column<T> = {
   total?: "sum" | ((rows: T[]) => number);
   // How the total is shown. Default: formatRM for currency (sen), else formatNumber.
   totalFormat?: (n: number) => React.ReactNode;
+  // What "Group By This Column" groups this column's rows under, when what it
+  // shows is too fine to group by (a status that carries an amount). Default:
+  // the column's export value (src/lib/grid-group.ts).
+  groupAccessor?: (row: T) => string | number | null;
 };
 
 export type ContextMenuItem = {
@@ -202,6 +207,8 @@ export type ContextMenuItem = {
   separator?: boolean;
   danger?: boolean;
   disabled?: boolean;
+  // A tick after the label: the choice that is on now.
+  checked?: boolean;
 };
 
 export type DataGridProps<T> = {
@@ -396,6 +403,11 @@ function getNestedValue(obj: any, path: string): any {
 // `filteredData` change too, so a sorted grid pays it on each search keystroke.
 const COLLATOR = new Intl.Collator(undefined, { numeric: true });
 
+// "Group By This Column": a list longer than this opens with its groups
+// folded (each group's header and subtotal row) — a grouped grid is not
+// virtualised, so unfolded it would paint every row of a long ledger at once.
+const USER_GROUP_OPEN_MAX = 500;
+
 function compareValues(a: any, b: any): number {
   if (a == null && b == null) return 0;
   if (a == null) return -1;
@@ -533,7 +545,8 @@ export function ContextMenu({
             onMouseEnter={() => setFocusIndex(i)}
           >
             {item.icon && <span className="flex h-4 w-4 items-center justify-center text-[#666]">{item.icon}</span>}
-            {item.label}
+            <span className={cn(item.checked && "font-semibold text-[#6B5C32]")}>{item.label}</span>
+            {item.checked && <span className="ml-auto text-[#6B5C32]" aria-label="on">✓</span>}
           </button>
         </React.Fragment>
       ))}
@@ -2485,6 +2498,20 @@ export function DataGrid<T extends Record<string, any>>({
   // Sync groupEnabled when groupBy prop changes
   useEffect(() => { setGroupEnabled(!!groupBy && autoGroup); }, [groupBy, autoGroup]);
 
+  // "Group By This Column" (the header menu, finance v2 design; owner
+  // 2026-10-20 「可以」): the column the user grouped the rows by. While set it
+  // wins over the page's own `groupBy`. Its groups open unfolded (a long
+  // list opens folded — see USER_GROUP_OPEN_MAX) and fold on their own, and
+  // each group ends with a subtotal row when the grid has totals.
+  const [userGroupKey, setUserGroupKey] = useState<string | null>(null);
+  const [userFolded, setUserFolded] = useState<Set<string>>(new Set());
+  const userGroupCol = userGroupKey ? columns.find((c) => c.key === userGroupKey) ?? null : null;
+  const groupOn = !!userGroupCol || (!!groupBy && groupEnabled);
+  const userGroupValue = useCallback(
+    (row: T): string | number => (userGroupCol ? columnGroupValue(userGroupCol as unknown as GroupColumn<T>, row) : ""),
+    [userGroupCol],
+  );
+
   // 2026-05-12 perf: groups default collapsed on first paint. See the effect
   // body further down (lives after the allGroupValues useMemo so we can
   // depend on it). Ref tracks initialization-per-groupBy so manually
@@ -2566,6 +2593,8 @@ export function DataGrid<T extends Record<string, any>>({
     setGroupEnabled(!!groupBy && autoGroup);
     setGroupFilter(null);
     setCollapsedGroups(new Set());
+    setUserGroupKey(null);
+    setUserFolded(new Set());
     setShowViewsDropdown(false);
   }, [groupBy, autoGroup]);
 
@@ -2598,6 +2627,13 @@ export function DataGrid<T extends Record<string, any>>({
     setCollapsedGroups(prev => {
       const next = new Set(prev);
       if (next.has(gv)) next.delete(gv); else next.add(gv);
+      return next;
+    });
+  }, []);
+  const toggleUserFold = useCallback((key: string) => {
+    setUserFolded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   }, []);
@@ -2692,8 +2728,8 @@ export function DataGrid<T extends Record<string, any>>({
   const sortRows = useCallback((rows: T[]): T[] => {
     let result = [...rows];
 
-    // Apply group filter (only when grouping is active)
-    if (groupBy && groupEnabled && groupFilter) {
+    // Apply group filter (only when the page's grouping is active)
+    if (!userGroupCol && groupBy && groupEnabled && groupFilter) {
       result = result.filter(row => {
         const gv = String(getNestedValue(row, groupBy) ?? "—");
         return groupFilter.has(gv);
@@ -2707,9 +2743,14 @@ export function DataGrid<T extends Record<string, any>>({
     // getNestedValue.
     const sortCol = sortKey ? columns.find((c) => c.key === sortKey) : null;
     const sortRead = sortCol?.sortAccessor;
-    if ((groupBy && groupEnabled) || sortKey) {
+    if (groupOn || sortKey) {
+      // The user's group of each row, read once — not per comparison.
+      const ug = userGroupCol ? new Map(result.map((r) => [r, userGroupValue(r)])) : null;
       result.sort((a, b) => {
-        if (groupBy && groupEnabled) {
+        if (ug) {
+          const gc = compareGroupValues(ug.get(a) ?? "", ug.get(b) ?? "");
+          if (gc !== 0) return gc;
+        } else if (groupBy && groupEnabled) {
           const ga = getNestedValue(a, groupBy);
           const gb = getNestedValue(b, groupBy);
           const gc = compareValues(ga, gb);
@@ -2725,7 +2766,7 @@ export function DataGrid<T extends Record<string, any>>({
       });
     }
     return result;
-  }, [sortKey, sortDir, groupBy, groupEnabled, groupFilter, columns]);
+  }, [sortKey, sortDir, groupBy, groupEnabled, groupFilter, columns, groupOn, userGroupCol, userGroupValue]);
   const sortedData = useMemo(() => sortRows(filteredData), [sortRows, filteredData]);
 
   // ── Row cap (render-only) ──
@@ -2750,7 +2791,7 @@ export function DataGrid<T extends Record<string, any>>({
   // virtualizer still mounts but its result is ignored — keeping hook order
   // stable across renders is non-negotiable.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const virtualizationActive = virtualize && !(groupBy && groupEnabled);
+  const virtualizationActive = virtualize && !groupOn;
   // Single source of truth for the per-row height. Used by both the
   // virtualizer's estimateSize and the body padding math below — without
   // sharing one constant, the padding calc could fall out of sync with
@@ -2930,29 +2971,41 @@ export function DataGrid<T extends Record<string, any>>({
     setHdrMenu({ x: Math.min(e.clientX, window.innerWidth - 248), y: e.clientY, key });
   };
   // The current view as a sheet: visible columns over every filtered row,
-  // plus the total row when the grid shows one (currency in RM).
-  const exportAoa = (): Aoa => {
-    const aoa = buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
+  // plus the total row when the grid shows one (currency in RM). Grouped by
+  // the user ("Group By This Column"): each group's rows, then its subtotal
+  // row, as the design's export; `subtotalRows` marks them for the PDF.
+  const exportSheet = (): { aoa: Aoa; subtotalRows: number[] } => {
+    const grouped = userGroupCol
+      ? buildGroupedListingAoa(
+          visibleColumns as unknown as ExportColumn<T>[],
+          groupRows(sortedData, userGroupValue).map((g) => ({ label: groupValueLabel(userGroupCol.type, g.value), rows: g.rows })),
+          (rows) => columnTotals(rows, visibleColumns, (row, key) => getNestedValue(row, key)),
+        )
+      : null;
+    const aoa = grouped ? grouped.aoa : buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
     if (showFooter) aoa.push(visibleColumns.map((c, i) => {
       const t = totals[c.key];
       if (t !== undefined) return c.type === "currency" ? Math.round(t) / 100 : t;
       return i === 0 ? "Total" : "";
     }));
-    return aoa;
+    return { aoa, subtotalRows: grouped?.subtotalRows ?? [] };
   };
   const exportBase = exportName || gridId || "export";
   const exportTitle = exportSheetLabel || exportName || gridId || "Listing";
   const runExport = (kind: "xlsx" | "pdf" | "print") => {
     const today = new Date().toISOString().slice(0, 10);
-    const aoa = exportAoa();
+    const { aoa, subtotalRows } = exportSheet();
     if (kind === "xlsx") {
       void exportReportXlsx(exportFilename(exportBase, "listing", "xlsx", today), exportTitle, aoa);
       return;
     }
     const lastBody = aoa.length - 2;
+    const subtotal = new Set(subtotalRows);
     void exportReportPdf(exportFilename(exportBase, "listing", "pdf", today), exportTitle, `As at ${formatDateDMY(today)}`, aoa, {
       leftCols: visibleColumns.flatMap((c, i) => (i > 0 && c.type !== "currency" && c.type !== "number" ? [i] : [])),
-      rowKind: showFooter ? (_row, idx) => (idx === lastBody ? "grand" : undefined) : undefined,
+      rowKind: showFooter || subtotal.size > 0
+        ? (_row, idx) => (showFooter && idx === lastBody ? "grand" : subtotal.has(idx) ? "subtotal" : undefined)
+        : undefined,
       print: kind === "print",
     });
   };
@@ -2986,6 +3039,17 @@ export function DataGrid<T extends Record<string, any>>({
     "Sort Ascending": () => { setSortKey(key); setSortDir("asc"); },
     "Sort Descending": () => { setSortKey(key); setSortDir("desc"); },
     "Clear Sorting": () => { setSortKey(null); setSortDir("asc"); },
+    "Group By This Column": () => {
+      const col = columns.find((c) => c.key === key);
+      if (!col) return;
+      setUserGroupKey(key);
+      // A long list opens with its groups folded (one header + subtotal
+      // each) — every row of every group would otherwise be painted at once.
+      setUserFolded(sortedData.length > USER_GROUP_OPEN_MAX
+        ? new Set(groupRows(sortedData, (r) => columnGroupValue(col as unknown as GroupColumn<T>, r)).map((g) => g.key))
+        : new Set());
+    },
+    "Clear Grouping": () => { setUserGroupKey(null); setUserFolded(new Set()); setGroupEnabled(false); },
     "Filter This Column…": () => setFilterDropdown({ key, rect: { left: at.x, top: at.y } }),
     "Clear All Filters": () => { setValueFilterTouched(true); setColumnFilters({}); setColumnValueFilters({}); },
     "Hide This Column": () => {
@@ -2999,6 +3063,8 @@ export function DataGrid<T extends Record<string, any>>({
     "Reset Layout": () => {
       setSortKey(null);
       setSortDir("asc");
+      setUserGroupKey(null);
+      setUserFolded(new Set());
       if (gridId) {
         void deleteOrgLayout(gridId, "user");
         try { localStorage.removeItem(`datagrid-layout-ts-${gridId}-${userKey()}`); } catch { /* ignore */ }
@@ -3017,12 +3083,13 @@ export function DataGrid<T extends Record<string, any>>({
       sorted: sortKey === hdrMenu.key ? sortDir : null,
       filterable: !!col && !col.noFilter,
       anyFilter: Object.values(columnFilters).some(Boolean) || Object.keys(columnValueFilters).length > 0,
+      grouped: userGroupKey === hdrMenu.key ? "this" : groupOn ? "other" : "none",
     });
     const out: ContextMenuItem[] = [];
     let sep = false;
     for (const label of labels) {
       if (label === "-") { sep = true; continue; }
-      out.push({ label, action: () => actions[label]?.(), separator: sep });
+      out.push({ label, action: () => actions[label]?.(), separator: sep, checked: label === "Group By This Column" && userGroupKey === hdrMenu.key });
       sep = false;
     }
     return out;
@@ -3071,8 +3138,20 @@ export function DataGrid<T extends Record<string, any>>({
 
         {!toolbarStart && <div className="flex-1" />}
 
+        {/* The user's grouping (header menu): what it groups by, and ✕ to stop. */}
+        {userGroupCol && (
+          <span className="flex items-center gap-1 rounded border border-[#6B5C32] bg-[#6B5C32]/10 h-9 pl-3 pr-1 text-sm font-medium text-[#6B5C32]">
+            Grouped by {userGroupCol.label}
+            <button
+              type="button"
+              className="ml-1 rounded px-1.5 py-0.5 hover:bg-[#6B5C32]/15"
+              title="Clear grouping"
+              onClick={() => { setUserGroupKey(null); setUserFolded(new Set()); }}
+            >✕</button>
+          </span>
+        )}
         {/* Group toggle + filter (only when groupBy prop is set) */}
-        {groupBy && (
+        {groupBy && !userGroupCol && (
           <div className="relative flex items-center gap-1">
             <button
               className={cn(
@@ -3843,6 +3922,90 @@ export function DataGrid<T extends Record<string, any>>({
                   return out;
                 }
 
+                // ── "Group By This Column": each group's header (click folds
+                // it), its rows, then its subtotal row when the grid has
+                // totals — shown folded too, so a folded group still says
+                // what it adds up to. The rows come grouped from sortedData.
+                if (userGroupCol) {
+                  const span = visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0);
+                  const groups = new Map(groupRows(sortedData, userGroupValue).map((g) => [g.key, g]));
+                  const labelAt = Math.max(0, visibleColumns.findIndex((c) => !c.total));
+                  const out: React.ReactNode[] = [];
+                  const subtotal = (key: string) => {
+                    const g = groups.get(key);
+                    if (!g || !showFooter) return;
+                    const t = columnTotals(g.rows, visibleColumns, (row, k) => getNestedValue(row, k));
+                    const name = groupValueLabel(userGroupCol.type, g.value);
+                    out.push(
+                      <tr key={`__usub__${key}`} data-dg="subtotal" className="bg-[#F1EEE8] text-[12px] font-semibold text-[#1F1D1B]">
+                        {selectable && (
+                          <td className="sticky left-0 z-10 bg-[#F1EEE8]" style={{ width: "32px", minWidth: "32px", maxWidth: "32px" }} />
+                        )}
+                        {(() => {
+                          // The label spans the empty columns after it, so a
+                          // long group name never widens its column (never
+                          // across a sticky column — that one stays put).
+                          const cells: React.ReactNode[] = [];
+                          for (let i = 0; i < visibleColumns.length; i++) {
+                            const col = visibleColumns[i];
+                            const stickyLeft = stickyOffsets.get(col.key);
+                            const isSticky = stickyLeft !== undefined;
+                            const v = t[col.key];
+                            let span = 1;
+                            if (i === labelAt && !isSticky) {
+                              while (i + span < visibleColumns.length && t[visibleColumns[i + span].key] === undefined && !stickyOffsets.has(visibleColumns[i + span].key)) span++;
+                            }
+                            cells.push(
+                              <td
+                                key={col.key}
+                                colSpan={span > 1 ? span : undefined}
+                                className={cn("whitespace-nowrap px-2 py-1 bg-[#F1EEE8]", i === labelAt ? "text-left" : alignClass(col), isSticky && "sticky z-10")}
+                                style={isSticky ? { left: `${stickyLeft}px` } : undefined}
+                              >
+                                {v !== undefined
+                                  ? (col.totalFormat ? col.totalFormat(v) : col.type === "currency" ? formatRM(v) : formatNumber(v))
+                                  : i === labelAt
+                                    ? <>{name} subtotal <span className="font-normal text-[#6B7280]">· {g.rows.length} {g.rows.length === 1 ? "row" : "rows"}</span></>
+                                    : null}
+                              </td>,
+                            );
+                            i += span - 1;
+                          }
+                          return cells;
+                        })()}
+                        {hasContextMenu && <td className="bg-[#F1EEE8]" />}
+                      </tr>,
+                    );
+                  };
+                  let open: string | null = null;
+                  displayedData.forEach((row, index) => {
+                    const key = String(userGroupValue(row));
+                    if (key !== open) {
+                      if (open !== null) subtotal(open);
+                      open = key;
+                      const g = groups.get(key);
+                      const folded = userFolded.has(key);
+                      out.push(
+                        <tr
+                          key={`__ugroup__${key}`}
+                          data-dg="group"
+                          className="bg-[#E8E4DF] border-b border-[#D0CCC7] cursor-pointer hover:bg-[#DDD8D2] select-none"
+                          onClick={() => toggleUserFold(key)}
+                          title={folded ? "Show this group's rows" : "Fold this group"}
+                        >
+                          <td colSpan={span} className="px-3 py-1.5 text-[11px] font-bold text-[#4A4540]">
+                            <span className="inline-block w-3 text-[9px] mr-1">{folded ? "▶" : "▼"}</span>
+                            {g ? groupValueLabel(userGroupCol.type, g.value) : key} <span className="font-normal text-[#888] ml-1">({g?.rows.length ?? 0})</span>
+                          </td>
+                        </tr>,
+                      );
+                    }
+                    if (!userFolded.has(key)) out.push(renderDataRow(row, index));
+                  });
+                  if (open !== null) subtotal(open);
+                  return out;
+                }
+
                 // ── Legacy / grouped path (renders every row) ──
                 const rows: React.ReactNode[] = [];
                 let lastGroup: string | null = null;
@@ -4045,7 +4208,7 @@ export function DataGrid<T extends Record<string, any>>({
           onClose={closeHdrMenu}
           heading={{
             title: visibleColumns.find((c) => c.key === hdrMenu.key)?.label || "Column",
-            sub: sortKey === hdrMenu.key ? (sortDir === "desc" ? "sorted Z → A" : "sorted A → Z") : "column",
+            sub: userGroupKey === hdrMenu.key ? "grouped" : sortKey === hdrMenu.key ? (sortDir === "desc" ? "sorted Z → A" : "sorted A → Z") : "column",
           }}
         />
       )}

@@ -150,7 +150,8 @@ test("system postings: the families and the tab that made each", () => {
   assert.deepEqual(Object.fromEntries(Object.entries(SYSTEM_JOURNAL_FAMILIES).map(([k, v]) => [k, v.tab])), {
     labor_post: "labor", labor_post_reversal: "labor",
     closing_stock: "stock", closing_stock_reversal: "stock",
-    depreciation: "assets", year_close: "bs",
+    // depreciation_reversal: Fixed Assets' Undo (owner 2026-10-20).
+    depreciation: "assets", depreciation_reversal: "assets", year_close: "bs",
     opening_balance: "opening", opening_balance_reversal: "opening",
   });
   // Each tab exists on the page.

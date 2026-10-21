@@ -44,18 +44,20 @@ test("the tooltip: three aligned columns, the Total in bold, lines under a rule"
   assert.match(tip, /border-dashed/);
   // Which series are lines, which charts stack.
   assert.match(src, /<ChartTip shares stackTotal lineKeys=\{\["__cardfc__", "perHead", "perUnit"\]\} \/>/);
-  assert.match(src, /<ChartTip lineKeys=\{line \? \[line\.key\] : \[\]\} \/>/);
+  assert.match(src, /<ChartTip lineKeys=\{line \? \[line\.key\] : \[\]\} dashKeys=\{line\?\.dashed \? \[line\.key\] : \[\]\} \/>/);
   assert.match(src, /<ChartTip shares stackTotal lineKeys=\{\["__fctotal__"\]\} \/>/);
 });
 
 test("axes: the y-axis line shows; labels 12px", () => {
   assert.doesNotMatch(src, /<YAxis[^>]*axisLine=\{false\}/, "every y-axis draws its line");
-  assert.equal((src.match(/axisLine=\{\{ stroke: "#CBD5E1" \}\}/g) ?? []).length, 5);
+  // Since 2026-10-20 every axis takes the design's props (src/components/finance/chart-look.tsx).
+  assert.equal((src.match(/<YAxis [^>]*\{\.\.\.yAxisProps\}/g) ?? []).length, 5);
   assert.doesNotMatch(src, /fontSize: 11, fill: "#6B7280"/);
 });
 
 test("chart tabs are the v2 switch", () => {
-  assert.match(src, /<SegmentedSwitch label=\{title\} options=\{tabs\} value=\{active\} onChange=\{onTab\} \/>/);
+  // The owner's design draws the dashboard's tabs as white pills on a grey track (2026-10-20).
+  assert.match(src, /<SegmentedSwitch tone="pill" label=\{title\} options=\{tabs\} value=\{active\} onChange=\{onTab\} \/>/);
 });
 
 test("the tables: v2 list look, the period header in the head, the first column pinned", () => {
@@ -65,7 +67,7 @@ test("the tables: v2 list look, the period header in the head, the first column 
   assert.doesNotMatch(src, /<tbody>\s*\{periodHead/);
   const heads = src.slice(src.indexOf("const periodHead = "), src.indexOf("\n  return (", src.indexOf("const periodHead = ")));
   assert.doesNotMatch(heads, /<td /, "the period header is header cells");
-  assert.match(heads, /style=\{\{ color: "#9A3A2D" \}\}>Forecast<\/th>/, "the forecast column keeps its red cue");
+  assert.match(heads, /style=\{\{ color: "#B4452F" \}\}>Forecast<\/th>/, "the forecast column keeps its red cue (the design's #B4452F since 2026-10-20)");
   assert.match(css, /\[data-fin-ui\] table\[data-fin-list\]\[data-fin-stick\] > tbody > tr > td:first-child \{\n  position: sticky;\n  left: 0;/);
   assert.match(css, /tr:not\(\[class\*="bg-"\]\) > td:first-child \{\n  background-color: #FFFFFF;/);
 });

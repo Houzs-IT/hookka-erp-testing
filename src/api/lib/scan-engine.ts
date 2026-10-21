@@ -1170,6 +1170,11 @@ async function runPoExtract(
   let cacheHit = false;
   let cacheCreated = false;
 
+  // BUG-2026-10-19-334: stage markers so a killed request shows its last step in the logs.
+  const t0 = Date.now();
+  const step = (s: string) => console.log(`[scan-po] ${opts.fileName} ${s} +${Date.now() - t0}ms`);
+  step("ai call start");
+
   try {
     const resp = await claudeFetch({
       method: "POST",
@@ -1206,7 +1211,9 @@ async function runPoExtract(
       }),
     });
 
+    step(`ai headers status=${resp.status} encoding=${resp.headers.get("content-encoding")} length=${resp.headers.get("content-length")}`);
     const bodyText = await resp.text();
+    step(`ai body read chars=${bodyText.length}`);
     if (!resp.ok) {
       errorMsg = `Anthropic ${resp.status}: ${bodyText.slice(0, 500)}`;
     } else {
@@ -1246,6 +1253,7 @@ async function runPoExtract(
   } catch (e) {
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
+  step(`parsed ok=${parseOk} pos=${parsed?.pos?.length ?? 0} textChars=${claudeText.length} error=${errorMsg?.slice(0, 200) ?? "none"}`);
 
   // Sample insert. The legacy route writes one row per parsed PO (because
   // the route has the validated/enriched PO in hand by then). The queue
@@ -1271,6 +1279,7 @@ async function runPoExtract(
         : null) ??
       cleanCustomerHint(readName) ??
       customerHintGuess;
+    step("sample insert start");
     try {
       await db
         .prepare(
@@ -1288,6 +1297,7 @@ async function runPoExtract(
     } catch (e) {
       console.error("po_scan_samples insert failed:", (e as Error).message);
     }
+    step("sample insert done");
   }
 
   if (!parseOk || !parsed) {
@@ -1298,6 +1308,7 @@ async function runPoExtract(
     };
   }
   await replayPoCorrections(db, orgId, catalog, parsed.pos);
+  step("corrections replayed");
   return {
     ok: true,
     data: parsed,

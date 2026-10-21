@@ -1,5 +1,6 @@
 # Dashboard & Command Center — Module Guide
 
+> **Last verified: 2026-10-19** (branch `fix/dashboard-dept-revenue-to-main` (to `main`, cherry-picked from staging #1003)): the Department Revenue JSX and `DeptRevenueChart` rows (anchors :1688 / :250 and the Day view). Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
@@ -53,8 +54,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |
 | Revenue by Customer JSX | `src/pages/dashboard-b/index.tsx:1749` | Concentration exhibit (donut + category modes) |
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
-| Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1614` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa |
-| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:248` | One line per production department |
+| Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1688` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
+| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:250` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
 | `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2355` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
@@ -82,6 +83,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - **Defect rate counts bedframe + sofa only** — accessories are excluded from both cases and units (owner 2026-10-18).
 
 - **Sales forecast** (2026-10-18, owner): target = sales keyed in **Forecast P&L** (`GET /api/accounting/forecast`, kv `forecast_pnl`, months[ym].salesSen; quarter/year = sum of keyed months); actual = **invoiced** by invoice date. No rolling-average fallback — an unkeyed month shows no target. Viewers without Accounting read see actuals only.
+
+- **Working day for production averages** (2026-10-20): a day any department produced something. Department Revenue's Avg / day and the Daily production revenue card both use it, so their averages match; a weekly view (quarter / year) counts Mon–Sat days elapsed.
 
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:58`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.

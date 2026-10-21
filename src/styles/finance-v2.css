@@ -420,7 +420,43 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   width: auto;
 }
 
+/* A report narrower than its card closes on the right (owner 2026-10-21
+   「sep2026 旁边没有线条？」): its columns draw only their left line, so the
+   last one had none. A report that fills its card needs none — the card's
+   own border is there. */
+[data-fin-ui] table[data-fin-report][data-fin-fit] > thead > tr > th:last-child,
+[data-fin-ui] table[data-fin-report][data-colw] > thead > tr > th:last-child {
+  border-right: 1px solid #CBD5E1;
+}
+
+[data-fin-ui] table[data-fin-report][data-fin-fit] > tbody > tr > td:last-child,
+[data-fin-ui] table[data-fin-report][data-colw] > tbody > tr > td:last-child,
+[data-fin-ui] table[data-fin-report][data-fin-fit] > tfoot > tr > td:last-child,
+[data-fin-ui] table[data-fin-report][data-colw] > tfoot > tr > td:last-child {
+  border-right: 1px solid #E7E1D8;
+}
+
 /* A zero ("-") reads pale, so the figures stand out. */
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-zero] {
   color: #C4BDB3;
+}
+
+/* Motion (the design: a toggle's rows fade in, about 180ms). No fill mode, so
+   a row's own hover lift is untouched once it has arrived. */
+[data-fin-ui] [data-fin-reveal] {
+  animation: fin-reveal .18s ease-out;
+}
+
+/* Opening and switching (owner 2026-10-20 「要」, the design's 150–200 ms): a
+   page's content fades in as it opens or its tab switches; a popup's panel
+   rises in over its fading backdrop. No fill mode — nothing keeps a transform
+   once it has arrived (a transform would re-anchor fixed menus inside it). */
+[data-fin-ui] [data-fin-tab] {
+  animation: fin-fade .16s ease-out;
+}
+[data-fin-ui] [data-fin-backdrop] {
+  animation: fin-fade .15s ease-out;
+}
+[data-fin-ui] [data-fin-pop] {
+  animation: fin-pop .18s ease-out;
 }

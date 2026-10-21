@@ -1,6 +1,7 @@
 import type { Env } from "../worker";
 import { addDays, deriveDraws } from "../../lib/trade-finance";
 import type { TfAlloc, TfDraw, TfDrawMeta, TfLegRow } from "../../lib/trade-finance";
+import { timedFn } from "./step-timing";
 
 // ---------------------------------------------------------------------------
 // Trade-finance storage (owner 2026-08-11) — the DB half of the feature whose
@@ -24,7 +25,16 @@ export type TfSource = {
   lenderSupplierId: string;
   lenderName: string;
   tenorDays: number;
+  /** The line's limit in sen, keyed by the owner (2026-10-20); null = none set. */
+  limitSen: number | null;
 };
+
+/** A limit as stored: a whole, non-negative number of sen, or null. */
+export function parseTfLimitSen(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
 
 export async function ensureTfTables(db: DB): Promise<void> {
   await db
@@ -70,6 +80,7 @@ export async function getTfSources(db: DB): Promise<TfSource[]> {
           lenderSupplierId: String(o.lenderSupplierId ?? "").trim(),
           lenderName: String(o.lenderName ?? "").trim(),
           tenorDays: Math.max(1, Math.round(Number(o.tenorDays) || 90)),
+          limitSen: parseTfLimitSen(o.limitSen),
         };
       })
       .filter((s) => s.accountCode && s.lenderSupplierId);
@@ -175,7 +186,7 @@ export async function loadTfDrawsAt(
   return deriveDraws(legs, metas, allocs, repayNos);
 }
 
-export async function loadTfDraws(
+async function loadTfDrawsUntimed(
   db: DB,
   source: TfSource,
 ): Promise<{ draws: TfDraw[]; accountNetSen: number; unallocatedSen: number }> {
@@ -251,3 +262,4 @@ export async function loadTfDraws(
   );
   return derived;
 }
+export const loadTfDraws = timedFn("tf-draws", loadTfDrawsUntimed);

@@ -1,27 +1,30 @@
 // ---------------------------------------------------------------------------
-// Trade Finance block (owner 2026-08-11) — lives on the Creditor Aging tab,
-// as its own section, NEVER mixed into the trade-creditor rows: this money is
-// owed to a LENDER (Houzs Century) for supplier bills it paid on our behalf.
+// Trade finance on Creditor Aging (owner 2026-08-11) — money owed to a LENDER
+// (Houzs Century) for supplier bills it paid on our behalf. Drawing on the
+// line and repaying it are AP Payments on Payment Vouchers.
 //
-// Buckets run on each draw's DUE date. The identity line the owner can check
-// at a glance: Σ draw outstanding + unallocated = TF account ledger net.
-// Amounts are ledger-derived server-side (loadTfDraws) — this block only
-// displays, edits due dates, and links to the Supplier Payment screen to
-// repay (payee = the lender; the grid there lists draws instead of PIs).
-//
-// Since 2026-10-17 (owner 「这些都做」, Finance v2) Creditor Aging's list ALSO
-// shows one row per open draw, in its own Trade finance section (never mixed
-// into the supplier rows), with its due date as Next Due. This block stays
-// where draws are managed: due dates, interest, bank charges, setup.
+// Since 2026-10-21 (owner 「就把那些信息显示在这边不行？」, then 「可以，全部做」)
+// there is no separate block under the list: each open drawdown is a row of
+// the aging list's Trade finance section (by due date) that opens (›) to its
+// principal, interest, bank charges, repaid, outstanding and due date — the
+// due date, interest and bank charges typed in place (TfDrawDetail); the
+// repaid drawdowns sit behind a "show" line at the end of the section
+// (TfRepaidRows). The line's limit card above the list (tfLineSummary) carries
+// the limit, used, available and the check the owner reads at a glance:
+// Σ drawdown outstanding + unallocated = the line's account balance. The
+// line's setup lives in Settings › Trade Finance Lines (TfSetupCard).
+// Amounts are ledger-derived server-side (loadTfDraws).
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { moneyFieldToRinggit, firstMoneyFieldError } from "@/lib/money-field";
-import { Landmark, Settings2 } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronRight, Landmark } from "lucide-react";
+import { tfPrincipalSen } from "@/lib/trade-finance";
+import { formatDateDMY } from "@/lib/utils";
 
-type TfDrawRow = {
+export type TfDrawRow = {
   drawSourceId: string;
   drawDate: string;
   dueDate: string;
@@ -32,13 +35,15 @@ type TfDrawRow = {
   outstandingSen: number;
   paidSupplier: string;
 };
-type TfSourceRow = {
+export type TfSourceRow = {
   accountCode: string;
   lenderSupplierId: string;
   lenderName: string;
   tenorDays: number;
   accountName: string;
   accountNetSen: number;
+  limitSen?: number | null;
+  availableSen?: number | null;
   unallocatedSen: number;
   totals: { notDue: number; d1_30: number; d31_60: number; d61_90: number; over90: number; total: number };
   draws: TfDrawRow[];
@@ -47,27 +52,10 @@ type TfSourceRow = {
 const rm = (sen: number) =>
   (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const BUCKETS: { key: keyof TfSourceRow["totals"]; label: string }[] = [
-  { key: "notDue", label: "Not due" },
-  { key: "d1_30", label: "1-30 d" },
-  { key: "d31_60", label: "31-60 d" },
-  { key: "d61_90", label: "61-90 d" },
-  { key: "over90", label: "90+ d" },
-  { key: "total", label: "Total" },
-];
-
-export function TradeFinanceBlock() {
+// The two saves a drawdown takes (its due date; its interest or bank
+// charges), then `onSaved` reloads the list.
+function useTfDrawSave(onSaved: () => void) {
   const { toast } = useToast();
-  const [sources, setSources] = useState<TfSourceRow[] | null>(null);
-  const [showSetup, setShowSetup] = useState(false);
-  const load = useCallback(() => {
-    fetch("/api/accounting/trade-finance", { cache: "no-store" })
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: TfSourceRow[] } }>)
-      .then((j) => setSources(j?.success ? (j.data?.sources ?? []) : []))
-      .catch(() => setSources([]));
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
   const saveDue = async (drawSourceId: string, dueDate: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
     const res = await fetch("/api/accounting/trade-finance/draw-due", {
@@ -76,7 +64,7 @@ export function TradeFinanceBlock() {
       body: JSON.stringify({ drawSourceId, dueDate }),
     }).catch(() => null);
     const j = (await res?.json().catch(() => null)) as { success?: boolean; error?: string } | null;
-    if (j?.success) { toast.success("Due date saved"); load(); }
+    if (j?.success) { toast.success("Due date saved"); onSaved(); }
     else toast.error(j?.error || "Couldn't save the due date");
   };
 
@@ -106,156 +94,186 @@ export function TradeFinanceBlock() {
         : { drawSourceId, bankChargeSen: sen }),
     }).catch(() => null);
     const j = (await res?.json().catch(() => null)) as { success?: boolean; error?: string; data?: { unchanged?: boolean } } | null;
-    if (j?.success) { if (!j.data?.unchanged) { toast.success(`${label} posted`); } load(); }
+    if (j?.success) { if (!j.data?.unchanged) { toast.success(`${label} posted`); } onSaved(); }
     else toast.error(j?.error || `Couldn't save the ${label.toLowerCase()}`);
   };
+  return { saveDue, saveCharge };
+}
 
-  if (sources === null) return null; // loading — the aging tab renders fine without it
+// The card under an opened drawdown (owner 2026-10-21 「这个点开可以优化一下，
+// 不好看」): the drawdown on the left — paid to, drawn, due date — and the
+// amount on the right worked as a sum, one figure under another: principal +
+// interest + bank charges − repaid = outstanding.
+const headCls = "mb-2.5 text-[10.5px] font-semibold uppercase tracking-[.5px] text-[#9CA3AF]";
+const termCls = "text-[#6B7280]";
+const opCls = "text-center text-[#9CA3AF]";
+// A plain figure sits where an input's text does (1px border + 8px padding).
+const figCls = "pr-[9px] text-right tabular-nums";
+const boxCls = "h-7 rounded-md border border-[#D9D3CA] bg-white text-[12.5px] focus:border-[#6B5C32] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/20";
+const moneyText = (sen: number) => (sen ? rm(sen) : "");
+
+/** The due date day-first like the rest of the page — the browser's own date
+ *  box follows its language (12/03/2026 for 3 December in an English-US
+ *  Chrome) — with the browser's calendar on click. Saved when it loses focus. */
+function DueDateBox({ d, onSave }: { d: TfDrawRow; onSave: (ymd: string) => void }) {
+  const [value, setValue] = useState(d.dueDate);
   return (
-    <div className="space-y-4">
-      {sources.map((s) => (
-        <Card key={s.accountCode}>
-          <CardContent className="p-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-[#1F1D1B] flex items-center gap-2">
-                <Landmark className="h-4 w-4 text-[#6B5C32]" />
-                TRADE FINANCE — {s.lenderName}
-              </h3>
-              <span className="text-[11px] text-[#9CA3AF]">
-                {s.accountCode} {s.accountName} · default tenor {s.tenorDays} days · buckets by DUE date
-              </span>
-              <div className="ml-auto flex items-center gap-2">
-                <a href={`/invoices/supplier-payments?supplier=${encodeURIComponent(s.lenderSupplierId)}`}>
-                  <Button size="sm">Repay</Button>
-                </a>
-                <Button variant="outline" size="sm" onClick={() => setShowSetup((v) => !v)}>
-                  <Settings2 className="h-4 w-4 mr-1" /> Settings
-                </Button>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {BUCKETS.map((b) => (
-                <div key={b.key} className={`rounded-md border border-[#E2DDD8] px-3 py-1.5 ${b.key === "total" ? "bg-[#F6F1E7]" : "bg-white"}`}>
-                  <p className="text-[10px] text-[#6B7280]">{b.label}</p>
-                  <p className={`text-sm font-semibold tabular-nums ${b.key === "over90" && s.totals.over90 > 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>
-                    {rm(s.totals[b.key])}
-                  </p>
-                </div>
-              ))}
-            </div>
-            {/* The identity the owner checks at a glance. Red = doesn't tie. */}
-            <p className={`text-[11px] ${s.totals.total + s.unallocatedSen === s.accountNetSen ? "text-[#9CA3AF]" : "text-[#9A3A2D] font-semibold"}`}>
-              Draws {rm(s.totals.total)}
-              {s.unallocatedSen !== 0 && <> + unallocated {rm(s.unallocatedSen)}</>}
-              {" = account balance "}{rm(s.accountNetSen)}
-            </p>
-            <div className="overflow-x-auto">
-              <table data-fin-list className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50 text-[#6B7280]">
-                    <th className="py-2 px-3 text-left font-medium">Draw</th>
-                    <th className="py-2 px-3 text-left font-medium">Paid supplier</th>
-                    <th className="py-2 px-3 text-left font-medium">Draw date</th>
-                    <th className="py-2 px-3 text-left font-medium">Due date</th>
-                    <th className="py-2 px-3 text-right font-medium">Principal</th>
-                    <th className="py-2 px-3 text-right font-medium">Interest</th>
-                    <th className="py-2 px-3 text-right font-medium">Bank charges</th>
-                    <th className="py-2 px-3 text-right font-medium">Repaid</th>
-                    <th className="py-2 px-3 text-right font-medium">Outstanding</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {s.draws.length === 0 && (
-                    <tr data-fin-nolift=""><td colSpan={9} className="py-4 px-3 text-center text-[#9CA3AF]">No open draws.</td></tr>
-                  )}
-                  {s.draws.map((d) => (
-                    // The due date, interest and bank charges are typed in place:
-                    // the row stays put under the cursor.
-                    <tr key={d.drawSourceId} data-fin-nolift="" className="border-b border-[#F0ECE9]">
-                      <td className="py-1.5 px-3 tabular-nums">{d.drawSourceId}</td>
-                      <td className="py-1.5 px-3">{d.paidSupplier || "-"}</td>
-                      <td className="py-1.5 px-3 tabular-nums">{d.drawDate}</td>
-                      <td className="py-1.5 px-3">
-                        {/* Editable in place — the bank's real maturity date. */}
-                        <input
-                          type="date"
-                          defaultValue={d.dueDate}
-                          onBlur={(e) => { if (e.target.value && e.target.value !== d.dueDate) void saveDue(d.drawSourceId, e.target.value); }}
-                          className="rounded border border-[#E2DDD8] px-1.5 py-0.5 text-[12px] bg-white"
-                        />
-                      </td>
-                      <td className="py-1.5 px-3 text-right tabular-nums">{rm(d.amountSen - d.interestSen - d.bankChargeSen)}</td>
-                      <td className="py-1.5 px-3 text-right">
-                        {/* The bank's charged interest — keyed here (OCR prefill
-                            later); posts to the dedicated INTEREST ON TRADE
-                            FINANCE account and joins the balance. */}
-                        <input
-                          key={`${d.drawSourceId}:${d.interestSen}`}
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          defaultValue={d.interestSen ? (d.interestSen / 100).toFixed(2) : ""}
-                          placeholder="0.00"
-                          onBlur={(e) => {
-                            const cur = d.interestSen ? (d.interestSen / 100).toFixed(2) : "";
-                            if (e.target.value !== cur && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value, d.drawDate);
-                          }}
-                          className="w-24 rounded border border-[#E2DDD8] px-1.5 py-0.5 text-[12px] text-right tabular-nums bg-white"
-                        />
-                      </td>
-                      <td className="py-1.5 px-3 text-right">
-                        {/* The bank's charges on the draw — posts to BANK
-                            CHARGES (900-B001) and joins the balance. */}
-                        <input
-                          key={`${d.drawSourceId}:bc:${d.bankChargeSen}`}
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          defaultValue={d.bankChargeSen ? (d.bankChargeSen / 100).toFixed(2) : ""}
-                          placeholder="0.00"
-                          onBlur={(e) => {
-                            const cur = d.bankChargeSen ? (d.bankChargeSen / 100).toFixed(2) : "";
-                            if (e.target.value !== cur && e.target.value !== "") void saveCharge("bankCharge", d.drawSourceId, e.target.value);
-                          }}
-                          className="w-24 rounded border border-[#E2DDD8] px-1.5 py-0.5 text-[12px] text-right tabular-nums bg-white"
-                        />
-                      </td>
-                      <td className="py-1.5 px-3 text-right tabular-nums">{d.repaidSen ? rm(d.repaidSen) : "-"}</td>
-                      <td className="py-1.5 px-3 text-right tabular-nums font-semibold">{rm(d.outstandingSen)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                {s.draws.length > 0 && (
-                  <tfoot>
-                    <tr className="border-t-2 border-[#E2DDD8] bg-[#F6F1E7] font-semibold">
-                      <td className="py-2 px-3" colSpan={4}>TOTAL</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.amountSen - d.interestSen - d.bankChargeSen, 0))}</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.interestSen, 0))}</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.bankChargeSen, 0))}</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.repaidSen, 0))}</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{rm(s.draws.reduce((t, d) => t + d.outstandingSen, 0))}</td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-      {(sources.length === 0 || showSetup) && (
-        <TfSetupCard
-          existing={sources[0] ?? null}
-          onSaved={() => { setShowSetup(false); load(); }}
-        />
-      )}
+    <span data-tf-due="" className="relative inline-flex h-7 w-[136px] items-center justify-between rounded-md border border-[#D9D3CA] bg-white px-2 text-[12.5px] tabular-nums focus-within:border-[#6B5C32] focus-within:ring-2 focus-within:ring-[#6B5C32]/20">
+      <span>{value ? formatDateDMY(value) : "-"}</span>
+      <CalendarDays className="h-3.5 w-3.5 text-[#9CA3AF]" aria-hidden="true" />
+      <input
+        type="date"
+        aria-label="Due date"
+        defaultValue={d.dueDate}
+        onClick={(e) => { try { e.currentTarget.showPicker(); } catch { /* the box still takes typing */ } }}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={(e) => {
+          if (!e.target.value) { e.target.value = d.dueDate; setValue(d.dueDate); return; }
+          if (e.target.value !== d.dueDate) onSave(e.target.value);
+        }}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+      />
+    </span>
+  );
+}
+
+/** One drawdown's figures under its aging row (or a repaid one's): paid to,
+ *  drawn, due date; principal + interest + bank charges − repaid =
+ *  outstanding — the due date, interest and bank charges typed in place
+ *  unless the list is as at a past date. */
+export function TfDrawDetail({ d, editable, onSaved }: { d: TfDrawRow; editable: boolean; onSaved: () => void }) {
+  const { saveDue, saveCharge } = useTfDrawSave(onSaved);
+  return (
+    <div data-tf-draw={d.drawSourceId} className="inline-flex flex-wrap items-start gap-x-8 gap-y-4 rounded-lg border border-[#E7E1D8] bg-white px-5 py-4 text-[12.5px] text-[#1F2937] shadow-[0_1px_2px_rgba(31,29,27,.06)]">
+      <div>
+        <div className={headCls}>Drawdown</div>
+        <dl className="grid grid-cols-[auto_auto] items-center gap-x-6 gap-y-2.5">
+          <dt className={termCls}>Paid to</dt>
+          <dd className="font-medium text-[#1F1D1B]">{d.paidSupplier || "-"}</dd>
+          <dt className={termCls}>Drawn</dt>
+          <dd className="tabular-nums">{d.drawDate ? formatDateDMY(d.drawDate) : "-"}<span className="text-[#9CA3AF]"> · {d.drawSourceId}</span></dd>
+          <dt className={termCls}>Due date</dt>
+          <dd>
+            {editable ? (
+              // The bank's real maturity date.
+              <DueDateBox key={`${d.drawSourceId}:due:${d.dueDate}`} d={d} onSave={(ymd) => { void saveDue(d.drawSourceId, ymd); }} />
+            ) : <span className="tabular-nums">{d.dueDate ? formatDateDMY(d.dueDate) : "-"}</span>}
+          </dd>
+        </dl>
+      </div>
+      <div className="border-l border-[#EDE8E1] pl-8">
+        <div className={headCls}>Amount (RM)</div>
+        <div data-tf-sum="" className="grid grid-cols-[10px_auto_124px] items-center gap-x-3 gap-y-2">
+          <span />
+          <span className={termCls}>Principal</span>
+          <span className={figCls}>{rm(tfPrincipalSen(d))}</span>
+          <span className={opCls}>+</span>
+          <span className={termCls}>Interest</span>
+          {editable ? (
+            // The bank's charged interest — posts to the dedicated INTEREST ON
+            // TRADE FINANCE account and joins the balance.
+            <input
+              key={`${d.drawSourceId}:${d.interestSen}`}
+              type="text"
+              inputMode="decimal"
+              aria-label="Interest (RM)"
+              defaultValue={moneyText(d.interestSen)}
+              placeholder="0.00"
+              onBlur={(e) => {
+                if (e.target.value !== moneyText(d.interestSen) && e.target.value !== "") void saveCharge("interest", d.drawSourceId, e.target.value, d.drawDate);
+              }}
+              className={`w-full px-2 text-right tabular-nums ${boxCls}`}
+            />
+          ) : <span className={figCls}>{rm(d.interestSen)}</span>}
+          <span className={opCls}>+</span>
+          <span className={termCls}>Bank charges</span>
+          {editable ? (
+            // The bank's charges on the draw — posts to BANK CHARGES and joins the balance.
+            <input
+              key={`${d.drawSourceId}:bc:${d.bankChargeSen}`}
+              type="text"
+              inputMode="decimal"
+              aria-label="Bank charges (RM)"
+              defaultValue={moneyText(d.bankChargeSen)}
+              placeholder="0.00"
+              onBlur={(e) => {
+                if (e.target.value !== moneyText(d.bankChargeSen) && e.target.value !== "") void saveCharge("bankCharge", d.drawSourceId, e.target.value);
+              }}
+              className={`w-full px-2 text-right tabular-nums ${boxCls}`}
+            />
+          ) : <span className={figCls}>{rm(d.bankChargeSen)}</span>}
+          <span className={opCls}>−</span>
+          <span className={termCls}>Repaid</span>
+          <span className={figCls}>{d.repaidSen ? rm(d.repaidSen) : "-"}</span>
+          <span className="col-span-3 border-t border-[#CBD5E1]" />
+          <span />
+          <span className="font-semibold text-[#1F1D1B]">Outstanding</span>
+          <span className={`${figCls} font-semibold text-[#1F1D1B]`}>{rm(d.outstandingSen)}</span>
+        </div>
+      </div>
     </div>
+  );
+}
+
+/** A repaid drawdown with the line it was drawn on (the row's code and name). */
+export type TfRepaidDraw = TfDrawRow & { accountCode: string; lenderName: string };
+
+/** The drawdowns already repaid, behind one line at the end of the Trade
+ *  finance section: each a row like an open one with nothing outstanding,
+ *  opening (›) to the same card. `colSpan` = the table's columns (10 with
+ *  Next Due). */
+export function TfRepaidRows({ draws, colSpan, editable, onSaved }: { draws: TfRepaidDraw[]; colSpan: number; editable: boolean; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set());
+  if (draws.length === 0) return null;
+  const withDue = colSpan >= 10;
+  const toggle = (id: string) => setOpenRows((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  return (
+    <>
+      <tr data-fin-nolift="" data-tf-repaid="" className="border-b border-[#F0ECE9]">
+        <td colSpan={colSpan} className="py-2 px-4">
+          <button type="button" onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B5C32] hover:underline">
+            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            {open ? "Hide" : "Show"} {draws.length} repaid drawdown{draws.length === 1 ? "" : "s"}
+          </button>
+        </td>
+      </tr>
+      {open && draws.map((d) => {
+        const isOpen = openRows.has(d.drawSourceId);
+        return (
+          <Fragment key={d.drawSourceId}>
+            <tr data-tf-repaid-row="" data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] text-[#6B7280]">
+              <td className="py-3 px-4 font-mono text-xs whitespace-nowrap">{d.accountCode}</td>
+              <td className="py-3 px-4">
+                <button type="button" className="inline-flex items-start gap-1.5 text-left" onClick={() => toggle(d.drawSourceId)} title="Show this drawdown's figures">
+                  {isOpen ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6B5C32]" />}
+                  <span className="font-medium">
+                    {d.lenderName}
+                    <span className="block text-[11px] font-normal">{[d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`].filter(Boolean).join(" · ")}</span>
+                  </span>
+                </button>
+              </td>
+              <td className="py-3 px-4"><span className="inline-flex rounded-full bg-[#EAF2EC] px-2 py-0.5 text-[11px] font-medium text-[#3F6B4E]">Repaid</span></td>
+              {withDue ? <td className="py-3 px-4 whitespace-nowrap tabular-nums">{d.dueDate ? formatDateDMY(d.dueDate) : "-"}</td> : null}
+              {[0, 1, 2, 3, 4].map((b) => <td key={b} className="py-3 px-4 text-right">-</td>)}
+              <td className="py-3 px-4 text-right">-</td>
+            </tr>
+            {isOpen && (
+              <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6]">
+                <td colSpan={colSpan} className="py-2.5 px-4 pl-10"><TfDrawDetail d={d} editable={editable} onSaved={onSaved} /></td>
+              </tr>
+            )}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }
 
 // Setup = the ONE owner-pressed write that also reclasses the account in
 // place (LIABILITY, renamed, out of the bank lists). The confirm spells that
-// out — nothing here happens silently.
-function TfSetupCard({ existing, onSaved }: { existing: TfSourceRow | null; onSaved: () => void }) {
+// out — nothing here happens silently. Lives in Settings › Trade Finance Lines.
+export function TfSetupCard({ existing, onSaved }: { existing: TfSourceRow | null; onSaved: () => void }) {
   const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [accountCode, setAccountCode] = useState(existing?.accountCode ?? "310-0020");
@@ -284,7 +302,7 @@ function TfSetupCard({ existing, onSaved }: { existing: TfSourceRow | null; onSa
       return;
     }
     const ok = window.confirm(
-      `Set up trade finance?\n\nAccount ${accountCode} becomes a LIABILITY named "${effectiveAccountName}" and leaves the bank / cash-book lists. The ledger itself is not touched — history reads correctly at every date.\n\nDraws (money ${lenderName} paid suppliers for us) will be tracked with due dates; repay through Supplier Payment to ${lenderName}.`,
+      `Set up trade finance?\n\nAccount ${accountCode} becomes a LIABILITY named "${effectiveAccountName}" and leaves the bank / cash-book lists. The ledger itself is not touched — history reads correctly at every date.\n\nDraws (money ${lenderName} paid suppliers for us) will be tracked with due dates; repay with an AP Payment to ${lenderName} on Payment Vouchers.`,
     );
     if (!ok) return;
     setSaving(true);

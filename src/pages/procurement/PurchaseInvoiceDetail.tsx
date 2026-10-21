@@ -64,6 +64,12 @@ type DraftLine = {
   // restores the old consumption then re-increments off this id). Dropping it
   // would silently free the GRN line's invoiced qty on every edit.
   grnItemId: string | null;
+  // The PO this line bills (HK-0107) — sent back so a multi-PO invoice keeps
+  // each line's own PO on save instead of collapsing onto the header PO.
+  poId?: string | null;
+  // ...and the PO LINE (T-006 R8): dropping it on save would let an edit
+  // re-line a blank-code PO line past the PO ceiling.
+  poItemId?: string | null;
 };
 
 // Status lifecycle (post-simplification, owner 2026-06-29):
@@ -105,6 +111,8 @@ type PurchaseInvoiceItem = {
   lineType: LineType;
   notes: string | null;
   grnItemId?: string | number | null;
+  poId?: string | null;
+  poItemId?: string | null;
 };
 
 // Linked documents, returned by GET /api/purchase-invoices/:id alongside the
@@ -427,6 +435,8 @@ export default function PurchaseInvoiceDetailPage() {
         taxRm: (Number(it.taxSen || 0) / 100).toFixed(2),
         lineType: it.lineType,
         grnItemId: it.grnItemId == null ? null : String(it.grnItemId),
+        poId: it.poId ?? null,
+        poItemId: it.poItemId ?? null,
       })),
     );
     setDirty(false);
@@ -538,6 +548,8 @@ export default function PurchaseInvoiceDetailPage() {
         lineType: l.lineType,
         // Preserve the GRN-source link so the backend keeps invoiced_qty in sync.
         grnItemId: l.grnItemId,
+        poId: l.poId ?? null,
+        poItemId: l.poItemId ?? null,
       }));
       const res = await fetch(`/api/purchase-invoices/${pi.id}`, {
         method: "PUT",

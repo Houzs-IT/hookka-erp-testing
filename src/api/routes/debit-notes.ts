@@ -15,12 +15,21 @@ import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { buildJournalEntryStatements } from "../lib/journal-hash";
 import { ClosedYearError } from "../lib/fiscal";
+import { nextSelfNumber } from "../lib/doc-number-service";
 import {
   buildDebitNoteLedgerLegs,
   buildNoteUnpostStatements,
   invoiceAfterNoteReversal,
   noteLedgerSourceType,
 } from "../lib/note-ledger";
+import {
+  DEBIT_NOTE_REASONS,
+  noteDeleteStatement,
+  noteDraftOnly,
+  noteIsDeleted,
+  notDeletedSql,
+  parseNoteItems,
+} from "../lib/note-edit";
 
 const app = new Hono<Env>();
 
@@ -102,23 +111,9 @@ function genId(): string {
 async function nextDNNo(db: D1Database): Promise<string> {
   // DN-YYMM-NNN sequential. Bug fix 2026-04-28: previous Math.random
   // sequence was collision-prone and not monotonic. Same pattern as
-  // SO/PO/DO/GRN/PI/CN.
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(
-    now.getMonth() + 1,
-  ).padStart(2, "0")}`;
-  const prefix = `DN-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT noteNumber FROM debit_notes WHERE noteNumber LIKE ? ORDER BY noteNumber DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ noteNumber: string }>();
-  if (!res) return `${prefix}001`;
-  const tail = res.noteNumber.replace(prefix, "");
-  const seq = parseInt(tail, 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  // SO/PO/DO/GRN/PI/CN. The prefix is Settings' (Document Numbering,
+  // 2026-10-20) — nextSelfNumber.
+  return nextSelfNumber(db, "DN");
 }
 
 // GET /api/debit-notes — list all
@@ -127,8 +122,9 @@ app.get("/", async (c) => {
   const denied = await requirePermission(c, "debit-notes", "read");
   if (denied) return denied;
   const orgId = getOrgId(c);
+  // A deleted note is hidden from the list (DELETE /:id keeps the row).
   const res = await c.var.DB.prepare(
-    "SELECT * FROM debit_notes WHERE orgId = ? ORDER BY date DESC",
+    `SELECT * FROM debit_notes WHERE orgId = ? AND ${notDeletedSql("debit_note", "debit_notes")} ORDER BY date DESC`,
   )
     .bind(orgId)
     .all<DebitNoteRow>();
@@ -291,7 +287,7 @@ app.get("/:id", async (c) => {
   )
     .bind(id)
     .first<DebitNoteRow>();
-  if (!row) {
+  if (!row || (await noteIsDeleted(c.var.DB, getOrgId(c), "debit_note", id))) {
     return c.json({ success: false, error: "Debit note not found" }, 404);
   }
   return c.json({ success: true, data: rowToDebitNote(row) });
@@ -313,7 +309,8 @@ app.put("/:id", async (c) => {
     )
       .bind(id)
       .first<DebitNoteRow>();
-    if (!existing) {
+    // A deleted draft is gone from every list — it cannot be posted either.
+    if (!existing || (await noteIsDeleted(c.var.DB, getOrgId(c), "debit_note", id))) {
       return c.json({ success: false, error: "Debit note not found" }, 404);
     }
     const body = await c.req.json();
@@ -600,6 +597,110 @@ app.post("/:id/unpost", async (c) => {
     after: rowToDebitNote(updated),
   });
   return c.json({ success: true, data: rowToDebitNote(updated) });
+});
+
+// PUT /api/debit-notes/:id/edit — change a draft (owner 2026-10-20 「edit,
+// duplicate, delete 可以做， approve 不需要」), the mirror of the credit-note
+// one: its invoice, reason, detail and lines, checked as on create (the
+// customer block re-read from the invoice). A draft has charged nothing, so
+// nothing else moves; an approved or posted note goes Back to Draft first.
+// Its number and date stay.
+app.put("/:id/edit", async (c) => {
+  const denied = await requirePermission(c, "debit-notes", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const db = c.var.DB;
+  const existing = await db
+    .prepare("SELECT * FROM debit_notes WHERE id = ? AND orgId = ?")
+    .bind(id, orgId)
+    .first<DebitNoteRow>();
+  if (!existing || (await noteIsDeleted(db, orgId, "debit_note", id))) {
+    return c.json({ success: false, error: "Debit note not found" }, 404);
+  }
+  const notDraft = noteDraftOnly("Debit note", existing.noteNumber, existing.status, "edited");
+  if (notDraft) return c.json({ success: false, error: notDraft }, 409);
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body) return c.json({ success: false, error: "Invalid request body" }, 400);
+  const invoiceId = typeof body.invoiceId === "string" ? body.invoiceId.trim() : "";
+  const reason = typeof body.reason === "string" ? body.reason : "";
+  if (!invoiceId || !reason) {
+    return c.json({ success: false, error: "invoiceId, reason, and items are required" }, 400);
+  }
+  if (!(DEBIT_NOTE_REASONS as readonly string[]).includes(reason)) {
+    return c.json({ success: false, error: `Unknown reason "${reason}".` }, 400);
+  }
+  const parsed = parseNoteItems(body.items, "Debit note");
+  if ("error" in parsed) return c.json({ success: false, error: parsed.error }, 400);
+  const invoice = await db
+    .prepare(
+      `SELECT id, invoiceNo, customerId, customerName, customerState,
+              customerAddress, attention, customerPhone
+         FROM invoices WHERE id = ? AND orgId = ?`,
+    )
+    .bind(invoiceId, orgId)
+    .first<{
+      id: string; invoiceNo: string; customerId: string; customerName: string;
+      customerState: string | null; customerAddress: string | null; attention: string | null; customerPhone: string | null;
+    }>();
+  if (!invoice) return c.json({ success: false, error: "Invoice not found" }, 404);
+  await db
+    .prepare(
+      `UPDATE debit_notes
+          SET invoiceId = ?, invoiceNumber = ?, customerId = ?, customerName = ?, customerState = ?,
+              customerAddress = ?, attention = ?, customerPhone = ?,
+              reason = ?, reasonDetail = ?, totalAmount = ?, items = ?
+        WHERE id = ? AND orgId = ? AND status = 'DRAFT'`,
+    )
+    .bind(
+      invoice.id, invoice.invoiceNo, invoice.customerId, invoice.customerName, invoice.customerState,
+      invoice.customerAddress, invoice.attention, invoice.customerPhone,
+      reason, typeof body.reasonDetail === "string" ? body.reasonDetail : "", parsed.totalSen, JSON.stringify(parsed.items),
+      id, orgId,
+    )
+    .run();
+  const updated = await db
+    .prepare("SELECT * FROM debit_notes WHERE id = ? AND orgId = ?")
+    .bind(id, orgId)
+    .first<DebitNoteRow>();
+  if (!updated) return c.json({ success: false, error: "Debit note not found" }, 404);
+  await emitAudit(c, {
+    resource: "debit-notes",
+    resourceId: id,
+    action: "update",
+    before: rowToDebitNote(existing),
+    after: rowToDebitNote(updated),
+  });
+  return c.json({ success: true, data: rowToDebitNote(updated) });
+});
+
+// DELETE /api/debit-notes/:id — delete a draft (owner 2026-10-20): hidden from
+// every list, the row kept (document_lifecycle DELETED). Its number is not
+// used again. An approved or posted note goes Back to Draft first.
+app.delete("/:id", async (c) => {
+  const denied = await requirePermission(c, "debit-notes", "delete");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const db = c.var.DB;
+  const existing = await db
+    .prepare("SELECT * FROM debit_notes WHERE id = ? AND orgId = ?")
+    .bind(id, orgId)
+    .first<DebitNoteRow>();
+  if (!existing || (await noteIsDeleted(db, orgId, "debit_note", id))) {
+    return c.json({ success: false, error: "Debit note not found" }, 404);
+  }
+  const notDraft = noteDraftOnly("Debit note", existing.noteNumber, existing.status, "deleted");
+  if (notDraft) return c.json({ success: false, error: notDraft }, 409);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  await noteDeleteStatement(db, orgId, "debit_note", id, actorUserId).run();
+  await emitAudit(c, {
+    resource: "debit-notes",
+    resourceId: id,
+    action: "delete",
+    before: rowToDebitNote(existing),
+  });
+  return c.json({ success: true });
 });
 
 export default app;

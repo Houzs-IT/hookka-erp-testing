@@ -403,6 +403,12 @@ export async function withSnapshot<T extends Record<string, unknown>>(
     // production list uses it to bump its KV-layer version so the edge cache
     // stops serving the stale body it cached during the SWR window.
     onRevalidated?: () => void | Promise<void>;
+    // A copy older than this counts as stale even when the source tables say
+    // it is current — the safety net for an input the source-table list cannot
+    // see (an edit that bumps no timestamp, a table the list does not name).
+    // With staleWhileRevalidate the old copy is still served and refreshed
+    // behind it. Added 2026-10-19 for the P&L / Balance Sheet snapshots.
+    maxAgeMs?: number;
   },
 ): Promise<T> {
   const [snap, signature] = await Promise.all([
@@ -412,7 +418,13 @@ export async function withSnapshot<T extends Record<string, unknown>>(
   const currentMax = signature.maxUpdatedAt;
   const sourceRows = signature.rowCount;
 
-  if (isSnapshotFresh(snap, currentMax, sourceRows) && snap) {
+  // maxAgeMs: an unreadable build time counts as too old (refresh, never trust).
+  const tooOld = (s: SnapshotRow): boolean => {
+    if (opts?.maxAgeMs === undefined) return false;
+    const builtMs = new Date(s.builtAt as unknown as string).getTime();
+    return Number.isNaN(builtMs) || Date.now() - builtMs > opts.maxAgeMs;
+  };
+  if (isSnapshotFresh(snap, currentMax, sourceRows) && snap && !tooOld(snap)) {
     if (c) {
       try {
         const { emitCounter } = await import("./observability");

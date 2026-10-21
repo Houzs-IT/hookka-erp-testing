@@ -20,6 +20,7 @@
 // Tune thresholds below. Start loud; turn down once the noisy offenders are fixed.
 // ---------------------------------------------------------------------------
 import type { Context, Next } from "hono";
+import { stepTimingEntries, withStepTiming, type StepMark } from "./step-timing";
 
 export const SLOW_REQUEST_MS = 200;
 export const SLOW_QUERY_MS = 100;
@@ -189,8 +190,14 @@ export async function timingMiddleware(c: Context, next: Next): Promise<void> {
   // PII safety — long stacks may include user-typed strings).
   let errMsg = "";
   let errCaught: unknown = null;
+  // Each step a handler times with timed() (step-timing.ts) lands here and
+  // goes out as an s-<name> Server-Timing entry below.
+  const stepMarks: StepMark[] = [];
   try {
-    await next();
+    // A read gets a per-request memo too (requestMemo): the loads every
+    // report helper repeats — the document dates, the account aliases — run
+    // once per GET. Writes never share a copy taken before they wrote.
+    await withStepTiming(stepMarks, () => next(), { memo: c.req.method === "GET" });
   } catch (err) {
     errCaught = err;
     errMsg = ((err instanceof Error ? err.message : String(err)) || "").slice(
@@ -225,6 +232,7 @@ export async function timingMiddleware(c: Context, next: Next): Promise<void> {
       parts.push(`db;dur=${dbTimer.total};desc="${dbTimer.count} queries"`);
     }
     if (colo) parts.push(`cf-country;desc="${colo}"`);
+    parts.push(...stepTimingEntries(stepMarks));
     c.res.headers.set("Server-Timing", parts.join(", "));
   } catch { /* ignore */ }
 

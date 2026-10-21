@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { humanizeError } from "@/lib/humanize-error";
 import { useToast } from "@/components/ui/toast";
+import { DEFAULT_IN_PREFIX, DEFAULT_OUT_PREFIX, DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypeKey } from "@/lib/doc-number";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { LifecycleBadge } from "@/components/accounting/lifecycle-actions";
 import { defaultBankCode } from "@/lib/default-bank";
@@ -20,7 +21,7 @@ import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } fr
 import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
 import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
 import { clearFaQueue, faRemarkFor, fixedAssetPrefills, putFaQueue, readFaQueue, withoutRegistered, type FaPrefill } from "@/lib/fixed-asset-prompt";
-import { addDays as tfAddDays } from "@/lib/trade-finance";
+import { addDays as tfAddDays, tfLineRoom, tfOverLimitWarning } from "@/lib/trade-finance";
 import { guessAccount, findDuplicate, linesWithTax, normPayee, normDocNo, type LearnedLine, type AccountGuess, type KnownDoc } from "@/lib/scan-account-learn";
 // Every money field on this page is `type="text" inputMode="decimal"` — the
 // browser lets a comma through, and `parseFloat("12,000")` is 12. One parser,
@@ -32,6 +33,9 @@ import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFro
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
+import { apForeignPay, confirmBankPlan } from "@/lib/ap-fx";
+import { fmtFxRate, fxMonthLabel, fxMonthOf, fxRateFor, parseFxRate, type FxSettings } from "@/lib/fx";
+import { loadPiForPrint, type PiPrintSupplier } from "@/lib/pi-print-load";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party-aging-rows";
 import { daysUntil, dueText, dueTone, monthBucket, nextDueOf, overdueSen } from "@/lib/aging-next-due";
@@ -39,7 +43,7 @@ import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
-import { lifecycleMenuItems, rowMenuItems, type RowMenuGroups } from "@/components/accounting/row-menu";
+import { lifecycleMenuItems, rowMenuItems, useRowMenu, type RowMenuGroups } from "@/components/accounting/row-menu";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
 import { amountInWords } from "@/lib/amount-in-words";
 import { COMPANY } from "@/lib/constants";
@@ -95,7 +99,13 @@ import { AuditLogTab } from "./tabs/AuditLogTab";
 import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
 import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
-import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
+import { TfDrawDetail, TfRepaidRows, type TfDrawRow, type TfRepaidDraw, type TfSourceRow } from "./tabs/TradeFinanceBlock";
+import { groupBsEntries } from "@/lib/bs-groups";
+import { tfLineSummary } from "@/lib/trade-finance";
+import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
+import { FxTab } from "./tabs/FxTab";
+import { CoaEditModal, CoaListView } from "./tabs/CoaListView";
+import { coaInactiveBlock, coaListRows } from "@/lib/coa-list";
 import { PartyListTab } from "./tabs/PartyListTab";
 import { bestMatch } from "@/lib/party-fuzzy-match";
 import {
@@ -154,7 +164,7 @@ function CompanySelect({
 
 // =============== TYPES ===============
 
-type TabKey = "overview" | "coa" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
+type TabKey = "overview" | "coa" | "fx" | "journals" | "tb" | "gl" | "ar" | "ap" | "debtors" | "creditors" | "supplier-discount" | "debtorledger" | "creditorledger" | "odebtor" | "ocreditor" | "odebtorbills" | "odebtorpay" | "ocreditorbills" | "ocreditorpay" | "apinvoices" | "arinvoices" | "selfcheck" | "corrections" | "pl" | "trend" | "plmonthly" | "ceclass" | "coststruct" | "cashflow" | "bs" | "payments" | "receipts" | "transfer" | "dailycash" | "cashbook" | "assets" | "contra" | "labor" | "stock" | "stockmap" | "openstock" | "stocktake" | "opening" | "audit" | "maint";
 
 // =============== VOUCHER PRINTING (PV / OR / JV) ===============
 //
@@ -234,7 +244,7 @@ function buildPvVoucher(
   const supplierAp = isAp && pv.partyKind === "SUPPLIER";
   const bills = isAp && apDetail
     ? apBillsBlock(apDetail, {
-        totalSen: pv.totalSen, money: formatCurrency,
+        totalSen: pv.totalSen, money: formatCurrency, fxMoney: (sen: number, ccy: string) => formatCurrency(sen, ccy),
         docLabel: supplierAp ? "Purchase invoice" : "Bill", refLabel: supplierAp ? "Supplier inv no." : "Reference",
         partyWord: supplierAp ? "Supplier" : "Creditor",
       })
@@ -251,7 +261,9 @@ function buildPvVoucher(
       ? [{ label: "From", value: paidFrom.value }]
       : [{ label: "Payee bank", value: apDetail?.payeeBank ?? "" }, paidFrom],
     amountBox: { label: isTransfer ? "Amount transferred" : accruedOnly ? "Amount payable" : "Amount paid", value: formatCurrency(pv.totalSen) },
-    facts: billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : undefined,
+    // The Reference (TT / cheque no., owner 2026-10-19) prints with the bill;
+    // a blank fact is left out by the renderer.
+    facts: [{ label: "Reference", value: pv.reference ?? "" }, ...(billNo ? [{ label: "Bill no.", value: billNo }, { label: "Bill date", value: billDateText }] : [])],
     columns: bills ? bills.columns : [{ label: "Account" }, { label: "Description" }, { label: "Amount", align: "right" }],
     lines: bills ? bills.lines : lines,
     totalCells: bills ? bills.totalCells : ["", "Total", formatCurrency(pv.totalSen)],
@@ -333,6 +345,7 @@ function buildJvVoucher(je: JournalEntry): VoucherSpec {
     date: formatDateDMY(je.date),
     partyLabel: "Description",
     partyName: je.description ?? "",
+    facts: [{ label: "Reference", value: je.reference ?? "" }],
     columns: [
       { label: "Account" },
       { label: "Description" },
@@ -616,13 +629,15 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "payments", label: "Payment Vouchers", icon: <BookOpen className="h-4 w-4" />, group: "Daily" },
   { key: "receipts", label: "Receipts", icon: <BookOpen className="h-4 w-4" />, group: "Daily" },
   { key: "transfer", label: "Fund Transfer", icon: <Wallet className="h-4 w-4" />, group: "Daily" },
-  { key: "dailycash", label: "Cash Position", icon: <Wallet className="h-4 w-4" />, group: "Daily" },
+  { key: "dailycash", label: "Daily Cash Position", icon: <Wallet className="h-4 w-4" />, group: "Daily" },
   // Monthly Operation
   { key: "journals", label: "Journal Entries", icon: <BookOpen className="h-4 w-4" />, group: "Monthly" },
   { key: "cashbook", label: "Cash Book", icon: <BookOpen className="h-4 w-4" />, group: "Monthly" },
   { key: "selfcheck", label: "Self-check", icon: <Calculator className="h-4 w-4" />, group: "Monthly" },
   { key: "corrections", label: "Corrections", icon: <BookOpen className="h-4 w-4" />, group: "Monthly" },
   { key: "assets", label: "Fixed Assets", icon: <Building2 className="h-4 w-4" />, group: "Monthly" },
+  // Contra left Creditor Aging for Monthly (owner 2026-10-20 「这个放去side bar 那边的monthly」).
+  { key: "contra", label: "Contra", icon: <Scale className="h-4 w-4" />, group: "Monthly" },
   // Debtor / Creditor
   { key: "ar", label: "Debtor Aging", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "ap", label: "Creditor Aging", icon: <Building2 className="h-4 w-4" />, group: "Debtor / Creditor" },
@@ -632,6 +647,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "apinvoices", label: "AP Invoices", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "supplier-discount", label: "Supplier Discount", icon: <CreditCard className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtor", label: "Other Debtor", icon: <Users className="h-4 w-4" />, group: "Debtor / Creditor" },
+  { key: "arinvoices", label: "AR Invoices", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtorbills", label: "Other Debtor Bills", icon: <BookOpen className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "odebtorpay", label: "Other Debtor Receipts", icon: <Wallet className="h-4 w-4" />, group: "Debtor / Creditor" },
   { key: "ocreditor", label: "Other Creditor", icon: <Building2 className="h-4 w-4" />, group: "Debtor / Creditor" },
@@ -639,6 +655,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
   { key: "ocreditorpay", label: "Other Creditor Payments", icon: <Wallet className="h-4 w-4" />, group: "Debtor / Creditor" },
   // Maintenance
   { key: "coa", label: "Chart of Accounts", icon: <List className="h-4 w-4" />, group: "Setup" },
+  { key: "fx", label: "Currency & FX", icon: <Wallet className="h-4 w-4" />, group: "Setup" },
   { key: "labor", label: "Labour", icon: <Users className="h-4 w-4" />, group: "Monthly" },
   { key: "stock", label: "Stock Summary", icon: <List className="h-4 w-4" />, group: "Reports" },
   { key: "stockmap", label: "Stock Mapping", icon: <List className="h-4 w-4" />, group: "Setup" },
@@ -651,6 +668,13 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode; group: string }
 
 // =============== MAIN PAGE ===============
 
+// The tabs handed the chart of accounts — they wait for it; every other tab
+// fetches its own data and opens at once.
+const TABS_WITH_ACCOUNTS = new Set<TabKey>([
+  "coa", "journals", "gl", "odebtorbills", "odebtorpay", "ocreditorbills", "apinvoices", "arinvoices", "ocreditorpay",
+  "payments", "receipts", "transfer", "cashbook", "assets", "labor", "opening", "stockmap", "maint", "fx",
+]);
+
 export default function AccountingPage() {
   // The sidebar deep-links each report via /accounting?tab=<key>; keep the
   // selected tab in the URL so those links land on the right screen and the
@@ -661,15 +685,26 @@ export default function AccountingPage() {
   // from the sidebar's deep links (/accounting?tab=<key>); the in-page tab bar
   // was removed as a duplicate of the sidebar (owner 2026-06).
   const tab: TabKey = (TABS.some((t) => t.key === urlTab) ? urlTab : "overview") as TabKey;
+  // Each tab waits only for what it is handed (owner 2026-10-19 「优化加载速度
+  // …尤其是overview」): every tab used to sit behind ALL journals with their
+  // lines plus the aging (measured 1.2 s + 0.9 s) before it could even start
+  // its own fetch. The journals load for the Journals tab only, the aging for
+  // Overview / AR / AP only; the chart of accounts (fast, used widely) always.
+  const needsJournals = tab === "journals";
+  const needsAging = tab === "overview" || tab === "ar" || tab === "ap";
   const { data: coaResp, loading: coaLoading, refresh: refreshCoa } = useCachedJson<{ success?: boolean; data?: ChartOfAccount[] }>("/api/accounting/coa");
-  const { data: jeResp, loading: jeLoading, refresh: refreshJe } = useCachedJson<{ success?: boolean; data?: JournalEntry[] }>("/api/accounting/journals");
-  const { data: agingResp, loading: agingLoading, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[] } }>("/api/accounting/aging");
+  const { data: jeResp, loading: jeLoading, error: jeError, refresh: refreshJe } = useCachedJson<{ success?: boolean; data?: JournalEntry[] }>(needsJournals ? "/api/accounting/journals" : null);
+  const { data: agingResp, loading: agingLoading, error: agingError, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[] } }>(needsAging ? "/api/accounting/aging" : null);
 
   const accounts: ChartOfAccount[] = useMemo(() => (coaResp?.success ? coaResp.data ?? [] : []), [coaResp]);
   const journals: JournalEntry[] = useMemo(() => (jeResp?.success ? jeResp.data ?? [] : []), [jeResp]);
   const arData: ARAgingEntry[] = useMemo(() => (agingResp?.success ? agingResp.data?.ar ?? [] : []), [agingResp]);
   const apData: APAgingEntry[] = useMemo(() => (agingResp?.success ? agingResp.data?.ap ?? [] : []), [agingResp]);
-  const loading = coaLoading || jeLoading || agingLoading;
+  // A load just switched on paints one frame before its fetch starts — no
+  // data and no error yet still reads as loading.
+  const jePending = needsJournals && (jeLoading || (!jeResp && !jeError));
+  const agingPending = needsAging && (agingLoading || (!agingResp && !agingError));
+  const loading = (TABS_WITH_ACCOUNTS.has(tab) && coaLoading) || jePending || (agingPending && tab !== "overview");
 
   const fetchAll = useCallback(() => {
     invalidateCachePrefix("/api/accounting");
@@ -709,9 +744,9 @@ export default function AccountingPage() {
           <div className="text-[#6B7280]">Loading accounting data...</div>
         </div>
       ) : (
-        <>
+        <div key={tab} data-fin-tab="">
           {tab === "overview" && (
-            <OverviewTab arData={arData} apData={apData} />
+            <OverviewTab arData={arData} apData={apData} agingLoading={agingPending} />
           )}
           {/* One P&L entry, three views (owner 2026-09-22 sidebar slim-down);
               the old deep links still land on their view. */}
@@ -724,6 +759,7 @@ export default function AccountingPage() {
           {tab === "bs" && <BalanceSheetTab />}
           {tab === "cashflow" && <CashFlowTab />}
           {tab === "coa" && <COATab accounts={accounts} onRefresh={fetchAll} />}
+          {tab === "fx" && <FxTab accounts={accounts} />}
           {tab === "journals" && (
             <JournalsTab journals={journals} accounts={accounts} onRefresh={fetchAll} />
           )}
@@ -735,11 +771,31 @@ export default function AccountingPage() {
           {tab === "debtors" && <PartyListTab side="DEBTOR" />}
           {tab === "creditors" && <PartyListTab side="CREDITOR" />}
           {tab === "odebtor" && <OtherPartiesTab side="DEBTOR" />}
-          {tab === "odebtorbills" && <OtherPartyBillsTab accounts={accounts} side="DEBTOR" />}
+          {/* AR Invoices (owner 2026-10-21): sales invoices + other debtor bills,
+              the customer statement at the foot (it moved here from Debtor Aging
+              on 2026-10-20). The old Other Debtor Bills address lands here too. */}
+          {tab === "arinvoices" && (
+            <div className="space-y-4">
+              <ArInvoicesTab accounts={accounts} />
+              <CustomerStatementCard />
+            </div>
+          )}
+          {tab === "odebtorbills" && (
+            <div className="space-y-4">
+              <ArInvoicesTab accounts={accounts} />
+              <CustomerStatementCard />
+            </div>
+          )}
           {tab === "odebtorpay" && <OtherPartyPaymentsTab accounts={accounts} side="DEBTOR" />}
           {tab === "ocreditor" && <OtherPartiesTab side="CREDITOR" />}
           {tab === "ocreditorbills" && <OtherPartyBillsTab accounts={accounts} side="CREDITOR" />}
-          {tab === "apinvoices" && <ApInvoicesTab accounts={accounts} />}
+          {/* The supplier statement moved here from Creditor Aging (owner 2026-10-20 「supplier statement 放去ap invoice」). */}
+          {tab === "apinvoices" && (
+            <div className="space-y-4">
+              <ApInvoicesTab accounts={accounts} />
+              <SupplierStatementCard />
+            </div>
+          )}
           {tab === "selfcheck" && <SelfCheckTab />}
           {tab === "corrections" && <CorrectionsTab />}
           {tab === "ocreditorpay" && <OtherPartyPaymentsTab accounts={accounts} side="CREDITOR" />}
@@ -749,6 +805,7 @@ export default function AccountingPage() {
           {tab === "dailycash" && <DailyCashTab />}
           {tab === "cashbook" && <CashBookTab accounts={accounts} />}
           {tab === "assets" && <FixedAssetsTab accounts={accounts} />}
+          {tab === "contra" && <ContraCard />}
           {tab === "labor" && <LaborTab accounts={accounts} />}
           {tab === "stock" && <StockSummaryTab />}
           {tab === "opening" && <OpeningBalanceTab accounts={accounts} onRefresh={fetchAll} />}
@@ -766,9 +823,10 @@ export default function AccountingPage() {
               <CleanupReportCard />
               <LandedCostCard />
               <DocNumberingCard accounts={accounts} />
+              <TradeFinanceLinesCard />
             </div>
           )}
-        </>
+        </div>
       )}
       </FinanceTitleSlotContext.Provider>
     </div>
@@ -1136,20 +1194,36 @@ function LandedCostCard() {
   );
 }
 
+// Document Numbering (owner 2026-10-20 「可以」 — the design's table). Every
+// document's next number is shown; payments and receipts keep their prefix per
+// bank; the self-numbering documents take theirs from here (the sales invoice
+// is shown, not changed). A changed prefix applies from the next document.
+type NumberingPreview = {
+  ym: string;
+  counters: Record<string, number>;
+  types: { key: DocTypeKey; label: string; prefix: string; editable: boolean; next: string }[];
+};
+
 function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   const [map, setMap] = useState<Record<string, { out: string; in: string }>>({});
+  const [typePrefix, setTypePrefix] = useState<Partial<Record<DocTypeKey, string>>>({});
+  const [preview, setPreview] = useState<NumberingPreview | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const apply = (data?: { map?: Record<string, { out?: string; in?: string }>; preview?: NumberingPreview }) => {
+    const norm: Record<string, { out: string; in: string }> = {};
+    for (const [k, v] of Object.entries(data?.map ?? {})) norm[k] = { out: v?.out ?? "", in: v?.in ?? "" };
+    setMap(norm);
+    if (data?.preview) {
+      setPreview(data.preview);
+      setTypePrefix(Object.fromEntries(data.preview.types.map((t) => [t.key, t.prefix])));
+    }
+  };
   useEffect(() => {
     fetch("/api/accounting/doc-number-prefixes")
-      .then((r) => r.json() as Promise<{ data?: { map?: Record<string, { out?: string; in?: string }> } }>)
-      .then((j) => {
-        const m = j?.data?.map ?? {};
-        const norm: Record<string, { out: string; in: string }> = {};
-        for (const [k, v] of Object.entries(m)) norm[k] = { out: v?.out ?? "", in: v?.in ?? "" };
-        setMap(norm);
-      })
+      .then((r) => r.json() as Promise<{ data?: { map?: Record<string, { out?: string; in?: string }>; preview?: NumberingPreview } }>)
+      .then((j) => apply(j?.data))
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, []);
@@ -1157,42 +1231,98 @@ function DocNumberingCard({ accounts }: { accounts: ChartOfAccount[] }) {
   const setField = (code: string, dir: "out" | "in", val: string) => {
     setMap((prev) => ({ ...prev, [code]: { out: prev[code]?.out ?? "", in: prev[code]?.in ?? "", [dir]: val } }));
   };
+  const ym = preview?.ym ?? "";
+  const defaultOf = (key: DocTypeKey) => DOC_TYPES.find((d) => d.key === key)?.defaultPrefix ?? key;
+  const pad = (n: number, digits = 3) => String(n).padStart(digits, "0");
+  // A bank's payment / receipt number: its prefix (or the PV / OR default) and
+  // this month's counter for that prefix — a shared book continues its run.
+  const bankNext = (code: string, dir: "out" | "in") => {
+    const p = normalisePrefix(map[code]?.[dir]) || (dir === "out" ? DEFAULT_OUT_PREFIX : DEFAULT_IN_PREFIX);
+    return `${p}-${ym}-${pad(preview?.counters[p] ?? 1)}`;
+  };
+  // A document type's number: the server's when the prefix is the saved one;
+  // a changed prefix starts its own run at 1.
+  const typeNext = (t: NumberingPreview["types"][number]) => {
+    const p = normalisePrefix(typePrefix[t.key]) || defaultOf(t.key);
+    if (p === t.prefix) return t.next;
+    const [, yymm, num] = t.next.split("-");
+    return `${p}-${yymm}-${pad(1, num?.length ?? 3)}`;
+  };
+  const keyedTypes = Object.fromEntries(
+    (preview?.types ?? []).filter((t) => t.editable).map((t) => [t.key, normalisePrefix(typePrefix[t.key]) || defaultOf(t.key)]),
+  ) as Partial<Record<DocTypeKey, string>>;
+  const problem =
+    banks.flatMap((a) => (["out", "in"] as const).map((d) => normalisePrefix(map[a.code]?.[d]))).filter(Boolean).map((p) => prefixProblem(p)).find(Boolean) ??
+    Object.values(keyedTypes).map((p) => prefixProblem(p ?? "")).find(Boolean) ??
+    findPrefixClash(map, keyedTypes);
   const save = async () => {
     setSaving(true);
     try {
       const res = await fetch("/api/accounting/doc-number-prefixes", {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ map }),
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ map, types: keyedTypes }),
       });
-      const j = (await res.json()) as { success?: boolean; error?: string };
-      if (j?.success) toast.success("Numbering prefixes saved"); else toast.error(j?.error || "Save failed");
+      const j = (await res.json()) as { success?: boolean; error?: string; data?: { map?: Record<string, { out?: string; in?: string }>; preview?: NumberingPreview } };
+      if (j?.success) {
+        apply(j.data);
+        toast.success("Document numbering saved — applies from the next document");
+      } else toast.error(j?.error || "Save failed");
     } catch { toast.error("Save failed"); } finally { setSaving(false); }
   };
+  const input = "w-28 rounded border border-[#E2DDD8] px-2 py-1 text-sm uppercase";
+  const fixedCells = (
+    <>
+      <td className="py-1.5 text-[#6B7280]">YYMM-</td>
+      <td className="py-1.5 text-[#6B7280]">Monthly</td>
+    </>
+  );
   return (
     <Card className="mb-4">
       <CardContent className="p-4">
         <div className="flex items-center gap-3 mb-2">
           <h3 className="text-sm font-semibold text-[#1F1D1B]">Document Numbering</h3>
-          <Button variant="primary" size="sm" onClick={save} disabled={saving || !loaded} className="ml-auto">{saving ? "Saving…" : "Save"}</Button>
+          <Button variant="primary" size="sm" onClick={save} disabled={saving || !loaded || !!problem} className="ml-auto">{saving ? "Saving…" : "Save"}</Button>
         </div>
-        <p className="text-[11px] text-[#9CA3AF] mb-3">Number = prefix + voucher month + running no. Outgoing (Expense / Supplier payment) uses the OUT prefix; incoming (Customer payment / Receipt) uses the IN prefix. Per bank.</p>
+        <p className="text-[11px] text-[#9CA3AF] mb-3">
+          Number = prefix + month (YYMM) + running number, starting again each month. Payments and receipts take their bank&apos;s prefix — supplier payments, other-creditor payments and fund transfers share the bank&apos;s payment book. A changed prefix applies from the next document; numbers already issued never change.
+        </p>
+        {problem && <p className="text-xs text-[#9A3A2D] mb-2">{problem}</p>}
         <div className="overflow-x-auto">
         <table data-fin-list className="w-full text-sm">
           <thead>
             <tr className="text-[12px] text-[#6B7280]">
-              <td className="text-left pb-1">Bank / Cash account</td>
-              <td className="text-left pb-1 w-40">OUT prefix (payments)</td>
-              <td className="text-left pb-1 w-40">IN prefix (receipts)</td>
+              <td className="text-left pb-1">Document</td>
+              <td className="text-left pb-1 w-36">Prefix</td>
+              <td className="text-left pb-1 w-24">Middle</td>
+              <td className="text-left pb-1 w-24">Restart</td>
+              <td className="text-left pb-1 w-48">Next Number Looks Like</td>
             </tr>
           </thead>
           <tbody>
-            {banks.map((a) => (
-              <tr key={a.code} data-fin-nolift="" className="border-t border-[#F0ECE9]">
-                <td className="py-1.5"><span className="tabular-nums text-xs text-[#6B7280] mr-2">{a.code}</span>{a.name}</td>
-                <td className="py-1.5"><input value={map[a.code]?.out ?? ""} onChange={(e) => setField(a.code, "out", e.target.value)} placeholder="e.g. HPV" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
-                <td className="py-1.5"><input value={map[a.code]?.in ?? ""} onChange={(e) => setField(a.code, "in", e.target.value)} placeholder="e.g. HOR" className="w-32 rounded border border-[#E2DDD8] px-2 py-1 text-sm" /></td>
+            {(["out", "in"] as const).flatMap((dir) =>
+              banks.map((a) => (
+                <tr key={`${dir}:${a.code}`} data-fin-nolift="" className="border-t border-[#F0ECE9]">
+                  <td className="py-1.5">{dir === "out" ? "Payment Voucher" : "Receipt"} <span className="text-[#6B7280]">· <span className="tabular-nums text-xs">{a.code}</span> {a.name}</span></td>
+                  <td className="py-1.5"><input aria-label={`${dir === "out" ? "Payment" : "Receipt"} prefix for ${a.code}`} value={map[a.code]?.[dir] ?? ""} onChange={(e) => setField(a.code, dir, e.target.value)} placeholder={dir === "out" ? DEFAULT_OUT_PREFIX : DEFAULT_IN_PREFIX} className={input} /></td>
+                  {fixedCells}
+                  <td className="py-1.5 font-mono text-[13px] text-[#6B5C32]">{preview ? bankNext(a.code, dir) : "…"}</td>
+                </tr>
+              )),
+            )}
+            {(preview?.types ?? []).map((t) => (
+              <tr key={t.key} data-fin-nolift="" className="border-t border-[#F0ECE9]">
+                <td className="py-1.5">{t.label}</td>
+                <td className="py-1.5">
+                  {t.editable ? (
+                    <input aria-label={`${t.label} prefix`} value={typePrefix[t.key] ?? ""} onChange={(e) => setTypePrefix((prev) => ({ ...prev, [t.key]: e.target.value }))} className={input} />
+                  ) : (
+                    <span className="text-[#6B7280]" title="Set by Sales — not changed here">{t.prefix} <span className="text-[11px]">(fixed)</span></span>
+                  )}
+                </td>
+                {fixedCells}
+                <td className="py-1.5 font-mono text-[13px] text-[#6B5C32]">{typeNext(t)}</td>
               </tr>
             ))}
-            {banks.length === 0 && <tr data-fin-nolift=""><td colSpan={3} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
+            {banks.length === 0 && <tr data-fin-nolift=""><td colSpan={5} className="py-3 text-[#9CA3AF] text-sm">No bank/cash accounts (SBK/SCH).</td></tr>}
           </tbody>
         </table>
         </div>
@@ -2710,7 +2840,69 @@ const COA_ROW_PX = 37;
 function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh: () => void }) {
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showForm, setShowForm] = useState(false);
+  // The design's list (owner 2026-10-20 「运用设计稿那样，单拖动的树状图也需要」)
+  // — every account, inactive ones too — and the drag tree as the second view;
+  // the choice is remembered on this browser.
+  const [view, setView] = useState<"list" | "tree">(() => {
+    try { return localStorage.getItem("hookka.coa.view") === "tree" ? "tree" : "list"; } catch { return "list"; }
+  });
+  const pickView = (v: "list" | "tree") => {
+    setView(v);
+    try { localStorage.setItem("hookka.coa.view", v); } catch { /* private mode — the choice just isn't kept */ }
+  };
+  const [allAccounts, setAllAccounts] = useState<ChartOfAccount[] | null>(null);
+  const [allVer, setAllVer] = useState(0);
+  useEffect(() => {
+    let dead = false;
+    fetch("/api/accounting/coa?includeInactive=1", { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: ChartOfAccount[] }>)
+      .then((j) => { if (!dead && j?.success) setAllAccounts(j.data ?? []); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [allVer, accounts]);
+  const listRows = useMemo(() => coaListRows(allAccounts ?? accounts), [allAccounts, accounts]);
+  const [editing, setEditing] = useState<ChartOfAccount | null>(null);
+  const afterChange = () => { setAllVer((v) => v + 1); onRefresh(); };
+  // ?edit=<code> (Trial Balance's "Edit Account") opens that account's form once.
+  useEffect(() => {
+    const code = searchParams.get("edit");
+    if (!code || !allAccounts) return;
+    const a = allAccounts.find((x) => x.code === code);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot deep link: the param is dropped below, so it never fires twice
+    if (a) setEditing(a);
+    const next = new URLSearchParams(searchParams);
+    next.delete("edit");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, allAccounts, setSearchParams]);
+  const viewLedger = (code: string) => {
+    const today = todayYmdMY();
+    navigate(glLink({ account: code, fromYm: today.slice(0, 7), toDate: today }));
+  };
+  // Set Inactive / Active (the design's rule: an account with a balance is cleared first).
+  const toggleActive = async (row: (typeof listRows)[number]) => {
+    const a = row.account;
+    if (a.isActive) {
+      const block = coaInactiveBlock(row);
+      if (block) { toast.error(block); return; }
+    }
+    if (!(await confirm({
+      title: a.isActive ? `Set ${a.code} inactive?` : `Set ${a.code} active?`,
+      message: a.isActive ? `${a.name} leaves the account pickers. Its history stays.` : `${a.name} comes back into the account pickers.`,
+      confirmLabel: a.isActive ? "Set Inactive" : "Set Active",
+      danger: a.isActive,
+    }))) return;
+    const res = await fetch("/api/accounting/coa", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: a.code, isActive: !a.isActive }),
+    });
+    const data = asMutationResponse(await res.json());
+    if (data?.success) { toast.success(`${a.code} ${a.isActive ? "set inactive" : "active again"}`); afterChange(); }
+    else toast.error(data?.error || "Failed to update the account");
+  };
   // The New Account form (backlog item 15, owner 2026-10-17 「可以，但前提不要
   // 碰现在的」): section chips, the parent first (only existing groups — a new
   // account never turns an existing posting account into a group), a
@@ -2730,6 +2922,20 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
   });
   const [formData, setFormData] = useState(() => blankForm());
   const openNewForm = () => { if (showForm) { setShowForm(false); return; } setFormData(blankForm()); setShowForm(true); };
+  // Add Sub-account (the list's row menu): the New Account form, opened under
+  // that group with its reporting carried over.
+  const openSubForm = (parent: ChartOfAccount) => {
+    const section = coaSectionOf(parent.code, parent.type);
+    setFormData({
+      ...blankForm(section),
+      parentCode: parent.code,
+      cashFlowCategory: (parent.cashFlowCategory ?? defaultCashFlowFor(section)) as "" | "O" | "I" | "F",
+      pnlCategory: (parent.pnlCategory ?? "") as "" | "FIXED" | "VARIABLE" | "OTHERS",
+      code: nextFreeCode(accounts, section, parent.code),
+    });
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   const setSection = (section: string) => setFormData((f) => ({
     ...f, section, parentCode: "",
     cashFlowCategory: defaultCashFlowFor(section),
@@ -2940,11 +3146,28 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
       {confirmDialog}
       <FinanceTitleActions>
         <ReportToolbar>
+          <SegmentedSwitch label="Chart of accounts view" options={[{ key: "list", label: "List" }, { key: "tree", label: "Tree" }]} value={view} onChange={pickView} />
           <Button variant="primary" size="sm" onClick={openNewForm}>
             <Plus className="h-4 w-4" /> Add Account
           </Button>
         </ReportToolbar>
       </FinanceTitleActions>
+      <KpiCards
+        items={[
+          { label: "Accounts", value: String(listRows.length), note: `${listRows.filter((r) => !r.account.isActive).length} inactive` },
+          { label: "Control accounts", value: String(listRows.filter((r) => r.account.specialAccountType).length), note: "with a special type — control, bank, cash, stock, fixed asset" },
+        ]}
+      />
+      {editing && (
+        <CoaEditModal
+          account={editing}
+          accounts={allAccounts ?? accounts}
+          balanceSen={listRows.find((r) => r.account.code === editing.code)?.balanceSen ?? editing.balance}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); afterChange(); }}
+          onRenameCode={(a) => { setEditing(null); void handleRenameCode(a); }}
+        />
+      )}
 
       {showForm && (() => {
         const sec = SECTIONS.find((x) => x.key === formData.section) ?? SECTIONS[SECTIONS.length - 1];
@@ -3042,7 +3265,17 @@ function COATab({ accounts, onRefresh }: { accounts: ChartOfAccount[]; onRefresh
         );
       })()}
 
-      {SECTIONS.map((section) => {
+      {view === "list" && (
+        <CoaListView
+          rows={listRows}
+          onEdit={setEditing}
+          onAddSub={openSubForm}
+          onViewLedger={viewLedger}
+          onToggleActive={(r) => void toggleActive(r)}
+        />
+      )}
+
+      {view === "tree" && SECTIONS.map((section) => {
         const type = section.type;
         const typeAccounts = accounts.filter((a) => sectionOf(a) === section.key);
         // Owner (round 3) — the COA is a REAL multi-level tree, e.g.
@@ -3405,6 +3638,11 @@ function JournalsTab({
       render: (value, row) => <span className="font-medium text-[#1F1D1B]">{row.description}</span>,
     },
     {
+      key: "reference",
+      label: "Reference",
+      render: (value, row) => <span className="text-[#4B5563]">{row.reference ?? ""}</span>,
+    },
+    {
       key: "totalDebit",
       label: "Total Debit",
       align: "right",
@@ -3591,8 +3829,9 @@ function JournalsTab({
                 <button onClick={close} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none">✕</button>
               </div>
               <div className="p-5 space-y-4 text-sm">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div><p className="text-[#9CA3AF] text-xs">Date</p><p className="font-medium">{formatDateDMY(je.date)}</p></div>
+                  <div><p className="text-[#9CA3AF] text-xs">Reference</p><p className="font-medium">{je.reference || "—"}</p></div>
                   <div className="col-span-2"><p className="text-[#9CA3AF] text-xs">Description</p><p className="font-medium">{je.description || "—"}</p></div>
                   <div><p className="text-[#9CA3AF] text-xs">{sys ? "Posted on" : "Created"}</p><p className="font-medium">{String(je.createdAt ?? "").slice(0, 10) || "—"}</p></div>
                 </div>
@@ -3679,6 +3918,8 @@ function JournalEntryForm({
 }) {
   const [date, setDate] = useState(() => (editing?.date ?? "").slice(0, 10) || new Date().toISOString().split("T")[0]);
   const [description, setDescription] = useState(editing?.description ?? "");
+  // Its own field, not the description (owner 2026-10-19 「先做 Reference 栏」).
+  const [reference, setReference] = useState(editing?.reference ?? "");
   // Editor rows carry a client-only `_uid` so React keys stay stable as rows
   // are added / removed / reordered. The uid is stripped before POST in
   // handleSave().  See sprint 7 — replacing key={idx} on mutable rows.
@@ -3771,7 +4012,7 @@ function JournalEntryForm({
     const res = await fetch(editing ? `/api/accounting/journals/${editing.id}` : "/api/accounting/journals", {
       method: editing ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date, description, lines: payloadLines }),
+      body: JSON.stringify({ date, description, reference: reference.trim(), lines: payloadLines }),
     });
     const data = asMutationResponse(await res.json());
     setSaving(false);
@@ -3794,7 +4035,7 @@ function JournalEntryForm({
             <div className={`rounded-md ${DANGER.bg} ${DANGER.border} border ${DANGER.text} px-4 py-2 text-sm`}>{error}</div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="text-xs font-medium text-[#6B7280] mb-1 block">Date</label>
               <input
@@ -3811,6 +4052,17 @@ function JournalEntryForm({
                 placeholder="Journal entry description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[#6B7280] mb-1 block">Reference</label>
+              <input
+                type="text"
+                placeholder="Optional"
+                value={reference}
+                maxLength={120}
+                onChange={(e) => setReference(e.target.value)}
                 className="w-full rounded-md border border-[#E2DDD8] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
               />
             </div>
@@ -4207,7 +4459,7 @@ function agingGroupsFor(show: AgingShow, all: AgingGroup[]): AgingGroup[] {
 const AGING_BUCKET_TONE = ["", "", "text-[#9C6F1E]", "text-[#B8601A] font-medium", "text-[#9A3A2D] font-medium"];
 
 function AgingListTable({
-  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue,
+  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue, renderDetail, groupExtra,
 }: {
   partyHeader: string;
   groups: AgingGroup[];
@@ -4217,6 +4469,11 @@ function AgingListTable({
   typeLabel: Record<string, string>;
   /** Renders the Next Due cell (Creditor Aging); omitted = no column. */
   nextDue?: (r: AgingListRow) => ReactNode;
+  /** An opened row's own detail instead of its documents (a trade-finance
+      drawdown's figures, owner 2026-10-21); null = the documents. */
+  renderDetail?: (r: AgingListRow) => ReactNode | null;
+  /** Rows after a group's own (the repaid drawdowns' line). */
+  groupExtra?: (g: AgingGroup, cols: number) => ReactNode;
 }) {
   const rows = groups.flatMap((g) => g.rows);
   const cols = 9 + (nextDue ? 1 : 0);
@@ -4226,6 +4483,7 @@ function AgingListTable({
   const sumOf = (list: AgingListRow[], k: (typeof AGING_KEYS)[number]) => list.reduce((s, r) => s + r[k], 0);
   const renderRow = (r: AgingListRow) => {
     const isOpen = open.has(r.key);
+    const detail = isOpen && renderDetail ? renderDetail(r) : null;
     return (
       <Fragment key={r.key}>
         <tr data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
@@ -4241,7 +4499,12 @@ function AgingListTable({
           {AGING_KEYS.map((k, i) => money(r[k], i))}
           <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(agingListTotal(r))}</td>
         </tr>
-        {isOpen && r.docs.map((d, i) => (
+        {detail != null && (
+          <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6]">
+            <td colSpan={cols} className="py-2.5 px-4 pl-10">{detail}</td>
+          </tr>
+        )}
+        {isOpen && detail == null && r.docs.map((d, i) => (
           <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
             <td colSpan={nextDue ? 4 : 3} className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
             {[0, 1, 2, 3, 4].map((b) => (
@@ -4252,7 +4515,7 @@ function AgingListTable({
             <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
           </tr>
         ))}
-        {isOpen && !r.docs.length && (
+        {isOpen && detail == null && !r.docs.length && (
           <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
             <td colSpan={cols} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
           </tr>
@@ -4292,9 +4555,10 @@ function AgingListTable({
               <td colSpan={cols} className="py-2 px-4 text-[11px] font-semibold uppercase tracking-wide text-[#6B5C32]">{g.label} · {g.rows.length}</td>
             </tr>
             {g.rows.map(renderRow)}
+            {groupExtra?.(g, cols)}
             {subtotal(g)}
           </Fragment>
-        )) : rows.map(renderRow)}
+        )) : <>{rows.map(renderRow)}{groups.map((g) => <Fragment key={`x-${g.key}`}>{groupExtra?.(g, cols)}</Fragment>)}</>}
       </tbody>
       <tfoot>
         <tr className="bg-[#F0ECE9]/50 font-semibold">
@@ -4306,13 +4570,9 @@ function AgingListTable({
     </table>
   );
 }
-// The slice of GET /api/accounting/trade-finance Creditor Aging reads.
-type TfAgingSource = {
-  lenderName: string;
-  /** The TF account the draws sit on (the Code column). */
-  accountCode?: string;
-  draws: { drawSourceId: string; drawDate: string; dueDate: string; interestSen: number; outstandingSen: number; paidSupplier: string }[];
-};
+// What Creditor Aging reads of GET /api/accounting/trade-finance: each line
+// with its drawdowns (TradeFinanceBlock.tsx).
+type TfAgingSource = TfSourceRow;
 const AGING_TYPE_TAG: Record<string, string> = {
   trade: "bg-[#EEF1F4] text-[#4B5563]",
   other: "bg-[#F4EEE3] text-[#6B5C32]",
@@ -4505,7 +4765,6 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
           </div>
         </CardContent>
       </Card>
-      <CustomerStatementCard />
     </div>
   );
 }
@@ -4942,6 +5201,31 @@ function SupplierDiscountTab() {
     }
   };
 
+  // Restore a cancelled note (owner 2026-10-20, design list 「要」): posted
+  // again as it stood; its old knock-offs against bills are not put back.
+  const restoreNote = async (row: SDHistoryRow) => {
+    if (!(await confirm({
+      title: "Restore supplier discount?",
+      message: `Restore ${row.noteNumber} (${formatCurrency(row.totalAmount)})? It is posted again: the supplier is owed that much less and the books take it back. The bills it was once knocked off stay as they are now.`,
+      confirmLabel: "Restore",
+    }))) return;
+    try {
+      const res = await fetch(`/api/accounting/purchase-credit-notes/${encodeURIComponent(row.id)}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const j = asMutationResponse(await res.json());
+      if (res.ok && j?.success) {
+        toast.success(`${row.noteNumber} restored`);
+        loadHistory();
+      } else {
+        toast.error(j?.error || "Failed to restore supplier discount");
+      }
+    } catch {
+      toast.error("Failed to restore supplier discount");
+    }
+  };
+
   const supplierOptions = useMemo(
     () => suppliers.map((s) => ({ value: s.id, label: s.code ? `${s.code} — ${s.name}` : s.name })),
     [suppliers],
@@ -5185,6 +5469,9 @@ function SupplierDiscountTab() {
                             <button onClick={() => cancelNote(n)} className="text-xs text-[#9A3A2D] hover:text-[#7A2E24] underline decoration-dotted cursor-pointer">Cancel</button>
                           </>
                         ))}
+                        {n.status === "CANCELLED" && (
+                          <button onClick={() => restoreNote(n)} className="text-xs text-[#27500A] hover:text-[#1F1D1B] underline decoration-dotted cursor-pointer">Restore</button>
+                        )}
                       </td>
                     </tr>
                     {editing && (
@@ -5254,6 +5541,10 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   // 2026-08-11 / 2026-10-16). A draw ages by its draw date like any bill.
   const [ocState, setOcState] = useState<{ key: string; bills: OtherPartyAgingBill[] } | null>(null);
   const [tfState, setTfState] = useState<{ key: string; sources: TfAgingSource[] } | null>(null);
+  // A drawdown's due date / interest / bank charges saved from its row → read
+  // the lines again (owner 2026-10-21: the block's figures now live here).
+  const [tfRev, setTfRev] = useState(0);
+  const reloadTf = () => setTfRev((n) => n + 1);
   useEffect(() => {
     let stale = false;
     const k = at.isPast ? at.asOf : "";
@@ -5267,7 +5558,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       .then((j) => { if (!stale) setTfState({ key: k, sources: j?.success ? (j.data?.sources ?? []) : [] }); })
       .catch(() => { if (!stale) setTfState({ key: k, sources: [] }); });
     return () => { stale = true; };
-  }, [at.isPast, at.asOf]);
+  }, [at.isPast, at.asOf, tfRev]);
   const ocBills = ocState?.key === (at.isPast ? at.asOf : "") ? ocState.bills : null;
   const tfSources = tfState?.key === (at.isPast ? at.asOf : "") ? tfState.sources : null;
   // Ages, Next Due and Overdue are measured at the as-at date.
@@ -5287,7 +5578,8 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       const mo = monthBucket(d.drawDate, today);
       const row: AgingListRow = {
         key: `f:${d.drawSourceId}`, kind: "tf", name: src.lenderName, code: src.accountCode,
-        sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`, d.interestSen ? `incl. interest ${formatCurrency(d.interestSen)}` : ""].filter(Boolean).join(" · "),
+        // The interest and charges are in the row's detail (›), not this line.
+        sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`].filter(Boolean).join(" · "),
         currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 0, over90Sen: 0,
         docs: [{ no: d.drawSourceId, date: d.drawDate, mo, amountSen: d.outstandingSen, due: d.dueDate }],
         nextDue: d.dueDate,
@@ -5296,6 +5588,23 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       return row;
     }))
     .sort((a, b) => (a.nextDue ?? "").localeCompare(b.nextDue ?? ""));
+  const tfDrawByKey = new Map<string, TfDrawRow>((tfSources ?? []).flatMap((src) => src.draws.map((d) => [`f:${d.drawSourceId}`, d] as const)));
+  const tfRepaid: TfRepaidDraw[] = (tfSources ?? [])
+    .flatMap((src) => src.draws.filter((d) => d.outstandingSen <= 0).map((d) => ({ ...d, accountCode: src.accountCode, lenderName: src.lenderName })))
+    .sort((a, b) => b.drawDate.localeCompare(a.drawDate));
+  // One card per trade-finance line (owner 2026-10-21): what is available
+  // under its limit, the limit, what is used and the drawdowns = account check.
+  const tfCards = (tfSources ?? []).map((src) => {
+    const t = tfLineSummary(src);
+    const check = (
+      <span data-tf-check={t.ties ? "ok" : "off"} className={t.ties ? "" : "font-semibold text-[#9A3A2D]"}>
+        {t.ties ? "drawdowns = account balance" : `drawdowns ${formatCurrency(t.drawsSen)} ≠ account ${formatCurrency(t.usedSen)}`}
+      </span>
+    );
+    return t.availableSen == null
+      ? { label: `Trade finance · ${src.lenderName}`, value: formatCurrency(t.usedSen), tone: (t.ties ? "info" : "err") as "info" | "err", note: <>used · no limit set (Settings › Trade Finance Lines) · {check}</> }
+      : { label: `Trade finance · ${src.lenderName}`, value: formatCurrency(t.availableSen), tone: (t.over || !t.ties ? "err" : "ok") as "ok" | "err", note: <span data-tf-limit="">available · limit {formatCurrency(t.limitSen ?? 0)} · used {formatCurrency(t.usedSen)} ({t.pct}%) · {check}</span> };
+  });
   const groups = agingGroupsFor(show, [
     { key: "tf", label: "Trade finance", rows: tfList },
     { key: "trade", label: "Trade suppliers", rows: supplierList },
@@ -5378,6 +5687,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           },
           { label: "Overdue", value: pastLoading ? "—" : formatCurrency(overdue), tone: "err" as const, note: `past the due date at ${formatDateDMY(at.asOf)}` },
           { label: "Total outstanding", value: pastLoading ? "—" : formatCurrency(totalOutstanding), tone: "info" as const, note: `as at ${formatDateDMY(at.asOf)}` },
+          ...tfCards,
         ] : [
           ...(ctl ? [
             { label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.tradeControlSen), tone: "err" as const, note: "per ledger" },
@@ -5400,6 +5710,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           },
           { label: "Overdue", value: formatCurrency(overdue), tone: "err" as const, note: "past the due date" },
           { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "info" as const, note: show === "all" ? "trade finance + suppliers + other creditors" : show === "tf" ? "trade finance" : show === "trade" ? "trade suppliers" : "other creditors" },
+          ...tfCards,
         ]}
       />
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -5418,7 +5729,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           />
         </div>
       </div>
-      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Pay a bill from <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>; repay trade finance on <Link to="/invoices/supplier-payments" className="underline decoration-dotted text-[#6B5C32]">Supplier Payments</Link>. Next Due is amber within 7 days and red once overdue.</p>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Pay a bill or repay trade finance with an AP Payment on <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>. Open a trade-finance row (›) to change its due date, interest or bank charges. Next Due is amber within 7 days and red once overdue.</p>
 
       <Card>
         <CardContent className="p-0">
@@ -5431,13 +5742,15 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
               onToggle={toggleAging}
               typeLabel={{ tf: "Trade Finance", trade: "Trade", other: "Other creditor" }}
               nextDue={nextDueCell}
+              renderDetail={(r) => {
+                const d = r.kind === "tf" ? tfDrawByKey.get(r.key) : undefined;
+                return d ? <TfDrawDetail d={d} editable={!at.isPast} onSaved={reloadTf} /> : null;
+              }}
+              groupExtra={(g, cols) => (g.key === "tf" ? <TfRepaidRows draws={tfRepaid} colSpan={cols} editable={!at.isPast} onSaved={reloadTf} /> : null)}
             />
           </div>
         </CardContent>
       </Card>
-      <TradeFinanceBlock />
-      <ContraCard />
-      <SupplierStatementCard />
     </div>
   );
 }
@@ -6084,7 +6397,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       </ReportFrame>
       {rows.some((r) => r.estValues) && (
         <p className="text-[11px] text-[#9C6F1E]">
-          Amber cells are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          Amber cells are estimates: recurring costs (in each of the last three months, or ticked Estimate every month in the Chart of Accounts) with nothing recorded yet this
           month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
         </p>
       )}
@@ -6633,7 +6946,7 @@ function PLStatementTab({ line }: { line: PlLine }) {
       </ReportFrame>
       {rows.some((r) => r.estSen) && (
         <p className="text-[11px] text-[#9C6F1E]">
-          Amber rows are estimates: recurring costs (in each of the last three months) with nothing recorded yet this
+          Amber rows are estimates: recurring costs (in each of the last three months, or ticked Estimate every month in the Chart of Accounts) with nothing recorded yet this
           month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
         </p>
       )}
@@ -7006,7 +7319,7 @@ type ScanFinanceResult = ScanFinanceDoc & { extraDocs: number; docs?: ScanFinanc
 // `onResult` also receives the scanned file so the caller can keep it as the
 // document's attachment once the form is saved. `allDocs`: the caller uses
 // every receipt in the file (a payment voucher), so there is nothing to warn.
-function ScanPrefillButton({ label, onResult, allDocs }: { label: string; onResult: (d: ScanFinanceResult, file: File) => void | Promise<void>; allDocs?: boolean }) {
+function ScanPrefillButton({ label, onResult, allDocs, startOpen }: { label: string; onResult: (d: ScanFinanceResult, file: File) => void | Promise<void>; allDocs?: boolean; startOpen?: boolean }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -7036,7 +7349,8 @@ function ScanPrefillButton({ label, onResult, allDocs }: { label: string; onResu
   // 2026-07-08: 「我希望是这样点了打开 upload」— same pattern as the PI scan
   // wizard). Drop a PDF/photo into the zone or click it to browse; the modal
   // shows the scanning state and closes itself when the form is prefilled.
-  const [open, setOpen] = useState(false);
+  // startOpen: a page's own Scan Bill button opened this form to scan (AR Invoices).
+  const [open, setOpen] = useState(!!startOpen);
   useEscapeClose(() => { if (!busy) setOpen(false); }, open);
   const startFile = (f: File | undefined) => {
     void onFile(f).then(() => setOpen(false));
@@ -7602,7 +7916,7 @@ function SelfCheckTab() {
       ok: cp ? tw.length === 0 : null,
       headline: !cp ? "Could not load" : tw.length === 0 ? "Every tick was confirmed by a statement" : `${tw.length} ticked item${tw.length === 1 ? "" : "s"} missing from the imported statement`,
       items: tw.slice(0, 12).map((w) => ({ label: `${w.account} · ${w.day} · ${w.sourceId}`, amount: w.amountSen })),
-      fixHref: "/accounting?tab=dailycash", fixLabel: "Open Cash Position",
+      fixHref: "/accounting?tab=dailycash", fixLabel: "Open Daily Cash Position",
     });
     for (const b of chains) {
       const ch = b.chain;
@@ -7925,10 +8239,56 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // opens ITS OWN detail page; an AP bill its detail popup.
   const openApInv = (r: ApInvRow) => { if (r.kind === "PI") navigate(`/procurement/pi/${r.id}`); else setDetailBillNo(r.no); };
   const payHref = (r: ApInvRow) => `/accounting?tab=payments&pay=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId ?? "")}`;
-  const apInvRowMenu = (r: ApInvRow): RowMenuGroups => [
-    [{ label: r.kind === "PI" ? "Open the purchase invoice" : "Open the bill", action: () => openApInv(r) }],
-    r.status === "OPEN" && r.partyId ? [{ label: "Pay", action: () => navigate(payHref(r)) }] : [],
-  ];
+  // Print (owner 2026-10-20 「这个需要」 — tick-box print and the row menu's
+  // Print): an AP bill prints as its voucher, a purchase invoice as its own
+  // PDF through the same loader Procurement's list uses (pi-print-load.ts).
+  const billOf = (r: ApInvRow) => (r.kind === "AP" ? bills.find((b) => b.billNo === r.no) : undefined);
+  const printApRows = async (list: ApInvRow[]) => {
+    const apBills = list.map(billOf).filter((b): b is OtherPartyBill => !!b);
+    const unloaded = list.filter((r) => r.kind === "AP" && !billOf(r)).map((r) => r.no);
+    if (apBills.length) printVouchers(apBills.map((b) => buildOtherPartyBillVoucher(b, accounts)));
+    const pis = list.filter((r) => r.kind === "PI");
+    if (pis.length) {
+      const [sup, orgs] = await Promise.all([
+        fetch("/api/suppliers").then((res) => res.json() as Promise<{ data?: PiPrintSupplier[] }>).catch(() => null),
+        fetch("/api/organisations").then((res) => res.json() as Promise<{ organisations?: Parameters<typeof loadPiForPrint>[2] }>).catch(() => null),
+      ]);
+      const loaded = await Promise.all(pis.map(async (r) => ({ r, one: await loadPiForPrint(r.id, sup?.data ?? [], orgs?.organisations).catch(() => null) })));
+      const ok = loaded.flatMap((x) => (x.one ? [x.one] : []));
+      unloaded.push(...loaded.filter((x) => !x.one).map((x) => x.r.no));
+      if (ok.length) {
+        const { generatePurchaseInvoicePdf, generateCombinedPurchaseInvoicePdf } = await import("@/lib/generate-purchase-invoice-pdf");
+        type PiPdf = Parameters<typeof generatePurchaseInvoicePdf>[0];
+        if (ok.length === 1) generatePurchaseInvoicePdf(ok[0].pi as unknown as PiPdf, ok[0].letterhead);
+        else await generateCombinedPurchaseInvoicePdf(ok.map((o) => ({ pi: o.pi as unknown as PiPdf, letterhead: o.letterhead })), `PurchaseInvoices-${ok.length}.pdf`);
+      }
+    }
+    if (unloaded.length) toast.error(`Not printed — ${unloaded.length} could not be loaded (${unloaded.slice(0, 3).join(", ")}).`);
+  };
+  const [selectedApRows, setSelectedApRows] = useState<(ApInvRow & { key: string })[]>([]);
+  // The row menu (owner 2026-10-20): Print for every row; an AP bill's Edit /
+  // Copy / Void here (as its popup); a purchase invoice is edited or
+  // cancelled on its own page (Open). Pay while it is open.
+  const apInvRowMenu = (r: ApInvRow): RowMenuGroups => {
+    const b = billOf(r);
+    const voided = !!b && ((b.lifecycleState ?? "ACTIVE") !== "ACTIVE" || b.status === "VOID");
+    return [
+      [
+        { label: r.kind === "PI" ? "Open the purchase invoice" : "Open the bill", action: () => openApInv(r) },
+        { label: "Print", action: () => void printApRows([r]) },
+      ],
+      b
+        ? [
+            ...(!voided ? [{ label: "Edit", action: () => setBillPopup({ mode: "edit", bill: b }) }] : []),
+            { label: "Copy", action: () => setBillPopup({ mode: "copy", bill: b }) },
+            voided
+              ? { label: "Unvoid", action: () => void billLifecycle(b, "unvoid") }
+              : { label: "Void", danger: true, action: () => void billLifecycle(b, "void") },
+          ]
+        : [],
+      r.status === "OPEN" && r.partyId ? [{ label: "Pay", action: () => navigate(payHref(r)) }] : [],
+    ];
+  };
   const liveSum = (list: ApInvRow[], pick: (r: ApInvRow) => number) => list.filter((r) => r.status !== "CANCELLED").reduce((t, r) => t + pick(r), 0);
   const apInvColumns = useMemo<Column<ApInvRow & { key: string }>[]>(() => [
     {
@@ -7969,7 +8329,7 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <Link to="/accounting?tab=payments"><Button variant="primary" size="sm">New AP Payment</Button></Link>
         </ReportToolbar>
       </FinanceTitleActions>
-      <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click a bill to see / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page.</p>
+      <p className="text-[11px] text-[#9CA3AF]">Everything owed on paper in one list. <b>AP</b> = other-creditor bills (New AP bill opens the form; double-click or right-click a bill to print / edit / copy / void it); <b>PI</b> = purchase invoices, read-only mirror — double-click opens the invoice on Procurement's page, where it is edited or cancelled. Tick rows to print them or take them to Excel.</p>
       {data && (
         <KpiCards
           items={[
@@ -7994,6 +8354,19 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
           <SearchableSelect value={supplier} onChange={setSupplier} options={supplierOpts} placeholder="All suppliers" allowClear />
         </div>
       </div>
+      {/* Tick rows → print them (bills as vouchers, purchase invoices as their PDF) or take them to Excel. */}
+      <BatchActionsBar
+        count={selectedApRows.length}
+        onPrint={() => void printApRows(selectedApRows)}
+        exportName="ap-invoices"
+        exportAoa={() => [
+          ["Kind", "No.", "Supplier", "Supplier ref", "Date", "Due", "Description", "Total (RM)", "Paid (RM)", "Outstanding (RM)", "Status"],
+          ...selectedApRows.map((r) => [
+            r.kind, r.no, r.supplier, r.supplierRef, r.date, r.dueDate ?? "", r.description,
+            r.totalSen / 100, r.paidSen / 100, r.outstandingSen / 100, r.status,
+          ]),
+        ]}
+      />
       <Card>
         <CardContent className="p-0">
           <DataGrid
@@ -8001,6 +8374,9 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
             data={rows}
             keyField="key"
             gridId="accounting-ap-invoices"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setSelectedApRows}
             onDoubleClick={openApInv}
             contextMenuItems={(r) => rowMenuItems(apInvRowMenu(r))}
             rowClassName={(r) => (r.status === "CANCELLED" ? "opacity-50" : "")}
@@ -8103,8 +8479,8 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
   // a light body whose blocks read as white cards (finance-v2.css,
   // [data-fin-modal-body]); the body scrolls, the header and actions stay.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
-      <div className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
+    <div data-fin-backdrop="" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
+      <div data-fin-pop="" className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-[16px] font-semibold text-[#1F1D1B]">{title}</h2>
@@ -8216,6 +8592,323 @@ function FoldSection({ title, hint, children, defaultOpen = false }: { title: st
   );
 }
 
+// ── AR Invoices (owner 2026-10-21 「我没发现ar invoice 在我的debtor part」 and
+// 「这个other debtor bill 里面…我希望只有bill，然后…ar invoice 一起放进来，像
+// creditor 的ap invoice」 → 「可以」): the debtor twin of AP Invoices — sales
+// invoices (INV, a read-only mirror: double-click opens the invoice's own
+// page, where it is edited or cancelled) and other-debtor bills (OD: New Bill
+// / Scan Bill open the form in a popup; double-click or right-click to print,
+// edit, copy or void). Receive opens Receipts with the document ticked. An
+// invoice dated before the books opened is Before opening — its balance is in
+// the opening balance, as on Debtor Aging. The customer statement is at the
+// foot (the page's render branch).
+type ArInvRow = {
+  kind: "INV" | "OD"; id: string; no: string; customer: string; partyId: string; ref: string; date: string; dueDate: string | null;
+  description: string; totalSen: number; receivedSen: number; outstandingSen: number;
+  status: "OPEN" | "PAID" | "CANCELLED" | "BEFORE_OPENING"; opening: boolean;
+};
+const AR_KIND_CHIPS: { key: "ALL" | "INV" | "OD"; label: string }[] = [
+  { key: "ALL", label: "All" }, { key: "INV", label: "Sales invoices" }, { key: "OD", label: "Other debtor bills" },
+];
+const AR_STATUS_CHIPS: { key: "ALL" | ArInvRow["status"]; label: string }[] = [
+  { key: "ALL", label: "All" }, { key: "OPEN", label: "Open" }, { key: "PAID", label: "Paid" }, { key: "CANCELLED", label: "Cancelled" }, { key: "BEFORE_OPENING", label: "Before opening" },
+];
+const AR_STATUS_LABEL: Record<ArInvRow["status"], string> = { OPEN: "OPEN", PAID: "PAID", CANCELLED: "CANCELLED", BEFORE_OPENING: "BEFORE OPENING" };
+function ArInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
+  const navigate = useNavigate();
+  const parties = useOtherPartiesList();
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  const [ver, setVer] = useState(0);
+  const [billPopup, setBillPopup] = useState<{ mode: "new" | "edit" | "copy"; bill?: OtherPartyBill; scan?: boolean } | null>(null);
+  const [detailBillNo, setDetailBillNo] = useState<string | null>(null);
+  const [bills, setBills] = useState<OtherPartyBill[]>([]);
+  useEffect(() => {
+    let dead = false;
+    fetch("/api/accounting/other-party-bills?type=DEBTOR")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: OtherPartyBill[] }>)
+      .then((j) => { if (!dead && j?.success) setBills(j.data ?? []); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [ver]);
+  const billLifecycle = async (b: OtherPartyBill, action: "void" | "unvoid") => {
+    const verb = action === "unvoid" ? "Restore" : "Void";
+    if (!(await confirm({ title: `${verb} bill?`, message: `${verb} ${b.billNo}?${action === "void" ? " A reversal entry will be posted (nothing is deleted)." : ""}`, danger: true }))) return;
+    const res = await fetch(`/api/accounting/other-party-bills/${encodeURIComponent(b.billNo)}/lifecycle`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+    });
+    const j = asMutationResponse(await res.json());
+    if (j?.success) { toast.success(`${b.billNo} ${action === "void" ? "voided" : "restored"}`); setVer((v) => v + 1); }
+    else toast.error(j?.error || `${verb} failed`);
+  };
+  const [data, setData] = useState<{ rows: ArInvRow[]; totals: { openSen: number; openCount: number; invOpenSen: number; odOpenSen: number } } | null>(null);
+  const [kind, setKind] = useState<"ALL" | "INV" | "OD">("ALL");
+  const [status, setStatus] = useState<"ALL" | ArInvRow["status"]>("ALL");
+  // One load of everything; every filter is client-side (chips carry counts).
+  const [customer, setCustomer] = useState("");
+  useEffect(() => {
+    let dead = false;
+    fetch("/api/accounting/ar-invoices")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: typeof data }>)
+      .then((j) => { if (!dead && j?.success && j.data) setData(j.data); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [ver]);
+  const all = data?.rows ?? [];
+  const passes = (r: ArInvRow, skip?: "kind" | "status") => {
+    if (skip !== "kind" && kind !== "ALL" && r.kind !== kind) return false;
+    if (skip !== "status" && status !== "ALL" && r.status !== status) return false;
+    if (customer && r.customer !== customer) return false;
+    return true;
+  };
+  const rows = useMemo(() => all.filter((r) => passes(r)).map((r) => ({ ...r, key: `${r.kind}-${r.id}` })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- passes reads exactly these
+    [all, kind, status, customer]);
+  const kindCount = (k: typeof kind) => all.filter((r) => passes(r, "kind") && (k === "ALL" || r.kind === k)).length;
+  const statusCount = (s: typeof status) => all.filter((r) => passes(r, "status") && (s === "ALL" || r.status === s)).length;
+  const customerOpts = [...new Set(all.map((r) => r.customer).filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((s) => ({ value: s, label: s }));
+  const chip = (r: ArInvRow) =>
+    r.status === "PAID" ? "bg-[#EAF3DE] text-[#27500A]" : r.status === "CANCELLED" || r.status === "BEFORE_OPENING" ? "bg-[#F0ECE9] text-[#9CA3AF]" : "bg-[#FBF3E4] text-[#7A5B12]";
+  const openArInv = (r: ArInvRow) => { if (r.kind === "INV") navigate(`/invoices/${encodeURIComponent(r.id)}`); else setDetailBillNo(r.no); };
+  const receiveHref = (r: ArInvRow) => `/accounting?tab=receipts&receive=${r.kind}:${encodeURIComponent(r.id)}:${encodeURIComponent(r.partyId)}`;
+  const billOf = (r: ArInvRow) => (r.kind === "OD" ? bills.find((b) => b.billNo === r.no) : undefined);
+  // Print: a bill as its voucher, a sales invoice as its own PDF (several →
+  // one combined PDF) — the same build the Sales list's Download PDF uses;
+  // anything that could not be loaded is named, not dropped.
+  const printArRows = async (list: ArInvRow[]) => {
+    const odBills = list.map(billOf).filter((b): b is OtherPartyBill => !!b);
+    const unloaded = list.filter((r) => r.kind === "OD" && !billOf(r)).map((r) => r.no);
+    if (odBills.length) printVouchers(odBills.map((b) => buildOtherPartyBillVoucher(b, accounts)));
+    const invs = list.filter((r) => r.kind === "INV");
+    if (invs.length) {
+      type CombinedItem = Parameters<typeof import("@/lib/unified-doc-download").downloadCombinedUnifiedInvoicePdf>[0][number];
+      const loaded = await Promise.all(invs.map(async (r) => {
+        try {
+          const [invRes, exRes] = await Promise.all([
+            fetch(`/api/invoices/${encodeURIComponent(r.id)}`),
+            fetch(`/api/invoices/${encodeURIComponent(r.id)}/print-extras`),
+          ]);
+          const invoice = ((await invRes.json()) as { data?: CombinedItem["invoice"] })?.data ?? null;
+          let extras: CombinedItem["extras"] = undefined;
+          try {
+            const ej = (await exRes.json()) as { success?: boolean; data?: CombinedItem["extras"] };
+            if (ej?.success && ej.data) extras = ej.data;
+          } catch { /* extras are optional — the PDF renders without them */ }
+          return { r, item: invoice ? { invoice, extras } : null };
+        } catch {
+          return { r, item: null };
+        }
+      }));
+      const items = loaded.flatMap((x) => (x.item ? [x.item] : []));
+      unloaded.push(...loaded.filter((x) => !x.item).map((x) => x.r.no));
+      if (items.length) {
+        const { downloadCombinedUnifiedInvoicePdf } = await import("@/lib/unified-doc-download");
+        await downloadCombinedUnifiedInvoicePdf(items, items.length === 1 ? `${invs[0].no}.pdf` : `Invoices-${items.length}.pdf`);
+      }
+    }
+    if (unloaded.length) toast.error(`Not printed — ${unloaded.length} could not be loaded (${unloaded.slice(0, 3).join(", ")}).`);
+  };
+  const [selectedArRows, setSelectedArRows] = useState<(ArInvRow & { key: string })[]>([]);
+  const arInvRowMenu = (r: ArInvRow): RowMenuGroups => {
+    const b = billOf(r);
+    const voided = !!b && ((b.lifecycleState ?? "ACTIVE") !== "ACTIVE" || b.status === "VOID");
+    return [
+      [
+        { label: r.kind === "INV" ? "Open the invoice" : "Open the bill", action: () => openArInv(r) },
+        { label: "Print", action: () => void printArRows([r]) },
+      ],
+      b
+        ? [
+            ...(!voided ? [{ label: "Edit", action: () => setBillPopup({ mode: "edit", bill: b }) }] : []),
+            { label: "Copy", action: () => setBillPopup({ mode: "copy", bill: b }) },
+            voided
+              ? { label: "Unvoid", action: () => void billLifecycle(b, "unvoid") }
+              : { label: "Void", danger: true, action: () => void billLifecycle(b, "void") },
+          ]
+        : [],
+      r.status === "OPEN" && r.partyId ? [{ label: "Receive", action: () => navigate(receiveHref(r)) }] : [],
+    ];
+  };
+  const liveSum = (list: ArInvRow[], pick: (r: ArInvRow) => number) => list.filter((r) => r.status !== "CANCELLED").reduce((t, r) => t + pick(r), 0);
+  const arInvColumns = useMemo<Column<ArInvRow & { key: string }>[]>(() => [
+    {
+      key: "kind", label: "Kind", width: "90px",
+      render: (_v, r) => <><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${r.kind === "INV" ? "bg-[#EEF2FB] text-[#2C4170]" : "bg-[#F6F1E7] text-[#6B5C32]"}`}>{r.kind}</span>{r.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}</>,
+    },
+    {
+      key: "no", label: "No.", type: "docno", width: "130px", noFilter: true,
+      render: (_v, r) => (r.kind === "INV"
+        ? <Link to={`/invoices/${encodeURIComponent(r.id)}`} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32]" title="Open this invoice">{r.no}</Link>
+        : <button type="button" onClick={() => setDetailBillNo(r.no)} className="tabular-nums text-xs underline decoration-dotted text-[#6B5C32] cursor-pointer" title="Open this bill">{r.no}</button>),
+    },
+    { key: "customer", label: "Customer / debtor", width: "220px" },
+    { key: "ref", label: "DO / Ref", width: "140px", render: (_v, r) => <span className="text-xs text-[#6B7280]">{r.ref}</span> },
+    { key: "date", label: "Date", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.date}</span> },
+    { key: "dueDate", label: "Due", type: "date", width: "110px", render: (_v, r) => <span className="text-xs text-[#6B7280] whitespace-nowrap">{r.dueDate ?? "—"}</span> },
+    { key: "totalSen", label: "Total", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.totalSen) },
+    { key: "receivedSen", label: "Received", type: "currency", align: "right", width: "120px", total: (list) => liveSum(list, (r) => r.receivedSen), render: (_v, r) => <span className="tabular-nums text-[#6B7280]">{r.receivedSen ? formatCurrency(r.receivedSen) : "—"}</span> },
+    { key: "outstandingSen", label: "Outstanding", type: "currency", align: "right", width: "130px", total: (list) => liveSum(list, (r) => r.outstandingSen), render: (_v, r) => <span className="tabular-nums font-medium">{r.outstandingSen ? formatCurrency(r.outstandingSen) : "—"}</span> },
+    {
+      key: "status", label: "Status", width: "150px",
+      filterAccessor: (r) => AR_STATUS_LABEL[r.status], exportValue: (r) => AR_STATUS_LABEL[r.status],
+      render: (_v, r) => (
+        <span className="whitespace-nowrap" title={r.status === "BEFORE_OPENING" ? "Dated before the books opened — its balance is in the opening balance, not here" : undefined}>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip(r)}`}>{AR_STATUS_LABEL[r.status]}</span>
+          {r.status === "OPEN" && r.partyId && (
+            // Receive: opens Receipts with this document ticked.
+            <Link to={receiveHref(r)} className="ml-2 text-[11px] underline decoration-dotted text-[#6B5C32] hover:text-[#1F1D1B]">receive</Link>
+          )}
+        </span>
+      ),
+    },
+  ], []);
+  return (
+    <div className="space-y-4" data-ar-invoices="">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <Button variant="outline" size="sm" onClick={() => setBillPopup({ mode: "new", scan: true })} title="Scan a bill — AI prefills the form for your review"><Upload className="h-4 w-4 mr-1.5" /> Scan Bill</Button>
+          <Button variant="outline" size="sm" onClick={() => setBillPopup({ mode: "new" })}><Plus className="h-4 w-4" /> New Bill</Button>
+          <Link to="/accounting?tab=receipts"><Button variant="primary" size="sm">New Receipt</Button></Link>
+        </ReportToolbar>
+      </FinanceTitleActions>
+      <p className="text-[11px] text-[#9CA3AF]">Everything owed to us on paper in one list. <b>INV</b> = sales invoices, a read-only mirror — double-click opens the invoice on Sales&apos; page, where it is edited or cancelled; <b>OD</b> = other-debtor bills (New Bill / Scan Bill open the form; double-click or right-click a bill to print / edit / copy / void it). Receive opens Receipts with it ticked. An invoice dated before the books opened is <b>Before opening</b>: its balance is in the opening balance, as on Debtor Aging. Tick rows to print them or take them to Excel.</p>
+      {data && (
+        <KpiCards
+          items={[
+            { label: "Open · all", value: formatCurrency(data.totals.openSen), note: `${data.totals.openCount} document${data.totals.openCount === 1 ? "" : "s"}` },
+            { label: "Open · sales invoices", value: formatCurrency(data.totals.invOpenSen) },
+            { label: "Open · other debtor bills", value: formatCurrency(data.totals.odOpenSen) },
+          ]}
+        />
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <SegmentedChips
+          options={AR_KIND_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: kindCount(ch.key) }))}
+          value={kind}
+          onChange={setKind}
+        />
+        <SegmentedChips
+          options={AR_STATUS_CHIPS.map((ch) => ({ key: ch.key, label: ch.label, count: statusCount(ch.key) }))}
+          value={status}
+          onChange={setStatus}
+        />
+        <div className="w-64">
+          <SearchableSelect value={customer} onChange={setCustomer} options={customerOpts} placeholder="All customers / debtors" allowClear />
+        </div>
+      </div>
+      {/* Tick rows → print them (bills as vouchers, invoices as their PDF) or take them to Excel. */}
+      <BatchActionsBar
+        count={selectedArRows.length}
+        onPrint={() => void printArRows(selectedArRows)}
+        exportName="ar-invoices"
+        exportAoa={() => [
+          ["Kind", "No.", "Customer / debtor", "DO / Ref", "Date", "Due", "Description", "Total (RM)", "Received (RM)", "Outstanding (RM)", "Status"],
+          ...selectedArRows.map((r) => [
+            r.kind, r.no, r.customer, r.ref, r.date, r.dueDate ?? "", r.description,
+            r.totalSen / 100, r.receivedSen / 100, r.outstandingSen / 100, AR_STATUS_LABEL[r.status],
+          ]),
+        ]}
+      />
+      <Card>
+        <CardContent className="p-0">
+          <DataGrid
+            columns={arInvColumns}
+            data={rows}
+            keyField="key"
+            gridId="accounting-ar-invoices"
+            selectable
+            checkboxSelectOnly
+            onSelectionChange={setSelectedArRows}
+            onDoubleClick={openArInv}
+            contextMenuItems={(r) => rowMenuItems(arInvRowMenu(r))}
+            rowClassName={(r) => (r.status === "CANCELLED" || r.status === "BEFORE_OPENING" ? "opacity-50" : "")}
+            searchPlaceholder="Search no / customer / ref / description"
+            alwaysSearchKeys={["no", "customer", "ref", "description"]}
+            headerMenu
+            reorderableHeaders
+            exportName="AR Invoices"
+            footerLabel={(shown) => <>Total · {shown} shown <span className="text-[11px] font-normal">of {all.length} · cancelled not counted</span></>}
+            emptyMessage="Nothing matches"
+            loading={data === null}
+            maxHeight="calc(100vh - 320px)"
+          />
+        </CardContent>
+      </Card>
+
+      {detailBillNo && (() => {
+        const b = bills.find((x) => x.billNo === detailBillNo);
+        if (!b) return null;
+        const close = () => setDetailBillNo(null);
+        const voided = (b.lifecycleState ?? "ACTIVE") !== "ACTIVE" || b.status === "VOID";
+        return (
+          <DocDetailModal
+            title={`Other debtor bill ${b.billNo}`}
+            badges={<span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${voided ? "bg-[#F0ECE9] text-[#9CA3AF]" : b.outstandingSen > 0 ? "bg-[#FBF3E4] text-[#7A5B12]" : "bg-[#EAF3DE] text-[#27500A]"}`}>{voided ? "VOID" : b.outstandingSen > 0 ? "OPEN" : "PAID"}</span>}
+            onClose={close}
+            wide
+            actions={<>
+              <Button variant="outline" size="sm" onClick={() => printVoucher(buildOtherPartyBillVoucher(b, accounts))}><Printer className="h-4 w-4" /> Print</Button>
+              {(b.attachmentCount ?? 0) > 0 && (
+                <Button variant="outline" size="sm" onClick={() => void printBillWithFiles(b, accounts).catch((e: Error) => toast.error(`Not printed — ${e.message}`))}><Printer className="h-4 w-4" /> Print + files</Button>
+              )}
+              {!voided && <Button variant="outline" size="sm" onClick={() => { close(); setBillPopup({ mode: "edit", bill: b }); }}>Edit</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); setBillPopup({ mode: "copy", bill: b }); }}>Copy</Button>
+              {!voided && b.outstandingSen > 0 && <Button variant="outline" size="sm" onClick={() => { close(); navigate(`/accounting?tab=receipts&receive=OD:${encodeURIComponent(b.id)}:${encodeURIComponent(b.partyId)}`); }}>Receive</Button>}
+              {!voided
+                ? <Button variant="outline" size="sm" onClick={() => { close(); void billLifecycle(b, "void"); }}>Void</Button>
+                : <Button variant="outline" size="sm" onClick={() => { close(); void billLifecycle(b, "unvoid"); }}>Unvoid</Button>}
+            </>}
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <DetailField label="Debtor" span={2}>{b.partyName || "—"}</DetailField>
+              <DetailField label="Bill date">{fmtDocDate(b.billDate) || "—"}</DetailField>
+              <DetailField label="Reference">{b.referenceNo || "—"}</DetailField>
+              <DetailField label="Description" span={4}>{b.description || "—"}</DetailField>
+              <DetailField label="Total"><span className="tabular-nums">{formatCurrency(b.totalSen)}</span></DetailField>
+              <DetailField label="Received"><span className="tabular-nums">{formatCurrency(b.paidAmountSen)}</span></DetailField>
+              <DetailField label="Outstanding"><span className="tabular-nums">{formatCurrency(b.outstandingSen)}</span></DetailField>
+              {b.isOpening && <DetailField label="Kind">Opening balance</DetailField>}
+            </div>
+            <div className="border border-[#E2DDD8] rounded-md overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Account</th><th className="text-left px-3 py-1.5 font-medium">Description</th><th className="text-right px-3 py-1.5 font-medium">Amount</th></tr></thead>
+                <tbody>
+                  {b.items.map((it, i) => (
+                    <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap">{accountLabel(accounts, it.counterAccount)}</td><td className="px-3 py-1.5 text-[#6B7280]">{it.description || "—"}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(it.amountSen)}</td></tr>
+                  ))}
+                  {b.taxSen ? <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5" colSpan={2}>Tax / SST</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(b.taxSen)}</td></tr> : null}
+                  <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(b.totalSen)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <BillAttachmentsBlock bill={b} onChanged={() => setVer((v) => v + 1)} />
+          </DocDetailModal>
+        );
+      })()}
+
+      {billPopup && (
+        // Deliberately NOT closed by a click outside — a half-filled bill must
+        // not vanish; ✕ or Cancel closes it.
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-start justify-center overflow-y-auto p-4">
+          <div className="bg-[#F7F5F2] rounded-lg shadow-xl w-full max-w-5xl my-8 p-4 space-y-3" role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-[#1F1D1B]">{billPopup.mode === "new" ? "New other debtor bill" : billPopup.mode === "edit" ? `Edit ${billPopup.bill?.billNo ?? ""}` : `Copy of ${billPopup.bill?.billNo ?? ""}`}</h2>
+              <button onClick={() => setBillPopup(null)} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none" aria-label="Close">✕</button>
+            </div>
+            <OtherPartyBillsManager
+              key={`${billPopup.mode}:${billPopup.bill?.billNo ?? "new"}:${billPopup.scan ? "scan" : ""}`}
+              parties={parties}
+              accounts={accounts}
+              side="DEBTOR"
+              formOnly={{ mode: billPopup.mode, bill: billPopup.bill, scan: billPopup.scan, onDone: () => { setBillPopup(null); setVer((v) => v + 1); } }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OtherPartyBillsTab({ accounts, side }: { accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR" }) {
   const parties = useOtherPartiesList();
   return (
@@ -8256,7 +8949,7 @@ type OtherPartyBill = {
 // pop out 出来给我填」): AP Invoices hosts the manager in formOnly mode — no
 // list, no toolbar toggle, the form open from the first render; onDone closes
 // the popup (after a save or on Cancel).
-type BillPopupSpec = { mode: "new" | "edit" | "copy"; bill?: OtherPartyBill; onDone: () => void };
+type BillPopupSpec = { mode: "new" | "edit" | "copy"; bill?: OtherPartyBill; onDone: () => void; scan?: boolean };
 // One builder for the Edit / Copy prefill (and the popup's first render).
 // Copy starts a fresh bill: today's date, no reference, never an opening.
 function billFormFrom(b: OtherPartyBill, mode: "edit" | "copy", today: string) {
@@ -8655,7 +9348,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} />}
+        {(!formOnly || formOnly.mode !== "edit") && <ScanPrefillButton label="Scan Bill" allDocs onResult={applyScan} startOpen={!!formOnly?.scan} />}
         {!formOnly && <Button variant="primary" size="sm" onClick={() => {
           if (editingBillNo) {
             setEditingBillNo(null);
@@ -9042,23 +9735,32 @@ type PaymentGroup = {
 // payment in place (same number) — remount with a key so the state seeds
 // once; the bills it paid come back into the list at their pre-payment
 // outstanding so they stay re-allocatable.
-function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCancelEdit }: {
+function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCancelEdit, copyFrom = null, receiveFor = null }: {
   parties: OtherParty[]; accounts: ChartOfAccount[]; side: "DEBTOR" | "CREDITOR";
   editing: PaymentGroup | null; onSaved: () => void; onCancelEdit: () => void;
+  /** Duplicate (owner 2026-10-20): a NEW one for the same party and bank —
+   *  never its knock-offs (the bills are ticked again). Saving it closes the form. */
+  copyFrom?: PaymentGroup | null;
+  /** Receive (owner 2026-10-21, AR Invoices): a NEW one for this party with this bill ticked in full. */
+  receiveFor?: { partyId: string; billId: string } | null;
 }) {
   const { toast } = useToast();
   const today = new Date().toISOString().slice(0, 10);
   const banks = accounts.filter((a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH");
-  const [partyId, setPartyId] = useState(editing?.partyId ?? "");
-  const [bankAccountSel, setBankAccountSel] = useState(editing?.bankAccount ?? "");
+  const [partyId, setPartyId] = useState(editing?.partyId ?? copyFrom?.partyId ?? receiveFor?.partyId ?? "");
+  const [bankAccountSel, setBankAccountSel] = useState(editing?.bankAccount ?? copyFrom?.bankAccount ?? "");
   const bankAccount = bankAccountSel || defaultBankCode(banks);
   const [date, setDate] = useState(editing?.date || today);
   const [reference, setReference] = useState("");
   // openBills carries the party it was loaded for; a mismatch = loading.
   const [openBills, setOpenBills] = useState<{ forParty: string; bills: OpenBill[] }>({ forParty: "", bills: [] });
+  // Bumped after a post: the party stays picked, so its bills reload from
+  // here (BUG-2026-10-20-346 — they used to stay on "Loading bills…").
+  const [billsVer, setBillsVer] = useState(0);
   const [rows, setRows] = useState<Record<string, { amountStr: string; full: boolean }>>(() => {
     const seeded: Record<string, { amountStr: string; full: boolean }> = {};
     for (const l of editing?.lines ?? []) if (l.amountSen > 0) seeded[l.billId] = { amountStr: (l.amountSen / 100).toFixed(2), full: false };
+    if (!editing && receiveFor) seeded[receiveFor.billId] = { amountStr: "", full: true };
     return seeded;
   });
   const [posting, setPosting] = useState(false);
@@ -9094,7 +9796,7 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
       })
       .catch(() => {});
     return () => { dead = true; };
-  }, [partyId, side, editing]);
+  }, [partyId, side, editing, billsVer]);
   const bills = openBills.forParty === partyId ? openBills.bills : [];
   const billsLoading = !!partyId && openBills.forParty !== partyId;
 
@@ -9140,16 +9842,17 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
     // Fresh form for the next one (the party stays picked after a post, as before).
     setReference(""); setRows({});
     setOpenBills({ forParty: "", bills: [] });
-    if (editingNo) onCancelEdit();
+    setBillsVer((v) => v + 1);
+    if (editingNo || copyFrom) onCancelEdit();
     onSaved();
   };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[#3E6570]">{editingNo ? `Edit ${verb.toLowerCase()} ${editingNo}` : side === "CREDITOR" ? "New payment" : "New other debtor receipt"}</h3>
+        <h3 className="text-sm font-semibold text-[#3E6570]">{editingNo ? `Edit ${verb.toLowerCase()} ${editingNo}` : side === "CREDITOR" ? "New payment" : "New other debtor receipt"}{!editingNo && copyFrom && <span className="ml-2 text-[11px] font-normal text-[#9CA3AF]">copy of {copyFrom.paymentNo} — tick the bills again</span>}</h3>
         <div className="flex items-center gap-2">
-          {editingNo && <Button variant="outline" size="sm" onClick={onCancelEdit}>Cancel</Button>}
+          {(editingNo || copyFrom) && <Button variant="outline" size="sm" onClick={onCancelEdit}>Cancel</Button>}
           <Button variant="primary" size="sm" disabled={posting || !partyId || !bankAccount || totalSen <= 0 || !!allocMoneyError} onClick={handleSave}>
             {editingNo ? `Update ${verb.toLowerCase()}` : `Post ${verb.toLowerCase()}`}
           </Button>
@@ -9509,6 +10212,12 @@ function TrialBalanceTab() {
   // Same balance both sides: the ledger runs to the same as-at date, by
   // document date, with everything before the month as Balance B/F.
   const openLedger = (code: string) => navigate(glLink({ account: code, fromYm: ym, toDate: asOf }));
+  // The row menu (owner 2026-10-20 「要」): View Ledger, or Edit Account on the chart.
+  const rowMenu = useRowMenu();
+  const tbRowMenu = (code: string): RowMenuGroups => [[
+    { label: "View Ledger", action: () => openLedger(code) },
+    { label: "Edit Account", action: () => navigate(`/accounting?tab=coa&edit=${encodeURIComponent(code)}`) },
+  ]];
 
   // The download carries what is on screen (folded sections as one line).
   const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
@@ -9565,7 +10274,7 @@ function TrialBalanceTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={`Trial Balance As At ${fmtDocDate(asOf)}`}
-        note="All figures RM · double-click an account to open its ledger"
+        note="All figures RM · double-click an account to open its ledger · right-click to edit it"
       >
         {loadingTb || !tb ? (
           <div className="py-12 text-center text-[#6B7280] text-sm">Loading trial balance…</div>
@@ -9600,8 +10309,9 @@ function TrialBalanceTab() {
                         key={r.accountCode}
                         data-row="line"
                         onDoubleClick={() => openLedger(r.accountCode)}
-                        title="Double-click to open the ledger"
-                        className="cursor-pointer"
+                        onContextMenu={rowMenu.onContextMenu(r.accountCode, () => tbRowMenu(r.accountCode))}
+                        title="Double-click to open the ledger · right-click for more"
+                        className={`cursor-pointer ${rowMenu.openKey === r.accountCode ? "bg-[#F6F1E7]" : ""}`}
                       >
                         <td data-cell="code">{r.accountCode}</td>
                         <td style={{ paddingLeft: 28 }}>{r.accountName}</td>
@@ -9630,6 +10340,7 @@ function TrialBalanceTab() {
           </table>
         )}
       </ReportFrame>
+      {rowMenu.element}
     </div>
   );
 }
@@ -10419,8 +11130,10 @@ type PvRow = {
   // of expense lines. EXPENSE / undefined = the classic voucher.
   pvKind?: "AP" | "EXPENSE" | "TRANSFER";
   // The voucher form's own fields (owner 2026-10-01): internal notes (never
-  // printed), the supplier's bill number and date.
+  // printed), the supplier's bill number and date; the Reference (TT /
+  // cheque no., owner 2026-10-19), printed.
   notes?: string | null;
+  reference?: string | null;
   billNo?: string | null; bill_no?: string | null;
   billDate?: string | null; bill_date?: string | null;
   partyKind?: "SUPPLIER" | "OTHER" | null;
@@ -10431,23 +11144,32 @@ type PvRow = {
   tfInterestSen?: number | null; tf_interest_sen?: number | null;
   advanceOpenSen?: number;
   allocs?: PvAllocOut[];
+  // An AP Payment of foreign-currency bills: their currency and the payment's
+  // rate (RM per 1 unit); totalSen is then what the bank pays (foreign × rate).
+  fxCurrency?: string | null;
+  fxRate?: number | null;
+  // Confirm bank amount (Currency & FX step 4): when Finance keyed the RM the
+  // bank actually debited, and who — the rate and total are then the actual ones.
+  fxBankConfirmedAt?: string | null;
+  fxBankConfirmedByName?: string | null;
   // Evidence on file (Houzs adoption 2026-09-22): count on the row, the list
   // loads on expand; print bundle = voucher + every attachment.
   attachmentCount?: number;
 };
 // TF = a trade-finance drawdown repaid by an AP Payment to the lender (item 17).
-type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; docRef: string; amountSen: number };
+// foreignSen: a foreign-currency bill's payment in its own currency (Currency & FX step 3); amountSen = the booked RM it cleared.
+type PvAllocOut = { docKind: "PI" | "AP" | "TF"; docId: string; docNo: string; docRef: string; amountSen: number; foreignSen?: number };
 // The voucher form (owner 2026-10-01, the layout he showed): Payment = expense
 // lines; Transfer = money between our own bank / cash accounts.
 type PvFormState = {
   date: string; payee: string; description: string; accrued: boolean; payFrom: string; accrualAccount: string;
-  productLine: string; notes: string; billNo: string; billDate: string;
+  productLine: string; notes: string; billNo: string; billDate: string; reference: string;
   mode: "PAYMENT" | "TRANSFER"; transferTo: string; transferAmount: string;
 };
 function blankPvForm(): PvFormState {
   return {
     date: new Date().toISOString().slice(0, 10), payee: "", description: "", accrued: false, payFrom: "", accrualAccount: "",
-    productLine: "", notes: "", billNo: "", billDate: "", mode: "PAYMENT", transferTo: "", transferAmount: "",
+    productLine: "", notes: "", billNo: "", billDate: "", reference: "", mode: "PAYMENT", transferTo: "", transferAmount: "",
   };
 }
 type PvAttachment = { id: string; filename: string; contentType: string; sizeBytes: number; uploadedAt: string };
@@ -10533,6 +11255,9 @@ type PvOpenBill = {
   currency: string; foreign: boolean; opening: boolean;
   /** A drawdown (docKind TF): the interest in its balance. */
   interestSen?: number;
+  /** A foreign-currency bill: its booking rate and what is still payable in its own currency. */
+  fxRate?: number | null;
+  foreignAvailableSen?: number | null;
 };
 // The supplier picked on an AP Payment is a trade-finance lender: its lines are
 // drawdowns and the voucher repays them (finance backlog item 17).
@@ -10643,8 +11368,16 @@ function buildPayRows(pv: PvRow[] | null, sp: SupplierPaymentGroup[] | null, ocp
 // with the text its columns show, so the grid sorts, filters, searches and
 // exports what the eye reads. Built once per load (stable rows — BUG-CLASSES
 // C24: an unstable list re-emits the selection forever).
+// A posted, live foreign-currency AP payment: its bank amount can be keyed
+// (Currency & FX step 4) — and keyed again to correct it.
+function pvCanConfirmBank(r: PvRow): boolean {
+  return r.pvKind === "AP" && !!r.fxCurrency && r.partyKind !== "OTHER" && r.status !== "VOID"
+    && ((r.approvalState ?? r.approval_state) ?? "APPROVED") === "APPROVED" && (r.lifecycleState ?? "ACTIVE") === "ACTIVE";
+}
+// ... still at the estimated rate: the bank amount is not confirmed yet.
+const pvFxPending = (r: PvRow): boolean => pvCanConfirmBank(r) && !r.fxBankConfirmedAt;
 type PayGridRow = PayRow & {
-  payeeText: string; descText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
+  payeeText: string; descText: string; refText: string; viaLabel: string; lineText: string; lineTitle: string; billNos: string;
   statusLabel: string; status: FinStatus;
 };
 function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
@@ -10657,6 +11390,9 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
   const r = row.pv;
   let payeeText = row.payee;
   let descText = "";
+  // The TT / cheque no.: the voucher's own Reference, or the reference the
+  // supplier / other-creditor payment was saved with.
+  let refText = "";
   let viaLabel = bank(row.via);
   let lineText = "";
   let lineTitle = "";
@@ -10667,6 +11403,7 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     const toName = shortBankName(accounts.find((a) => a.code === toAcct)?.name) || toAcct;
     payeeText = r.pvKind === "TRANSFER" ? `Transfer to ${toName}` : (r.payee ?? "");
     descText = r.description ?? "";
+    refText = r.reference ?? "";
     viaLabel = r.accrued === 1 && !r.settledAt ? `accrued → ${r.accrualAccount ?? ""}` : bank(r.payFrom);
     if (r.pvKind === "AP") {
       const allocs = r.allocs ?? [];
@@ -10681,6 +11418,7 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     status = pvStatus({
       status: r.status, approvalState: r.approvalState ?? r.approval_state, advanceOpenSen: r.advanceOpenSen,
       accrued: r.accrued, settledAt: r.settledAt, rejectReason: r.rejectReason ?? r.reject_reason, pvNo: r.pvNo,
+      fxPending: pvFxPending(r),
     });
   } else if (row.sp) {
     const invoices = row.sp.lines.filter((l) => l.purchaseInvoiceId).length;
@@ -10688,9 +11426,10 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     lineText = `${plural(invoices, "invoice")}${advance > 0 ? " + advance" : ""}`;
     lineTitle = row.sp.lines.map((l) => `${l.piNo || "Advance"} ${formatCurrency(l.amountSen)}`).join("\n");
     billNos = row.sp.lines.map((l) => l.piNo ?? "").join(" ");
+    refText = row.sp.reference ?? "";
     status = foreignPayStatus(row.state, advance, PAY_DOOR_HINT[row.door]);
   } else if (row.ocp) {
-    descText = row.ocp.reference ?? "";
+    refText = row.ocp.reference ?? "";
     lineText = plural(row.ocp.lines.length, "bill");
     lineTitle = row.ocp.lines.map((l) => `${l.billNo} ${formatCurrency(l.amountSen)}`).join("\n");
     billNos = row.ocp.lines.map((l) => l.billNo).join(" ");
@@ -10700,7 +11439,7 @@ function payGridRow(row: PayRow, accounts: ChartOfAccount[]): PayGridRow {
     lineText = `→ ${row.ft?.toName || row.ft?.toAccount || ""}`;
     status = foreignPayStatus(row.state, 0, PAY_DOOR_HINT[row.door]);
   }
-  return { ...row, payeeText, descText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
+  return { ...row, payeeText, descText, refText, viaLabel, lineText, lineTitle, billNos, statusLabel: status.label, status };
 }
 
 // The settled-bills detail block for a voucher's print when its print detail
@@ -10820,6 +11559,15 @@ function DocAttachmentsBlock({ base, docNo, voided, lockedNote, onChanged }: {
 }
 
 // ?pay=<PI|AP>:<docId>:<partyId> — the "Pay" deep-link from AP Invoices.
+// Receive (owner 2026-10-21, AR Invoices): ?receive=INV:<invoiceId>:<customerId>
+// or OD:<billId>:<partyId> opens Receipts with that document ticked.
+function parseReceiveLink(raw: string | null): { kind: "INV" | "OD"; docId: string; partyId: string } | null {
+  if (!raw) return null;
+  const [kind, docId, partyId] = raw.split(":");
+  if ((kind !== "INV" && kind !== "OD") || !docId || !partyId) return null;
+  return { kind, docId, partyId };
+}
+
 function parsePayLink(raw: string | null): { docKind: "PI" | "AP"; docId: string; partyId: string } | null {
   if (!raw) return null;
   const [docKind, docId, partyId] = raw.split(":");
@@ -10845,6 +11593,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [detailPvId, setDetailPvId] = useState<string | null>(null);
   // Same for a row from another door (keyed by PayRow.key).
   const [detailPayKey, setDetailPayKey] = useState<string | null>(null);
+  // The foreign-currency payment whose bank amount is being keyed (step 4).
+  const [confirmBankId, setConfirmBankId] = useState<string | null>(null);
   // A fund transfer's description being edited here (by transfer no).
   const [editFtNo, setEditFtNo] = useState<string | null>(null);
   // A deep-link opens New AP Payment straight away (state seeded, no effect).
@@ -10867,6 +11617,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Ladder actions in flight (single or batch) — buttons disable meanwhile.
   const [ladderBusy, setLadderBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Duplicate (owner 2026-10-20 「duplicate 可以做」): the number of the
+  // document a NEW voucher was copied from (shown in the form's title).
+  const [copyOf, setCopyOf] = useState<string | null>(null);
   // Editing a not-yet-posted voucher goes to PUT (plain replace); editing a
   // posted one goes to /restate (reverse + re-post under the same number).
   const [editingPosted, setEditingPosted] = useState(true);
@@ -10891,7 +11644,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     payFrom: "",
     partyKind: (initialPay?.docKind === "AP" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER",
     partyId: initialPay?.partyId ?? "",
+    // Reference = the TT / cheque no. (or the bank's drawdown no.);
+    // description = the printed text (owner 2026-10-19, two fields).
     reference: "",
+    description: "",
     advance: "",
     // Paid from a trade-finance line (a drawdown): its due date (blank =
     // the payment date + the line's tenor) and the interest at drawdown.
@@ -10899,8 +11655,19 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     tfInterest: "",
   });
   // The trade-finance lines (GET /trade-finance): Paid from may draw on one.
-  const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[]>([]);
+  const [tfLines, setTfLines] = useState<{ accountCode: string; accountName: string; lenderName: string; lenderSupplierId: string; tenorDays: number; limitSen: number | null; accountNetSen: number }[]>([]);
   const [apAlloc, setApAlloc] = useState<Record<string, string>>({});
+  // Currency & FX step 3 (owner 2026-10-20): an AP payment of foreign-currency
+  // bills pays in their currency at this rate (RM per 1 unit). The month's
+  // rate from Setup fills it in when the first one is ticked; it can be changed.
+  const [apFxRate, setApFxRate] = useState("");
+  const { data: fxResp } = useCachedJson<{ success?: boolean; data?: FxSettings }>("/api/fx");
+  const fxSettings = fxResp?.success ? fxResp.data ?? null : null;
+  const fillFxRate = (ccy: string) => {
+    if (apFxRate.trim() || !fxSettings) return;
+    const r = fxRateFor(fxSettings, ccy, apForm.date);
+    if (r !== null) setApFxRate(fmtFxRate(r));
+  };
   // apBills carries the key it was loaded for; a key mismatch = loading.
   const [apBills, setApBills] = useState<{ key: string; partyName: string; advanceOpenSen: number; bills: PvOpenBill[]; tfLender?: PvTfLender | null } | null>(null);
   const [suppliers, setSuppliers] = useState<{ id: string; code?: string | null; name: string; isActive?: boolean }[]>([]);
@@ -10915,8 +11682,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     fetch("/api/accounting/other-parties").then((r) => r.json() as Promise<{ success?: boolean; data?: typeof otherCreditors }>)
       .then((j) => { if (!dead && j?.success) setOtherCreditors((j.data ?? []).filter((p) => p.type === "CREDITOR" && p.isActive !== false)); })
       .catch(() => {});
-    fetch("/api/accounting/trade-finance").then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: { accountCode: string; accountName?: string; lenderName: string; lenderSupplierId: string; tenorDays: number }[] } }>)
-      .then((j) => { if (!dead && j?.success) setTfLines((j.data?.sources ?? []).map((t) => ({ accountCode: t.accountCode, accountName: t.accountName ?? "", lenderName: t.lenderName, lenderSupplierId: t.lenderSupplierId, tenorDays: Number(t.tenorDays) || 90 }))); })
+    fetch("/api/accounting/trade-finance").then((r) => r.json() as Promise<{ success?: boolean; data?: { sources?: { accountCode: string; accountName?: string; lenderName: string; lenderSupplierId: string; tenorDays: number; limitSen?: number | null; accountNetSen?: number }[] } }>)
+      .then((j) => { if (!dead && j?.success) setTfLines((j.data?.sources ?? []).map((t) => ({ accountCode: t.accountCode, accountName: t.accountName ?? "", lenderName: t.lenderName, lenderSupplierId: t.lenderSupplierId, tenorDays: Number(t.tenorDays) || 90, limitSen: t.limitSen ?? null, accountNetSen: Number(t.accountNetSen) || 0 }))); })
       .catch(() => {});
     return () => { dead = true; };
   }, []);
@@ -11074,6 +11841,8 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           {r.descText && <div className="truncate text-[12px] text-[#6B7280]" title={r.descText}>{r.descText}</div>}
         </div>
       ) },
+    { key: "refText", label: "Reference", width: "150px",
+      render: (_v, r) => <span className="truncate text-[12px] text-[#4B5563]" title={r.refText || undefined}>{r.refText}</span> },
     { key: "viaLabel", label: "Paid From", width: "190px", filterAccessor: (r) => r.viaLabel || (r.door === "SP" ? "(no bank leg)" : "—"),
       render: (_v, r) => (r.pv && r.pv.accrued === 1 && !r.pv.settledAt
         ? <span className="text-[12px] text-[#9A3A2D]">{r.viaLabel}</span>
@@ -11085,6 +11854,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     { key: "totalSen", label: "Total", type: "currency", align: "right", width: "140px", total: (rows) => activeTotalSen(rows),
       render: (v) => <span className="font-semibold tabular-nums">{formatCurrency(Number(v) || 0)}</span> },
     { key: "statusLabel", label: "Status", width: "250px", noClip: true,
+      // Grouped by its kind, not each open advance's amount (owner's Group By
+      // This Column, 2026-10-20 — seen on prod: one group per advance).
+      groupAccessor: (r) => r.status.group ?? r.status.label,
       render: (_v, r) => {
         const reason = r.pv ? (r.pv.rejectReason ?? r.pv.reject_reason) : null;
         return (
@@ -11101,12 +11873,14 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
+    setCopyOf(null);
     setFormKind("EXPENSE");
     setPendingScanFiles([]);
     setForm(blankPvForm());
     setLines([{ accountCode: "", description: "", amount: "" }]);
-    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", advance: "", tfDue: "", tfInterest: "" });
+    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", description: "", advance: "", tfDue: "", tfInterest: "" });
     setApAlloc({});
+    setApFxRate("");
     setApBills(null);
   };
   const openNew = (kind: "EXPENSE" | "AP") => {
@@ -11131,13 +11905,38 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // One parser for the AP form's money cells (display + payload); an
   // unreadable cell is refused by handleSaveAp before any figure is sent.
   const apSen = (v: string) => moneyFieldToSen(v) ?? 0;
-  const apAllocSen = apTicked.reduce((s, b) => s + apSen(apAlloc[b.id] ?? ""), 0);
-  const apAdvanceSen = apTfLender ? 0 : apSen(apForm.advance);
+  // Foreign-currency bills (Currency & FX step 3): typed in the bill's
+  // currency and priced at the payment's rate — AP cleared at the booked RM,
+  // the bank pays foreign × rate (apForeignPay, the server's own check).
+  // One currency per payment; no advance and no drawdown on one.
+  const apFxCcy = apTicked.find((b) => b.foreign)?.currency ?? null;
+  const apMixed = !!apFxCcy && apTicked.some((b) => b.currency !== apFxCcy);
+  const apPayRate = parseFxRate(apFxRate);
+  const apSetupRate = apFxCcy && fxSettings ? fxRateFor(fxSettings, apFxCcy, apForm.date) : null;
+  const apFxLines = apTicked.filter((b) => b.foreign).map((b) => ({
+    b,
+    r: apForeignPay({ availableSen: b.availableSen, reservedSen: b.reservedSen, bookingRate: b.fxRate ?? 0, foreignSen: apSen(apAlloc[b.id] ?? ""), payRate: apPayRate ?? 0 }),
+  }));
+  const apFxBankSen = apFxLines.reduce((s, x) => s + (x.r.ok ? x.r.bankSen : 0), 0);
+  const apFxBookedSen = apFxLines.reduce((s, x) => s + (x.r.ok ? x.r.bookedSen : 0), 0);
+  const apFxForeignSen = apFxLines.reduce((s, x) => s + apSen(apAlloc[x.b.id] ?? ""), 0);
+  const apFxSen = apFxBookedSen - apFxBankSen;
+  const apAllocSen = apTicked.reduce((s, b) => s + (b.foreign ? 0 : apSen(apAlloc[b.id] ?? "")), 0) + apFxBankSen;
+  const apAdvanceSen = apTfLender || apFxCcy ? 0 : apSen(apForm.advance);
   const apTotalSen = apAllocSen + apAdvanceSen;
-  const apOverAlloc = apTicked.find((b) => apSen(apAlloc[b.id] ?? "") > b.availableSen);
+  const apOverAlloc = apTicked.find((b) => !b.foreign && apSen(apAlloc[b.id] ?? "") > b.availableSen);
+  const apFxBad = apFxLines.find((x) => !x.r.ok);
+  // Why a foreign-currency payment cannot be saved yet ("" when it can).
+  const apFxError = !apFxCcy ? ""
+    : apMixed ? "One currency per payment — untick the bills in another currency"
+    : apPayRate === null ? `Enter this payment's ${apFxCcy} rate (RM per 1 ${apFxCcy})`
+    : apTfDraw ? "A trade-finance drawdown is in RM — pay foreign-currency bills from a bank account"
+    : apFxBad && !apFxBad.r.ok ? `${apFxBad.b.no}: ${apFxBad.r.error}`
+    : "";
   const handleSaveAp = async (mode: "draft" | "post") => {
     if (apMoneyError) { toast.error(apMoneyError); return; }
     if (apOverAlloc) { toast.error(`${apOverAlloc.no}: more than the ${formatCurrency(apOverAlloc.availableSen)} still payable`); return; }
+    if (apFxError) { toast.error(apFxError); return; }
     if (apTotalSen <= 0) { toast.error(apTfLender ? "Tick at least one drawdown to repay" : "Tick at least one bill (or enter an advance)"); return; }
     const body = {
       kind: "AP",
@@ -11145,9 +11944,16 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       payFrom: apForm.payFrom || defaultBankCode(bankCash),
       partyKind: apForm.partyKind,
       partyId: apForm.partyId,
-      description: apForm.reference,
+      description: apForm.description,
+      reference: apForm.reference,
       advanceSen: apForm.partyKind === "SUPPLIER" ? apAdvanceSen : 0,
-      allocations: apTicked.map((b) => ({ docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") })).filter((a) => a.amountSen > 0),
+      // A foreign-currency bill sends what is paid in its currency; the rate rides on the voucher.
+      allocations: apTicked
+        .map((b) => (b.foreign
+          ? { docKind: b.docKind, docId: b.id, foreignSen: apSen(apAlloc[b.id] ?? "") }
+          : { docKind: b.docKind, docId: b.id, amountSen: apSen(apAlloc[b.id] ?? "") }))
+        .filter((a) => (a.foreignSen ?? a.amountSen ?? 0) > 0),
+      ...(apFxCcy ? { fxRate: apPayRate } : {}),
       ...(apTfDraw ? { tfDueDate: apForm.tfDue || tfAddDays(apForm.date, apTfDraw.tenorDays), tfInterestSen: apSen(apForm.tfInterest) } : {}),
       saveAs: mode === "draft" && !editingId ? "draft" : undefined,
     };
@@ -11183,6 +11989,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const common = {
       date: form.date,
       description: form.description,
+      reference: form.reference,
       notes: form.notes,
       saveAs: mode === "draft" && !editingId ? "draft" : undefined,
     };
@@ -11463,14 +12270,16 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       // Only an unposted AP voucher is editable (posted → cancel and redo).
       const af = {
         date: r.date, payFrom: r.payFrom ?? "", partyKind: (r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER", partyId: r.partyId ?? "",
-        reference: r.description ?? "", advance: (r.advanceSen ?? 0) > 0 ? ((r.advanceSen ?? 0) / 100).toFixed(2) : "",
+        reference: r.reference ?? "", description: r.description ?? "", advance: (r.advanceSen ?? 0) > 0 ? ((r.advanceSen ?? 0) / 100).toFixed(2) : "",
         tfDue: String(r.tfDueDate ?? r.tf_due_date ?? "").slice(0, 10),
         tfInterest: (Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) > 0 ? ((Number(r.tfInterestSen ?? r.tf_interest_sen) || 0) / 100).toFixed(2) : "",
       };
-      const alloc: Record<string, string> = Object.fromEntries((r.allocs ?? []).map((a) => [a.docId, (a.amountSen / 100).toFixed(2)]));
+      // A foreign-currency bill is edited in its own currency (Currency & FX step 3).
+      const alloc: Record<string, string> = Object.fromEntries((r.allocs ?? []).map((a) => [a.docId, (((a.foreignSen ?? 0) > 0 ? a.foreignSen ?? 0 : a.amountSen) / 100).toFixed(2)]));
       setFormKind("AP");
       setApForm(af);
       setApAlloc(alloc);
+      setApFxRate(r.fxCurrency && r.fxRate ? fmtFxRate(r.fxRate) : "");
       editBaseline.current = JSON.stringify([af, alloc]);
       setShowForm(true);
       return;
@@ -11481,7 +12290,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       ...blankPvForm(),
       date: r.date, payee: r.payee ?? "", description: r.description ?? "", accrued: r.accrued === 1,
       payFrom: r.payFrom ?? "", accrualAccount: r.accrualAccount ?? "", productLine: r.productLine ?? "",
-      notes: r.notes ?? "", billNo: (r.billNo ?? r.bill_no) ?? "", billDate: String((r.billDate ?? r.bill_date) ?? "").slice(0, 10),
+      notes: r.notes ?? "", reference: r.reference ?? "", billNo: (r.billNo ?? r.bill_no) ?? "", billDate: String((r.billDate ?? r.bill_date) ?? "").slice(0, 10),
       mode: isTransfer ? "TRANSFER" : "PAYMENT",
       transferTo: isTransfer ? (r.lines[0]?.accountCode ?? "") : "",
       transferAmount: isTransfer ? (r.totalSen / 100).toFixed(2) : "",
@@ -11491,6 +12300,68 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setLines(ls);
     editBaseline.current = JSON.stringify([f, ls]);
     setShowForm(true);
+  };
+
+  // Duplicate: a NEW voucher seeded from this one, dated today — its lines (or
+  // a transfer's accounts and amount), payee, paid-from and description; never
+  // its reference, bill no., notes or attachments. An AP payment copies the
+  // creditor and paid-from only — never its knock-offs (the design's rule):
+  // the bills are ticked again. Its description is left blank too: on these
+  // books it names the bills that payment paid (measured on prod 2026-10-20 —
+  // the AP rows' descriptions are bill / invoice numbers). Nothing is
+  // recorded until it is saved; the copy closes at once on Esc while nothing
+  // was changed.
+  const openCopy = (no: string, kind: "EXPENSE" | "AP", seed: { ap?: typeof apForm; form?: PvFormState; lines?: PvLineDraft[] }) => {
+    resetForm();
+    setCopyOf(no.startsWith("DRAFT-") ? "a draft" : no);
+    setFormKind(kind);
+    if (kind === "AP" && seed.ap) {
+      setApForm(seed.ap);
+      editBaseline.current = JSON.stringify([seed.ap, {}]);
+    } else {
+      const f = seed.form ?? blankPvForm();
+      const ls: PvLineDraft[] = seed.lines?.length ? seed.lines : [{ accountCode: "", description: "", amount: "" }];
+      setForm(f);
+      setLines(ls);
+      editBaseline.current = JSON.stringify([f, ls]);
+    }
+    setShowForm(true);
+  };
+  const copyApForm = (party: { kind: "SUPPLIER" | "OTHER"; id: string }, payFrom: string): typeof apForm => ({
+    date: new Date().toISOString().slice(0, 10), payFrom, partyKind: party.kind, partyId: party.id,
+    reference: "", description: "", advance: "", tfDue: "", tfInterest: "",
+  });
+  const startDuplicate = (r: PvRow) => {
+    if (r.pvKind === "AP") {
+      openCopy(r.pvNo, "AP", { ap: copyApForm({ kind: r.partyKind === "OTHER" ? "OTHER" : "SUPPLIER", id: r.partyId ?? "" }, r.payFrom ?? "") });
+      return;
+    }
+    const isTransfer = r.pvKind === "TRANSFER";
+    openCopy(r.pvNo, "EXPENSE", {
+      form: {
+        ...blankPvForm(),
+        payee: r.payee ?? "", description: r.description ?? "", accrued: r.accrued === 1,
+        payFrom: r.payFrom ?? "", accrualAccount: r.accrualAccount ?? "", productLine: r.productLine ?? "",
+        mode: isTransfer ? "TRANSFER" : "PAYMENT",
+        transferTo: isTransfer ? (r.lines[0]?.accountCode ?? "") : "",
+        transferAmount: isTransfer ? (r.totalSen / 100).toFixed(2) : "",
+      },
+      lines: isTransfer ? [] : r.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) })),
+    });
+  };
+  // A row from another door: a supplier or other-creditor payment becomes a
+  // NEW AP payment to the same creditor from the same bank (bills ticked
+  // again); an old Fund Transfer becomes a NEW transfer voucher.
+  const startDuplicatePay = (g: PayRow) => {
+    if (g.pv) { startDuplicate(g.pv); return; }
+    if (g.sp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "SUPPLIER", id: g.sp.supplierId }, g.sp.bankAccount ?? "") }); return; }
+    if (g.ocp) { openCopy(g.no, "AP", { ap: copyApForm({ kind: "OTHER", id: g.ocp.partyId }, g.ocp.bankAccount ?? "") }); return; }
+    if (g.ft) {
+      openCopy(g.no, "EXPENSE", { form: {
+        ...blankPvForm(), mode: "TRANSFER", payFrom: g.ft.fromAccount, transferTo: g.ft.toAccount,
+        transferAmount: (g.ft.amountSen / 100).toFixed(2), description: g.ft.description ?? "",
+      } });
+    }
   };
 
   const selCls = "rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm";
@@ -11587,10 +12458,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // voucher counts as keyed once it holds a payee, text, an account, an amount
   // or a scan; an edited one once it differs from the voucher as it opened.
   const formKeyed = (): boolean => {
-    if (editingId) return JSON.stringify(formKind === "AP" ? [apForm, apAlloc] : [form, lines]) !== editBaseline.current;
+    if (editingId || copyOf) return JSON.stringify(formKind === "AP" ? [apForm, apAlloc] : [form, lines]) !== editBaseline.current;
     if (pendingScanFiles.length > 0) return true;
-    if (formKind === "AP") return !!(apForm.partyId || apForm.payFrom || apForm.reference.trim() || apForm.advance.trim() || Object.values(apAlloc).some((v) => v.trim()));
-    return !!(form.payee.trim() || form.description.trim() || form.billNo.trim() || form.notes.trim() || form.payFrom || form.accrualAccount
+    if (formKind === "AP") return !!(apForm.partyId || apForm.payFrom || apForm.reference.trim() || apForm.description.trim() || apForm.advance.trim() || Object.values(apAlloc).some((v) => v.trim()));
+    return !!(form.payee.trim() || form.description.trim() || form.reference.trim() || form.billNo.trim() || form.notes.trim() || form.payFrom || form.accrualAccount
       || form.transferTo || form.transferAmount.trim() || lines.some((l) => l.accountCode || l.description.trim() || l.amount.trim()));
   };
   const requestCloseForm = async () => {
@@ -11624,10 +12495,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         ] : []),
         ...(isPosted(r) && r.pvKind !== "AP" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
         ...(isPosted(r) && r.accrued === 1 && !r.settledAt ? [{ label: "Settle", action: () => void handleSettle(r) }] : []),
+        ...(pvCanConfirmBank(r) ? [{ label: r.fxBankConfirmedAt ? "Change bank amount" : "Confirm bank amount", action: () => setConfirmBankId(r.id) }] : []),
       ],
       [
         { label: "Print", action: () => void printPvWithDetail(r) },
         ...((r.attachmentCount ?? 0) > 0 ? [{ label: bundleBusy === r.id ? "Print + files (preparing…)" : "Print + files", disabled: bundleBusy === r.id, action: () => void printPvBundle(r) }] : []),
+        { label: "Duplicate", action: () => startDuplicate(r) },
       ],
       lifecycleMenuItems(r.lifecycleState, {
         void: () => void handleLifecycle(r.id, r.pvNo, "void"),
@@ -11644,6 +12517,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
       ...(g.ft && g.state === "ACTIVE" ? [{ label: "Edit description", action: () => setEditFtNo(g.no) }] : []),
       { label: "Print", action: () => void printPayRows([g]) },
       { label: `Open on the ${PAY_DOOR_LABEL[g.door]} page ↗`, action: () => navigate(foreignHref(g)) },
+      { label: g.ft ? "Duplicate as a transfer" : "Duplicate as an AP payment", action: () => startDuplicatePay(g) },
     ],
     lifecycleMenuItems(g.state, {
       void: () => void handleForeignLifecycle(g, "void"),
@@ -11695,7 +12569,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           ? suppliers.map((s) => ({ value: s.id, label: s.code ? `${s.code} ${s.name}` : s.name }))
           : otherCreditors.map((p) => ({ value: p.id, label: p.name }));
         const setAmt = (id: string, v: string) => setApAlloc((m) => { const n = { ...m }; if (v === "") delete n[id]; else n[id] = v; return n; });
-        const cannot = saving || apTotalSen <= 0 || !!apMoneyError || !!apOverAlloc || !apForm.partyId || !(apForm.payFrom || defaultBankCode(bankCash));
+        const cannot = saving || apTotalSen <= 0 || !!apMoneyError || !!apOverAlloc || !!apFxError || !apForm.partyId || !(apForm.payFrom || defaultBankCode(bankCash));
         // The same popup as the voucher form (owner 2026-10-01 「new ap payment
         // 的页面还是这样」): HEADER, then the bills to pay; fields and rules unchanged.
         const editingRow = editingId ? (rows ?? []).find((x) => x.id === editingId) : undefined;
@@ -11707,7 +12581,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <div className="mx-auto my-4 w-full max-w-5xl rounded-lg bg-[#F7F5F2] shadow-2xl">
               <div className="flex items-center justify-between px-5 py-3 rounded-t-lg bg-white border-b border-[#E2DDD8]">
                 <h3 className="text-base font-semibold text-[#1F1D1B]">
-                  {editingRow ? `Edit AP payment ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : "New AP payment"}
+                  {editingRow ? `Edit AP payment ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : copyOf ? `New AP payment · copy of ${copyOf}` : "New AP payment"}
                   <span className="ml-2 text-[11px] font-normal text-[#9CA3AF]">DR creditor control · CR Paid from — posted when approved</span>
                 </h3>
                 <button onClick={resetForm} title="Close without saving" className="text-[#9CA3AF] hover:text-[#1F1D1B] text-lg leading-none cursor-pointer">✕</button>
@@ -11770,11 +12644,29 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               <input type="text" placeholder="0.00" value={apForm.tfInterest} onChange={(e) => setApForm({ ...apForm, tfInterest: e.target.value })} className={`${selCls} w-full text-right tabular-nums ${isUnreadableMoney(apForm.tfInterest) ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
                             </div>
                           </div>
+                          {(() => {
+                            // The line's limit (Settings › Trade Finance Lines, owner 2026-10-20):
+                            // what is left, and a warning — never a block — when this drawdown
+                            // goes past it. Not on an edit: the line already counts that draw.
+                            const room = tfLineRoom(apTfDraw.limitSen, apTfDraw.accountNetSen);
+                            if (!room) return null;
+                            const warn = editingId ? null : tfOverLimitWarning({ limitSen: apTfDraw.limitSen, usedSen: apTfDraw.accountNetSen, drawSen: apTotalSen + (apSen(apForm.tfInterest) || 0), lenderName: apTfDraw.lenderName, fmt: formatCurrency });
+                            return (
+                              <div className="text-[11px]" data-tf-room="">
+                                <span className="text-[#2C4170]">Limit {formatCurrency(room.limitSen)} · drawn {formatCurrency(room.usedSen)} · available {formatCurrency(room.availableSen)}</span>
+                                {warn && <div className="mt-1 rounded border border-[#E8B4A8] bg-[#FBEDEA] px-2 py-1 font-semibold text-[#9A3A2D]">{warn}</div>}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
-                      <div className="sm:col-span-2">
-                        <label className={fieldLabel}>Reference / remarks</label>
-                        <input type="text" placeholder={apTfDraw ? "Bank's drawdown no." : "e.g. TT ref, cheque no"} value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
+                      <div>
+                        <label className={fieldLabel}>{apTfDraw ? "Reference (drawdown no.)" : "Reference"} <span className="normal-case font-normal text-[#9CA3AF]">{apTfDraw ? "(the bank's)" : "(TT / cheque no.)"}</span></label>
+                        <input type="text" maxLength={120} placeholder={apTfDraw ? "Bank's drawdown no." : "e.g. TT ref, cheque no"} value={apForm.reference} onChange={(e) => setApForm({ ...apForm, reference: e.target.value })} className={`${selCls} w-full`} />
+                      </div>
+                      <div>
+                        <label className={fieldLabel}>Description <span className="normal-case font-normal text-[#9CA3AF]">(printed on the voucher)</span></label>
+                        <input type="text" placeholder="e.g. Aug fabric invoices + advance" value={apForm.description} onChange={(e) => setApForm({ ...apForm, description: e.target.value })} className={`${selCls} w-full`} />
                       </div>
                     </div>
                   </div>
@@ -11856,23 +12748,27 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <th className="px-2.5 py-1.5 text-left">Due</th>
                           <th className="px-2.5 py-1.5 text-right">Total</th>
                           <th className="px-2.5 py-1.5 text-right">Outstanding</th>
-                          <th className="px-2.5 py-1.5 text-right">Pay (RM)</th>
+                          <th className="px-2.5 py-1.5 text-right">Pay ({apFxCcy ?? "RM"})</th>
                         </tr>
                       </thead>
                       <tbody>
                         {apBills.bills.map((b) => {
                           const ticked = (apAlloc[b.id] ?? "") !== "";
-                          const over = ticked && apSen(apAlloc[b.id] ?? "") > b.availableSen;
+                          // A foreign bill is paid in its own currency (Currency & FX step 3).
+                          const payable = b.foreign ? (b.foreignAvailableSen ?? 0) : b.availableSen;
+                          const over = ticked && apSen(apAlloc[b.id] ?? "") > payable;
+                          // One currency per payment: once a bill is ticked, bills in another currency wait.
+                          const otherCcy = !ticked && apTicked.length > 0 && (apTicked[0].currency !== b.currency);
                           return (
-                            <tr key={b.id} className={`border-t border-[#F0ECE9] ${b.foreign ? "opacity-60" : ""}`}>
+                            <tr key={b.id} className={`border-t border-[#F0ECE9] ${otherCcy ? "opacity-60" : ""}`}>
                               <td className="px-2.5 py-1">
-                                <input type="checkbox" checked={ticked} disabled={b.foreign || b.availableSen <= 0}
-                                  onChange={(e) => setAmt(b.id, e.target.checked ? (b.availableSen / 100).toFixed(2) : "")}
-                                  className="h-3.5 w-3.5 accent-[#6B5C32]" title={b.foreign ? `${b.currency} invoice — pay on the Supplier Payment page` : "Tick = pay in full; edit the amount for a part payment"} />
+                                <input type="checkbox" checked={ticked} disabled={payable <= 0 || otherCcy}
+                                  onChange={(e) => { setAmt(b.id, e.target.checked ? (payable / 100).toFixed(2) : ""); if (e.target.checked && b.foreign) fillFxRate(b.currency); }}
+                                  className="h-3.5 w-3.5 accent-[#6B5C32]" title={otherCcy ? `One currency per payment — this bill is in ${b.currency}` : "Tick = pay in full; edit the amount for a part payment"} />
                               </td>
                               <td className="px-2.5 py-1 whitespace-nowrap tabular-nums">
                                 {b.no}{b.opening && <span className="ml-1 text-[10px] text-[#9CA3AF]">opening</span>}
-                                {b.foreign && <span className="ml-1 rounded bg-[#F0ECE9] px-1 text-[10px] text-[#6B7280]">{b.currency} — Supplier Payment page</span>}
+                                {b.foreign && <span className="ml-1 rounded bg-[#EEF2FB] px-1 text-[10px] text-[#2C4170]" title={`Booked at ${fmtFxRate(b.fxRate ?? 0)} RM per 1 ${b.currency}`}>{b.currency} @{fmtFxRate(b.fxRate ?? 0)}</span>}
                               </td>
                               <td className="px-2.5 py-1 text-[#6B7280]">{b.ref}</td>
                               <td className="px-2.5 py-1 text-[#6B7280] whitespace-nowrap">{b.date}</td>
@@ -11881,10 +12777,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                               <td className="px-2.5 py-1 text-right tabular-nums">
                                 {formatCurrency(b.outstandingSen)}
                                 {b.reservedSen > 0 && <div className="text-[10px] text-[#9A3A2D]" title={`Already ticked on ${b.reservedBy.join(", ")}`}>−{formatCurrency(b.reservedSen)} on {b.reservedBy.join(", ")}</div>}
+                                {b.foreign && <div className="text-[10px] text-[#6B7280]">{formatCurrency(b.foreignAvailableSen ?? 0, b.currency)} payable</div>}
                               </td>
                               <td className="px-2.5 py-1 text-right">
-                                <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={b.foreign || b.availableSen <= 0}
-                                  onChange={(e) => setAmt(b.id, e.target.value)}
+                                {b.foreign && <span className="mr-1 text-[10px] text-[#6B7280]">{b.currency}</span>}
+                                <input type="text" placeholder="0.00" value={apAlloc[b.id] ?? ""} disabled={payable <= 0 || otherCcy}
+                                  onChange={(e) => { setAmt(b.id, e.target.value); if (b.foreign && e.target.value.trim()) fillFxRate(b.currency); }}
                                   className={`w-28 rounded border border-[#E2DDD8] bg-white px-2 py-1 text-right tabular-nums text-xs ${over || isUnreadableMoney(apAlloc[b.id] ?? "") ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`} />
                               </td>
                             </tr>
@@ -11896,10 +12794,38 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 )}
                 {apOverAlloc && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apOverAlloc.no}: more than the {formatCurrency(apOverAlloc.availableSen)} still payable.</div>}
                 {apMoneyError && <div className="mt-1 text-[11px] text-[#9A3A2D]">{apMoneyError}</div>}
+                {apFxCcy && (
+                  <div className="mt-2 rounded-md border border-[#D6DDEB] bg-[#F6F8FC] px-3 py-2 text-xs" data-ap-fx="">
+                    <div className="flex flex-wrap items-end gap-4">
+                      <label className="font-medium text-[#6B7280]">
+                        Rate · {fxMonthLabel(fxMonthOf(apForm.date))} · {apSetupRate === null ? "not in Setup" : apPayRate === apSetupRate ? "from Setup" : "edited"}
+                        <input
+                          aria-label={`${apFxCcy} rate (RM per 1 ${apFxCcy})`}
+                          type="text" inputMode="decimal" value={apFxRate}
+                          placeholder={apSetupRate !== null ? fmtFxRate(apSetupRate) : `RM per 1 ${apFxCcy}`}
+                          onChange={(e) => setApFxRate(e.target.value)}
+                          className={`${selCls} mt-1 block w-32 text-right tabular-nums ${apFxRate.trim() && apPayRate === null ? "text-[#9A3A2D] border-[#9A3A2D]" : ""}`}
+                        />
+                      </label>
+                      <div className="pb-1.5 text-[#374151] tabular-nums">
+                        {formatCurrency(apFxForeignSen, apFxCcy)} × {apPayRate !== null ? fmtFxRate(apPayRate) : "—"} = <b>{formatCurrency(apFxBankSen)}</b>
+                      </div>
+                      {apPayRate !== null && apFxSen !== 0 && (
+                        <div className={`pb-1.5 tabular-nums ${apFxSen > 0 ? "text-[#27500A]" : "text-[#9A3A2D]"}`}>
+                          FX {apFxSen > 0 ? "gain" : "loss"} {formatCurrency(Math.abs(apFxSen))} vs the invoice rate
+                        </div>
+                      )}
+                    </div>
+                    {apSetupRate === null && (
+                      <div className="mt-1 text-[#7A5B12]">No {fxMonthLabel(fxMonthOf(apForm.date))} {apFxCcy} rate in Setup — type it here, or <Link to="/accounting?tab=fx" className="underline decoration-dotted">key it in Setup › Currency &amp; FX</Link>.</div>
+                    )}
+                    {apFxError && apPayRate !== null && <div className="mt-1 text-[#9A3A2D]">{apFxError}</div>}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-end justify-between gap-3">
-                {apForm.partyKind === "SUPPLIER" && !apTfLender ? (
+                {apForm.partyKind === "SUPPLIER" && !apTfLender && !apFxCcy ? (
                   <div>
                     <label className="text-xs font-medium text-[#6B7280] mb-1 block">Advance / unallocated (RM) <span className="ml-1 text-[#B4B2A9] cursor-help" title="Paid on top of the bills — sits as a prepayment on this supplier's ledger; knock it off later on the Supplier Payment page">ⓘ</span></label>
                     <input type="text" placeholder="0.00" value={apForm.advance} onChange={(e) => setApForm({ ...apForm, advance: e.target.value })} className={`${selCls} w-40 text-right tabular-nums ${isUnreadableMoney(apForm.advance) ? "text-[#9A3A2D]" : ""}`} />
@@ -11948,7 +12874,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             <div className="mx-auto my-4 w-full max-w-5xl rounded-lg bg-[#F7F5F2] shadow-2xl">
               <div className="flex items-center justify-between px-5 py-3 rounded-t-lg bg-white border-b border-[#E2DDD8]">
                 <h3 className="text-base font-semibold text-[#1F1D1B]">
-                  {editingRow ? `Edit ${isTransfer ? "transfer" : "payment voucher"} ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : isTransfer ? "New transfer" : "New payment voucher"}
+                  {editingRow ? `Edit ${isTransfer ? "transfer" : "payment voucher"} ${editingRow.pvNo.startsWith("DRAFT-") ? "(draft)" : editingRow.pvNo}` : `${isTransfer ? "New transfer" : "New payment voucher"}${copyOf ? ` · copy of ${copyOf}` : ""}`}
                 </h3>
                 <button onClick={resetForm} title="Close without saving" className="text-[#9CA3AF] hover:text-[#1F1D1B] text-lg leading-none cursor-pointer">✕</button>
               </div>
@@ -12009,12 +12935,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                         </div>
                       )}
                       <div>
+                        <label className={fieldLabel}>Reference <span className="normal-case font-normal text-[#9CA3AF]">(TT / cheque no.)</span></label>
+                        <input type="text" maxLength={120} placeholder="e.g. TT ref, cheque no" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} className={`${selCls} w-full`} />
+                      </div>
+                      <div>
                         <label className={fieldLabel}>Description <span className="normal-case font-normal text-[#9CA3AF]">(printed on the voucher)</span></label>
                         <input type="text" placeholder={isTransfer ? "e.g. Petty cash top-up" : "e.g. Factory rent June"} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={`${selCls} w-full`} />
-                      </div>
-                      <div className={isTransfer ? "sm:col-span-2" : ""}>
-                        <label className={fieldLabel}>Notes <span className="normal-case font-normal text-[#9CA3AF]">(internal — not printed)</span></label>
-                        <textarea rows={2} placeholder="Internal notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={`${selCls} w-full`} />
                       </div>
                       {!isTransfer && (
                         <>
@@ -12029,6 +12955,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           </div>
                         </>
                       )}
+                      <div className={isTransfer ? "" : "sm:col-span-2"}>
+                        <label className={fieldLabel}>Notes <span className="normal-case font-normal text-[#9CA3AF]">(internal — not printed)</span></label>
+                        <textarea rows={2} placeholder="Internal notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={`${selCls} w-full`} />
+                      </div>
                     </div>
                     {!isTransfer && (
                       <label className="flex items-center gap-2 text-sm text-[#1F1D1B] cursor-pointer">
@@ -12214,7 +13144,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               />
             }
             searchPlaceholder="Search PV no / payee / bill no"
-            alwaysSearchKeys={["no", "payeeText", "descText", "billNos"]}
+            alwaysSearchKeys={["no", "payeeText", "descText", "refText", "billNos"]}
             headerMenu
             reorderableHeaders
             exportName="Payment Vouchers"
@@ -12242,6 +13172,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
           : st === "DRAFT" ? chip("Draft", "bg-[#F0ECE9] text-[#6B7280]")
           : st === "PREPARED" ? chip("Prepared", "bg-[#EEF2FB] text-[#2C4170]")
           : st === "CHECKED" ? chip("Checked · awaiting approval", "bg-[#FBF3E4] text-[#7A5B12]")
+          : pvFxPending(r) ? chip("Approved · bank amount pending", "bg-[#FBF3E4] text-[#7A5B12]")
           : r.accrued === 1 && !r.settledAt ? chip("Approved · accrued, unpaid", "bg-[#F7E5E1] text-[#9A3A2D]") : chip("Approved · paid", "bg-[#EAF3DE] text-[#27500A]");
         return (
           <DocDetailModal
@@ -12252,6 +13183,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             actions={<>
               <Button variant="outline" size="sm" onClick={() => void printPvWithDetail(r)}><Printer className="h-4 w-4" /> Print</Button>
               {(r.attachmentCount ?? 0) > 0 && <Button variant="outline" size="sm" disabled={bundleBusy === r.id} onClick={() => void printPvBundle(r)}><Printer className="h-4 w-4" /> {bundleBusy === r.id ? "Preparing…" : "Print + files"}</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); startDuplicate(r); }}>Duplicate</Button>
               {r.status !== "VOID" && st === "DRAFT" && <>
                 <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => { close(); startEdit(r); }}>Edit</Button>
                 <Button variant="primary" size="sm" disabled={ladderBusy} onClick={() => void handleLadder(r, "prepare")}>Prepare →</Button>
@@ -12268,6 +13200,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               </>}
               {isPosted(r) && r.pvKind !== "AP" && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
               {isPosted(r) && r.accrued === 1 && !r.settledAt && <Button variant="outline" size="sm" onClick={() => { close(); void handleSettle(r); }}>Settle</Button>}
+              {pvCanConfirmBank(r) && <Button variant={r.fxBankConfirmedAt ? "outline" : "primary"} size="sm" onClick={() => setConfirmBankId(r.id)}>{r.fxBankConfirmedAt ? "Change bank amount" : "Confirm bank amount"}</Button>}
               {(r.lifecycleState ?? "ACTIVE") === "ACTIVE" && r.status !== "VOID"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void handleLifecycle(r.id, r.pvNo, "void"); }}>Void</Button>
                 : r.status === "VOID" && (r.lifecycleState ?? "VOID") !== "DELETED"
@@ -12287,8 +13220,9 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <DetailField label="Voucher date">{fmtDocDate(r.date)}</DetailField>
                 <DetailField label={r.accrued === 1 && !r.settledAt ? "Accrued to" : "Paid from"} span={2}>{r.accrued === 1 && !r.settledAt ? (r.accrualAccount ? accountLabel(accounts, r.accrualAccount) : "—") : (r.payFrom ? accountLabel(accounts, r.payFrom) : "—")}</DetailField>
                 <DetailField label="Total"><span className="tabular-nums">{formatCurrency(r.totalSen)}</span></DetailField>
-                <DetailField label="Kind">{r.pvKind === "AP" ? "AP payment" : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
-                <DetailField label={r.pvKind === "AP" ? "Reference" : "Description (printed)"} span={4}>{r.description || "—"}</DetailField>
+                <DetailField label="Kind">{r.pvKind === "AP" ? (r.fxCurrency && r.fxRate ? `AP payment · ${r.fxCurrency} @ ${fmtFxRate(r.fxRate)}${pvCanConfirmBank(r) ? (r.fxBankConfirmedAt ? " (bank)" : " (estimate)") : ""}` : "AP payment") : r.pvKind === "TRANSFER" ? "Transfer" : "Payment"}</DetailField>
+                <DetailField label="Reference">{r.reference || "—"}</DetailField>
+                <DetailField label="Description (printed)" span={3}>{r.description || "—"}</DetailField>
                 {r.pvKind !== "AP" && r.pvKind !== "TRANSFER" && (
                   <>
                     <DetailField label="Bill no.">{(r.billNo ?? r.bill_no) || "—"}</DetailField>
@@ -12307,7 +13241,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                       <thead className="bg-[#FAF8F5]"><tr className="text-xs text-[#6B7280]"><th className="text-left px-3 py-1.5 font-medium">Bill</th><th className="text-left px-3 py-1.5 font-medium">Ref</th><th className="text-right px-3 py-1.5 font-medium">Paid</th></tr></thead>
                       <tbody>
                         {(r.allocs ?? []).map((a, i) => (
-                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : a.docKind === "TF" ? "trade-finance drawdown" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(a.amountSen)}</td></tr>
+                          <tr key={i} className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{a.docNo || a.docId} <span className="text-[10px] text-[#9CA3AF]">{a.docKind === "PI" ? "purchase invoice" : a.docKind === "TF" ? "trade-finance drawdown" : "other-creditor bill"}</span></td><td className="px-3 py-1.5 text-[#6B7280]">{a.docRef}</td><td className="px-3 py-1.5 text-right tabular-nums">{(a.foreignSen ?? 0) > 0 && r.fxCurrency ? <>{formatCurrency(a.foreignSen ?? 0, r.fxCurrency)}<div className="text-[10px] text-[#9CA3AF]">cleared {formatCurrency(a.amountSen)}</div></> : formatCurrency(a.amountSen)}</td></tr>
                         ))}
                         {(r.advanceSen ?? 0) > 0 && <tr className="border-t border-[#F0ECE9]"><td className="px-3 py-1.5">Advance / unallocated{(r.advanceOpenSen ?? 0) > 0 && isPosted(r) ? <span className="ml-1 text-[10px] text-[#7A5B12]">· {formatCurrency(r.advanceOpenSen ?? 0)} still unapplied</span> : null}</td><td /><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.advanceSen ?? 0)}</td></tr>}
                         <tr className="border-t-2 border-[#1F1D1B] font-semibold"><td className="px-3 py-1.5" colSpan={2}>Total</td><td className="px-3 py-1.5 text-right tabular-nums">{formatCurrency(r.totalSen)}</td></tr>
@@ -12334,12 +13268,27 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <div><span className="text-[#9CA3AF]">Prepared</span><br />{rx.preparedByName ?? rx.createdByName ?? "—"} · {dmy(r.preparedAt ?? r.prepared_at)}</div>
               <div><span className="text-[#9CA3AF]">Checked</span><br />{rx.checkedByName ?? "—"} · {dmy(r.checkedAt ?? r.checked_at)}</div>
               <div><span className="text-[#9CA3AF]">Approved</span><br />{rx.approvedByName ?? "—"} · {dmy(r.approvedAt ?? r.approved_at)}</div>
-              <div><span className="text-[#9CA3AF]">Settled</span><br />{r.accrued === 1 ? dmy(r.settledAt) : "n/a"}</div>
+              {r.pvKind === "AP" && r.fxCurrency
+                ? <div><span className="text-[#9CA3AF]">Bank amount</span><br />{r.fxBankConfirmedAt ? `${rx.fxBankConfirmedByName ?? "—"} · ${dmy(r.fxBankConfirmedAt)}` : isPosted(r) ? "pending" : "—"}</div>
+                : <div><span className="text-[#9CA3AF]">Settled</span><br />{r.accrued === 1 ? dmy(r.settledAt) : "n/a"}</div>}
               {(r.rejectReason ?? r.reject_reason) && st === "DRAFT" && r.status !== "VOID" && <div className="col-span-2 sm:col-span-4 text-[#9A3A2D]">↩ Rejected: {r.rejectReason ?? r.reject_reason}</div>}
             </div>
-            <DocTrailBlock family="payment_voucher" sourceId={r.id} />
+            {/* An AP voucher's entry lives on its settlement document, under the
+                voucher's number (BUG-2026-10-20-350: it read the voucher's own
+                family and showed "Nothing posted yet"). Keyed so it reloads
+                after a bank amount is confirmed. */}
+            <DocTrailBlock
+              key={`${r.id}|${r.totalSen}|${r.fxBankConfirmedAt ?? ""}|${r.status}`}
+              family={r.pvKind === "AP" ? (r.partyKind === "OTHER" ? "other_party_payment" : "supplier_payment") : "payment_voucher"}
+              sourceId={r.pvKind === "AP" ? r.pvNo : r.id}
+            />
           </DocDetailModal>
         );
+      })()}
+
+      {confirmBankId && (() => {
+        const r = (rows ?? []).find((x) => x.id === confirmBankId);
+        return r ? <PvConfirmBankModal pv={r} onClose={() => setConfirmBankId(null)} onDone={() => { setConfirmBankId(null); load(); }} /> : null;
       })()}
 
       {detailPayKey && (() => {
@@ -12359,6 +13308,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
             actions={<>
               <Button variant="outline" size="sm" onClick={() => void printPayRows([g])}><Printer className="h-4 w-4" /> Print</Button>
               <Link to={foreignHref(g)}><Button variant="outline" size="sm">Open on its page ↗</Button></Link>
+              <Button variant="outline" size="sm" onClick={() => { close(); startDuplicatePay(g); }}>{g.ft ? "Duplicate as a transfer" : "Duplicate as an AP payment"}</Button>
               {g.ft && g.state === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); setEditFtNo(g.no); }}>Edit description</Button>}
               {g.state === "ACTIVE"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void handleForeignLifecycle(g, "void"); }}>Void</Button>
@@ -12371,7 +13321,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
               <DetailField label="Date">{fmtDocDate(g.date)}</DetailField>
               <DetailField label={g.sp ? "Supplier" : g.ft ? "Transfer" : "Other creditor"} span={2}>{g.payee || "—"}</DetailField>
               <DetailField label="Paid from">{g.via ? accountLabel(accounts, g.via) : <span title="No bank leg on this payment's ledger posting (contra settlement)">—</span>}</DetailField>
-              <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.ocp?.reference) || "—"}</DetailField>
+              <DetailField label={g.ft ? "Description" : "Reference"} span={3}>{(g.ft ? g.ft.description : g.sp ? g.sp.reference : g.ocp?.reference) || "—"}</DetailField>
               <DetailField label="Total"><span className="tabular-nums">{formatCurrency(g.totalSen)}</span></DetailField>
             </div>
             {/* Per door (owner 2026-10-02 「FUND TRANSFER无法edit?」): this line used to
@@ -12413,18 +13363,21 @@ type OrRow = {
 // With `editing` (owner 2026-10-17 「可以」) the same form edits a posted
 // receipt: same OR number, the server reverses the posted entry and re-posts
 // the edited one (/official-receipts/:id/restate).
-function OfficialReceiptForm({ accounts, editing, onSaved, onCancel }: { accounts: ChartOfAccount[]; editing?: OrRow | null; onSaved: () => void; onCancel: () => void }) {
+// With `copyFrom` (Duplicate, owner 2026-10-20) it is a NEW receipt holding
+// that one's lines, dated today.
+function OfficialReceiptForm({ accounts, editing, onSaved, onCancel, copyFrom = null }: { accounts: ChartOfAccount[]; editing?: OrRow | null; onSaved: () => void; onCancel: () => void; copyFrom?: OrRow | null }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const seed = editing ?? copyFrom;
   const [form, setForm] = useState({
     date: editing ? String(editing.date ?? "").slice(0, 10) : new Date().toISOString().slice(0, 10),
-    receivedFrom: editing?.receivedFrom ?? "",
-    description: editing?.description ?? "",
-    payTo: editing?.payTo ?? "",
+    receivedFrom: seed?.receivedFrom ?? "",
+    description: seed?.description ?? "",
+    payTo: seed?.payTo ?? "",
   });
   const [lines, setLines] = useState<{ accountCode: string; description: string; amount: string }[]>(
-    editing && editing.lines.length > 0
-      ? editing.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) }))
+    seed && seed.lines.length > 0
+      ? seed.lines.map((l) => ({ accountCode: l.accountCode, description: l.description ?? "", amount: (l.amountSen / 100).toFixed(2) }))
       : [{ accountCode: "", description: "", amount: "" }],
   );
 
@@ -12497,7 +13450,7 @@ function OfficialReceiptForm({ accounts, editing, onSaved, onCancel }: { account
         {editing ? (
           <div className="text-sm font-semibold text-[#1F1D1B]">Edit Official Receipt {editing.orNo} <span className="text-[11px] font-normal text-[#9CA3AF]">same number — the posted entry is reversed and the edited one posted</span></div>
         ) : (
-          <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">sundry income / recovery — DR bank, CR the income account</span></div>
+          <div className="text-sm font-semibold text-[#1F1D1B]">New Official Receipt <span className="text-[11px] font-normal text-[#9CA3AF]">{copyFrom ? `copy of ${copyFrom.orNo} — check the date and the amounts` : "sundry income / recovery — DR bank, CR the income account"}</span></div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -12640,13 +13593,24 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     return () => { dead = true; };
   }, [ver]);
 
+  // Receive from AR Invoices (2026-10-21): the door opens on that document. Read once.
+  const [receiveLink] = useState(() => parseReceiveLink(new URLSearchParams(window.location.search).get("receive")));
+  const [custReceive, setCustReceive] = useState(receiveLink?.kind === "INV" ? { customerId: receiveLink.partyId, invoiceId: receiveLink.docId } : null);
+  const [odReceive, setOdReceive] = useState(receiveLink?.kind === "OD" ? { partyId: receiveLink.partyId, billId: receiveLink.docId } : null);
   // Which form is open: one at a time, like the Payment Vouchers page.
-  const [door, setDoor] = useState<ReceiptKind | null>(null);
+  const [door, setDoor] = useState<ReceiptKind | null>(receiveLink ? (receiveLink.kind === "INV" ? "CUSTOMER" : "OTHER") : null);
   const [custEditing, setCustEditing] = useState<PaymentRecord | null>(null);
   const [odEditing, setOdEditing] = useState<PaymentGroup | null>(null);
   const [orEditing, setOrEditing] = useState<OrRow | null>(null);
-  const openDoor = (k: ReceiptKind) => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setDoor(door === k ? null : k); };
-  const closeDoor = () => { setDoor(null); setCustEditing(null); setOdEditing(null); setOrEditing(null); };
+  // Duplicate (owner 2026-10-20 「duplicate 可以做」): the same door opened as a
+  // NEW receipt seeded from this one — never its knock-offs; nothing is
+  // recorded until it is saved.
+  const [custCopy, setCustCopy] = useState<PaymentRecord | null>(null);
+  const [odCopy, setOdCopy] = useState<PaymentGroup | null>(null);
+  const [orCopy, setOrCopy] = useState<OrRow | null>(null);
+  const clearForms = () => { setCustEditing(null); setOdEditing(null); setOrEditing(null); setCustCopy(null); setOdCopy(null); setOrCopy(null); setCustReceive(null); setOdReceive(null); };
+  const openDoor = (k: ReceiptKind) => { clearForms(); setDoor(door === k ? null : k); };
+  const closeDoor = () => { setDoor(null); clearForms(); };
 
   const rows = useMemo<ReceiptHubRow[]>(() => [
     ...(cust ?? []).map((p): ReceiptHubRow => ({
@@ -12750,9 +13714,17 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     else toast.error(j?.error || `${verb} failed`);
   };
   const startEdit = (r: ReceiptHubRow) => {
+    setCustCopy(null); setOdCopy(null); setOrCopy(null);
     if (r.cust) { setOdEditing(null); setOrEditing(null); setCustEditing(r.cust); setDoor("CUSTOMER"); }
     else if (r.od) { setCustEditing(null); setOrEditing(null); setOdEditing(r.od); setDoor("OTHER"); }
     else if (r.or) { setCustEditing(null); setOdEditing(null); setOrEditing(r.or); setDoor("OFFICIAL"); }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const startDuplicate = (r: ReceiptHubRow) => {
+    clearForms();
+    if (r.cust) { setCustCopy(r.cust); setDoor("CUSTOMER"); }
+    else if (r.od) { setOdCopy(r.od); setDoor("OTHER"); }
+    else if (r.or) { setOrCopy(r.or); setDoor("OFFICIAL"); }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const kindChip = receiptKindChip;
@@ -12788,6 +13760,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
     [
       { label: "Print", action: () => printVoucher(voucherOf(r)) },
       ...(r.lifecycleState === "ACTIVE" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
+      { label: "Duplicate", action: () => startDuplicate(r) },
     ],
     lifecycleMenuItems(r.lifecycleState, {
       void: () => void lifecycle(r, "void"),
@@ -12808,13 +13781,13 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
       </FinanceTitleActions>
 
       {door === "CUSTOMER" && (
-        <CustomerReceiptForm key={custEditing?.id ?? "new"} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} />
+        <CustomerReceiptForm key={custEditing?.id ?? (custCopy ? `copy:${custCopy.id}` : custReceive ? `receive:${custReceive.invoiceId}` : "new")} editing={custEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={custCopy} receiveFor={custReceive} />
       )}
       {door === "OTHER" && (
-        <OtherPartyPaymentForm key={odEditing?.paymentNo ?? "new"} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} />
+        <OtherPartyPaymentForm key={odEditing?.paymentNo ?? (odCopy ? `copy:${odCopy.paymentNo}` : odReceive ? `receive:${odReceive.billId}` : "new")} parties={parties} accounts={accounts} side="DEBTOR" editing={odEditing} onSaved={reload} onCancelEdit={closeDoor} copyFrom={odCopy} receiveFor={odReceive} />
       )}
       {door === "OFFICIAL" && (
-        <OfficialReceiptForm key={orEditing?.id ?? "new"} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} />
+        <OfficialReceiptForm key={orEditing?.id ?? (orCopy ? `copy:${orCopy.id}` : "new")} accounts={accounts} editing={orEditing} onSaved={() => { reload(); closeDoor(); }} onCancel={closeDoor} copyFrom={orCopy} />
       )}
 
       <BatchActionsBar
@@ -12882,6 +13855,7 @@ function ReceiptsHubTab({ accounts }: { accounts: ChartOfAccount[] }) {
             actions={<>
               <Button variant="outline" size="sm" onClick={() => printVoucher(voucherOf(r))}><Printer className="h-4 w-4" /> Print</Button>
               {r.lifecycleState === "ACTIVE" && <Button variant="outline" size="sm" onClick={() => { close(); startEdit(r); }}>Edit</Button>}
+              <Button variant="outline" size="sm" onClick={() => { close(); startDuplicate(r); }}>Duplicate</Button>
               {r.lifecycleState === "ACTIVE"
                 ? <Button variant="outline" size="sm" onClick={() => { close(); void lifecycle(r, "void"); }}>Void</Button>
                 : r.lifecycleState === "VOID"
@@ -12932,6 +13906,99 @@ const ftReferenceOf = (t: FtRow): string => {
   const head = `Transfer ${t.no}`;
   return d === head ? "" : d.startsWith(`${head} · `) ? d.slice(head.length + 3) : d;
 };
+// Confirm bank amount (Currency & FX step 4, owner 2026-10-20): the RM the bank
+// actually debited for a foreign-currency AP payment that posted at the
+// payment's rate. The server re-states the settlement under the same number —
+// each bill still clears its booked RM, the bank leg becomes this RM, the
+// difference is the realised FX; this box only shows the sums.
+function PvConfirmBankModal({ pv, onClose, onDone }: { pv: PvRow; onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast();
+  const { confirm } = useConfirm();
+  const ccy = pv.fxCurrency ?? "";
+  const fxAllocs = (pv.allocs ?? []).filter((a) => (a.foreignSen ?? 0) > 0);
+  const foreignSen = fxAllocs.reduce((s, a) => s + (a.foreignSen ?? 0), 0);
+  const bookedSen = fxAllocs.reduce((s, a) => s + a.amountSen, 0);
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const moneyErr = amount.trim() ? firstMoneyFieldError([{ label: "Bank amount", value: amount }]) : null;
+  const bankSen = moneyErr ? null : moneyFieldToSen(amount);
+  const plan = bankSen && bankSen > 0 ? confirmBankPlan({ bankSen, foreignSens: [foreignSen] }) : null;
+  const fxSen = plan?.ok ? bookedSen - plan.foreignBankSen : null;
+  // A figure far from the posted one is most likely a typo (a digit too many).
+  const offPct = bankSen && pv.totalSen > 0 ? Math.abs(bankSen - pv.totalSen) / pv.totalSen : 0;
+  const requestClose = async () => {
+    if (saving) return;
+    if (amount.trim() && !(await confirm({ title: "Close without confirming?", message: "The bank amount you keyed will be lost.", confirmLabel: "Discard", cancelLabel: "Keep editing", danger: true }))) return;
+    onClose();
+  };
+  useEscapeClose(() => void requestClose());
+  const save = async () => {
+    if (saving || !bankSen || !plan?.ok) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounting/payment-vouchers/${encodeURIComponent(pv.id)}/confirm-bank`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bankSen }),
+      });
+      const j = asMutationResponse(await res.json());
+      if (j?.success) { toast.success(`${pv.pvNo}: bank amount ${formatCurrency(bankSen)} confirmed`); onDone(); }
+      else toast.error(j?.error || "Could not confirm the bank amount");
+    } catch {
+      toast.error("Could not confirm the bank amount");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => void requestClose()}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg" role="dialog" aria-modal="true" data-confirm-bank onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
+          <h2 className="text-base font-semibold text-[#1F1D1B]">{pv.fxBankConfirmedAt ? "Change bank amount" : "Confirm bank amount"} — AP Payment {pv.pvNo}</h2>
+          <button onClick={() => void requestClose()} className="text-[#9CA3AF] hover:text-[#6B7280] text-lg leading-none" title="Close (Esc)">✕</button>
+        </div>
+        <div className="p-5 space-y-4 text-sm">
+          <div className="grid grid-cols-2 gap-3">
+            <DetailField label="Supplier" span={2}>{pv.payee || "—"}</DetailField>
+            <DetailField label={`Paid (${ccy})`}><span className="tabular-nums">{formatCurrency(foreignSen, ccy)}</span></DetailField>
+            <DetailField label="Invoices cleared (booked RM)"><span className="tabular-nums">{formatCurrency(bookedSen)}</span></DetailField>
+            <DetailField label={pv.fxBankConfirmedAt ? "Bank amount now" : "Posted at (estimate)"} span={2}>
+              <span className="tabular-nums">{formatCurrency(pv.totalSen)}</span> <span className="text-xs text-[#6B7280]">@ {fmtFxRate(pv.fxRate ?? 0)}</span>
+            </DetailField>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6B7280] mb-1 block">RM the bank debited for {formatCurrency(foreignSen, ccy)} *</label>
+            <input
+              autoFocus value={amount} onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+              inputMode="decimal" placeholder="0.00"
+              className="w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm text-right tabular-nums"
+            />
+            <p className="mt-1 text-[11px] text-[#9CA3AF]">As the bank statement shows it, without bank charges (those go on their own voucher).</p>
+          </div>
+          {moneyErr && <p className="text-xs text-[#9A3A2D]">{moneyErr}</p>}
+          {plan && !plan.ok && <p className="text-xs text-[#9A3A2D]">{plan.error}</p>}
+          {plan?.ok && fxSen !== null && (
+            <div className="rounded-md bg-[#FAF8F5] border border-[#F0ECE9] px-3 py-2 text-xs space-y-1">
+              <div className="flex justify-between gap-3"><span className="text-[#6B7280]">Actual rate</span><span className="tabular-nums">1 {ccy} = RM {fmtFxRate(plan.rate)}</span></div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[#6B7280]">{fxSen >= 0 ? "Realised FX gain" : "Realised FX loss"} against the invoices</span>
+                <span className={`tabular-nums ${fxSen < 0 ? "text-[#9A3A2D]" : "text-[#27500A]"}`}>{formatCurrency(Math.abs(fxSen))}</span>
+              </div>
+              {offPct > 0.1 && <div className="text-[#9A3A2D]">That is {Math.round(offPct * 100)}% away from the {formatCurrency(pv.totalSen)} posted — check the figure.</div>}
+            </div>
+          )}
+          <p className="text-[11px] text-[#6B7280]">Re-posts {pv.pvNo} under the same number: the invoices stay cleared at their booked RM, the bank leg becomes this amount and the difference goes to FX gain / loss. A payment already matched in Cash Book has to be unmatched there first.</p>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E2DDD8]">
+          <Button variant="outline" size="sm" onClick={() => void requestClose()} disabled={saving}>Cancel</Button>
+          <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving || !plan?.ok}>{saving ? "Posting…" : "Confirm"}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FtDescriptionEditor({ ft, onClose, onSaved }: { ft: FtRow; onClose: () => void; onSaved: () => void }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
@@ -14091,7 +15158,15 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Re-read the month's preview after a run (finance v2: the preview loads
   // with the month — a read; Post stays the owner's click).
   const [previewKey, setPreviewKey] = useState(0);
-  const [preview, setPreview] = useState<{ rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[]; totalSen: number } | null>(null);
+  const [preview, setPreview] = useState<{
+    rows: { assetId: string; name: string; expenseAccount: string; accumAccount: string; amountSen: number }[];
+    totalSen: number;
+    // What is already posted for the month, and the latest month with any
+    // posting (only that one can be undone) — 2026-10-20.
+    posted?: { assetId: string; name: string; assetAccount: string; expenseAccount: string; accumAccount: string; amountSen: number }[];
+    postedTotalSen?: number;
+    latestPostedMonth?: string | null;
+  } | null>(null);
   const [posting, setPosting] = useState(false);
   // Add New Asset from a saved voucher / AP bill (backlog item 11): the lines
   // the saving page left waiting, opened one at a time (each a fresh form,
@@ -14137,6 +15212,52 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const j = asMutationResponse(await res.json());
     if (j?.success) load();
     else toast.error(j?.error || "Delete failed");
+  };
+
+  // Restore a disposed asset (owner 2026-10-20, design list 「这个要做」): in
+  // use again; depreciation picks up from where it stopped. Nothing posts.
+  const handleRestore = async (row: FaRow) => {
+    if (!(await confirm({ title: "Restore asset?", message: `Put ${row.name} back in use? Its depreciation picks up from where it stopped; nothing is posted now.` }))) return;
+    const res = await fetch(`/api/accounting/fixed-assets/${row.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ restore: true }),
+    });
+    const j = asMutationResponse(await res.json());
+    if (j?.success) { toast.success(`${row.name} restored`); load(); setPreviewKey((k) => k + 1); }
+    else toast.error(j?.error || "Restore failed");
+  };
+
+  // Undo the month's depreciation (owner 2026-10-20 「这个要做」) — the latest
+  // posted month only. Its entries are reversed (the pair shows as one undone
+  // row on Journal Entries) and the assets' accumulated depreciation steps
+  // back; the month can then be run again.
+  const [undoing, setUndoing] = useState(false);
+  const handleUndo = async () => {
+    if (!preview?.posted?.length) return;
+    if (!(await confirm({
+      title: `Undo ${periodLabel(runMonth, "")}'s depreciation?`,
+      message: `${formatCurrency(preview.postedTotalSen ?? 0)} on ${preview.posted.length} asset${preview.posted.length === 1 ? "" : "s"} comes out of the books (the entries are reversed, not erased) and their accumulated depreciation goes back. You can post the month again.`,
+      confirmLabel: "Undo",
+      danger: true,
+    }))) return;
+    setUndoing(true);
+    try {
+      const res = await fetch("/api/accounting/fixed-assets/depreciation-undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: runMonth }),
+      });
+      const j = await res.json() as { success?: boolean; error?: string };
+      if (j?.success) {
+        toast.success(`Depreciation ${runMonth} undone`);
+        setPreview(null);
+        load();
+        setPreviewKey((k) => k + 1);
+      } else toast.error(j?.error || "Undo failed");
+    } finally {
+      setUndoing(false);
+    }
   };
 
   useEffect(() => {
@@ -14202,8 +15323,18 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     aoa.push(["TOTAL (in use)", "", "", sumOf(rows ?? [], (r) => r.costSen) / 100, sumOf(rows ?? [], (r) => r.accumSen) / 100, sumOf(rows ?? [], nbv) / 100, ""]); kinds.push("grand");
     return { aoa, kinds };
   };
+  // The month's depreciation list (owner 2026-10-20 「这个要做」): what is
+  // posted and what is still to run, asset by asset.
+  const buildMonthExport = (): Aoa => {
+    const aoa: Aoa = [["Month", "Asset", "Asset account", "DR expense", "CR accum. depn", "Amount (RM)", "Status"]];
+    for (const p of preview?.posted ?? []) aoa.push([runMonth, p.name, p.assetAccount, p.expenseAccount, p.accumAccount, p.amountSen / 100, "Posted"]);
+    for (const p of preview?.rows ?? []) aoa.push([runMonth, p.name, assetOf.get(p.assetId)?.assetAccount ?? "", p.expenseAccount, p.accumAccount, p.amountSen / 100, "Not posted"]);
+    aoa.push(["", "TOTAL", "", "", "", ((preview?.postedTotalSen ?? 0) + (preview?.totalSen ?? 0)) / 100, ""]);
+    return aoa;
+  };
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx("fixed-assets.xlsx", "Fixed Assets", buildExport().aoa, { moneyFormat: true }); } },
+    { label: `${mLabel} depreciation (Excel)`, onSelect: () => { void exportReportXlsx(`depreciation-${runMonth}.xlsx`, `Depreciation ${runMonth}`, buildMonthExport(), { moneyFormat: true }); } },
     {
       label: "Print / PDF",
       onSelect: () => {
@@ -14318,6 +15449,49 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         </div>
       )}
 
+      {/* What is posted for the month — the latest posted month can be undone. */}
+      {preview?.posted && preview.posted.length > 0 && (
+        <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white" data-fa-posted="">
+          <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
+            <span className="text-[15px] font-bold text-[#1F1D1B]">Posted depreciation</span>
+            <span className="text-[12px] text-[#9CA3AF]">{mLabel} · {preview.posted.length} asset{preview.posted.length === 1 ? "" : "s"}</span>
+            <span className="ml-auto">
+              {preview.latestPostedMonth === runMonth ? (
+                <Button variant="outline" size="sm" disabled={undoing} onClick={handleUndo}>{undoing ? "Undoing…" : `Undo ${mLabel}`}</Button>
+              ) : (
+                <span className="text-[12px] text-[#9CA3AF]">Undo {preview.latestPostedMonth} first to undo this month</span>
+              )}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table data-fin-report className="min-w-[640px]">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>DR expense</th>
+                  <th>CR accum. depn</th>
+                  <th data-cell="num split" className="w-[160px]">This month</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.posted.map((p) => (
+                  <tr key={p.assetId} data-row="line">
+                    <td style={{ paddingLeft: 28 }}>{p.name}</td>
+                    <td><span data-cell="code" className="mr-1.5">{p.expenseAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.expenseAccount)}</span></td>
+                    <td><span data-cell="code" className="mr-1.5">{p.accumAccount}</span><span className="text-[12px] text-[#6B7280]">{acctName(p.accumAccount)}</span></td>
+                    <td data-cell="num split">{formatCurrency(p.amountSen)}</td>
+                  </tr>
+                ))}
+                <tr data-row="fin">
+                  <td colSpan={3}>TOTAL</td>
+                  <td data-cell="num split">{formatCurrency(preview.postedTotalSen ?? 0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Register */}
       <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
         <div className="flex flex-wrap items-baseline gap-2.5 border-b-[1.5px] border-[#7A6E5E] px-4 py-3">
@@ -14357,8 +15531,10 @@ function FixedAssetsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                           <td data-cell="num">{formatCurrency(nbv(r))}</td>
                           <td className="text-xs text-[#6B7280]">{r.usefulLifeMonths} mo</td>
                           <td className="text-right">
-                            {!r.disposedAt && (
+                            {!r.disposedAt ? (
                               <button onClick={() => handleDispose(r)} className="text-[#6B7280] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer mr-3">dispose</button>
+                            ) : (
+                              <button onClick={() => handleRestore(r)} className="text-[#6B7280] hover:text-[#27500A] text-xs underline decoration-dotted cursor-pointer mr-3">restore</button>
                             )}
                             <button onClick={() => handleDelete(r)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-xs underline decoration-dotted cursor-pointer">del</button>
                           </td>
@@ -14424,6 +15600,9 @@ type CashPosData = {
   // Vouchers on the approval ladder, not posted yet (2026-09-22).
   awaitingApproval?: { id: string; pvNo: string; date: string; payee: string; description: string; payFrom: string; amountSen: number; state: "DRAFT" | "PREPARED" | "CHECKED" }[];
   awaitingCheckedSen?: number;
+  // Foreign-currency AP payments posted at the estimated rate, bank amount
+  // not confirmed yet (Currency & FX step 4).
+  fxBankPending?: { id: string; pvNo: string; date: string; payee: string; payFrom: string; currency: string; foreignSen: number; rate: number; amountSen: number }[];
   // Trade-finance draws still owed, by due date (2026-10-17).
   tradeFinance?: CashPosTfRow[];
 };
@@ -14714,7 +15893,7 @@ function DailyCashTab() {
       <p class="avail">Available (after pending): <b>${formatCurrency(a.availableSen)}</b></p>`;
     const w = window.open("", "_blank", "width=900,height=700");
     if (!w) { toast.error("Pop-up blocked — allow pop-ups to print"); return; }
-    w.document.write(`<!doctype html><html><head><title>Cash Position ${cur.date}</title><style>
+    w.document.write(`<!doctype html><html><head><title>Daily Cash Position ${cur.date}</title><style>
       body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:32px}
       h1{font-size:18px;margin:0 0 12px} h2{font-size:13px;margin:18px 0 6px}
       table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccc;padding:4px 8px;text-align:left}
@@ -14723,7 +15902,7 @@ function DailyCashTab() {
       .total{margin-top:20px;font-size:15px;text-align:right}
       footer{margin-top:24px;color:#777;font-size:10px}
     </style></head><body>
-      <h1>Cash Position — ${cur.date}</h1>
+      <h1>Daily Cash Position — ${cur.date}</h1>
       ${cur.accounts.map(acctBlock).join("")}
       <p class="total">CURRENT CASH AVAILABLE: <b>${formatCurrency(cur.totalAvailableSen)}</b></p>
       <footer>Estimated from the books ± bank reconciliation · Hookka ERP</footer>
@@ -14756,7 +15935,7 @@ function DailyCashTab() {
               <p>📱 Long-press the image → <b>Save</b> or <b>Share</b>.</p>
             </div>
             <div className="overflow-auto px-5 py-3">
-              <img src={imgPopup} alt={`Cash position ${date}`} className="w-full rounded border border-[#E2DDD8]" />
+              <img src={imgPopup} alt={`Daily Cash Position ${date}`} className="w-full rounded border border-[#E2DDD8]" />
             </div>
           </div>
         </div>
@@ -14950,6 +16129,36 @@ function DailyCashTab() {
               </Card>
             );
           })()}
+          {(cur.fxBankPending?.length ?? 0) > 0 && (
+            // Foreign-currency payments posted at the estimated rate (Currency
+            // & FX step 4): their bank legs above carry the estimate until the
+            // RM the bank debited is keyed on the Payment Vouchers page.
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+                  <div>
+                    <span className="text-sm font-semibold text-[#1F1D1B]">BANK AMOUNT PENDING — foreign-currency payments at the estimated rate</span>
+                    <span className="ml-2 text-[11px] text-[#9CA3AF]">Key the RM the bank debited on Payment Vouchers (right-click → Confirm bank amount).</span>
+                  </div>
+                  <Link to="/accounting?tab=payments" className="text-xs text-[#6B5C32] underline whitespace-nowrap">Open Payment Vouchers →</Link>
+                </div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {(cur.fxBankPending ?? []).map((v) => (
+                      <tr key={v.id} className="border-t border-[#F0ECE9]">
+                        <td className="py-1 pr-3 text-[#6B7280] whitespace-nowrap">{fmtDocDate(v.date)}</td>
+                        <td className="py-1 pr-3 tabular-nums whitespace-nowrap">{v.pvNo}</td>
+                        <td className="py-1 pr-3 w-full max-w-0"><div className="truncate">{v.payee}</div></td>
+                        <td className="py-1 pr-3 text-[#6B7280] whitespace-nowrap">{v.payFrom}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{formatCurrency(v.foreignSen, v.currency)} @ {fmtFxRate(v.rate)}</td>
+                        <td className="py-1 text-right tabular-nums whitespace-nowrap">{formatCurrency(v.amountSen)} <span className="text-[10px] text-[#9CA3AF]">est.</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
             <div className="space-y-4">
               <CashPosPartyPanel
@@ -17185,11 +18394,14 @@ function BalanceSheetTab() {
   // Accounts opened in the inline drill, keyed by period + company + account
   // so a new month starts with everything closed.
   const [bsDrillOpen, setBsDrillOpen] = useState<Set<string>>(new Set());
-  // Finance v2 (owner 2026-10-17): DETAIL L1 totals only, L2 sections, L3 every
-  // account (the default), L4 every account with its ledger lines; a heading
-  // click folds or opens one section.
-  const [level, setLevel] = useState(3);
+  // Finance v2 (owner 2026-10-17): DETAIL L1 totals only, L2 sections, then
+  // (parent accounts, owner 2026-10-21) L3 the parents folded to their
+  // subtotals, L4 every account (the default), L5 every account with its
+  // ledger lines; a heading click folds or opens one section, a parent's row
+  // one parent.
+  const [level, setLevel] = useState(4);
   const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
+  const [openGrp, setOpenGrp] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (!edit) return;
     fetch("/api/accounting/bs/section-map")
@@ -17237,7 +18449,11 @@ function BalanceSheetTab() {
   const sheetDiff = leftTotal - rightTotal;
 
   // A section: its heading (folds; a drop target while editing), its accounts,
-  // its total. At L1 only the total shows.
+  // its total. At L1 only the total shows. Accounts that share a Chart of
+  // Accounts parent sit under it (owner 2026-10-21 「这个balance sheet 没有分父子
+  // account？」 → 「可以，做」; groupBsEntries, the Cash Flow's rule): the parent a
+  // row of its own with their subtotal that folds like a section — folded at
+  // L3, open from L4. Edit Layout lists every account on its own.
   const renderBSSection = (
     key: string,
     title: string,
@@ -17256,6 +18472,37 @@ function BalanceSheetTab() {
       );
     }
     const open = edit || (openSec[key] !== undefined ? openSec[key] : level >= 3);
+    // One account (and its ledger lines when opened); under a parent it sits further in.
+    const accountRow = (e: BalanceSheetEntry, underParent: boolean) => {
+      const draggable = edit && e.accountCode !== "NP-CURRENT";
+      // The unclosed-earnings line is the P&L's result, not an account.
+      const canDrill = !edit && e.accountCode !== "NP-CURRENT";
+      const drillKey = `${period}|${company}|${e.accountCode}`;
+      // L5 opens every account's ledger lines; a click then folds one.
+      const drilled = canDrill && (level >= 5 ? !bsDrillOpen.has(drillKey) : bsDrillOpen.has(drillKey));
+      return (
+        <Fragment key={e.id}>
+        <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
+          draggable={draggable}
+          onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
+          onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
+          <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
+          <td style={{ paddingLeft: underParent ? 52 : 32 }}>
+            {canDrill ? (
+              <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
+                onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
+                <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
+              </button>
+            ) : e.accountName}
+          </td>
+          <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
+        </tr>
+        {drilled && (
+          <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
+        )}
+        </Fragment>
+      );
+    };
     return (
       <>
         <tr data-row="grp" data-fin-drop={edit && dragCode && dragOverSec === section ? "" : undefined}
@@ -17271,36 +18518,24 @@ function BalanceSheetTab() {
           </td>
           <td data-cell="num split" data-neg={!open && total < 0 ? "" : undefined}>{open ? "" : fmtAmt(total)}</td>
         </tr>
-        {open && entries.map((e) => {
-          const draggable = edit && e.accountCode !== "NP-CURRENT";
-          // The unclosed-earnings line is the P&L's result, not an account.
-          const canDrill = !edit && e.accountCode !== "NP-CURRENT";
-          const drillKey = `${period}|${company}|${e.accountCode}`;
-          // L4 opens every account's ledger lines; a click then folds one.
-          const drilled = canDrill && (level >= 4 ? !bsDrillOpen.has(drillKey) : bsDrillOpen.has(drillKey));
+        {open && (edit ? entries.map((e) => accountRow(e, false)) : groupBsEntries(entries).map((it) => {
+          if (it.kind === "line") return accountRow(it.entry, false);
+          const gKey = `${key}>${it.code}`;
+          const gOpen = openGrp[gKey] !== undefined ? openGrp[gKey] : level >= 4;
           return (
-            <Fragment key={e.id}>
-            <tr data-row="line" className={`${draggable ? "cursor-move" : ""} ${dragCode === e.accountCode ? "opacity-40" : ""}`}
-              draggable={draggable}
-              onDragStart={draggable ? (ev) => { setDragCode(e.accountCode); ev.dataTransfer.setData("text/plain", e.accountCode); ev.dataTransfer.effectAllowed = "move"; } : undefined}
-              onDragEnd={draggable ? () => { setDragCode(null); setDragOverSec(null); } : undefined}>
-              <td data-cell="code">{draggable ? <span className="mr-1 text-[#9CA3AF]">⠿</span> : null}{e.accountCode === "NP-CURRENT" ? "" : e.accountCode}</td>
-              <td style={{ paddingLeft: 32 }}>
-                {canDrill ? (
-                  <button type="button" className="text-left hover:underline decoration-dotted cursor-pointer" title="Show the ledger lines behind this balance"
-                    onClick={() => setBsDrillOpen((prev) => { const n = new Set(prev); if (n.has(drillKey)) n.delete(drillKey); else n.add(drillKey); return n; })}>
-                    <span className="text-[10px] text-[#9CA3AF] mr-1.5">{drilled ? "▾" : "▸"}</span>{e.accountName}
-                  </button>
-                ) : e.accountName}
-              </td>
-              <td data-cell="num split" data-neg={e.balance < 0 ? "" : undefined}>{fmtAmt(e.balance)}</td>
-            </tr>
-            {drilled && (
-              <tr><td colSpan={3} style={{ padding: 0 }}><BsDrillPanel period={period} account={e.accountCode} company={company} /></td></tr>
-            )}
+            <Fragment key={gKey}>
+              <tr data-row="grp" data-bs-parent={it.code} className="cursor-pointer select-none" title={gOpen ? "Click to fold" : "Click to open"}
+                onClick={() => setOpenGrp({ ...openGrp, [gKey]: !gOpen })}>
+                <td data-cell="code">{it.code}</td>
+                <td style={{ paddingLeft: 32 }}>
+                  <span aria-hidden="true" className="mr-1.5 inline-block w-3 text-[10px] text-[#9CA3AF]">{gOpen ? "▾" : "▸"}</span>{it.name}
+                </td>
+                <td data-cell="num split" data-neg={it.totalSen < 0 ? "" : undefined}>{fmtAmt(it.totalSen)}</td>
+              </tr>
+              {gOpen && it.members.map((e) => accountRow(e, true))}
             </Fragment>
           );
-        })}
+        }))}
         {open && (
           <tr data-row="sub">
             <td />
@@ -17312,14 +18547,23 @@ function BalanceSheetTab() {
     );
   };
 
-  // The download carries the sheet in the same arrangement, every account.
+  // The download carries the sheet in the same arrangement, every account —
+  // a parent's row with its subtotal, its accounts under it (as on screen at L4).
   const buildExport = (): { aoa: Aoa; kinds: PdfRowKind[] } => {
     const aoa: Aoa = [["Code", "Account", "Amount (RM)"]];
     const kinds: PdfRowKind[] = [];
     const push = (row: (string | number)[], kind: PdfRowKind) => { aoa.push(row); kinds.push(kind); };
     const sec = (title: string, entries: BalanceSheetEntry[], total: number) => {
       push(["", title, ""], "section");
-      for (const e of entries) push([e.accountCode === "NP-CURRENT" ? "" : e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+      for (const it of groupBsEntries(entries)) {
+        if (it.kind === "line") {
+          const e = it.entry;
+          push([e.accountCode === "NP-CURRENT" ? "" : e.accountCode, `  ${e.accountName}`, e.balance / 100], undefined);
+          continue;
+        }
+        push([it.code, `  ${it.name}`, it.totalSen / 100], "group");
+        for (const e of it.members) push([e.accountCode, `      ${e.accountName}`, e.balance / 100], undefined);
+      }
       push(["", `Total ${title.replace("Less: ", "")}`, total / 100], "subtotal");
     };
     sec("Fixed Assets (Net)", fixedAssets, totalFixedAssets);
@@ -17356,10 +18600,10 @@ function BalanceSheetTab() {
           <EditLayoutToggle on={edit} onToggle={() => setEdit((v) => !v)} />
           {!edit && (
             <DetailLevels
-              levels={[1, 2, 3, 4]}
+              levels={[1, 2, 3, 4, 5]}
               value={level}
-              onChange={(L) => { setLevel(L); setOpenSec({}); setBsDrillOpen(new Set()); }}
-              tips={{ 1: "Totals only", 2: "Sections", 3: "Every account", 4: "Every account with its ledger lines" }}
+              onChange={(L) => { setLevel(L); setOpenSec({}); setOpenGrp({}); setBsDrillOpen(new Set()); }}
+              tips={{ 1: "Totals only", 2: "Sections", 3: "Parent accounts", 4: "Every account", 5: "Every account with its ledger lines" }}
             />
           )}
           <DownloadMenu items={downloads} />
@@ -17384,7 +18628,7 @@ function BalanceSheetTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={`Balance Sheet ${asAtLabel}`}
-        note="All figures RM · brackets = negative · stock = the P&L's closing stock · click an account to see the ledger lines behind it"
+        note="All figures RM · brackets = negative · stock = the P&L's closing stock · click an account to see the ledger lines behind it, a parent account to fold its accounts"
       >
         <table data-col-resize="first" data-fin-report className="min-w-[560px]">
           <thead>

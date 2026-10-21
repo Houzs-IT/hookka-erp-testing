@@ -24,6 +24,7 @@ export const SYSTEM_JOURNAL_FAMILIES: Record<string, { label: string; tab: strin
   closing_stock: { label: "Closing stock", tab: "stock" },
   closing_stock_reversal: { label: "Closing stock reversed", tab: "stock" },
   depreciation: { label: "Depreciation", tab: "assets" },
+  depreciation_reversal: { label: "Depreciation undone", tab: "assets" },
   year_close: { label: "Year-end close", tab: "bs" },
   opening_balance: { label: "Opening balance", tab: "opening" },
   opening_balance_reversal: { label: "Opening balance reversed", tab: "opening" },

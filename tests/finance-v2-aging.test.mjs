@@ -3,8 +3,11 @@
 // 2026-10-17-finance-v2-debtors-creditors Task 1). Same reads, figures and
 // writes. New places, as in the design: the control figures as KPI cards with
 // Recalculate counter on the title row, one download (Excel / PDF, no CSV —
-// owner 2026-10-17), the lists in the v2 list look, then the statement (and on
-// the creditor side Trade Finance and Contra) under the list.
+// owner 2026-10-17), the lists in the v2 list look, then (creditor side) Trade
+// Finance under the list. Since 2026-10-20 (owner) the statements and Contra
+// live elsewhere: the supplier statement on AP Invoices, the customer statement
+// on Other Debtor Bills, Contra on its own Monthly page; the trade-finance
+// block has no Repay (an AP Payment repays it).
 // ---------------------------------------------------------------------------
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -88,7 +91,7 @@ test("the aging lists in the v2 list look; an open row and its documents stay pu
   assert.match(ar, /<AgingListTable\n\s*partyHeader="Customer"/);
   assert.match(list, /<table data-fin-list className="w-full text-sm">/);
   assert.match(list, /<tr data-fin-nolift=\{isOpen \? "" : undefined\} className="border-b border-\[#F0ECE9\]/);
-  assert.match(list, /\{isOpen && r\.docs\.map\(\(d, i\) => \(\n\s*<tr key=\{`d-\$\{i\}`\} data-fin-nolift=""/);
+  assert.match(list, /\{isOpen && detail == null && r\.docs\.map\(\(d, i\) => \(\n\s*<tr key=\{`d-\$\{i\}`\} data-fin-nolift=""/);
   assert.match(list, /\{AGING_KEYS\.map\(\(k\) => <td key=\{k\} className="py-3 px-4 text-right">\{formatCurrency\(sumOf\(rows, k\)\)\}<\/td>\)\}/);
   // Creditor Aging too (2026-10-17), with its Next Due column.
   assert.match(ap, /<AgingListTable\n\s*partyHeader="Creditor"[\s\S]*?nextDue=\{nextDueCell\}/);
@@ -107,11 +110,17 @@ test("statements: same reads and print; v2 list look with the closing balance as
     assert.match(s, /<tr data-fin-nolift="" className="border-b border-\[#F0ECE9\] text-\[#6B7280\]">\n\s*<td className="px-3 py-1\.5" colSpan=\{5\}>Opening balance<\/td>/);
     assert.match(s, /<tfoot>\n\s*<tr className="border-t border-\[#1F1D1B\] font-semibold">\n\s*<td className="px-3 py-2" colSpan=\{5\}>Closing balance<\/td>/);
   }
-  assert.match(ar, /<CustomerStatementCard \/>/);
+  // The statements moved (owner 2026-10-20): customer → Other Debtor Bills, supplier → AP Invoices.
+  assert.doesNotMatch(ar, /<CustomerStatementCard \/>/);
+  assert.doesNotMatch(ap, /<SupplierStatementCard \/>/);
+  // Since 2026-10-21 the customer statement is at the foot of AR Invoices (the old Other Debtor Bills address lands there).
+  assert.match(ui, /\{tab === "arinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ArInvoicesTab accounts=\{accounts\} \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  assert.match(ui, /\{tab === "odebtorbills" && \(\n\s+<div className="space-y-4">\n\s+<ArInvoicesTab accounts=\{accounts\} \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  assert.match(ui, /\{tab === "apinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ApInvoicesTab accounts=\{accounts\} \/>\n\s+<SupplierStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
 });
 
-test("Creditor Aging: the list first, then Trade Finance, Contra and the statement", () => {
-  const order = ["<KpiCards", "<AgingListTable", "<TradeFinanceBlock />", "<ContraCard />", "<SupplierStatementCard />"];
+test("Creditor Aging: the cards, then the list with the trade-finance drawdowns in it; Contra is its own Monthly page", () => {
+  const order = ["<KpiCards", "<AgingListTable", "<TfDrawDetail", "<TfRepaidRows"];
   let at = -1;
   for (const o of order) {
     const i = ap.indexOf(o, at + 1);
@@ -119,18 +128,64 @@ test("Creditor Aging: the list first, then Trade Finance, Contra and the stateme
     at = i;
   }
   assert.match(ui, /\{tab === "ap" && <APTab apData=\{apData\} onRefresh=\{fetchAll\} \/>\}/);
+  assert.doesNotMatch(ap, /<ContraCard \/>/);
+  // Contra: Monthly in the sidebar and the tab list, a page of its own (owner 2026-10-20 「放去side bar 那边的monthly」).
+  assert.match(ui, /\{ key: "contra", label: "Contra", icon: <Scale className="h-4 w-4" \/>, group: "Monthly" \},/);
+  assert.match(ui, /\{tab === "contra" && <ContraCard \/>\}/);
+  assert.match(read("src/components/layout/sidebar.tsx"), /\{ name: "Fixed Assets", href: "\/accounting\?tab=assets", icon: Building2 \},\n\s+\{ name: "Contra", href: "\/accounting\?tab=contra", icon: Scale \},/);
+  assert.match(read("src/lib/finance-nav.ts"), /contra: \{ title: "Contra", explain: /);
+  // Trade finance is repaid with an AP Payment — the block has no Repay (owner 「拿掉」).
+  assert.doesNotMatch(tf, />Repay</);
+  assert.doesNotMatch(tf, /supplier-payments\?supplier=/);
+  assert.match(ap, /Pay a bill or repay trade finance with an AP Payment on <Link to="\/accounting\?tab=payments"/);
   const contra = fn("ContraCard");
   assert.match(contra, /<table data-fin-list className="w-full text-sm">/);
   assert.match(contra, /fetch\("\/api\/accounting\/contra", \{\n\s*method: "POST"/, "the contra post is unchanged");
   assert.match(contra, /title: "Post contra\?"/);
 });
 
-test("Trade Finance: v2 list look; rows with inputs do not lift; TOTAL is the total row; saves unchanged", () => {
-  assert.match(tf, /<table data-fin-list className="w-full text-sm">/);
-  assert.match(tf, /<tr key=\{d\.drawSourceId\} data-fin-nolift="" className="border-b border-\[#F0ECE9\]">/);
-  assert.match(tf, /<tr data-fin-nolift=""><td colSpan=\{9\}[^>]*>No open draws\.<\/td><\/tr>/);
-  assert.match(tf, /<\/tbody>\n\s*\{s\.draws\.length > 0 && \(\n\s*<tfoot>\n\s*<tr className="border-t-2 border-\[#E2DDD8\] bg-\[#F6F1E7\] font-semibold">\n\s*<td className="py-2 px-3" colSpan=\{4\}>TOTAL<\/td>/);
+test("Trade Finance in the list: a drawdown's figures open under its row, the repaid ones behind a line; saves unchanged", () => {
+  assert.match(tf, /export function TfDrawDetail\(\{ d, editable, onSaved \}/);
+  assert.match(list, /\{detail != null && \(\n\s*<tr data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">\n\s*<td colSpan=\{cols\} className="py-2\.5 px-4 pl-10">\{detail\}<\/td>/);
+  assert.match(tf, /\{open \? "Hide" : "Show"\} \{draws\.length\} repaid drawdown\{draws\.length === 1 \? "" : "s"\}/);
+  // Since 2026-10-21 (owner 「这个点开可以优化一下，不好看」) a repaid drawdown is a row like an open one,
+  // with the line's code and lender, opening to the same card.
+  assert.match(tf, /<tr data-tf-repaid-row="" data-fin-nolift=\{isOpen \? "" : undefined\} className="border-b border-\[#F0ECE9\] text-\[#6B7280\]">/);
+  assert.match(tf, /<td className="py-3 px-4 font-mono text-xs whitespace-nowrap">\{d\.accountCode\}<\/td>/);
+  assert.match(tf, /\{isOpen && \(\n\s*<tr data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">\n\s*<td colSpan=\{colSpan\} className="py-2\.5 px-4 pl-10"><TfDrawDetail d=\{d\} editable=\{editable\} onSaved=\{onSaved\} \/><\/td>/);
+  assert.match(ap, /\.flatMap\(\(src\) => src\.draws\.filter\(\(d\) => d\.outstandingSen <= 0\)\.map\(\(d\) => \(\{ \.\.\.d, accountCode: src\.accountCode, lenderName: src\.lenderName \}\)\)\)/);
   assert.match(tf, /fetch\("\/api\/accounting\/trade-finance\/draw-due", \{\n\s*method: "PUT"/);
   assert.match(tf, /`\/api\/accounting\/trade-finance\/\$\{kind === "interest" \? "draw-interest" : "draw-bank-charge"\}`/);
   assert.match(tf, /fetch\("\/api\/accounting\/trade-finance\/setup", \{\n\s*method: "POST"/);
+});
+
+test("the drawdown card (owner 2026-10-21 「这个点开可以优化一下，不好看」): the drawdown on the left, the amount worked as a sum on the right, the due date day-first", () => {
+  const card = tf.slice(tf.indexOf("export function TfDrawDetail("), tf.indexOf("export type TfRepaidDraw"));
+  assert.match(card, /<div className=\{headCls\}>Drawdown<\/div>/);
+  assert.match(card, /<div className=\{headCls\}>Amount \(RM\)<\/div>/);
+  // principal + interest + bank charges − repaid = outstanding, in that order
+  let at = -1;
+  for (const label of ["Principal", "Interest", "Bank charges", "Repaid", "Outstanding"]) {
+    const i = card.indexOf(">" + label + "</span>", at + 1);
+    assert.ok(i > at, label + " in order");
+    at = i;
+  }
+  assert.match(card, /<span className=\{opCls\}>\+<\/span>\n\s*<span className=\{termCls\}>Interest<\/span>/);
+  assert.match(card, /<span className=\{opCls\}>−<\/span>\n\s*<span className=\{termCls\}>Repaid<\/span>/);
+  assert.match(card, /<span className="col-span-3 border-t border-\[#CBD5E1\]" \/>/, "a rule above Outstanding");
+  // The money boxes: text (no spinner), a comma figure reads through the shared parser.
+  assert.equal(card.match(/type="text"\n\s*inputMode="decimal"/g)?.length, 2);
+  assert.doesNotMatch(card, /type="number"/);
+  assert.match(card, /defaultValue=\{moneyText\(d\.interestSen\)\}/);
+  assert.match(card, /if \(e\.target\.value !== moneyText\(d\.interestSen\) && e\.target\.value !== ""\) void saveCharge\("interest", d\.drawSourceId, e\.target\.value, d\.drawDate\);/);
+  // The due date: day-first text over the browser's date box, the calendar on click, saved on leaving.
+  const due = tf.slice(tf.indexOf("function DueDateBox("), tf.indexOf("export function TfDrawDetail("));
+  assert.match(due, /<span>\{value \? formatDateDMY\(value\) : "-"\}<\/span>/);
+  assert.match(due, /onClick=\{\(e\) => \{ try \{ e\.currentTarget\.showPicker\(\); \} catch \{/);
+  assert.match(due, /if \(e\.target\.value !== d\.dueDate\) onSave\(e\.target\.value\);/);
+  assert.match(due, /className="absolute inset-0 h-full w-full cursor-pointer opacity-0"/);
+  assert.match(card, /<DueDateBox key=\{`\$\{d\.drawSourceId\}:due:\$\{d\.dueDate\}`\} d=\{d\} onSave=\{\(ymd\) => \{ void saveDue\(d\.drawSourceId, ymd\); \}\} \/>/);
+  // As at a past date: plain figures, no boxes.
+  assert.match(card, /\) : <span className="tabular-nums">\{d\.dueDate \? formatDateDMY\(d\.dueDate\) : "-"\}<\/span>\}/);
+  assert.match(card, /\) : <span className=\{figCls\}>\{rm\(d\.interestSen\)\}<\/span>\}/);
 });

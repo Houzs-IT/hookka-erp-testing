@@ -76,6 +76,8 @@ import {
   type FgEventActor,
 } from "../../lib/fg-stock-events";
 import { availableQty } from "../../../lib/convert-chain";
+import { returnableByLine } from "../../../lib/delivery-return-qty";
+import { loadReturnedQtyByPo } from "../../lib/delivery-return-create";
 
 // Status transitions allowed by the mock-data impl. Preserved here so the
 // frontend sees identical error messages.
@@ -1442,34 +1444,18 @@ export async function computeDoInvoiceLines(
   ]);
   const doItems = doItemsRes.results ?? [];
 
-  // Partial-delivery: a line that went into a Delivery Return is NOT delivered,
-  // so it's excluded from the invoice (the good lines are billed; the returned
-  // ones drop out). Best-effort — if the delivery_return tables don't exist yet
-  // (no returns raised on this deployment), the query throws and we bill all.
-  let returnedPoIds = new Set<string>();
+  // Partial-delivery: what went into a Delivery Return is NOT delivered, so it
+  // is not billed. HK-0110: returns can be partial, so only the RETURNED qty
+  // drops out (return 1 of 3 still bills 2); the line used to drop out whole on
+  // any return. Best-effort — if the delivery_return tables don't exist yet (no
+  // returns raised on this deployment), the query throws and we bill all.
+  let returnedByPo = new Map<string, number>();
   try {
-    const retRes = await db
-      .prepare(
-        `SELECT dri.production_order_id AS "poId"
-           FROM delivery_return_items dri
-           JOIN delivery_returns dr ON dr.id = dri.delivery_return_id
-          WHERE dr.delivery_order_id = ? AND dr.status <> 'CANCELLED'`,
-      )
-      .bind(doId)
-      .all<{ poId: string | null }>();
-    returnedPoIds = new Set(
-      (retRes.results ?? [])
-        .map((r) => r.poId)
-        .filter((x): x is string => !!x),
-    );
+    returnedByPo = await loadReturnedQtyByPo(db, doId);
   } catch {
     /* delivery_return tables not present — nothing to exclude */
   }
-  const activeDoItems = returnedPoIds.size
-    ? doItems.filter(
-        (di) => !di.productionOrderId || !returnedPoIds.has(di.productionOrderId),
-      )
-    : doItems;
+  const deliveredNet = returnableByLine(doItems, returnedByPo);
 
   // How much of each line this invoice is allowed to take. Default: everything
   // still un-invoiced. With a `select`, only what was ticked — clamped to the
@@ -1490,8 +1476,8 @@ export async function computeDoInvoiceLines(
 
   const draws: DoLineSelection[] = [];
   let invItems: InvItem[] = [];
-  for (const di of activeDoItems) {
-    const delivered = Number(di.quantity) || 0;
+  for (const [i, di] of doItems.entries()) {
+    const delivered = deliveredNet[i];
     const already = Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0;
     const remaining = availableQty(delivered, already);
     const billQty = select
@@ -1538,7 +1524,7 @@ export async function computeDoInvoiceLines(
   // invoice already charged. Restrict them to what they were always for — the
   // FIRST, whole-document bill of a delivery nothing has drawn on yet.
   const freshWholeDo =
-    !select && activeDoItems.every((di) => (Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0) === 0);
+    !select && doItems.every((di) => (Number(di.invoicedQty ?? di.invoiced_qty ?? 0) || 0) === 0);
 
   // Fallback 1: nothing priced at all → bill the linked SO lines directly.
   if (computedTotal === 0 && freshWholeDo) {

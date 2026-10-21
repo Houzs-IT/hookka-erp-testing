@@ -85,6 +85,7 @@ import {
   createScanQueueDriver,
 } from "@/lib/scan-queue-client";
 import { compressScanFile } from "@/lib/compress-scan-pdf";
+import { useIdempotencyKeys } from "@/lib/idempotency-key";
 
 // ─── Shared types (kept exported for callers) ─────────────────────────────
 
@@ -1028,6 +1029,8 @@ type PreviewLine = {
    * and the header PO is display only.
    */
   poId?: string | null;
+  /** ...and the PO LINE (T-006 R8), so a line with no material code is still capped. */
+  poItemId?: string | null;
 };
 
 type PreviewCard = {
@@ -1672,6 +1675,7 @@ function CreatePIWizard({
       const allocatedLines = lines.map((l, i) => ({
         ...l,
         poId: allocations[i]?.poId ?? null,
+        poItemId: allocations[i]?.poItemId ?? null,
       }));
       const purchaseOrderId = headerPoId(allocations, namedPoIds);
       const touchedPoIds = allocatedPoIds(allocations);
@@ -1850,6 +1854,16 @@ function CreatePIWizard({
   // ─── Card mutators ─────────────────────────────────────────────────────
   const patchCard = (id: string, patch: Partial<PreviewCard>) =>
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  // T-006 R10 — one key PER CARD: each card becomes its own purchase invoice,
+  // so a shared key would make the second card replay the first card's
+  // document. The key survives a lost response (the retry is the same
+  // attempt) and is dropped as soon as the server answers.
+  const createPiIdem = useIdempotencyKeys();
+  // The source PDF is uploaded once per card: a fresh upload on retry gives
+  // a new file id, so the retry's body differs and the server answers 422
+  // instead of replaying the PI the lost attempt may have created.
+  const piSourceFileIds = useRef(new Map<string, string>());
 
   const patchLine = (cardId: string, idx: number, patch: Partial<PreviewLine>) =>
     setCards((prev) =>
@@ -2122,6 +2136,7 @@ function CreatePIWizard({
               // the header would over-bill one order and wrongly reject a line
               // that is within budget on its own.
               poId: l.poId ?? null,
+              poItemId: l.poItemId ?? null,
               // The catalogue tier is the scanner reading text with nothing to
               // corroborate it — no PO line, no history with this supplier. Now
               // that creating a document teaches a binding, a wrong guess there
@@ -2154,17 +2169,23 @@ function CreatePIWizard({
           // Ungated: a direct upload has no queue row, and gating on one is
           // exactly how the sales side lost a month of originals.
           const sourceOrigin = sourceDocOriginForCard(card);
-          const fileId = await uploadSourceDoc(
-            sourceOrigin,
-            "purchase-invoice-source",
-            card.scanQueueRowId ?? card.id,
-          );
+          let fileId = piSourceFileIds.current.get(card.id);
+          if (!fileId) {
+            fileId = await uploadSourceDoc(
+              sourceOrigin,
+              "purchase-invoice-source",
+              card.scanQueueRowId ?? card.id,
+            ) ?? undefined;
+            if (fileId) piSourceFileIds.current.set(card.id, fileId);
+          }
           if (fileId) payload.sourceDocumentFileId = fileId;
-          const res = await fetch("/api/purchase-invoices", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          });
+          const res = await createPiIdem.withKey(card.id, (key) =>
+            fetch("/api/purchase-invoices", {
+              method: "POST",
+              headers: { "content-type": "application/json", "Idempotency-Key": key },
+              body: JSON.stringify(payload),
+            }),
+          );
           const j = (await res.json().catch(() => null)) as
             | { success?: boolean; error?: string; ref?: string; data?: { piNo?: string; id?: string } }
             | null;
@@ -2633,7 +2654,7 @@ function ScanQueueStrip({
             </i>
             <span className="truncate">{it.fileName}</span>
             {it.error && (
-              <span className="text-xs truncate opacity-80">— {it.error.slice(0, 80)}</span>
+              <span className="text-xs min-w-0 line-clamp-2 break-words opacity-80" title={it.error}>— {it.error}</span>
             )}
           </div>
           {onRetry && (
@@ -3190,7 +3211,8 @@ function PICard({
     const byId = new Map(pos.map((p) => [p.id, p]));
     const lines = card.lines.map((l, i) => {
       const poId = allocations[i]?.poId ?? null;
-      return applyPoPriceFill([{ ...l, poId }], byId.get(poId ?? "") ?? null)[0];
+      const poItemId = allocations[i]?.poItemId ?? null;
+      return applyPoPriceFill([{ ...l, poId, poItemId }], byId.get(poId ?? "") ?? null)[0];
     });
     return {
       purchaseOrderIds: nextIds,
@@ -4564,6 +4586,10 @@ function CreateGRNWizard({
   const patchCard = (id: string, patch: Partial<GRNPreviewCard>) =>
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
 
+  // T-006 R10 — one key per card, same reasoning as the purchase-invoice
+  // scan above: each card is its own goods receipt.
+  const createGrnIdem = useIdempotencyKeys();
+
   const patchLine = (cardId: string, idx: number, patch: Partial<GRNPreviewLine>) =>
     setCards((prev) =>
       prev.map((c) => {
@@ -4786,11 +4812,13 @@ function CreateGRNWizard({
           if (card.purchaseOrderId) {
             payload.poId = card.purchaseOrderId;
           }
-          const res = await fetch("/api/grn", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          });
+          const res = await createGrnIdem.withKey(card.id, (key) =>
+            fetch("/api/grn", {
+              method: "POST",
+              headers: { "content-type": "application/json", "Idempotency-Key": key },
+              body: JSON.stringify(payload),
+            }),
+          );
           const j = (await res.json().catch(() => null)) as
             | { success?: boolean; error?: string; ref?: string; data?: { grnNumber?: string; grnNo?: string; id?: string } }
             | null;

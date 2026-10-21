@@ -13,10 +13,12 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { idempotent } from "../lib/idempotency";
 import { getOrgId } from "../lib/tenant";
 import {
   ensurePurchaseReturnTables,
   createPurchaseReturn,
+  checkPurchaseReturnQty,
   loadPiItemsForReturn,
   loadGrnItemsForReturn,
   applyPurchaseReturnStockOut,
@@ -120,7 +122,7 @@ app.get("/:id", async (c) => {
 });
 
 // POST /api/purchase-returns — create from a PI
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "purchase-returns", "create");
   if (denied) return denied;
   await ensurePurchaseReturnTables(c.var.DB);
@@ -178,6 +180,8 @@ app.post("/", async (c) => {
       supplierName: String(pick(grn, "supplier_name", "supplierName") ?? ""),
     };
   }
+  const overReturn = await checkPurchaseReturnQty(c.var.DB, items);
+  if (overReturn) return c.json({ success: false, error: overReturn }, 409);
   const created = await createPurchaseReturn(c.var.DB, {
     ...src,
     reason: String(b.reason ?? ""),

@@ -1,5 +1,6 @@
 # Delivery & Consignment — Module Guide
 
+> **Last verified: 2026-10-20** (branch `claude/t006-idempotency-main-0d4efa`, T-006 R10): `runBulkDoTransition` `:3059`, `detailLive` `:3710`, `lineSpec` `:3743` re-anchored after the DO create gained an Idempotency-Key. Nothing else re-checked.
 > **Last verified: 2026-10-17** (branch `feat/finance-notes-post`): `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2104` (the void-and-reissue backfill above it now skips invoices with an issued credit / debit note). Nothing else re-checked.
 > **Last verified: 2026-10-15** (review fixes on `fix/bug06-do-duplicate-guard-main`): `createDeliveryOrderForPOs` production-order lookup is org-scoped and refuses lines whose `productionOrderId` is missing or not among the loaded orders. Nothing else re-checked.
 > **Last verified: 2026-10-07** (branch `fix/bug06-do-duplicate-guard-main`, BUG-2026-09-30-223): `validateDoComposition` `_helpers.ts:2094` and `createDeliveryOrderForPOs` `:2223` re-derived; create now guards every production order in `productionOrderIds` and `items`; the Consignment page's Transfer-to-DO is now "Create Consignment Note". Nothing else re-checked.
@@ -98,12 +99,12 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | Symbol / section | file:line | Role |
 |---|---|---|
 | `DeliveryPage` | `src/pages/delivery/index.tsx:901` | DO workbench + 3PL + agent, `pageTab` toggle |
-| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3059` | FE bulk status move (all guards/cascades) |
+| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3067` | FE bulk status move (all guards/cascades) |
 | `resendCustomerNotice` / `warnIfNoCustomerEmail` | `delivery/index.tsx:2940 / :2922` | Feature A per-DO resend / Feature B no-email warning |
 | `columns` (DataGrid) | `src/pages/delivery/index.tsx` (~3.9k) | DO grid column defs |
 | `getContextMenuItems` | `src/pages/delivery/index.tsx` (~4.4k) | THE DO status table — row menu **and** the drawer's action bar |
-| `detailLive` | `src/pages/delivery/index.tsx:3710` | Drawer's document re-read from the list; its bar filtered from the row menu |
-| `lineSpec` | `src/pages/delivery/index.tsx:3743` | One-line build spec per DO line, via the shared `buildSpec` |
+| `detailLive` | `src/pages/delivery/index.tsx:3718` | Drawer's document re-read from the list; its bar filtered from the row menu |
+| `lineSpec` | `src/pages/delivery/index.tsx:3751` | One-line build spec per DO line, via the shared `buildSpec` |
 | `drawerActionBar` / `drawerLineSpec` / `DRAWER_DOC_CONFIG` | `src/lib/document-drawer.ts` | Drawer model: full-page route, action-bar filter, spec-line delegation |
 | `DocumentDetailDrawer` | `src/components/ui/document-detail-drawer.tsx` | Shared slide-over chrome (chrome only, no domain knowledge) |
 | 3PL Providers block | `src/pages/delivery/index.tsx` (~6.5k) | `pageTab==="3pl"` list + Create/Edit dialog |

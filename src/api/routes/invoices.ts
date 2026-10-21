@@ -39,6 +39,7 @@ import {
   type LedgerEntryInput,
 } from "../lib/journal-hash";
 import { ClosedYearError } from "../lib/fiscal";
+import { nextSelfNumber } from "../lib/doc-number-service";
 import { getOpeningDate } from "./accounting";
 import { getOrgId } from "../lib/tenant";
 import { loadSoLinePriceIndex } from "../lib/do-value";
@@ -71,6 +72,7 @@ import {
   buildDoStatusSyncStatement,
 } from "../lib/do-partial-invoice";
 import type { DoDraw } from "../lib/do-partial-invoice";
+import { notDeletedSql } from "../lib/note-edit";
 
 const app = new Hono<Env>();
 
@@ -453,23 +455,10 @@ function genInvoicePaymentId(): string {
 // not monotonic and could collide. Pulls max-existing-suffix+1 in the
 // (year, month) bucket so new invoices always increment.
 // Exported so delivery-orders.ts can share the same source of truth.
+// The prefix stays INV (Settings shows it, does not change it — the
+// customer's reference); the run is the shared nextSelfNumber.
 export async function nextInvoiceNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(
-    now.getMonth() + 1,
-  ).padStart(2, "0")}`;
-  const prefix = `INV-${yymm}-`;
-  const res = await db
-    .prepare(
-      "SELECT invoiceNo FROM invoices WHERE invoiceNo LIKE ? ORDER BY invoiceNo DESC LIMIT 1",
-    )
-    .bind(`${prefix}%`)
-    .first<{ invoiceNo: string }>();
-  if (!res) return `${prefix}001`;
-  const tail = res.invoiceNo.replace(prefix, "");
-  const seq = parseInt(tail, 10);
-  if (!Number.isFinite(seq)) return `${prefix}001`;
-  return `${prefix}${String(seq + 1).padStart(3, "0")}`;
+  return nextSelfNumber(db, "INV");
 }
 
 function genStatusChangeId(): string {
@@ -2127,7 +2116,7 @@ app.get("/:id", async (c) => {
     c.var.DB.prepare(
       `SELECT id, noteNumber, date, reason, totalAmount, status
          FROM credit_notes
-        WHERE invoiceId = ?
+        WHERE invoiceId = ? AND ${notDeletedSql("credit_note", "credit_notes")}
         ORDER BY date DESC`,
     )
       .bind(id)
@@ -2135,7 +2124,7 @@ app.get("/:id", async (c) => {
     c.var.DB.prepare(
       `SELECT id, noteNumber, date, reason, totalAmount, status
          FROM debit_notes
-        WHERE invoiceId = ?
+        WHERE invoiceId = ? AND ${notDeletedSql("debit_note", "debit_notes")}
         ORDER BY date DESC`,
     )
       .bind(id)

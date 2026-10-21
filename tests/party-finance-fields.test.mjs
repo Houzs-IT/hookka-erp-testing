@@ -23,11 +23,14 @@ const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const between = (src, a, b) => { const i = src.indexOf(a); assert.ok(i >= 0, a); const j = src.indexOf(b, i + a.length); return src.slice(i, j < 0 ? undefined : j); };
 
 test("the shared helpers: MYR default, a stored code outside the list is kept", () => {
-  assert.deepEqual([...PARTY_CURRENCIES], ["MYR", "RMB", "USD", "SGD", "EUR"]);
-  assert.deepEqual(partyCurrencyOptions("JPY"), ["MYR", "RMB", "USD", "SGD", "EUR", "JPY"]);
-  assert.deepEqual(partyCurrencyOptions("usd"), ["MYR", "RMB", "USD", "SGD", "EUR"]);
+  // The yuan is CNY (owner 2026-10-20, Currency & FX); RMB reads as CNY.
+  assert.deepEqual([...PARTY_CURRENCIES], ["MYR", "CNY", "USD", "SGD", "EUR"]);
+  assert.deepEqual(partyCurrencyOptions("JPY"), ["MYR", "CNY", "USD", "SGD", "EUR", "JPY"]);
+  assert.deepEqual(partyCurrencyOptions("usd"), ["MYR", "CNY", "USD", "SGD", "EUR"]);
+  assert.deepEqual(partyCurrencyOptions("RMB"), ["MYR", "CNY", "USD", "SGD", "EUR"], "an old RMB is the CNY option, not a sixth");
   assert.equal(normalisePartyCurrency(""), "MYR");
-  assert.equal(normalisePartyCurrency(" rmb "), "RMB");
+  assert.equal(normalisePartyCurrency(" rmb "), "CNY");
+  assert.equal(normalisePartyCurrency(" cny "), "CNY");
   assert.equal(normalisePartyCurrency(undefined), "MYR");
   assert.equal(partyText("  Maybank 1  "), "Maybank 1");
   assert.equal(partyText(null), "");

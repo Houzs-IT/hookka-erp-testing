@@ -1,5 +1,36 @@
 # Bug History
+
+> **New entries do not go in this file (2026-10-21).** Write each new bug as its own file,
+> `docs/bugs/BUG-YYYY-MM-DD-NNN.md`, with the same `## BUG-… — title` heading. This file is
+> the archive up to BUG-2026-10-21-380. Every branch used to insert its entry and a
+> verified-stamp line at the same spot near the top, so every merge to `main` put every
+> other open PR into conflict; a new file never conflicts. Do not add stamp lines here
+> either: `check-docs-freshness.mjs` fails a PR that adds an entry or a stamp to this file.
+
+> **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-355 to -357 (branch `claude/t006-pi-caps-main-096a64`, to main, ported from staging T-006 R5 / R8 / R9; 355 to 359 are assigned to this branch); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-350 (branch `feat/fx-confirm-bank`, to main; 347–349 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-348 (branch `fix/hk0109-cn-convert-customers-updated-at`, to main; number reserved for HK-0109); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-347 gains its PO-side fix (same branch `fix/hk0108-posted-grn-line-pairing`, to main): the correction now moves each line's own PO line.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-347 (branch `fix/hk0108-posted-grn-line-pairing`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-349 gains the return-to-stock undo and partial returns (branch `fix/hk0110-delivery-return-caps`, to main).
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-349 (branch `fix/hk0110-delivery-return-caps`, to main; HK-0110); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
+> **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-345 (branch `feat/einvoice-myinvois-tracking`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: BUG-2026-10-19-344 flipped to ✅ after the #1026 prod check.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-375 (branch `fix/hk0002-import-blank-keeps`, to main; renumbered from 287, then 342, on rebase; both taken on main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-330 (branch `feat/production-overview-default-grid-main`, to `main`, cherry-picked from the staging change; 328 is taken on `main`, 329 on `staging`); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-329 (branch `fix/ocr-tab-myt-time-main`, to `main`, cherry-picked from the staging fix); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: BUG-2026-10-18-325 (#980) and -326 (#982) flipped to 🟢 after their prod checks.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-328 (branch `fix/raw-materials-org-scope`, to main; 327 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-326 (branch `feat/finance-change-log-2`, to main); BUG-2026-10-18-325 stays 🟡 until its prod check.
 > **Last verified: 2026-10-18**: newest entry BUG-2026-10-18-325 (branch `fix/wip-card-no-ratio`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-17**: BUG-2026-10-17-322 and -323 flipped to 🟢 after the #970 prod check; -320 / -321 stay 🟡 (deployed, nothing on production to exercise without a write).
@@ -146,6 +177,282 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-10-20-372 — A retried DO / GRN / PI create, CN convert or return create could make a second document `procurement` `delivery` `idempotency` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). T-006 R10, ported from staging.
+
+**Symptom.** A create whose response was lost (timeout, network drop) and then retried could mint a duplicate DO, GRN, purchase invoice, CN-conversion invoice, purchase return or delivery return.
+
+**Root cause.** The six routes had no `withIdempotency`, and no screen sent an `Idempotency-Key` to them.
+
+**Fix.** Each route carries the `idempotent()` middleware (one changed line). Screens send a key from `useIdempotencyKey(s)` (`src/lib/idempotency-key.ts`), held while the attempt is unresolved (no answer, a 5xx, or the server's in-flight 409) and dropped once the server answers. The PI scan uploads its source PDF once per card, so a retry sends the same body.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs`.
+
+---
+
+## BUG-2026-10-20-371 — The same Idempotency-Key with a different body replayed the first response `idempotency` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). Gap found in staging's R10.
+
+**Symptom.** A second request carrying an already-used key but a different body got the first request's response back, as if it had succeeded.
+
+**Root cause.** `withIdempotency` cached by key only and never compared the request.
+
+**Fix.** The SHA-256 of the raw body is stored with the entry; a mismatch returns 422.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs` ("BUG-371").
+
+---
+
+## BUG-2026-10-20-370 — Idempotency keys were not scoped per org `idempotency` `multi-tenancy` 🟡
+
+🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). Gap found in staging's R10.
+
+**Symptom.** Two orgs sending the same `Idempotency-Key` to the same route would share one cache slot: the second org got the first org's response.
+
+**Root cause.** The KV key was `idem:<resource>:<key>`, with no org.
+
+**Fix.** The key is `idem:<orgId>:<resource>:<key>` (requests with no org share an `_` bucket). Applies to every wrapped route, including the seven wrapped before R10.
+
+**Regression.** `tests/t006-r10-idempotency.test.mjs` ("BUG-370").
+
+---
+
+## BUG-2026-10-20-355 — Two purchase invoices saved at once could bill the same goods-receipt line twice `procurement` `purchase-invoice` 🟡
+
+Ported from staging (T-006 R5); not reproduced on prod, which would take two concurrent writes. Each invoice checks a GRN line's remaining quantity and then raises `grn_items.invoiced_qty`, in separate statements, so two saves in the same moment both pass the check and the line ends up billed past what was received. Nothing in the database refused it.
+
+Fix = migration `0246` (and the PI route's self-apply) adds `chk_grn_items_invoiced_qty` (`invoiced_qty` between 0 and `accepted_qty`) as NOT VALID, so old rows are not checked but every new write is. The PI create, edit and unvoid map that one constraint's error to a 409 that says to refresh; the batch is one transaction, so nothing is written. Count of old rows that break it, read-only: `SELECT COUNT(*) FROM grn_items WHERE invoiced_qty < 0 OR invoiced_qty > accepted_qty;` (UNMEASURED on prod). Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R5" tests) and `tests/convert-chain.test.mjs` (the matcher).
+
+## BUG-2026-10-20-356 — A PO line with no material code could be billed past the PO without limit `procurement` `purchase-invoice` 🟡
+
+Ported from staging (T-006 R8, with staging f740d53c). The PO ceiling on a purchase invoice grouped lines by material code only, so a PO line with a blank code matched nothing and was skipped: billing it, straight off the PO or through its GRN, was never capped. The invoiced-so-far query also joined `grn_items.id` (a number) to `pii.grn_item_id` (text) without a cast.
+
+Fix = invoice lines store `po_item_id` (migration `0247` plus self-apply), filled from the PO picker, the scan flow and the GRN line's own `po_item_id`. The ceiling buckets by PO line first and code second, so a material ordered on two lines is billable for both; a stocked line billed straight off a PO that matches neither key is refused with a 409 naming the PO, while fee lines, hand-added lines and GRN-sourced lines (capped by the receipt) stay allowed; the code is tried before the PO line, so a line re-coded after picking counts under its new code. The join casts `gi.id::text`. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R8" tests).
+
+## BUG-2026-10-20-357 — A purchase invoice line's own PO was not capped when the header named no PO `procurement` `purchase-invoice` 🟡
+
+Ported from staging (T-006 R9). On create, the PO ceiling ran only when the invoice header carried a `purchaseOrderId`, so lines that each named their PO (several POs on one invoice, the header left blank) were never checked against their PO. The edit side was already fixed on main.
+
+Fix = the create guard runs for every line that names a PO, using the line's own `poId` before the header's. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R9: a line's own poId is capped even when the header names no PO and no GRN").
+## BUG-2026-10-21-380 — A commit with 9 or more staged ts/tsx files hung in pre-commit `infrastructure` 🟡
+
+Found 2026-10-21: merges of `main` into open PR branches (about 33 staged files) hung in the pre-commit hook for 20+ minutes with no CPU. Reproduced in a worktree: 8 staged ts files lint in 5 s, 9 hang, whichever files they are.
+
+**Root cause.** lint-staged 16 starts its task with tinyexec. On Windows a bare `node_modules/.bin` name (`eslint`, from `package.json` `lint-staged`) is run as `cmd.exe /d /s /c "eslint ^^^"file^^^" …"` (the `.cmd` shim rule in tinyexec's bundled cross-spawn). cmd.exe on this machine (Windows 11 build 26200) hangs before running anything once that line holds 9 or more `^^^"…^^^"` arguments — even `echo` does; with plain `"…"` quoting it does not. No eslint process ever starts, so the hook waits forever. eslint itself lints the same 40 files in 8 s.
+
+**Fix.** The task is `node node_modules/eslint/bin/eslint.js`: `node` resolves to node.exe, which tinyexec spawns directly with no cmd.exe. Same rules, same files; an unused variable still fails the commit. 40 staged files: hung (killed at 5 min) → 5 s for lint-staged.
+
+**Regression.** `tests/lint-staged-no-cmd-shim.test.mjs` fails if any lint-staged command does not start with `node `. Class: none (tooling).
+
+## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/dashboard-period-keeps-scroll` → `staging`, #1008; to `main` in #1015). Reported 2026-10-19 on staging, right after the Day view (#1003).
+
+**Symptom.** On Operations, clicking a day on the Department Revenue chart (or any period change) scrolled the page to the top, away from the chart.
+
+**Root cause.** Measured on staging: `scrollY` went from 487 to 0 on a day click while the page height stayed 3318, and the only `window.scrollTo(0, 0)` call came from react-router. `DashboardLayout` renders `<ScrollRestoration>`, which scrolls to the top on every navigation without `preventScrollReset`. A period change is a `setSearchParams(..., { replace: true })` in `use-dashboard-url-state.ts` (and `/m`'s `hooks.ts`) with no such flag.
+
+**Fix.** Period and day writes pass `preventScrollReset` (desktop: on the replace writes only, so a tab switch still opens at the top; phone: the period setter).
+
+**Regression.** `tests/dashboard-period-keeps-scroll.test.mjs`.
+
+---
+
+## BUG-2026-10-19-335 — Clicking a dashboard chart drew a box round it and selected the axis labels `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/chart-click-focus-box` → `staging`, #1006; to `main` in #1015). Reported 2026-10-19 on staging after the Day view (#1003) made the Department Revenue chart clickable.
+
+**Symptom.** Clicking a day on the Department Revenue chart, or anywhere on the Revenue chart, drew a dark box round the whole chart. Clicking quickly also highlighted the x-axis dates in blue.
+
+**Root cause.** Measured on staging: recharts 3 renders the chart `<svg class="recharts-surface">` with `tabindex="0"`. After a real mouse click it is `document.activeElement` with `outline: auto` (not `:focus-visible`, so a focus-visible rule would not catch it). The charts on the newer dashboard tabs already hid this with a per-chart wrapper (`select-none [&_*]:outline-none`); the Command Center charts embedded on 2026-10-17 never had it.
+
+**Fix.** `src/index.css`: `.recharts-wrapper { user-select: none }` and `.recharts-wrapper *:focus { outline: none }`, so every chart in the app is covered once. Buttons and inputs outside charts keep their focus rings. Checked by injecting the same rule on staging: the clicked surface reads `outline: none`.
+
+**Regression.** `tests/chart-click-no-focus-box.test.mjs`.
+
+---
+
+## BUG-2026-10-19-343 — Clicking a day on the Department Revenue chart jumped the page down to the worklist `dashboard` `ui` 🟡
+
+🟡 **Fixed on branch** (`fix/tabs-no-page-scroll` → `staging`; cherry-picked to `main` on `fix/dashboard-dept-revenue-to-main`). Reported 2026-10-19 on staging, after BUG-2026-10-19-336 stopped the jump to the top.
+
+**Symptom.** On Operations, clicking a day on a Department Revenue small chart scrolled the page down to the overdue production orders / Due within 3 Days worklist.
+
+**Root cause.** Measured on staging in Chrome: after the click, `scrollIntoView` ran on four buttons in a row (`Overview`, `Still in production · 625`, `All · 625`, `All · 113`). All four are the active pill of a `scrollable` `Tabs` strip. `src/components/ui/tabs.tsx` passed an inline ref callback that called `el.scrollIntoView({ block: "nearest", inline: "center" })`. An inline ref is a new function on every render, so React re-ran it on every re-render of those cards, and `scrollIntoView` scrolls every scrollable ancestor, including the page. The last strip (the worklist filter) won, so the page landed there. It was meant only to centre the active pill inside its own horizontally scrolling row on phones.
+
+**Fix.** The ref now sets `scrollLeft` on the pill row itself, and does nothing when the row does not overflow (desktop). The page's vertical scroll is never touched. One shared component, so all 13 `scrollable` callers are covered. `main` carries the same code.
+
+**Regression.** `tests/tabs-no-page-scroll.test.mjs`.
+
+---
+
+## BUG-2026-10-20-350 — A posted AP Payment's popup said "Nothing posted yet" under Ledger entry `finance` `payments` ✅
+
+Found 2026-10-20 building Confirm bank amount (Currency & FX step 4). The Payment Vouchers popup reads its Ledger entry and bank state from `GET /doc-trail?family=payment_voucher&sourceId=<voucher id>`. An AP Payment writes no ledger legs of its own — at Approve its money posts on the settlement document (a supplier or other-creditor payment) under the voucher's number — so every posted AP Payment showed "Nothing posted yet — a voucher reaches the ledger when it is approved" and no bank state. Measured on prod read-only on one posted AP Payment: 0 legs as a voucher, 2 legs (creditors, bank) as its supplier payment. Nothing wrong was recorded; only the popup missed it.
+
+Fix = an AP voucher's popup asks for `supplier_payment` (or `other_party_payment`) under its number, keyed so it reloads after a bank amount is confirmed. Shipped in #1062; checked on prod read-only the same day — the posted AP Payment it was measured on now shows its two legs and the HLBB bank state. Regression: `tests/fx-confirm-bank.test.mjs`, `tests/pv-popup-form-transfer.test.mjs`, `tests/doc-detail-dblclick.test.mjs`.
+
+## BUG-2026-10-20-349 — One delivered item could be returned twice: no qty cap on a delivery return `delivery-orders` `inventory-cascade` 🟡
+
+Ticket HK-0110 (YH, prod hub, 2026-10-20): on prod DO-2610-071, production order SO-2610-095-01 (qty 1) was returned twice the same day (DR-2610-001, DR-2610-002, both CN_ISSUED); whether stock went back twice or two credit notes were issued is not measured. `createDeliveryReturnRecord` never compared the returned quantity with the DO line or with earlier returns, saved a missing quantity as 1 (`Number(it.quantity ?? 1)`) and let zero / negative through. Return-to-stock is idempotent only per return (refId = this DR), so each of two returns on one item puts stock back. Cancel refused only CLOSED / REDELIVERED / CN_ISSUED, so a RETURNED_TO_STOCK return could be cancelled with nothing reversed (and would free its quantity for another return).
+
+Fix (ported from staging T-006 R7, #604, plus its two known gaps): a line's quantity must be a number > 0 (400); a line must name its production order when the DO's lines do; per production order, earlier non-cancelled returns + this one may not exceed the DO's delivered quantity, summed over every DO line carrying that order (staging kept only the last line's). Race: the write batch (one transaction) takes `pg_advisory_xact_lock` on the DO first and re-checks the cap last, after its own rows are in; over the cap divides by zero and rolls back. Regression: `tests/hk0110-delivery-return-caps.test.mjs`.
+
+Follow-up on the same branch (YH, relayed 2026-10-20). Cancelling a RETURNED_TO_STOCK return now undoes the restock instead of being refused (the return's page shows "Undo return to stock"). `undoFGForDeliveryReturn` (`do-cost-cascade.ts`) replays that return's own `DELIVERY_RETURN` ledger rows: each qty comes back off its batch, with an ADJUSTMENT OUT counter-row at the same unit cost, refType `DELIVERY_RETURN_UNDO`. The returned `fg_units` go back to DELIVERED with stock-event counter-rows, and the return becomes CANCELLED, all in one batch. It is refused (409, nothing written) if it already ran, if a batch no longer holds what the return put on it, or if a unit is no longer RETURNED. In the batch, a per-return lock and two divide-by-zero guards (return still RETURNED_TO_STOCK; no batch below 0) cover a double click or a sale running at the same time. CN_ISSUED (pure return, which also restocks) is still refused. Partial returns: the "New return" picker takes a quantity per line. It defaults to what is still returnable (delivered minus earlier non-cancelled returns, split across lines of the same production order: `src/lib/delivery-return-qty.ts`) and is capped there. The invoice now subtracts only the returned quantity; before, a line dropped out whole on any return (the staging 26bc84c9 change, with the same split). Review fixes: a database failure on create is now 500, not 400. The driver QR "returned at delivery" flow logs a refused return instead of dropping it silently.
+
+## BUG-2026-10-20-348 — CN → invoice convert never worked: it wrote `customers.updated_at`, which does not exist `consignment` `data-integrity` 🟡
+
+HK-0109 (YH, 2026-10-20). Same bug as staging's BUG-2026-09-24-201, whose fix (T-006 R4, `6f242d90`) never reached `main`. Since `7701e1aa` (2026-05-04) `POST /api/consignment-notes/:id/convert-to-invoice` bumps the customer's A/R with `UPDATE customers SET outstandingSen = …, updated_at = ?`, and the CN `/return` A/R refund does the same. `customers` has no `updated_at`: not in `0001_init.sql`, no later migration adds it, and the prod schema snapshot `tests/db-schema.json` does not list it. Both writes sit in one atomic `DB.batch`, so the whole convert (invoice, CN → FULLY_SOLD, items SOLD, units DELIVERED) rolls back, and so does a return on a converted CN. Prod: 22 CNs, none with `convertedInvoiceId` (per the ticket); whether prod's live `customers` has the column is UNMEASURED.
+
+Fix = drop `updated_at` from both `UPDATE customers` in `consignment-notes.ts`, as staging did. Not brought over: staging's release of the CN when its invoice is voided or deleted (owner question on the PR). Regression: `tests/sql-columns-exist.test.mjs` checks every column an `UPDATE customers` sets against the snapshot.
+
+## BUG-2026-10-20-347 — Editing a received GRN could correct the wrong line `procurement` `grn` 🟡
+
+HK-0108, the POSTED-edit sibling of BUG-2026-10-19-340 (HK-0107). Prod impact unmeasured. On a received (POSTED) GRN whose lines' ids and PO-line order differ (e.g. a multi-PO receipt), correcting one line's accepted qty could land on another line, so its stock, cost and PO received qty moved instead. Even on the right line, the PO received qty moved on the header PO's line at the same position, not the line's own PO line, so correcting a PO-2 line moved PO-1.
+
+Cause: GET returns the lines sorted by `poItemIndex` (`rowToGRN`), but `PUT /:id` on a POSTED GRN read the stored lines `ORDER BY id` and paired them with the body lines by position. Fix = pair by line id, else by position in GET order (as the draft path does since HK-0107); the stored lines stay in id order, so `lineIdx` still names the batch `postGRNToStock` wrote. Second cause: `cascadePOReceivedQtyDelta` looked the PO line up by `poItemIndex` in the header PO only, and the over-receipt check on the edit was fed only `poItemIndex`, so both ignored each line's `po_id` / `po_item_id`. Fix = both now carry the line's own PO link through `resolveGrnLineTargets` (header PO by position only for legacy lines, as the post cascade does), and status is recomputed for every PO touched. Regression: `tests/grn-posted-edit-line-pairing.test.mjs`.
+
+## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
+
+Found 2026-10-20 reading the form while adding Duplicate (owner 「duplicate 可以做」); not reproduced on prod, which would take a post. `OtherPartyPaymentForm` (the Receipts page's New Other Debtor Receipt, and the old Other Creditor Payments page) keeps the party picked after a post and clears its bills so they reload — but the bills load in an effect keyed on the party, the side and the payment being edited, none of which change on a post. The cleared list is read as "still loading" (it is tagged with no party), so the form said "Loading bills…" until the party was changed; nothing wrong was recorded.
+
+Fix = a counter bumped after each post is part of the effect's key, so the picked party's bills load again at once. Regression: `tests/finance-duplicate.test.mjs`.
+
+## BUG-2026-10-20-345 — e-Invoice Generate failed for every invoice whose total had cents `finance` `e-invoice` 🟡
+
+Found 2026-10-19 while building the MyInvois tracking (owner 「1 做」). `POST /api/e-invoices` wrote the three amounts as ringgit with decimals (total ÷ 100) into the table's INTEGER columns. postgres.js sends a number untyped, so the server reads it as the column's type and refuses a decimal for an integer; the catch-all answered 400 "Invalid request body", and the page never read the answer — Generate looked as if it worked and nothing was made. (A whole-ringgit total would have saved, in ringgit, against the sen rule.) The phone's e-Invoice list read `totalSen`, which the row does not have, so every amount there showed 0. Prod held no e-invoices when the list was read through the API on 2026-10-19.
+
+Fix (with the tracking): the columns hold sen, taken from the invoice — total, its stored SST, total − SST; the page and the phone read them as sen (`totalIncludingTax`); every refusal is shown (Generate collects each one, the catch logs and names the error). Regression: `tests/einvoice-tracking.test.mjs` (its mock refuses a non-integer amount the way Postgres does).
+
+## BUG-2026-10-19-344 — The Financial Dashboard's equity read 0 every month, so ROE never showed `finance` `dashboard` ✅
+
+Found 2026-10-19 while checking the phone dashboard's new Balance Sheet card (owner 「要」 — the five sections): its Equity line read 0.00 for October, though total assets were well above total liabilities. `GET /api/accounting/dashboard` added up only the accounts whose balance-sheet section is EQUITY. The un-closed current-year earnings sit in the P&L accounts until a year close, and those have no balance-sheet section, so they were left out. On these books the equity side of the Balance Sheet tab is exactly that one line ("Current Year Earnings (unclosed)"), so the dashboard's equity was 0 in every month, and ROE (`net ÷ equity`, only when equity > 0) read "-" on the desktop dashboard all along. The desktop card never printed equity itself, which is why nobody saw it.
+
+Fix = equity is net assets (total assets − total liabilities): the equity accounts plus the un-closed earnings, the sum the Balance Sheet tab's equity side adds up to. Payload version v20 retires the stored copies. Regression: `tests/dashboard-equity-net-assets.test.mjs`. Verified on prod after #1026: each month's equity equals the Balance Sheet tab's equity side (September negative, October positive), ROE shows for the month whose equity is positive, and the phone's Balance Sheet / Ratios cards read the same.
+
+## BUG-2026-10-19-342 — Today's efficiency read 4,000% on the dashboard: working hours only land at punch-out `dashboard` `workforce` ✅
+
+Owner 2026-10-19 (10-19 tile: 4,173%, 166.9 h production over 4 h working). Job-card credit lands all day, but `working_hour_entries` are written only when the worker punches out (`punch-autofill.ts`), so until evening the day's efficiency divided a full morning's output by almost no working time. Same for the Attendance log's "Production time" (0h for everyone) and the Today's problems efficiency tile.
+
+Fix = every punch still open today gets its hours so far in the dashboard feed — clock-in to now, rules engine (lunch off, late ceiled), less approved non-production hours, split by department scans: the same maths as the worker phone's live card (`liveSplitRows`, now shared by `computeLiveDeptDay` and the bulk `liveOpenPunchRows`). "Now" steps every 30 minutes (owner: refresh half-hourly); the dashboard page refetches every 30 minutes. Feed cache key v5. Regression: `tests/live-open-punch.test.mjs`.
+
+## BUG-2026-10-19-341 — Two receipts could each take the full PO qty; returned and cancelled goods stayed billable `procurement` `data-integrity` 🟡
+
+🟡 **On branch** (`fix/hk0096-qty-guards` → `main`). HK-0096, the follow-up to HK-0003 parts 2 and 3.
+
+**Symptom.** Against a 100-unit PO line, two goods receipts of 100 each both posted (each passed "100 <= 110"). A DRAFT receipt could be posted on top of another receipt that had already taken the line. A POSTED receipt's qty could be raised past the line. A purchase invoice could be raised through the API off a DRAFT or CANCELLED receipt. Goods returned off a GRN before billing could still be invoiced in full, and a GRN line could be returned more than once.
+
+**Cause.** The 110% over-receipt check in `grn.ts` POST compared only this document's qty to the ordered qty. `purchase_order_items.receivedQty` already holds what earlier posted receipts drew down, but the check never read it. The DRAFT → POSTED flip and the POSTED qty edit had no ceiling at all. PI create never read the source GRN's status (only the UI hid the button). PI-from-GRN availability was `accepted - invoiced`, so a GRN-sourced return was ignored, and `issuePurchaseReturnDebitNote` refuses a debit note for such a return. So the supplier's credit never landed anywhere. Purchase-return create had no qty cap.
+
+**Fix.** `findOverReceipt` checks (already received + this receipt) <= 110% of ordered, summed per PO line, at GRN create, the DRAFT → POSTED flip and a POSTED qty increase. PI create refuses a source GRN that is not POSTED/CONFIRMED (409). PI create and the PI re-line ceiling subtract `loadGrnReturnedBeforeBilling` (returns with no PI) from what a GRN line may still bill. `checkPurchaseReturnQty` caps cumulative returns per GRN line at accepted and per PI line at its billed qty (409).
+
+**Regression.** `tests/purchasing-convert-flow.test.mjs` — the seven `HK-0096` tests fail without the fix.
+
+---
+
+## BUG-2026-10-19-340 — Editing a GRN or PI dropped each line's own PO link `procurement` `grn` `purchase-invoice` 🟡
+
+🟡 **On branch** (`fix/hk0107-line-po-keep` → `main`), HK-0107. Preventive: prod has 0 DRAFT GRNs and 0 PIs whose line PO differs from the header, so no backfill.
+
+**Symptom.** A GRN or PI covering lines from several POs lost each line's PO on edit: every line fell back to the header PO, so the PO received / invoiced counters and the over-invoicing guard would act on the wrong PO.
+
+**Cause.** GRN `PUT /:id` (DRAFT) deleted and re-inserted `grn_items` without `po_id` / `po_item_id`, so `resolveGrnLineTargets` fell back to header PO + positional `poItemIndex`. PI `PUT /:id` wrote `po_id = body poId ?? header PO`, and the PI editor never sent `poId` (GET did not return it).
+
+**Fix.** GRN DRAFT replace writes `po_id` / `po_item_id` from the body line, else from the old line matched by line id, then by position in GET order; the GRN editor sends line ids. PI PUT keeps the old line's `po_id` (matched by line id, then `grn_item_id`) when the body omits `poId`, before falling back to the header; PI GET returns `poId` per line and the editor sends it back. DRAFT GRN lines still get new ids on edit: the UI only invoices POSTED GRNs, so no PI line points at a DRAFT GRN line.
+
+**Regression.** `tests/grn-pi-edit-keeps-line-po.test.mjs`.
+
+---
+## BUG-2026-10-19-375 — Inventory raw-material batch import wiped min / max stock, notes, item type and supplier on every row it touched; exports wrote an unpriced SKU as RM 0 `inventory` `import-export` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0002-import-blank-keeps` → `main`). IT Hub HK-0002 (reporter Lim Wei Siang, 2026-09-07). Prod occurrences UNMEASURED (no prod access this session).
+
+**Symptom.** HK-0002 says an empty cell in a batch import clears a saved value, and that an exported file cannot be imported back without damage. Re-checked against the code on `main` 2026-10-15: the products import and the "batch import never saves" half were already fixed (both inventory dialogs call `/api/products/bulk-import` and `/api/raw-materials/bulk-import`; `shapeProductBulkRow` drops blanks). What was still true: the raw-material import and the price export.
+
+**Root cause.** `POST /api/raw-materials/bulk-import` built every UPDATE from the sheet row alone: description fell back to the item code, group to "OTHERS", `minStock`/`maxStock` to 0, `notes`/`itemType`/`mainSupplierCode` to NULL, `uomCount` to 1, `stockControl` to 1. The template carries none of the last seven, so every re-import reset them on every row it touched; a blank group cell re-grouped the material to OTHERS and with it its GL accounts (BUG-2026-08-21-160). Separately, the products and inventory FG exports wrote `(basePriceSen ?? 0) / 100`, so a SKU with no price exported as 0 and re-imported as a real RM 0.
+
+**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell. Review fixes: the route's stored-value read and UPDATE/INSERT are scoped by `orgId`; `[CLEAR]` in a notes / main supplier code / item type cell sets NULL (blank still keeps; documented in the RM import template); whitespace-only notes keep; an unrecognised `stockControl` keeps. `products.basePriceSen` is nullable (`0001_init.sql:90`, so the blank export is live; `:425` is `sales_order_items`), while `products.costPriceSen` is NOT NULL DEFAULT 0 (`:89`) so a never-priced cost cannot be told from 0 and now also exports blank (imports back as keep = 0).
+
+**Not done (needs the ticket's PRD, not visible to this session).** Preview and audit row already exist (dialog diff preview; `products` bulk-import audit; RM audit only on re-group). Other modules' exports (customers, suppliers, ...) were not swept.
+
+**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix; now drives the route with two orgs).
+
+## BUG-2026-10-19-334 — Two PO files die on every scan attempt with no error recorded `ocr` `scan-queue` 🟡
+
+🟡 **Fixed on branch** (`fix/scan-no-30s-cap` → `main`). Step logs shipped first in #1005.
+
+**Symptom.** On prod (19 Oct) `HC-PO-2610-245-SO2610-196 HOK.pdf` and `HC-PO-2610-200-SO011254 HOK..pdf` ended every scan as "worker died before completing OCR", across several uploads. Twelve other POs scanned fine the same day, sofas included.
+
+**What was measured.** For the 08:35 UTC attempt the forwarder logged the Claude call as 200 after 32 s, but no `po_scan_samples` row was written and the `scan_queue` row stayed `processing`; no DB query was active or blocked. No attempt ever wrote a `retry n/3` error, so the 150 s fetch timeout never fired. Closing the modal later logged no cancelled `/work` request, so the request most likely ended (killed) soon after the reply arrived. Which step it died in is unmeasured: nothing is logged between the reply and the sample insert.
+
+**Change.** `runPoExtract` logs each step after the AI call (headers, body read, parse, sample insert, corrections replay) with elapsed ms, and `processOneRow` logs the claim, the extract result and the row write. Retry the file with `wrangler pages deployment tail` running to see the last step reached.
+
+**Regression.** `tests/scan-step-logs.test.mjs` pins the markers.
+
+**Root cause (measured with the step logs, 09:09 UTC).** The `/work` request ended `outcome=canceled` at `wall=29996` ms; its last log was `ai call start +0ms`, and the forwarder's Claude call for it took 31.5 s. `src/lib/api-client.ts` patches `window.fetch` to abort every `/api/*` call at `API_TIMEOUT_MS` (30 s), the scan-queue `/work` request included, although the client-driven design (BUG-2026-09-22-178) relies on that request staying open for as long as the extract takes. A PO whose Claude call finishes under 30 s scans fine; these two take about 31 s (seven lines with long fabric and special-instruction text), so the browser cancelled every attempt, Cloudflare cancelled the Worker with it, and the row sat `processing` until the 5-minute sweeper. The same cap also overrode the legacy `/api/scan-po/extract` (90 s) and `/api/scan-supplier/extract` (180 s) callers' own timeouts.
+
+**Fix.** `NO_TIMEOUT_PATH` in `api-client.ts` exempts those three OCR paths from the 30 s abort; a caller's own signal still chains. Every other `/api/*` call keeps the cap. `tests/api-client-ocr-no-timeout.test.mjs` drives the real patch with fake timers.
+
+---
+
+## BUG-2026-10-19-331 — Announcement read receipts counted every worker, not the notice's audience `announcements` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0025-receipts-targeted` → `main`).
+
+**Symptom.** On prod (19 Oct) a notice sent to 1 worker read "Read 1 of 39", with 38 "NOT YET" and "Remind all (39)" (HK-0025).
+
+**Root cause.** `GET /api/announcements/:id/acks` and `POST /:id/remind` built the roster from every ACTIVE worker, ignoring `target_type` / `target_dept_codes` / `target_worker_ids`.
+
+**Fix.** `audienceRoster()` filters the active roster with `workerCanSee`, the rule the worker phone uses; both endpoints call it.
+
+**Regression.** `tests/announcement-acks.test.mjs` ("a targeted notice counts only its audience").
+
+---
+
+## BUG-2026-10-19-330 — Production Overview opened on Cards; the floor wants Grid first `production` `ui` 🟡
+
+🟡 **Fixed on branch** (`feat/production-overview-default-grid-main` → `main`, same change as `feat/production-overview-default-grid` → `staging`, #995). Owner request 2026-10-19.
+
+**Symptom.** The /production Overview tab always opened on the Cards layout. Users had to click Grid every visit to get the matrix they work from.
+
+**Root cause.** Not a fault: `overviewView` in `src/pages/production/index.tsx` started as `"cards"` by design when the Cards view shipped (2026-09-30). The choice is not saved anywhere (no localStorage, no URL param), so every visit starts on the default.
+
+**Fix.** The initial state is now `"grid"`. The toggle still switches to Cards for that visit, and the choice is still not saved, as before.
+
+**Regression.** `tests/production-overview-cards.test.mjs` "the page opens on Grid and does not persist the choice" (it used to pin Cards).
+
+---
+
+## BUG-2026-10-19-329 — The OCR tab showed scan times in UTC and filtered by the UTC date `ocr` `dashboard` 🟡
+
+🟡 **Fixed on branch** (`fix/ocr-tab-myt-time-main` → `main`, same fix as `fix/ocr-tab-myt-time` → `staging`). Found 2026-10-19 from the owner's screenshot of "Recent problem scans".
+
+**Symptom.** On the dashboard's OCR tab the When column read `2026-10-19 02:05` for a scan made at 10:05 Malaysia time, eight hours early. The period filter had the same offset: a scan before 08:00 MYT counted on the previous day, so the first eight hours of a selected range were left out and the last eight hours of the day before it were counted.
+
+**Root cause.** `scan_queue.created_at` and the sample tables' `createdAt` are stored in UTC (`new Date().toISOString()`, or the Postgres `NOW()` default). The page sliced the stored string (`p.createdAt.slice(0, 16)`), which prints the UTC clock. The route compared `substr(created_at::text, 1, 10)`, the UTC date, in `GET /models`, the timing block of `GET /`, and `dateWhere` (whose `from` bound compared the raw string). Same shape as BUG-2026-09-24-190.
+
+**Fix.** The When column uses `formatTimestampMY(..., { withYear: true })` from `src/lib/utils.ts`, so it now reads `19/10/2026 10:05` (house format, was `YYYY-MM-DD HH:MM`). All six date bounds in `src/api/routes/ocr-accuracy.ts` use `mytDateSql` from `src/api/lib/on-time-delivery.ts`.
+
+**Unmeasured.** `mytDateSql` casts the text column to `timestamptz`; a value that does not cast would fail the query. `scan_queue.created_at` is already cast on this table by the timing query. `po_scan_samples.created_at` and `supplier_scan_samples.created_at` were not checked; read-only check per table: `SELECT count(*) FROM po_scan_samples WHERE created_at IS NOT NULL AND created_at !~ '^d{4}-d{2}-d{2}[T ]d{2}:d{2}'` (expect 0).
+
+**Regression.** `tests/ocr-tab-myt.test.mjs`: the formatter turns `02:05Z` into `10:05` and `17:30Z` into the next day, and the route has no UTC `substr(created_at::text` bound left. It fails on the old code.
+
+---
+
+## BUG-2026-10-19-328 — Raw-material by-id routes ignored the caller's org `raw-materials` `auth-rbac` 🟡
+
+🟡 **Fixed on branch** (`fix/raw-materials-org-scope` → `main`). Not a live leak: prod has one org, `hookka`.
+
+**Symptom.** `GET /api/raw-materials/:id`, `GET /:id/used-in`, `PUT /:id` and `DELETE /:id` returned, edited or deleted a raw material of any org given its id, while the list beside them filtered by org.
+
+**Root cause.** The four lookups ran `SELECT ... FROM raw_materials WHERE id = ?` with no org predicate.
+
+**Fix.** `WHERE id = ? AND orgId = ?` bound to `getOrgId(c)`; another org's id is a 404, so the PUT/DELETE writes behind the lookup never run. Bulk import's prefetch is still unscoped (and `item_code` is globally unique); left for when a second org exists.
+
+**Regression.** `tests/raw-materials-tenant-scope.test.mjs`.
 
 ## BUG-2026-10-18-326 — Audit Log "What changed" doubled every account of an edit `finance` 🟢
 
@@ -652,6 +959,18 @@ fixed print layout.
 **Fix.** The BOM page shows a DRAFT badge beside the product in the list and on the BOM header, and a DRAFT BOM gets an Activate button that saves `versionStatus: "ACTIVE"` through the existing `PUT /api/bom/templates/:id`. The bulk-generate default is unchanged (not part of this ask).
 
 **Regression.** `tests/bom-draft-activate.test.mjs` checks the badge, the Activate wiring and that the PUT accepts ACTIVE; fails without the change.
+
+## BUG-2026-10-15-HK0033 — Chat could not approve or reject the Delivery Agent's schedule proposals `assistant` `planning` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0033-pic-decide-proposals-chat`, PR #861). Prod occurrences UNMEASURED for non-super-admins.
+
+**Symptom.** The person in charge asked the chat to approve schedule proposals and it could not.
+
+**Root cause.** `list_schedule_proposals` / `decide_schedule_proposals` were missing from `STAFF_TOOL_NAMES` (`assistant.ts`) and `decide` was gated to SUPER_ADMIN only.
+
+**Fix.** Both tools are on the staff list; list needs `production-orders:read`, decide needs `production-orders:update` (super admin always passes). Approval still only records the plan: no DO or packing list is created (Delivery Agent v1 red line).
+
+**Regression.** `tests/assistant-schedule-decide.test.mjs`.
 
 ## BUG-2026-10-14-286 — Voiding a purchase invoice a second time failed with a server error `procurement` `accounting` 🟡
 

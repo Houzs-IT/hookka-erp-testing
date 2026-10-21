@@ -77,7 +77,9 @@ test("legs left out (pre-opening / opening) never record; other documents never 
 
 test("both P&L readers use the netted rule", () => {
   const src = readFileSync("src/api/routes/accounting.ts", "utf8").replace(/\r\n/g, "\n");
-  assert.match(src, /const recordedSalaryAccts = recordedSalaryAccounts\(salaryLegsIn\(legRes\.results \?\? \[\], resolve, docDate, obDate\), LABOUR_ACCRUAL_ACCT\);/);
+  // Since 2026-10-19 computed once per read request (requestMemo) — the same rule
+  // (tests/ledger-window.test.mjs); a drill (trace) computes it fresh.
+  assert.match(src, /const recordedSalaryAccts = trace\n\s+\? recordedSalaryAccounts\(salaryLegsIn\(legRes\.results \?\? \[\], resolve, docDate, obDate\), LABOUR_ACCRUAL_ACCT\)\n\s+: await requestMemo\("ledger-recorded-salary", async \(\) => recordedSalaryAccounts\(salaryLegsIn\(legRes\.results \?\? \[\], resolve, docDate, obDate\), LABOUR_ACCRUAL_ACCT\)\);/);
   assert.match(src, /const recordedSalaryAcctsCec = recordedSalaryAccounts\(salaryLegsIn\(legRes\.results \?\? \[\], resolve, docDate, obDateCec\), LABOUR_ACCRUAL_ACCT\);/);
   assert.doesNotMatch(src, /salaryEntryYm/, "the old first-leg-only rule is gone");
   // Same exclusions as before: pre-opening and opening legs never record.

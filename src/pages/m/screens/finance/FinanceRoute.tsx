@@ -13,7 +13,7 @@ import { MobileHeader, MobileCard } from "../../components";
 import { M } from "../../theme";
 import { usePermissions } from "@/lib/use-permission";
 import { allowedFinanceMenu, financeRowFor, type FinanceScreen } from "../../finance-menu";
-import { FinanceNoAccess, FinanceNote, FinanceSectionLabel } from "./finance-shell";
+import { FinanceNoAccess, FinanceNote, FinanceSectionLabel, SwipeBack } from "./finance-shell";
 import { AgingScreen } from "./AgingScreen";
 import { OverviewScreen } from "./OverviewScreen";
 import { PlScreen } from "./PlScreen";
@@ -44,7 +44,8 @@ export default function FinanceRoute() {
     if (!row) return <FinanceNoAccess title="Finance" />;
     const render = SCREENS[row.screen];
     if (!render) return <FinanceNoAccess title={row.label} note="Not on the phone yet — open it on the desktop." />;
-    return <>{render()}</>;
+    // A swipe from the left edge backs out to this menu (the iPhone home-screen app).
+    return <SwipeBack onBack={() => navigate("/m/finance")}>{render()}</SwipeBack>;
   }
 
   const menu = allowedFinanceMenu(isNavAllowed)

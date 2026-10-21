@@ -1149,6 +1149,7 @@ import { apiRateLimit } from "./lib/api-rate-limit";
 // (verified 2026-04-26). The import block name is kept for git-history
 // continuity; the routes themselves are fully durable.
 import accounting, { rebuildArCounterSen, rebuildApCounterSen } from "./routes/accounting";
+import fx from "./routes/fx";
 import attendance from "./routes/attendance";
 import workingHourEntries from "./routes/working-hour-entries";
 import payrollHourDeductions from "./routes/payroll-hour-deductions";
@@ -1396,6 +1397,8 @@ app.route("/api/sheets-sync", sheetsSync);
 // 2026-04-26 — the original "writes are in-memory, reset on deploy"
 // claim was stale and actively misleading the next dev.
 app.route("/api/accounting", accounting);
+// Setup › Currency & FX (owner 2026-10-20): monthly rates + FX gain / loss accounts.
+app.route("/api/fx", fx);
 app.route("/api/attendance", attendance);
 app.route("/api/working-hour-entries", workingHourEntries);
 app.route("/api/payroll-hour-deductions", payrollHourDeductions);

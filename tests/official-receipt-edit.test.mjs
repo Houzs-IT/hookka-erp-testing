@@ -73,7 +73,7 @@ test("API: the receipts list reads today's account codes (C32)", () => {
 
 test("UI: the Official Receipt form edits too, through the restate endpoint", () => {
   const form = block(ui, "function OfficialReceiptForm(", "// =============== TAB: RECEIPTS HUB");
-  assert.match(form, /function OfficialReceiptForm\(\{ accounts, editing, onSaved, onCancel \}: \{ accounts: ChartOfAccount\[\]; editing\?: OrRow \| null;/);
+  assert.match(form, /function OfficialReceiptForm\(\{ accounts, editing, onSaved, onCancel, copyFrom = null \}: \{ accounts: ChartOfAccount\[\]; editing\?: OrRow \| null;/);
   assert.match(form, /amount: \(l\.amountSen \/ 100\)\.toFixed\(2\)/, "lines prefilled from the receipt");
   assert.match(form, /fetch\(editing \? `\/api\/accounting\/official-receipts\/\$\{encodeURIComponent\(editing\.id\)\}\/restate` : "\/api\/accounting\/official-receipts"/);
   assert.match(form, /Edit Official Receipt \{editing\.orNo\}/);
@@ -87,5 +87,5 @@ test("UI: every active receipt offers Edit — official receipts included", () =
   assert.match(hub, /else if \(r\.or\) \{ setCustEditing\(null\); setOdEditing\(null\); setOrEditing\(r\.or\); setDoor\("OFFICIAL"\); \}/);
   assert.match(hub, /\.\.\.\(r\.lifecycleState === "ACTIVE" \? \[\{ label: "Edit", action: \(\) => startEdit\(r\) \}\] : \[\]\),/);
   assert.match(hub, /\{r\.lifecycleState === "ACTIVE" && <Button variant="outline" size="sm" onClick=\{\(\) => \{ close\(\); startEdit\(r\); \}\}>Edit<\/Button>\}/);
-  assert.match(hub, /<OfficialReceiptForm key=\{orEditing\?\.id \?\? "new"\} accounts=\{accounts\} editing=\{orEditing\}/);
+  assert.match(hub, /<OfficialReceiptForm key=\{orEditing\?\.id \?\? \(orCopy \? `copy:\$\{orCopy\.id\}` : "new"\)\} accounts=\{accounts\} editing=\{orEditing\}/);
 });

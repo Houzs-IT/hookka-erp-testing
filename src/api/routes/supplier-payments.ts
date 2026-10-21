@@ -43,9 +43,13 @@ import type { TfSource } from "../lib/trade-finance";
 import { clampRepayAlloc, addDays } from "../../lib/trade-finance";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
 import { emitAudit } from "../lib/audit";
+import { getFxSettings } from "../lib/fx-settings";
+import { fxLegAccount, fxLegAccounts } from "../../lib/fx";
 
 const AP_CONTROL = "400-0000"; // Trade Creditors
-const FX_GAIN_ACCT = "530-0000"; // GAIN ON FOREIGN EXCHANGE (realised; debit = loss)
+// Realised FX posts to the accounts Setup › Currency & FX names (owner
+// 2026-10-20; gain and loss both 530-0000 GAIN ON FOREIGN EXCHANGE until he
+// splits them): a gain credits the gain account, a loss debits the loss one.
 
 const app = new Hono<Env>();
 
@@ -76,6 +80,7 @@ app.get("/", async (c) => {
             sp.booked_sen   AS booked_sen,
             pi.pi_no        AS pi_no,
             pi.supplier_invoice_no AS supplier_invoice_no,
+            sp.reference    AS reference,
             dl.state        AS lifecycleState
        FROM supplier_payments sp
        LEFT JOIN purchase_invoices pi ON pi.id = sp.purchase_invoice_id
@@ -100,13 +105,15 @@ app.get("/", async (c) => {
   // it from here too). Newest CR leg that is not the AP control / FX account:
   // a restate re-posts under its own source, a void reverses with a DR leg.
   if (groups.length) {
+    // Never the AP control or an FX account (any it ever posted to).
+    const skip = [AP_CONTROL, ...fxLegAccounts(await getFxSettings(c.var.DB))];
     const legRes = await c.var.DB.prepare(
       `SELECT sourceId, accountCode, postedAt FROM ledger_journal_entries
         WHERE orgId = ? AND hidden = 0 AND creditSen > 0
           AND sourceType LIKE 'supplier_payment%'
-          AND accountCode NOT IN (?, ?)
+          AND accountCode NOT IN (${skip.map(() => "?").join(", ")})
         ORDER BY postedAt DESC`,
-    ).bind(orgId, AP_CONTROL, FX_GAIN_ACCT).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+    ).bind(orgId, ...skip).all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
     const bankByNo = new Map<string, string>();
     for (const l of legRes.results ?? []) {
       const no = String(l.sourceId ?? l.source_id ?? "");
@@ -120,12 +127,17 @@ app.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // POST / — create a supplier payment (partial + multi-PI + FX).
 // ---------------------------------------------------------------------------
-type CreateAllocation = {
+export type CreateAllocation = {
   piId: string;
   payMyrSen?: number;
   foreignSen?: number;
   payRate?: number;
   full?: boolean;
+  // Set only by Confirm bank amount (accounting.ts, Currency & FX step 4) on
+  // a restate: the RM the bank actually debited for the line, and the booked
+  // RM it keeps. The HTTP routes drop them — an edit keeps the posting's maths.
+  bankSen?: number;
+  bookedSen?: number;
 };
 
 type PiRow = {
@@ -616,8 +628,9 @@ export async function buildSupplierPaymentCreate(
   }
 
   // 6. Build the GL legs — ONE entry group keyed by payNo.
-  //    DR 400-0000 (Σ booked) · CR bank (Σ bank) · ±530-0000 (Σ FX).
-  //    fxDiff > 0 → paid less → GAIN → credit 530; < 0 → loss → debit 530.
+  //    DR 400-0000 (Σ booked) · CR bank (Σ bank) · ± the FX account (Σ FX).
+  //    fxDiff > 0 → paid less → GAIN → credit the gain account; < 0 → loss →
+  //    debit the loss account (Setup › Currency & FX; both 530-0000 today).
   const legs: Parameters<typeof buildJournalEntryStatements>[2] = [
     {
       id: `lje-${crypto.randomUUID().slice(0, 12)}`,
@@ -650,7 +663,7 @@ export async function buildSupplierPaymentCreate(
       sourceType: "supplier_payment",
       sourceId: payNo,
       legNo: 3,
-      accountCode: FX_GAIN_ACCT,
+      accountCode: fxLegAccount(totalFx, await getFxSettings(db)),
       debitSen: totalFx < 0 ? -totalFx : 0,
       creditSen: totalFx > 0 ? totalFx : 0,
       description: `Realised FX · ${payNo}`,
@@ -1109,12 +1122,35 @@ async function buildSupplierPaymentLifecycle(
   return { statements, newState: lc.newState };
 }
 
+// The bank / cash account a supplier payment's live legs credit — the ledger
+// is its only record (supplier_payments keeps no bank column): the CR leg that
+// is neither the AP control nor an FX account. null when there is none.
+export async function supplierPaymentBankAccount(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  paymentNo: string,
+): Promise<string | null> {
+  const skip = new Set([AP_CONTROL, ...fxLegAccounts(await getFxSettings(db))]);
+  const legs =
+    (
+      await db
+        .prepare(
+          `SELECT id, accountCode, debitSen, creditSen FROM ledger_journal_entries
+            WHERE sourceId = ? AND orgId = ? AND hidden = 0 AND sourceType LIKE 'supplier_payment%'`,
+        )
+        .bind(paymentNo, orgId)
+        .all<{ id: string; accountCode: string; debitSen: number; creditSen: number }>()
+    ).results ?? [];
+  const bank = legs.find((l) => (Number(l.creditSen) || 0) > 0 && !skip.has(String(l.accountCode)));
+  return bank ? String(bank.accountCode) : null;
+}
+
 // buildSupplierPaymentRestate — in-place EDIT (same voucher number). Rolls the
 // old PI paid amounts back, drops the old sub-ledger rows, re-runs the per-PI FX
 // allocation (same logic as POST) for the new data, and on the GL reverses the
 // live legs + posts the corrected ones (supplier_payment_restate_rev/post:<stamp>),
 // then collapses to the newest post. Throws "PAYMENT_NOT_FOUND" / a validation msg.
-async function buildSupplierPaymentRestate(
+export async function buildSupplierPaymentRestate(
   db: Env["Variables"]["DB"],
   orgId: string,
   paymentNo: string,
@@ -1272,6 +1308,7 @@ async function buildSupplierPaymentRestate(
     const r = computeAlloc({
       outstandingBookedSen, isForeign, fxRate,
       payMyrSen: a.payMyrSen, foreignSen: a.foreignSen, payRate: a.payRate, full: !!a.full,
+      bankSen: a.bankSen, bookedSen: a.bookedSen,
     });
     if (!r.ok) throw new Error(r.error);
     if (r.bookedSen <= 0) continue;
@@ -1337,7 +1374,7 @@ async function buildSupplierPaymentRestate(
     { id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: paymentNo, legNo: 2, accountCode: payFrom, debitSen: 0, creditSen: totalBank, description: `Supplier payment ${paymentNo} (edited)`, actorUserId, orgId },
   ];
   if (totalFx !== 0) {
-    newLegs.push({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: paymentNo, legNo: 3, accountCode: FX_GAIN_ACCT, debitSen: totalFx < 0 ? -totalFx : 0, creditSen: totalFx > 0 ? totalFx : 0, description: `Realised FX · ${paymentNo}`, actorUserId, orgId });
+    newLegs.push({ id: `lje-${crypto.randomUUID().slice(0, 12)}`, sourceType: postSource, sourceId: paymentNo, legNo: 3, accountCode: fxLegAccount(totalFx, await getFxSettings(db)), debitSen: totalFx < 0 ? -totalFx : 0, creditSen: totalFx > 0 ? totalFx : 0, description: `Realised FX · ${paymentNo}`, actorUserId, orgId });
   }
   // The bank side follows the re-posted bank leg, or the edit is refused (C31).
   const carry = await planEditBankCarry(db, cur, newLegs, "payment");
@@ -1662,6 +1699,9 @@ app.post("/:paymentNo/restate", async (c) => {
   const advanceEditSen =
     body.advanceSen === undefined ? undefined : Math.max(0, Math.round(Number(body.advanceSen) || 0));
   if (!Array.isArray(body.allocations)) body.allocations = [];
+  // bankSen / bookedSen belong to Confirm bank amount alone (see
+  // CreateAllocation): an edit from the page keeps the posting's own maths.
+  body.allocations = body.allocations.map(({ piId, payMyrSen, foreignSen, payRate, full }) => ({ piId, payMyrSen, foreignSen, payRate, full }));
   if (body.allocations.length === 0 && !(advanceEditSen !== undefined && advanceEditSen > 0)) {
     return c.json({ success: false, error: "at least one allocation (or an advance amount) is required" }, 400);
   }

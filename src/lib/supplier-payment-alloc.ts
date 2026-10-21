@@ -12,6 +12,11 @@ export type AllocInput = {
   foreignSen?: number;          // foreign PIs: the foreign amount being paid (sen)
   payRate?: number;             // foreign PIs: payment-day rate (MYR per 1 foreign unit)
   full: boolean;                // paying off the entire remaining outstanding
+  // Confirm bank amount (Currency & FX step 4): the RM the bank actually
+  // debited for this line wins over foreign × payRate, and the line keeps the
+  // booked RM it cleared when it was first posted.
+  bankSen?: number;
+  bookedSen?: number;
 };
 export type AllocResult =
   | { ok: true; bookedSen: number; bankSen: number; fxDiffSen: number }
@@ -28,10 +33,10 @@ export function computeAlloc(a: AllocInput): AllocResult {
   if (!(payRate > 0)) return { ok: false, error: "foreign invoice needs payment-day rate" };
   const foreign = Math.round(Number(a.foreignSen) || 0);
   if (foreign <= 0) return { ok: false, error: "amount must be > 0" };
-  const booked = a.full ? a.outstandingBookedSen : Math.round(foreign * a.fxRate);
+  const booked = (a.bookedSen ?? 0) > 0 ? Math.round(Number(a.bookedSen)) : a.full ? a.outstandingBookedSen : Math.round(foreign * a.fxRate);
   if (booked <= 0) return { ok: false, error: "amount must be > 0" };
   if (booked > a.outstandingBookedSen) return { ok: false, error: "amount exceeds outstanding" };
-  const bank = Math.round(foreign * payRate);
+  const bank = (a.bankSen ?? 0) > 0 ? Math.round(Number(a.bankSen)) : Math.round(foreign * payRate);
   return { ok: true, bookedSen: booked, bankSen: bank, fxDiffSen: booked - bank };
 }
 
@@ -121,6 +126,8 @@ export type RawSupplierPaymentRow = {
   bookedSen?: number | null; booked_sen?: number | null;
   piNo?: string | null; pi_no?: string | null;
   supplierInvoiceNo?: string | null; supplier_invoice_no?: string | null;
+  // The TT / cheque no. typed with the payment (every line of a payment carries it).
+  reference?: string | null;
   lifecycleState?: string | null;
 };
 
@@ -145,6 +152,8 @@ export type SupplierPaymentGroup = {
   // Filled by GET /api/supplier-payments from the ledger's CR leg (the table
   // itself keeps no bank column); null when no bank leg exists (contra).
   bankAccount?: string | null;
+  // The payment's reference (TT / cheque no.) — the first line that has one.
+  reference?: string;
 };
 
 /** Groups flat (payment × PI-line) rows into one entry per payment_no. */
@@ -171,6 +180,7 @@ export function groupSupplierPaymentRows(
     }
     const amountSen = Number(row.amountSen ?? row.amount_sen) || 0;
     const bookedSen = readBookedSen(row);
+    if (!g.reference && String(row.reference ?? "").trim()) g.reference = String(row.reference).trim();
     g.totalBankSen += amountSen;
     g.totalBookedSen += bookedSen;
     g.lines.push({

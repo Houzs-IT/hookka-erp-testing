@@ -45,6 +45,7 @@ import {
 } from "./_fabric-cascade";
 
 import { emitAudit } from "../lib/audit";
+import { mergeRmBulkUpdate } from "../lib/rm-bulk-import";
 import {
   accountsForItemGroup,
   accountDiff,
@@ -245,9 +246,9 @@ app.get("/", async (c) => {
 app.get("/:id", async (c) => {
   const id = c.req.param("id");
   const row = await c.var.DB.prepare(
-    "SELECT * FROM raw_materials WHERE id = ?",
+    "SELECT * FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, getOrgId(c))
     .first<RawMaterialRow>();
   if (!row) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -264,9 +265,9 @@ app.get("/:id/used-in", async (c) => {
   const id = c.req.param("id");
   const orgId = getOrgId(c);
   const rm = await c.var.DB.prepare(
-    "SELECT itemCode FROM raw_materials WHERE id = ?",
+    "SELECT itemCode FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, orgId)
     .first<{ itemCode?: string | null }>();
   if (!rm) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -415,9 +416,9 @@ app.put("/:id", async (c) => {
   await ensureDupCodesUnlocked(c.var.DB);
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare(
-    "SELECT * FROM raw_materials WHERE id = ?",
+    "SELECT * FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, getOrgId(c))
     .first<RawMaterialRow>();
   if (!existing) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -647,9 +648,9 @@ app.delete("/:id", async (c) => {
   if (denied) return denied;
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare(
-    "SELECT * FROM raw_materials WHERE id = ?",
+    "SELECT * FROM raw_materials WHERE id = ? AND orgId = ?",
   )
-    .bind(id)
+    .bind(id, getOrgId(c))
     .first<RawMaterialRow>();
   if (!existing) {
     return c.json({ success: false, error: "Raw material not found" }, 404);
@@ -719,19 +720,31 @@ app.post("/bulk-import", async (c) => {
     return c.json({ success: true, data: { created: 0, updated: 0, rejected: [] } });
   }
 
+  const orgId = getOrgId(c);
   // Fetch existing itemCodes in one shot for the match test.
   // itemGroup rides along so a bulk sheet cannot RE-GROUP materials
   // silently — see the audit note on the single-row update.
   // baseUOM / balanceQty ride along for the DEV-20 UOM rules below.
   const existingRes = await c.var.DB.prepare(
-    "SELECT id, itemCode, itemGroup, baseUOM, balanceQty FROM raw_materials",
-  ).all<{
+    "SELECT id, itemCode, itemGroup, baseUOM, balanceQty, description, status, minStock, maxStock, notes, uomCount, itemType, stockControl, mainSupplierCode FROM raw_materials WHERE orgId = ?",
+  ).bind(orgId).all<{
     id: string;
     itemCode: string;
     itemGroup: string | null;
     baseUOM: string | null;
     balanceQty: number | null;
+    description: string | null;
+    status: string | null;
+    minStock: number | null;
+    maxStock: number | null;
+    notes: string | null;
+    uomCount: number | null;
+    itemType: string | null;
+    stockControl: number | null;
+    mainSupplierCode: string | null;
   }>();
+  // HK-0002: stored values a blank cell must not clear (UPDATE only).
+  const idToStored = new Map<string, Parameters<typeof mergeRmBulkUpdate>[0]>();
   const codeToId = new Map<string, string>();
   const codeToGroup = new Map<string, string>();
   const idToCode = new Map<string, string>();
@@ -741,6 +754,18 @@ app.post("/bulk-import", async (c) => {
     codeToGroup.set(r.itemCode, r.itemGroup ?? "");
     idToCode.set(r.id, r.itemCode);
     idToUnit.set(r.id, { baseUOM: r.baseUOM ?? "", balanceQty: r.balanceQty });
+    idToStored.set(r.id, {
+      description: r.description ?? "",
+      itemGroup: r.itemGroup ?? "",
+      status: r.status ?? "ACTIVE",
+      minStock: r.minStock ?? 0,
+      maxStock: r.maxStock ?? 0,
+      notes: r.notes,
+      uomCount: r.uomCount ?? 1,
+      itemType: r.itemType,
+      stockControl: r.stockControl ?? 1,
+      mainSupplierCode: r.mainSupplierCode,
+    });
   }
   // Bulk import never writes balanceQty on UPDATE, so only the unit rules apply.
   const { units } = await loadUomConfig(c.var.DB);
@@ -770,9 +795,11 @@ app.post("/bulk-import", async (c) => {
         continue;
       }
     }
-    const description = (r.description ?? "").trim() || itemCode;
-    const itemGroup = (r.itemGroup ?? "OTHERS").trim() || "OTHERS";
     const existingId = priorCode ? bodyId : codeToId.get(itemCode);
+    const stored = existingId ? idToStored.get(existingId) : undefined;
+    const merged = stored ? mergeRmBulkUpdate(stored, r as Record<string, unknown>) : undefined;
+    const description = merged?.description || (r.description ?? "").trim() || itemCode;
+    const itemGroup = merged?.itemGroup || (r.itemGroup ?? "OTHERS").trim() || "OTHERS";
     const priorGroup = existingId ? codeToGroup.get(priorCode ?? itemCode) ?? "" : "";
 
     // DEV-20 UOM rules — checked BEFORE the rename re-keys the maps, so a
@@ -803,19 +830,19 @@ app.post("/bulk-import", async (c) => {
       codeToId.delete(priorCode);
       codeToGroup.delete(priorCode);
     }
-    const status = statusFromBody(r);
+    const status = merged?.status ?? statusFromBody(r);
     const isActive = status === "ACTIVE" ? 1 : 0;
-    const minStock = Number(r.minStock) || 0;
-    const maxStock = Number(r.maxStock) || 0;
-    const notes = typeof r.notes === "string" ? r.notes : null;
-    const uomCount = r.uomCount !== undefined && Number.isFinite(Number(r.uomCount))
+    const minStock = merged?.minStock ?? (Number(r.minStock) || 0);
+    const maxStock = merged?.maxStock ?? (Number(r.maxStock) || 0);
+    const notes = merged ? merged.notes : typeof r.notes === "string" ? r.notes : null;
+    const uomCount = merged?.uomCount ?? (r.uomCount !== undefined && Number.isFinite(Number(r.uomCount))
       ? Number(r.uomCount)
-      : 1;
-    const itemType = typeof r.itemType === "string" && r.itemType.trim()
+      : 1);
+    const itemType = merged ? merged.itemType : typeof r.itemType === "string" && r.itemType.trim()
       ? r.itemType.trim()
       : null;
-    const stockControl = stockControlFromBody(r);
-    const mainSupplierCode = typeof r.mainSupplierCode === "string" && r.mainSupplierCode.trim()
+    const stockControl = merged?.stockControl ?? stockControlFromBody(r);
+    const mainSupplierCode = merged ? merged.mainSupplierCode : typeof r.mainSupplierCode === "string" && r.mainSupplierCode.trim()
       ? r.mainSupplierCode.trim()
       : null;
 
@@ -831,7 +858,7 @@ app.post("/bulk-import", async (c) => {
              minStock = ?, maxStock = ?, status = ?,
              notes = ?, updated_at = ?,
              uomCount = ?, itemType = ?, stockControl = ?, mainSupplierCode = ?
-           WHERE id = ?`,
+           WHERE id = ? AND orgId = ?`,
         ).bind(
           itemCode,
           description,
@@ -848,6 +875,7 @@ app.post("/bulk-import", async (c) => {
           stockControl,
           mainSupplierCode,
           existingId,
+          orgId,
         ),
       );
       codeToId.set(itemCode, existingId);
@@ -864,8 +892,8 @@ app.post("/bulk-import", async (c) => {
              (id, itemCode, description, baseUOM, itemGroup, isActive,
               balanceQty, minStock, maxStock, status, notes,
               created_at, updated_at,
-              uomCount, itemType, stockControl, mainSupplierCode)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              uomCount, itemType, stockControl, mainSupplierCode, orgId)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id,
           itemCode,
@@ -884,6 +912,7 @@ app.post("/bulk-import", async (c) => {
           itemType,
           stockControl,
           mainSupplierCode,
+          orgId,
         ),
       );
       codeToId.set(itemCode, id);

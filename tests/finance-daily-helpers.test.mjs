@@ -36,10 +36,11 @@ test("voucher status pills: every rung, the advance, the accrual, the void", () 
     { label: "Draft", tone: "neutral", title: "Rejected: wrong account" });
   assert.deepEqual(pvStatus({ approvalState: "PREPARED" }), { label: "Prepared", tone: "info" });
   assert.deepEqual(pvStatus({ approvalState: "CHECKED", pvNo: "HPV-0001" }),
-    { label: "Checked · awaiting approval", tone: "warn", title: "Formal No. HPV-0001 — pending in Cash Position" });
+    { label: "Checked · awaiting approval", tone: "warn", title: "Formal No. HPV-0001 — pending in Daily Cash Position" });
   const adv = pvStatus({ approvalState: "APPROVED", advanceOpenSen: 12000 });
   assert.equal(adv.tone, "warn");
   assert.match(adv.label, /^Approved · advance open RM\s120\.00$/, "the app's RM format (a no-break space)");
+  assert.equal(adv.group, "Approved · advance open", "grouped by its kind, not its amount");
   assert.deepEqual(pvStatus({ approvalState: "APPROVED", accrued: 1, settledAt: null }),
     { label: "Approved · accrued, unpaid", tone: "err" });
   assert.deepEqual(pvStatus({ approvalState: "APPROVED", accrued: 1, settledAt: "2026-10-01" }),
@@ -53,6 +54,7 @@ test("a payment from another door: posted on save, advance open, or its void sta
   const adv = foreignPayStatus("ACTIVE", 5000, "x");
   assert.equal(adv.tone, "warn");
   assert.match(adv.label, /^Approved · advance open RM\s50\.00$/);
+  assert.equal(adv.group, "Approved · advance open");
   assert.deepEqual(foreignPayStatus("ACTIVE", 0, "Supplier Payment — posts on save"),
     { label: "Approved · paid", tone: "ok", title: "Posted on save — Supplier Payment — posts on save" });
 });

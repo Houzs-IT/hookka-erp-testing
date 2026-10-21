@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
-import { cachedFetchJson, useCachedJson } from "@/lib/cached-fetch";
+import { cachedFetchJson, invalidateCachePrefix, useCachedJson } from "@/lib/cached-fetch";
+import { useInterval } from "@/lib/scheduler";
 import { PeriodPicker } from "./dashboard-shared";
 import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, widgetPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
@@ -94,10 +95,17 @@ export default function DashboardPrototypePage() {
   // The page reads the feed only for `meta.months` — the months that actually
   // exist in the book, which bound the stepper. Every tab below calls the same
   // cached URL, so this costs no extra request.
-  const { data } = useCachedJson<{
+  const { data, refresh } = useCachedJson<{
     meta?: { months?: string[]; monthsWithSales?: string[] };
     sales?: { byDay?: { date: string }[] };
   }>("/api/dashboard/prototype");
+  // Live figures (today's hours worked so far, efficiency, attendance) step
+  // every 30 minutes on the server (owner 2026-10-19: "刷新半小时"); a page
+  // left open refetches on the same beat instead of going stale.
+  useInterval(() => {
+    invalidateCachePrefix("/api/dashboard/");
+    refresh();
+  }, 30 * 60 * 1000);
 
   // Driven by the months that actually HAVE SALES, not `meta.months` — that is
   // a union with attendance, and this org has three months holding one
@@ -128,15 +136,17 @@ export default function DashboardPrototypePage() {
   // DERIVED, not synced with an effect (a setState-in-effect here caused a
   // cascading re-render on every load). A bare URL opens on TODAY - see
   // resolvePeriod - except Overview and Sales, which open on the month.
-  // Only Employees has a Day view (owner 2026-10-17: Sales / Operations /
-  // Service figures are the same whichever day you pick) — elsewhere a picked
-  // day or a non-quarter range falls back to its month.
-  const dayTab = tab === "people";
+  // Day view: Employees, and Operations since 2026-10-19 (Department Revenue
+  // and Output & Cost show the picked day). Sales / Service / Finance keep the
+  // owner's 2026-10-17 rule (their figures are the same whichever day you
+  // pick): a picked day falls back to its month. Outside Employees a
+  // non-quarter range falls back to its month too.
+  const dayTab = tab === "people" || tab === "operations";
   const effectivePeriod = useMemo<Period>(() => {
     const p = resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab));
-    if (dayTab) return p;
+    if (tab === "people") return p;
     if (p.mode === "range" && !quarterOfPeriod(p)) return { mode: "monthly", month: p.month };
-    return p.day ? { ...p, day: undefined } : p;
+    return p.day && !dayTab ? { ...p, day: undefined } : p;
   }, [period, months, tab, dayTab]);
 
   // Start the Command Center reads with the feed, not after it (owner
