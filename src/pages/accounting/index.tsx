@@ -99,7 +99,8 @@ import { AuditLogTab } from "./tabs/AuditLogTab";
 import { FinancialYearsCard } from "./tabs/FinancialYearsCard";
 import { useFiscalYears } from "./use-fiscal-years";
 import { fyKey, fyqKey, fyQuarters } from "@/lib/fiscal-year";
-import { TradeFinanceBlock } from "./tabs/TradeFinanceBlock";
+import { TfDrawDetail, TfRepaidRows, type TfDrawRow, type TfSourceRow } from "./tabs/TradeFinanceBlock";
+import { tfLineSummary } from "@/lib/trade-finance";
 import { TradeFinanceLinesCard } from "./tabs/TradeFinanceLinesCard";
 import { FxTab } from "./tabs/FxTab";
 import { CoaEditModal, CoaListView } from "./tabs/CoaListView";
@@ -4448,7 +4449,7 @@ function agingGroupsFor(show: AgingShow, all: AgingGroup[]): AgingGroup[] {
 const AGING_BUCKET_TONE = ["", "", "text-[#9C6F1E]", "text-[#B8601A] font-medium", "text-[#9A3A2D] font-medium"];
 
 function AgingListTable({
-  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue,
+  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue, renderDetail, groupExtra,
 }: {
   partyHeader: string;
   groups: AgingGroup[];
@@ -4458,6 +4459,11 @@ function AgingListTable({
   typeLabel: Record<string, string>;
   /** Renders the Next Due cell (Creditor Aging); omitted = no column. */
   nextDue?: (r: AgingListRow) => ReactNode;
+  /** An opened row's own detail instead of its documents (a trade-finance
+      drawdown's figures, owner 2026-10-21); null = the documents. */
+  renderDetail?: (r: AgingListRow) => ReactNode | null;
+  /** Rows after a group's own (the repaid drawdowns' line). */
+  groupExtra?: (g: AgingGroup, cols: number) => ReactNode;
 }) {
   const rows = groups.flatMap((g) => g.rows);
   const cols = 9 + (nextDue ? 1 : 0);
@@ -4467,6 +4473,7 @@ function AgingListTable({
   const sumOf = (list: AgingListRow[], k: (typeof AGING_KEYS)[number]) => list.reduce((s, r) => s + r[k], 0);
   const renderRow = (r: AgingListRow) => {
     const isOpen = open.has(r.key);
+    const detail = isOpen && renderDetail ? renderDetail(r) : null;
     return (
       <Fragment key={r.key}>
         <tr data-fin-nolift={isOpen ? "" : undefined} className="border-b border-[#F0ECE9] hover:bg-[#F0ECE9]/30">
@@ -4482,7 +4489,12 @@ function AgingListTable({
           {AGING_KEYS.map((k, i) => money(r[k], i))}
           <td className="py-3 px-4 text-right font-semibold text-[#1F1D1B]">{formatCurrency(agingListTotal(r))}</td>
         </tr>
-        {isOpen && r.docs.map((d, i) => (
+        {detail != null && (
+          <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6]">
+            <td colSpan={cols} className="py-2.5 px-4 pl-10">{detail}</td>
+          </tr>
+        )}
+        {isOpen && detail == null && r.docs.map((d, i) => (
           <tr key={`d-${i}`} data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
             <td colSpan={nextDue ? 4 : 3} className="py-1.5 px-4 pl-10 text-[#6B7280]"><span className="tabular-nums text-[#9CA3AF]">{d.date}</span><span className="ml-4">{d.no}</span></td>
             {[0, 1, 2, 3, 4].map((b) => (
@@ -4493,7 +4505,7 @@ function AgingListTable({
             <td className={`py-1.5 px-4 text-right tabular-nums font-medium ${d.amountSen < 0 ? "text-[#9A3A2D]" : "text-[#4B5563]"}`}>{formatCurrency(d.amountSen)}</td>
           </tr>
         ))}
-        {isOpen && !r.docs.length && (
+        {isOpen && detail == null && !r.docs.length && (
           <tr data-fin-nolift="" className="border-b border-[#F7F4F1] bg-[#FAF8F6] text-xs">
             <td colSpan={cols} className="py-1.5 px-4 pl-10 text-[#9CA3AF] italic">No document detail (refresh after the next aging rebuild)</td>
           </tr>
@@ -4533,9 +4545,10 @@ function AgingListTable({
               <td colSpan={cols} className="py-2 px-4 text-[11px] font-semibold uppercase tracking-wide text-[#6B5C32]">{g.label} · {g.rows.length}</td>
             </tr>
             {g.rows.map(renderRow)}
+            {groupExtra?.(g, cols)}
             {subtotal(g)}
           </Fragment>
-        )) : rows.map(renderRow)}
+        )) : <>{rows.map(renderRow)}{groups.map((g) => <Fragment key={`x-${g.key}`}>{groupExtra?.(g, cols)}</Fragment>)}</>}
       </tbody>
       <tfoot>
         <tr className="bg-[#F0ECE9]/50 font-semibold">
@@ -4547,13 +4560,9 @@ function AgingListTable({
     </table>
   );
 }
-// The slice of GET /api/accounting/trade-finance Creditor Aging reads.
-type TfAgingSource = {
-  lenderName: string;
-  /** The TF account the draws sit on (the Code column). */
-  accountCode?: string;
-  draws: { drawSourceId: string; drawDate: string; dueDate: string; interestSen: number; outstandingSen: number; paidSupplier: string }[];
-};
+// What Creditor Aging reads of GET /api/accounting/trade-finance: each line
+// with its drawdowns (TradeFinanceBlock.tsx).
+type TfAgingSource = TfSourceRow;
 const AGING_TYPE_TAG: Record<string, string> = {
   trade: "bg-[#EEF1F4] text-[#4B5563]",
   other: "bg-[#F4EEE3] text-[#6B5C32]",
@@ -5522,6 +5531,10 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
   // 2026-08-11 / 2026-10-16). A draw ages by its draw date like any bill.
   const [ocState, setOcState] = useState<{ key: string; bills: OtherPartyAgingBill[] } | null>(null);
   const [tfState, setTfState] = useState<{ key: string; sources: TfAgingSource[] } | null>(null);
+  // A drawdown's due date / interest / bank charges saved from its row → read
+  // the lines again (owner 2026-10-21: the block's figures now live here).
+  const [tfRev, setTfRev] = useState(0);
+  const reloadTf = () => setTfRev((n) => n + 1);
   useEffect(() => {
     let stale = false;
     const k = at.isPast ? at.asOf : "";
@@ -5535,7 +5548,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       .then((j) => { if (!stale) setTfState({ key: k, sources: j?.success ? (j.data?.sources ?? []) : [] }); })
       .catch(() => { if (!stale) setTfState({ key: k, sources: [] }); });
     return () => { stale = true; };
-  }, [at.isPast, at.asOf]);
+  }, [at.isPast, at.asOf, tfRev]);
   const ocBills = ocState?.key === (at.isPast ? at.asOf : "") ? ocState.bills : null;
   const tfSources = tfState?.key === (at.isPast ? at.asOf : "") ? tfState.sources : null;
   // Ages, Next Due and Overdue are measured at the as-at date.
@@ -5555,7 +5568,8 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       const mo = monthBucket(d.drawDate, today);
       const row: AgingListRow = {
         key: `f:${d.drawSourceId}`, kind: "tf", name: src.lenderName, code: src.accountCode,
-        sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`, d.interestSen ? `incl. interest ${formatCurrency(d.interestSen)}` : ""].filter(Boolean).join(" · "),
+        // The interest and charges are in the row's detail (›), not this line.
+        sub: [d.drawSourceId, d.paidSupplier, `drawn ${formatDateDMY(d.drawDate)}`].filter(Boolean).join(" · "),
         currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 0, over90Sen: 0,
         docs: [{ no: d.drawSourceId, date: d.drawDate, mo, amountSen: d.outstandingSen, due: d.dueDate }],
         nextDue: d.dueDate,
@@ -5564,6 +5578,21 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
       return row;
     }))
     .sort((a, b) => (a.nextDue ?? "").localeCompare(b.nextDue ?? ""));
+  const tfDrawByKey = new Map<string, TfDrawRow>((tfSources ?? []).flatMap((src) => src.draws.map((d) => [`f:${d.drawSourceId}`, d] as const)));
+  const tfRepaid = (tfSources ?? []).flatMap((src) => src.draws.filter((d) => d.outstandingSen <= 0)).sort((a, b) => b.drawDate.localeCompare(a.drawDate));
+  // One card per trade-finance line (owner 2026-10-21): what is available
+  // under its limit, the limit, what is used and the drawdowns = account check.
+  const tfCards = (tfSources ?? []).map((src) => {
+    const t = tfLineSummary(src);
+    const check = (
+      <span data-tf-check={t.ties ? "ok" : "off"} className={t.ties ? "" : "font-semibold text-[#9A3A2D]"}>
+        {t.ties ? "drawdowns = account balance" : `drawdowns ${formatCurrency(t.drawsSen)} ≠ account ${formatCurrency(t.usedSen)}`}
+      </span>
+    );
+    return t.availableSen == null
+      ? { label: `Trade finance · ${src.lenderName}`, value: formatCurrency(t.usedSen), tone: (t.ties ? "info" : "err") as "info" | "err", note: <>used · no limit set (Settings › Trade Finance Lines) · {check}</> }
+      : { label: `Trade finance · ${src.lenderName}`, value: formatCurrency(t.availableSen), tone: (t.over || !t.ties ? "err" : "ok") as "ok" | "err", note: <span data-tf-limit="">available · limit {formatCurrency(t.limitSen ?? 0)} · used {formatCurrency(t.usedSen)} ({t.pct}%) · {check}</span> };
+  });
   const groups = agingGroupsFor(show, [
     { key: "tf", label: "Trade finance", rows: tfList },
     { key: "trade", label: "Trade suppliers", rows: supplierList },
@@ -5646,6 +5675,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           },
           { label: "Overdue", value: pastLoading ? "—" : formatCurrency(overdue), tone: "err" as const, note: `past the due date at ${formatDateDMY(at.asOf)}` },
           { label: "Total outstanding", value: pastLoading ? "—" : formatCurrency(totalOutstanding), tone: "info" as const, note: `as at ${formatDateDMY(at.asOf)}` },
+          ...tfCards,
         ] : [
           ...(ctl ? [
             { label: `Creditor control · ${ctl.controls.filter((x) => x.code !== "405-0000").map((x) => x.code).join(", ")}`, value: formatCurrency(ctl.tradeControlSen), tone: "err" as const, note: "per ledger" },
@@ -5668,6 +5698,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           },
           { label: "Overdue", value: formatCurrency(overdue), tone: "err" as const, note: "past the due date" },
           { label: "Total outstanding", value: formatCurrency(totalOutstanding), tone: "info" as const, note: show === "all" ? "trade finance + suppliers + other creditors" : show === "tf" ? "trade finance" : show === "trade" ? "trade suppliers" : "other creditors" },
+          ...tfCards,
         ]}
       />
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -5686,7 +5717,7 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
           />
         </div>
       </div>
-      <p className="text-[12px] text-[#9CA3AF] -mt-2">Read-only. Pay a bill or repay trade finance with an AP Payment on <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>. Next Due is amber within 7 days and red once overdue.</p>
+      <p className="text-[12px] text-[#9CA3AF] -mt-2">Pay a bill or repay trade finance with an AP Payment on <Link to="/accounting?tab=payments" className="underline decoration-dotted text-[#6B5C32]">Payment Vouchers</Link>. Open a trade-finance row (›) to change its due date, interest or bank charges. Next Due is amber within 7 days and red once overdue.</p>
 
       <Card>
         <CardContent className="p-0">
@@ -5699,11 +5730,15 @@ function APTab({ apData }: { apData: APAgingEntry[]; onRefresh: () => void }) {
               onToggle={toggleAging}
               typeLabel={{ tf: "Trade Finance", trade: "Trade", other: "Other creditor" }}
               nextDue={nextDueCell}
+              renderDetail={(r) => {
+                const d = r.kind === "tf" ? tfDrawByKey.get(r.key) : undefined;
+                return d ? <TfDrawDetail d={d} editable={!at.isPast} onSaved={reloadTf} /> : null;
+              }}
+              groupExtra={(g, cols) => (g.key === "tf" ? <TfRepaidRows draws={tfRepaid} colSpan={cols} editable={!at.isPast} onSaved={reloadTf} /> : null)}
             />
           </div>
         </CardContent>
       </Card>
-      <TradeFinanceBlock />
     </div>
   );
 }

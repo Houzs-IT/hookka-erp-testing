@@ -41,7 +41,7 @@ export const FINANCE_PAGES: Record<string, FinancePageInfo> = {
   assets: { title: "Fixed Assets", explain: "The asset register and its monthly depreciation." },
   contra: { title: "Contra", explain: "A customer who is also a supplier: offset what we owe them against what they owe us, through 490-0000. Both sides settle in one entry." },
   ar: { title: "Debtor Aging", explain: "What customers owe, by how long it has been outstanding." },
-  ap: { title: "Creditor Aging", explain: "What we owe suppliers, by how long it has been outstanding. Trade Finance is its own block; repay it with an AP Payment on Payment Vouchers." },
+  ap: { title: "Creditor Aging", explain: "What we owe suppliers, other creditors and the trade-finance lender, by how long it has been outstanding. Each trade-finance line has a card with its limit, what is used and what is still available; open a drawdown's row (›) to change its due date, interest or bank charges. Repay with an AP Payment on Payment Vouchers." },
   debtors: { title: "Debtor List", explain: "Everyone who owes us money — trade customers and other debtors — in one place. Double-click a row to edit it; set it inactive instead of deleting." },
   creditors: { title: "Creditor List", explain: "Everyone we owe — suppliers and other creditors — in one place. Double-click a row to edit it; set it inactive instead of deleting." },
   apinvoices: { title: "AP Invoices", explain: "Everything owed on paper in one list: purchase invoices and other creditor bills. A supplier's statement is at the foot." },
