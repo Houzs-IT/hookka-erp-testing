@@ -876,10 +876,11 @@ function grnStatusGuard(db: D1Database, grnId: string, expected: string): D1Prep
 // and any receipt that committed before they started. Two receipts filling
 // DIFFERENT lines of one PO at the same moment can each miss the other's
 // line and leave it PARTIAL_RECEIVED (the old JS recompute had the same hole;
-// a per-PO lock would close it). `onEdit` mirrors what a POSTED-line
+// a per-PO lock would close it). `qtyMayHaveDropped` mirrors what a POSTED-line
 // edit always did: only move a PO already in a receiving status, and allow
-// stepping back to CONFIRMED when nothing is received any more. The post path
-// (onEdit false) is recomputePoStatusFromReceipts' rule: RECEIVED (and clear
+// stepping back to CONFIRMED when nothing is received any more; purchase
+// returns use it too (recomputePoStatusFromReceipts). The post path
+// (qtyMayHaveDropped false): RECEIVED (and clear
 // goods-in-transit) when every line is full, else PARTIAL_RECEIVED when any is.
 const PO_HAS_LINES = "EXISTS (SELECT 1 FROM purchase_order_items WHERE purchaseOrderId = ?)";
 const PO_HAS_SHORT_LINE =
@@ -890,11 +891,11 @@ const PO_HAS_RECEIPT =
 function poStatusStatements(
   db: D1Database,
   poId: string,
-  onEdit = false,
+  qtyMayHaveDropped = false,
 ): D1PreparedStatement[] {
   const nowIso = new Date().toISOString();
   const today = nowIso.split("T")[0];
-  if (!onEdit) {
+  if (!qtyMayHaveDropped) {
     return [
       db
         .prepare(
@@ -1107,55 +1108,14 @@ export async function findOverReceipt(
 }
 
 /**
- * Recompute status for ONE purchase order from its current receivedQty totals.
- * Split out because a multi-PO receipt has to refresh every PO it touched, not
- * just the GRN's header PO — otherwise the second PO stays CONFIRMED forever
- * while its goods are physically in the building.
+ * Recompute ONE purchase order's status from its current receivedQty totals.
+ * Purchase returns (T-006 R6) call it after lowering received qty, the same
+ * case as a POSTED-GRN edit that lowers qty, so it uses that rule: only a PO
+ * in a receiving status moves, and it steps back to CONFIRMED when nothing is
+ * received any more. A CLOSED, CANCELLED or DRAFT PO is never touched.
  */
 export async function recomputePoStatusFromReceipts(db: D1Database, poId: string): Promise<void> {
-  const afterRes = await db
-    .prepare(
-      "SELECT quantity, receivedQty FROM purchase_order_items WHERE purchaseOrderId = ?",
-    )
-    .bind(poId)
-    .all<{ quantity: number; receivedQty: number }>();
-  const after = afterRes.results ?? [];
-  if (after.length === 0) return;
-  const allFull = after.every(
-    (r) => (Number(r.receivedQty) || 0) >= (Number(r.quantity) || 0),
-  );
-  const anyPartial = after.some((r) => (Number(r.receivedQty) || 0) > 0);
-  const nowIso = new Date().toISOString();
-  if (allFull) {
-    await db
-      .prepare(
-        `UPDATE purchase_orders SET status = 'RECEIVED', receivedDate = ?,
-           updated_at = ? WHERE id = ? AND status NOT IN ('CLOSED','CANCELLED')`,
-      )
-      .bind(nowIso.split("T")[0], nowIso, poId)
-      .run();
-    await db.prepare("DELETE FROM goods_in_transit WHERE poId = ?").bind(poId).run();
-  } else if (anyPartial) {
-    await db
-      .prepare(
-        // A purchase return (T-006 R6) recomputes too: never reopen a
-        // short-closed or cancelled PO.
-        "UPDATE purchase_orders SET status = 'PARTIAL_RECEIVED', updated_at = ? WHERE id = ? AND status NOT IN ('CLOSED','CANCELLED')",
-      )
-      .bind(nowIso, poId)
-      .run();
-  } else {
-    // Nothing received any more (a purchase return gave it all back, T-006
-    // R6) — back to CONFIRMED, as restorePOReceivedQtyForGRN does. Only from
-    // a received status; never resurrect a CANCELLED/CLOSED/DRAFT PO.
-    await db
-      .prepare(
-        `UPDATE purchase_orders SET status = 'CONFIRMED', receivedDate = NULL, updated_at = ?
-           WHERE id = ? AND status IN ('RECEIVED','PARTIAL_RECEIVED')`,
-      )
-      .bind(nowIso, poId)
-      .run();
-  }
+  await db.batch(poStatusStatements(db, poId, true));
 }
 
 /**

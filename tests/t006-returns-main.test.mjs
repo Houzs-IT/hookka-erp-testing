@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { execPoReceiptSql } from "./_po-receipt-mock.mjs";
 
 const load = (p) => import(pathToFileURL(resolve(process.cwd(), p)).href);
 const { createPurchaseReturn, purchaseReturnRestoreStatements } = await load("src/api/lib/purchase-return-create.ts");
@@ -60,7 +61,6 @@ function poDb(b) {
   };
   const exec = (q, a) => {
     b.statements.push(q);
-    let m;
     if (/^INSERT INTO purchase_returns /.test(q)) b.returns.push({ id: a[0], return_no: a[1], status: "OPEN" });
     else if (/^INSERT INTO purchase_return_items /.test(q)) b.returnItems.push({ purchase_return_id: a[1], grn_item_id: a[6], quantity: a[7] });
     else if (/^UPDATE purchase_order_items SET receivedQty = GREATEST\(0, receivedQty - \?\) WHERE id = \?$/.test(q)) {
@@ -71,13 +71,8 @@ function poDb(b) {
       b.returnItems = b.returnItems.filter((r) => r.purchase_return_id !== a[0]);
     } else if (/^DELETE FROM purchase_returns WHERE id = \?$/.test(q)) {
       b.returns = b.returns.filter((r) => r.id !== a[0]);
-    } else if ((m = /^UPDATE purchase_orders SET status = '(\w+)'/.exec(q))) {
-      const po = b.pos.find((x) => x.id === a[a.length - 1]);
-      const onlyReceived = /status IN \('RECEIVED','PARTIAL_RECEIVED'\)/.test(q);
-      const notClosed = /status NOT IN \('CLOSED','CANCELLED'\)/.test(q);
-      if (onlyReceived && !["RECEIVED", "PARTIAL_RECEIVED"].includes(po.status)) return { success: true, meta: { changes: 0 } };
-      if (notClosed && ["CLOSED", "CANCELLED"].includes(po.status)) return { success: true, meta: { changes: 0 } };
-      po.status = m[1];
+    } else if (execPoReceiptSql(q, a, { purchase_order_items: b.poItems, purchase_orders: b.pos, goods_in_transit: [] })) {
+      // PO status: poStatusStatements' EXISTS-conditioned updates.
     } else if (!/^(ALTER|CREATE|DELETE FROM goods_in_transit)/.test(q)) throw new Error("unexpected write: " + q);
     return { success: true, meta: { changes: 1 } };
   };
@@ -136,18 +131,18 @@ test("R6: returning everything puts the PO back to CONFIRMED", async () => {
   assert.equal(b.pos[0].status, "CONFIRMED");
 });
 
-test("R6: a return on a short-closed PO gives qty back but never reopens it", async () => {
+for (const status of ["CLOSED", "CANCELLED", "DRAFT"]) test(`R6: a return on a ${status} PO gives qty back but never changes its status`, async () => {
   const b = poBook();
   const db = poDb(b);
-  b.pos[0].status = "CLOSED";
+  b.pos[0].status = status;
   const created = await returnTwenty(db);
   for (const poId of created.poIds) await recomputePoStatusFromReceipts(db, poId);
   assert.equal(b.poItems[0].receivedQty, 80);
-  assert.equal(b.pos[0].status, "CLOSED");
+  assert.equal(b.pos[0].status, status);
   const restore = await purchaseReturnRestoreStatements(db, created.id);
   await db.batch(restore.statements);
   for (const poId of restore.poIds) await recomputePoStatusFromReceipts(db, poId);
-  assert.equal(b.pos[0].status, "CLOSED");
+  assert.equal(b.pos[0].status, status);
 });
 
 test("R6: a return off an un-posted GRN is refused and writes nothing", async () => {
