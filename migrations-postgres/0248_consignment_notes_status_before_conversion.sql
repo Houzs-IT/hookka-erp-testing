@@ -1,4 +1,4 @@
--- 0244_consignment_notes_status_before_conversion.sql
+-- 0248_consignment_notes_status_before_conversion.sql
 --
 -- T-006 R4 (ported from staging's 0234, renumbered: 0233/0234 collide on main).
 -- Voiding or deleting a CN-sourced invoice hands the consignment note back to
