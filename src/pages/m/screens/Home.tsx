@@ -1543,9 +1543,13 @@ export default function MobileHome() {
       <div style={{ padding: "0 18px" }}>
         {/* One-tap install offer (hidden once installed or dismissed). */}
         <InstallAppCard dismissible />
-        {/* Phone only: Operations | Performance switch (owner 2026-10-13). */}
+        {/* Phone only: Operations | Performance switch (owner 2026-10-13).
+            Handoff style (owner 2026-10-21): wrapper 6px 18px 0 — this
+            container already pads the 18px sides. */}
         {isPhone && (
-          <SegmentedSwitch options={HOME_VIEWS} value={view} onChange={setView} ariaLabel="Home view" />
+          <div style={{ paddingTop: 6 }}>
+            <SegmentedSwitch options={HOME_VIEWS} value={view} onChange={setView} ariaLabel="Home view" variant="prominent" />
+          </div>
         )}
         {/* Phone (owner 2026-10-15, decision 2): the view's KPI hero comes
             BEFORE Quick Actions. Same values, notes and loading states as the
