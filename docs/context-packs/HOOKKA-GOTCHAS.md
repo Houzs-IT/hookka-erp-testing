@@ -295,8 +295,8 @@ costing model. See `docs/BUG-CLASSES.md`.
 - **Money / inventory / payroll / cascade changes:** investigate → propose with
   options → confirm before coding; when fixing one case, sweep the whole dataset
   for the same pattern. Schema/cascade rewrites go on a dedicated branch.
-- **`docs/BUG-HISTORY.md` is the living bug log** — append every diagnosed+fixed
-  bug (newest first). It is the source of truth, not GitHub issues.
+- **`docs/bugs/` is the living bug log** (one file per bug since 2026-10-21; `docs/BUG-HISTORY.md` is the archive) — log every diagnosed+fixed
+  bug. It is the source of truth, not GitHub issues.
 - **Shared UI primitives** (don't hand-roll): `ObjectPageHeader`/`PageHeader`,
   `useConfirm`, `DataGrid`, `MoneyInput`, `DiscountInput`, `SearchableSelect`;
   one shared PDF letterhead via `drawLetterhead`. See `docs/UI-CONVENTIONS.md`.
