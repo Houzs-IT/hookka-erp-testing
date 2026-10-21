@@ -17,6 +17,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { execPoReceiptSql } from "./_po-receipt-mock.mjs";
 
 try {
   register("tsx/esm", pathToFileURL("./"));
@@ -27,9 +28,11 @@ try {
 const grnApp = (await import(pathToFileURL(resolve(process.cwd(), "src/api/routes/grn.ts")).href)).default;
 
 function makeDb() {
-  const t = { grns: [], grn_items: [], purchase_order_items: [] };
+  const t = { grns: [], grn_items: [], purchase_order_items: [], purchase_orders: [], goods_in_transit: [] };
   const poItem = (id) => t.purchase_order_items.find((r) => String(r.id) === String(id));
   function exec(sql, b) {
+    // T-006 R2: the guarded / clamped PO counter SQL.
+    if (execPoReceiptSql(sql, b, t)) return;
     const po = sql.match(/^UPDATE purchase_order_items SET receivedQty = receivedQty ([+-]) \? WHERE id = \?/i);
     if (po) {
       const row = poItem(b[1]);

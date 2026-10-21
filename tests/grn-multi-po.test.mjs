@@ -23,10 +23,10 @@ import { resolve } from "node:path";
 const SRC = readFileSync(resolve(process.cwd(), "src/api/routes/grn.ts"), "utf8");
 
 function fnBody(name) {
-  const start = SRC.indexOf(`async function ${name}(`);
+  const start = SRC.indexOf(`function ${name}(`);
   assert.ok(start !== -1, `${name} must exist`);
-  const after = SRC.indexOf("\nasync function ", start + 1);
-  return SRC.slice(start, after === -1 ? undefined : after);
+  const next = SRC.slice(start + 1).search(/\n(export )?(async )?function /);
+  return SRC.slice(start, next === -1 ? undefined : start + 1 + next);
 }
 
 test("the per-line PO columns are self-applied, not assumed", () => {
@@ -60,21 +60,21 @@ test("a line's own PO is used, with the header PO only as fallback", () => {
 });
 
 test("posting draws down each line's own PO line", () => {
-  const body = fnBody("cascadePOStatusAfterGRNPost");
-  assert.match(body, /resolveGrnLineTargets\(db, grnId, grn\?\.poId \?\? null\)/);
-  assert.match(body, /receivedQty = receivedQty \+ \?[\s\S]*?\.bind\(t\.qty, t\.poItemId\)/);
+  // T-006 R3: the cascade is a statement builder fed resolved targets.
+  const body = fnBody("buildPoReceiptStatements");
+  assert.match(body, /targets\.map\(\(t\) => poCounterIncrement\(db, t\.poItemId, t\.qty\)\)/);
   // No positional lookup survives in the cascade itself.
   assert.doesNotMatch(body, /poItemIndex/);
 });
 
 test("posting recomputes EVERY purchase order the receipt touched", () => {
-  const body = fnBody("cascadePOStatusAfterGRNPost");
+  const body = fnBody("buildPoReceiptStatements");
   assert.match(
     body,
     /for \(const poId of \[\.\.\.new Set\(targets\.map\(\(t\) => t\.poId\)\)\]\)/,
     "a second PO must not be left at CONFIRMED while its goods are in the building",
   );
-  assert.match(body, /recomputePoStatusFromReceipts\(db, poId\)/);
+  assert.match(body, /poStatusStatements\(db, poId\)/);
 });
 
 test("reversal decrements each line's own PO line and clamps at zero", () => {
@@ -104,8 +104,8 @@ test("reversal also recomputes every touched purchase order", () => {
 test("partial receipt still accumulates rather than overwrites", () => {
   // The owner confirmed a PO is received across several deliveries, so the
   // draw-down must be += / -=, never =.
-  const post = fnBody("cascadePOStatusAfterGRNPost");
-  assert.match(post, /receivedQty = receivedQty \+ \?/);
+  const post = fnBody("poCounterIncrement");
+  assert.match(post, /THEN receivedQty \+ \?/);
   assert.doesNotMatch(post, /SET receivedQty = \?/);
 });
 
