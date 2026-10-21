@@ -87,14 +87,14 @@ test("Receipts: Duplicate on the row menu and the popup opens the same door as a
   assert.match(dup, /else if \(r\.or\) \{ setOrCopy\(r\.or\); setDoor\("OFFICIAL"\); \}/);
   assert.match(hub, /const closeDoor = \(\) => \{ setDoor\(null\); clearForms\(\); \};/);
   // A new key per copy, so the form seeds from it (state seeds once).
-  assert.match(hub, /key=\{custEditing\?\.id \?\? \(custCopy \? `copy:\$\{custCopy\.id\}` : "new"\)\}/);
-  assert.match(hub, /key=\{odEditing\?\.paymentNo \?\? \(odCopy \? `copy:\$\{odCopy\.paymentNo\}` : "new"\)\}/);
+  assert.match(hub, /key=\{custEditing\?\.id \?\? \(custCopy \? `copy:\$\{custCopy\.id\}` : custReceive \? `receive:\$\{custReceive\.invoiceId\}` : "new"\)\}/);
+  assert.match(hub, /key=\{odEditing\?\.paymentNo \?\? \(odCopy \? `copy:\$\{odCopy\.paymentNo\}` : odReceive \? `receive:\$\{odReceive\.billId\}` : "new"\)\}/);
   assert.match(hub, /key=\{orEditing\?\.id \?\? \(orCopy \? `copy:\$\{orCopy\.id\}` : "new"\)\}/);
 });
 
 test("a customer receipt copy: customer, method, amount — never the knock-offs, reference or date", () => {
   const form = block(page, "export function CustomerReceiptForm(", "// Save: create a new receipt");
-  assert.match(form, /useState\(editing\?\.customerId \?\? copyFrom\?\.customerId \?\? ""\)/);
+  assert.match(form, /useState\(editing\?\.customerId \?\? copyFrom\?\.customerId \?\? receiveFor\?\.customerId \?\? ""\)/);
   assert.match(form, /useState<PaymentRecord\["method"\]>\(editing\?\.method \?\? copyFrom\?\.method \?\? "BANK_TRANSFER"\)/);
   assert.match(form, /const amountSeed = editing \?\? copyFrom;/);
   assert.match(form, /useState\(editing\?\.reference \?\? ""\)/, "the reference is the original's own");
@@ -108,7 +108,7 @@ test("a customer receipt copy: customer, method, amount — never the knock-offs
 
 test("an other-debtor receipt copy: party and bank — never the bills it settled", () => {
   const form = block(ui, "function OtherPartyPaymentForm(", "\n  return (");
-  assert.match(form, /useState\(editing\?\.partyId \?\? copyFrom\?\.partyId \?\? ""\)/);
+  assert.match(form, /useState\(editing\?\.partyId \?\? copyFrom\?\.partyId \?\? receiveFor\?\.partyId \?\? ""\)/);
   assert.match(form, /useState\(editing\?\.bankAccount \?\? copyFrom\?\.bankAccount \?\? ""\)/);
   assert.match(form, /for \(const l of editing\?\.lines \?\? \[\]\)/, "rows seed from an edit only");
   assert.doesNotMatch(form, /copyFrom\?\.lines|copyFrom\?\.reference|copyFrom\?\.date/);

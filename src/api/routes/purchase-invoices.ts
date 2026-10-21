@@ -18,6 +18,8 @@ import type { Env } from "../worker";
 import { requirePermission, requireFinance } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
 import { learnSupplierBindings } from "../lib/supplier-binding-learn";
+import { getFxSettings } from "../lib/fx-settings";
+import { fxLegAccount } from "../../lib/fx";
 import { getOrgId } from "../lib/tenant";
 import {
   buildJournalEntryStatements,
@@ -119,14 +121,14 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
       // source supplier document straight from the PI detail page. snake_case
       // → no column-rename-map.json entry needed.
       "ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS source_document_file_id TEXT",
-      // T-006 R8 (migration 0245): the PO LINE an invoice line bills, so the
+      // T-006 R8 (migration 0247): the PO LINE an invoice line bills, so the
       // PO ceiling can match a line whose material code is blank. grn.ts adds
       // grn_items.po_item_id too, but only once a GRN route has run.
       "ALTER TABLE purchase_invoice_items ADD COLUMN IF NOT EXISTS po_item_id TEXT",
       "ALTER TABLE grn_items ADD COLUMN IF NOT EXISTS po_item_id TEXT",
     ];
     await runSelfApply(db, "purchase-invoices", stmts);
-    // T-006 R5 (migration 0243): the DB backstop under the app-level
+    // T-006 R5 (migration 0246): the DB backstop under the app-level
     // invoiced-vs-accepted check. Looked up first, because ADD CONSTRAINT takes
     // an exclusive lock on grn_items even when it then fails as a duplicate.
     const has = await db
@@ -149,7 +151,9 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
 }
 
 const AP_CONTROL = "400-0000"; // Trade Creditors
-const FX_GAIN_ACCT = "530-0000"; // GAIN ON FOREIGN EXCHANGE (realised; debit = loss)
+// Realised FX on Mark Paid posts to the accounts Setup › Currency & FX names
+// (owner 2026-10-20; both 530-0000 GAIN ON FOREIGN EXCHANGE until he splits
+// them): a gain credits the gain account, a loss debits the loss one.
 export const DEFAULT_PURCHASE_ACCT = "704-0010";
 // Fallback raw-material item_group → purchase account. The owner's
 // editable kv_config `coa_stock_map` (rm[<group>].purchase /
@@ -2613,7 +2617,7 @@ app.put("/:id", async (c) => {
               sourceType: "supplier_payment",
               sourceId: id,
               legNo: 3,
-              accountCode: FX_GAIN_ACCT,
+              accountCode: fxLegAccount(fxDiff, await getFxSettings(db)),
               debitSen: fxDiff < 0 ? -fxDiff : 0,
               creditSen: fxDiff > 0 ? fxDiff : 0,
               description: `Realised FX ${fxDiff > 0 ? "gain" : "loss"} · PI ${piNo}`,

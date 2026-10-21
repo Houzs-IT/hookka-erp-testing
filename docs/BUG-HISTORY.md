@@ -1,5 +1,8 @@
 # Bug History
 > **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-355 to -357 (branch `claude/t006-pi-caps-main-096a64`, to main, ported from staging T-006 R5 / R8 / R9; 355 to 359 are assigned to this branch); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
+> **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-350 (branch `feat/fx-confirm-bank`, to main; 347–349 are taken on other branches); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: newest entry BUG-2026-10-20-346 (branch `feat/duplicate-pv-ap-receipt`, to main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-336 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1008).
 > **Last verified: 2026-10-19**: BUG-2026-10-19-335 added (branch `fix/dashboard-dept-revenue-to-main`, to main, cherry-picked from staging #1006).
@@ -7,6 +10,7 @@
 > **Last verified: 2026-10-19**: BUG-2026-10-19-344 flipped to ✅ after the #1026 prod check.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-344 (branch `fix/dashboard-equity-net-assets`, to main; 343 is taken on another branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-340 (branch `fix/hk0107-line-po-keep`, to main; highest number on any remote branch was 334); a log, so "verified" means the entry matches the code on its branch.
+> **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-375 (branch `fix/hk0002-import-blank-keeps`, to main; renumbered from 287, then 342, on rebase; both taken on main); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: BUG-2026-10-19-334 gains its root cause and fix (branch `fix/scan-no-30s-cap`, to main); the step logs from #1005 caught it on prod.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-334 (branch `fix/scan-po-step-logs`, to main; 332 and 333 are taken on staging); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-331 (branch `fix/hk0025-receipts-targeted`, to main; 329 and 330 are taken on main); a log, so "verified" means the entry matches the code on its branch.
@@ -165,19 +169,28 @@ Entries themselves stay newest-first.
 
 Ported from staging (T-006 R5); not reproduced on prod, which would take two concurrent writes. Each invoice checks a GRN line's remaining quantity and then raises `grn_items.invoiced_qty`, in separate statements, so two saves in the same moment both pass the check and the line ends up billed past what was received. Nothing in the database refused it.
 
-Fix = migration `0243` (and the PI route's self-apply) adds `chk_grn_items_invoiced_qty` (`invoiced_qty` between 0 and `accepted_qty`) as NOT VALID, so old rows are not checked but every new write is. The PI create, edit and unvoid map that one constraint's error to a 409 that says to refresh; the batch is one transaction, so nothing is written. Count of old rows that break it, read-only: `SELECT COUNT(*) FROM grn_items WHERE invoiced_qty < 0 OR invoiced_qty > accepted_qty;` (UNMEASURED on prod). Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R5" tests) and `tests/convert-chain.test.mjs` (the matcher).
+Fix = migration `0246` (and the PI route's self-apply) adds `chk_grn_items_invoiced_qty` (`invoiced_qty` between 0 and `accepted_qty`) as NOT VALID, so old rows are not checked but every new write is. The PI create, edit and unvoid map that one constraint's error to a 409 that says to refresh; the batch is one transaction, so nothing is written. Count of old rows that break it, read-only: `SELECT COUNT(*) FROM grn_items WHERE invoiced_qty < 0 OR invoiced_qty > accepted_qty;` (UNMEASURED on prod). Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R5" tests) and `tests/convert-chain.test.mjs` (the matcher).
 
 ## BUG-2026-10-20-356 — A PO line with no material code could be billed past the PO without limit `procurement` `purchase-invoice` 🟡
 
 Ported from staging (T-006 R8, with staging f740d53c). The PO ceiling on a purchase invoice grouped lines by material code only, so a PO line with a blank code matched nothing and was skipped: billing it, straight off the PO or through its GRN, was never capped. The invoiced-so-far query also joined `grn_items.id` (a number) to `pii.grn_item_id` (text) without a cast.
 
-Fix = invoice lines store `po_item_id` (migration `0245` plus self-apply), filled from the PO picker, the scan flow and the GRN line's own `po_item_id`. The ceiling buckets by PO line first and code second, so a material ordered on two lines is billable for both; a stocked line billed straight off a PO that matches neither key is refused with a 409 naming the PO, while fee lines, hand-added lines and GRN-sourced lines (capped by the receipt) stay allowed; the code is tried before the PO line, so a line re-coded after picking counts under its new code. The join casts `gi.id::text`. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R8" tests).
+Fix = invoice lines store `po_item_id` (migration `0247` plus self-apply), filled from the PO picker, the scan flow and the GRN line's own `po_item_id`. The ceiling buckets by PO line first and code second, so a material ordered on two lines is billable for both; a stocked line billed straight off a PO that matches neither key is refused with a 409 naming the PO, while fee lines, hand-added lines and GRN-sourced lines (capped by the receipt) stay allowed; the code is tried before the PO line, so a line re-coded after picking counts under its new code. The join casts `gi.id::text`. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R8" tests).
 
 ## BUG-2026-10-20-357 — A purchase invoice line's own PO was not capped when the header named no PO `procurement` `purchase-invoice` 🟡
 
 Ported from staging (T-006 R9). On create, the PO ceiling ran only when the invoice header carried a `purchaseOrderId`, so lines that each named their PO (several POs on one invoice, the header left blank) were never checked against their PO. The edit side was already fixed on main.
 
 Fix = the create guard runs for every line that names a PO, using the line's own `poId` before the header's. Regression: `tests/purchasing-convert-flow.test.mjs` ("T-006 R9: a line's own poId is capped even when the header names no PO and no GRN").
+## BUG-2026-10-21-380 — A commit with 9 or more staged ts/tsx files hung in pre-commit `infrastructure` 🟡
+
+Found 2026-10-21: merges of `main` into open PR branches (about 33 staged files) hung in the pre-commit hook for 20+ minutes with no CPU. Reproduced in a worktree: 8 staged ts files lint in 5 s, 9 hang, whichever files they are.
+
+**Root cause.** lint-staged 16 starts its task with tinyexec. On Windows a bare `node_modules/.bin` name (`eslint`, from `package.json` `lint-staged`) is run as `cmd.exe /d /s /c "eslint ^^^"file^^^" …"` (the `.cmd` shim rule in tinyexec's bundled cross-spawn). cmd.exe on this machine (Windows 11 build 26200) hangs before running anything once that line holds 9 or more `^^^"…^^^"` arguments — even `echo` does; with plain `"…"` quoting it does not. No eslint process ever starts, so the hook waits forever. eslint itself lints the same 40 files in 8 s.
+
+**Fix.** The task is `node node_modules/eslint/bin/eslint.js`: `node` resolves to node.exe, which tinyexec spawns directly with no cmd.exe. Same rules, same files; an unused variable still fails the commit. 40 staged files: hung (killed at 5 min) → 5 s for lint-staged.
+
+**Regression.** `tests/lint-staged-no-cmd-shim.test.mjs` fails if any lint-staged command does not start with `node `. Class: none (tooling).
 
 ## BUG-2026-10-19-336 — Clicking a day on the dashboard jumped the page back to the top `dashboard` `ui` 🟡
 
@@ -220,6 +233,12 @@ Fix = the create guard runs for every line that names a PO, using the line's own
 **Regression.** `tests/tabs-no-page-scroll.test.mjs`.
 
 ---
+
+## BUG-2026-10-20-350 — A posted AP Payment's popup said "Nothing posted yet" under Ledger entry `finance` `payments` ✅
+
+Found 2026-10-20 building Confirm bank amount (Currency & FX step 4). The Payment Vouchers popup reads its Ledger entry and bank state from `GET /doc-trail?family=payment_voucher&sourceId=<voucher id>`. An AP Payment writes no ledger legs of its own — at Approve its money posts on the settlement document (a supplier or other-creditor payment) under the voucher's number — so every posted AP Payment showed "Nothing posted yet — a voucher reaches the ledger when it is approved" and no bank state. Measured on prod read-only on one posted AP Payment: 0 legs as a voucher, 2 legs (creditors, bank) as its supplier payment. Nothing wrong was recorded; only the popup missed it.
+
+Fix = an AP voucher's popup asks for `supplier_payment` (or `other_party_payment`) under its number, keyed so it reloads after a bank amount is confirmed. Shipped in #1062; checked on prod read-only the same day — the posted AP Payment it was measured on now shows its two legs and the HLBB bank state. Regression: `tests/fx-confirm-bank.test.mjs`, `tests/pv-popup-form-transfer.test.mjs`, `tests/doc-detail-dblclick.test.mjs`.
 
 ## BUG-2026-10-20-346 — After a post, the other-party settle form stayed on "Loading bills…" `finance` `receipts` 🟡
 
@@ -272,6 +291,19 @@ Fix = every punch still open today gets its hours so far in the dashboard feed �
 **Regression.** `tests/grn-pi-edit-keeps-line-po.test.mjs`.
 
 ---
+## BUG-2026-10-19-375 — Inventory raw-material batch import wiped min / max stock, notes, item type and supplier on every row it touched; exports wrote an unpriced SKU as RM 0 `inventory` `import-export` 🟡
+
+🟡 **Fixed on branch** (`fix/hk0002-import-blank-keeps` → `main`). IT Hub HK-0002 (reporter Lim Wei Siang, 2026-09-07). Prod occurrences UNMEASURED (no prod access this session).
+
+**Symptom.** HK-0002 says an empty cell in a batch import clears a saved value, and that an exported file cannot be imported back without damage. Re-checked against the code on `main` 2026-10-15: the products import and the "batch import never saves" half were already fixed (both inventory dialogs call `/api/products/bulk-import` and `/api/raw-materials/bulk-import`; `shapeProductBulkRow` drops blanks). What was still true: the raw-material import and the price export.
+
+**Root cause.** `POST /api/raw-materials/bulk-import` built every UPDATE from the sheet row alone: description fell back to the item code, group to "OTHERS", `minStock`/`maxStock` to 0, `notes`/`itemType`/`mainSupplierCode` to NULL, `uomCount` to 1, `stockControl` to 1. The template carries none of the last seven, so every re-import reset them on every row it touched; a blank group cell re-grouped the material to OTHERS and with it its GL accounts (BUG-2026-08-21-160). Separately, the products and inventory FG exports wrote `(basePriceSen ?? 0) / 100`, so a SKU with no price exported as 0 and re-imported as a real RM 0.
+
+**Fix.** `mergeRmBulkUpdate` (`src/api/lib/rm-bulk-import.ts`): on UPDATE a blank / null / absent cell keeps the stored value, a typed value (including 0) wins; the route reads the stored columns first. INSERT is unchanged. Exports write a null base price as an empty cell. Review fixes: the route's stored-value read and UPDATE/INSERT are scoped by `orgId`; `[CLEAR]` in a notes / main supplier code / item type cell sets NULL (blank still keeps; documented in the RM import template); whitespace-only notes keep; an unrecognised `stockControl` keeps. `products.basePriceSen` is nullable (`0001_init.sql:90`, so the blank export is live; `:425` is `sales_order_items`), while `products.costPriceSen` is NOT NULL DEFAULT 0 (`:89`) so a never-priced cost cannot be told from 0 and now also exports blank (imports back as keep = 0).
+
+**Not done (needs the ticket's PRD, not visible to this session).** Preview and audit row already exist (dialog diff preview; `products` bulk-import audit; RM audit only on re-group). Other modules' exports (customers, suppliers, ...) were not swept.
+
+**Regression.** `tests/rm-bulk-import-blank-keeps.test.mjs` (red before the fix; now drives the route with two orgs).
 
 ## BUG-2026-10-19-334 — Two PO files die on every scan attempt with no error recorded `ocr` `scan-queue` 🟡
 

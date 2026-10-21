@@ -118,7 +118,7 @@ function makeDb() {
     return out;
   }
 
-  // Prod's chk_grn_items_invoiced_qty (migration 0243): the error postgres.js
+  // Prod's chk_grn_items_invoiced_qty (migration 0246): the error postgres.js
   // throws, code and constraint name included.
   function checkInvoiced(gi) {
     const inv = Number(gi.invoiced_qty) || 0;

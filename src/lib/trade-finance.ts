@@ -143,3 +143,34 @@ export function clampRepayAlloc(outstandingSen: number, paySen: number): { ok: b
   if (paySen > outstandingSen) return { ok: false, error: "allocation exceeds the draw's outstanding balance" };
   return { ok: true };
 }
+
+/** What a drawdown paid the supplier: the drawdown less the interest and bank
+ *  charges recorded on it. */
+export function tfPrincipalSen(d: { amountSen: number; interestSen: number; bankChargeSen: number }): number {
+  return d.amountSen - d.interestSen - d.bankChargeSen;
+}
+
+/** A line's card on Creditor Aging (owner 2026-10-21 「我希望在creditor aging
+ *  那边有card 可以看到」): used = the line's balance (drawn and not repaid,
+ *  interest and charges included — as Settings › Trade Finance Lines shows it),
+ *  what is still available under its limit (null = no limit set), the share
+ *  used, and the check the owner reads at a glance — Σ drawdown outstanding +
+ *  unallocated = the line's account balance. */
+export function tfLineSummary(s: {
+  limitSen?: number | null;
+  accountNetSen: number;
+  unallocatedSen: number;
+  totals: { total: number };
+}): { usedSen: number; limitSen: number | null; availableSen: number | null; pct: number | null; over: boolean; drawsSen: number; ties: boolean } {
+  const room = tfLineRoom(s.limitSen ?? null, s.accountNetSen);
+  const drawsSen = s.totals.total + s.unallocatedSen;
+  return {
+    usedSen: s.accountNetSen,
+    limitSen: room?.limitSen ?? null,
+    availableSen: room?.availableSen ?? null,
+    pct: room && room.limitSen > 0 ? Math.round((room.usedSen / room.limitSen) * 100) : null,
+    over: !!room && room.availableSen < 0,
+    drawsSen,
+    ties: drawsSen === s.accountNetSen,
+  };
+}

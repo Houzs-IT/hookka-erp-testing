@@ -253,7 +253,9 @@ const navigationGroups: NavGroup[] = [
         name: "Debtors", href: "/accounting?tab=ar", icon: Users, children: [
           { name: "Debtor Aging", href: "/accounting?tab=ar", icon: Users },
           { name: "Debtor List", href: "/accounting?tab=debtors", icon: List },
-          { name: "Other Debtor Bills", href: "/accounting?tab=odebtorbills", icon: BookOpen },
+          // AR Invoices (owner 2026-10-21): sales invoices + other debtor bills in
+          // one list, like AP Invoices; ?tab=odebtorbills lands there too.
+          { name: "AR Invoices", href: "/accounting?tab=arinvoices", icon: BookOpen },
           { name: "Credit Notes", href: "/invoices/credit-notes", icon: FileX },
           { name: "Debit Notes", href: "/invoices/debit-notes", icon: FilePlus },
         ],
@@ -263,9 +265,9 @@ const navigationGroups: NavGroup[] = [
           { name: "Creditor Aging", href: "/accounting?tab=ap", icon: Building2 },
           { name: "Creditor List", href: "/accounting?tab=creditors", icon: List },
           { name: "AP Invoices", href: "/accounting?tab=apinvoices", icon: BookOpen },
-          // Back in the menu (owner 2026-09-29 「other creditor maintenance 放 sidebar
-          // 旁边」): the creditor register, no longer folded under AP Invoices.
-          { name: "Other Creditors", href: "/accounting?tab=ocreditor", icon: Users },
+          // Other Creditors left the menu (owner 2026-10-21 「只留 Creditor List
+          // 一个入口」): the Creditor List adds and edits them in a popup;
+          // ?tab=ocreditor still opens the register page.
           { name: "Supplier Discount", href: "/accounting?tab=supplier-discount", icon: CreditCard },
         ],
       },
@@ -273,6 +275,7 @@ const navigationGroups: NavGroup[] = [
       {
         name: "Setup", href: "/accounting?tab=coa", icon: Settings, children: [
           { name: "Chart of Accounts", href: "/accounting?tab=coa", icon: List },
+          { name: "Currency & FX", href: "/accounting?tab=fx", icon: Wallet },
           { name: "Stock Mapping", href: "/accounting?tab=stockmap", icon: Boxes },
           { name: "Opening Stock", href: "/accounting?tab=openstock", icon: Scale },
           { name: "Opening Balance", href: "/accounting?tab=opening", icon: Scale },

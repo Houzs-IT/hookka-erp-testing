@@ -12,6 +12,11 @@ export type AllocInput = {
   foreignSen?: number;          // foreign PIs: the foreign amount being paid (sen)
   payRate?: number;             // foreign PIs: payment-day rate (MYR per 1 foreign unit)
   full: boolean;                // paying off the entire remaining outstanding
+  // Confirm bank amount (Currency & FX step 4): the RM the bank actually
+  // debited for this line wins over foreign × payRate, and the line keeps the
+  // booked RM it cleared when it was first posted.
+  bankSen?: number;
+  bookedSen?: number;
 };
 export type AllocResult =
   | { ok: true; bookedSen: number; bankSen: number; fxDiffSen: number }
@@ -28,10 +33,10 @@ export function computeAlloc(a: AllocInput): AllocResult {
   if (!(payRate > 0)) return { ok: false, error: "foreign invoice needs payment-day rate" };
   const foreign = Math.round(Number(a.foreignSen) || 0);
   if (foreign <= 0) return { ok: false, error: "amount must be > 0" };
-  const booked = a.full ? a.outstandingBookedSen : Math.round(foreign * a.fxRate);
+  const booked = (a.bookedSen ?? 0) > 0 ? Math.round(Number(a.bookedSen)) : a.full ? a.outstandingBookedSen : Math.round(foreign * a.fxRate);
   if (booked <= 0) return { ok: false, error: "amount must be > 0" };
   if (booked > a.outstandingBookedSen) return { ok: false, error: "amount exceeds outstanding" };
-  const bank = Math.round(foreign * payRate);
+  const bank = (a.bankSen ?? 0) > 0 ? Math.round(Number(a.bankSen)) : Math.round(foreign * payRate);
   return { ok: true, bookedSen: booked, bankSen: bank, fxDiffSen: booked - bank };
 }
 

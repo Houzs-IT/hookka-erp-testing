@@ -88,7 +88,7 @@ test("the estimates read the same one-month ledger windows the statement shows, 
   const fn = slice(API, "async function runningMonthEstimatesUntimed(", "\nasync function computePnlWindowUntimed(");
   assert.match(fn, /const prevYms = previousMonths\(runYm, ESTIMATE_LOOKBACK\);/);
   assert.match(fn, /\[runYm, \.\.\.prevYms\]\.map\(\(ym\) => glWindowSigned\(db, orgId, ym, ym, dc\)\)/);
-  assert.match(fn, /recurringEstimates\(\{ current: cur\.net, previous: prev\.map\(\(w\) => w\.net\), bucketOf \}\)/);
+  assert.match(fn, /recurringEstimates\(\{ current: cur\.net, previous: prev\.map\(\(w\) => w\.net\), bucketOf, always \}\)/, "plus the accounts ticked Estimate every month (owner 2026-10-21)");
   assert.match(fn, /dc\.estimateMemo\.set\(runYm, hit\);/, "once per request");
 });
 
@@ -133,4 +133,31 @@ test("the pages colour an estimate: amber text on a pale amber row, an est. tag 
   assert.match(mo, /const est = \(r\.estValues\?\.\[j\] \?\? 0\) !== 0;/);
   assert.match(mo, /Amber cells are estimates/);
   assert.match(UI, /e\.kind === "estimate" \? estTitle\(e\.fromYm\)/, "the monthly drill names it");
+});
+
+test("an account ticked Estimate every month needs only last month's amount (owner 2026-10-21, Director Remuneration)", () => {
+  // Made-up figures: nothing in July, an amount in August and September, nothing yet in October.
+  const previous = [map({ "900-0025": 1000000 }), map({ "900-0025": 6000000 }), map({})];
+  const current = map({});
+  assert.equal(m.recurringEstimates({ current, previous, bucketOf }).size, 0, "without the tick July keeps it out");
+  const ticked = new Set(["900-0025"]);
+  assert.deepEqual([...m.recurringEstimates({ current, previous, bucketOf, always: ticked })], [["900-0025", 1000000]], "ticked: last month's amount");
+  assert.equal(m.recurringEstimates({ current: map({ "900-0025": 1000000 }), previous, bucketOf, always: ticked }).size, 0, "anything recorded this month replaces it");
+  assert.equal(m.recurringEstimates({ current, previous: [map({}), map({ "900-0025": 6000000 })], bucketOf, always: ticked }).size, 0, "nothing last month: nothing to show");
+  assert.equal(m.recurringEstimates({ current, previous: [map({ "500-0000": 100 })], bucketOf, always: new Set(["500-0000"]) }).size, 0, "only the cost sections are estimated");
+  assert.deepEqual([...m.recurringEstimates({ current, previous: [map({ "900-0025": 1000000 })], bucketOf, always: ticked })], [["900-0025", 1000000]], "a ticked account even when fewer than three months are on the books");
+  assert.equal(m.recurringEstimates({ current, previous: [map({ "900-W001": 500 })], bucketOf }).size, 0, "the three-month rule still needs three months");
+});
+
+test("the tick lives on the account: saved by the Chart of Accounts, followed by a rename, read by the running month", () => {
+  const api = readFileSync("src/api/routes/accounting.ts", "utf8").replace(/\r\n/g, "\n");
+  assert.match(api, /estimateMonthly: Number\(r\.estimateMonthly \?\? r\.estimate_monthly \?\? 0\) === 1,/);
+  assert.match(api, /if \(estimateTick === 1 && existing\.type !== "EXPENSE" && existing\.type !== "COST"\) \{\n\s*return c\.json\(\{ success: false, error: "Only an expense or cost account can be estimated every month" \}, 400\);/);
+  assert.match(api, /coaStmts\.push\(c\.var\.DB\.prepare\("UPDATE chart_of_accounts SET estimate_monthly = \? WHERE code = \?"\)\.bind\(estimateTick, code\)\);/);
+  assert.match(api, /\.\.\.\(Number\(existing\.estimateMonthly \?\? existing\.estimate_monthly \?\? 0\) === 1\n\s*\? \[c\.var\.DB\.prepare\("UPDATE chart_of_accounts SET estimate_monthly = 1 WHERE code = \?"\)\.bind\(newCode\)\]/);
+  assert.match(api, /const always = await estimateMonthlyCodes\(db\);\n\s*const est = recurringEstimates\(\{ current: cur\.net, previous: prev\.map\(\(w\) => w\.net\), bucketOf, always \}\);/);
+  const ui = readFileSync("src/pages/accounting/tabs/CoaListView.tsx", "utf8").replace(/\r\n/g, "\n");
+  assert.match(ui, /const canEstimate = account\.type === "EXPENSE" \|\| account\.type === "COST";/);
+  assert.match(ui, /\.\.\.\(canEstimate \? \{ estimateMonthly: estimate \} : \{\}\),/);
+  assert.match(ui, /\{a\.estimateMonthly && <span className="ml-2 rounded-full bg-\[#FBF3E4\]/);
 });

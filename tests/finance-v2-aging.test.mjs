@@ -91,7 +91,7 @@ test("the aging lists in the v2 list look; an open row and its documents stay pu
   assert.match(ar, /<AgingListTable\n\s*partyHeader="Customer"/);
   assert.match(list, /<table data-fin-list className="w-full text-sm">/);
   assert.match(list, /<tr data-fin-nolift=\{isOpen \? "" : undefined\} className="border-b border-\[#F0ECE9\]/);
-  assert.match(list, /\{isOpen && r\.docs\.map\(\(d, i\) => \(\n\s*<tr key=\{`d-\$\{i\}`\} data-fin-nolift=""/);
+  assert.match(list, /\{isOpen && detail == null && r\.docs\.map\(\(d, i\) => \(\n\s*<tr key=\{`d-\$\{i\}`\} data-fin-nolift=""/);
   assert.match(list, /\{AGING_KEYS\.map\(\(k\) => <td key=\{k\} className="py-3 px-4 text-right">\{formatCurrency\(sumOf\(rows, k\)\)\}<\/td>\)\}/);
   // Creditor Aging too (2026-10-17), with its Next Due column.
   assert.match(ap, /<AgingListTable\n\s*partyHeader="Creditor"[\s\S]*?nextDue=\{nextDueCell\}/);
@@ -113,12 +113,14 @@ test("statements: same reads and print; v2 list look with the closing balance as
   // The statements moved (owner 2026-10-20): customer → Other Debtor Bills, supplier → AP Invoices.
   assert.doesNotMatch(ar, /<CustomerStatementCard \/>/);
   assert.doesNotMatch(ap, /<SupplierStatementCard \/>/);
-  assert.match(ui, /\{tab === "odebtorbills" && \(\n\s+<div className="space-y-4">\n\s+<OtherPartyBillsTab accounts=\{accounts\} side="DEBTOR" \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  // Since 2026-10-21 the customer statement is at the foot of AR Invoices (the old Other Debtor Bills address lands there).
+  assert.match(ui, /\{tab === "arinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ArInvoicesTab accounts=\{accounts\} \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
+  assert.match(ui, /\{tab === "odebtorbills" && \(\n\s+<div className="space-y-4">\n\s+<ArInvoicesTab accounts=\{accounts\} \/>\n\s+<CustomerStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
   assert.match(ui, /\{tab === "apinvoices" && \(\n\s+<div className="space-y-4">\n\s+<ApInvoicesTab accounts=\{accounts\} \/>\n\s+<SupplierStatementCard \/>\n\s+<\/div>\n\s+\)\}/);
 });
 
-test("Creditor Aging: the list first, then Trade Finance; Contra is its own Monthly page", () => {
-  const order = ["<KpiCards", "<AgingListTable", "<TradeFinanceBlock />"];
+test("Creditor Aging: the cards, then the list with the trade-finance drawdowns in it; Contra is its own Monthly page", () => {
+  const order = ["<KpiCards", "<AgingListTable", "<TfDrawDetail", "<TfRepaidRows"];
   let at = -1;
   for (const o of order) {
     const i = ap.indexOf(o, at + 1);
@@ -142,11 +144,11 @@ test("Creditor Aging: the list first, then Trade Finance; Contra is its own Mont
   assert.match(contra, /title: "Post contra\?"/);
 });
 
-test("Trade Finance: v2 list look; rows with inputs do not lift; TOTAL is the total row; saves unchanged", () => {
-  assert.match(tf, /<table data-fin-list className="w-full text-sm">/);
-  assert.match(tf, /<tr key=\{d\.drawSourceId\} data-fin-nolift="" className="border-b border-\[#F0ECE9\]">/);
-  assert.match(tf, /<tr data-fin-nolift=""><td colSpan=\{9\}[^>]*>No open draws\.<\/td><\/tr>/);
-  assert.match(tf, /<\/tbody>\n\s*\{s\.draws\.length > 0 && \(\n\s*<tfoot>\n\s*<tr className="border-t-2 border-\[#E2DDD8\] bg-\[#F6F1E7\] font-semibold">\n\s*<td className="py-2 px-3" colSpan=\{4\}>TOTAL<\/td>/);
+test("Trade Finance in the list: a drawdown's figures open under its row, the repaid ones behind a line; saves unchanged", () => {
+  assert.match(tf, /export function TfDrawDetail\(\{ d, editable, onSaved \}/);
+  assert.match(list, /\{detail != null && \(\n\s*<tr data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">\n\s*<td colSpan=\{cols\} className="py-2\.5 px-4 pl-10">\{detail\}<\/td>/);
+  assert.match(tf, /\{open \? "Hide" : "Show"\} \{draws\.length\} repaid drawdown\{draws\.length === 1 \? "" : "s"\}/);
+  assert.match(tf, /<tr key=\{d\.drawSourceId\} data-fin-nolift="" className="border-b border-\[#F7F4F1\] bg-\[#FAF8F6\]">/);
   assert.match(tf, /fetch\("\/api\/accounting\/trade-finance\/draw-due", \{\n\s*method: "PUT"/);
   assert.match(tf, /`\/api\/accounting\/trade-finance\/\$\{kind === "interest" \? "draw-interest" : "draw-bank-charge"\}`/);
   assert.match(tf, /fetch\("\/api\/accounting\/trade-finance\/setup", \{\n\s*method: "POST"/);

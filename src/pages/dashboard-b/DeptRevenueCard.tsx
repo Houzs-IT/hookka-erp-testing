@@ -18,16 +18,16 @@ const DeptRevenueChart = lazy(() =>
   import("./charts").then((m) => ({ default: m.DeptRevenueChart })),
 );
 
-export function CatToggle({ value, onChange }: { value: RevCat; onChange: (v: RevCat) => void }) {
+export function CatToggle({ value, onChange, withAccessory = false }: { value: RevCat; onChange: (v: RevCat) => void; withAccessory?: boolean }) {
+  const opts: [RevCat, string][] = [
+    ["all", "All"],
+    ["bedframe", "Bedframe"],
+    ["sofa", "Sofa"],
+    ...(withAccessory ? ([["accessory", "Accessory"]] as [RevCat, string][]) : []),
+  ];
   return (
     <div className="flex items-center gap-1">
-      {(
-        [
-          ["all", "All"],
-          ["bedframe", "Bedframe"],
-          ["sofa", "Sofa"],
-        ] as const
-      ).map(([v, label]) => (
+      {opts.map(([v, label]) => (
         <button
           key={v}
           type="button"
@@ -84,6 +84,25 @@ export function DeptRevenueCard({
   const di = dayBucketIndex(data, day);
   const valueOf = (d: (typeof depts)[number]): CatSplit => (di >= 0 ? d.byBucket[di] ?? NONE : d.period);
   const showAccessory = depts.some((d) => d.period.accessory > 0);
+  // Today | Average per working day | Total (owner 2026-10-20: the category
+  // split comes from the toggle above, not from columns). Working days = days
+  // anything was produced (idle days out) on a daily view; on a weekly view
+  // (quarter / year) the Mon–Sat days elapsed.
+  const [todayYmd] = useState(() => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10));
+  const ti = data?.granularity === "day" ? buckets.indexOf(todayYmd) : -1;
+  const workDays = useMemo(() => {
+    if (!buckets.length) return 0;
+    if (data?.granularity === "day") {
+      return buckets.filter((_, i) => buckets[i] <= todayYmd && depts.some((d) => (d.byBucket[i]?.total ?? 0) > 0)).length;
+    }
+    const start = new Date(`${buckets[0]}T00:00:00Z`);
+    const lastEnd = new Date(`${buckets[buckets.length - 1]}T00:00:00Z`);
+    lastEnd.setUTCDate(lastEnd.getUTCDate() + 6);
+    const end = new Date(`${todayYmd}T00:00:00Z`) < lastEnd ? new Date(`${todayYmd}T00:00:00Z`) : lastEnd;
+    let n = 0;
+    for (const d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) if (d.getUTCDay() !== 0) n++;
+    return n;
+  }, [buckets, depts, data?.granularity, todayYmd]);
   const maxSel = Math.max(1, ...depts.map((d) => pickCat(valueOf(d), cat)));
   const clickable = !!onPickDay && data?.granularity === "day";
 
@@ -130,7 +149,7 @@ export function DeptRevenueCard({
                 department at a time could not clear them all). */}
             <button type="button" onClick={() => setHidden(new Set())} className="rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">Show all</button>
             <button type="button" onClick={() => setHidden(new Set(depts.map((d) => d.code)))} className="rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">Hide all</button>
-            <CatToggle value={cat} onChange={setCat} />
+            <CatToggle value={cat} onChange={setCat} withAccessory={showAccessory} />
           </div>
         </div>
 
@@ -145,9 +164,8 @@ export function DeptRevenueCard({
                 <thead>
                   <tr className="text-[#9CA3AF] border-b border-[#F0ECE6]">
                     <th className="text-left font-medium py-1.5 pr-2">Department</th>
-                    <th className="text-right font-medium py-1.5 px-2">Bedframe</th>
-                    <th className="text-right font-medium py-1.5 px-2">Sofa</th>
-                    {showAccessory && <th className="text-right font-medium py-1.5 px-2">Accessory</th>}
+                    <th className="text-right font-medium py-1.5 px-2">{di >= 0 && day ? dayLabel(day) : "Today"}</th>
+                    <th className="text-right font-medium py-1.5 px-2" title={`Total ÷ ${workDays} working day${workDays === 1 ? "" : "s"}`}>Avg / day</th>
                     <th className="text-right font-medium py-1.5 pl-2">Total</th>
                   </tr>
                 </thead>
@@ -176,17 +194,14 @@ export function DeptRevenueCard({
                             />
                           </div>
                         </td>
-                        <td className={`text-right tabular-nums py-1.5 px-2 ${cat === "bedframe" ? "font-semibold text-[#1F1D1B]" : "text-[#5A5550]"}`}>
-                          {rm(v.bedframe)}
+                        <td className="text-right tabular-nums py-1.5 px-2 text-[#5A5550]">
+                          {di >= 0 ? rm(sel) : ti >= 0 ? rm(pickCat(d.byBucket[ti], cat)) : "—"}
                         </td>
-                        <td className={`text-right tabular-nums py-1.5 px-2 ${cat === "sofa" ? "font-semibold text-[#1F1D1B]" : "text-[#5A5550]"}`}>
-                          {rm(v.sofa)}
+                        <td className="text-right tabular-nums py-1.5 px-2 text-[#5A5550]">
+                          {workDays > 0 ? rm(Math.round(pickCat(d.period, cat) / workDays)) : "—"}
                         </td>
-                        {showAccessory && (
-                          <td className="text-right tabular-nums py-1.5 px-2 text-[#5A5550]">{rm(v.accessory)}</td>
-                        )}
-                        <td className={`text-right tabular-nums py-1.5 pl-2 ${cat === "all" ? "font-semibold text-[#1F1D1B]" : "text-[#5A5550]"}`}>
-                          {rm(v.total)}
+                        <td className="text-right tabular-nums py-1.5 pl-2 font-semibold text-[#1F1D1B]">
+                          {rm(pickCat(d.period, cat))}
                         </td>
                       </tr>
                     );
