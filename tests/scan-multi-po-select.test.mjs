@@ -65,7 +65,7 @@ test("a re-link re-prices off each line's OWN order", () => {
   // goods at the first order's rates.
   assert.match(
     SRC,
-    /applyPoPriceFill\(\[\{ \.\.\.l, poId \}\], byId\.get\(poId \?\? ""\) \?\? null\)\[0\]/,
+    /applyPoPriceFill\(\[\{ \.\.\.l, poId(, poItemId)? \}\], byId\.get\(poId \?\? ""\) \?\? null\)\[0\]/,
   );
 });
 

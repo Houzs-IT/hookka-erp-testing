@@ -30,7 +30,11 @@ test("a line records the purchase order it bills", () => {
 });
 
 test("submit sends each line's own PO, not just the header", () => {
-  assert.match(SRC, /poId: l\.poId \?\? sourcePurchaseOrderId \?\? null/);
+  // A hand-added line is NOT stamped with the header PO any more (T-006 R8):
+  // the server caps it against the header PO anyway, but a stamped poId would
+  // make a blank-code fee line look PO-linked and get it refused.
+  assert.match(SRC, /poId: l\.poId \?\? null,/);
+  assert.match(SRC, /poItemId: l\.poItemId \?\? null/);
 });
 
 test("the ?poId= prefill stamps that PO onto its lines", () => {
@@ -52,8 +56,10 @@ test("the FIRST purchase order stays the header", () => {
 });
 
 test("re-picking a PO cannot double-count a line already billed", () => {
-  assert.match(SRC, /const seen = new Set\(kept\.map\(\(l\) => `\$\{l\.poId \?\? ""\}:\$\{l\.materialCode\}`\)\)/);
-  assert.match(SRC, /incoming\.filter\(\(l\) => !seen\.has\(/);
+  // Keyed by PO line when known, so two lines of one material stay apart.
+  assert.match(SRC, /l\.poItemId \? `item:\$\{l\.poItemId\}` : `\$\{l\.poId \?\? ""\}:\$\{l\.materialCode\}`/);
+  assert.match(SRC, /const seen = new Set\(kept\.map\(lineKey\)\)/);
+  assert.match(SRC, /incoming\.filter\(\(l\) => !seen\.has\(lineKey\(l\)\)\)/);
 });
 
 test("the blank starter row is dropped rather than billed", () => {
