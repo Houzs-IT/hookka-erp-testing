@@ -99,12 +99,12 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | Symbol / section | file:line | Role |
 |---|---|---|
 | `DeliveryPage` | `src/pages/delivery/index.tsx:901` | DO workbench + 3PL + agent, `pageTab` toggle |
-| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3059` | FE bulk status move (all guards/cascades) |
+| `runBulkDoTransition` | `src/pages/delivery/index.tsx:3067` | FE bulk status move (all guards/cascades) |
 | `resendCustomerNotice` / `warnIfNoCustomerEmail` | `delivery/index.tsx:2940 / :2922` | Feature A per-DO resend / Feature B no-email warning |
 | `columns` (DataGrid) | `src/pages/delivery/index.tsx` (~3.9k) | DO grid column defs |
 | `getContextMenuItems` | `src/pages/delivery/index.tsx` (~4.4k) | THE DO status table — row menu **and** the drawer's action bar |
-| `detailLive` | `src/pages/delivery/index.tsx:3710` | Drawer's document re-read from the list; its bar filtered from the row menu |
-| `lineSpec` | `src/pages/delivery/index.tsx:3743` | One-line build spec per DO line, via the shared `buildSpec` |
+| `detailLive` | `src/pages/delivery/index.tsx:3718` | Drawer's document re-read from the list; its bar filtered from the row menu |
+| `lineSpec` | `src/pages/delivery/index.tsx:3751` | One-line build spec per DO line, via the shared `buildSpec` |
 | `drawerActionBar` / `drawerLineSpec` / `DRAWER_DOC_CONFIG` | `src/lib/document-drawer.ts` | Drawer model: full-page route, action-bar filter, spec-line delegation |
 | `DocumentDetailDrawer` | `src/components/ui/document-detail-drawer.tsx` | Shared slide-over chrome (chrome only, no domain knowledge) |
 | 3PL Providers block | `src/pages/delivery/index.tsx` (~6.5k) | `pageTab==="3pl"` list + Create/Edit dialog |

@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // so-detail-listing — the AutoCount-style "Sales Order Detail Listing" export.
 //
-// Target shape (owner's dridtable.xlsx): 36 columns, ONE ROW PER LINE ITEM,
+// Target shape (owner's dridtable.xlsx): 36 AutoCount columns (after the
+// HK-0002 shared block from doc-columns.ts), ONE ROW PER LINE ITEM,
 // with the document header fields (Doc No, Date, Debtor, totals, Cancelled…)
 // repeated on every line, then per-line fields (Item Group, Code, Description,
 // UOM, Qty, Unit Price, per-line totals). A 5-line SO becomes 5 rows.
@@ -16,10 +17,12 @@
 // ---------------------------------------------------------------------------
 
 import type { Aoa } from "./export-report";
+import { commonCells, commonHeaders, rm, day, uomFor } from "./doc-columns";
 
 // Structural subset of SalesOrder / SalesOrderItem — only what this export
 // reads, so the lib stays decoupled and testable without the full types.
 export type DetailItem = {
+  id?: string | null;
   itemCategory?: string | null;
   productCode?: string | null;
   productName?: string | null;
@@ -31,6 +34,8 @@ export type DetailItem = {
   legHeightInches?: number | null;
   specialOrder?: string | null;
   unitPriceSen?: number | null;
+  /** Per-line discount (migration 0179); Line Total is net of it. */
+  discountSen?: number | null;
   lineTotalSen?: number | null;
 };
 export type DetailOrder = {
@@ -56,13 +61,10 @@ export type DetailListingOpts = {
   agentByCustomerId?: Map<string, string>;
 };
 
-/** UOM per the owner's AutoCount listing: bedframes/sofas ship as SET,
- *  accessories as UNIT. */
-function uomFor(category: string | null | undefined): string {
-  return String(category ?? "").toUpperCase() === "ACCESSORY" ? "UNIT" : "SET";
-}
-
-export const SO_DETAIL_HEADERS = [
+/** The AutoCount block. Since HK-0002 it follows the shared common block
+ *  (doc-columns.ts) instead of leading, so AutoCount users keep every column
+ *  and the file is also importable through the shared document importer. */
+export const SO_AUTOCOUNT_HEADERS = [
   "Check", "Doc. No.", "Date", "Debtor Code", "Debtor Name", "Agent",
   "Curr. Code", "Inclusive?", "SubTotal (Ex)", "Tax", "Total", "Local Total",
   "Cancelled", "Remark 4", "Sales Exemption Expiry Date", "Processing Date",
@@ -72,11 +74,7 @@ export const SO_DETAIL_HEADERS = [
   "BALANCE", "PAYEMENT", "Remark6", "Remark5",
 ] as const;
 
-const rm = (sen: number | null | undefined): number => Math.round(Number(sen) || 0) / 100;
-const day = (iso: string | null | undefined): string => {
-  const s = String(iso ?? "");
-  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
-};
+export const SO_DETAIL_HEADERS = [...commonHeaders(false), ...SO_AUTOCOUNT_HEADERS];
 
 /** The "Detail Description 2" spec line — divan/leg/gap/special, blank parts
  *  omitted (mirrors what the invoice shows). */
@@ -101,6 +99,24 @@ export function buildSoDetailListingAoa(orders: DetailOrder[], opts: DetailListi
     const items = o.items && o.items.length > 0 ? o.items : [{} as DetailItem];
     for (const it of items) {
       body.push([
+        ...commonCells(
+          {
+            docType: "SO",
+            docNo: o.companySOId,
+            docDate: o.companySODate,
+            partyCode: debtorCode,
+            partyName: o.customerName,
+            lineId: it.id,
+            itemCode: it.productCode,
+            description: it.productName,
+            qty: Number(it.quantity) || 0,
+            uom: uomFor(it.itemCategory),
+            unitPriceSen: it.unitPriceSen ?? 0,
+            discountSen: it.discountSen ?? 0,
+            lineTotalSen: it.lineTotalSen ?? 0,
+          },
+          false,
+        ),
         "", // Check
         o.companySOId ?? "",
         day(o.companySODate),
@@ -120,12 +136,12 @@ export function buildSoDetailListingAoa(orders: DetailOrder[], opts: DetailListi
         it.itemCategory ?? "", // Item Group
         it.productCode ?? "", // Item Code
         it.productName ?? "", // Detail Description
-        uomFor(it.itemCategory), // UOM — SET for bedframe/sofa, UNIT for accessory
+        uomFor(it.itemCategory) || "SET", // UOM — SET for bedframe/sofa, UNIT for accessory
         o.customerState ?? "", // Location
         detailDescription2(it), // Detail Description 2
         Number(it.quantity) || 0, // Qty
         rm(it.unitPriceSen), // Unit Price
-        "", // Discount
+        rm(it.discountSen), // Discount
         "", // Detail Tax Code
         rm(it.lineTotalSen), // Total
         0, // Tax
@@ -140,5 +156,5 @@ export function buildSoDetailListingAoa(orders: DetailOrder[], opts: DetailListi
       ]);
     }
   }
-  return [SO_DETAIL_HEADERS as unknown as string[], ...body];
+  return [SO_DETAIL_HEADERS, ...body];
 }

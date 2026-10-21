@@ -14,17 +14,19 @@ import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
 import { roundUnitPriceSen, lineTotalSen } from "@/lib/unit-price";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
 import type { Supplier, PurchaseOrder, SupplierMaterialBinding, RawMaterial } from "@/types";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
 import { useSessionState } from "@/lib/use-session-state";
 import { matchesCompanyFilter } from "@/lib/company-dimension";
 import { buildPoDetailListingAoa } from "@/lib/doc-detail-listings";
 import { poItemsSearchText } from "@/lib/po-items-search";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import {
   Plus, ShoppingBag, Truck, Trash2, X, Package,
   FileText, Download, Filter, AlertTriangle,
   Eye, Pencil, Printer, RefreshCw, TrendingDown, ChevronDown, ChevronUp,
-  ClipboardCheck,
+  ClipboardCheck, Upload,
 } from "lucide-react";
 
 // PO statuses that the bulk Convert-to-GRN action accepts. Mirrors the
@@ -814,6 +816,7 @@ export default function ProcurementPage() {
 
   // Dialog
   const [showPOForm, setShowPOForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   // 2.5 — when the operator clicks the low-stock banner we open the
   // same modal pre-populated with low-stock RMs. Cleared on close so
   // a regular "+ New PO" click doesn't inherit the prefill.
@@ -1740,10 +1743,28 @@ export default function ProcurementPage() {
             both of which open with seeded line items where the compact
             modal still feels right. Plain "New PO" gets the breathing
             room of the full page. */}
-        <Button variant="primary" onClick={() => navigate("/procurement/create")}>
-          <Plus className="h-4 w-4" /> New Purchase Order
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Next to New PO: the Detail Listing export is the import template. */}
+          <Button variant="outline" onClick={() => setShowImport(true)}>
+            <Upload className="h-4 w-4" /> Import
+          </Button>
+          <Button variant="primary" onClick={() => navigate("/procurement/create")}>
+            <Plus className="h-4 w-4" /> New Purchase Order
+          </Button>
+        </div>
       </div>
+
+      <DocImportDialog
+        docType="po"
+        title="Import purchase orders from a Detail Listing"
+        hint="Edit: Doc Date, Qty and Unit Price on POs with nothing received; a row with a blank Line ID adds a line. Create: blank Doc No. (or NEW-1, NEW-2…), Party Code = supplier, one row per line with Item Code, Qty and Unit Price. UOM comes from the raw material."
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onApplied={() => {
+          invalidateCachePrefix("/api/purchase-orders");
+          refreshPOs();
+        }}
+      />
 
       {/* Summary Cards — gold card style: colored icon-box LEFT + text-2xl number */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-4">
@@ -2138,7 +2159,15 @@ export default function ProcurementPage() {
             gridId="purchase-orders-list"
             exportName="purchase-orders"
             exportSheetLabel="Purchase Orders"
-            detailExport={{ label: "Detail Listing", build: (rows) => buildPoDetailListingAoa(rows) }}
+            detailExport={{
+              label: "Detail Listing",
+              build: (rows) => buildPoDetailListingAoa(rows, new Map(allSuppliers.map((x) => [x.id, x.code]))),
+            }}
+            // Unfiltered = one server page; export every PO on the current tab.
+            fetchAllRows={poFiltersActive ? undefined : async () =>
+              (await fetchAllPages<PurchaseOrder>("/api/purchase-orders"))
+                .filter((po) => (tab === "DRAFT") === (po.status === "DRAFT"))
+                .map((po) => ({ ...po, itemsSearchText: poItemsSearchText(po.items) }))}
           />
           {/* Server-side page controls — only in the default (unfiltered) view.
               When a filter/search is active the whole dataset is loaded and the

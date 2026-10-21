@@ -15,6 +15,8 @@ import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
 import { fetchFxRate } from "@/lib/fx-client";
 import { fmtFxRate } from "@/lib/fx";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { buildPiDetailRows } from "@/lib/invoice-detail-export";
+import { DocImportDialog } from "@/components/doc-import-dialog";
 import { loadPiForPrint as loadPiPrint } from "@/lib/pi-print-load";
 import { useUrlState } from "@/lib/use-url-state";
 import type { Supplier } from "@/types";
@@ -34,6 +36,7 @@ import {
   ScanLine,
   FolderInput,
   List,
+  Upload,
 } from "lucide-react";
 import {
   FromSourceModal,
@@ -161,6 +164,7 @@ export default function PurchaseInvoicesPage() {
 
   // From PO / GRN picker
   const [fromSourceOpen, setFromSourceOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const handleFromSource = (sel: SourceSelection) => {
     const param =
       sel.type === "po" ? `poId=${sel.id}` : `grnId=${sel.id}`;
@@ -605,6 +609,10 @@ export default function PurchaseInvoicesPage() {
           >
             <FolderInput className="h-4 w-4" /> From PO / GRN
           </Button>
+          {/* The Detail Listing export IS the import template. */}
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload className="h-4 w-4" /> Import
+          </Button>
           <Button variant="primary" onClick={() => navigate("/procurement/pi/create")}>
             <Plus className="h-4 w-4" /> Create Invoice
           </Button>
@@ -825,13 +833,17 @@ export default function PurchaseInvoicesPage() {
                 contextMenuItems={piGridContextMenu}
                 maxHeight="calc(100vh - 300px)"
                 emptyMessage={tab === "DRAFT" ? "No draft invoices." : "No purchase invoices found."}
-                // WYSIWYG export of the current columns over the current rows.
-                // Listing only: GET /api/purchase-invoices maps rows through
-                // rowToPI, which carries no `items[]` — the same reason the
-                // row menu's "Print PI" re-fetches the invoice before printing.
-                // A per-line listing here needs that re-fetch per row.
+                // WYSIWYG export of the current columns over the current rows
+                // (this page already loads every PI — no fetchAllRows needed).
+                // The Detail Listing re-fetches each PI (rowToPI carries no
+                // `items[]`), paced like the sales-invoice one.
                 exportName="purchase-invoices"
                 exportSheetLabel="Purchase Invoices"
+                detailExport={{
+                  label: "Detail Listing",
+                  build: (rows) =>
+                    buildPiDetailRows(rows, { partyCodes: new Map(suppliers.map((x) => [x.id, x.code])) }),
+                }}
                 clearSelectionToken={clearSelectionToken}
               />
             </CardContent>
@@ -886,6 +898,18 @@ export default function PurchaseInvoicesPage() {
         open={fromSourceOpen}
         onClose={() => setFromSourceOpen(false)}
         onSelect={handleFromSource}
+      />
+
+      <DocImportDialog
+        docType="pi"
+        title="Import purchase invoices from a Detail Listing"
+        hint="Edit: Doc Date, Supplier Invoice No. and the line cells (DRAFT / CONFIRMED, MYR). Create: blank Doc No. or NEW-1, Party Code = supplier code, Ref Doc No. = the PO (optional), one row per line with Description + Qty + Unit Price."
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onApplied={() => {
+          invalidateCachePrefix("/api/purchase-invoices");
+          fetchData();
+        }}
       />
     </div>
   );

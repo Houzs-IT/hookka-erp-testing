@@ -165,7 +165,9 @@ test("an invoice with an issued note is locked: no edit, no cancel, no price imp
   assert.match(lock, /FROM debit_notes WHERE invoiceId = \? AND status = 'POSTED'/);
   const inv = read("src/api/routes/invoices.ts");
   assert.match(inv, /issuedNotesLockMessage\("cancel", existing\.invoiceNo, notes\)/);
-  assert.match(inv, /l\.invoiceNotes = notes;/);
+  // The price import moved to the shared importer (HK-0002): it reads the notes into the plan.
+  assert.match(read("src/api/lib/doc-import-invoice.ts"), /notes: notesById\.get\(str\(r\.id\)\)/);
+  assert.match(read("src/lib/doc-import/invoice.ts"), /invoiceNotes: meta\.notes,/);
   assert.match(read("src/api/routes/delivery-orders.ts"), /noteLocked \|\|/);
   // The price import refuses a line whose invoice carries a note.
   const plan = planInvoicePriceImport(
