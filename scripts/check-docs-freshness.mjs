@@ -51,6 +51,7 @@ const STAMP_RE = /Last (?:verified|generated):\s*(\d{4}-\d{2}-\d{2})/;
 const STAMP_EXEMPT = [
   /^docs\/archive\//,
   /^docs\/BUG-HISTORY\.md$/,
+  /^docs\/bugs\//,
   /CHANGELOG(-\w+)?\.md$/,
 ];
 
@@ -125,20 +126,24 @@ if (stale.length) {
 // deliberate second entry on a date, so it is a distinct id, not a collision.
 {
   const LEDGER = "docs/BUG-HISTORY.md";
-  if (existsSync(LEDGER)) {
+  // New entries live one per file in docs/bugs/ (2026-10-21); the ledger is the
+  // archive. An id is unique across both.
+  const BUG_DIR = "docs/bugs";
+  const entries = [LEDGER, ...(existsSync(BUG_DIR) ? walk(BUG_DIR) : [])].filter(existsSync);
+  if (entries.length) {
     // An ADDENDUM deliberately reuses its parent's id — BUG-2026-07-17-001 has a
     // dated `完成注记` follow-up recording that the backfill ran. That is the same
     // bug, so sharing the id is correct, and flagging it would train people to
     // disable this check. Only headings that claim to be a NEW bug are compared.
     const ADDENDUM = /完成注记|addendum|follow-?up|后续|補記|補记/i;
-    const ids = [...readFileSync(LEDGER, "utf8").matchAll(/^## (BUG-\d{4}-\d{2}-\d{2}-\d+[a-z]?)(.*)$/gm)]
+    const ids = [...entries.map((f) => readFileSync(f, "utf8")).join("\n").matchAll(/^## (BUG-\d{4}-\d{2}-\d{2}-\d+[a-z]?)(.*)$/gm)]
       .filter((m) => !ADDENDUM.test(m[2]))
       .map((m) => m[1]);
     const seen = new Set();
     const dupes = [...new Set(ids.filter((id) => (seen.has(id) ? true : (seen.add(id), false))))];
     if (dupes.length) {
       failed = true;
-      console.log(`\nFAIL — ${dupes.length} duplicate bug id(s) in ${LEDGER}:`);
+      console.log(`\nFAIL — ${dupes.length} duplicate bug id(s) in ${LEDGER} + ${BUG_DIR}/:`);
       dupes.forEach((d) => console.log(`  ${d}`));
       console.log("  Every citation of a duplicated id is ambiguous. Give the entry with the");
       console.log("  FEWER inbound references a `b` suffix (the existing convention), and update");
@@ -171,6 +176,43 @@ if (!stampsOnly) {
       srcChanged.slice(0, 12).forEach(warn);
     } else if (optOut) {
       console.log("  opt-out recorded in a commit message — OK");
+    }
+
+    // ---- 2b. MERGE-CONFLICT MAGNETS ----------------------------------------
+    // Measured 2026-10-21: every merge to main put every other open PR into
+    // conflict (#1055, #1059, #1064, #1066, #1067, #1071, 3+ times each in one
+    // day), and only ever in docs. Each branch wrote lines at the SAME spot: a
+    // new `Last verified` line under the title, a new entry at the top of the
+    // bug ledger, and a regenerated API.md whose line numbers and date moved.
+    // A .gitattributes `merge=union` would not help on GitHub: a bare-repo
+    // merge reads no in-tree attributes, so the PR still shows DIRTY. The fix
+    // is to stop writing those lines on branches; these checks hold that line.
+    if (changed.includes("docs/API.md")) {
+      failed = true;
+      console.log("\nFAIL — this branch changes docs/API.md.");
+      console.log("  API.md is regenerated on main after every merge (docs-freshness.yml).");
+      console.log("  Put main's copy back:  git checkout origin/main -- docs/API.md");
+    }
+    const STAMP_LOCKED = /^docs\/(CODEBASE-MAP\.md|BUG-HISTORY\.md|modules\/[^/]+\.md)$/;
+    for (const f of changed.filter((f) => STAMP_LOCKED.test(f))) {
+      const diff = sh(`git diff --unified=0 ${range} -- "${f}"`).split("\n");
+      const plus = diff.filter((l) => l.startsWith("+") && !l.startsWith("+++"));
+      // A heading edited in place (an entry flipped to ✅) is - and + of the same id.
+      const ids = (sign) =>
+        diff.filter((l) => l.startsWith(`${sign}## BUG-`)).map((l) => l.slice(4).split(/\s/)[0]);
+      const removedIds = new Set(ids("-"));
+      if (plus.some((l) => /Last verified/.test(l))) {
+        failed = true;
+        console.log(`\nFAIL — ${f}: this branch adds a "Last verified" line.`);
+        console.log("  Its file:line refs are checked by CI on every PR, so a per-branch stamp");
+        console.log("  proves nothing more, and two branches adding one conflict. Say what you");
+        console.log("  verified in the commit message instead, and drop the line.");
+      }
+      if (f === "docs/BUG-HISTORY.md" && ids("+").some((id) => !removedIds.has(id))) {
+        failed = true;
+        console.log("\nFAIL — a new entry was added to docs/BUG-HISTORY.md (the archive).");
+        console.log("  Move it to its own file: docs/bugs/<BUG-id>.md (see docs/bugs/README.md).");
+      }
     }
   }
 }

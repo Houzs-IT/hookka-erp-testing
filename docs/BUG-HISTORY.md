@@ -1,4 +1,12 @@
 # Bug History
+
+> **New entries do not go in this file (2026-10-21).** Write each new bug as its own file,
+> `docs/bugs/BUG-YYYY-MM-DD-NNN.md`, with the same `## BUG-… — title` heading. This file is
+> the archive up to BUG-2026-10-21-380. Every branch used to insert its entry and a
+> verified-stamp line at the same spot near the top, so every merge to `main` put every
+> other open PR into conflict; a new file never conflicts. Do not add stamp lines here
+> either: `check-docs-freshness.mjs` fails a PR that adds an entry or a stamp to this file.
+
 > **Last verified: 2026-10-20**: newest entries BUG-2026-10-20-355 to -357 (branch `claude/t006-pi-caps-main-096a64`, to main, ported from staging T-006 R5 / R8 / R9; 355 to 359 are assigned to this branch); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-380 (branch `claude/fix-precommit-hang-b6c42d`, to main; highest number seen on any remote branch was 372); a log, so "verified" means the entry matches the code on its branch.
 > **Last verified: 2026-10-20**: BUG-2026-10-20-350 flipped to ✅ after the #1062 prod check.
