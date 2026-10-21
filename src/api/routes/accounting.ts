@@ -163,6 +163,9 @@ type CoaRow = {
   // Phase 1 (migration 0154): 0 = header/parent account, journals and
   // auto-postings must hit postable (leaf) accounts only.
   isPostable: number;
+  // "Estimate every month" (record 0245, self-applied; absent before).
+  estimateMonthly?: number | null;
+  estimate_monthly?: number | null;
   created_at: string;
 };
 
@@ -246,7 +249,38 @@ function rowToCoa(r: CoaRow) {
     pnlCategory: r.pnlCategory ?? undefined,
     // Default 1 — rows predating migration 0154 stay postable.
     isPostable: (r.isPostable ?? 1) === 1,
+    // The "Estimate every month" tick (record 0245, self-applied).
+    estimateMonthly: Number(r.estimateMonthly ?? r.estimate_monthly ?? 0) === 1,
   };
+}
+
+// "Estimate every month" (owner 2026-10-21 「别在setting，在COA 可以吗？」 →
+// 「可以，全部做」): a tick on an expense or cost account in the Chart of
+// Accounts; the running month's P&L shows it at last month's amount while
+// nothing is recorded (src/lib/expense-estimates.ts). Record 0245; this
+// self-apply is the mechanism, awaited before a read or write that names it.
+let _pendingCoaEstimateCol: Promise<void> | null = null;
+function ensureCoaEstimateColumn(db: Env["Variables"]["DB"]): Promise<void> {
+  if (!_pendingCoaEstimateCol) {
+    _pendingCoaEstimateCol = db
+      .prepare("ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS estimate_monthly INTEGER DEFAULT 0")
+      .run()
+      .then(() => undefined)
+      .catch((e) => {
+        _pendingCoaEstimateCol = null;
+        throw e;
+      });
+  }
+  return _pendingCoaEstimateCol;
+}
+async function estimateMonthlyCodes(db: Env["Variables"]["DB"]): Promise<Set<string>> {
+  try {
+    await ensureCoaEstimateColumn(db);
+    const res = await db.prepare("SELECT code FROM chart_of_accounts WHERE estimate_monthly = 1").all<{ code: string }>();
+    return new Set((res.results ?? []).map((r) => String(r.code)));
+  } catch {
+    return new Set(); // unreadable → the three-month rule alone, as before
+  }
 }
 
 function rowToJournal(e: JournalEntryRow, lines: JournalLineRow[]) {
@@ -1146,6 +1180,11 @@ app.put("/coa", async (c) => {
       }
       merged.isPostable = 0;
     }
+    // "Estimate every month" — only where an estimate can show.
+    const estimateTick = body.estimateMonthly === undefined ? null : body.estimateMonthly ? 1 : 0;
+    if (estimateTick === 1 && existing.type !== "EXPENSE" && existing.type !== "COST") {
+      return c.json({ success: false, error: "Only an expense or cost account can be estimated every month" }, 400);
+    }
     if (
       merged.cashFlowCategory &&
       !["O", "I", "F"].includes(merged.cashFlowCategory)
@@ -1196,10 +1235,10 @@ app.put("/coa", async (c) => {
         return c.json({ success: false, error: promoErr }, 400);
       }
     }
-    await c.var.DB.prepare(
-      `UPDATE chart_of_accounts SET name = ?, parentCode = ?, isActive = ?, cashFlowCategory = ?, specialAccountType = ?, pnlCategory = ?, isPostable = ? WHERE code = ?`,
-    )
-      .bind(
+    const coaStmts = [
+      c.var.DB.prepare(
+        `UPDATE chart_of_accounts SET name = ?, parentCode = ?, isActive = ?, cashFlowCategory = ?, specialAccountType = ?, pnlCategory = ?, isPostable = ? WHERE code = ?`,
+      ).bind(
         merged.name,
         merged.parentCode,
         merged.isActive,
@@ -1208,8 +1247,13 @@ app.put("/coa", async (c) => {
         merged.pnlCategory,
         merged.isPostable,
         code,
-      )
-      .run();
+      ),
+    ];
+    if (estimateTick !== null) {
+      await ensureCoaEstimateColumn(c.var.DB);
+      coaStmts.push(c.var.DB.prepare("UPDATE chart_of_accounts SET estimate_monthly = ? WHERE code = ?").bind(estimateTick, code));
+    }
+    await c.var.DB.batch(coaStmts);
     const updated = await c.var.DB.prepare(
       "SELECT * FROM chart_of_accounts WHERE code = ?",
     )
@@ -1305,6 +1349,10 @@ app.post("/coa/rename", async (c) => {
         existing.pnlCategory,
         existing.isPostable ?? 1,
       ),
+      // The "Estimate every month" tick follows the account (owner 2026-10-21).
+      ...(Number(existing.estimateMonthly ?? existing.estimate_monthly ?? 0) === 1
+        ? [c.var.DB.prepare("UPDATE chart_of_accounts SET estimate_monthly = 1 WHERE code = ?").bind(newCode)]
+        : []),
       c.var.DB.prepare(
         "UPDATE chart_of_accounts SET parentCode = ? WHERE parentCode = ?",
       ).bind(newCode, oldCode),
@@ -8924,7 +8972,8 @@ async function sheetStockAt(
 // at last month's amount (owner 2026-10-13 「这个月的 amount 还没有但每个月都
 // 有的…根据上个月的 amount 出现」; src/lib/expense-estimates.ts): operating
 // expenses, salaries & contribution and factory overhead with an amount in each
-// of the last three months and nothing so far this month. Read from the same
+// of the last three months — or ticked "Estimate every month" in the Chart of
+// Accounts (owner 2026-10-21) — and nothing so far this month. Read from the same
 // one-month ledger windows the statement shows for those months (before any
 // estimate). Display only — nothing is posted. Memoised per request.
 async function runningMonthEstimatesUntimed(
@@ -8944,7 +8993,8 @@ async function runningMonthEstimatesUntimed(
         const meta = cur.coa.get(code);
         return meta ? pnlBucketFor(code, meta.type, override) : null;
       };
-      const est = recurringEstimates({ current: cur.net, previous: prev.map((w) => w.net), bucketOf });
+      const always = await estimateMonthlyCodes(db);
+      const est = recurringEstimates({ current: cur.net, previous: prev.map((w) => w.net), bucketOf, always });
       return new Map([...est].map(([code, sen]) => [code, { sen, fromYm: prevYms[0] }] as const));
     })();
     dc.estimateMemo.set(runYm, hit);
