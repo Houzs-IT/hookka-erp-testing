@@ -1,7 +1,8 @@
 # Hookka ERP — Work Tracker
 > **Last verified: 2026-10-22**: branch `docs/dev05-close` — DEV-05 closed. A9's design
 > gap is answered by the owner (orders are not held for deposits, so the two rules agree);
-> R1–R17 re-checked against source. A1–A4/A8 remain recorded as inferred, not measured.
+> R1–R17 re-checked against source. A1–A4/A8 close as UNVERIFIABLE: their text was never
+> recorded in this repo and the PRD holding it is unreachable.
 > **Last verified: 2026-10-21**: mobile Procurement core entry added (branch `design/mobile-procurement`); nothing else re-checked.
 > **Last verified: 2026-10-21**: mobile switch / chip standardisation entry added (branch `design/mobile-filter-chips-standardization`); nothing else re-checked.
 > **Last verified: 2026-10-19**: staging<-main sync (branch `chore/sync-staging-from-main-1019`): main entries staging lacked are added above staging's newest; nothing else re-checked.
@@ -8173,7 +8174,7 @@ cost of being wrong is one rare order told the truth late rather than early.
 | A5 take-from-stock, A6 release, A7 invoice, A9 loser-told | **Measured live on staging 2026-10-16** (invoice `INV-2610-005`, SO-2609-395, 4 × RM 305.00) |
 | A9 design gap | **Closed by the owner, 2026-10-22, above** |
 | WIP counts as stock | Owner asked mid-showcase; built and merged (#906) |
-| A1–A4, A8 | **NO RECORD of verification. See below — this is the one open item.** |
+| A1–A4, A8 | **UNVERIFIABLE from this repo — their text was never recorded here. See below.** |
 
 **R1–R17 re-check** (2026-10-22, read off `origin/staging`, not trusted from
 the build note): R2/R3 the gate is `delivery-pipeline.ts:108` and asks whether
@@ -8187,19 +8188,46 @@ reversal and the promise stays on the record; R14 `create.tsx:3412`; R15
 `detail.tsx:286`; R16 `production/index.tsx:8544`; R17 all three surfaces, no
 "Reserved" left; Q5 `stock-allocations.ts:269`.
 
-**The open item, stated as what it is.** On 2026-09-17 this entry said *"A2–A8
-unverified"*. On 2026-09-29 an acceptance run happened on staging — the A9
-entry above records contention measured there — and afterwards the open list
-was *"A7, and A9's design gap"*. A1–A6 and A8 are therefore **believed** to
-have passed in that run, and nobody wrote them down.
+**The open item: A1–A4 and A8 CANNOT BE VERIFIED FROM THIS REPOSITORY, and
+this is where that search stops.**
 
-That is an inference, not a measurement, and it is not being upgraded here by
-restating it confidently. The PRD holding A1–A9 is in Notion
-(`T-014-Hookka-make-to-stock-allocation`) and neither the author of this entry
-nor the person closing the ticket could open it. **Samuel ran the 2026-09-29
-acceptance and can confirm those five in one sentence.** Until he does, the
-honest status of A1–A4 and A8 is *implemented, almost certainly verified, not
-recorded*.
+Their text was never written down here. The whole history was searched on
+2026-10-22 — all thirty DEV-05 commits, their full messages, and every file
+ever added or deleted — and only four criteria are ever quoted anywhere:
+
+| | as quoted in this repo |
+|---|---|
+| A5 | *"allocate four pieces from stock and PRODUCE THE REMAINING SIX"* |
+| A6 | release — ownership home, availability back |
+| A7 | *"the invoice for an allocated piece show the customer's order"* and its price |
+| A9 | *"two orders want the same piece; one gets it, the other is told"* |
+
+A1, A2, A3, A4 and A8 appear only as numbers in the sentence *"A2–A8
+unverified"*. The PRD holding them is in Notion
+(`T-014-Hookka-make-to-stock-allocation`), which nobody involved in closing
+this could open. **A criterion whose text cannot be read cannot be verified**,
+and the earlier plan here — ask Samuel, who ran the 2026-09-29 acceptance —
+went nowhere: he does not remember which of the five he checked. Writing
+"ask Samuel" into a closing note would have left a question permanently
+addressed to someone who has already answered that he cannot settle it.
+
+What IS true, and is the reason this closes anyway: the chain runs end to end
+on staging — build for stock, allocate, release, deliver, invoice at the
+customer's price — and a broken foundational criterion would not let it.
+Seventeen of seventeen R-requirements are present. And of the 39 tests in
+`tests/stock-allocations.test.mjs`, **22 pin things that carry no A-number**
+and are exactly what a foundational criterion tends to ask: a stock order never
+allocates to itself; availability is recomputed from production orders rather
+than read off the ledger; a human's manual allocation is left alone; two lines
+of one product cannot claim the same pieces; `is_stock` survives the ownership
+move; the ledger has no UPDATE or DELETE path; the migration and the runtime
+self-apply declare the same table; and three separate cases pin the dual-key
+read CLAUDE.md names as a silent-failure class.
+
+That is **not** a claim that A1–A4 and A8 passed. It is the honest shape of
+what is known: the behaviour those criteria would plausibly protect is pinned,
+the criteria themselves are unreadable from here, and the five are closed as
+UNVERIFIABLE rather than left as a task nobody can action.
 
 ### Not part of this ticket
 
