@@ -93,7 +93,7 @@ Two unrelated report worlds share the name **Reports**:
 | `collectOperationsReport` | `operations-report.ts:1112` | Ops report builder |
 | `collectBriefData` / `renderBriefHtml` | `production-brief.ts:386 / 467` | Morning production brief |
 | `GET /` (list) / `POST /` (create) | `src/api/routes/forecasts.ts:55 / 80` | `forecast_entries` CRUD |
-| `GET /` (overview) | `src/api/routes/dashboard-overview.ts:75` | Consolidated dashboard payload |
+| `GET /` (overview) | `src/api/routes/dashboard-overview.ts:98` | Consolidated dashboard payload |
 | `buildReportHTML` / `printReport` | `src/lib/print-report.ts:218 / 339` | Shared WYSIWYG print engine |
 | `exportReportCsv/Xlsx/Pdf` | `src/lib/export-report.ts:37 / 51 / 120` | Shared export helpers |
 | `exportWorkbookXlsx` | `src/lib/export-report.ts:93` | Several sheets in one .xlsx (the MRP workbook) |
