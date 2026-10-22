@@ -48,10 +48,14 @@ import { preloadMobileCritical } from "./lib/preload";
 import { useAutoUpdateOnNavigate } from "@/lib/use-version-check";
 import { bootstrapMobileTheme } from "./lib/theme-mode";
 import {
+  PaneProvider,
   ResponsiveLayoutProvider,
+  estimatePaneWidths,
   readRailExpandedPreference,
+  resolveContainerLayout,
   resolveResponsiveLayout,
   useObservedWidth,
+  useResponsiveLayout,
   writeRailExpandedPreference,
 } from "./lib/responsive-layout";
 import "./theme-vars.css";
@@ -393,14 +397,22 @@ export default function MobileLayout() {
 }
 
 /** Fold-only 2-pane shell — list (~320px) left, detail right, independent
- * scrollbars. dc13 v13 Fold layout. */
+ * scrollbars. dc13 v13 Fold layout. Each pane reports its own measured width
+ * (PaneProvider), so a screen inside it arranges itself for the pane, not for
+ * the whole shell. */
 function TwoPane({ left, right }: { left: ReactNode; right: ReactNode }) {
+  const estimate = estimatePaneWidths(useResponsiveLayout());
+  const [leftRef, leftWidth] = useObservedWidth<HTMLDivElement>(estimate.list);
+  const [rightRef, rightWidth] = useObservedWidth<HTMLDivElement>(estimate.detail);
+  const leftPane = useMemo(() => resolveContainerLayout(leftWidth, "list"), [leftWidth]);
+  const rightPane = useMemo(() => resolveContainerLayout(rightWidth, "detail"), [rightWidth]);
   return (
     <div
       data-mobile-split-view
       style={{ display: "flex", height: "100dvh", overflow: "hidden" }}
     >
       <div
+        ref={leftRef}
         style={{
           width: "clamp(320px, 38%, 340px)",
           flex: "none",
@@ -410,9 +422,10 @@ function TwoPane({ left, right }: { left: ReactNode; right: ReactNode }) {
           background: M.paper,
         }}
       >
-        {left}
+        <PaneProvider value={leftPane}>{left}</PaneProvider>
       </div>
       <div
+        ref={rightRef}
         style={{
           flex: 1,
           minWidth: 0,
@@ -420,7 +433,7 @@ function TwoPane({ left, right }: { left: ReactNode; right: ReactNode }) {
           overflowX: "hidden",
         }}
       >
-        {right}
+        <PaneProvider value={rightPane}>{right}</PaneProvider>
       </div>
     </div>
   );
