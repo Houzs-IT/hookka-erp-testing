@@ -195,6 +195,37 @@ body:not([data-theme]) {
   --m-pill-success-bg: #EEF3E4;
   /* Products active-filter chips + "Exact" badge (HTML #F0EAD8). */
   --m-gold-tint: #F0EAD8;
+  /* Invoices v2 (Claude Design `Invoices v2.dc.html`, owner 2026-10-21).
+     Status tones = desktop getStatusColor (src/lib/utils.ts): rail / dot
+     (--m-inv-<tone>) + pill (-bg / -fg). warning-high = desktop WARNING_HIGH
+     (Overdue). Read only by screens/invoices/* (list + detail). */
+  --m-inv-neutral: #6B7280;      --m-inv-neutral-bg: #EEEBE6;      --m-inv-neutral-fg: #4B5260;
+  --m-inv-info: #3E6570;         --m-inv-info-bg: #E0EDF0;         --m-inv-info-fg: #3E6570;
+  --m-inv-success: #4F7C3A;      --m-inv-success-bg: #EEF3E4;      --m-inv-success-fg: #4F7C3A;
+  --m-inv-warning: #9C6F1E;      --m-inv-warning-bg: #FAEFCB;      --m-inv-warning-fg: #85600F;
+  --m-inv-warning-high: #B8601A; --m-inv-warning-high-bg: #FBE4CE; --m-inv-warning-high-fg: #B8601A;
+  --m-inv-danger: #9A3A2D;       --m-inv-danger-bg: #F9E1DA;       --m-inv-danger-fg: #9A3A2D;
+  --m-inv-gold-box: #F7F1E3;     /* summary Outstanding tile, card amount box */
+  --m-inv-past-bg: #FCF3F0;      /* Past Due tile + past-due chip */
+  --m-inv-past-fg: #9A3A2D;
+  --m-inv-soon-fg: #9C6F1E;      /* due within 7 days */
+  --m-inv-tile-bg: #F4EFE6;      /* DO / SO ref chips, PDF View button */
+  --m-inv-ref-key: #6B6252;
+  --m-inv-icon: #8B7A4E;         /* chevrons, fact icons */
+  --m-inv-line: #E6E0D9;         /* timeline pending line, tab underline track */
+  --m-inv-dot-ring: #D9D2C6;     /* lifecycle pending-step ring (HTML dotRing) */
+  /* Invoices v2 AR Aging buckets (two-tab handoff README §2.6). <tone> = dot /
+     bar / rail, -bg = pill + tint, -fg = pill text. */
+  --m-age-current: #4F7C3A; --m-age-current-bg: #EEF3E4; --m-age-current-fg: #4F7C3A;
+  --m-age-d31: #9C6F1E;     --m-age-d31-bg: #FAEFCB;     --m-age-d31-fg: #85600F;
+  --m-age-d61: #B8601A;     --m-age-d61-bg: #FBE9DA;     --m-age-d61-fg: #B8601A;
+  --m-age-d90: #9A3A2D;     --m-age-d90-bg: #F9E1DA;     --m-age-d90-fg: #9A3A2D;
+  --m-age-divider: #EDE7DD;
+  --m-inv-note-bg: #FAF8F4;      /* lifecycle off-flow note */
+  --m-inv-body: #3A352C;
+  --m-inv-paid-label: #3D6229;   /* "Amount paid" tile label */
+  /* Opt-in glass header (MobileHeader glass) + the row stuck under it. */
+  --m-header-glass: rgba(250, 248, 244, 0.92);
 }
 
 body[data-theme="dark"] {
@@ -261,6 +292,34 @@ body[data-theme="dark"] {
   --m-search-icon: #8A8170;
   --m-pill-success-bg: #2B3324;
   --m-gold-tint: #3A3324;
+  /* Invoices v2 — lifted for the dark card (same family as delivery-theme.css). */
+  --m-inv-neutral: #8A8170;      --m-inv-neutral-bg: rgba(155, 160, 170, 0.18); --m-inv-neutral-fg: #C9CCD2;
+  --m-inv-info: #6FA3B0;         --m-inv-info-bg: rgba(111, 163, 176, 0.18);    --m-inv-info-fg: #6FA3B0;
+  --m-inv-success: #8FBE78;      --m-inv-success-bg: rgba(143, 190, 120, 0.18); --m-inv-success-fg: #8FBE78;
+  --m-inv-warning: #D9A441;      --m-inv-warning-bg: rgba(217, 164, 65, 0.18);  --m-inv-warning-fg: #D9A441;
+  --m-inv-warning-high: #E08A4B; --m-inv-warning-high-bg: rgba(224, 138, 75, 0.18); --m-inv-warning-high-fg: #E08A4B;
+  --m-inv-danger: #D67B6B;       --m-inv-danger-bg: rgba(214, 123, 107, 0.18); --m-inv-danger-fg: #D67B6B;
+  --m-inv-gold-box: #36312A;
+  --m-inv-past-bg: rgba(214, 123, 107, 0.12);
+  --m-inv-past-fg: #D67B6B;
+  --m-inv-soon-fg: #D9A441;
+  --m-inv-tile-bg: #34302A;
+  --m-inv-ref-key: #B9B0A0;
+  --m-inv-icon: #B59A5C;
+  --m-inv-line: #3A352C;
+  --m-inv-dot-ring: #4A443A;
+  /* AR Aging buckets on the dark card (#2A2722). Measured 2026-10-22: tone on
+     card 4.89–6.94:1; pill text (-fg) on its tint 4.64–5.42:1 (d61 / d90 pill
+     text lifted — the tone alone measured 4.13 / 3.73 there). */
+  --m-age-current: #8FBE78; --m-age-current-bg: rgba(143, 190, 120, 0.18); --m-age-current-fg: #8FBE78;
+  --m-age-d31: #D9A441;     --m-age-d31-bg: rgba(217, 164, 65, 0.18);     --m-age-d31-fg: #D9A441;
+  --m-age-d61: #E08A4B;     --m-age-d61-bg: rgba(224, 138, 75, 0.18);     --m-age-d61-fg: #EB9D63;
+  --m-age-d90: #D67B6B;     --m-age-d90-bg: rgba(214, 123, 107, 0.18);    --m-age-d90-fg: #EBA192;
+  --m-age-divider: #3A352C;
+  --m-inv-note-bg: #211F1C;
+  --m-inv-body: #D4C9A8;
+  --m-inv-paid-label: #8FBE78;
+  --m-header-glass: rgba(26, 24, 22, 0.92);
 }
 
 /* Foundation breakpoints mirror the existing /m shell: phone first, Fold /

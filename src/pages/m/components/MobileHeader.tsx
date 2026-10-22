@@ -9,6 +9,10 @@
 // shared by the hamburger and the back arrow (both 20px glyphs), so the title
 // never shifts when you move between a list and its detail. Tablet styling is
 // unchanged.
+//
+// `glass` (opt-in, owner 2026-10-21 for Invoices v2): the Claude Design
+// translucent, blurred, borderless bar, so a sticky row below it (module tabs)
+// reads as one block. Default (glass off) is exactly as before.
 import { ChevronLeft } from "lucide-react";
 import { type ReactNode } from "react";
 import { M, M_MAX_WIDTH } from "../theme";
@@ -24,9 +28,11 @@ type Props = {
   trailing?: ReactNode;
   /** Top-level screen: show the drawer hamburger on phones. */
   menu?: boolean;
+  /** Translucent, blurred, borderless bar (opt-in; default unchanged). */
+  glass?: boolean;
 };
 
-export function MobileHeader({ title, onBack: onBackProp, trailing, menu = false }: Props) {
+export function MobileHeader({ title, onBack: onBackProp, trailing, menu = false, glass = false }: Props) {
   const { mode } = useResponsiveLayout();
   const drawer = useNavDrawer();
   const phone = mode === "phone";
@@ -40,8 +46,10 @@ export function MobileHeader({ title, onBack: onBackProp, trailing, menu = false
         zIndex: 40,
         display: "flex",
         justifyContent: "center",
-        backgroundColor: M.paper,
-        borderBottom: `1px solid ${M.border}`,
+        backgroundColor: glass ? "var(--m-header-glass)" : M.paper,
+        borderBottom: glass ? "none" : `1px solid ${M.border}`,
+        backdropFilter: glass ? "blur(12px)" : undefined,
+        WebkitBackdropFilter: glass ? "blur(12px)" : undefined,
         paddingTop: "env(safe-area-inset-top)",
       }}
     >
