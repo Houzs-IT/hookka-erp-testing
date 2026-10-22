@@ -483,7 +483,7 @@ export async function reverseFGForDoUndeliver(
     db,
     doId,
     "DELIVERY_ORDER_UNDELIVER",
-    "fgu",
+    "fgd",
     `FG un-delivered — ${doNo} reversed to dispatched`,
     reversedAtIso,
   );
