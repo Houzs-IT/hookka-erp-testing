@@ -2748,6 +2748,7 @@ app.post("/:id/confirm", async (c) => {
   // to mean "cannot see".
   let allocationStmts: D1PreparedStatement[] = [];
   let allocatedByItemId = new Map<string, number>();
+  let unfinishedTaken = 0;
   const allocationNotes: string[] = [];
   try {
     await ensureStockOrderSchema(c.var.DB);
@@ -2770,6 +2771,7 @@ app.post("/:id/confirm", async (c) => {
     );
     allocationStmts = plan.statements;
     allocatedByItemId = plan.allocatedByItemId;
+    unfinishedTaken = plan.unfinishedTaken;
     allocationNotes.push(...plan.notes);
   } catch (err) {
     console.error(
@@ -2804,7 +2806,18 @@ app.post("/:id/confirm", async (c) => {
     : productionOrders.map((po) => `Created PO ${po.poNo}`);
   autoActions.push(...allocationNotes);
   if (allocatedByItemId.size > 0 && itemsToProduce.length === 0) {
-    autoActions.push("Filled entirely from stock — nothing to produce.");
+    // "Nothing to produce" is only true when every piece came off the SHELF.
+    // Once work in progress is allocatable a line can be fully covered while
+    // part of it is still on the floor — no NEW order is queued, but the
+    // pieces are not finished goods yet and the sentence must not say they
+    // are. Measured on staging 2026-10-22: 6 ordered against 4 finished + 4
+    // unfinished printed "Filled entirely from stock — nothing to produce"
+    // over an allocation that was 4 from stock and 2 still being made.
+    autoActions.push(
+      unfinishedTaken > 0
+        ? `No new production needed — ${unfinishedTaken} of these are still being made.`
+        : "Filled entirely from stock — nothing to produce.",
+    );
   }
 
   // 2026-04-28: confirm lands at IN_PRODUCTION directly. The PO cascade
