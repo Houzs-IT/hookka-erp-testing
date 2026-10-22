@@ -110,7 +110,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 1. **Create SO** — `app.post("/")` `sales-orders.ts:1765`. Validates/normalizes items → item-catalog-snap enrich (import at `:42`) → sofa-combo repricing via `runSofaComboPass` at `:2309` (guarded by `if (!isServiceOrder)` at `:2308`) → insert SO + items (`:2399`) → invalidate list snapshot.
 2. **Confirm / status cascade (DRAFT/PENDING → IN_PRODUCTION)** — `app.post("/:id/confirm")` `sales-orders.ts:2561`. Idempotent; flips status, writes `so_status_changes` (autoActions JSON), and calls `createProductionOrdersForSO` (`_helpers.ts:591`, called at `sales-orders.ts:2788`; a second call site for the PUT path sits at `:4227`) to insert one PO per item. Further transitions cascade via `cascadeSOStatusToPOs` (`_helpers.ts:788`).
 3. **Sofa-combo pricing** — `runSofaComboPass` `sofa-combo-pass.ts:132` (resolves base prices via `resolveLineBasePriceSen` `:76`, `seatHeightOf` `:64`) → calls `applySofaCombos` `sofa-combo.ts:209` which subset-matches lines (`findComboSubset` `:98`, module-private) and returns `newBaseByKey` + total discount; per-unit split via `distributeComboUnitPrices` (`:165`). Called from SO POST (`sales-orders.ts:2253`) and PUT (`:3799`) — those are the ONLY two call sites.
-4. **Edit SO** — `app.put("/:id")` `sales-orders.ts:3229`. Re-resolves items, re-runs `runSofaComboPass` at `:3912` (old full-price combo SOs re-price down here), re-cascades status/locks.
+4. **Edit SO** — `app.put("/:id")` `sales-orders.ts:3242`. Re-resolves items, re-runs `runSofaComboPass` at `:3912` (old full-price combo SOs re-price down here), re-cascades status/locks.
 5. **Copy-from-source (draft picker)** — `CopyFromSourceModal` `create.tsx:2429` (2-step) + backend `app.post("/copy-for-service-order")` `sales-orders.ts:5434`.
 
 ## Key functions / sections (locate-to-function)
@@ -125,7 +125,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `LineItemCard` | `src/pages/sales/create.tsx:3068` | Per-line item editor |
 | `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:583` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1765` | SO create + combo pass + snapshot invalidation |
-| `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3229` | SO edit + re-run combo pass |
+| `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3242` | SO edit + re-run combo pass |
 | `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2561` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
 | `createProductionOrdersForSO` | `sales-orders/_helpers.ts:591` | One production_orders row per SO item |
 | `cascadeSOStatusToPOs` | `sales-orders/_helpers.ts:788` | Propagate SO status change to POs/JCs |
