@@ -8,7 +8,7 @@ import { DeptEfficiencyCard } from "./ProductionDailyPanels";
 import { DepartmentsView } from "./DepartmentsView";
 import { AttendanceLogCard } from "./AttendanceLogCard";
 import { filterSlice } from "./employee-filter";
-import { TAUPE, TEAL, BORDER, fmtN, inPeriod, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+import { TAUPE, TEAL, BORDER, fmtN, inPeriod, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub, CC_TICK, CC_AXIS_LINE, CC_LEGEND, KPI_ROW } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge, MissingNote } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
 

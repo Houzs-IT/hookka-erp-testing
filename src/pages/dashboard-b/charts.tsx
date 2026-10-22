@@ -25,6 +25,7 @@ import {
   ReferenceLine,
   Line,
 } from "recharts";
+import type { XAxisTickContentProps } from "recharts";
 import { formatCurrency } from "@/lib/utils";
 
 const rm = (sen: number | undefined) => formatCurrency(sen ?? 0);
@@ -309,9 +310,15 @@ export function DeptRevenueChart({
                       dataKey="m"
                       ticks={first && last ? [first, last] : undefined}
                       interval={0}
-                      tick={({ x, y, payload }: { x: number; y: number; payload: { value: string } }) => (
-                        <text x={x} y={y} dy="0.71em" textAnchor={payload.value === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
-                          {payload.value}
+                      // Recharts types a tick's x/y as `number | string` and its
+                      // payload value as unknown-ish, so a hand-written
+                      // `{ x: number; y: number }` is not assignable and
+                      // build:strict rejects it. Take the library's own prop
+                      // type and narrow at the point of use instead of
+                      // re-declaring a shape it never promised.
+                      tick={({ x, y, payload }: XAxisTickContentProps) => (
+                        <text x={x} y={y} dy="0.71em" textAnchor={String(payload.value) === first ? "start" : "end"} fill="#9CA3AF" fontSize={10}>
+                          {String(payload.value)}
                         </text>
                       )}
                       axisLine={{ stroke: "#F0ECE6" }}
