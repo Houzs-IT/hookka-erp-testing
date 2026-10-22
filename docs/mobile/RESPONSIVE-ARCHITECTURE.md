@@ -1,6 +1,6 @@
 # `/m` responsive architecture
 
-> **Last verified: 2026-10-22 on branch `feat/mobile-responsive-foundation`** against
+> **Last verified: 2026-10-22 on branch `feat/mobile-responsive-foundation` (step 2 added the same day: `ResponsiveActionDock`, `screens/delivery/ui.tsx` `ToastView`, `DocumentDetailScreen.tsx` `Toast`)** against
 > `src/pages/m/lib/responsive-layout.tsx`, `lib/responsive-grid.ts`,
 > `components/{ResponsiveGrid,PageContainer,ResponsiveActionDock,Sheet}.tsx`,
 > `MobileLayout.tsx` (`TwoPane`) and the screens named below. The repo counts quoted
@@ -66,7 +66,7 @@ Decisions were made on repository evidence, not on possible future use.
 | Step | Purpose | Done when |
 |---|---|---|
 | 1. Foundation (this branch) | Pane width, grid, cap, tests, this page | Tests and lint green, no screen changed, no new `tsc` errors |
-| 2. Floating layers | One toast / action-bar placement that follows the rail and pane | The hard-coded `72/84/104px` offsets and `100vw` are gone from `DocumentDetailScreen` and `delivery/ui.tsx`; phone offsets unchanged |
+| 2. Floating layers (**built, not yet visually checked**) | One toast / action-bar placement that follows the rail and pane | `ResponsiveActionDock` gains `scope="auto"` (follows the pane via `useContainerLayout`) and `tabletBottom`; the `DocumentDetailScreen` and Delivery (`ToastView`) toasts render in it with their phone offsets unchanged (120/72 and 104) and their looks untouched; `tests/mobile-floating-layer.test.mjs` also fails if a screen adds a new `position: "fixed"` layer or uses `100vw`. Tablet position of those two toasts changes on purpose (centred in the content area or pane, above the bar) and needs a visual check |
 | 3. First screens | Prove the API on real screens; **fix the thresholds** | Delivery and Procurement lists on `ResponsiveGrid` with the phone-width decision above made; `inPane` removed from the three screens |
 | 4. Sales Order detail | The one fork with functional differences | Single adaptive screen; every tablet action and figure preserved and checked in a non-production environment; `SalesDetailTablet` removed only after sign-off |
 | 5. Remaining forks and unadapted screens | Production detail, Sales list, Mail Center, Home, Finance, Dashboard wrapper, Warehouse, forms | Per module: one component, phone unchanged, tablet follows the phone design language |

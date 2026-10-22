@@ -1233,43 +1233,43 @@ function Toast({
   raised?: boolean;
 }) {
   const ok = toast.kind === "ok";
+  // Floats in the dock of the pane this screen is in. Phones keep the old
+  // offsets (above the bottom action bar when there is one, else above the tab
+  // bar); a tablet has no tab bar, so it sits just above the bar or the edge.
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        left: 0,
-        right: 0,
-        bottom: raised
-          ? "calc(120px + env(safe-area-inset-bottom))"
-          : "calc(72px + env(safe-area-inset-bottom))",
-        display: "flex",
-        justifyContent: "center",
-        zIndex: 50,
-        padding: "0 16px",
-        pointerEvents: "auto",
-      }}
-    >
+    <ResponsiveActionDock scope="auto" phoneBottom={raised ? 120 : 72} tabletBottom={raised ? 84 : 24} zIndex={50}>
       <div
+        onClick={onClose}
         style={{
-          maxWidth: 382,
           width: "100%",
+          boxSizing: "border-box",
           display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "11px 14px",
-          borderRadius: 12,
-          backgroundColor: ok ? "#4F7C3A" : "#9A3A2D",
-          color: "#fff",
-          fontSize: 13,
-          fontWeight: 600,
-          boxShadow: "0 6px 20px rgba(31,29,27,0.25)",
+          justifyContent: "center",
+          padding: "0 16px",
+          pointerEvents: "auto",
         }}
       >
-        <CheckCircle2 size={16} strokeWidth={2} style={{ flexShrink: 0 }} />
-        <span>{toast.text}</span>
+        <div
+          style={{
+            maxWidth: 382,
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "11px 14px",
+            borderRadius: 12,
+            backgroundColor: ok ? "#4F7C3A" : "#9A3A2D",
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: "0 6px 20px rgba(31,29,27,0.25)",
+          }}
+        >
+          <CheckCircle2 size={16} strokeWidth={2} style={{ flexShrink: 0 }} />
+          <span>{toast.text}</span>
+        </div>
       </div>
-    </div>
+    </ResponsiveActionDock>
   );
 }
 
