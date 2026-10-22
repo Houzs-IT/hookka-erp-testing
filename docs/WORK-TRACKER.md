@@ -1,4 +1,7 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-22**: branch `fix/dev05-filled-from-stock-wording` — WIP
+> allocation measured live on staging (4 finished + 2 unfinished, no new POs). It proved
+> the confirm route's "nothing to produce" line wrong; the planner now returns the number.
 > **Last verified: 2026-10-22**: branch `docs/dev05-close` — DEV-05 closed. A9's design
 > gap is answered by the owner (orders are not held for deposits, so the two rules agree);
 > R1–R17 re-checked against source. A1–A4/A8 close as UNVERIFIABLE: their text was never
@@ -8235,3 +8238,59 @@ Promotion to `main`. CLAUDE.md: *bug fixes merge straight to main; features go
 to staging*. A feature landing on `staging` is its finish line; shipping it is
 a separate, scheduled decision about the whole branch (638 commits ahead of
 `main`, which is itself 245 ahead the other way), not about DEV-05.
+
+## 2026-10-22 — WIP allocation measured on staging, and the sentence it proved wrong
+
+Branch `fix/dev05-filled-from-stock-wording`, to `staging`. #906 shipped WIP
+allocation on 39 unit tests and no live run. This is the live run, and it found
+something the suite could not.
+
+**MEASURED on staging 2026-10-22.** Set up 4 finished pieces (`SOH-2610-001`,
+COMPLETED) plus 4 unfinished ones (`SOH-2610-002`, PENDING), then confirmed a
+SIX-piece customer order — chosen so the shelf alone could not cover it. The
+confirm printed:
+
+```
+Allocated 6 x 1013-(Q) (4 from stock, 2 from pieces still in production)
+Filled entirely from stock — nothing to produce.
+```
+
+Line one is right, and it is the whole feature working: **all four finished
+pieces went first**, two unfinished ones topped the line up, and **zero new
+production orders were raised**. Ownership moved on exactly those six.
+
+**Line two is wrong, twice.** Nothing was "entirely from stock" — two pieces
+were on the floor — and there was plenty "to produce", namely those two. It is
+written in the confirm route off `itemsToProduce.length === 0`
+(`sales-orders.ts:2806`), which before #906 meant "every piece is a finished
+good" and silently stopped meaning that the moment work in progress became
+allocatable.
+
+**Why 39 tests missed it.** They all test `planAutoAllocation`, and the
+sentence is assembled in the route. The planner's own note was correct — the
+suite was reading the right function and the wrong one was never exercised.
+The fix is not a reworded string: the planner now RETURNS `unfinishedTaken`, so
+the route states a number it was given instead of inferring one from a PO
+count. Four tests added (43 total), one of them structural over the route.
+
+**Cleanup**: the test customer order and the WIP stock order were cancelled and
+every piece released. Availability re-read as it started — 4 available, 0 in
+production, the original four COMPLETED pieces home at Factory Stock. The
+cancelled WIP pieces correctly dropped out of supply.
+
+**Confirmed again, third time today**: availability lags a confirm by up to a
+minute (the query cache). Creating the WIP stock order showed
+`inProductionQty: 0` for ~30 s before settling at 4.
+
+**Pre-existing on `origin/staging`, measured here, NOT caused by this branch** —
+each verified by re-running on a clean worktree of `origin/staging`:
+- `npx tsc -p tsconfig.app.json --noEmit` FAILS on
+  `src/pages/dashboard-b/charts.tsx:312` (a Recharts tick-prop type). CLAUDE.md
+  requires build:strict clean before every push; it is currently red on the
+  base branch.
+- three test failures: `export-all-pages`, `m-finance-menu`,
+  `mobile-nav-drawer`.
+- `docs/modules/dashboard.md:66` pointed at `dashboard-overview.ts:2355` for
+  `GET /revenue-split`, which is at `:2681` — a 326-line drift this branch
+  cannot have caused. Corrected here because it was holding the anchor gate
+  red; named so it is not mistaken for part of this change.
