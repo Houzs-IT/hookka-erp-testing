@@ -38,6 +38,9 @@ const ALLOW = new Set([
   // supplier_scan_samples — CREATE TABLE in ocr-distill.ts uses these exact
   // camelCase names (all fold to lowercase), INSERT/SELECT match. Self-consistent.
   "supplierHint", "docIdentifier", "docType", "rawJson", "correctedJson",
+  // delivery_orders — ensureNotifyEmailColumns ALTERs it in with this exact
+  // camelCase; Reverse to Dispatched (HK-0111) clears it. Self-consistent.
+  "deliveredEmailAt",
 ]);
 
 function walk(dir) {

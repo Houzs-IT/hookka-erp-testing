@@ -38,6 +38,7 @@ import {
   Mail,
   Bot,
   Undo2,
+  RotateCcw,
   XCircle,
   Upload,
 } from "lucide-react";
@@ -4605,6 +4606,56 @@ export default function DeliveryPage() {
         label: "Convert to Delivery Return",
         icon: <Undo2 className="h-3.5 w-3.5" />,
         action: () => navigate(`/delivery-returns?createFrom=${row.id}`),
+        disabled:
+          row.status !== "DELIVERED" && row.status !== "INVOICED",
+      },
+      {
+        // HK-0111: marked delivered by mistake (pieces not sent). The backend
+        // voids the unpaid invoice and undoes the delivery in one batch, and
+        // refuses with a readable reason when it cannot (payment, note,
+        // Delivery Return) — surface that reason verbatim.
+        label: "Reverse to Dispatched",
+        icon: <RotateCcw className="h-3.5 w-3.5" />,
+        action: async () => {
+          if (
+            !(await confirm({
+              title: `Reverse ${row.doNo} to Dispatched?`,
+              message:
+                "Use this when the DO was marked delivered but some items were not sent. Its invoice is voided (only while unpaid), the delivery is undone and the DO goes back to Dispatched with the same DO number. Then use Reverse to Pending Dispatch to remove the items that were not sent, and deliver it again.",
+              danger: true,
+            }))
+          )
+            return;
+          const result = await verifiedSave<DeliveryOrder>({
+            endpoint: `/api/delivery-orders/${row.id}/reverse-to-dispatched`,
+            method: "POST",
+            body: {},
+            readback: async () => {
+              const r = await fetch(`/api/delivery-orders/${row.id}?_v=${Date.now()}`, {
+                credentials: "include",
+                cache: "no-store",
+              });
+              if (!r.ok) return null;
+              const j = (await r.json()) as { success?: boolean; data?: DeliveryOrder } | DeliveryOrder;
+              return (j as { data?: DeliveryOrder })?.data ?? (j as DeliveryOrder) ?? null;
+            },
+            expect: { status: "LOADED" },
+          });
+          if (!result.ok) {
+            if (result.reason === "mismatch") toast.error(formatMismatchError(result.diffs));
+            else if (result.reason === "http") {
+              let parsedErr = result.body;
+              try {
+                const j = JSON.parse(result.body) as { error?: string };
+                if (j.error) parsedErr = j.error;
+              } catch { /* keep raw body */ }
+              toast.error(parsedErr || `Failed to reverse (HTTP ${result.status})`);
+            } else toast.error(`Save failed: ${result.details}`);
+          } else {
+            toast.success(`${row.doNo} is back in Dispatched`);
+          }
+          fetchData();
+        },
         disabled:
           row.status !== "DELIVERED" && row.status !== "INVOICED",
       },

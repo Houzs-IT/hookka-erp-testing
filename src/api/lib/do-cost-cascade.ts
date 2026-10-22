@@ -53,6 +53,62 @@ function genLedgerId(prefix: string): string {
   return `cl-${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+type DeliveredSlice = {
+  itemId: string;
+  batchId: string | null;
+  qty: number;
+  unitCostSen: number;
+};
+
+// ---------------------------------------------------------------------------
+// The FG_DELIVERED slices this DO still holds, newest first. A DO can be
+// delivered, reversed to Dispatched and delivered again (HK-0111), so its
+// original FG_DELIVERED rows outlive their consumption: each reversal appends
+// DELIVERY_ORDER_UNDELIVER rows that hand those slices back. Every reader that
+// replays a DO's consumption must read it net of them, or a reversed delivery
+// is credited (or skipped) twice.
+// ---------------------------------------------------------------------------
+async function liveDeliveredSlices(
+  db: D1Database,
+  doId: string,
+): Promise<DeliveredSlice[]> {
+  const [deliveredRes, undeliveredRes] = await Promise.all([
+    db
+      .prepare(
+        `SELECT itemId AS "itemId", batchId AS "batchId", qty AS "qty",
+                unitCostSen AS "unitCostSen"
+           FROM cost_ledger
+          WHERE refType = 'DELIVERY_ORDER' AND refId = ? AND type = 'FG_DELIVERED'
+          ORDER BY date DESC, id DESC`,
+      )
+      .bind(doId)
+      .all<DeliveredSlice>(),
+    db
+      .prepare(
+        `SELECT itemId AS "itemId", batchId AS "batchId", qty AS "qty"
+           FROM cost_ledger
+          WHERE refType = 'DELIVERY_ORDER_UNDELIVER' AND refId = ?`,
+      )
+      .bind(doId)
+      .all<{ itemId: string; batchId: string | null; qty: number }>(),
+  ]);
+  const key = (itemId: string, batchId: string | null) => `${itemId}|${batchId ?? ""}`;
+  const handedBack = new Map<string, number>();
+  for (const r of undeliveredRes.results ?? []) {
+    const k = key(r.itemId, r.batchId);
+    handedBack.set(k, (handedBack.get(k) ?? 0) + (Number(r.qty) || 0));
+  }
+  const live: DeliveredSlice[] = [];
+  for (const s of deliveredRes.results ?? []) {
+    const k = key(s.itemId, s.batchId);
+    const qty = Number(s.qty) || 0;
+    const offset = Math.min(qty, handedBack.get(k) ?? 0);
+    if (offset > 0) handedBack.set(k, (handedBack.get(k) ?? 0) - offset);
+    if (qty - offset > 0) live.push({ ...s, qty: qty - offset });
+  }
+  return live;
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point. Returns statements to append to the caller's existing
 // batch — we don't call db.batch() ourselves so the outer DELIVERED flow
@@ -71,14 +127,10 @@ export async function consumeFGBatchesForDO(
   totalCogsSen: number;
   shortages: FGDeliveredShortage[];
 }> {
-  // Idempotency — already emitted FG_DELIVERED for this DO?
-  const existing = await db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM cost_ledger WHERE refType = 'DELIVERY_ORDER' AND refId = ? AND type = 'FG_DELIVERED'",
-    )
-    .bind(doId)
-    .first<{ n: number }>();
-  if ((existing?.n ?? 0) > 0) {
+  // Idempotency — this DO already holds FG_DELIVERED consumption? Net of
+  // Reverse to Dispatched (HK-0111): a reversed delivery holds none, so its
+  // re-delivery consumes again for the corrected lines.
+  if ((await liveDeliveredSlices(db, doId)).length > 0) {
     return { skipped: true, statements: [], totalCogsSen: 0, shortages: [] };
   }
 
@@ -219,18 +271,11 @@ export async function reverseFGForDeliveryReturn(
 
     // The FG_DELIVERED slices this DO consumed for this product (newest first
     // so a return unwinds the most recent consumption).
-    const slicesRes = await db
-      .prepare(
-        `SELECT batchId AS "batchId", qty AS "qty", unitCostSen AS "unitCostSen"
-           FROM cost_ledger
-          WHERE refType = 'DELIVERY_ORDER' AND refId = ? AND type = 'FG_DELIVERED'
-            AND itemId = ?
-          ORDER BY date DESC, id DESC`,
-      )
-      .bind(doId, product.id)
-      .all<{ batchId: string; qty: number; unitCostSen: number }>();
+    const slices = (await liveDeliveredSlices(db, doId)).filter(
+      (s) => s.itemId === product.id,
+    );
 
-    for (const s of slicesRes.results ?? []) {
+    for (const s of slices) {
       if (toReverse <= 0) break;
       const take = Math.min(Number(s.qty) || 0, toReverse);
       if (take <= 0) continue;
@@ -407,25 +452,54 @@ export async function reverseFGForDoCancel(
     return { skipped: true, statements: [], reversedCogsSen: 0 };
   }
 
-  const slicesRes = await db
-    .prepare(
-      `SELECT itemId AS "itemId", batchId AS "batchId", qty AS "qty",
-              unitCostSen AS "unitCostSen"
-         FROM cost_ledger
-        WHERE refType = 'DELIVERY_ORDER' AND refId = ? AND type = 'FG_DELIVERED'
-        ORDER BY date DESC, id DESC`,
-    )
-    .bind(doId)
-    .all<{
-      itemId: string;
-      batchId: string | null;
-      qty: number;
-      unitCostSen: number;
-    }>();
+  return {
+    skipped: false,
+    ...(await handBackDeliveredSlices(
+      db,
+      doId,
+      "DELIVERY_ORDER_CANCEL",
+      "fgc",
+      `FG un-delivered — ${doNo} cancelled`,
+      reversedAtIso,
+    )),
+  };
+}
 
+// ---------------------------------------------------------------------------
+// REVERSE TO DISPATCHED (HK-0111) — a delivery marked DELIVERED by mistake (some
+// pieces never reached the customer) steps back to LOADED so its lines can be
+// corrected and delivered again under the same DO number. Same give-back as the
+// cancel above, but repeatable: the DO stays live, may be delivered and
+// reversed again, so there is no once-only marker. liveDeliveredSlices nets
+// earlier reversals off, which also makes a retry a no-op.
+// ---------------------------------------------------------------------------
+export async function reverseFGForDoUndeliver(
+  db: D1Database,
+  doId: string,
+  doNo: string,
+  reversedAtIso: string,
+): Promise<{ statements: D1PreparedStatement[]; reversedCogsSen: number }> {
+  return handBackDeliveredSlices(
+    db,
+    doId,
+    "DELIVERY_ORDER_UNDELIVER",
+    "fgu",
+    `FG un-delivered — ${doNo} reversed to dispatched`,
+    reversedAtIso,
+  );
+}
+
+async function handBackDeliveredSlices(
+  db: D1Database,
+  doId: string,
+  refType: "DELIVERY_ORDER_CANCEL" | "DELIVERY_ORDER_UNDELIVER",
+  idPrefix: string,
+  note: string,
+  reversedAtIso: string,
+): Promise<{ statements: D1PreparedStatement[]; reversedCogsSen: number }> {
   const statements: D1PreparedStatement[] = [];
   let reversedCogsSen = 0;
-  for (const s of slicesRes.results ?? []) {
+  for (const s of await liveDeliveredSlices(db, doId)) {
     const qty = Number(s.qty) || 0;
     if (qty <= 0) continue;
     const unitSen = Number(s.unitCostSen) || 0;
@@ -446,21 +520,21 @@ export async function reverseFGForDoCancel(
           `INSERT INTO cost_ledger
              (id, date, type, itemType, itemId, batchId, qty, direction,
               unitCostSen, totalCostSen, refType, refId, notes)
-           VALUES (?, ?, 'ADJUSTMENT', 'FG', ?, ?, ?, 'IN', ?, ?, 'DELIVERY_ORDER_CANCEL', ?, ?)`,
+           VALUES (?, ?, 'ADJUSTMENT', 'FG', ?, ?, ?, 'IN', ?, ?, ?, ?, ?)`,
         )
         .bind(
-          genLedgerId("fgc"),
+          genLedgerId(idPrefix),
           reversedAtIso,
           s.itemId,
           s.batchId,
           qty,
           unitSen,
           costSen,
+          refType,
           doId,
-          `FG un-delivered — ${doNo} cancelled`,
+          note,
         ),
     );
   }
-
-  return { skipped: false, statements, reversedCogsSen };
+  return { statements, reversedCogsSen };
 }

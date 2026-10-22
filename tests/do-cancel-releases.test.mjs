@@ -105,6 +105,11 @@ function fakeDb({
                   ),
                 };
               }
+              if (/FROM cost_ledger WHERE refType = 'DELIVERY_ORDER_UNDELIVER' AND refId = \?/.test(q)) {
+                return {
+                  results: costLedger.filter((r) => r.refType === "DELIVERY_ORDER_UNDELIVER" && r.refId === args[0]),
+                };
+              }
               if (/po\.salesOrderId AS soId/.test(q)) {
                 const ids = new Set();
                 for (const di of doItems.filter((d) => d.deliveryOrderId === args[0])) {
@@ -261,7 +266,7 @@ test("the FIFO FG_DELIVERED COGS is credited back, slice for slice", async () =>
   assert.deepEqual(back.args, [2, "b-1"], "give back exactly what that slice took, to the batch it took it from");
   const rev = r.statements.find((s) => /INSERT INTO cost_ledger/.test(s.sql));
   assert.ok(rev, "the COGS reversal needs its own ledger row — cost_ledger is append-only");
-  assert.ok(rev.sql.includes("'DELIVERY_ORDER_CANCEL'"), "traceable + idempotent by refType");
+  assert.ok(rev.args.includes("DELIVERY_ORDER_CANCEL"), "traceable + idempotent by refType");
   assert.equal(r.reversedCogsSen, 30000, "2 units × RM 150.00 comes back off COGS");
 });
 
