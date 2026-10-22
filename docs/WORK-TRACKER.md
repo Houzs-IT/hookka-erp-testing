@@ -1,4 +1,7 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-22**: branch `fix/charts-tick-type` — build:strict is green on
+> staging again; it had TWO pre-existing errors, the second hidden behind the first. Three
+> unrelated test failures remain red and are named in the entry.
  fix/mobile-tablet-routing
 > **Last verified: 2026-10-22**: mobile/tablet routing entry added (branch `fix/mobile-tablet-routing`, PR #1098); nothing else re-checked.
 
@@ -8320,6 +8323,39 @@ each verified by re-running on a clean worktree of `origin/staging`:
   cannot have caused. Corrected here because it was holding the anchor gate
   red; named so it is not mistaken for part of this change.
 
+## 2026-10-22 — build:strict is green on staging again (two errors, both pre-existing)
+
+Branch `fix/charts-tick-type`, to `staging`. Found while checking what a
+release would need: `npx tsc -p tsconfig.app.json --noEmit` was FAILING on the
+base branch, which CLAUDE.md names as a non-negotiable before every push. Two
+errors, neither from the branch that found them.
+
+**1. `dashboard-b/charts.tsx:312` — a hand-written tick prop type.** The inline
+`<XAxis tick={...}>` renderer declared `{ x: number; y: number; payload: {
+value: string } }`. Recharts types a tick's `x`/`y` as `number | string`, so
+the function was not assignable to `TickProp<XAxisTickContentProps>`. Fixed by
+taking the library's own exported `XAxisTickContentProps` and narrowing at the
+point of use (`String(payload.value)`), rather than re-declaring a shape
+Recharts never promised — the same mistake would come back the next time the
+library's types move. Swept the repo first: this was the only hand-written
+inline tick.
+
+**2. `dashboards/EmployeesView.tsx:189` — a missing import.** `KPI_ROW` is
+exported from `dashboard-shared-lib.ts` and used in two views;
+`AllOverviewView` imports it, `EmployeesView` uses it without importing. This
+one only became visible after #1 was fixed, because tsc stops reporting past
+a point — so "one error" on the base branch was really two.
+
+**MEASURED, not assumed**: both reproduce on a clean worktree of
+`origin/staging`; neither file is touched by any DEV-05 work. After the fix
+`tsc` exits 0 with zero errors.
+
+**Still red on staging, NOT addressed here** (each also reproduced on a clean
+`origin/staging` worktree): three test failures — `export-all-pages`
+("column text filters keep their modes"), `m-finance-menu` ("the Finance row"),
+`mobile-nav-drawer` ("module search filters by label"). They are unrelated to
+the type system and belong to their own owners; naming them so the next person
+reading "staging is green" knows exactly what that does and does not cover.
 ## 2026-10-22 — staging's three red tests, and the permission hole one of them was reporting
 
 Branch `fix/staging-red-tests`, to `staging`. Three tests had been failing on
