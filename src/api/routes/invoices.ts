@@ -18,6 +18,7 @@
 // payments.ts imports the same helper so both paths stay in lock-step.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -254,7 +255,7 @@ export async function buildInvoiceLedgerLegs(
   return { legs, taxSen };
 }
 
-type InvoiceRow = {
+export type InvoiceRow = {
   id: string;
   invoiceNo: string;
   deliveryOrderId: string | null;
@@ -2176,6 +2177,141 @@ app.get("/:id", async (c) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// buildInvoiceVoidStatements — everything a void writes besides the invoice's
+// own status flip: audit row, GL reversal, A/R and the DO / SO release (the
+// consignment-note release stays in the PUT, which reads it up front).
+// Shared by PUT /:id (the void action) and the DO's Reverse to Dispatched
+// (HK-0111), which voids the delivery's unpaid invoice in the same batch as
+// the un-delivery so the two land or roll back together.
+// ---------------------------------------------------------------------------
+export async function buildInvoiceVoidStatements(
+  c: Context<Env>,
+  existing: InvoiceRow,
+  afterSnapshot: Record<string, unknown>,
+  now: string,
+): Promise<
+  | { ok: true; statements: D1PreparedStatement[] }
+  | { ok: false; error: string }
+> {
+  const id = existing.id;
+  const statements: D1PreparedStatement[] = [];
+  const auditStmt = await buildAuditStatement(c, {
+    resource: "invoices",
+    resourceId: id,
+    action: "void",
+    before: existing,
+    after: afterSnapshot,
+  });
+  if (auditStmt) statements.push(auditStmt);
+
+  // Reverse the original posting (idempotent): only when it was
+  // posted and not already reversed. Recomputed from the current
+  // invoice subtotal + GST rate — accurate because a SENT invoice's
+  // items are locked from edits, so post and void mirror exactly.
+  try {
+    const orgId =
+      (existing as unknown as { orgId?: string | null }).orgId ??
+      "hookka";
+    const actorUserId =
+      (
+        c as unknown as { get: (k: string) => string | undefined }
+      ).get("userId") ?? null;
+    // BUG-2026-07-23-002 — mirror-reverse whatever the invoice's doc
+    // family VISIBLY nets, per account, org-agnostic. The old
+    // posted/reversed gate + recompute skipped the reversal whenever
+    // the legs sat under a different orgId than the fallback (five
+    // Carress cancels left +31,677.52 live on 300-0000), and a
+    // recompute could drift from edited invoices' actual legs.
+    const { statements: revStmts } = await buildCancelReversalStatements(
+      c.var.DB,
+      id,
+      actorUserId,
+      orgId,
+    );
+    statements.push(...revStmts);
+  } catch (e) {
+    // Phase 1 (2026-06) — abort: a void must reverse the original
+    // posting or the ledger keeps revenue/AR for a cancelled invoice.
+    console.error(
+      `[ledger] failed to BUILD reversal for invoice ${id} void — aborting:`,
+      e,
+    );
+    return {
+      ok: false,
+      error:
+        "Failed to build the GL reversal for this void — the status change was NOT saved. Retry, and report if it persists.",
+    };
+  }
+
+  // PR 0 (2026-05-20, owner-confirmed) — reverse the customer's
+  // outstanding A/R for the unpaid portion of the cancelled invoice.
+  // Previously a CANCELLED transition wrote only the audit row, so
+  // customers.outstandingSen kept carrying the cancelled amount —
+  // AR drifted up forever (every cancelled SENT/PARTIAL_PAID/OVERDUE
+  // invoice padded the balance with money the customer no longer owed).
+  //
+  // unpaidSen = totalSen - paidAmount = the portion that was still on
+  // the customer's tab at cancel time. Already-paid portion stays out
+  // of the reversal — the cash is real, it just needs a refund / CN
+  // path which is a separate decision.
+  //
+  // GREATEST(0, ...) clamps in case the original create path didn't bump
+  // outstandingSen for this invoice (the manual POST /api/invoices
+  // path doesn't, only the auto-create-from-DO path does). Matches
+  // the guard pattern used in credit-notes.ts:256 and payments.ts:389.
+  const unpaidSen = existing.totalSen - existing.paidAmount;
+  if (unpaidSen > 0 && existing.customerId) {
+    statements.push(
+      c.var.DB.prepare(
+        `UPDATE customers SET outstandingSen = GREATEST(0, outstandingSen - ?) WHERE id = ?`,
+      ).bind(unpaidSen, existing.customerId),
+    );
+  }
+
+  // Release the source (2026-08-07). The void above reverses the GL and
+  // the customer's A/R, but until now it wrote NOTHING back to
+  // delivery_orders — so the DO stayed at INVOICED forever and the
+  // delivered goods could never be billed again. Step the DO (and any SO
+  // this invoice family bumped) back to DELIVERED, but ONLY when no other
+  // live invoice still bills them. Same batch as the void, so the release
+  // and the reversal land or roll back together.
+  {
+    const { buildInvoiceDeathReleaseStatements } = await import(
+      "./delivery-orders"
+    );
+    statements.push(
+      ...(await buildInvoiceDeathReleaseStatements(c.var.DB, {
+        invoiceId: id,
+        deliveryOrderId: existing.deliveryOrderId,
+        salesOrderId: existing.salesOrderId,
+        now,
+        reason: "void",
+      })),
+    );
+  }
+  // Hide the cancelled invoice's GL legs (original + reversal) so the void
+  // doesn't show in the GL — the same effect applyLifecycle gives the
+  // lifecycle-managed doc types. Pushed AFTER the reversal INSERTs.
+  //
+  // The WHOLE family, not IN ('invoice','invoice_void'): an EDITED
+  // invoice's live legs are `invoice_restate_post:<stamp>`, which the
+  // exact-match list left visible while hiding the just-written reversal —
+  // the cancelled invoice kept its full DR on 300-0000 (BUG-2026-08-06-005;
+  // the two Carress error invoices sat live at 12,802.76 after their void).
+  // Same class as BUG-2026-07-08-002: a void must cover every leg the
+  // document family ever posted. Org-agnostic like the reversal itself —
+  // sourceId is globally unique, and an orgId bind is exactly how
+  // BUG-2026-07-23-002 skipped five Carress cancels.
+  statements.push(
+    c.var.DB.prepare(
+      "UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceType LIKE 'invoice%' AND sourceId = ?",
+    ).bind(id),
+  );
+
+  return { ok: true, statements };
+}
+
 // PUT /api/invoices/:id — update (status transitions, payments, fields)
 // The in-batch guard in buildInvoiceDeathCnReleaseStatements fails with
 // CN_RELEASE_CONFLICT when the consignment note moved on between its read and
@@ -3011,128 +3147,15 @@ app.put("/:id", async (c) => {
         );
       }
     } else if (isVoidTransition && afterSnapshot) {
-      const auditStmt = await buildAuditStatement(c, {
-        resource: "invoices",
-        resourceId: id,
-        action: "void",
-        before: existing,
-        after: afterSnapshot,
-      });
-      if (auditStmt) statements.push(auditStmt);
-
-      // Reverse the original posting (idempotent): only when it was
-      // posted and not already reversed. Recomputed from the current
-      // invoice subtotal + GST rate — accurate because a SENT invoice's
-      // items are locked from edits, so post and void mirror exactly.
-      try {
-        const orgId =
-          (existing as unknown as { orgId?: string | null }).orgId ??
-          "hookka";
-        const actorUserId =
-          (
-            c as unknown as { get: (k: string) => string | undefined }
-          ).get("userId") ?? null;
-        // BUG-2026-07-23-002 — mirror-reverse whatever the invoice's doc
-        // family VISIBLY nets, per account, org-agnostic. The old
-        // posted/reversed gate + recompute skipped the reversal whenever
-        // the legs sat under a different orgId than the fallback (five
-        // Carress cancels left +31,677.52 live on 300-0000), and a
-        // recompute could drift from edited invoices' actual legs.
-        const { statements: revStmts } = await buildCancelReversalStatements(
-          c.var.DB,
-          id,
-          actorUserId,
-          orgId,
-        );
-        statements.push(...revStmts);
-      } catch (e) {
-        // Phase 1 (2026-06) — abort: a void must reverse the original
-        // posting or the ledger keeps revenue/AR for a cancelled invoice.
-        console.error(
-          `[ledger] failed to BUILD reversal for invoice ${id} void — aborting:`,
-          e,
-        );
-        return c.json(
-          {
-            success: false,
-            error:
-              "Failed to build the GL reversal for this void — the status change was NOT saved. Retry, and report if it persists.",
-          },
-          500,
-        );
-      }
-
-      // PR 0 (2026-05-20, owner-confirmed) — reverse the customer's
-      // outstanding A/R for the unpaid portion of the cancelled invoice.
-      // Previously a CANCELLED transition wrote only the audit row, so
-      // customers.outstandingSen kept carrying the cancelled amount —
-      // AR drifted up forever (every cancelled SENT/PARTIAL_PAID/OVERDUE
-      // invoice padded the balance with money the customer no longer owed).
-      //
-      // unpaidSen = totalSen - paidAmount = the portion that was still on
-      // the customer's tab at cancel time. Already-paid portion stays out
-      // of the reversal — the cash is real, it just needs a refund / CN
-      // path which is a separate decision.
-      //
-      // GREATEST(0, ...) clamps in case the original create path didn't bump
-      // outstandingSen for this invoice (the manual POST /api/invoices
-      // path doesn't, only the auto-create-from-DO path does). Matches
-      // the guard pattern used in credit-notes.ts:256 and payments.ts:389.
-      const unpaidSen = existing.totalSen - existing.paidAmount;
-      if (unpaidSen > 0 && existing.customerId) {
-        statements.push(
-          c.var.DB.prepare(
-            `UPDATE customers SET outstandingSen = GREATEST(0, outstandingSen - ?) WHERE id = ?`,
-          ).bind(unpaidSen, existing.customerId),
-        );
-      }
-
-      // Release the source (2026-08-07). The void above reverses the GL and
-      // the customer's A/R, but until now it wrote NOTHING back to
-      // delivery_orders — so the DO stayed at INVOICED forever and the
-      // delivered goods could never be billed again. Step the DO (and any SO
-      // this invoice family bumped) back to DELIVERED, but ONLY when no other
-      // live invoice still bills them. Same batch as the void, so the release
-      // and the reversal land or roll back together.
-      {
-        const { buildInvoiceDeathReleaseStatements } = await import(
-          "./delivery-orders"
-        );
-        statements.push(
-          ...(await buildInvoiceDeathReleaseStatements(c.var.DB, {
-            invoiceId: id,
-            deliveryOrderId: existing.deliveryOrderId,
-            salesOrderId: existing.salesOrderId,
-            now,
-            reason: "void",
-          })),
-        );
-      }
+      const voided = await buildInvoiceVoidStatements(c, existing, afterSnapshot, now);
+      if (!voided.ok) return c.json({ success: false, error: voided.error }, 500);
+      statements.push(...voided.statements);
       // …and a CN-sourced invoice's consignment note (T-006 R4), built above.
       if (cnRelease) {
         statements.push(
           ...(await cnReleaseStatements(c, cnRelease, id, existing.invoiceNo, "voided")),
         );
       }
-
-      // Hide the cancelled invoice's GL legs (original + reversal) so the void
-      // doesn't show in the GL — the same effect applyLifecycle gives the
-      // lifecycle-managed doc types. Pushed AFTER the reversal INSERTs.
-      //
-      // The WHOLE family, not IN ('invoice','invoice_void'): an EDITED
-      // invoice's live legs are `invoice_restate_post:<stamp>`, which the
-      // exact-match list left visible while hiding the just-written reversal —
-      // the cancelled invoice kept its full DR on 300-0000 (BUG-2026-08-06-005;
-      // the two Carress error invoices sat live at 12,802.76 after their void).
-      // Same class as BUG-2026-07-08-002: a void must cover every leg the
-      // document family ever posted. Org-agnostic like the reversal itself —
-      // sourceId is globally unique, and an orgId bind is exactly how
-      // BUG-2026-07-23-002 skipped five Carress cancels.
-      statements.push(
-        c.var.DB.prepare(
-          "UPDATE ledger_journal_entries SET hidden = 1 WHERE sourceType LIKE 'invoice%' AND sourceId = ?",
-        ).bind(id),
-      );
     }
 
     await c.var.DB.batch(statements);
