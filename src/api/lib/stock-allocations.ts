@@ -543,6 +543,20 @@ export type AutoAllocationPlan = {
    * is what makes the sentence true.
    */
   allocatedByItemId: Map<string, number>;
+  /**
+   * How many of the allocated pieces were still being MADE when they were
+   * taken. Zero means every piece came off the shelf.
+   *
+   * The caller needs this for the same reason `allocatedByItemId` exists: a
+   * sentence it writes downstream would otherwise be false. A line covered
+   * without queueing new production is NOT automatically "filled entirely from
+   * stock — nothing to produce" once work in progress is allocatable, because
+   * some of those pieces are on the floor and the floor still has to finish
+   * them. Found by running a 6-piece order against 4 finished + 4 unfinished
+   * on staging, 2026-10-22; the unit suite missed it because the sentence is
+   * assembled in the confirm route, not here.
+   */
+  unfinishedTaken: number;
 };
 
 /**
@@ -580,10 +594,12 @@ export async function planAutoAllocation(
 ): Promise<AutoAllocationPlan> {
   // A stock order IS the stock. Allocating to it would be the placeholder
   // problem all over again.
-  if (order.isStock === true) return { statements: [], notes: [], allocatedByItemId: new Map() };
+  if (order.isStock === true)
+    return { statements: [], notes: [], allocatedByItemId: new Map(), unfinishedTaken: 0 };
 
   const wanted = lines.filter((l) => l.productCode && l.quantity > 0);
-  if (wanted.length === 0) return { statements: [], notes: [], allocatedByItemId: new Map() };
+  if (wanted.length === 0)
+    return { statements: [], notes: [], allocatedByItemId: new Map(), unfinishedTaken: 0 };
 
   const alreadyHeld = await loadAllocatedPOsForOrder(db, order.id);
   const heldCodes = new Set(alreadyHeld.map((p) => p.productCode));
@@ -604,6 +620,7 @@ export async function planAutoAllocation(
   const statements: D1PreparedStatement[] = [];
   const notes: string[] = [];
   const allocatedByItemId = new Map<string, number>();
+  let unfinishedTaken = 0;
   for (const line of wanted) {
     // A manual decision wins: a product this order already holds from stock is
     // left exactly as the operator set it.
@@ -701,6 +718,7 @@ export async function planAutoAllocation(
     const fromShelf = taken.filter((p) => p.isFinished)
       .reduce((n, p) => n + p.quantity, 0);
     const fromFloor = got - fromShelf;
+    unfinishedTaken += fromFloor;
     const remainder = line.quantity > got
       ? ` (${line.quantity - got} to be produced)`
       : "";
@@ -715,7 +733,7 @@ export async function planAutoAllocation(
           `${fromFloor} from pieces still in production)${remainder}`,
     );
   }
-  return { statements, notes, allocatedByItemId };
+  return { statements, notes, allocatedByItemId, unfinishedTaken };
 }
 
 export type OpenAllocation = {

@@ -959,3 +959,75 @@ test("WIP: the stage gate is a named constant, not a literal nobody can find", a
     "an unknown department withholds the piece rather than promising it",
   );
 });
+
+// ---------------------------------------------------------------------------
+// The plan has to REPORT how much of a covered line is still on the floor.
+// The confirm route writes "Filled entirely from stock — nothing to produce"
+// off `itemsToProduce.length === 0`, and once WIP is allocatable that test is
+// no longer the same question. Measured on staging 2026-10-22: a 6-piece order
+// against 4 finished + 4 unfinished printed that sentence over an allocation
+// that was 4 from stock and 2 still being made. The unit suite missed it
+// because the sentence lives in the route, not in the planner — so the planner
+// now hands the caller the number instead of leaving it to infer one.
+// ---------------------------------------------------------------------------
+
+test("the plan reports how many allocated pieces are still unfinished", async () => {
+  const db = autoDb({ pool: [...stockPOs(4), ...wipPOs(4)] });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 6, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  assert.equal(plan.unfinishedTaken, 2, "four came off the shelf, two off the floor");
+  assert.match(plan.notes[0], /4 from stock, 2 from pieces still in production/);
+});
+
+test("a line filled entirely off the shelf reports ZERO unfinished", async () => {
+  // The guard for the other branch: this is the case that may still say
+  // "nothing to produce", and it must keep saying it.
+  const db = autoDb({ pool: stockPOs(4) });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [{ productCode: "A100", quantity: 4, soItemId: "i1", soLineNo: 1 }],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  assert.equal(plan.unfinishedTaken, 0);
+});
+
+test("unfinishedTaken sums across lines, not just the last one", async () => {
+  const db = autoDb({ pool: [...stockPOs(1), ...wipPOs(3)] });
+  const plan = await planAutoAllocation(
+    db,
+    "hookka",
+    ORDER,
+    [
+      { productCode: "A100", quantity: 2, soItemId: "i1", soLineNo: 1 },
+      { productCode: "A100", quantity: 2, soItemId: "i2", soLineNo: 2 },
+    ],
+    SYSTEM_ALLOCATION_ACTOR,
+    AT,
+  );
+  assert.equal(plan.unfinishedTaken, 3, "one shelf piece and three floor pieces went out");
+});
+
+test("the confirm route picks its sentence off unfinishedTaken, not off the PO count", async () => {
+  // Structural, because the sentence is assembled in the route. Pins the exact
+  // failure found on staging: a fully-covered line whose pieces are not all
+  // finished must NOT claim there is nothing to produce.
+  const src = readFileSync(
+    new URL("../src/api/routes/sales-orders.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    src,
+    /unfinishedTaken > 0\s*\?\s*`No new production needed/,
+    "the branch exists and is driven by the planner's number",
+  );
+  assert.match(src, /unfinishedTaken = plan\.unfinishedTaken;/, "the number is read off the plan");
+});

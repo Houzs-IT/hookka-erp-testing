@@ -3,6 +3,14 @@
 > **Last verified: 2026-10-22**: mobile Invoices v2 round 5 (AR Aging access rule, Overdue findings) added to the Invoices v2 entry; nothing else re-checked.
 > **Last verified: 2026-10-22**: mobile Invoices v2 round 4 (two-tab, AR Aging gated) result added to the Invoices v2 entry; nothing else re-checked.
 > **Last verified: 2026-10-21**: mobile Invoices v2 + Invoice PDF card entry added (branch `design/mobile-invoicesv2`); nothing else re-checked.
+
+> **Last verified: 2026-10-22**: branch `fix/dev05-filled-from-stock-wording` — WIP
+> allocation measured live on staging (4 finished + 2 unfinished, no new POs). It proved
+> the confirm route's "nothing to produce" line wrong; the planner now returns the number.
+> **Last verified: 2026-10-22**: branch `docs/dev05-close` — DEV-05 closed. A9's design
+> gap is answered by the owner (orders are not held for deposits, so the two rules agree);
+> R1–R17 re-checked against source. A1–A4/A8 close as UNVERIFIABLE: their text was never
+> recorded in this repo and the PRD holding it is unreachable.
 > **Last verified: 2026-10-21**: mobile Procurement core entry added (branch `design/mobile-procurement`); nothing else re-checked.
 > **Last verified: 2026-10-21**: mobile switch / chip standardisation entry added (branch `design/mobile-filter-chips-standardization`); nothing else re-checked.
 > **Last verified: 2026-10-19**: staging<-main sync (branch `chore/sync-staging-from-main-1019`): main entries staging lacked are added above staging's newest; nothing else re-checked.
@@ -8042,10 +8050,9 @@ however, are now delivered and invoiced, and a piece on a delivery note cannot
 be released — so a showcase needs fresh stock built first.
 
 **Still open:** nothing on `main` — the whole feature is staging-only, and
-promoting it is a decision nobody has been asked for. A9's design gap also
-stands: the owner's rule is *earliest order wins*, the implementation is *first
-to confirm wins*, and closing that means answering how long an unconfirmed order
-may hold finished stock.
+promoting it is a decision nobody has been asked for. **A9's design gap was
+closed on 2026-10-22** — see the entry below; it needed a fact about the
+factory, not code.
 
 
 ## 2026-10-16 — WIP Production Times: push a changed time onto open job cards
@@ -8202,3 +8209,159 @@ real save on `5539 -Left Arm (Frame)` / Framing moved the card finished on 7 Oct
 finished on 25 Sep, then was put back. The pop-up lists the finished card as "Finished this month".
 4. [x] The pop-up headline and the after-save banner said "unfinished job cards", which is wrong once a
    finished card is in the list. Now just "job cards" (branch `fix/wip-save-popup-wording`, to `staging`).
+
+## 2026-10-22 — DEV-05 CLOSED: A9's design gap answered, and what is still only inferred
+
+Branch `docs/dev05-close`. No source change — this closes the ticket and says
+plainly which parts rest on measurement and which rest on inference.
+
+### A9's design gap is closed, and it took a fact rather than a decision
+
+It stood for three weeks as *"the owner's rule is earliest order wins, the
+implementation is first to confirm wins"*, and the plan was to ask him to pick
+a holding period for unconfirmed orders. He was asked, and answered something
+better: **"通常不会等付定金，都是收到 order 就直接做"** — orders are not held
+waiting for a deposit, production starts when the order arrives.
+
+That collapses the gap instead of deciding it. If an order is confirmed as it
+arrives, *earliest order* and *first to confirm* return the same piece to the
+same customer. The divergence needs an order that sits unconfirmed while a
+later one is confirmed, and that is not how the floor runs.
+
+**No change was made, and that is the finding.** The implementation is closer
+to the business than the written rule was: *first to confirm wins* means the
+stock goes to the customer the factory has already started work for, not to
+whoever telephoned first. The residual case — an order genuinely held, which he
+says is rare, not impossible — is not silent: A9's other half tells the loser
+why it got nothing.
+
+**UNMEASURED, deliberately:** the real order-date→confirm-date interval on
+staging was not pulled. It would make the claim a number instead of a
+statement, but this is the owner describing how his own factory runs, and the
+cost of being wrong is one rare order told the truth late rather than early.
+
+### Where the ticket stands
+
+| | State |
+|---|---|
+| R1–R17 | **Re-checked against source 2026-10-22, all seventeen present** — see below |
+| A5 take-from-stock, A6 release, A7 invoice, A9 loser-told | **Measured live on staging 2026-10-16** (invoice `INV-2610-005`, SO-2609-395, 4 × RM 305.00) |
+| A9 design gap | **Closed by the owner, 2026-10-22, above** |
+| WIP counts as stock | Owner asked mid-showcase; built and merged (#906) |
+| A1–A4, A8 | **UNVERIFIABLE from this repo — their text was never recorded here. See below.** |
+
+**R1–R17 re-check** (2026-10-22, read off `origin/staging`, not trusted from
+the build note): R2/R3 the gate is `delivery-pipeline.ts:108` and asks whether
+the piece still belongs to the stock order rather than whether it was born for
+stock — so once allocated it flows through delivery, the one-customer check and
+the invoice with no special case anywhere; R4/R5 `stock-orders.ts:32`
+(`cust-factory-stock`) plus both self-apply helpers; R6 both read sites in
+`sales-orders.ts` (`:234`, `:1031`); R7 `production-orders.ts:1946`; R8–R13 the
+ledger carries **zero** `UPDATE`/`DELETE` statements, so a release writes a
+reversal and the promise stays on the record; R14 `create.tsx:3412`; R15
+`detail.tsx:286`; R16 `production/index.tsx:8544`; R17 all three surfaces, no
+"Reserved" left; Q5 `stock-allocations.ts:269`.
+
+**The open item: A1–A4 and A8 CANNOT BE VERIFIED FROM THIS REPOSITORY, and
+this is where that search stops.**
+
+Their text was never written down here. The whole history was searched on
+2026-10-22 — all thirty DEV-05 commits, their full messages, and every file
+ever added or deleted — and only four criteria are ever quoted anywhere:
+
+| | as quoted in this repo |
+|---|---|
+| A5 | *"allocate four pieces from stock and PRODUCE THE REMAINING SIX"* |
+| A6 | release — ownership home, availability back |
+| A7 | *"the invoice for an allocated piece show the customer's order"* and its price |
+| A9 | *"two orders want the same piece; one gets it, the other is told"* |
+
+A1, A2, A3, A4 and A8 appear only as numbers in the sentence *"A2–A8
+unverified"*. The PRD holding them is in Notion
+(`T-014-Hookka-make-to-stock-allocation`), which nobody involved in closing
+this could open. **A criterion whose text cannot be read cannot be verified**,
+and the earlier plan here — ask Samuel, who ran the 2026-09-29 acceptance —
+went nowhere: he does not remember which of the five he checked. Writing
+"ask Samuel" into a closing note would have left a question permanently
+addressed to someone who has already answered that he cannot settle it.
+
+What IS true, and is the reason this closes anyway: the chain runs end to end
+on staging — build for stock, allocate, release, deliver, invoice at the
+customer's price — and a broken foundational criterion would not let it.
+Seventeen of seventeen R-requirements are present. And of the 39 tests in
+`tests/stock-allocations.test.mjs`, **22 pin things that carry no A-number**
+and are exactly what a foundational criterion tends to ask: a stock order never
+allocates to itself; availability is recomputed from production orders rather
+than read off the ledger; a human's manual allocation is left alone; two lines
+of one product cannot claim the same pieces; `is_stock` survives the ownership
+move; the ledger has no UPDATE or DELETE path; the migration and the runtime
+self-apply declare the same table; and three separate cases pin the dual-key
+read CLAUDE.md names as a silent-failure class.
+
+That is **not** a claim that A1–A4 and A8 passed. It is the honest shape of
+what is known: the behaviour those criteria would plausibly protect is pinned,
+the criteria themselves are unreadable from here, and the five are closed as
+UNVERIFIABLE rather than left as a task nobody can action.
+
+### Not part of this ticket
+
+Promotion to `main`. CLAUDE.md: *bug fixes merge straight to main; features go
+to staging*. A feature landing on `staging` is its finish line; shipping it is
+a separate, scheduled decision about the whole branch (638 commits ahead of
+`main`, which is itself 245 ahead the other way), not about DEV-05.
+
+## 2026-10-22 — WIP allocation measured on staging, and the sentence it proved wrong
+
+Branch `fix/dev05-filled-from-stock-wording`, to `staging`. #906 shipped WIP
+allocation on 39 unit tests and no live run. This is the live run, and it found
+something the suite could not.
+
+**MEASURED on staging 2026-10-22.** Set up 4 finished pieces (`SOH-2610-001`,
+COMPLETED) plus 4 unfinished ones (`SOH-2610-002`, PENDING), then confirmed a
+SIX-piece customer order — chosen so the shelf alone could not cover it. The
+confirm printed:
+
+```
+Allocated 6 x 1013-(Q) (4 from stock, 2 from pieces still in production)
+Filled entirely from stock — nothing to produce.
+```
+
+Line one is right, and it is the whole feature working: **all four finished
+pieces went first**, two unfinished ones topped the line up, and **zero new
+production orders were raised**. Ownership moved on exactly those six.
+
+**Line two is wrong, twice.** Nothing was "entirely from stock" — two pieces
+were on the floor — and there was plenty "to produce", namely those two. It is
+written in the confirm route off `itemsToProduce.length === 0`
+(`sales-orders.ts:2806`), which before #906 meant "every piece is a finished
+good" and silently stopped meaning that the moment work in progress became
+allocatable.
+
+**Why 39 tests missed it.** They all test `planAutoAllocation`, and the
+sentence is assembled in the route. The planner's own note was correct — the
+suite was reading the right function and the wrong one was never exercised.
+The fix is not a reworded string: the planner now RETURNS `unfinishedTaken`, so
+the route states a number it was given instead of inferring one from a PO
+count. Four tests added (43 total), one of them structural over the route.
+
+**Cleanup**: the test customer order and the WIP stock order were cancelled and
+every piece released. Availability re-read as it started — 4 available, 0 in
+production, the original four COMPLETED pieces home at Factory Stock. The
+cancelled WIP pieces correctly dropped out of supply.
+
+**Confirmed again, third time today**: availability lags a confirm by up to a
+minute (the query cache). Creating the WIP stock order showed
+`inProductionQty: 0` for ~30 s before settling at 4.
+
+**Pre-existing on `origin/staging`, measured here, NOT caused by this branch** —
+each verified by re-running on a clean worktree of `origin/staging`:
+- `npx tsc -p tsconfig.app.json --noEmit` FAILS on
+  `src/pages/dashboard-b/charts.tsx:312` (a Recharts tick-prop type). CLAUDE.md
+  requires build:strict clean before every push; it is currently red on the
+  base branch.
+- three test failures: `export-all-pages`, `m-finance-menu`,
+  `mobile-nav-drawer`.
+- `docs/modules/dashboard.md:66` pointed at `dashboard-overview.ts:2355` for
+  `GET /revenue-split`, which is at `:2681` — a 326-line drift this branch
+  cannot have caused. Corrected here because it was holding the anchor gate
+  red; named so it is not mistaken for part of this change.
