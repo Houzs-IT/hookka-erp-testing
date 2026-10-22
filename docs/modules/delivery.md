@@ -86,6 +86,15 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
    move is checked against `VALID_TRANSITIONS[existing.status]` (`_helpers.ts:4249`). Bulk moves come from FE `runBulkDoTransition`
    (`delivery/index.tsx:3002`). DELIVERED→INVOICED builds SO + invoice via `buildDoDeliveredSoAndInvoice` (`_helpers.ts:1558`) /
    `computeDoInvoiceLines` (`_helpers.ts:1342`).
+2b. **Reverse to Dispatched (HK-0111)** — `app.post("/:id/reverse-to-dispatched")` `delivery-orders.ts:2950`. A DELIVERED / INVOICED DO
+   marked delivered by mistake goes back to LOADED under the same DO number (then Reverse to Pending Dispatch → edit lines → deliver again).
+   One batch: every live invoice of the DO is voided through `buildInvoiceVoidStatements` (`invoices.ts:2188`, the invoice PUT's own void
+   minus the CN release, which a DO invoice never has), then `buildDoUndeliverStatements` (`_helpers.ts:1266`) moves fg_units DELIVERED→LOADED,
+   hands the FIFO COGS back as `DELIVERY_ORDER_UNDELIVER` rows, steps SOs to SHIPPED and clears `deliveredAt` / `deliveredEmailAt`. Refuses
+   (writes nothing) on a payment, an issued credit / debit note, an e-invoice SUBMITTED / VALID, or any Delivery Return on the DO. Not a
+   `VALID_TRANSITIONS` edge — a PUT to LOADED from DELIVERED is still refused. Every FG_DELIVERED replay (`consumeFGBatchesForDO` idempotency,
+   cancel, return) reads net of the undeliver rows via `liveDeliveredSlices` (`lib/do-cost-cascade.ts:71`), so deliver → reverse → deliver
+   is repeatable. Row menu: `delivery/index.tsx:4617`.
 3. **Customer notice (backend safety-net)** — any transition calls `fireCustomerNoticeBestEffort` (`_helpers.ts:131`),
    which fire-and-forgets `queueDoCustomerNotice` (`_helpers.ts:3637`). Idempotency = atomic `UPDATE … WHERE dispatchEmailAt/deliveredEmailAt IS NULL`;
    whichever caller (QR scan, bulk action, FE button) wins the claim sends exactly one email. Manual re-send: `app.post("/:id/resend-notice")` (`delivery-orders.ts:2536`).
@@ -117,7 +126,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | `applyDeliveryOrderUpdate` | `delivery-orders/_helpers.ts:4194` | DO edit + transition apply |
 | `buildDoDeliveredSoAndInvoice` / `computeDoInvoiceLines` | `delivery-orders/_helpers.ts:1558 / 1342` | DELIVERED→INVOICED SO + invoice build |
 | `queueDoCustomerNotice` | `delivery-orders/_helpers.ts:3637` | Recipient chain + idempotent email claim |
-| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2104` | PL-first auto-split create |
+| `app.post("/packing-list-first")` | `src/api/routes/delivery-orders.ts:2114` | PL-first auto-split create |
 | `createPackingListCore` | `src/api/routes/packing-lists.ts:628` | Truck-run packing-list build |
 | `collectDeliveryBrief` / `generateDeliveryProposals` | `src/api/lib/delivery-agent.ts:633 / 868` | Agent brief + proposals |
 | `cheapestForState` / `loadStateRateCard` | `src/api/lib/delivery-agent.ts` | Cheapest-3PL routing |

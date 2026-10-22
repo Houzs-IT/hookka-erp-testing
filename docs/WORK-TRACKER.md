@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-22**: branch `feat/hk0111-reverse-to-dispatched-to-main`, to `main` (HK-0111, Reverse to Dispatched) added below (its entry is the newest).
 > **Last verified: 2026-10-21**: the owner's next replies logged (the estimate mark in the Chart of Accounts, the Trade Finance block folded into the aging list) and two new asks with their causes measured (a dragged table that stops short of its card, the report's missing right-hand line).
 > **Last verified: 2026-10-21**: the owner's replies to the six questions logged (AR Invoices, the one-door Creditor List and the Trade finance card agreed; director remuneration's estimate and the Trade Finance block answered back).
 > **Last verified: 2026-10-21**: the owner's six questions (P&L estimates, AR invoices, the Trade Finance block, Creditor List vs Other Creditors, the trade-finance limit card, Other Debtor Bills) logged with the answers and proposals given; nothing built until he picks.
@@ -276,6 +277,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-22 — 🔵 HK-0111 Reverse a delivered DO to Dispatched, same DO number (branch `feat/hk0111-reverse-to-dispatched-to-main` → `main`; staging copy #1091)
+
+Siti (office, HK-0111): a DO is sometimes marked delivered while some items never reached the customer; she wants to take it back to Dispatch, remove the items not sent and issue the corrected DO under the same number. The customer has usually not paid by then (her answer 2026-10-22). Until now: void the invoice (API only) + cancel the DO + raise a new DO number. Owner (Samuel) 2026-10-22: straight to `main`.
+
+1. 🔵 `POST /api/delivery-orders/:id/reverse-to-dispatched` — DELIVERED / INVOICED → LOADED. Voids every live invoice of the DO in the same batch (the invoice page's own void, now `buildInvoiceVoidStatements`), then undoes the delivery: fg_units DELIVERED → LOADED, FIFO COGS back (`DELIVERY_ORDER_UNDELIVER`), SO → SHIPPED, delivery stamps cleared.
+2. 🔵 Refuses, writing nothing: a payment on the invoice, an issued credit / debit note, an e-invoice SUBMITTED / VALID, a Delivery Return on the DO.
+3. 🔵 COGS ledger read net of reversals everywhere it is replayed (re-delivery consumes again; a later cancel / return does not credit twice). HK-0110's `undoFGForDeliveryReturn` replays the return's own rows, unaffected.
+4. 🔵 Row menu "Reverse to Dispatched" on Delivered-tab rows (also in the DO drawer's action bar). Not on the phone DO detail yet.
+5. 🟡 Prod check after merge: read-only on prod by Claude; the first real reversal is done by the office on a DO that actually needs it.
+
 ## 2026-10-19 — 🔵 Dashboard Operations: a Day view, and click a day on the month chart (branch `feat/dashboard-ops-day-view` → `staging` #1003; to `main` in #1015)
 
 Owner asks (2026-10-19): days should show each day's performance, and on the month view a click on the chart should open that day (as the pre-sync staging dashboard did).
