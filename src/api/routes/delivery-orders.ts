@@ -3055,8 +3055,8 @@ app.post("/:id/reverse-to-dispatched", async (c) => {
     for (const inv of invoices) {
       statements.push(
         c.var.DB.prepare(
-          "UPDATE invoices SET status = 'CANCELLED', updated_at = ? WHERE id = ? AND status = ?",
-        ).bind(now, inv.id, inv.status),
+          "UPDATE invoices SET status = 'CANCELLED', updated_at = ? WHERE id = ?",
+        ).bind(now, inv.id),
       );
       const voided = await buildInvoiceVoidStatements(
         c,
