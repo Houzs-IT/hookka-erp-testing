@@ -1,7 +1,11 @@
 # Hookka ERP — Work Tracker
+ fix/mobile-tablet-routing
+> **Last verified: 2026-10-22**: mobile/tablet routing entry added (branch `fix/mobile-tablet-routing`, PR #1098); nothing else re-checked.
+
 > **Last verified: 2026-10-22**: branch `fix/staging-red-tests` — staging's three red tests
 > are green. One was a permission hole, not a stale test: a menu row gated only by
 > `navGateAny` was never filtered, so Finance showed to everyone on the phone surface.
+ staging
 > **Last verified: 2026-10-22**: branch `fix/dev05-filled-from-stock-wording` — WIP
 > allocation measured live on staging (4 finished + 2 unfinished, no new POs). It proved
 > the confirm route's "nothing to produce" line wrong; the planner now returns the number.
@@ -346,6 +350,24 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-22 — 🟡 iPads and Android tablets enter `/m` by default (branch `fix/mobile-tablet-routing` → `staging`; routing only, PR #1098) — local commit `efec1cecf`, awaiting the owner's review
+
+Status 2026-10-22: committed locally with `--no-verify` (owner-approved) because the pre-commit `npm test` fails on three tests that also fail on a clean `upstream/staging` (`tests/m-finance-menu`, `tests/mobile-nav-drawer`, `tests/export-all-pages`); `tsc` also has two pre-existing errors outside `/m` (`dashboard-b/charts.tsx:312`, `dashboards/EmployeesView.tsx:189`). Not caused by this change. Responsive-layout work is a separate branch (`feat/mobile-responsive-foundation`) and is not part of this one.
+
+Owner decisions (2026-10-22):
+
+1. 🔵 Phones, foldables, iPads and Android tablets use `/m` by default; desktop and laptop stay on the desktop ERP.
+2. 🔵 iPadOS 13+ is detected as a `Macintosh` UA plus `navigator.maxTouchPoints > 1`; ambiguous devices stay on desktop.
+3. 🔵 The `sessionStorage` desktop preference is kept as is.
+4. 🟡 Desktop-to-`/m` deep-link mapping is deferred (a redirect lands on bare `/m`).
+5. 🟡 No hinge-specific logic; foldables use the existing width modes.
+6. 🔵 Tablets get an "Open desktop app" link (new `DesktopAppRow` in `LeftRail.tsx`) and a way back (the "Back to mobile app" bar now shows for every mobile-class device).
+7. 🔵 No backend, API, auth or RBAC change; no redirect loop (the redirect is one-way and the flag is set before the full-page navigation).
+
+Files: `src/lib/prefer-desktop.ts` (`isMobileClassDevice`, `shouldRedirectToMobile(ua, preferDesktop, maxTouchPoints?)`), `src/layouts/DashboardLayout.tsx`, `src/pages/m/components/LeftRail.tsx`, `tests/prefer-desktop.test.mjs` (UA matrix, 9 tests). Described in `docs/CODEBASE-MAP.md` (Install-as-an-app / phone-desktop switch row).
+
+Still unverified: real iPad, Android tablet and foldable hardware (detection is unit-tested with sample user agents only); the sign-in -> `/m` and "Open desktop app" -> "Back to mobile app" round trip on a device.
+
 ## 2026-10-21 — 🔵 Mobile Products Hub v2 visual refresh (/m/products list, phone + tablet) from Claude Design `Products Hub v2.dc.html` (branch `design/mobile-products-v2` → `staging`; frontend, visual only) — list + Product Detail committed `31afa056` on `design/mobile-products-v2`, awaiting the owner's QA and review
 
 Result 2026-10-21: asks 1–5 built. Touched: `ProductsScreen.tsx`, `lib/products-hub.ts` (`categoryTone`, `leadTimeDays` read, `fmtLeadDays` — no pricing change), `theme.ts` (`M_CAT`), `theme-vars.css` (`--m-cat-*`, spec chip, price box; light + dark), `tests/m-products-hub.test.mjs` (+3 tests), and the stale tablet comment in `MobileLayout.tsx` (comment only). Checks: `tsc -p tsconfig.app.json` = the two pre-existing errors only; eslint on touched files = 0; `m-products-hub` 12/12; `npm test` = 6627 tests, the same 4 pre-existing failures, none new; `check-codebase-map` OK. NOT done: browser visual check at 390px / tablet / split pane / dark (no browser in session) — owner to verify on sandbox.
