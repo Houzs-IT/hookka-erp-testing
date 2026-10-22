@@ -63,6 +63,34 @@ import { loadPoValueMap, loadDoValueMap } from "../lib/do-value";
 import { buildDailySlice } from "../lib/dashboard-daily-slice";
 import { countsToHeadcount } from "../lib/headcount-rule";
 import { buildPerfDays, num, dayKey } from "../lib/workforce-perf";
+import { withSnapshot } from "../lib/snapshot";
+import { ensureFeedSnapshotTable, FEED_SNAPSHOT_TABLE, pruneFeedSnapshots } from "../lib/dashboard-snapshot";
+
+// Every table the feed reads, here and in the helpers it calls. A write to any
+// of them makes the saved copy stale.
+const PROTOTYPE_SOURCE_TABLES = [
+  "attendance_records",
+  "consignment_order_items",
+  "delivery_order_items",
+  "delivery_orders",
+  "departments",
+  "fg_batches",
+  "fg_units",
+  "job_cards",
+  "packing_lists",
+  "piece_pics",
+  "production_orders",
+  "products",
+  "purchase_order_items",
+  "purchase_orders",
+  "raw_materials",
+  "rm_batches",
+  "sales_order_items",
+  "sales_orders",
+  "service_cases",
+  "workers",
+  "working_hour_entries",
+] as const;
 
 const app = new Hono<Env>();
 
@@ -318,7 +346,7 @@ app.get("/", async (c) => {
   const canService = (await canRead("service-cases")) && !isCustomerScoped(c);
 
   const orgId = getOrgId(c);
-  const { cached } = await import("../lib/kv-cache");
+  const { cached, invalidate } = await import("../lib/kv-cache");
 
   // Whole route is read-only (no mutating handler in this file), so a plain
   // 60s SWR cache is safe: no write path needs to invalidate it, and it's
@@ -328,7 +356,9 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const rawPayload = await cached(c, `dashboard:prototype:${orgId}:v4`, 60, async () => {
+  const protoV = "v4";
+  const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
+  const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------
   // Whole book, not a window: the prototype owns the month picker, so it
   // needs every month that exists. ~1,500 rows of seven columns is small
@@ -1789,6 +1819,31 @@ app.get("/", async (c) => {
       },
     },
   };
+  };
+
+  // Behind the 60s KV copy, a saved copy in the database that is reused until
+  // one of the source tables changes, so a cold KV no longer means the full
+  // ~2.8s rebuild (measured on staging 2026-10-22). Keyed by day because the
+  // payload carries "today" figures. A copy with a failed section is not saved.
+  const db = c.var.DB;
+  const rawPayload = await cached(c, kvKey, 60, async () => {
+    await ensureFeedSnapshotTable(db);
+    return withSnapshot(
+      db,
+      { tableName: FEED_SNAPSHOT_TABLE, sourceTables: PROTOTYPE_SOURCE_TABLES },
+      orgId,
+      async () => {
+        await pruneFeedSnapshots(db, orgId);
+        return computePrototype();
+      },
+      `prototype:${protoV}:${dayKey(new Date().toISOString())}`,
+      c,
+      {
+        staleWhileRevalidate: true,
+        onRevalidated: () => invalidate(c, kvKey),
+        shouldStore: (p) => Object.values(p.availability).every((s) => s.live !== false),
+      },
+    );
   });
 
   // Redact at the response boundary, not by skipping the queries above — the
