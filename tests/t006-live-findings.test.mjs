@@ -206,11 +206,18 @@ test("void AND delete reopen the consignment order: read before the batch, reope
   const src = readFileSync("src/api/routes/invoices.ts", "utf8");
   const put = src.slice(src.indexOf('app.put("/:id"'), src.indexOf('app.delete("/:id"'));
   const del = src.slice(src.indexOf('app.delete("/:id"'));
-  for (const [name, body, batch] of [
-    ["void", put, "await c.var.DB.batch(statements)"],
-    ["delete", del, "await c.var.DB.batch(stmts)"],
+  // The void's side effects live in buildInvoiceVoidStatements (shared with
+  // the DO's Reverse to Dispatched, HK-0111); the PUT builds them pre-batch.
+  const voidBuilder = src.slice(
+    src.indexOf("export async function buildInvoiceVoidStatements"),
+    src.indexOf('app.put("/:id"'),
+  );
+  assert.ok(voidBuilder.includes("consignmentOrderForInvoice(c.var.DB, id)"));
+  for (const [name, body, batch, readCall] of [
+    ["void", put, "await c.var.DB.batch(statements)", "buildInvoiceVoidStatements(c, existing"],
+    ["delete", del, "await c.var.DB.batch(stmts)", "consignmentOrderForInvoice(c.var.DB, id)"],
   ]) {
-    const read = body.indexOf("consignmentOrderForInvoice(c.var.DB, id)");
+    const read = body.indexOf(readCall);
     const b = body.indexOf(batch);
     const reopen = body.indexOf("reopenConsignmentOrderAfterRelease(c.var.DB, releasedCoId)");
     assert.ok(read !== -1 && read < b, `${name}: the CO must be read BEFORE the release clears convertedInvoiceId`);

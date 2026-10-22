@@ -1,5 +1,6 @@
 # Delivery & Consignment — Module Guide
 
+> **Last verified: 2026-10-22** (branch `feat/hk0111-reverse-to-dispatched`, HK-0111): Reverse to Dispatched added (core flow 2b), read from `delivery-orders.ts:2954`, `_helpers.ts:1266`, `invoices.ts:2415`, `lib/do-cost-cascade.ts:71`/`:377`. Nothing else re-checked.
 > **Last verified: 2026-10-20** (branch `design/mobile-delivery-redesign`): the customer-notice helpers (`sendCustomerNotice`, `renderDeliveredInvoicePdf`) moved unchanged from `delivery/index.tsx` to `src/lib/delivery-customer-notice.ts` (shared with the phone Delivery screens); the `DeliveryPage`, `runBulkDoTransition`, `resendCustomerNotice` / `warnIfNoCustomerEmail`, `detailLive`, `lineSpec` anchors re-derived after that move; `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2139` (it had drifted on staging before this branch). Nothing else re-checked.
 > **Last verified: 2026-10-17** (branch `feat/finance-notes-post`): `app.post("/packing-list-first")` re-anchored to `delivery-orders.ts:2104` (the void-and-reissue backfill above it now skips invoices with an issued credit / debit note). Nothing else re-checked.
 > **Last verified: 2026-10-09** (branch `feat/dashboard-month-static-kpis`): the `app.post("/packing-list-first")` anchor re-derived after `/stats` and `/pending-value` gained the dashboard's daily save. Nothing else re-checked.
@@ -92,6 +93,14 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
    move is checked against `VALID_TRANSITIONS[existing.status]` (`_helpers.ts:4249`). Bulk moves come from FE `runBulkDoTransition`
    (`delivery/index.tsx:3002`). DELIVERED→INVOICED builds SO + invoice via `buildDoDeliveredSoAndInvoice` (`_helpers.ts:1558`) /
    `computeDoInvoiceLines` (`_helpers.ts:1342`).
+2b. **Reverse to Dispatched (HK-0111)** — `app.post("/:id/reverse-to-dispatched")` `delivery-orders.ts:2954`. A DELIVERED / INVOICED DO
+   marked delivered by mistake goes back to LOADED under the same DO number (then Reverse to Pending Dispatch → edit lines → deliver again).
+   One batch: every live invoice of the DO is voided through `buildInvoiceVoidStatements` (`invoices.ts:2415`, the invoice page's own void),
+   then `buildDoUndeliverStatements` (`_helpers.ts:1266`) moves fg_units DELIVERED→LOADED, hands the FIFO COGS back as
+   `DELIVERY_ORDER_UNDELIVER` rows, steps SOs to SHIPPED and clears `deliveredAt` / `deliveredEmailAt`. Refuses (writes nothing) on a payment,
+   an issued credit / debit note, an e-invoice SUBMITTED / VALID, or a Delivery Return. Not a `VALID_TRANSITIONS` edge — a PUT to LOADED from
+   DELIVERED is still refused. Every FG_DELIVERED reader (`consumeFGBatchesForDO` idempotency, cancel, return) reads net of the undeliver rows
+   via `liveDeliveredSlices` (`lib/do-cost-cascade.ts:71`), so deliver → reverse → deliver is repeatable. Row menu: `delivery/index.tsx:4543`.
 3. **Customer notice (backend safety-net)** — any transition calls `fireCustomerNoticeBestEffort` (`_helpers.ts:131`),
    which fire-and-forgets `queueDoCustomerNotice` (`_helpers.ts:3637`). Idempotency = atomic `UPDATE … WHERE dispatchEmailAt/deliveredEmailAt IS NULL`;
    whichever caller (QR scan, bulk action, FE button) wins the claim sends exactly one email. Manual re-send: `app.post("/:id/resend-notice")` (`delivery-orders.ts:2536`).

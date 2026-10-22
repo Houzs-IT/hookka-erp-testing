@@ -39,7 +39,13 @@ function dispatchKpis(v: Record<string, number> | undefined) {
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { checkDeliveryOrderLocked, issuedNotesOnInvoice } from "../lib/lock-helpers";
-import { nextInvoiceNo, buildInvoiceLedgerLegs } from "./invoices";
+import {
+  nextInvoiceNo,
+  buildInvoiceLedgerLegs,
+  buildInvoiceVoidStatements,
+  type InvoiceRow,
+} from "./invoices";
+import { actorFromUserId } from "../lib/fg-stock-events";
 import { readGstRatePct } from "../lib/note-ledger";
 import {
   ledgerHasSource,
@@ -89,6 +95,7 @@ import {
   ensureDeliveryIncompleteColumn,
   queueDoCustomerNotice,
   applyDeliveryOrderUpdate,
+  buildDoUndeliverStatements,
 } from "./delivery-orders/_helpers";
 import type {
   DeliveryOrderRow,
@@ -2925,6 +2932,179 @@ app.post("/:id/resolve-incomplete", async (c) => {
     console.error("[POST /api/delivery-orders/:id/resolve-incomplete] failed:", msg);
     return c.json(
       { success: false, error: msg || "Failed to resolve delivery" },
+      500,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/delivery-orders/:id/reverse-to-dispatched — HK-0111. A DO marked
+// delivered when some pieces never reached the customer goes back to LOADED
+// (Dispatched), keeping its DO number, so the office can reverse it on to
+// Pending Dispatch, remove the lines that were not sent and deliver again.
+//
+// Delivering auto-posts an invoice, so the reversal voids that invoice in the
+// SAME batch (buildInvoiceVoidStatements — the exact void the invoice page
+// runs: GL reversal, A/R, per-line release) and then undoes the delivery
+// (buildDoUndeliverStatements). It refuses, writing nothing, when that cannot
+// be complete: a payment or an issued credit / debit note on the invoice
+// (the money is real — that is a credit note), an e-invoice already sent to
+// LHDN, or a Delivery Return that already took goods back from this DO.
+// ---------------------------------------------------------------------------
+app.post("/:id/reverse-to-dispatched", async (c) => {
+  const denied = await requirePermission(c, "delivery-orders", "update");
+  if (denied) return denied;
+
+  const id = c.req.param("id");
+  try {
+    await ensureDeliveryIncompleteColumn(c.var.DB);
+    await ensureNotifyEmailColumns(c.var.DB);
+    const existing = await c.var.DB.prepare(
+      "SELECT * FROM delivery_orders WHERE id = ?",
+    )
+      .bind(id)
+      .first<DeliveryOrderRow>();
+    if (!existing) {
+      return c.json({ success: false, error: "Delivery order not found" }, 404);
+    }
+    if (existing.status !== "DELIVERED" && existing.status !== "INVOICED") {
+      return c.json(
+        {
+          success: false,
+          error: `Only a delivered DO can be reversed to dispatched — ${existing.doNo} is ${existing.status}.`,
+        },
+        409,
+      );
+    }
+
+    // Same best-effort read as the cancel: no tables means no return.
+    try {
+      const ret = await c.var.DB.prepare(
+        `SELECT id AS "id", status AS "status"
+           FROM delivery_returns WHERE delivery_order_id = ? LIMIT 1`,
+      )
+        .bind(id)
+        .first<{ id: string; status: string }>();
+      if (ret) {
+        return c.json(
+          {
+            success: false,
+            error: `Cannot reverse ${existing.doNo}: a Delivery Return (${ret.id}, ${ret.status}) has already taken goods back from it. Handle the remaining lines through the return instead.`,
+          },
+          409,
+        );
+      }
+    } catch {
+      /* delivery_return tables not present — no return can exist */
+    }
+
+    const invoices =
+      (
+        await c.var.DB.prepare(
+          "SELECT * FROM invoices WHERE deliveryOrderId = ? AND status != 'CANCELLED'",
+        )
+          .bind(id)
+          .all<InvoiceRow>()
+      ).results ?? [];
+    for (const inv of invoices) {
+      if (inv.status === "PAID" || inv.status === "PARTIAL_PAID" || (Number(inv.paidAmount) || 0) > 0) {
+        return c.json(
+          {
+            success: false,
+            error: `Cannot reverse ${existing.doNo}: invoice ${inv.invoiceNo} already has a payment recorded. Use a Delivery Return and credit note for the pieces that were not sent.`,
+          },
+          409,
+        );
+      }
+      const notes = await issuedNotesOnInvoice(c.var.DB, inv.id);
+      if (notes.length) {
+        return c.json(
+          {
+            success: false,
+            error: `Cannot reverse ${existing.doNo}: invoice ${inv.invoiceNo} has issued note(s) ${notes.join(", ")}. Put them back to Draft first.`,
+          },
+          409,
+        );
+      }
+      try {
+        const einv = await c.var.DB.prepare(
+          "SELECT status FROM e_invoices WHERE invoiceId = ? AND status IN ('SUBMITTED','VALID') LIMIT 1",
+        )
+          .bind(inv.id)
+          .first<{ status: string }>();
+        if (einv) {
+          return c.json(
+            {
+              success: false,
+              error: `Cannot reverse ${existing.doNo}: invoice ${inv.invoiceNo} has an e-invoice already ${einv.status} at LHDN. Cancel the e-invoice first.`,
+            },
+            409,
+          );
+        }
+      } catch {
+        /* e_invoices table not present — nothing was submitted */
+      }
+    }
+    if (invoices.length > 0) {
+      const voidDenied = await requirePermission(c, "invoices", "void");
+      if (voidDenied) return voidDenied;
+    }
+
+    const now = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [];
+    for (const inv of invoices) {
+      statements.push(
+        c.var.DB.prepare(
+          "UPDATE invoices SET status = 'CANCELLED', updated_at = ? WHERE id = ? AND status = ?",
+        ).bind(now, inv.id, inv.status),
+      );
+      const voided = await buildInvoiceVoidStatements(
+        c,
+        inv,
+        { ...inv, status: "CANCELLED", updatedAt: now },
+        now,
+      );
+      if (!voided.ok) {
+        return c.json({ success: false, error: voided.error }, 500);
+      }
+      statements.push(...voided.statements);
+    }
+
+    const userId = (c as unknown as { get: (k: string) => unknown }).get("userId");
+    const undo = await buildDoUndeliverStatements(
+      c.var.DB,
+      { id, doNo: existing.doNo, salesOrderId: existing.salesOrderId },
+      invoices.map((inv) => inv.id),
+      actorFromUserId(typeof userId === "string" ? userId : null),
+      now,
+    );
+    statements.push(...undo.statements);
+
+    await c.var.DB.batch(statements);
+
+    await emitAudit(c, {
+      resource: "delivery-orders",
+      resourceId: id,
+      action: "update",
+      before: { status: existing.status },
+      after: {
+        status: "LOADED",
+        reversedToDispatched: true,
+        voidedInvoices: invoices.map((inv) => inv.invoiceNo),
+      },
+    });
+
+    const updated = await fetchOrderWithItems(c.var.DB, id);
+    return c.json({
+      success: true,
+      data: updated,
+      voidedInvoices: invoices.map((inv) => inv.invoiceNo),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[POST /api/delivery-orders/:id/reverse-to-dispatched] failed:", msg);
+    return c.json(
+      { success: false, error: msg || "Failed to reverse delivery order" },
       500,
     );
   }

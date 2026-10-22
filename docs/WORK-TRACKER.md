@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-22**: branch `feat/hk0111-reverse-to-dispatched`, to `staging` (HK-0111, Reverse to Dispatched) added below (its entry is the newest).
 > **Last verified: 2026-10-22**: branch `docs/dev05-close` — DEV-05 closed. A9's design
 > gap is answered by the owner (orders are not held for deposits, so the two rules agree);
 > R1–R17 re-checked against source. A1–A4/A8 close as UNVERIFIABLE: their text was never
@@ -340,6 +341,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-22 — 🔵 HK-0111 Reverse a delivered DO to Dispatched, same DO number (branch `feat/hk0111-reverse-to-dispatched` → `staging`)
+
+Siti (office, HK-0111): a DO is sometimes marked delivered while some items never reached the customer; she wants to take it back to Dispatch, remove the items not sent and issue the corrected DO under the same number. The customer has usually not paid by then (her answer 2026-10-22). Until now: void the invoice (API only) + cancel the DO + raise a new DO number.
+
+1. 🔵 `POST /api/delivery-orders/:id/reverse-to-dispatched` — DELIVERED / INVOICED → LOADED. Voids every live invoice of the DO in the same batch (the invoice page's own void, now `buildInvoiceVoidStatements`), then undoes the delivery: fg_units DELIVERED → LOADED, FIFO COGS back (`DELIVERY_ORDER_UNDELIVER`), SO → SHIPPED, delivery stamps cleared.
+2. 🔵 Refuses, writing nothing: a payment on the invoice, an issued credit / debit note, an e-invoice SUBMITTED / VALID, a Delivery Return on the DO.
+3. 🔵 COGS ledger read net of reversals everywhere it is replayed (re-delivery consumes again; a later cancel / return does not credit twice).
+4. 🔵 Row menu "Reverse to Dispatched" on Delivered-tab rows (also in the DO drawer's action bar).
+5. 🟡 Siti checks it on staging after merge; then a `-to-main` PR.
+
 ## 2026-10-21 — 🔵 Mobile Products Hub v2 visual refresh (/m/products list, phone + tablet) from Claude Design `Products Hub v2.dc.html` (branch `design/mobile-products-v2` → `staging`; frontend, visual only) — list + Product Detail committed `31afa056` on `design/mobile-products-v2`, awaiting the owner's QA and review
 
 Result 2026-10-21: asks 1–5 built. Touched: `ProductsScreen.tsx`, `lib/products-hub.ts` (`categoryTone`, `leadTimeDays` read, `fmtLeadDays` — no pricing change), `theme.ts` (`M_CAT`), `theme-vars.css` (`--m-cat-*`, spec chip, price box; light + dark), `tests/m-products-hub.test.mjs` (+3 tests), and the stale tablet comment in `MobileLayout.tsx` (comment only). Checks: `tsc -p tsconfig.app.json` = the two pre-existing errors only; eslint on touched files = 0; `m-products-hub` 12/12; `npm test` = 6627 tests, the same 4 pre-existing failures, none new; `check-codebase-map` OK. NOT done: browser visual check at 390px / tablet / split pane / dark (no browser in session) — owner to verify on sandbox.

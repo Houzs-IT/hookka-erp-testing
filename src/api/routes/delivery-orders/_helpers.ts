@@ -14,6 +14,7 @@ import type { Env } from "../../worker";
 import {
   consumeFGBatchesForDO,
   reverseFGForDoCancel,
+  reverseFGForDoUndeliver,
 } from "../../lib/do-cost-cascade";
 import { loadSoLinePriceIndex, priceForItem } from "../../lib/do-value";
 import { getOrgId } from "../../lib/tenant";
@@ -1242,6 +1243,139 @@ export async function buildDoCancelReleaseStatements(
   }
 
   return { ok: true, statements, reversedCogsSen, releasedSoIds };
+}
+
+// ---------------------------------------------------------------------------
+// buildDoUndeliverStatements — Reverse to Dispatched (HK-0111). A DO marked
+// DELIVERED when some pieces never reached the customer steps back to LOADED,
+// so the office can reverse it on to Pending Dispatch, drop the lines that
+// were not sent and deliver it again under the SAME DO number.
+//
+// Undoes only the DELIVERED leg; the dispatch leg (fg_units.doId, the
+// STOCK_OUT) stands, because the goods did leave the building:
+//   fg_units DELIVERED/deliveredAt  → LOADED (+ an append-only event row)
+//   FIFO FG_DELIVERED COGS          → reverseFGForDoUndeliver
+//   sales_orders DELIVERED/INVOICED → SHIPPED, what dispatch left them at
+//   delivery_orders                 → LOADED, delivery stamps cleared
+// The invoice is the caller's: it voids every live invoice of the DO through
+// buildInvoiceVoidStatements in the same batch, AHEAD of these statements
+// (its release steps the DO and SOs back to DELIVERED first; the updates here
+// accept either status), and passes their ids so the SO step does not count
+// them as still billing.
+// ---------------------------------------------------------------------------
+export async function buildDoUndeliverStatements(
+  db: D1Database,
+  doRow: { id: string; doNo: string; salesOrderId: string | null },
+  voidedInvoiceIds: string[],
+  actor: FgEventActor,
+  now: string,
+): Promise<{ statements: D1PreparedStatement[]; reversedCogsSen: number; releasedSoIds: string[] }> {
+  const statements: D1PreparedStatement[] = [];
+  const releasedSoIds: string[] = [];
+
+  await ensureFgStockEventsSchema(db);
+  const deliveredUnits = await loadFgUnitsForEvent(
+    db,
+    "doId = ? AND status = 'DELIVERED'",
+    [doRow.id],
+  );
+  statements.push(
+    db
+      .prepare(
+        `UPDATE fg_units SET status = 'LOADED', deliveredAt = NULL
+          WHERE doId = ? AND status = 'DELIVERED'`,
+      )
+      .bind(doRow.id),
+    ...buildFgStockEventStatements(db, deliveredUnits, {
+      toStatus: "LOADED",
+      doc: { docType: "DELIVERY_ORDER", docId: doRow.id, docNo: doRow.doNo },
+      actor,
+      occurredAt: now,
+      note: `${doRow.doNo} reversed to dispatched`,
+      reverses: { docType: "DELIVERY_ORDER", docId: doRow.id },
+    }),
+  );
+
+  const cogs = await reverseFGForDoUndeliver(db, doRow.id, doRow.doNo, now);
+  statements.push(...cogs.statements);
+
+  const voided = new Set(voidedInvoiceIds);
+  const soIds = await resolveDoSalesOrderIds(db, doRow.id, doRow.salesOrderId);
+  for (const soId of soIds) {
+    const soRow = await db
+      .prepare("SELECT id, status FROM sales_orders WHERE id = ?")
+      .bind(soId)
+      .first<{ id: string; status: string }>();
+    if (!soRow) continue;
+    if (soRow.status !== "DELIVERED" && soRow.status !== "INVOICED") continue;
+
+    // Another delivery of this SO is still real — the SO keeps its status.
+    const soDoIds = (await resolveSalesOrderDoIds(db, soId)).filter(
+      (x) => x !== doRow.id,
+    );
+    if (soDoIds.length > 0) {
+      const ph = soDoIds.map(() => "?").join(",");
+      const siblingDelivered = await db
+        .prepare(
+          `SELECT id FROM delivery_orders
+            WHERE id IN (${ph}) AND status IN ('DELIVERED','INVOICED')
+            LIMIT 1`,
+        )
+        .bind(...soDoIds)
+        .first<{ id: string }>();
+      if (siblingDelivered) continue;
+    }
+    // Still billed by an invoice this reversal does not void.
+    const billing = await db
+      .prepare(
+        `SELECT id FROM invoices
+          WHERE status != 'CANCELLED'
+            AND (salesOrderId = ? OR deliveryOrderId = ?)`,
+      )
+      .bind(soId, doRow.id)
+      .all<{ id: string }>();
+    if ((billing.results ?? []).some((r) => !voided.has(r.id))) continue;
+
+    releasedSoIds.push(soId);
+    statements.push(
+      db
+        .prepare(
+          "UPDATE sales_orders SET status = 'SHIPPED', updated_at = ? WHERE id = ? AND status IN ('DELIVERED','INVOICED')",
+        )
+        .bind(now, soId),
+      db
+        .prepare(
+          `INSERT INTO so_status_changes
+             (id, soId, fromStatus, toStatus, changedBy, timestamp, notes, autoActions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          genStatusChangeId(),
+          soId,
+          soRow.status,
+          "SHIPPED",
+          "System",
+          now,
+          "DO reversed to dispatched",
+          JSON.stringify([
+            `${doRow.doNo} reversed to dispatched — delivery to be corrected and re-done`,
+          ]),
+        ),
+    );
+  }
+
+  statements.push(
+    db
+      .prepare(
+        `UPDATE delivery_orders
+            SET status = 'LOADED', overdue = 'PENDING', deliveredAt = NULL,
+                delivery_incomplete = 0, deliveredEmailAt = NULL, updated_at = ?
+          WHERE id = ? AND status IN ('DELIVERED','INVOICED')`,
+      )
+      .bind(now, doRow.id),
+  );
+
+  return { statements, reversedCogsSen: cogs.reversedCogsSen, releasedSoIds };
 }
 
 // DO / PO "Sales Figure" resolver moved to ../lib/do-value (single source
