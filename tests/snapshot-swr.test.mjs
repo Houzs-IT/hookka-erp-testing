@@ -210,3 +210,32 @@ test("fresh snapshot → served from cache, computeFresh never runs", async () =
   assert.equal(calls, 0, "no recompute when the snapshot is fresh");
   assert.deepEqual(out, { v: "cached" });
 });
+
+test("shouldStore false → result returned but not written back", async () => {
+  const db = makeDb({ snapshotRow: null });
+  const out = await withSnapshot(
+    db,
+    CONFIG,
+    "org1",
+    async () => ({ v: "partial", ok: false }),
+    "k-should-store-no",
+    undefined,
+    { shouldStore: (d) => d.ok },
+  );
+  assert.deepEqual(out, { v: "partial", ok: false });
+  assert.equal(db.writes.length, 0, "a payload the caller rejects is never saved");
+});
+
+test("shouldStore true → written back as usual", async () => {
+  const db = makeDb({ snapshotRow: null });
+  await withSnapshot(
+    db,
+    CONFIG,
+    "org1",
+    async () => ({ v: "whole", ok: true }),
+    "k-should-store-yes",
+    undefined,
+    { shouldStore: (d) => d.ok },
+  );
+  assert.ok(db.writes.length >= 1);
+});

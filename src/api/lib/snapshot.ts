@@ -335,12 +335,14 @@ async function computeAndStore<T extends Record<string, unknown>>(
   cacheKey: string,
   currentMax: string | null,
   sourceRows: number | null,
+  shouldStore?: (data: T) => boolean,
 ): Promise<T> {
   const key = flightKey(config.tableName, orgId, cacheKey);
   const existing = inFlightComputes.get(key);
   if (existing) return existing as Promise<T>;
   const p = (async () => {
     const data = await computeFresh();
+    if (shouldStore && !shouldStore(data)) return data;
     try {
       await writeSnapshot(
         db,
@@ -409,6 +411,9 @@ export async function withSnapshot<T extends Record<string, unknown>>(
     // With staleWhileRevalidate the old copy is still served and refreshed
     // behind it. Added 2026-10-19 for the P&L / Balance Sheet snapshots.
     maxAgeMs?: number;
+    // Return false to hand the result back without saving it, e.g. a payload
+    // with a failed section that must not outlive this request.
+    shouldStore?: (data: T) => boolean;
   },
 ): Promise<T> {
   const [snap, signature] = await Promise.all([
@@ -467,6 +472,7 @@ export async function withSnapshot<T extends Record<string, unknown>>(
           cacheKey,
           currentMax,
           sourceRows,
+          opts.shouldStore,
         );
         waitUntil(
           refresh
@@ -491,6 +497,7 @@ export async function withSnapshot<T extends Record<string, unknown>>(
     cacheKey,
     currentMax,
     sourceRows,
+    opts?.shouldStore,
   );
 }
 
