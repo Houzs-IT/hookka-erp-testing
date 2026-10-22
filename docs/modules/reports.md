@@ -70,7 +70,7 @@ Two unrelated report worlds share the name **Reports**:
 | `collectOperationsReport` | `operations-report.ts:1112` | Ops report builder |
 | `collectBriefData` / `renderBriefHtml` | `production-brief.ts:386 / 467` | Morning production brief |
 | `GET /` (list) / `POST /` (create) | `src/api/routes/forecasts.ts:55 / 80` | `forecast_entries` CRUD |
-| `GET /` (overview) | `src/api/routes/dashboard-overview.ts:58` | Consolidated dashboard payload |
+| `GET /` (overview) | `src/api/routes/dashboard-overview.ts:81` | Consolidated dashboard payload |
 | `buildReportHTML` / `printReport` | `src/lib/print-report.ts:218 / 339` | Shared WYSIWYG print engine |
 | `exportReportCsv/Xlsx/Pdf` | `src/lib/export-report.ts:27 / 41 / 82` | Shared export helpers |
 

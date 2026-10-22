@@ -35,7 +35,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - The overview endpoint is READ-ONLY over business data — it only writes the two snapshot/cache tables.
 
 ## Core flows
-1. **Overview read (three-layer freshness)** — `app.get("/")` `dashboard-overview.ts:58`. For `period=all`: (1) `readSnapshot` + `getMaxSourceUpdatedAt` in parallel (`:128`); if `isSnapshotFresh` (`:132`) serve the stored row. Else (2) 60s KV `cached(...)` (`:140`); else (3) the full ~27-query compute, written back via `writeSnapshot` near the tail of the handler.
+1. **Overview read (three-layer freshness)** — `app.get("/")` `dashboard-overview.ts:81`. For `period=all`: (1) `readSnapshot` + `getMaxSourceUpdatedAt` in parallel (`:128`); if `isSnapshotFresh` (`:132`) serve the stored row. Else (2) 60s KV `cached(...)` (`:140`); else (3) the full ~27-query compute, written back via `writeSnapshot` near the tail of the handler.
 2. **Daily state capture** — `captureTodayState` (`:78`) extracts backlog/activeJobs/headcount from the live payload and fire-and-forgets `writeStateSnapshot` via `waitUntil`. Called on a snapshot hit (`:137`) and after any live (non-past-month) compute (`:2243`). Guarded so a past-month payload is never written back as "today".
 3. **Past-month reconstruction** — when `isPastMonth` (`:70`), the handler reads the stored state snapshot via `readStateSnapshotForMonth` (`:1931`) and overrides the live state widgets with that month's captured values (falling back to a reconstructed backlog when no snapshot exists).
 4. **Frontend staged fetch** — `DashboardBPage` fires three parallel loads (`ovL`/`soL`/`pendingL`, see comment `:779`): overview drives the KPI rail + most sections, sales-orders/stats drives the Order Pipeline + Outstanding, and 4 heavy live fetches drive Pending Delivery. Each section shows `SectionRowsSkeleton` until its own fetch lands. The overview fetch URL is `dashboard-overview.ts`-backed `index.tsx:713`.
@@ -56,11 +56,11 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1688` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:250` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2355` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2398` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
-| `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:58` | Single ~2000-line aggregate handler |
-| `captureTodayState` | `src/api/routes/dashboard-overview.ts:87` | Extract + upsert today's state snapshot |
+| `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:81` | Single ~2000-line aggregate handler |
+| `captureTodayState` | `src/api/routes/dashboard-overview.ts:112` | Extract + upsert today's state snapshot |
 | `readSnapshot` / `writeSnapshot` / `isSnapshotFresh` | `src/api/lib/dashboard-snapshot.ts:100 / 211 / 187` | Read-through snapshot (Layer 1) |
 | `getMaxSourceUpdatedAt` | `src/api/lib/dashboard-snapshot.ts:155` | Data-change probe for freshness |
 | `writeStateSnapshot` / `readStateSnapshotForMonth` | `src/api/lib/dashboard-state-snapshot.ts:63 / 108` | Daily state UPSERT + past-month read |
@@ -87,7 +87,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - **Working day for production averages** (2026-10-20): a day any department produced something. Department Revenue's Avg / day and the Daily production revenue card both use it, so their averages match; a weekly view (quarter / year) counts Mon–Sat days elapsed.
 
 ## Common tasks (mini-playbook)
-- **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:58`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
+- **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:81`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
 - **Add a chart** → put the recharts component in `charts.tsx` and lazy-import it (keep recharts out of `index.tsx`); pass computed data + colors as props (parent owns the numbers).
 - **Change a point-in-time (state) metric** → update the `DashboardStateMetrics` shape (`dashboard-state-snapshot.ts:37`), the `captureTodayState` extractor (`dashboard-overview.ts:78`), AND the past-month override (`:1930`) so history and live stay consistent.
 - **Force a live refresh** → hit `POST /api/internal/rebuild-dashboard-snapshot` (`worker.ts:387`, CRON_SECRET) or bump the `v23` KV key; remember the 60s KV TTL.
