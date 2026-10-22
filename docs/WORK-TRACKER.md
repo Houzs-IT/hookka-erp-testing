@@ -1,5 +1,11 @@
 # Hookka ERP — Work Tracker
+ fix/mobile-tablet-routing
 > **Last verified: 2026-10-22**: mobile/tablet routing entry added (branch `fix/mobile-tablet-routing`, PR #1098); nothing else re-checked.
+
+> **Last verified: 2026-10-22**: branch `fix/staging-red-tests` — staging's three red tests
+> are green. One was a permission hole, not a stale test: a menu row gated only by
+> `navGateAny` was never filtered, so Finance showed to everyone on the phone surface.
+ staging
 > **Last verified: 2026-10-22**: branch `fix/dev05-filled-from-stock-wording` — WIP
 > allocation measured live on staging (4 finished + 2 unfinished, no new POs). It proved
 > the confirm route's "nothing to produce" line wrong; the planner now returns the number.
@@ -8313,3 +8319,52 @@ each verified by re-running on a clean worktree of `origin/staging`:
   `GET /revenue-split`, which is at `:2681` — a 326-line drift this branch
   cannot have caused. Corrected here because it was holding the anchor gate
   red; named so it is not mistaken for part of this change.
+
+## 2026-10-22 — staging's three red tests, and the permission hole one of them was reporting
+
+Branch `fix/staging-red-tests`, to `staging`. Three tests had been failing on
+the base branch; they were taken one at a time rather than as a batch to
+silence, which is how the second turned out not to be a test problem at all.
+
+**1. `export-all-pages` — a test harness missing an import.** The test lifts
+two slices of `data-grid.tsx` text into a temp module and imports it. The
+slices call `decodeRange` / `inRange`, which the real file imports from
+`@/lib/grid-layout`; the slices do not carry that import, so the module threw
+`ReferenceError: decodeRange is not defined` the moment a column filter ran.
+Fixed by loading the REAL `grid-layout.ts` into the temp module by path —
+it has no imports of its own, so nothing had to be stubbed. A stub would have
+let the two drift while the test kept passing.
+
+**2. `m-finance-menu` — NOT a stale test. A permission hole.**
+`visibleModuleGroups` (`src/pages/m/nav.ts`) filtered on `navGate` alone:
+
+```ts
+g.items.filter((i) => !i.navGate || isNavAllowed(i.navGate))
+```
+
+A row carrying only `navGateAny` satisfies `!i.navGate`, so it was **never
+filtered** — it showed to everyone. **Finance is exactly such a row**
+(`navGateAny: FINANCE_NAV_GATES`, `nav.ts:162`). `LeftRail.tsx:202` has always
+checked both gates, so the same entry was correctly hidden on the tablet rail
+and visible in the phone drawer. The filter used to live inline in
+`screens/More.tsx` and lost the `navGateAny` half when it moved here; the test
+was still asserting against `More.tsx`, so it reported the loss as a missing
+string rather than as the hole it is.
+
+Fixed in `nav.ts` to check both, mirroring `LeftRail`. **Whether the /m/finance
+route itself is authorised server-side is UNMEASURED here** — this change
+restores the menu gate, nothing more, and a hidden menu entry is not an access
+control.
+
+**3. `mobile-nav-drawer` — a genuinely stale expectation, plus the reason #2
+survived.** The search case still listed the "People & Finance" group as
+`["Employees", "Receivables"]`; Finance joined that group later. Updated. More
+usefully, the gate loop in the same file read
+`.filter((i) => i.navGate)` — so the one row gated purely by `navGateAny` was
+never gate-tested, which is precisely how #2 lived. It now filters
+`i.navGate || i.navGateAny`, and with every gate denied Finance must disappear.
+
+**Verified**: full suite 6644/6647, **0 failures** (was 3). `build:strict`
+still reports `dashboard-b/charts.tsx:312` on this branch — that is the
+pre-existing error fixed separately on `fix/charts-tick-type`, which this
+branch is not based on.

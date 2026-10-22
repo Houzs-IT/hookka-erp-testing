@@ -32,9 +32,19 @@ const slice = (from, to) => {
 };
 const dir = mkdtempSync(join(tmpdir(), "grid-view-"));
 const mod = join(dir, "grid-view.mts");
+// The lifted slices call helpers data-grid.tsx imports from "@/lib/grid-layout"
+// — `decodeRange` and `inRange`, the number-range column filter. The slices do
+// not carry that import, so without it the temp module throws "decodeRange is
+// not defined" the moment a column filter is exercised.
+// `grid-layout.ts` has no imports of its own, so the REAL module is loaded by
+// path rather than stubbed: a stub would let the two drift and this test would
+// keep passing while the grid itself was broken.
+const gridLayout = pathToFileURL(resolve("src/lib/grid-layout.ts")).href;
 writeFileSync(
   mod,
-  "type Column<T> = any;\n" +
+  `import { decodeRange, inRange } from ${JSON.stringify(gridLayout)};
+` +
+    "type Column<T> = any;\n" +
     slice("function getNestedValue(", "// Context Menu") +
     slice("type GridFilterState<T>", "export function DataGrid<"),
 );

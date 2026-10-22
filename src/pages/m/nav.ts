@@ -191,7 +191,16 @@ export function visibleModuleGroups(
   const q = query.trim().toLowerCase();
   return groups
     .map((g) => {
-      const allowed = g.items.filter((i) => !i.navGate || isNavAllowed(i.navGate));
+      // BOTH gates, or the ones that carry only `navGateAny` are never
+      // filtered at all: `!i.navGate` is true for them, so the row shows to
+      // everyone. Finance is exactly such a row (FINANCE_NAV_GATES), and
+      // LeftRail has always checked both — this surface silently stopped
+      // when the filter moved here out of screens/More.tsx.
+      const allowed = g.items.filter(
+        (i) =>
+          (!i.navGate || isNavAllowed(i.navGate)) &&
+          (!i.navGateAny || i.navGateAny.some(isNavAllowed)),
+      );
       const groupHit = q !== "" && g.title.toLowerCase().includes(q);
       return {
         ...g,

@@ -36,7 +36,12 @@ import {
   writeSnapshot,
   getDashboardSignature,
   isSnapshotFresh,
+  ensureFeedSnapshotTable,
+  FEED_SNAPSHOT_TABLE,
+  pruneFeedSnapshots,
+  TRACKED_TABLES,
 } from "../lib/dashboard-snapshot";
+import { withSnapshot } from "../lib/snapshot";
 import {
   writeStateSnapshot,
   readStateSnapshotForMonth,
@@ -69,6 +74,21 @@ const SHIPPED_DO_STATUSES = new Set([
 
 const app = new Hono<Env>();
 
+// Every table the overview compute reads, here and in the helpers it calls.
+// TRACKED_TABLES (the "all" snapshot list) misses the purchasing and stock
+// tables this payload also reads.
+const OVERVIEW_SOURCE_TABLES = [
+  ...TRACKED_TABLES,
+  "production_orders",
+  "products",
+  "consignment_order_items",
+  "purchase_orders",
+  "purchase_order_items",
+  "purchase_invoices",
+  "grns",
+  "kv_config",
+] as const;
+
 const FABRIC_ITEM_GROUPS = ["B.M-FABR", "S.M-FABR", "S-FABRIC"];
 
 function fmtISO(d: Date): string {
@@ -77,7 +97,7 @@ function fmtISO(d: Date): string {
 
 app.get("/", async (c) => {
   const orgId = getOrgId(c);
-  const { cached } = await import("../lib/kv-cache");
+  const { cached, invalidate } = await import("../lib/kv-cache");
 
   // Period filter for the sales-derived sections (AOV, Monthly,
   // Top Sellers): "all" or a specific "YYYY-MM". Everything else in
@@ -206,7 +226,9 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const data = await cached(c, `dashboard:overview:${orgId}:v28:${period}${windowOverride ? `:cmp${windowOverride}` : ""}`, 60, async () => {
+  const overviewV = "v28";
+  const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}${windowOverride ? `:cmp${windowOverride}` : ""}`;
+  const computeOverview = async () => {
     const db = c.var.DB;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -2371,6 +2393,30 @@ app.get("/", async (c) => {
       salesMonths,
       employee: stateEmployee,
     };
+  };
+
+  // A month / quarter / year (the new dashboard never asks for "all") gets a
+  // saved copy in the database behind the KV copy, reused until a source table
+  // changes: a cold one cost ~2.3s (measured on staging 2026-10-22). "all" has
+  // its own snapshot above; a past month is frozen after its first view; the
+  // compare view stores nothing. Keyed by day because the payload has "today"
+  // figures.
+  const useFeedSnapshot = dp.kind !== "all" && !windowOverride && !(isPastMonth && dp.kind === "month");
+  const data = await cached(c, kvKey, 60, async () => {
+    if (!useFeedSnapshot) return computeOverview();
+    await ensureFeedSnapshotTable(c.var.DB);
+    return withSnapshot(
+      c.var.DB,
+      { tableName: FEED_SNAPSHOT_TABLE, sourceTables: OVERVIEW_SOURCE_TABLES },
+      orgId,
+      async () => {
+        await pruneFeedSnapshots(c.var.DB, orgId);
+        return computeOverview();
+      },
+      `overview:${overviewV}:${period}:${todayISOTop}`,
+      c,
+      { staleWhileRevalidate: true, onRevalidated: () => invalidate(c, kvKey) },
+    );
   });
 
   // PR 1 (2026-05-20) — write-back to dashboard_snapshot for the next
