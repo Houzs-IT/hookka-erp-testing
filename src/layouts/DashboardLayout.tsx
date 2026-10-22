@@ -12,7 +12,7 @@ import { useAutoUpdateOnNavigate } from "@/lib/use-version-check";
 import { DASHBOARD_ROUTE_ELEMENTS } from "@/dashboard-routes";
 import { FloatingChatButton } from "@/components/assistant/FloatingChatButton";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
-import { isPhoneUa, prefersDesktop, setPreferDesktop, shouldRedirectToMobile } from "@/lib/prefer-desktop";
+import { isMobileClassDevice, prefersDesktop, setPreferDesktop, shouldRedirectToMobile } from "@/lib/prefer-desktop";
 
 // Lives inside ToastProvider so it can pop a toast when a new deploy lands.
 // Polls for a new bundle hash every 2 min + on focus. On change: offers an
@@ -166,20 +166,19 @@ export default function DashboardLayout() {
     };
   }, [pathname]);
 
-  // Phones (incl. foldables) get the dedicated /m mobile app; iPad + desktop
-  // keep this desktop shell (owner 2026-06-28: phones/folds → /m, "iPad 用电脑
-  // 版本"). So the redirect matches phone-class UAs only — iPhone, iPod, and
-  // Android (a folded foldable is phone-width and /m has a fold layout). iPad
-  // is deliberately EXCLUDED: old iPads send "iPad" (no longer matched) and
-  // iPadOS 13+ already reports a "Macintosh" desktop UA — both stay on desktop.
-  // A small *desktop* window also stays on desktop (no mobile UA token). The
-  // worker portal (/worker) is a separate layout and never reaches here. The
-  // early return is AFTER all hooks above (rules-of-hooks safe).
-  // "Open the full desktop app" in /m More lets a phone through for the
-  // session (src/lib/prefer-desktop.ts); it then gets a way back below.
+  // Phones, foldables, iPads and Android tablets get the dedicated /m mobile
+  // app (owner 2026-10-22; this reverses the 2026-06-28 "iPad uses desktop"
+  // decision). iPadOS 13+ reports a "Macintosh" UA, so it is recognised by that
+  // UA plus touch points (a Mac reports 0) -- see isMobileClassDevice. Anything
+  // ambiguous, and every desktop or laptop, stays here. The worker portal
+  // (/worker) is a separate layout and never reaches here. The early return is
+  // AFTER all hooks above (rules-of-hooks safe). "Open desktop app" in /m lets a
+  // device through for the session (src/lib/prefer-desktop.ts); it then gets a
+  // way back below. The redirect is one-way (desktop -> /m) so it cannot loop.
   const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-  if (shouldRedirectToMobile(ua, prefersDesktop())) return <Navigate to="/m" replace />;
-  const phoneOnDesktop = isPhoneUa(ua);
+  const touchPoints = typeof navigator !== "undefined" ? navigator.maxTouchPoints : undefined;
+  if (shouldRedirectToMobile(ua, prefersDesktop(), touchPoints)) return <Navigate to="/m" replace />;
+  const mobileClassOnDesktop = isMobileClassDevice(ua, touchPoints);
 
   return (
     <ToastProvider>
@@ -207,7 +206,7 @@ export default function DashboardLayout() {
           </div>
           {/* Extra bottom padding on phones so content clears the bottom nav. */}
           <main className="p-4 pb-24 md:p-6 print:!p-0">
-            {phoneOnDesktop && (
+            {mobileClassOnDesktop && (
               <a
                 href="/m"
                 onClick={() => setPreferDesktop(false)}
