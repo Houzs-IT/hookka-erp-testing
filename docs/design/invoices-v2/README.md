@@ -1,7 +1,9 @@
 # Hookka ERP — Mobile Invoices v2 · Two-tab update handoff (Invoices + AR Aging)
 
+> **Last verified: 2026-10-23** against `src/pages/m/screens/invoices/`, `src/pages/m/lib/invoices-mobile.ts` and `tests/m-invoices-v2.test.mjs` on branch `design/mobile-invoicesv2` (PR #1094). The design sections below are the unchanged design handoff.
+
 Design reference only. HTML prototype with illustrative sample data, not connected to any API.
-Repo: `hookkadev/hookka-erp-testing` @ `staging`. Implementation branch (Claude Code, uncommitted): `design/mobile-invoicesv2`.
+Repo: `hookkadev/hookka-erp-testing` @ `staging`. Implementation: PR #1094, branch `design/mobile-invoicesv2` (screens in `src/pages/m/screens/invoices/`, rules in `src/pages/m/lib/invoices-mobile.ts`).
 
 ---
 
@@ -138,7 +140,7 @@ Payments, Supplier Pay, Credit Notes, Debit Notes and e-Invoice are **real ERP f
 
 ## 6. Implementation delta
 
-React paths below are confirmed on `staging`. Paths created by Claude Code on `design/mobile-invoicesv2` are not known here; locate them in the working tree.
+React paths below are confirmed on `staging`. The branch's own files live under `src/pages/m/screens/invoices/` and `src/pages/m/lib/` (`invoices-mobile.ts`, `invoice-pdf.ts`).
 
 | Area | Current | Required change | Preserve | Risks / dependencies |
 |---|---|---|---|---|
