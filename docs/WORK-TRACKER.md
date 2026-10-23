@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-23**: branch `feat/2fa-login-code-step` (to `staging`, then `main`) added below (built, waiting on the staging PR; its entry is the newest).
 > **Last verified: 2026-10-23**: mobile Sales Orders responsive migration entry added (branch `feat/m-sales-responsive`, local commits only); nothing else re-checked.
 > **Last verified: 2026-10-22**: branch `fix/charts-tick-type` — build:strict is green on
 > staging again; it had TWO pre-existing errors, the second hidden behind the first. Three
@@ -354,6 +355,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-23 — 🟡 Two-factor sign-in: the missing code step (branch `feat/2fa-login-code-step` → `staging`, then `main`)
+
+Ask (owner): "is the 2fa on the staging?" → it was off on staging AND main (`TOTP_LOGIN_ENFORCEMENT_ENABLED = false` since 2026-08-04, BUG-2026-08-04-006: the login page had no screen to type the code, so an enrolled Super Admin was locked out). Owner: "yes build it, staging first".
+1. 🟡 Login page: after a correct password for an account with 2FA on, ask for the 6-digit code (or a backup code) and finish sign-in through `/api/auth/totp/login-verify`. Both layouts (phone and desktop).
+2. 🟡 Turn the login check back on; keep the "please set up 2FA" prompt OFF until the owner decides who must use it.
+3. 🟡 Lost phone: Super Admin can reset another account's 2FA (the setup page issues no backup codes, so without this a lost phone is a permanent lock-out).
+
+Built on the branch, not yet on staging: BUG-2026-10-23-382, `tests/2fa-login-code-step.test.mjs` (8 tests, red on the old code). Who must set 2FA up is still the owner decision.
+
 ## 2026-10-23 — 🔵 Phase 2 step 1: Sales Orders list + detail, one adaptive UI for phone, foldable and tablet (branch `feat/m-sales-responsive` from `upstream/staging` `c36fa4ddc`; frontend only) — local commits, not pushed, awaiting the owner's visual check
 
 Owner decisions (2026-10-23): (1) Option A: one adaptive Sales Orders UI; (2) the approved 390px phone design and its read-only behaviour are unchanged; (3) the phone design language is the foundation for tablet, the legacy tablet appearance is not kept; (4) all existing Sales Order functionality stays, including the tablet actions and Paid / Balance / Payments; (5) the iPad sidebar is unchanged (no hamburger, no More flyout); (6) Products is NOT added to the tablet rail; (7) nothing from Invoices v2 is touched; (8) no API, backend, RBAC or unrelated-module change.

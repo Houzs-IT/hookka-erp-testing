@@ -138,6 +138,8 @@ type UserRow = {
   department: string;
   position: string;
   reportsTo: string;
+  // Two-step sign-in is on (Super Admin can reset it from the drawer).
+  twoFactorOn?: boolean;
 };
 
 type InviteRow = {
@@ -2632,6 +2634,7 @@ export default function UsersPage() {
               department: drawerUser.department ?? "",
               position: drawerUser.position ?? "",
               reportsTo: drawerUser.reportsTo ?? "",
+              twoFactorOn: drawerUser.twoFactorOn ?? false,
             } satisfies DrawerUser
           }
           currentManagerKey={

@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-23**: newest entry BUG-2026-10-23-382 (branch `feat/2fa-login-code-step`, to `staging`).
 > **Last verified: 2026-10-22**: newest entry BUG-2026-10-22-381 (branch `feat/dashboard-feed-snapshot`, to `staging`; 347-380 are taken on `main`).
 > **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-346 (branch `design/mobile-products-v2`, to `staging`; committed `31afa056`; 344 and 345 are Procurement's, from `design/mobile-procurement`).
 > **Last verified: 2026-10-21**: newest entries BUG-2026-10-21-344 / -345 (branch `design/mobile-procurement`, to `staging`) — both 🔴 open, logged for backend review, nothing fixed.
@@ -226,6 +227,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-23-382 — Two-step sign-in was switched off because the login page had no code step `auth` `security` 🟡
+
+🟡 **Fixed on branch** (`feat/2fa-login-code-step` → `staging`, then `main`). Found 2026-10-23 when the owner asked whether 2FA was on for staging. Prod impact UNMEASURED (no prod read of who has `totpEnrolledAt` set).
+
+**Symptom.** Since BUG-2026-08-04-006 the login gate `TOTP_LOGIN_ENFORCEMENT_ENABLED` was `false` on `staging` and `main`: an account that had set up 2FA on `/setup-2fa` still signed in with its password alone. Turning the gate on was not possible, because `/login` answered `totpRequired` and the login page only showed "isn't available yet", so an enrolled account could not sign in at all.
+
+**Root cause.** The backend half (`POST /api/auth/totp/login-verify` + the pending token, BUG-2026-08-13-101) was finished, but the login page never got the screen that asks for the code. There was also no way back for a lost phone: `/setup-2fa` issues no backup codes and the self-service disable needs a signed-in session. Google sign-in (not configured today) would have issued a session with no code step.
+
+**Fix.** `src/pages/login.tsx` shows a "Two-step sign-in" code step in both layouts and posts the code with the pending token to `login-verify`; a timed-out token goes back to the password step. The gate is on again; the set-up prompt stays off on its own switch (`TOTP_SETUP_PROMPT_ENABLED = false`) until it is decided who must use 2FA. New `POST /api/users/:id/reset-2fa` (Super Admin only) clears the 2FA columns, ends the person's sessions and is audited, with a "Reset two-step sign-in" button in the Users drawer. The Google callback refuses an account with 2FA on.
+
+**Regression.** `tests/2fa-login-code-step.test.mjs` (8 tests, all red on the old code). The verify flow itself stays covered by `tests/totp-login-password-gate.test.mjs`.
 
 ---
 

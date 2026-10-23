@@ -1,5 +1,7 @@
 # Customers & Platform — Module Guide
 
+> **Last verified: 2026-10-23**: the two `UsersPage` anchors re-derived (`Users.tsx:235`) after the users list gained `twoFactorOn` (branch `feat/2fa-login-code-step`); nothing else re-checked.
+
 > **Last verified: 2026-10-17**: the three `src/api/routes/customers.ts` anchors (`validateDebtorCode`, `rowToCustomer`, POST / PUT) restamped after the Finance v2 party fields (branch `feat/finance-v2-party-fields`); nothing else re-checked.
 
 > **Last verified: 2026-10-05** (branch `feat/topbar-profile`): the `auth.ts` anchor rows re-derived after `/me` started returning the photo. Nothing else re-checked.
@@ -27,7 +29,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 ## Entry points
 - Pages
   - `/customers` → `src/pages/customers.tsx:3424` (`CustomersPage` — list/KPI/CRUD + nested pricing/maintenance/combo panels)
-  - Users/Org/Mailbox → `src/pages/settings/Users.tsx:226` (`UsersPage`; SUPER_ADMIN-gated account admin)
+  - Users/Org/Mailbox → `src/pages/settings/Users.tsx:235` (`UsersPage`; SUPER_ADMIN-gated account admin)
   - `src/pages/settings/index.tsx` (settings shell) · `src/pages/settings/organisations.tsx` (sister-company config)
   - Mail Center → `src/pages/mail-center/index.tsx` (Gmail-style shell) + `detail.tsx` / `compose.tsx`; client view prefs in `src/pages/mail-center/mail-prefs.ts`
   - Master config editors (config only, NOT combo math): `src/pages/maintenance.tsx`, `src/pages/maintenance/sofa-combos.tsx`
@@ -66,7 +68,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 | `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2403` | Per-customer combo pricing (config editor) |
 | `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2692` | Price-history viewer |
 | `AssignSkuModal` | `src/pages/customers.tsx:3218` | SKU assignment modal |
-| `UsersPage` | `src/pages/settings/Users.tsx:226` | Users/Org/Mailbox tab shell |
+| `UsersPage` | `src/pages/settings/Users.tsx:235` | Users/Org/Mailbox tab shell |
 | `validateDebtorCode` | `src/api/routes/customers.ts:93` | Debtor-code validation on create/edit |
 | `rowToCustomer` | `src/api/routes/customers.ts:294` | Dual-key row → customer, buckets hubs |
 | `app.post("/")` / `app.put("/:id")` | `src/api/routes/customers.ts:379 / 540` | Customer create / edit (+ column self-apply) |

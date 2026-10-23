@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Mail, Lock, Eye, EyeOff, ArrowRight, Sun, Moon, Check } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, ArrowRight, Sun, Moon, Check, ShieldCheck } from "lucide-react";
 import { setAuth, isAuthenticated, type AuthUser } from "@/lib/auth";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -222,9 +222,8 @@ type LoginResponse =
   // BUG-2026-08-04-006). Modelled so the handler must account for it instead of
   // blindly reading json.data.user and crashing.
   // `pendingToken` is the server's proof that the password step passed; the
-  // step-2 screen (when it is finally built) must send it back to
-  // /api/auth/totp/login-verify, which refuses without it. See
-  // src/api/lib/totp-pending.ts (BUG-2026-08-13-101).
+  // code step below sends it back to /api/auth/totp/login-verify, which
+  // refuses without it. See src/api/lib/totp-pending.ts (BUG-2026-08-13-101).
   | { success: true; totpRequired: true; userId: string; pendingToken?: string }
   | { success: false; error?: string };
 
@@ -242,6 +241,10 @@ export default function LoginPage() {
   // (brutal in incognito) → "mysteriously logged out" (owner 2026-06-27, staging).
   // Defaulting to a persistent 7-day session is the expected behaviour anyway.
   const [rememberMe, setRememberMe] = useState(true);
+  // Two-factor step: set once the password is right for an account with
+  // two-step sign-in on. Holds what /api/auth/totp/login-verify needs.
+  const [totpStep, setTotpStep] = useState<{ userId: string; pendingToken?: string } | null>(null);
+  const [totpCode, setTotpCode] = useState("");
 
   // Mobile (< lg / 1024px) renders the owner's phone-first design; desktop
   // keeps the existing premium split-panel. Both share the SAME form state +
@@ -308,6 +311,69 @@ export default function LoginPage() {
     return "/settings";
   }
 
+  // Step 2 for an account with two-step sign-in: the 6-digit code from the
+  // authenticator app, or a backup code. The server checks it against the
+  // pending token from step 1 and only then issues the session.
+  const handleTotpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!totpStep) return;
+    setError(null);
+    const code = totpCode.replace(/\s+/g, "");
+    if (!code) {
+      setError("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/totp/login-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          userId: totpStep.userId,
+          pendingToken: totpStep.pendingToken,
+          code,
+          rememberMe,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        data?: { user?: AuthUser };
+      };
+      if (!res.ok || !json.success || !json.data?.user) {
+        const msg = json.error || "";
+        if (/timed out/i.test(msg)) {
+          // The password step expired (5 minutes) — start again from it.
+          setTotpStep(null);
+          setTotpCode("");
+          setPassword("");
+          setError(msg);
+          return;
+        }
+        setError(
+          !msg || msg === "Invalid credentials"
+            ? "That code didn't work. Check the code in your authenticator app and try again."
+            : msg,
+        );
+        return;
+      }
+      setAuth({ user: json.data.user, rememberMe });
+      navigate(await landingPage(), { replace: true });
+    } catch {
+      setError("Could not reach the server. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  function backToPassword() {
+    setTotpStep(null);
+    setTotpCode("");
+    setPassword("");
+    setError(null);
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -342,15 +408,17 @@ export default function LoginPage() {
         );
         return;
       }
-      // 2FA hard-gate response ({ success:true, totpRequired, userId }) carries
-      // no `data`. The login-verify step isn't built (BUG-2026-08-04-006), so
-      // handle it explicitly instead of crashing on json.data.user. The server
-      // gate is currently disabled, but a stale worker / future re-enable must
-      // never white-screen the login page again.
-      if ("totpRequired" in json || !("data" in json) || !json.data?.user) {
-        setError(
-          "Two-factor sign-in isn't available yet. Ask an admin to reset your 2FA, then sign in with your password.",
-        );
+      // Password right, and the account has two-step sign-in on: ask for the
+      // code (BUG-2026-08-04-006 — this step did not exist, so the gate was
+      // switched off). No session exists yet; login-verify issues it.
+      if ("totpRequired" in json && json.totpRequired) {
+        setTotpStep({ userId: json.userId, pendingToken: json.pendingToken });
+        setTotpCode("");
+        return;
+      }
+      // Never read json.data.user off a shape without it (white-screen guard).
+      if (!("data" in json) || !json.data?.user) {
+        setError("Login failed. Please try again.");
         return;
       }
       // Sprint 7: only the user blob lands in client storage; the session
@@ -622,7 +690,7 @@ export default function LoginPage() {
 
           {/* frosted sheet */}
           <form
-            onSubmit={handleSubmit}
+            onSubmit={totpStep ? handleTotpSubmit : handleSubmit}
             style={{
               position: "relative",
               flex: 1,
@@ -645,7 +713,7 @@ export default function LoginPage() {
                 letterSpacing: "-.3px",
               }}
             >
-              Welcome back
+              {totpStep ? "Two-step sign-in" : "Welcome back"}
             </h2>
             <p
               style={{
@@ -655,9 +723,22 @@ export default function LoginPage() {
                 lineHeight: 1.5,
               }}
             >
-              Sign in to your manufacturing intelligence platform
+              {totpStep
+                ? "Your password was correct."
+                : "Sign in to your manufacturing intelligence platform"}
             </p>
 
+            {totpStep ? (
+              <TotpCodeField
+                variant="phone"
+                p={p}
+                code={totpCode}
+                onChange={setTotpCode}
+                onBack={backToPassword}
+                disabled={loading}
+              />
+            ) : (
+            <>
             {/* Email Address */}
             <div style={{ marginBottom: "15px" }}>
               <div
@@ -753,6 +834,8 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
+            </>
+            )}
 
             {/* Error banner */}
             {error && (
@@ -773,6 +856,7 @@ export default function LoginPage() {
             )}
 
             {/* Remember me + Forgot password */}
+            {!totpStep && (
             <div
               style={{
                 display: "flex",
@@ -837,6 +921,7 @@ export default function LoginPage() {
                 Forgot Password?
               </button>
             </div>
+            )}
 
             {/* Sign In */}
             <button
@@ -844,7 +929,13 @@ export default function LoginPage() {
               disabled={loading}
               className="ml-btn-primary"
             >
-              {loading ? "Signing in..." : "Sign In"}
+              {loading
+                ? totpStep
+                  ? "Checking..."
+                  : "Signing in..."
+                : totpStep
+                  ? "Verify"
+                  : "Sign In"}
               {!loading && <ArrowRight size={19} color="#fff" />}
             </button>
 
@@ -954,16 +1045,31 @@ export default function LoginPage() {
             </div>
 
             {/* Title */}
-            <h2 className="text-2xl font-bold text-white mb-1">Welcome back</h2>
+            <h2 className="text-2xl font-bold text-white mb-1">
+              {totpStep ? "Two-step sign-in" : "Welcome back"}
+            </h2>
             <p
               className="mb-8"
               style={{ color: "rgba(255,255,255,.45)", fontSize: "13px" }}
             >
-              Sign in to your manufacturing intelligence platform
+              {totpStep
+                ? "Your password was correct."
+                : "Sign in to your manufacturing intelligence platform"}
             </p>
 
             {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={totpStep ? handleTotpSubmit : handleSubmit} className="space-y-5">
+              {totpStep ? (
+                <TotpCodeField
+                  variant="desktop"
+                  p={p}
+                  code={totpCode}
+                  onChange={setTotpCode}
+                  onBack={backToPassword}
+                  disabled={loading}
+                />
+              ) : (
+              <>
               <div>
                 <label
                   htmlFor="email"
@@ -1019,6 +1125,8 @@ export default function LoginPage() {
                   }}
                 />
               </div>
+              </>
+              )}
 
               {/* Error banner */}
               {error && (
@@ -1036,6 +1144,7 @@ export default function LoginPage() {
               )}
 
               {/* Remember me + Forgot password */}
+              {!totpStep && (
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -1067,6 +1176,7 @@ export default function LoginPage() {
                   Forgot Password?
                 </button>
               </div>
+              )}
 
               {/* Sign In Button */}
               <button
@@ -1079,7 +1189,13 @@ export default function LoginPage() {
                   fontSize: "15px",
                 }}
               >
-                {loading ? "Signing in..." : "Sign In"}
+                {loading
+                ? totpStep
+                  ? "Checking..."
+                  : "Signing in..."
+                : totpStep
+                  ? "Verify"
+                  : "Sign In"}
               </button>
             </form>
           </div>
@@ -1279,6 +1395,115 @@ export default function LoginPage() {
 }
 
 // ----- mobile field wrapper (icon + input row), styled to the sheet -----
+/**
+ * The code box for two-step sign-in, in the phone or desktop style.
+ * Accepts a 6-digit authenticator code or a longer backup code.
+ */
+function TotpCodeField({
+  variant,
+  p,
+  code,
+  onChange,
+  onBack,
+  disabled,
+}: {
+  variant: "phone" | "desktop";
+  p: Palette;
+  code: string;
+  onChange: (v: string) => void;
+  onBack: () => void;
+  disabled: boolean;
+}) {
+  const phone = variant === "phone";
+  return (
+    <div style={{ marginBottom: phone ? "18px" : 0 }}>
+      <label
+        htmlFor="totp-code"
+        className={phone ? undefined : "block mb-2 uppercase font-medium"}
+        style={
+          phone
+            ? {
+                display: "block",
+                fontSize: "10.5px",
+                fontWeight: 600,
+                color: p.label,
+                textTransform: "uppercase",
+                letterSpacing: ".08em",
+                marginBottom: "7px",
+              }
+            : { color: "rgba(255,255,255,.5)", fontSize: "12px", letterSpacing: "0.05em" }
+        }
+      >
+        Authenticator code
+      </label>
+      <div style={phone ? mlFieldStyle(p) : { display: "flex", alignItems: "center", gap: "10px" }}>
+        {phone && <ShieldCheck size={18} color={p.accent} />}
+        <input
+          id="totp-code"
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          maxLength={32}
+          placeholder="6-digit code"
+          value={code}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className={phone ? "ml-input" : "login-input w-full rounded-lg px-4 py-3 text-white"}
+          style={
+            phone
+              ? {
+                  flex: 1,
+                  minWidth: 0,
+                  border: "none",
+                  background: "transparent",
+                  outline: "none",
+                  fontFamily: "inherit",
+                  fontSize: "16px",
+                  letterSpacing: "4px",
+                  color: p.input,
+                }
+              : {
+                  backgroundColor: "rgba(255,255,255,.06)",
+                  border: "1.5px solid rgba(107,92,50,.3)",
+                  fontSize: "16px",
+                  letterSpacing: "4px",
+                }
+          }
+        />
+      </div>
+      <p
+        style={{
+          margin: "8px 0 0",
+          fontSize: "12px",
+          lineHeight: 1.5,
+          color: phone ? p.sub : "rgba(255,255,255,.45)",
+        }}
+      >
+        Open your authenticator app and enter the code for Hookka. Lost your phone? Enter a
+        backup code, or ask a Super Admin to reset your two-step sign-in.
+      </p>
+      <button
+        type="button"
+        onClick={onBack}
+        disabled={disabled}
+        style={{
+          marginTop: "10px",
+          background: "transparent",
+          border: 0,
+          padding: 0,
+          cursor: "pointer",
+          fontSize: "13px",
+          fontWeight: 600,
+          color: phone ? p.accent : "#8B7A4E",
+        }}
+      >
+        ← Use a different account
+      </button>
+    </div>
+  );
+}
+
 function mlFieldStyle(p: Palette): React.CSSProperties {
   return {
     background: p.fieldBg,
