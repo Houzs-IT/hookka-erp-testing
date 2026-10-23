@@ -80,7 +80,6 @@ export function DeptRevenueCard({
   onPickDay?: (day: string | undefined) => void;
 }) {
   const [cat, setCat] = useState<RevCat>("all");
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
   // Clicking a department row focuses it: the right side becomes that
   // department's bar chart for each day (owner 2026-10-23). Click it again,
   // or "All departments", to go back to the small charts.
@@ -130,7 +129,6 @@ export function DeptRevenueCard({
   );
   const focusDept = focus ? depts.find((d) => d.code === focus) ?? null : null;
   const series = depts
-    .filter((d) => !hidden.has(d.code))
     .map((d) => ({ key: d.label, color: colorOf.get(d.code) ?? "#A8A29A" }));
 
 
@@ -146,10 +144,6 @@ export function DeptRevenueCard({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {/* Hide / show every line at once (owner 2026-10-17: clicking one
-                department at a time could not clear them all). */}
-            <button type="button" onClick={() => setHidden(new Set())} className="rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">Show all</button>
-            <button type="button" onClick={() => setHidden(new Set(depts.map((d) => d.code)))} className="rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">Hide all</button>
             <CatToggle value={cat} onChange={setCat} withAccessory={showAccessory} />
           </div>
         </div>
@@ -172,7 +166,6 @@ export function DeptRevenueCard({
                 </thead>
                 <tbody>
                   {depts.map((d) => {
-                    const off = hidden.has(d.code);
                     const v = valueOf(d);
                     const sel = pickCat(v, cat);
                     return (
@@ -180,7 +173,7 @@ export function DeptRevenueCard({
                         key={d.code}
                         onClick={() => setFocus((f) => (f === d.code ? null : d.code))}
                         className={`border-b border-[#F7F4EF] cursor-pointer hover:bg-[#FAF8F4] ${focus === d.code ? "bg-[#F7F4EF]" : ""}`}
-                        style={{ opacity: off && !focus ? 0.45 : 1 }}
+                        
                         title={focus === d.code ? "Back to all departments" : "Show this department's output for each day"}
                       >
                         <td className="py-1.5 pr-2">
