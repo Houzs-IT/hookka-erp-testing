@@ -20,16 +20,22 @@ import { TAB_REGISTRY } from "./registry";
 import { TONE, useProblemTiles } from "../../../dashboards/use-problem-tiles";
 import { quarterOfPeriod, type Period } from "../../../dashboards/dashboard-shared-lib";
 
-export function DashboardScreen() {
-  const { tab } = useParams();
-  const { search } = useLocation();
-  const navigate = useNavigate();
-  const { isNavAllowed, dashboardTabs, loading: permsLoading } = usePermissions();
-  // Tab-restricted role (role-policy.ts DASHBOARD_TABS_BY_ROLE): only its tabs
-  // are offered, a bare /m/dashboard lands on the first, and any other tab
-  // reached by URL shows "Under maintenance". Same rule as the desktop page.
+/**
+ * The dashboard itself — section strip, Today's problems, the active tab —
+ * shared by /m/dashboard/:tab and the phone Home (owner 2026-10-24: "Home 应该
+ * 要有全部各种各样的 dashboard"), so both show the same figures. `tab` and
+ * `openTab` come from the caller: the URL on the dashboard page, local state
+ * on Home. `showPeriod` renders the period chip in the strip row (Home has no
+ * MobileHeader to carry it).
+ */
+export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
+  tab: MobileTabKey;
+  openTab: (key: MobileTabKey) => void;
+  stickyTop: number;
+  showPeriod?: boolean;
+}) {
+  const { dashboardTabs } = usePermissions();
   const tabs = dashboardTabs ? MOBILE_TABS.filter((t) => dashboardTabs.includes(t.key)) : MOBILE_TABS;
-  const landing = tabs[0]?.key ?? "sales";
   const { feed, months } = useDashboardFeed();
   // Newest day that carries data: the period sheet anchors its presets to it.
   const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
@@ -44,37 +50,13 @@ export function DashboardScreen() {
       : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
   // "Today's problems" — the same four tiles as the desktop strip.
   const problems = useProblemTiles(tabs.map((t) => t.key));
-
-  const openTab = useCallback(
-    (key: MobileTabKey) => navigate(`/m/dashboard/${key}${search}`),
-    [navigate, search],
-  );
-
-  // Wait for the permission set (first visit only; it is cached after), so a
-  // restricted role never lands on, or fetches for, a tab it may not see.
-  if (permsLoading) return null;
-  if (!isMobileTab(tab)) return <Navigate to={`/m/dashboard/${landing}${search}`} replace />;
   const blocked = !tabs.some((t) => t.key === tab);
-
-  if (!isNavAllowed(DASHBOARD_NAV_HREF)) {
-    return (
-      <>
-        <MobileHeader title="Dashboard" onBack={() => navigate("/m/more")} />
-        <MState kind="empty" text="Your role doesn't have access to the dashboard." />
-      </>
-    );
-  }
-
   const Tab = TAB_REGISTRY[tab];
+  const chip = <PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} allowDay={dayTab} />;
   return (
     <>
-      <MobileHeader
-        title="Dashboard"
-        onBack={() => navigate("/m/more")}
-        trailing={<PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} allowDay={dayTab} />}
-      />
-      {/* Sticky under the MobileHeader (minHeight 52), like SubTabs. */}
-      <div style={{ position: "sticky", top: 52, zIndex: 30, padding: "8px 12px", backgroundColor: M.paper, borderBottom: `1px solid ${M.border}` }}>
+      <div style={{ position: "sticky", top: stickyTop, zIndex: 30, padding: "8px 12px", backgroundColor: M.paper, borderBottom: `1px solid ${M.border}` }}>
+        {showPeriod && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>{chip}</div>}
         {/* The section strip, like the desktop's Sales · Operations · … tabs
             (owner 2026-10-23: the dropdown hid them). Scrolls sideways on a
             narrow phone; the active one scrolls into view. */}
@@ -129,6 +111,58 @@ export function DashboardScreen() {
       ) : (
         <Tab period={period} setPeriod={setPeriod} months={months} openTab={openTab} />
       )}
+    </>
+  );
+}
+
+export function DashboardScreen() {
+  const { tab } = useParams();
+  const { search } = useLocation();
+  const navigate = useNavigate();
+  const { isNavAllowed, dashboardTabs, loading: permsLoading } = usePermissions();
+  // Tab-restricted role (role-policy.ts DASHBOARD_TABS_BY_ROLE): only its tabs
+  // are offered, a bare /m/dashboard lands on the first, and any other tab
+  // reached by URL shows "Under maintenance". Same rule as the desktop page.
+  const tabs = dashboardTabs ? MOBILE_TABS.filter((t) => dashboardTabs.includes(t.key)) : MOBILE_TABS;
+  const landing = tabs[0]?.key ?? "sales";
+  const { feed, months } = useDashboardFeed();
+  const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, tab);
+  const dayTab = tab === "people";
+  const period: Period = dayTab
+    ? rawPeriod
+    : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
+      ? { mode: "monthly", month: rawPeriod.month }
+      : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
+  const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
+
+  const openTab = useCallback(
+    (key: MobileTabKey) => navigate(`/m/dashboard/${key}${search}`),
+    [navigate, search],
+  );
+
+  // Wait for the permission set (first visit only; it is cached after), so a
+  // restricted role never lands on, or fetches for, a tab it may not see.
+  if (permsLoading) return null;
+  if (!isMobileTab(tab)) return <Navigate to={`/m/dashboard/${landing}${search}`} replace />;
+
+  if (!isNavAllowed(DASHBOARD_NAV_HREF)) {
+    return (
+      <>
+        <MobileHeader title="Dashboard" onBack={() => navigate("/m/more")} />
+        <MState kind="empty" text="Your role doesn't have access to the dashboard." />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <MobileHeader
+        title="Dashboard"
+        onBack={() => navigate("/m/more")}
+        trailing={<PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} allowDay={dayTab} />}
+      />
+      {/* Sticky under the MobileHeader (minHeight 52), like SubTabs. */}
+      <DashboardBody tab={tab} openTab={openTab} stickyTop={52} />
     </>
   );
 }
