@@ -24,6 +24,9 @@ import {
   LineChart,
   ReferenceLine,
   Line,
+  BarChart,
+  Bar,
+  CartesianGrid,
 } from "recharts";
 import type { XAxisTickContentProps } from "recharts";
 import { formatCurrency } from "@/lib/utils";
@@ -160,7 +163,10 @@ export function CustomerPieChart({
   pieColors: string[];
   totalCustRev: number;
 }) {
-  const renderPieLabel = (a: PieLabelArg): React.ReactElement => {
+  const renderPieLabel = (a: PieLabelArg): React.ReactElement | null => {
+    // Slivers under 2% get no label: theirs overlapped and, on a phone, ran
+    // off the card (owner 2026-10-23). The tooltip still names them.
+    if ((a.percent ?? 0) < 0.02) return null;
     const RAD = Math.PI / 180;
     const cx = a.cx ?? 0;
     const cy = a.cy ?? 0;
@@ -212,8 +218,9 @@ export function CustomerPieChart({
           nameKey="name"
           cx="50%"
           cy="50%"
-          innerRadius={66}
-          outerRadius={104}
+          // Relative radii so the leader labels fit a phone-width card too.
+          innerRadius="44%"
+          outerRadius="68%"
           paddingAngle={2}
           stroke="#fff"
           strokeWidth={2}
@@ -335,6 +342,68 @@ export function DeptRevenueChart({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One department, one bar per day (owner 2026-10-23: click a department in
+ * the Department Revenue table → its output for each day of the month).
+ * Dashed line = its average per working day; click a bar to focus that day.
+ */
+export function DeptDailyBarChart({
+  data,
+  label,
+  color,
+  avgSen,
+  markDay,
+  onPickDay,
+}: {
+  data: { m: string; d: string; v: number }[];
+  label: string;
+  color: string;
+  avgSen: number;
+  markDay?: string;
+  onPickDay?: (day: string) => void;
+}) {
+  const peak = data.reduce<{ m: string; v: number } | null>((p, r) => (!p || r.v > p.v ? r : p), null);
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
+        <span className="flex items-center gap-1.5 text-[#1F1D1B] font-semibold">
+          <span style={{ color }}>●</span>
+          {label} · each day
+        </span>
+        <span className="shrink-0 tabular-nums text-[#5A5550]">
+          {peak && peak.v > 0 ? `peak ${peak.m} · ${rm(Math.round(peak.v * 100))}` : "no output"} · avg {rm(Math.round(avgSen))}/day
+        </span>
+      </div>
+      <div style={{ height: 300 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={data}
+            margin={{ top: 6, right: 6, bottom: 0, left: 0 }}
+            onClick={onPickDay ? (e) => {
+              const hit = data.find((r) => r.m === e?.activeLabel);
+              if (hit) onPickDay(hit.d);
+            } : undefined}
+            style={onPickDay ? { cursor: "pointer" } : undefined}
+          >
+            <CartesianGrid vertical={false} stroke="#F0ECE6" />
+            <XAxis dataKey="m" tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={{ stroke: "#F0ECE6" }} tickLine={false} interval="preserveStartEnd" minTickGap={6} />
+            <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} width={44} tickFormatter={(v) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))} />
+            <Tooltip
+              cursor={{ fill: "rgba(107,92,50,0.06)" }}
+              formatter={(v) => [rm(Math.round(Number(v) * 100)), label]}
+              labelFormatter={(m) => String(data.find((r) => r.m === m)?.d ?? m)}
+              contentStyle={{ background: "#FFFFFF", border: "1px solid #E2DDD8", borderRadius: 8, fontSize: 12 }}
+            />
+            {avgSen > 0 && <ReferenceLine y={avgSen / 100} stroke="#3E6570" strokeDasharray="5 4" />}
+            {markDay && <ReferenceLine x={markDay} stroke="#9C6F1E" strokeWidth={2} />}
+            <Bar dataKey="v" name={label} fill={color} radius={[3, 3, 0, 0]} maxBarSize={22} isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

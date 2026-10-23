@@ -6784,3 +6784,5 @@ Asks, in order:
 59. Operations: daily production revenue bar chart (owner 2026-10-20).
 60. Department Revenue table: Today / Avg per day / Total; category split via the toggle (Accessory added) (owner 2026-10-20).
 61. Attendance log: Department column (today / yesterday / this month) (owner 2026-10-23).
+62. Phone dashboard: section strip like the desktop tabs (was a dropdown), OCR tab, KPI figures / tiles / rows fit 375px (owner 2026-10-23).
+63. Department Revenue: click a department → its bar chart for each day of the month (owner 2026-10-23).

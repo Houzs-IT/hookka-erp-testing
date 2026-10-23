@@ -17,6 +17,9 @@ import { dropIdleSundays } from "@/lib/idle-sundays";
 const DeptRevenueChart = lazy(() =>
   import("./charts").then((m) => ({ default: m.DeptRevenueChart })),
 );
+const DeptDailyBarChart = lazy(() =>
+  import("./charts").then((m) => ({ default: m.DeptDailyBarChart })),
+);
 
 export function CatToggle({ value, onChange, withAccessory = false }: { value: RevCat; onChange: (v: RevCat) => void; withAccessory?: boolean }) {
   const opts: [RevCat, string][] = [
@@ -78,6 +81,10 @@ export function DeptRevenueCard({
 }) {
   const [cat, setCat] = useState<RevCat>("all");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  // Clicking a department row focuses it: the right side becomes that
+  // department's bar chart for each day (owner 2026-10-23). Click it again,
+  // or "All departments", to go back to the small charts.
+  const [focus, setFocus] = useState<string | null>(null);
   const depts = useMemo(() => data?.departments ?? [], [data]);
   const buckets = useMemo(() => (data?.revenue ?? []).map((r) => r.bucket), [data]);
   const colorOf = useMemo(() => new Map(depts.map((d, i) => [d.code, DEPT_COLORS[i % DEPT_COLORS.length]])), [depts]);
@@ -121,17 +128,11 @@ export function DeptRevenueCard({
       }),
     [buckets, depts, cat],
   );
+  const focusDept = focus ? depts.find((d) => d.code === focus) ?? null : null;
   const series = depts
     .filter((d) => !hidden.has(d.code))
     .map((d) => ({ key: d.label, color: colorOf.get(d.code) ?? "#A8A29A" }));
 
-  const toggle = (code: string) =>
-    setHidden((prev) => {
-      const n = new Set(prev);
-      if (n.has(code)) n.delete(code);
-      else n.add(code);
-      return n;
-    });
 
   return (
     <Card className="bg-white rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
@@ -141,7 +142,7 @@ export function DeptRevenueCard({
             <h3 className="text-sm font-bold text-[#1F1D1B] tracking-[-0.2px]">Department Revenue — {di >= 0 && day ? dayLabel(day) : periodLabel}</h3>
             <p className="text-xs text-[#9CA3AF] mt-0.5">
               Each department books an order's full value when its last card for that order completes (same rule as
-              Production) · equal rows = balanced output · click a department to hide its chart{clickable ? " · click a day on the chart to see that day" : ""}
+              Production) · equal rows = balanced output · click a department to see its output for each day{clickable ? " · click a day on the chart to see that day" : ""}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -177,10 +178,10 @@ export function DeptRevenueCard({
                     return (
                       <tr
                         key={d.code}
-                        onClick={() => toggle(d.code)}
-                        className="border-b border-[#F7F4EF] cursor-pointer hover:bg-[#FAF8F4]"
-                        style={{ opacity: off ? 0.45 : 1 }}
-                        title={off ? "Show this department's chart" : "Hide this department's chart"}
+                        onClick={() => setFocus((f) => (f === d.code ? null : d.code))}
+                        className={`border-b border-[#F7F4EF] cursor-pointer hover:bg-[#FAF8F4] ${focus === d.code ? "bg-[#F7F4EF]" : ""}`}
+                        style={{ opacity: off && !focus ? 0.45 : 1 }}
+                        title={focus === d.code ? "Back to all departments" : "Show this department's output for each day"}
                       >
                         <td className="py-1.5 pr-2">
                           <div className="flex items-center gap-1.5 whitespace-nowrap">
@@ -215,12 +216,26 @@ export function DeptRevenueCard({
                   <div className="flex items-center justify-center h-40 text-xs text-[#9CA3AF]">Loading chart…</div>
                 }
               >
-                <DeptRevenueChart
-                  data={chartRows}
-                  series={series}
-                  markDay={di >= 0 ? day?.slice(5) : undefined}
-                  onPickDay={clickable ? (d) => onPickDay?.(d === day ? undefined : d) : undefined}
-                />
+                {focusDept ? (
+                  <>
+                    <button type="button" onClick={() => setFocus(null)} className="mb-2 rounded-md px-2.5 py-1 text-xs font-medium bg-[#F5F2ED] text-[#5A5550] hover:bg-[#EAE5DC]">‹ All departments</button>
+                    <DeptDailyBarChart
+                      data={chartRows.map((r) => ({ m: String(r.m), d: String(r.d), v: Number(r[focusDept.label]) || 0 }))}
+                      label={focusDept.label}
+                      color={colorOf.get(focusDept.code) ?? "#6B5C32"}
+                      avgSen={workDays > 0 ? pickCat(focusDept.period, cat) / workDays : 0}
+                      markDay={di >= 0 ? day?.slice(5) : undefined}
+                      onPickDay={clickable ? (d) => onPickDay?.(d === day ? undefined : d) : undefined}
+                    />
+                  </>
+                ) : (
+                  <DeptRevenueChart
+                    data={chartRows}
+                    series={series}
+                    markDay={di >= 0 ? day?.slice(5) : undefined}
+                    onPickDay={clickable ? (d) => onPickDay?.(d === day ? undefined : d) : undefined}
+                  />
+                )}
               </Suspense>
             </div>
           </div>
