@@ -29,6 +29,7 @@ export const MOBILE_TABS = [
   { key: "people", label: "Employees" },
   { key: "service", label: "Service" },
   { key: "finance", label: "Finance" },
+  { key: "ocr", label: "OCR" },
 ] as const;
 export type MobileTabKey = (typeof MOBILE_TABS)[number]["key"];
 

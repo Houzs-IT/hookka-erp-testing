@@ -12,6 +12,7 @@ import { OperationsView } from "../../../../dashboards/OperationsView";
 import { EmployeesDashboard } from "../../../../dashboards/EmployeesDashboard";
 import { ServiceView } from "../../../../dashboards/ServiceView";
 import { FinanceView } from "../../../../dashboards/FinanceView";
+import { OcrView } from "../../../../dashboards/OcrView";
 import type { FinSub, OpsSub, ServiceSub } from "../../../../dashboards/dashboard-shared-lib";
 import { useDashboardSub } from "../hooks";
 import { MSubPills } from "../primitives";
@@ -22,7 +23,9 @@ function Surface({ children }: { children: ReactNode }) {
     <div
       // The desktop views style cards through [data-slot=card]; give them the
       // same look the desktop shell gives them, at phone padding.
-      className="space-y-4 [--card-pad:1rem] [&_[data-slot=card]]:rounded-xl [&_[data-slot=card]]:shadow-[0_1px_3px_rgba(0,0,0,0.08)] [&_[data-slot=card]_h3]:text-sm [&_[data-slot=card]_h3]:font-bold"
+      // p.truncate: tile labels and sub-lines wrap on the phone instead of
+      // being cut ("Average per working…", "Closed within 3 d…").
+      className="space-y-4 [--card-pad:1rem] [&_p.truncate]:whitespace-normal [&_p.truncate]:overflow-visible [&_[data-slot=card]]:rounded-xl [&_[data-slot=card]]:shadow-[0_1px_3px_rgba(0,0,0,0.08)] [&_[data-slot=card]_h3]:text-sm [&_[data-slot=card]_h3]:font-bold"
       style={{ padding: "12px 12px 28px", backgroundColor: "#F0ECE9", color: "#1F1D1B", minHeight: "60vh" }}
     >
       {children}
@@ -66,4 +69,8 @@ export function FinanceTab({ period, setPeriod, months }: DashboardTabProps) {
       <Surface><FinanceView period={period} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} /></Surface>
     </>
   );
+}
+
+export function OcrTab({ period }: DashboardTabProps) {
+  return <Surface><OcrView period={period} /></Surface>;
 }

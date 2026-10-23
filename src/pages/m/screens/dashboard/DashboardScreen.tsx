@@ -1,7 +1,7 @@
 // DashboardScreen — the /m/dashboard/:tab shell: header (back + period chip),
-// a tab DROPDOWN (native <select>: one 44px row and the OS picker, instead of a
-// six-pill strip stacked on each tab's own sub-tab pills), and the active tab
-// from TAB_REGISTRY. It owns nothing
+// the section strip (Sales · Operations · Employees · Service · Finance · OCR,
+// the desktop's tabs; it replaced a dropdown 2026-10-23), the active tab's own
+// sub-page pills, and the active tab from TAB_REGISTRY. It owns nothing
 // tab-specific: tabs, their data and their states live behind the registry.
 //
 // URL: tab in the path (/m/dashboard/sales), period in the query string
@@ -75,19 +75,33 @@ export function DashboardScreen() {
       />
       {/* Sticky under the MobileHeader (minHeight 52), like SubTabs. */}
       <div style={{ position: "sticky", top: 52, zIndex: 30, padding: "8px 12px", backgroundColor: M.paper, borderBottom: `1px solid ${M.border}` }}>
-        <select
-          aria-label="Dashboard section"
-          value={tab}
-          onChange={(e) => openTab(e.target.value as MobileTabKey)}
-          style={{
-            width: "100%", minHeight: 44, padding: "0 12px", borderRadius: 11, border: `1px solid ${M.hairline}`,
-            // 16px: iOS Safari zooms the whole page when a control under 16px takes focus.
-            backgroundColor: M.card, color: M.raisin, fontSize: 16, fontWeight: 700,
-          }}
-        >
-          {blocked && <option value={tab} disabled>Choose a section</option>}
-          {tabs.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-        </select>
+        {/* The section strip, like the desktop's Sales · Operations · … tabs
+            (owner 2026-10-23: the dropdown hid them). Scrolls sideways on a
+            narrow phone; the active one scrolls into view. */}
+        <div role="tablist" aria-label="Dashboard section" style={{ display: "flex", gap: 4, overflowX: "auto", padding: 3, borderRadius: 12, border: `1px solid ${M.hairline}`, backgroundColor: M.card, scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
+          {blocked && <span style={{ alignSelf: "center", padding: "0 8px", fontSize: 12, color: M.muted, whiteSpace: "nowrap" }}>Choose a section</span>}
+          {tabs.map((t) => {
+            const on = t.key === tab;
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                type="button"
+                aria-selected={on}
+                ref={on ? (el) => el?.scrollIntoView?.({ block: "nearest", inline: "center" }) : undefined}
+                onClick={() => openTab(t.key)}
+                style={{
+                  flexShrink: 0, minHeight: 38, padding: "6px 13px", borderRadius: 9, whiteSpace: "nowrap",
+                  border: `1px solid ${on ? M.taupe : "transparent"}`, backgroundColor: on ? "#FFFFFF" : "transparent",
+                  color: on ? M.raisin : M.muted, fontSize: 12.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase",
+                  boxShadow: on ? "0 1px 2px rgba(0,0,0,0.06)" : undefined, cursor: "pointer", WebkitTapHighlightColor: "transparent",
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       {problems.length > 0 && (
         <div role="list" aria-label="Today's problems" style={{ display: "flex", gap: 8, overflowX: "auto", padding: "10px 12px 2px", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>

@@ -476,7 +476,7 @@ function KTile({
           : ""
       }`}
     >
-      <CardContent className="p-5">
+      <CardContent className="p-5 max-sm:p-3">
         <div className="flex items-start justify-between">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5A5550]">
             {label}
@@ -497,7 +497,9 @@ function KTile({
           {loading ? (
             <Skeleton height={26} width={96} />
           ) : (
-            <p className="text-[26px] font-[800] tracking-[-0.5px] text-[#1F1D1B] tabular-nums leading-none">
+            // Phone (owner 2026-10-23): two tiles a row left ~150px, and the
+            // 26px figure ran off the card ("RM 469,588…").
+            <p className="text-[26px] max-sm:text-[17px] font-[800] tracking-[-0.5px] text-[#1F1D1B] tabular-nums leading-none whitespace-nowrap">
               {value}
             </p>
           )}
@@ -1745,8 +1747,8 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     pct: deliveredRate,
                   },
                 ].map((s) => (
-                  <div key={s.k} className="flex items-center gap-3 py-1.5">
-                    <span className="w-24 text-xs text-[#5A5550]">{s.k}</span>
+                  <div key={s.k} className="flex items-center gap-3 max-sm:gap-2 py-1.5">
+                    <span className="w-24 max-sm:w-20 shrink-0 text-xs text-[#5A5550]">{s.k}</span>
                     <div className="flex-1 h-3 rounded-full bg-[#F5F2ED] overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all"
@@ -1756,10 +1758,10 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                         }}
                       />
                     </div>
-                    <span className="w-12 text-right text-[11px] text-[#9CA3AF] tabular-nums">
+                    <span className="w-12 max-sm:w-8 shrink-0 text-right text-[11px] text-[#9CA3AF] tabular-nums">
                       {s.pct.toFixed(0)}%
                     </span>
-                    <span className="w-24 text-right text-xs font-semibold text-[#1F1D1B] tabular-nums">
+                    <span className="w-24 shrink-0 whitespace-nowrap text-right text-xs font-semibold text-[#1F1D1B] tabular-nums">
                       {rm(s.v)}
                     </span>
                   </div>
@@ -1793,16 +1795,20 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     const sen = so.revenueByStatus?.[k] ?? 0;
                     const d = daysOf(k, sen);
                     return (
-                      <div key={k} className="flex items-center gap-3 py-1">
-                        <span className="w-24 shrink-0 text-xs text-[#5A5550]">{label}</span>
+                      <div key={k} className="flex items-center gap-3 max-sm:gap-2 py-1">
+                        <span className="w-24 max-sm:w-20 shrink-0 text-xs text-[#5A5550]">
+                          {label}
+                          {/* phone: the count and days sit under the label */}
+                          <span className="hidden max-sm:block text-[10.5px] text-[#9CA3AF] tabular-nums">{n.toLocaleString()} SO{d == null ? "" : ` · ≈ ${d.toFixed(1)} d`}</span>
+                        </span>
                         <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#F5F2ED]">
                           <div className="h-full rounded-full" style={{ width: `${Math.max(3, (n / maxN) * 100)}%`, background: k === "ON_HOLD" ? C_RED : C_PROD }} />
                         </div>
-                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9CA3AF]">{n.toLocaleString()} SO</span>
-                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9C6F1E]" title={d == null ? undefined : k === "IN_PRODUCTION" ? "Days of production at the current pace" : "Days of invoicing at the current pace"}>
+                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9CA3AF] max-sm:hidden">{n.toLocaleString()} SO</span>
+                        <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-[#9C6F1E] max-sm:hidden" title={d == null ? undefined : k === "IN_PRODUCTION" ? "Days of production at the current pace" : "Days of invoicing at the current pace"}>
                           {d == null ? "" : `≈ ${d.toFixed(1)} d`}
                         </span>
-                        <span className="w-28 shrink-0 text-right text-xs font-semibold tabular-nums text-[#1F1D1B]">{rm(sen)}</span>
+                        <span className="w-28 max-sm:w-auto shrink-0 whitespace-nowrap text-right text-xs font-semibold tabular-nums text-[#1F1D1B]">{rm(sen)}</span>
                       </div>
                     );
                   });
@@ -1820,7 +1826,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       ].map(([k, v, c]) => (
                         <div key={k as string} className="min-w-0">
                           <p className="truncate text-[11px] text-[#6B7280]">{k as string}</p>
-                          <p className="truncate text-sm font-bold tabular-nums" style={{ color: c as string }}>{rm(Math.round(v as number))}</p>
+                          <p className="text-sm max-sm:text-[12px] font-bold tabular-nums whitespace-nowrap" style={{ color: c as string }}>{rm(Math.round(v as number))}</p>
                         </div>
                       ))}
                     </div>

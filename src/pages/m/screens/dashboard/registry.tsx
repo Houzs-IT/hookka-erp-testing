@@ -7,7 +7,7 @@
 // whatever is registered.
 import { type ComponentType } from "react";
 import type { MobileTabKey } from "./dashboard-m-lib";
-import { FinanceTab, OperationsTab, PeopleTab, SalesTab, ServiceTab } from "./tabs/MergedTabs";
+import { FinanceTab, OcrTab, OperationsTab, PeopleTab, SalesTab, ServiceTab } from "./tabs/MergedTabs";
 import type { DashboardTabProps } from "./types";
 
 export const TAB_REGISTRY: Record<MobileTabKey, ComponentType<DashboardTabProps>> = {
@@ -16,4 +16,5 @@ export const TAB_REGISTRY: Record<MobileTabKey, ComponentType<DashboardTabProps>
   people: PeopleTab,
   service: ServiceTab,
   finance: FinanceTab,
+  ocr: OcrTab,
 };

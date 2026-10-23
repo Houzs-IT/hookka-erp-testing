@@ -13,7 +13,7 @@ import { opensOnToday } from "../src/pages/dashboards/dashboard-shared-lib.ts";
 const months = ["2026-06", "2026-07", "2026-08"];
 
 test("tabs are in the agreed order", () => {
-  assert.deepEqual(MOBILE_TABS.map((t) => t.key), ["sales", "operations", "people", "service", "finance"]);
+  assert.deepEqual(MOBILE_TABS.map((t) => t.key), ["sales", "operations", "people", "service", "finance", "ocr"]);
 });
 
 test("period round-trips through the URL and keeps sub + unrelated params", () => {

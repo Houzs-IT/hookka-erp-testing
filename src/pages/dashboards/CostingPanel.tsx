@@ -279,7 +279,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
           <p className="mt-2 text-[11.5px] text-[#6B7280]">
             Purchases (supplier invoices, stock bought — not used):{" "}
             {cols.map((c, i) => (
-              <span key={c.label} className="whitespace-nowrap">{i ? " · " : ""}{c.label} <b className="tabular-nums">{rm(c.b.purchases)}</b> ({pctTxt(pctOf(c.b.purchases, c.b.revenue))})</span>
+              <span key={c.label} className="whitespace-nowrap max-sm:whitespace-normal">{i ? " · " : ""}{c.label} <b className="tabular-nums">{rm(c.b.purchases)}</b> ({pctTxt(pctOf(c.b.purchases, c.b.revenue))})</span>
             ))}
           </p>
           <p className="mt-2 text-[11px] text-[#9CA3AF]">

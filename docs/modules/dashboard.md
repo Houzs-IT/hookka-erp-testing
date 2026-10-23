@@ -55,10 +55,10 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales Â· Invoices Â
 | Revenue by Customer JSX | `src/pages/dashboard-b/index.tsx:1749` | Concentration exhibit (donut + category modes) |
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1688` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
-| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:250` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
+| `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:258` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
 | `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2398` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
-| `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
+| `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:68 / 149` | Lazy recharts wrappers (~357 KB chunk) |
 | `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:81` | Single ~2000-line aggregate handler |
 | `captureTodayState` | `src/api/routes/dashboard-overview.ts:112` | Extract + upsert today's state snapshot |
 | `readSnapshot` / `writeSnapshot` / `isSnapshotFresh` | `src/api/lib/dashboard-snapshot.ts:100 / 211 / 187` | Read-through snapshot (Layer 1) |
