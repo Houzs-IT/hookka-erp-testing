@@ -171,6 +171,16 @@ app.get("/google/callback", async (c) => {
     return c.json({ success: false, error: "user link failed" }, 500);
   }
 
+  // An account with two-factor sign-in on must sign in with password + code.
+  // Google sign-in has no code step, so issuing a session here would skip the
+  // second factor entirely (2026-10-23).
+  const enrolled = await c.var.DB.prepare("SELECT totpEnrolledAt FROM users WHERE id = ?")
+    .bind(linked.userId)
+    .first<{ totpEnrolledAt?: string | null; totp_enrolled_at?: string | null }>();
+  if (enrolled?.totpEnrolledAt ?? enrolled?.totp_enrolled_at) {
+    return c.redirect(`/?oauth_error=${encodeURIComponent("Two-step sign-in is on for this account. Sign in with your password and code.")}`, 302);
+  }
+
   // Issue a session — same shape as /api/auth/login.
   const sessionToken = crypto.randomUUID();
   const now = new Date();

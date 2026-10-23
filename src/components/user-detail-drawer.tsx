@@ -27,7 +27,7 @@
 //     rewrite a role
 // ---------------------------------------------------------------------------
 import { useRef, useState } from "react";
-import { X, Trash2, Ban, CheckCircle2, Save, Camera, Loader2 } from "lucide-react";
+import { X, Trash2, Ban, CheckCircle2, Save, Camera, Loader2, ShieldOff } from "lucide-react";
 import { uploadFileAsset } from "@/lib/upload-file";
 import { announcePhotoChange } from "@/lib/photo-changed";
 
@@ -40,6 +40,8 @@ export type DrawerUser = {
   department: string;
   position: string;
   reportsTo: string;
+  /** Two-step sign-in is on for this account (GET /api/users `twoFactorOn`). */
+  twoFactorOn?: boolean;
 };
 
 // Mirrors org-chart.tsx's PHOTO_ACCEPT — the image subset of ALLOWED_MIME in
@@ -100,6 +102,8 @@ export function UserDetailDrawer({
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmReset2fa, setConfirmReset2fa] = useState(false);
+  const [twoFactorOn, setTwoFactorOn] = useState(!!user.twoFactorOn);
 
   // No re-seed effect: the caller gives this component a `key`, so pointing the
   // drawer at a different person REMOUNTS it and every field starts from that
@@ -238,6 +242,33 @@ export function UserDetailDrawer({
       } finally {
         setBusy(false);
       }
+    }
+  }
+
+  // Lost phone: turn off this person's two-step sign-in so they can sign in
+  // with their password again (and set it up on a new phone). Super Admin
+  // only — the server refuses anyone else.
+  async function reset2fa() {
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(user.id)}/reset-2fa`, {
+        method: "POST",
+      });
+      const j = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
+      if (!res.ok || j.success === false) {
+        setError(j.error || `Could not reset two-step sign-in (HTTP ${res.status})`);
+        return;
+      }
+      setTwoFactorOn(false);
+      setConfirmReset2fa(false);
+      setOk("Two-step sign-in reset. They can sign in with their password now.");
+      onSaved();
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -520,6 +551,43 @@ export function UserDetailDrawer({
                   <button
                     type="button"
                     onClick={() => setConfirmDelete(false)}
+                    className="h-8 flex-1 rounded-md border border-[#E2DDD8] bg-white text-[13px] text-[#6B7280]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {twoFactorOn && !confirmReset2fa && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmReset2fa(true)}
+                className="flex h-9 w-full items-center justify-center gap-1.5 rounded-md border border-[#E2DDD8] text-[13px] text-[#6B7280] hover:text-[#1F1D1B] disabled:opacity-50"
+              >
+                <ShieldOff className="h-4 w-4" /> Reset two-step sign-in
+              </button>
+            )}
+            {confirmReset2fa && (
+              <div className="rounded-md border border-[#E2DDD8] bg-[#F7F5F2] p-3 text-[12px] text-[#5A5550]">
+                <div className="mb-2">
+                  Turn off two-step sign-in for <strong>{user.displayName || user.email}</strong>?
+                  Use this when they lost their phone. They will sign in with their password
+                  only until they set it up again, and are signed out now.
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={reset2fa}
+                    disabled={busy}
+                    className="h-8 flex-1 rounded-md bg-[#6B5C32] text-[13px] font-semibold text-white disabled:opacity-50"
+                  >
+                    {busy ? "Resetting…" : "Yes, reset"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmReset2fa(false)}
                     className="h-8 flex-1 rounded-md border border-[#E2DDD8] bg-white text-[13px] text-[#6B7280]"
                   >
                     Cancel

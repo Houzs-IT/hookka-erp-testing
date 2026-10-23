@@ -60,6 +60,8 @@ type UserRow = {
   position: string | null;
   reportsTo: string | null;
   reports_to?: string | null;
+  totpEnrolledAt?: string | null;
+  totp_enrolled_at?: string | null;
 };
 
 type InviteRow = {
@@ -95,6 +97,9 @@ function publicUser(u: UserRow) {
     department: u.department ?? "",
     position: u.position ?? "",
     reportsTo: u.reportsTo ?? u.reports_to ?? "",
+    // Two-factor sign-in is on — drives the Super Admin "Reset two-step
+    // sign-in" action. A flag only; the secret never leaves the server.
+    twoFactorOn: !!(u.totpEnrolledAt ?? u.totp_enrolled_at),
   };
 }
 
@@ -686,6 +691,47 @@ app.post("/:id/reset-password", async (c) => {
     .run();
   await purgeUserSessions(c.var.DB, c.env.SESSION_CACHE, id);
 
+  return c.json({ success: true });
+});
+
+// POST /api/users/:id/reset-2fa — turn off another user's two-step sign-in.
+//
+// The lost-phone path. The /setup-2fa page issues no backup codes, and the
+// self-service /api/auth/totp/disable needs the user to be signed in — which
+// they cannot be without the code. Without this, a lost phone is a permanent
+// lock-out. Super Admin only, same as resetting a password (account takeover
+// vector). The user signs in with their password afterwards and may set 2FA
+// up again on a new phone.
+app.post("/:id/reset-2fa", async (c) => {
+  const denied = await requirePermission(c, "users", "update");
+  if (denied) return denied;
+  const su = requireSuperAdmin(c);
+  if (su) return su;
+  const id = c.req.param("id");
+  const existing = await c.var.DB.prepare("SELECT * FROM users WHERE id = ?")
+    .bind(id)
+    .first<UserRow>();
+  if (!existing) {
+    return c.json({ success: false, error: "User not found" }, 404);
+  }
+  if (!(existing.totpEnrolledAt ?? existing.totp_enrolled_at)) {
+    return c.json({ success: false, error: "Two-step sign-in is not on for this account." }, 400);
+  }
+  await c.var.DB
+    .prepare(
+      "UPDATE users SET totpSecret = NULL, totpEnrolledAt = NULL, totpRecoveryHashes = NULL WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  // A session started with the old code should not outlive the reset.
+  const { purgeUserSessions } = await import("../lib/auth-middleware");
+  await purgeUserSessions(c.var.DB, c.env.SESSION_CACHE, id);
+  await emitAudit(c, {
+    resource: "auth-totp",
+    resourceId: id,
+    action: "totp.admin-reset",
+    after: { email: existing.email },
+  });
   return c.json({ success: true });
 });
 
