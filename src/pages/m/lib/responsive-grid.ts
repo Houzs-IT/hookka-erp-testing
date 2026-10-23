@@ -18,6 +18,8 @@ export function responsiveGridTemplate(
   maxColumns?: number,
   gap: string = CARD_GAP,
 ): string {
+  // One column is simply one flexible track (what the phone screens already use).
+  if (maxColumns === 1) return "minmax(0, 1fr)";
   const floor = `min(100%, ${min}px)`;
   if (!maxColumns || maxColumns < 1) return `repeat(auto-fill, minmax(${floor}, 1fr))`;
   const share = `calc((100% - ${gap} * ${maxColumns - 1}) / ${maxColumns})`;

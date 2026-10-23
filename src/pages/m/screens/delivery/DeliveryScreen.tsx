@@ -30,7 +30,7 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { useUrlBatch, useUrlState, useUrlStateNumber } from "@/lib/use-url-state";
 import { pageSlice } from "@/lib/delivery-list-filters";
-import { MobileHeader } from "../../components";
+import { MobileHeader, ResponsiveGrid } from "../../components";
 import { M } from "../../theme";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { useDebounced } from "../../lib/use-debounced";
@@ -69,7 +69,8 @@ export function DeliveryScreen() {
   const tablet = layout.mode !== "phone";
   // In the tablet split view this list renders beside /m/delivery/:id.
   const inPane = layout.canSplitDetail && !!openId;
-  const gridCols = tablet && !inPane ? "repeat(auto-fill, minmax(320px, 1fr))" : "minmax(0, 1fr)";
+  // One column on a phone and in the split view's list pane; as many 320px+ columns as fit otherwise.
+  const gridMaxColumns = tablet && !inPane ? undefined : 1;
 
   const [section] = useUrlState<string>("section", "deliveries");
   const [tabRaw] = useUrlState<string>("tab", DEFAULT_TAB);
@@ -373,11 +374,11 @@ export function DeliveryScreen() {
 
       <div style={{ padding: `0 18px ${showPoBar || showDoBar ? 140 : 32}px` }}>
         {loading ? (
-          <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 10 }}>
+          <ResponsiveGrid maxColumns={gridMaxColumns} gap={10}>
             {[0, 1, 2].map((i) => (
               <div key={i} aria-hidden style={{ height: 118, borderRadius: 16, background: M.card, opacity: 0.7, boxShadow: SHADOW_CARD }} />
             ))}
-          </div>
+          </ResponsiveGrid>
         ) : failed ? (
           <div role="alert" style={{ margin: "12px 0", padding: "24px 18px", textAlign: "center", background: M.card, borderRadius: 16, boxShadow: SHADOW_CARD }}>
             <div style={{ fontSize: 13.5, color: M.raisin, fontWeight: 600 }}>Couldn’t load this list.</div>
@@ -388,7 +389,7 @@ export function DeliveryScreen() {
         ) : listCount === 0 ? (
           <EmptyCard text={searching ? "No matches for your search." : "Nothing here yet."} />
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 10 }}>
+          <ResponsiveGrid maxColumns={gridMaxColumns} gap={10}>
             {!isDel
               ? providerRows.map((p) => <ProviderCard key={s(p, "id")} p={p} onClick={() => setProvider(p)} />)
               : isPO
@@ -427,7 +428,7 @@ export function DeliveryScreen() {
                         }
                       />
                     ))}
-          </div>
+          </ResponsiveGrid>
         )}
 
         {!loading && !failed && pages > 1 ? <Pager page={Math.min(page, pages)} pages={pages} onPage={goPage} /> : null}

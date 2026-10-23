@@ -195,13 +195,10 @@ test("the primitives are exported from the components barrel", () => {
   assert.match(barrel, /export \{ PageContainer \} from "\.\/PageContainer"/);
 });
 
-test("no existing screen was migrated in this batch", () => {
-  for (const f of [
-    "screens/delivery/DeliveryScreen.tsx",
-    "screens/procurement/ProcurementScreen.tsx",
-    "screens/DocumentDetailScreen.tsx",
-    "screens/ProductsScreen.tsx",
-  ]) {
+test("only the Step 3 screens use the new primitives so far", () => {
+  // Delivery and Procurement lists moved to ResponsiveGrid in Step 3 (see
+  // tests/mobile-list-grid.test.mjs); everything else is untouched.
+  for (const f of ["screens/DocumentDetailScreen.tsx", "screens/ProductsScreen.tsx"]) {
     const code = src(f);
     assert.doesNotMatch(code, /ResponsiveGrid|PageContainer|useContainerLayout/, `${f} untouched`);
   }

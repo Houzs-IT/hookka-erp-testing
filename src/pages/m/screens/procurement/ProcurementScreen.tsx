@@ -19,7 +19,7 @@ import { ClipboardList, PackageCheck, Receipt, Send, TriangleAlert } from "lucid
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { useUrlBatch, useUrlState } from "@/lib/use-url-state";
-import { MobileHeader } from "../../components";
+import { MobileHeader, ResponsiveGrid } from "../../components";
 import { M } from "../../theme";
 import { money } from "../../config/helpers";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
@@ -58,7 +58,8 @@ export function ProcurementScreen() {
   const layout = useResponsiveLayout();
   const tablet = layout.mode !== "phone";
   const inPane = layout.canSplitDetail && !!openId;
-  const gridCols = tablet && !inPane ? "repeat(auto-fill, minmax(320px, 1fr))" : "minmax(0, 1fr)";
+  // One column on a phone and in the split view's list pane; as many 320px+ columns as fit otherwise.
+  const gridMaxColumns = tablet && !inPane ? undefined : 1;
 
   const { hasPermission, loading: permLoading } = usePermissions();
   const can = (resource: string, action: string) => hasPermission(resource, action);
@@ -309,13 +310,13 @@ export function ProcurementScreen() {
 
           <div style={{ padding: `0 18px ${selecting && selectedDrafts.length ? 140 : 32}px` }}>
             {loading ? (
-              <SkeletonCards cols={gridCols} />
+              <SkeletonCards maxColumns={gridMaxColumns} />
             ) : failed ? (
               <ErrorCard text="Couldn’t load this list. Check your connection and try again." onRetry={() => source.refresh()} />
             ) : shown.length === 0 ? (
               <EmptyCard text={dq ? "No matches for your search." : "Nothing here yet."} />
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 10 }}>{shown.map(card)}</div>
+              <ResponsiveGrid maxColumns={gridMaxColumns} gap={10}>{shown.map(card)}</ResponsiveGrid>
             )}
           </div>
         </>
