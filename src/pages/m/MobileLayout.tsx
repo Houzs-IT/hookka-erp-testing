@@ -51,8 +51,10 @@ import {
   PaneProvider,
   ResponsiveLayoutProvider,
   estimatePaneWidths,
+  hasRailExpandedPreference,
   readRailExpandedPreference,
   resolveContainerLayout,
+  resolveRailExpanded,
   resolveResponsiveLayout,
   useObservedWidth,
   useResponsiveLayout,
@@ -191,6 +193,15 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   procurement: ProcurementDetailRoute,
 };
 
+/** True on /m/<module>/<id>[/…] when that module has a detail screen, i.e. when the split view
+ * (TwoPane) is what renders on a wide enough tablet. */
+function isSplitDetailPath(pathname: string): boolean {
+  const [, base, slug, id] = pathname.split("/");
+  if (base !== "m" || !slug || !id) return false;
+  const cfg = MODULE_CONFIGS.find((c) => c.slug === slug);
+  return !!cfg && !!(CUSTOM_L2[slug] || cfg.detail);
+}
+
 export default function MobileLayout() {
   // Kick off background preload of high-traffic endpoints on mount — every
   // subsequent module list navigation paints from cache, not network. Runs
@@ -207,11 +218,22 @@ export default function MobileLayout() {
     "tablet-portrait": readRailExpandedPreference("tablet-portrait"),
     "tablet-landscape": readRailExpandedPreference("tablet-landscape"),
   }));
+  // Which modes the user has set the rail for themselves; an explicit choice is never overridden.
+  const [railExplicit, setRailExplicit] = useState(() => ({
+    "tablet-portrait": hasRailExpandedPreference("tablet-portrait"),
+    "tablet-landscape": hasRailExpandedPreference("tablet-landscape"),
+  }));
+  const { pathname } = useLocation();
   const [shellRef, shellWidth] = useObservedWidth<HTMLDivElement>();
   const shellLayout = resolveResponsiveLayout(shellWidth);
   const railExpanded = shellLayout.mode === "phone"
     ? false
-    : railPreferences[shellLayout.mode];
+    : resolveRailExpanded({
+        shellWidth,
+        preferred: railPreferences[shellLayout.mode],
+        explicit: railExplicit[shellLayout.mode],
+        splitDetailOpen: isSplitDetailPath(pathname),
+      });
   const preferredShellLayout = resolveResponsiveLayout(
     shellWidth,
     undefined,
@@ -240,18 +262,17 @@ export default function MobileLayout() {
   const toggleRail = () => {
     if (layout.mode === "phone") return;
     const mode = layout.mode;
-    setRailPreferences((current) => {
-      const expanded = !current[mode];
-      writeRailExpandedPreference(mode, expanded);
-      return { ...current, [mode]: expanded };
-    });
+    // Toggle what is SHOWN (it may be auto-compacted), and save it as the user's own choice.
+    const expanded = !railExpanded;
+    writeRailExpandedPreference(mode, expanded);
+    setRailPreferences((current) => ({ ...current, [mode]: expanded }));
+    setRailExplicit((current) => ({ ...current, [mode]: true }));
   };
 
   // Phone left drawer (hamburger → NavDrawer). Closes on any route change
   // (incl. browser back) and whenever the shell leaves phone mode, so a
   // rotated/resized device never keeps a stale overlay over the tablet rail.
   const phone = layout.mode === "phone";
-  const { pathname } = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);

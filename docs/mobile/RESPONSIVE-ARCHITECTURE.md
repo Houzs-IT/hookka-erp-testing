@@ -1,6 +1,6 @@
 # `/m` responsive architecture
 
-> **Last verified: 2026-10-22 on branch `feat/mobile-responsive-foundation` (step 2 added the same day: `ResponsiveActionDock`, `screens/delivery/ui.tsx` `ToastView`, `DocumentDetailScreen.tsx` `Toast`)** against
+> **Last verified: 2026-10-23 on branch `feat/mobile-responsive-foundation` (rail auto-compact added; step 2 added the same day: `ResponsiveActionDock`, `screens/delivery/ui.tsx` `ToastView`, `DocumentDetailScreen.tsx` `Toast`)** against
 > `src/pages/m/lib/responsive-layout.tsx`, `lib/responsive-grid.ts`,
 > `components/{ResponsiveGrid,PageContainer,ResponsiveActionDock,Sheet}.tsx`,
 > `MobileLayout.tsx` (`TwoPane`) and the screens named below. The repo counts quoted
@@ -60,6 +60,14 @@ Decisions were made on repository evidence, not on possible future use.
 - **Phone mode ≤719px but wider than a phone** (a large phone in landscape, or an unfolded fold) uses phone navigation and a content width up to 719. `ResponsiveGrid` will use two columns from 652px there, where today's `tablet && !inPane` rule gives one. Decide this explicitly when migrating Delivery / Procurement.
 - **Full-screen scanning** (`ScanSheet`) stays a full-screen layer on purpose.
 - **Embedded desktop views** (Dashboard tabs, IT Support) stay until a separate product decision.
+
+## Tablet rail auto-compact (owner-approved 2026-10-23)
+
+In `tablet-landscape` the rail defaults to expanded (198px). With the split view open at about 1024px that leaves a 505px detail pane, so `resolveRailExpanded()` (`lib/responsive-layout.tsx`, wired in `MobileLayout.tsx`) compacts the rail to 72px (detail 611px) while a split-view detail is open, only when all of these hold: no explicit user choice is saved, the preference is "expanded", and the detail pane with the full rail would be below `CONTAINER_REGULAR_MIN_WIDTH` (520). Closing the detail restores the preference. Tapping the rail toggle acts on what is shown and saves it as an explicit choice, which is never overridden. The width eases with `--m-motion-standard`, which is 0.01ms under `prefers-reduced-motion`.
+
+- **No oscillation, by construction.** The rule is computed from the *shell* width and the route, measuring the detail pane as if the rail were expanded; it never reads the current rail. A rule that measured the current pane would flip forever at 1024px (505 compact, 611 expand, 505 ...); `tests/mobile-rail-auto-collapse.test.mjs` demonstrates that and pins the fixed-point behaviour. Compacting only widens the content, so the split view cannot close because of it.
+- **The 520 threshold only matters for 1024-1038px shells** (a 1024px iPad in landscape). 1039px and wider already give the detail 520px or more (1080px: 546, 1180px: 641). It is therefore a narrow trigger, and 520 vs 521 makes no practical difference to the detail UI, since nothing consumes the size class yet. 520 is still provisional; a larger value (for example 560, covering up to 1099px) would extend the behaviour to 1080px iPads and is a design decision.
+- **Known visual trade-offs to check on a device:** the rail labels disappear at the start of the width transition while the width eases; the split panes re-measure each frame during the 180ms transition.
 
 ## Migration order and completion criteria
 

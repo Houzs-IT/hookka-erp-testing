@@ -99,6 +99,9 @@ export function LeftRail({
     <nav
       style={{
         width: compact ? 72 : 198,
+        // Eases the auto-compact / manual toggle; --m-motion-standard is 0.01ms under
+        // prefers-reduced-motion (theme-vars.css), so no extra media query is needed.
+        transition: "width var(--m-motion-standard, 180ms) ease",
         flex: "none",
         height: "100dvh",
         background: "#F3EEE6",

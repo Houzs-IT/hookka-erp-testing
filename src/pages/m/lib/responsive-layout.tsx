@@ -51,6 +51,46 @@ export function writeRailExpandedPreference(
   }
 }
 
+/** True once the user has expanded or collapsed the rail themselves (a saved choice exists). */
+export function hasRailExpandedPreference(mode: TabletLayoutMode): boolean {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    return localStorage.getItem(RAIL_PREFERENCE_KEYS[mode]) != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the rail is shown expanded. Normally that is the preference (the saved
+ * choice, else the mode's default). One exception, so the split view's detail
+ * keeps a usable width: when NO explicit choice exists, the preference is
+ * "expanded", and a split-view detail is open, the rail compacts if the detail
+ * pane would otherwise be phone-sized (below CONTAINER_REGULAR_MIN_WIDTH).
+ *
+ * The result depends only on the shell width and the route, never on the current
+ * rail width: it measures the detail pane as if the rail were expanded. So
+ * opening or closing the rail cannot change the answer, and there is no feedback
+ * loop. Compacting only ever widens the content, so the split view stays open.
+ * Closing the detail returns the preference unchanged.
+ */
+export function resolveRailExpanded({
+  shellWidth,
+  preferred,
+  explicit,
+  splitDetailOpen,
+}: {
+  shellWidth: number;
+  preferred: boolean;
+  explicit: boolean;
+  splitDetailOpen: boolean;
+}): boolean {
+  if (!preferred || explicit || !splitDetailOpen) return preferred;
+  const withFullRail = resolveResponsiveLayout(shellWidth, undefined, true);
+  if (withFullRail.mode === "phone" || !withFullRail.canSplitDetail) return preferred;
+  return estimatePaneWidths(withFullRail).detail >= CONTAINER_REGULAR_MIN_WIDTH;
+}
+
 export type ResponsiveLayoutValue = {
   mode: MobileLayoutMode;
   shellWidth: number;
