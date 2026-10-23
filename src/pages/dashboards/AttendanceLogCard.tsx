@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { MUTED, inFocus, isOutsourced, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
+import { deptName } from "./ops-floor-lib";
 
 // Attendance log: latest recorded day per employee inside the period (or the
 // focused day), plus that person's day count.
@@ -73,6 +74,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
         return {
           id: w.id,
           name: w.name ?? w.id,
+          dept: w.dept ? deptName(w.dept) : "—",
           daysIn: inDays.size,
           notIn: Math.max(0, expected.length - inDays.size),
           late: lates.length,
@@ -85,6 +87,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
 
   const log = useMemo(() => {
     const byId = new Set(employee.workers.map((w) => w.id));
+    const homeDept = new Map(employee.workers.map((w) => [w.id, w.dept]));
     const byName = new Map(employee.workers.map((w) => [(w.name ?? "").trim().toLowerCase(), w.id]));
     const perf = new Map<string, { working: number; prod: number; all: number }>();
     for (const d of employee.performance.byDay) {
@@ -107,8 +110,10 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     const rows = [...byEmp.entries()]
       .map(([key, { last, workerId, days }]) => {
         const p = workerId && last.date ? perf.get(`${last.date}|${workerId}`) : undefined;
+        const dept = (workerId && homeDept.get(workerId)) || last.dept;
         return {
           key, last, days,
+          dept: dept ? deptName(dept) : "—",
           working: p?.working ?? null,
           prod: p?.prod ?? null,
           nonProd: p ? Math.max(0, p.all - p.working) : null,
@@ -126,6 +131,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
         rows.push({
           key: `absent|${w.id}`,
           last: { employeeId: w.id, employeeName: w.name, dept: w.dept, date: period.day, clockIn: null, clockOut: null, workingMinutes: 0, productionMinutes: 0, overtimeMinutes: 0, efficiencyPct: null },
+          dept: w.dept ? deptName(w.dept) : "—",
           days: 0, working: null, prod: null, nonProd: null, eff: null, absent: true,
         });
       }
@@ -141,7 +147,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     return { rows, working, prod, nonProd: sum((r) => r.nonProd), days: sum((r) => r.days), eff: working > 0 ? (prod / working) * 100 : null, absent: rows.filter((r) => r.absent).length, late: rows.filter((r) => !r.absent && lateMin(r.last.clockIn) > 0).length };
   }, [employee, period, perDay, everClocked]);
 
-  const H = ["Employee", "Date", "Clock in", "Clock out", "Production time", "Prod hours", "Non-prod hours", "Efficiency", ...(perDay ? [] : ["Total days"]), "Status"];
+  const H = ["Employee", "Department", "Date", "Clock in", "Clock out", "Production time", "Prod hours", "Non-prod hours", "Efficiency", ...(perDay ? [] : ["Total days"]), "Status"];
   const ncol = H.length;
   const who = log.rows[0]?.last.employeeName ?? "";
   const h = (v: number | null) => (v == null ? "—" : hrs(v));
@@ -202,8 +208,8 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E2DDD8,inset_0_-1px_0_#E2DDD8]">
-                  {["Employee", "Days in", "Not in", "Times late", "Minutes late", "Status"].map((t, i) => (
-                    <th key={t} className={`px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap ${i >= 1 && i <= 4 ? "text-right" : "text-left"}`}>{t}</th>
+                  {["Employee", "Department", "Days in", "Not in", "Times late", "Minutes late", "Status"].map((t, i) => (
+                    <th key={t} className={`px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap ${i >= 2 && i <= 5 ? "text-right" : "text-left"}`}>{t}</th>
                   ))}
                 </tr>
               </thead>
@@ -211,6 +217,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
                 {monthRows.rows.map((r) => (
                   <tr key={r.id} className={`border-b border-[#E2DDD8] ${r.notIn > 0 ? "bg-[#FDF3F1]" : ""}`}>
                     <td className={`px-3 py-2 ${r.notIn > 0 ? "font-semibold text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{r.name}</td>
+                    <td className="px-3 py-2 text-[#6B7280] whitespace-nowrap">{r.dept}</td>
                     <td className="px-3 py-2 text-right font-mono">{r.daysIn}</td>
                     <td className={`px-3 py-2 text-right font-mono ${r.notIn > 0 ? "font-semibold text-[#9A3A2D]" : "text-[#9CA3AF]"}`}>{r.notIn}</td>
                     <td className={`px-3 py-2 text-right font-mono ${r.late > 0 ? "text-[#9C6F1E]" : "text-[#9CA3AF]"}`}>{r.late}</td>
@@ -239,7 +246,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
             <thead>
               <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E2DDD8,inset_0_-1px_0_#E2DDD8]">
                 {H.map((t, i) => (
-                  <th key={t} className={`px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap ${i >= 4 && i <= 7 + (perDay ? 0 : 1) ? "text-right" : "text-left"}`}>{t}</th>
+                  <th key={t} className={`px-3 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap ${i >= 5 && i <= 8 + (perDay ? 0 : 1) ? "text-right" : "text-left"}`}>{t}</th>
                 ))}
               </tr>
             </thead>
@@ -249,6 +256,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
                 return (
                   <tr key={r.key} className={`border-b border-[#E2DDD8] ${r.absent ? "bg-[#FDF3F1]" : ""}`}>
                     <td className={`px-3 py-2 ${r.absent ? "font-semibold text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{r.last.employeeName ?? "—"}</td>
+                    <td className="px-3 py-2 text-[#6B7280] whitespace-nowrap">{r.dept}</td>
                     <td className="px-3 py-2 text-[#6B7280] whitespace-nowrap">
                       {r.last.date ? `${Number(r.last.date.slice(8))} ${new Date(r.last.date).toLocaleString("en", { month: "short" })}` : "—"}
                     </td>
@@ -279,7 +287,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
             {log.rows.length > 0 && (
               <tfoot>
                 <tr className="font-mono font-semibold *:sticky *:bottom-0 *:z-10 *:bg-white *:shadow-[inset_0_2px_0_#E2DDD8]">
-                  <td className="px-3 py-2" colSpan={4}>{perDay ? `Total (${log.days} days)` : "Listed rows"}</td>
+                  <td className="px-3 py-2" colSpan={5}>{perDay ? `Total (${log.days} days)` : "Listed rows"}</td>
                   <td className="px-3 py-2 text-right">{hrs(log.working)}</td>
                   <td className="px-3 py-2 text-right">{hrs(log.prod)}</td>
                   <td className="px-3 py-2 text-right">{hrs(log.nonProd)}</td>

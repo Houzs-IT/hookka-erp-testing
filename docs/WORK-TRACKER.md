@@ -6783,3 +6783,4 @@ Asks, in order:
 58. Efficiency 4,000% mid-day — working hours live for open punches (clock-in to now), refresh every 30 min (owner 2026-10-19).
 59. Operations: daily production revenue bar chart (owner 2026-10-20).
 60. Department Revenue table: Today / Avg per day / Total; category split via the toggle (Accessory added) (owner 2026-10-20).
+61. Attendance log: Department column (today / yesterday / this month) (owner 2026-10-23).
