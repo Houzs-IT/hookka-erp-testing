@@ -6789,3 +6789,4 @@ Asks, in order:
 64. Phone menu: "Dashboard Prototype" → "Dashboard"; the /m start page entry → "Home" (owner 2026-10-24).
 65. Department Revenue: Show all / Hide all removed (owner 2026-10-24).
 66. Phone Home: carry all the dashboards; drop Delivery / Receive / Staff quick actions; re-layout (owner 2026-10-24).
+67. Phone Home top tidied (period chip in header, compact New SO); Today's problems 2x2; Sales by Customer fits a phone (owner 2026-10-24).

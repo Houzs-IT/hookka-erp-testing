@@ -24,6 +24,9 @@ import { type FormSpec } from "../config/form-types";
 import { newSalesOrderSpec } from "../config/forms";
 import { DashboardBody } from "./dashboard/DashboardScreen";
 import { DASHBOARD_NAV_HREF, MOBILE_TABS, type MobileTabKey } from "./dashboard/dashboard-m-lib";
+import { useDashboardFeed, useDashboardPeriod } from "./dashboard/hooks";
+import { PeriodChip } from "./dashboard/PeriodChip";
+import { quarterOfPeriod, type Period } from "../../dashboards/dashboard-shared-lib";
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -33,8 +36,8 @@ function greeting(): string {
 }
 
 const ROUND_BTN = {
-  width: 42,
-  height: 42,
+  width: 38,
+  height: 38,
   borderRadius: "50%",
   backgroundColor: M.card,
   border: `1px solid ${M.hairline}`,
@@ -57,20 +60,36 @@ export default function MobileHome() {
   const [formSpec, setFormSpec] = useState<FormSpec | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const canDashboard = !permsLoading && isNavAllowed(DASHBOARD_NAV_HREF);
+  // The period chip sits in the header (owner 2026-10-24: tidy the top); the
+  // same period rule as DashboardScreen — Day only on Employees.
+  const { feed, months } = useDashboardFeed();
+  const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
+  const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, tab);
+  const dayTab = tab === "people";
+  const period: Period = dayTab
+    ? rawPeriod
+    : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
+      ? { mode: "monthly", month: rawPeriod.month }
+      : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
 
   return (
     <div style={{ paddingTop: "env(safe-area-inset-top)" }}>
       {/* ===== Header — brand · greeting · search · notifications ===== */}
-      <div style={{ padding: "12px 16px 10px", display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 42, height: 42, borderRadius: 11, background: "#1F1D1B", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-          <span style={{ fontWeight: 800, color: "#fff", fontSize: 19 }}>H</span>
+      <div style={{ padding: "12px 16px 8px", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 10, background: "#1F1D1B", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+          <span style={{ fontWeight: 800, color: "#fff", fontSize: 17 }}>H</span>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, color: M.muted }}>{greeting()}</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: M.raisin, letterSpacing: "-0.3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.2 }}>{greeting()}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: M.raisin, letterSpacing: "-0.3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.25 }}>
             {firstName}
           </div>
         </div>
+        {canDashboard && (
+          <div style={{ flex: "none" }}>
+            <PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} allowDay={dayTab} />
+          </div>
+        )}
         <button type="button" onClick={() => setSearchOpen(true)} aria-label="Search" style={ROUND_BTN}>
           <SearchIcon size={20} strokeWidth={1.75} color={M.ink} />
         </button>
@@ -87,23 +106,23 @@ export default function MobileHome() {
           type="button"
           onClick={() => setFormSpec(newSalesOrderSpec())}
           style={{
-            marginTop: 12, width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
-            borderRadius: 14, border: `1px solid ${M.border}`, backgroundColor: M.card, cursor: "pointer",
+            marginTop: 8, width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+            minHeight: 44, borderRadius: 12, border: `1px solid ${M.border}`, backgroundColor: M.card, cursor: "pointer",
             WebkitTapHighlightColor: "transparent", textAlign: "left",
           }}
         >
-          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 11, background: M_ACCENT.gold.bg }}>
-            <Plus size={20} strokeWidth={1.75} color={M_ACCENT.gold.fg} />
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, background: M_ACCENT.gold.bg }}>
+            <Plus size={17} strokeWidth={2} color={M_ACCENT.gold.fg} />
           </span>
-          <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: M.raisin }}>New sales order</span>
-          <ChevronRight size={18} strokeWidth={1.75} color={M.muted} />
+          <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: M.raisin }}>New sales order</span>
+          <ChevronRight size={17} strokeWidth={1.75} color={M.muted} />
         </button>
       </div>
 
       {/* ===== The dashboard — every section, same as /m/dashboard ===== */}
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: 10 }}>
         {canDashboard ? (
-          <DashboardBody tab={tab} openTab={setPicked} stickyTop={0} showPeriod />
+          <DashboardBody tab={tab} openTab={setPicked} stickyTop={0} />
         ) : !permsLoading ? (
           <p style={{ padding: "24px 16px", fontSize: 13, color: M.muted, textAlign: "center" }}>
             Your role doesn't have access to the dashboard.
