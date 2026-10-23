@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { ChevronDown, LogOut, User, Building2, ScrollText } from "lucide-react";
+import { ChevronDown, LogOut, User, Building2, ScrollText, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlobalSearch } from "./global-search";
 import { NotificationBell } from "./notification-bell";
@@ -158,7 +158,21 @@ export function Topbar({ user }: TopbarProps) {
       {/* User menu */}
       <div className="relative shrink-0">
         <button
-          onClick={() => { setUserDropdownOpen(!userDropdownOpen); setOrgDropdownOpen(false); }}
+          onClick={() => {
+            // Re-read the 2FA flag on open: set-up happens on another page while
+            // this header stays mounted, so the menu would still offer it.
+            if (!userDropdownOpen && me && !me.twoFactorOn) {
+              fetch("/api/auth/me")
+                .then((r) => (r.ok ? (r.json() as Promise<{ data?: { user?: Me } }>) : null))
+                .then((j) => {
+                  const on = j?.data?.user?.twoFactorOn;
+                  if (on) setMe((cur) => (cur ? { ...cur, twoFactorOn: true } : cur));
+                })
+                .catch(() => {});
+            }
+            setUserDropdownOpen(!userDropdownOpen);
+            setOrgDropdownOpen(false);
+          }}
           className="flex items-center gap-2 rounded-md p-1.5 hover:bg-[#F0ECE9] transition-colors"
         >
           <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-[#6B5C32] flex items-center justify-center text-white text-sm font-medium">
@@ -180,7 +194,7 @@ export function Topbar({ user }: TopbarProps) {
           <ChevronDown className="h-3 w-3 text-[#9CA3AF] hidden xl:block" />
         </button>
         {userDropdownOpen && (
-          <div className="absolute right-0 top-full mt-1 w-48 rounded-md border border-[#E2DDD8] bg-white shadow-lg py-1 z-50">
+          <div className="absolute right-0 top-full mt-1 w-56 rounded-md border border-[#E2DDD8] bg-white shadow-lg py-1 z-50">
             <button
               className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[#4B5563] hover:bg-[#F0ECE9] disabled:opacity-50"
               disabled={!me}
@@ -189,6 +203,23 @@ export function Topbar({ user }: TopbarProps) {
               <User className="h-4 w-4" />
               Profile
             </button>
+            {/* Opt-in until it is decided who must use it: the set-up prompt after
+                login is off (TOTP_SETUP_PROMPT_ENABLED in auth.ts). */}
+            {me?.twoFactorOn ? (
+              <div className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[#9CA3AF]">
+                <ShieldCheck className="h-4 w-4" />
+                Two-step sign-in on
+              </div>
+            ) : (
+              <Link
+                to="/setup-2fa"
+                className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[#4B5563] hover:bg-[#F0ECE9]"
+                onClick={() => setUserDropdownOpen(false)}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                Set up two-step sign-in
+              </Link>
+            )}
             <hr className="my-1 border-[#E2DDD8]" />
             <button
               className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"

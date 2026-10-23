@@ -99,6 +99,7 @@ type UserRow = {
   // a TOTP code (or recovery code) before /login issues a session.
   totpSecret?: string | null;
   totpEnrolledAt?: string | null;
+  totp_enrolled_at?: string | null;
   // TRUE while the account still carries the password an ADMIN chose for it.
   // Until the person changes it, nothing the account does can be attributed to
   // them — the admin knows the credential too. Dual-keyed: the column is
@@ -125,6 +126,9 @@ function publicUser(u: UserRow) {
     photoFileId: u.photoFileId ?? u.photo_file_id ?? null,
     department: u.department ?? "",
     position: u.position ?? "",
+    // Drives the profile menu: "Set up two-step sign-in" or "is on". A flag
+    // only; the secret never leaves the server.
+    twoFactorOn: !!(u.totpEnrolledAt ?? u.totp_enrolled_at),
   };
 }
 

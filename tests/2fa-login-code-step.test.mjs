@@ -101,3 +101,17 @@ test("the drawer offers the reset only when 2FA is on, behind a confirm", () => 
   assert.match(drawer, /Yes, reset/);
   assert.match(usersPage, /twoFactorOn: drawerUser\.twoFactorOn \?\? false/);
 });
+
+test("the profile menu offers set-up, and says when it is already on", () => {
+  // Opt-in: the set-up prompt after login is off, so this menu item is the
+  // only way to reach /setup-2fa without typing the address (2026-10-23).
+  const topbar = readFileSync("src/components/layout/topbar.tsx", "utf8");
+  assert.match(topbar, /to="\/setup-2fa"/);
+  assert.match(topbar, /Set up two-step sign-in/);
+  assert.match(topbar, /me\?\.twoFactorOn \?/, "an enrolled account is not offered set-up again");
+  // /api/auth/me carries the flag, dual-keyed, and never the secret.
+  assert.match(auth, /twoFactorOn: !!\(u\.totpEnrolledAt \?\? u\.totp_enrolled_at\)/);
+  const pub = auth.indexOf("function publicUser");
+  const body = auth.slice(pub).split(/\r?\n\}\r?\n/)[0];
+  assert.doesNotMatch(body, /totpSecret|totpRecoveryHashes/);
+});
