@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-23**: mobile Sales Orders responsive migration entry added (branch `feat/m-sales-responsive`, local commits only); nothing else re-checked.
 > **Last verified: 2026-10-22**: branch `fix/charts-tick-type` — build:strict is green on
 > staging again; it had TWO pre-existing errors, the second hidden behind the first. Three
 > unrelated test failures remain red and are named in the entry.
@@ -353,6 +354,17 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-23 — 🔵 Phase 2 step 1: Sales Orders list + detail, one adaptive UI for phone, foldable and tablet (branch `feat/m-sales-responsive` from `upstream/staging` `c36fa4ddc`; frontend only) — local commits, not pushed, awaiting the owner's visual check
+
+Owner decisions (2026-10-23): (1) Option A: one adaptive Sales Orders UI; (2) the approved 390px phone design and its read-only behaviour are unchanged; (3) the phone design language is the foundation for tablet, the legacy tablet appearance is not kept; (4) all existing Sales Order functionality stays, including the tablet actions and Paid / Balance / Payments; (5) the iPad sidebar is unchanged (no hamburger, no More flyout); (6) Products is NOT added to the tablet rail; (7) nothing from Invoices v2 is touched; (8) no API, backend, RBAC or unrelated-module change.
+
+Built: a markup fingerprint of the phone list + detail (fixture data) taken BEFORE any change and enforced by `tests/m-sales-phone-golden.test.mjs`; the tablet actions and Paid / Balance maths extracted unchanged (`lib/so-actions.ts`, `lib/use-so-actions.ts`, `lib/so-financials.ts`); `SalesDetailPhone` renamed `SalesOrderDetail` and made adaptive (Payments block, Customer PO Date row, status actions in `SalesOrderActionBar`, two columns at a >= 760px container); the Sales list uses the phone design at every width (`ResponsiveGrid` columns, one column in a phone and in the split list pane) with the Sort kept inside `SalesFilterSheet` on wider screens. `SalesDetailTablet` stays, unused, until parity is verified in a non-production environment.
+
+Known differences to review: the old tablet list card showed Order date (now only in the detail); the tablet Sort moved into the filter sheet; action buttons now use the Delivery detail's bar and buttons; toasts use the shared mobile toast (3.2 s / 5.2 s) instead of the old 2.4 s one; cancel / undo still use `window.confirm`.
+
+UNVERIFIED: how any of it looks at 768 / 1024 / 1180 (no browser run: screenshots needed); the tablet actions against a non-production environment (no mutation was run against production); whether `POST /api/delivery-orders` (Issue Delivery Order) is permission-gated as expected.
+
+
 ## 2026-10-22 — 🟡 iPads and Android tablets enter `/m` by default (branch `fix/mobile-tablet-routing` → `staging`; routing only, PR #1098) — local commit `efec1cecf`, awaiting the owner's review
 
 Status 2026-10-22: committed locally with `--no-verify` (owner-approved) because the pre-commit `npm test` fails on three tests that also fail on a clean `upstream/staging` (`tests/m-finance-menu`, `tests/mobile-nav-drawer`, `tests/export-all-pages`); `tsc` also has two pre-existing errors outside `/m` (`dashboard-b/charts.tsx:312`, `dashboards/EmployeesView.tsx:189`). Not caused by this change. Responsive-layout work is a separate branch (`feat/mobile-responsive-foundation`) and is not part of this one.
