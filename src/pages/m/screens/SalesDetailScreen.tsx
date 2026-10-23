@@ -23,7 +23,7 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { MobileHeader, StatusPill, FormSheet, ResponsiveActionDock } from "../components";
 import { M } from "../theme";
 import { useResponsiveLayout } from "../lib/responsive-layout";
-import { SalesDetailPhone } from "./SalesDetailPhone";
+import { SalesOrderDetail } from "./SalesOrderDetail";
 import { editSalesOrderSpec, newDeliveryOrderSpec } from "../config/forms";
 import { type FormSpec } from "../config/form-types";
 import { mutateJson, refreshOne, refreshList } from "../config/mutate";
@@ -44,16 +44,20 @@ function arr(v: unknown): RawRow[] {
   return Array.isArray(v) ? (v as RawRow[]) : [];
 }
 
-// Phone (owner 2026-10-16): the read-only redesign in SalesDetailPhone — no
-// actions, no Paid / Balance / Payments. Tablet keeps SalesDetailTablet below
-// exactly as it was, actions included. Its `phone` branches are now only
-// reached if the layout mode flips while it is mounted.
+// The Sales Order detail is ONE adaptive screen (SalesOrderDetail.tsx) for phone,
+// foldable and tablet (owner 2026-10-23, "Option A"): the approved read-only phone
+// design is unchanged, and wider screens add the Payments block and the status actions
+// the tablet detail always had.
+//
+// LEGACY: SalesDetailTablet below is the previous tablet screen. It is no longer
+// rendered; it stays until the tablet actions and Paid / Balance / Payments have been
+// verified against it in a non-production environment, then it is deleted. Do not add
+// features to it.
 export function SalesDetailScreen() {
-  const phone = useResponsiveLayout().mode === "phone";
-  return phone ? <SalesDetailPhone /> : <SalesDetailTablet />;
+  return <SalesOrderDetail />;
 }
 
-function SalesDetailTablet() {
+export function SalesDetailTablet() {
   const navigate = useNavigate();
   const phone = useResponsiveLayout().mode === "phone";
   const { id = "" } = useParams();
