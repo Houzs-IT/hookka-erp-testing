@@ -2008,20 +2008,20 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                         <th className="py-1.5 font-medium">Customer</th>
                         {custCat !== "sofa" && (
                           <>
-                            <th className="py-1.5 font-medium text-right">
+                            <th className="py-1.5 font-medium text-right max-sm:hidden">
                               Bedframe AOV
                             </th>
-                            <th className="py-1.5 font-medium text-right">
+                            <th className="py-1.5 font-medium text-right max-sm:hidden">
                               Units
                             </th>
                           </>
                         )}
                         {custCat !== "bedframe" && (
                           <>
-                            <th className="py-1.5 font-medium text-right">
+                            <th className="py-1.5 font-medium text-right max-sm:hidden">
                               Sofa AOV
                             </th>
-                            <th className="py-1.5 font-medium text-right">
+                            <th className="py-1.5 font-medium text-right max-sm:hidden">
                               Sets
                             </th>
                           </>
@@ -2039,12 +2039,12 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                           </td>
                           {custCat !== "sofa" && (
                             <>
-                              <td className="py-1.5 text-right font-semibold text-[#1F1D1B] tabular-nums">
+                              <td className="py-1.5 text-right font-semibold text-[#1F1D1B] tabular-nums max-sm:hidden">
                                 {ov.aovCompany.bedframeUnits
                                   ? rm(ov.aovCompany.bedframeAvgSen)
                                   : "—"}
                               </td>
-                              <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums">
+                              <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums max-sm:hidden">
                                 {ov.aovCompany.bedframeUnits
                                   ? ov.aovCompany.bedframeUnits.toLocaleString()
                                   : "—"}
@@ -2053,19 +2053,19 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                           )}
                           {custCat !== "bedframe" && (
                             <>
-                              <td className="py-1.5 text-right font-semibold text-[#1F1D1B] tabular-nums">
+                              <td className="py-1.5 text-right font-semibold text-[#1F1D1B] tabular-nums max-sm:hidden">
                                 {ov.aovCompany.sofaSets
                                   ? rm(ov.aovCompany.sofaAvgSen)
                                   : "—"}
                               </td>
-                              <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums">
+                              <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums max-sm:hidden">
                                 {ov.aovCompany.sofaSets
                                   ? ov.aovCompany.sofaSets.toLocaleString()
                                   : "—"}
                               </td>
                             </>
                           )}
-                          <td className="py-1.5 text-right font-bold text-[#1F1D1B] tabular-nums">
+                          <td className="py-1.5 pl-2 text-right font-bold text-[#1F1D1B] tabular-nums whitespace-nowrap">
                             {/* The all-customer total for the active category —
                                 the SAME figure as the header Total chip and the
                                 concentration denominator below, so the card no
@@ -2144,20 +2144,28 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                                 }}
                               />
                               {a.customerName}
-                              <span className="text-[10px] text-[#9CA3AF]">
+                              <span className="text-[10px] text-[#9CA3AF] max-sm:hidden">
                                 {" "}
                                 · monthly
                               </span>
                               <span className="text-[#C2BBAE]"> ›</span>
+                              {/* Phone (owner 2026-10-24): the AOV columns fold
+                                  into one line under the name. */}
+                              <span className="hidden max-sm:block text-[11px] text-[#9CA3AF] tabular-nums">
+                                {[
+                                  custCat !== "sofa" && a.bedframeUnits ? `Bedframe ${rm(a.bedframeAvgSen)} × ${a.bedframeUnits}` : null,
+                                  custCat !== "bedframe" && a.sofaSets ? `Sofa ${rm(a.sofaAvgSen)} × ${a.sofaSets}` : null,
+                                ].filter(Boolean).join(" · ") || "—"}
+                              </span>
                             </td>
                             {custCat !== "sofa" && (
                               <>
-                                <td className="py-1.5 text-right text-[#1F1D1B] tabular-nums">
+                                <td className="py-1.5 text-right text-[#1F1D1B] tabular-nums max-sm:hidden">
                                   {a.bedframeUnits
                                     ? rm(a.bedframeAvgSen)
                                     : "—"}
                                 </td>
-                                <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums">
+                                <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums max-sm:hidden">
                                   {a.bedframeUnits
                                     ? a.bedframeUnits.toLocaleString()
                                     : "—"}
@@ -2166,17 +2174,17 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                             )}
                             {custCat !== "bedframe" && (
                               <>
-                                <td className="py-1.5 text-right text-[#1F1D1B] tabular-nums">
+                                <td className="py-1.5 text-right text-[#1F1D1B] tabular-nums max-sm:hidden">
                                   {a.sofaSets ? rm(a.sofaAvgSen) : "—"}
                                 </td>
-                                <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums">
+                                <td className="py-1.5 text-right text-[#9CA3AF] tabular-nums max-sm:hidden">
                                   {a.sofaSets
                                     ? a.sofaSets.toLocaleString()
                                     : "—"}
                                 </td>
                               </>
                             )}
-                            <td className="py-1.5 text-right font-semibold text-[#1F1D1B] tabular-nums">
+                            <td className="py-1.5 pl-2 text-right font-semibold text-[#1F1D1B] tabular-nums whitespace-nowrap">
                               {rm(rowTotal)}
                             </td>
                           </tr>

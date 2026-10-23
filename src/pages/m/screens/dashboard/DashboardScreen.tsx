@@ -85,8 +85,9 @@ export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
           })}
         </div>
       </div>
+      {/* Today's problems: a 2 × 2 grid (owner 2026-10-24: a sideways row cut the outer tiles off). */}
       {problems.length > 0 && (
-        <div role="list" aria-label="Today's problems" style={{ display: "flex", gap: 8, overflowX: "auto", padding: "10px 12px 2px", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
+        <div role="list" aria-label="Today's problems" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 12px 2px" }}>
           {problems.map((p) => (
             <button
               key={p.key}
@@ -94,7 +95,7 @@ export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
               type="button"
               onClick={() => openTab(p.tab as MobileTabKey)}
               style={{
-                flex: "0 0 auto", minWidth: 132, maxWidth: 170, textAlign: "left", padding: "9px 11px", borderRadius: 13,
+                minWidth: 0, textAlign: "left", padding: "9px 11px", borderRadius: 13,
                 border: `1px solid ${M.hairline}`, borderTop: `3px solid ${TONE[p.tone].bar}`, backgroundColor: M.card, cursor: "pointer",
                 WebkitTapHighlightColor: "transparent",
               }}
