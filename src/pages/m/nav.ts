@@ -26,6 +26,7 @@ import {
   HardHat,
   Wallet,
   FlaskConical,
+  LayoutDashboard,
   Landmark,
   type LucideIcon,
 } from "lucide-react";
@@ -97,7 +98,7 @@ export const MORE_GROUPS: ModuleGroup[] = [
   {
     title: "Overview",
     items: [
-      { label: "Dashboard Prototype", icon: FlaskConical, path: "/m/dashboard", navGate: DASHBOARD_NAV_HREF },
+      { label: "Dashboard", icon: LayoutDashboard, path: "/m/dashboard", navGate: DASHBOARD_NAV_HREF },
       { label: "Announcements", icon: Megaphone, path: "/m/announcements" },
       { label: "Mail Center", icon: Mail, path: "/m/mail-center" },
     ],

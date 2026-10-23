@@ -6786,3 +6786,6 @@ Asks, in order:
 61. Attendance log: Department column (today / yesterday / this month) (owner 2026-10-23).
 62. Phone dashboard: section strip like the desktop tabs (was a dropdown), OCR tab, KPI figures / tiles / rows fit 375px (owner 2026-10-23).
 63. Department Revenue: click a department → its bar chart for each day of the month (owner 2026-10-23).
+64. Phone menu: "Dashboard Prototype" → "Dashboard"; the /m start page entry → "Home" (owner 2026-10-24).
+65. Department Revenue: Show all / Hide all removed (owner 2026-10-24).
+66. Phone Home: carry all the dashboards; drop Delivery / Receive / Staff quick actions; re-layout (owner 2026-10-24).

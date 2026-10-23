@@ -108,7 +108,6 @@ test("label maps: every dept picker lists FIBRE", () => {
     "src/pages/service-cases/detail.tsx",
     "src/pages/m/config/forms.ts",
     "src/pages/m/config/modules.ts",
-    "src/pages/m/screens/Home.tsx",
     "src/pages/m/screens/ProductionScreen.tsx",
     "src/pages/m/screens/ProductionDetailScreen.tsx",
   ];

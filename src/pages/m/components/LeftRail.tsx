@@ -15,7 +15,7 @@
 import { type LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
-  FlaskConical,
+  Home,
   ShoppingCart,
   Truck,
   Wallet,
@@ -47,8 +47,10 @@ type RailEntry =
 // dc12 Fold railDefs — same order + section labels.
 const ENTRIES: RailEntry[] = [
   { kind: "section", label: "Workspace" },
-  { kind: "item", key: "dashboard-prototype", label: "Dashboard Prototype", icon: FlaskConical, path: "/m/dashboard", navGate: DASHBOARD_NAV_HREF },
-  { kind: "item", key: "home", label: "Dashboard", icon: LayoutDashboard, path: "/m" },
+  // The merged dashboard is THE Dashboard since 2026-10-17 (owner 2026-10-24:
+  // "为什么还是 prototype"); the /m start page is Home.
+  { kind: "item", key: "dashboard-prototype", label: "Dashboard", icon: LayoutDashboard, path: "/m/dashboard", navGate: DASHBOARD_NAV_HREF },
+  { kind: "item", key: "home", label: "Home", icon: Home, path: "/m" },
   { kind: "section", label: "Sales & Customers" },
   { kind: "item", key: "sales", label: "Sales Orders", icon: ShoppingCart, path: "/m/sales" },
   { kind: "item", key: "delivery", label: "Delivery Orders", icon: Truck, path: "/m/delivery" },
