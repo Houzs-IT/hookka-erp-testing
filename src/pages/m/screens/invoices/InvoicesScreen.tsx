@@ -234,7 +234,7 @@ export function InvoicesScreen() {
         {header}
         <div style={{ padding: "14px 18px 32px" }}>
           {permLoading ? (
-            <SkeletonCards cols="minmax(0, 1fr)" />
+            <SkeletonCards maxColumns={1} />
           ) : permUnknown ? (
             <EmptyCard text="Couldn’t confirm your access to Invoices right now. Reopen this screen to try again." />
           ) : (
@@ -292,7 +292,7 @@ export function InvoicesScreen() {
 
       <div style={{ padding: "0 18px 32px" }}>
         {showSkeleton ? (
-          <SkeletonCards cols={gridCols} />
+          <SkeletonCards maxColumns={tablet && !inPane ? undefined : 1} />
         ) : forbidden ? (
           <EmptyCard text={`You don’t have access to ${isAging ? "AR Aging" : "Invoices"}. Ask an administrator if you need it.`} />
         ) : failed ? (
