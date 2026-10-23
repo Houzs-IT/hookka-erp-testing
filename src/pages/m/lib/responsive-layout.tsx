@@ -61,34 +61,61 @@ export function hasRailExpandedPreference(mode: TabletLayoutMode): boolean {
   }
 }
 
+type RailRuleInput = {
+  shellWidth: number;
+  /** The saved choice, else the mode's default. */
+  preferred: boolean;
+  /** True once the user has set the rail themselves (a saved choice exists). */
+  explicit: boolean;
+  /** A split-view detail (/m/<module>/<id>) is open. */
+  splitDetailOpen: boolean;
+};
+
 /**
- * Whether the rail is shown expanded. Normally that is the preference (the saved
- * choice, else the mode's default). One exception, so the split view's detail
- * keeps a usable width: when NO explicit choice exists, the preference is
- * "expanded", and a split-view detail is open, the rail compacts if the detail
- * pane would otherwise be phone-sized (below CONTAINER_REGULAR_MIN_WIDTH).
+ * Should the rail compact itself right now so the split view's detail keeps a
+ * usable width? Only when NO explicit choice exists, the preference is
+ * "expanded", a split-view detail is open, and the detail pane with the full
+ * rail would be below CONTAINER_REGULAR_MIN_WIDTH.
  *
- * The result depends only on the shell width and the route, never on the current
- * rail width: it measures the detail pane as if the rail were expanded. So
- * opening or closing the rail cannot change the answer, and there is no feedback
- * loop. Compacting only ever widens the content, so the split view stays open.
- * Closing the detail returns the preference unchanged.
+ * It depends only on the shell width and the route, never on the current rail:
+ * it measures the detail pane as if the rail were expanded. So opening or
+ * closing the rail cannot change the answer, and there is no feedback loop.
+ * Compacting only ever widens the content, so the split view stays open.
+ */
+export function shouldAutoCompactRail({ shellWidth, preferred, explicit, splitDetailOpen }: RailRuleInput): boolean {
+  if (!preferred || explicit || !splitDetailOpen) return false;
+  const withFullRail = resolveResponsiveLayout(shellWidth, undefined, true);
+  if (withFullRail.mode === "phone" || !withFullRail.canSplitDetail) return false;
+  return estimatePaneWidths(withFullRail).detail < CONTAINER_REGULAR_MIN_WIDTH;
+}
+
+/**
+ * Whether the rail is shown expanded: the preference, except while it is
+ * auto-compacted. During auto-compact the user can expand it TEMPORARILY
+ * (`tempExpanded`); that is never saved, and the caller drops it as soon as
+ * auto-compact stops applying (the detail closes, the window is resized).
  */
 export function resolveRailExpanded({
-  shellWidth,
-  preferred,
-  explicit,
-  splitDetailOpen,
+  tempExpanded = false,
+  ...input
+}: RailRuleInput & { tempExpanded?: boolean }): boolean {
+  return shouldAutoCompactRail(input) ? tempExpanded : input.preferred;
+}
+
+/**
+ * What tapping the rail toggle does. While the rail is auto-compacted the tap
+ * only flips a TEMPORARY expand (nothing is saved, so auto-compact keeps working
+ * for the next detail). Otherwise it is the user's own choice: the opposite of
+ * what is shown, to be saved.
+ */
+export function railToggleOutcome({
+  autoCompact,
+  shown,
 }: {
-  shellWidth: number;
-  preferred: boolean;
-  explicit: boolean;
-  splitDetailOpen: boolean;
-}): boolean {
-  if (!preferred || explicit || !splitDetailOpen) return preferred;
-  const withFullRail = resolveResponsiveLayout(shellWidth, undefined, true);
-  if (withFullRail.mode === "phone" || !withFullRail.canSplitDetail) return preferred;
-  return estimatePaneWidths(withFullRail).detail >= CONTAINER_REGULAR_MIN_WIDTH;
+  autoCompact: boolean;
+  shown: boolean;
+}): { temporary: true } | { temporary: false; expanded: boolean } {
+  return autoCompact ? { temporary: true } : { temporary: false, expanded: !shown };
 }
 
 export type ResponsiveLayoutValue = {

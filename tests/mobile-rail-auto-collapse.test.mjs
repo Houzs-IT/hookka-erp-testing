@@ -8,8 +8,10 @@ import { readFileSync } from "node:fs";
 import {
   CONTAINER_REGULAR_MIN_WIDTH,
   estimatePaneWidths,
+  railToggleOutcome,
   resolveRailExpanded,
   resolveResponsiveLayout,
+  shouldAutoCompactRail,
 } from "../src/pages/m/lib/responsive-layout.tsx";
 
 const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
@@ -167,12 +169,21 @@ test("the shell feeds the rule the route and the explicit-choice flags", () => {
   assert.match(code, /hasRailExpandedPreference\("tablet-landscape"\)/);
 });
 
-test("the toggle acts on what is shown and saves it as the user's own choice", () => {
+test("the toggle is temporary while auto-compacted, a saved choice otherwise", () => {
   const code = read("MobileLayout.tsx");
   const toggle = code.slice(code.indexOf("const toggleRail"), code.indexOf("// Phone left drawer"));
-  assert.match(toggle, /const expanded = !railExpanded/);
-  assert.match(toggle, /writeRailExpandedPreference\(mode, expanded\)/);
+  assert.match(toggle, /railToggleOutcome\(\{ autoCompact: railAutoCompact, shown: railExpanded \}\)/);
+  assert.match(toggle, /if \(outcome\.temporary\) \{\s*setRailTempExpanded\(\(current\) => !current\);\s*return;/);
+  // The temporary branch returns BEFORE anything is saved.
+  assert.ok(toggle.indexOf("return;") < toggle.indexOf("writeRailExpandedPreference"));
+  assert.match(toggle, /writeRailExpandedPreference\(mode, outcome\.expanded\)/);
   assert.match(toggle, /setRailExplicit\(\(current\) => \(\{ \.\.\.current, \[mode\]: true \}\)\)/);
+});
+
+test("the temporary expand is dropped as soon as auto-compact stops applying", () => {
+  const code = read("MobileLayout.tsx");
+  assert.match(code, /if \(!railAutoCompact && railTempExpanded\) setRailTempExpanded\(false\);/);
+  assert.match(code, /resolveRailExpanded\(\{ \.\.\.railRule, tempExpanded: railTempExpanded \}\)/);
 });
 
 test("the rail eases its width with the reduced-motion-aware token", () => {
@@ -181,4 +192,116 @@ test("the rail eases its width with the reduced-motion-aware token", () => {
   const css = read("theme-vars.css");
   assert.match(css, /--m-motion-standard: 180ms;/);
   assert.match(css, /prefers-reduced-motion: reduce\) \{\s*body\[data-theme\] \{[^}]*--m-motion-standard: 0\.01ms;/);
+});
+
+// ---- temporary expand (owner decision 2026-10-23) ---------------------------------
+
+test("tempExpanded only matters while auto-compacted", () => {
+  const input = (shell, over = {}) => ({ shellWidth: shell, preferred: true, explicit: false, splitDetailOpen: true, ...over });
+  // 1024 + detail: compact, or expanded when the user expands it temporarily.
+  assert.equal(resolveRailExpanded(input(1024)), false);
+  assert.equal(resolveRailExpanded({ ...input(1024), tempExpanded: true }), true);
+  // Everywhere else the flag is ignored: the preference decides.
+  assert.equal(resolveRailExpanded({ ...input(1024, { splitDetailOpen: false }), tempExpanded: false }), true);
+  assert.equal(resolveRailExpanded({ ...input(1180), tempExpanded: false }), true);
+  assert.equal(resolveRailExpanded({ ...input(1024, { explicit: true, preferred: false }), tempExpanded: true }), false);
+  assert.equal(resolveRailExpanded({ ...input(768, { preferred: false }), tempExpanded: true }), false);
+});
+
+test("railToggleOutcome: temporary during auto-compact, otherwise the opposite of what is shown", () => {
+  assert.deepEqual(railToggleOutcome({ autoCompact: true, shown: false }), { temporary: true });
+  assert.deepEqual(railToggleOutcome({ autoCompact: true, shown: true }), { temporary: true });
+  assert.deepEqual(railToggleOutcome({ autoCompact: false, shown: true }), { temporary: false, expanded: false });
+  assert.deepEqual(railToggleOutcome({ autoCompact: false, shown: false }), { temporary: false, expanded: true });
+});
+
+/** The shell's state machine, built only from the shared pure functions. */
+function shell(width) {
+  const state = { preferred: width >= 1024, explicit: false, temp: false, open: false, saved: [] };
+  const view = () => {
+    const rule = { shellWidth: width, preferred: state.preferred, explicit: state.explicit, splitDetailOpen: state.open };
+    const auto = shouldAutoCompactRail(rule);
+    if (!auto && state.temp) state.temp = false; // the same reset MobileLayout does during render
+    return { auto, shown: resolveRailExpanded({ ...rule, tempExpanded: state.temp }) };
+  };
+  return {
+    state,
+    view,
+    open() { state.open = true; return view(); },
+    close() { state.open = false; return view(); },
+    toggle() {
+      const { auto, shown } = view();
+      const outcome = railToggleOutcome({ autoCompact: auto, shown });
+      if (outcome.temporary) state.temp = !state.temp;
+      else { state.preferred = outcome.expanded; state.explicit = true; state.saved.push(outcome.expanded); }
+      return view();
+    },
+  };
+}
+
+test("repeated open / close: auto-compact returns every time", () => {
+  const app = shell(1024);
+  assert.equal(app.view().shown, true);
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal(app.open().shown, false, `open #${i}`);
+    assert.equal(app.close().shown, true, `close #${i}`);
+  }
+});
+
+test("expanding during auto-compact is temporary: it ends when the detail closes", () => {
+  const app = shell(1024);
+  app.open();
+  assert.equal(app.toggle().shown, true, "expanded for now");
+  assert.deepEqual(app.state.saved, [], "nothing saved");
+  assert.equal(app.state.explicit, false, "auto-compact is not disabled");
+  assert.equal(app.close().shown, true, "list view: the normal expanded rail");
+  assert.equal(app.open().shown, false, "the NEXT detail auto-compacts again");
+});
+
+test("repeated: expand temporarily, close, open, expand, close ... never sticks", () => {
+  const app = shell(1024);
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal(app.open().shown, false);
+    assert.equal(app.toggle().shown, true);
+    assert.equal(app.close().shown, true);
+  }
+  assert.deepEqual(app.state.saved, []);
+  assert.equal(app.state.explicit, false);
+});
+
+test("switching between details keeps the temporary expand; toggling again undoes it", () => {
+  const app = shell(1024);
+  app.open();
+  app.toggle(); // expand
+  assert.equal(app.open().shown, true, "another detail opens: still expanded");
+  assert.equal(app.toggle().shown, false, "tap again: back to auto-compact");
+  assert.deepEqual(app.state.saved, []);
+});
+
+test("a choice made outside auto-compact is saved and respected from then on", () => {
+  const app = shell(1024);
+  // List view: the rail is expanded; the user collapses it -> saved.
+  assert.equal(app.toggle().shown, false);
+  assert.deepEqual(app.state.saved, [false]);
+  assert.equal(app.open().shown, false);
+  assert.equal(app.close().shown, false);
+  // And expanding it again outside auto-compact is saved too, and then wins over auto-compact.
+  assert.equal(app.toggle().shown, true);
+  assert.deepEqual(app.state.saved, [false, true]);
+  assert.equal(app.open().shown, true, "explicit expanded: no auto-compact");
+});
+
+test("resizing out of the narrow range drops a temporary expand", () => {
+  const rule = (shellWidth, temp) => resolveRailExpanded({ shellWidth, preferred: true, explicit: false, splitDetailOpen: true, tempExpanded: temp });
+  assert.equal(rule(1024, true), true);
+  // At 1180 auto-compact does not apply, and the flag is irrelevant.
+  assert.equal(shouldAutoCompactRail({ shellWidth: 1180, preferred: true, explicit: false, splitDetailOpen: true }), false);
+  assert.equal(rule(1180, true), true);
+  assert.equal(rule(1180, false), true);
+});
+
+test("phone: the rail logic never applies", () => {
+  for (const width of [390, 600, 719]) {
+    assert.equal(shouldAutoCompactRail({ shellWidth: width, preferred: true, explicit: false, splitDetailOpen: true }), false);
+  }
 });

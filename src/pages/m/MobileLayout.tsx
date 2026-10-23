@@ -52,10 +52,12 @@ import {
   ResponsiveLayoutProvider,
   estimatePaneWidths,
   hasRailExpandedPreference,
+  railToggleOutcome,
   readRailExpandedPreference,
   resolveContainerLayout,
   resolveRailExpanded,
   resolveResponsiveLayout,
+  shouldAutoCompactRail,
   useObservedWidth,
   useResponsiveLayout,
   writeRailExpandedPreference,
@@ -223,17 +225,28 @@ export default function MobileLayout() {
     "tablet-portrait": hasRailExpandedPreference("tablet-portrait"),
     "tablet-landscape": hasRailExpandedPreference("tablet-landscape"),
   }));
+  // Expanding the rail while it is auto-compacted is temporary: it is not saved
+  // and is dropped when auto-compact stops applying (see below).
+  const [railTempExpanded, setRailTempExpanded] = useState(false);
   const { pathname } = useLocation();
   const [shellRef, shellWidth] = useObservedWidth<HTMLDivElement>();
   const shellLayout = resolveResponsiveLayout(shellWidth);
-  const railExpanded = shellLayout.mode === "phone"
-    ? false
-    : resolveRailExpanded({
+  const railRule = shellLayout.mode === "phone"
+    ? null
+    : {
         shellWidth,
         preferred: railPreferences[shellLayout.mode],
         explicit: railExplicit[shellLayout.mode],
         splitDetailOpen: isSplitDetailPath(pathname),
-      });
+      };
+  const railAutoCompact = railRule != null && shouldAutoCompactRail(railRule);
+  // Closing the detail (or resizing out of the narrow range) ends the temporary
+  // expand, so the next detail auto-compacts again. Reset during render, as the
+  // drawer below does, so no frame shows a stale override.
+  if (!railAutoCompact && railTempExpanded) setRailTempExpanded(false);
+  const railExpanded = railRule == null
+    ? false
+    : resolveRailExpanded({ ...railRule, tempExpanded: railTempExpanded });
   const preferredShellLayout = resolveResponsiveLayout(
     shellWidth,
     undefined,
@@ -261,14 +274,18 @@ export default function MobileLayout() {
   const compactRail = tablet && !railExpanded;
   const toggleRail = () => {
     if (layout.mode === "phone") return;
+    const outcome = railToggleOutcome({ autoCompact: railAutoCompact, shown: railExpanded });
+    // While auto-compacted the toggle only flips a temporary expand: nothing is saved.
+    if (outcome.temporary) {
+      setRailTempExpanded((current) => !current);
+      return;
+    }
+    // Otherwise it is the user's own choice: save it.
     const mode = layout.mode;
-    // Toggle what is SHOWN (it may be auto-compacted), and save it as the user's own choice.
-    const expanded = !railExpanded;
-    writeRailExpandedPreference(mode, expanded);
-    setRailPreferences((current) => ({ ...current, [mode]: expanded }));
+    writeRailExpandedPreference(mode, outcome.expanded);
+    setRailPreferences((current) => ({ ...current, [mode]: outcome.expanded }));
     setRailExplicit((current) => ({ ...current, [mode]: true }));
   };
-
   // Phone left drawer (hamburger → NavDrawer). Closes on any route change
   // (incl. browser back) and whenever the shell leaves phone mode, so a
   // rotated/resized device never keeps a stale overlay over the tablet rail.
